@@ -14,14 +14,12 @@ class GenericRowBatcher : public RowBatcher {
  public:
     GenericRowBatcher(std::shared_ptr<arrow::Schema> schema, WriteAheadLog& wal);
 
-    void Append(const ArrowRow& buf) override;
-    std::shared_ptr<arrow::Table> Flush() override;
-    int64_t row_count() const noexcept override { return row_count_; }
+    virtual void Append(const ArrowRow& buf) override;
+    virtual std::shared_ptr<arrow::Table> Flush() override;
 
  private:
     WriteAheadLog&             wal_;
     std::unique_ptr<LogHandle> handle_;
-    int64_t                    row_count_{0};
 };
 
 }  // namespace arrow_row

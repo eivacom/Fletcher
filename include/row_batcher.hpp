@@ -23,11 +23,14 @@ class RowBatcher {
     virtual std::shared_ptr<arrow::Table> Flush() = 0;
 
     // Rows accumulated since construction or the last Flush().
-    virtual int64_t row_count() const noexcept = 0;
+    virtual int64_t row_count() const noexcept {
+        return row_count_;
+    };
 
  protected:
     std::shared_ptr<arrow::Schema> schema_;
-};
+    int64_t                        row_count_{ 0 };
+    };
 
 }  // namespace arrow_row
 
