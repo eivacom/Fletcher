@@ -1,13 +1,13 @@
-#include "row_batcher.h"
-#include "row_codec.h"
-#include "sqlite_wal.h"
+#include "row_batcher.hpp"
+#include "row_codec.hpp"
+#include "sqlite_wal.hpp"
 
 #include <arrow/api.h>
 
 #include <iomanip>
 #include <iostream>
 
-static void printHex(const std::vector<uint8_t>& buf) {
+static void PrintHex(const std::vector<uint8_t>& buf) {
     for (size_t i = 0; i < buf.size(); ++i) {
         std::cout << std::hex << std::setw(2) << std::setfill('0')
                   << static_cast<int>(buf[i]);
@@ -44,16 +44,16 @@ int main() {
     };
 
     try {
-        auto buf  = codec.encodeRow(values);
-        auto buf2 = codec.encodeRow(values2);
+        auto buf  = codec.EncodeRow(values);
+        auto buf2 = codec.EncodeRow(values2);
 
         std::cout << "Row 1 (" << buf.size() << " bytes):\n";
-        printHex(buf);
+        PrintHex(buf);
         std::cout << "Row 2 (" << buf2.size() << " bytes):\n";
-        printHex(buf2);
+        PrintHex(buf2);
 
         // Decode scalar vector (single-row round-trip check)
-        auto decoded = codec.decodeRow(buf);
+        auto decoded = codec.DecodeRow(buf);
         std::cout << "\nDecoded row 1 scalars:\n";
         for (int i = 0; i < schema->num_fields(); ++i) {
             const auto& s = decoded[i];
@@ -64,9 +64,9 @@ int main() {
         // Batch both rows via the write-ahead log
         arrow_row::SQLiteWAL wrl(":memory:");
         arrow_row::RowBatcher batcher(schema, wrl);
-        batcher.append(buf);
-        batcher.append(buf2);
-        auto table = batcher.flush();
+        batcher.Append(buf);
+        batcher.Append(buf2);
+        auto table = batcher.Flush();
 
         std::cout << "\nTable: " << table->num_rows() << " rows, "
                   << table->num_columns() << " columns\n";

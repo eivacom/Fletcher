@@ -1,6 +1,7 @@
-#pragma once
+#ifndef ARROW_ROW_SRC_ROW_READER_HPP_
+#define ARROW_ROW_SRC_ROW_READER_HPP_
 
-// Internal implementation detail shared between row_encoder.cpp and
+// Internal implementation detail shared between row_codec.cpp and
 // row_batcher.cpp.  Not part of the public API.
 
 #include <cstddef>
@@ -17,7 +18,7 @@ struct Reader {
     size_t         pos{0};
 
     template <typename T>
-    T read() {
+    T Read() {
         if (pos + sizeof(T) > size)
             throw std::invalid_argument("arrow_row: buffer underrun");
         T value;
@@ -26,7 +27,7 @@ struct Reader {
         return value;
     }
 
-    const uint8_t* readBytes(size_t n) {
+    const uint8_t* ReadBytes(size_t n) {
         if (pos + n > size)
             throw std::invalid_argument("arrow_row: buffer underrun");
         const uint8_t* ptr = data + pos;
@@ -35,5 +36,7 @@ struct Reader {
     }
 };
 
-} // namespace detail
-} // namespace arrow_row
+}  // namespace detail
+}  // namespace arrow_row
+
+#endif  // ARROW_ROW_SRC_ROW_READER_HPP_

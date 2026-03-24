@@ -1,20 +1,21 @@
-#pragma once
+#ifndef ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_
+#define ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_
 
-#include "row_codec.h"
-#include "write_ahead_log.h"
+#include "row_codec.hpp"
+#include "write_ahead_log.hpp"
 
 #include <string>
 
-struct sqlite3;      // forward declaration — keeps <sqlite3.h> out of the public header
-struct sqlite3_stmt; // forward declaration
+struct sqlite3;       // forward declaration - keeps <sqlite3.h> out of the public header
+struct sqlite3_stmt;  // forward declaration
 
 namespace arrow_row {
 
 class SQLiteLogHandle : public LogHandle {
-public:
-    SQLiteLogHandle(sqlite3* db, std::string tableName,
-                    std::vector<int> keyColumns, RowCodec codec,
-                    sqlite3_stmt* insertStmt);
+ public:
+    SQLiteLogHandle(sqlite3* db, std::string table_name,
+                    std::vector<int> key_columns, RowCodec codec,
+                    sqlite3_stmt* insert_stmt);
     ~SQLiteLogHandle() override;
 
     // Non-copyable, non-movable (owns sqlite3_stmt*).
@@ -23,18 +24,18 @@ public:
     SQLiteLogHandle(SQLiteLogHandle&&)                 = delete;
     SQLiteLogHandle& operator=(SQLiteLogHandle&&)      = delete;
 
-    void log(const ArrowRow& buffer) override;
-    std::shared_ptr<arrow::Table> toTable() const override;
+    void Log(const ArrowRow& buffer) override;
+    std::shared_ptr<arrow::Table> ToTable() const override;
 
-private:
+ private:
     sqlite3*      db_;
-    std::string   tableName_;
+    std::string   table_name_;
     RowCodec      codec_;
-    sqlite3_stmt* insertStmt_{nullptr};
+    sqlite3_stmt* insert_stmt_{nullptr};
 };
 
 class SQLiteWAL : public WriteAheadLog {
-public:
+ public:
     // Open (or create) the database at path.
     // Pass ":memory:" for an in-memory database.
     // Throws std::runtime_error if the database cannot be opened.
@@ -47,12 +48,14 @@ public:
     SQLiteWAL(SQLiteWAL&&)                 = default;
     SQLiteWAL& operator=(SQLiteWAL&&)      = default;
 
-    std::unique_ptr<LogHandle> createLog(const arrow::Schema&    schema,
-                                         const std::vector<int>& keyColumns) override;
+    std::unique_ptr<LogHandle> CreateLog(const arrow::Schema&    schema,
+                                         const std::vector<int>& key_columns) override;
 
-private:
+ private:
     sqlite3*     db_{nullptr};
-    unsigned int logCounter_{0};
+    unsigned int log_counter_{0};
 };
 
-} // namespace arrow_row
+}  // namespace arrow_row
+
+#endif  // ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_

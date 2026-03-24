@@ -1,4 +1,5 @@
-#pragma once
+#ifndef ARROW_ROW_INCLUDE_ROW_CODEC_HPP_
+#define ARROW_ROW_INCLUDE_ROW_CODEC_HPP_
 
 #include <arrow/api.h>
 
@@ -33,25 +34,27 @@ static constexpr uint8_t kVersion = 0x01u;
 //
 // Throws std::invalid_argument if the schema contains types that Arrow cannot
 // fingerprint (e.g. unregistered extension types).
-uint64_t fingerprintHash(const arrow::Schema& schema);
+uint64_t FingerprintHash(const arrow::Schema& schema);
 
-// Binds a schema to encodeRow / decodeRow so callers don't pass it on every call.
+// Binds a schema to EncodeRow / DecodeRow so callers don't pass it on every call.
 class RowCodec {
-public:
+ public:
     explicit RowCodec(std::shared_ptr<arrow::Schema> schema);
 
-    ArrowRow encodeRow(
+    ArrowRow EncodeRow(
         const std::vector<std::shared_ptr<arrow::Scalar>>& values) const;
 
-    std::vector<std::shared_ptr<arrow::Scalar>> decodeRow(
+    std::vector<std::shared_ptr<arrow::Scalar>> DecodeRow(
         const ArrowRow& buf) const;
 
-    const arrow::Schema& schema()     const noexcept { return *schema_; }
-    uint64_t             schemaHash() const noexcept { return schemaHash_; }
+    const arrow::Schema& schema()      const noexcept { return *schema_; }
+    uint64_t             schema_hash() const noexcept { return schema_hash_; }
 
-private:
+ private:
     std::shared_ptr<arrow::Schema> schema_;
-    uint64_t                       schemaHash_;
+    uint64_t                       schema_hash_;
 };
 
-} // namespace arrow_row
+}  // namespace arrow_row
+
+#endif  // ARROW_ROW_INCLUDE_ROW_CODEC_HPP_

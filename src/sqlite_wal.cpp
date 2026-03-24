@@ -1,4 +1,4 @@
-#include "sqlite_wal.h"
+#include "sqlite_wal.hpp"
 
 #include <sqlite3.h>
 
@@ -12,7 +12,7 @@
 namespace arrow_row {
 namespace {
 
-const char* arrowTypeToSQLite(const arrow::DataType& type) {
+const char* ArrowTypeToSQLite(const arrow::DataType& type) {
     using T = arrow::Type;
     switch (type.id()) {
         case T::BOOL:
@@ -32,7 +32,7 @@ const char* arrowTypeToSQLite(const arrow::DataType& type) {
     }
 }
 
-void bindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
+void BindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
     if (!scalar.is_valid) {
         sqlite3_bind_null(stmt, col);
         return;
@@ -103,11 +103,11 @@ void bindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
         }
         default:
             throw std::invalid_argument(
-                "SQLiteWAL::log: unsupported Arrow type: " + scalar.type->ToString());
+                "SQLiteLogHandle::Log: unsupported Arrow type: " + scalar.type->ToString());
     }
 }
 
-void appendColumn(sqlite3_stmt* stmt, int col, arrow::ArrayBuilder& builder,
+void AppendColumn(sqlite3_stmt* stmt, int col, arrow::ArrayBuilder& builder,
                   const arrow::DataType& type) {
     using T = arrow::Type;
     arrow::Status st;
@@ -194,51 +194,51 @@ void appendColumn(sqlite3_stmt* stmt, int col, arrow::ArrayBuilder& builder,
         }
         default:
             throw std::invalid_argument(
-                "SQLiteLogHandle::toTable: unsupported Arrow type: " + type.ToString());
+                "SQLiteLogHandle::ToTable: unsupported Arrow type: " + type.ToString());
     }
     if (!st.ok())
-        throw std::runtime_error("SQLiteLogHandle::toTable: builder error: " + st.ToString());
+        throw std::runtime_error("SQLiteLogHandle::ToTable: builder error: " + st.ToString());
 }
 
-} // namespace
+}  // namespace
 
-SQLiteLogHandle::SQLiteLogHandle(sqlite3* db, std::string tableName,
-                                 std::vector<int> keyColumns, RowCodec codec,
-                                 sqlite3_stmt* insertStmt)
-    : LogHandle(std::move(keyColumns))
+SQLiteLogHandle::SQLiteLogHandle(sqlite3* db, std::string table_name,
+                                 std::vector<int> key_columns, RowCodec codec,
+                                 sqlite3_stmt* insert_stmt)
+    : LogHandle(std::move(key_columns))
     , db_(db)
-    , tableName_(std::move(tableName))
+    , table_name_(std::move(table_name))
     , codec_(std::move(codec))
-    , insertStmt_(insertStmt)
+    , insert_stmt_(insert_stmt)
 {}
 
 SQLiteLogHandle::~SQLiteLogHandle() {
-    sqlite3_finalize(insertStmt_);
-    sqlite3_exec(db_, ("DROP TABLE IF EXISTS " + tableName_ + ";").c_str(),
+    sqlite3_finalize(insert_stmt_);
+    sqlite3_exec(db_, ("DROP TABLE IF EXISTS " + table_name_ + ";").c_str(),
                  nullptr, nullptr, nullptr);
 }
 
-void SQLiteLogHandle::log(const ArrowRow& buffer) {
-    auto scalars = codec_.decodeRow(buffer);
+void SQLiteLogHandle::Log(const ArrowRow& buffer) {
+    auto scalars = codec_.DecodeRow(buffer);
     const arrow::Schema& schema = codec_.schema();
 
     for (int i = 0; i < schema.num_fields(); ++i)
-        bindScalar(insertStmt_, i + 1, *scalars[i]);
+        BindScalar(insert_stmt_, i + 1, *scalars[i]);
 
-    const int rc = sqlite3_step(insertStmt_);
-    sqlite3_reset(insertStmt_);
-    sqlite3_clear_bindings(insertStmt_);
+    const int rc = sqlite3_step(insert_stmt_);
+    sqlite3_reset(insert_stmt_);
+    sqlite3_clear_bindings(insert_stmt_);
     if (rc != SQLITE_DONE)
-        throw std::runtime_error("SQLiteLogHandle::log: " + std::string(sqlite3_errmsg(db_)));
+        throw std::runtime_error("SQLiteLogHandle::Log: " + std::string(sqlite3_errmsg(db_)));
 }
 
-std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
+std::shared_ptr<arrow::Table> SQLiteLogHandle::ToTable() const {
     const arrow::Schema& schema = codec_.schema();
 
-    std::string sql = "SELECT * FROM " + tableName_;
-    if (!keyColumns().empty()) {
+    std::string sql = "SELECT * FROM " + table_name_;
+    if (!key_columns().empty()) {
         sql += " ORDER BY ";
-        const auto& keys = keyColumns();
+        const auto& keys = key_columns();
         for (size_t i = 0; i < keys.size(); ++i) {
             if (i > 0) sql += ", ";
             sql += schema.field(keys[i])->name();
@@ -248,7 +248,7 @@ std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
-        throw std::runtime_error("SQLiteLogHandle::toTable: " + std::string(sqlite3_errmsg(db_)));
+        throw std::runtime_error("SQLiteLogHandle::ToTable: " + std::string(sqlite3_errmsg(db_)));
 
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     std::vector<std::shared_ptr<arrow::ArrayBuilder>> builders;
@@ -258,7 +258,7 @@ std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
         auto st = arrow::MakeBuilder(pool, schema.field(i)->type(), &b);
         if (!st.ok()) {
             sqlite3_finalize(stmt);
-            throw std::runtime_error("SQLiteLogHandle::toTable: " + st.ToString());
+            throw std::runtime_error("SQLiteLogHandle::ToTable: " + st.ToString());
         }
         builders.push_back(std::shared_ptr<arrow::ArrayBuilder>(std::move(b)));
     }
@@ -270,10 +270,10 @@ std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
                 auto st = builders[col]->AppendNull();
                 if (!st.ok()) {
                     sqlite3_finalize(stmt);
-                    throw std::runtime_error("SQLiteLogHandle::toTable: " + st.ToString());
+                    throw std::runtime_error("SQLiteLogHandle::ToTable: " + st.ToString());
                 }
             } else {
-                appendColumn(stmt, col, *builders[col], *schema.field(col)->type());
+                AppendColumn(stmt, col, *builders[col], *schema.field(col)->type());
             }
         }
     }
@@ -281,7 +281,7 @@ std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
     sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE)
-        throw std::runtime_error("SQLiteLogHandle::toTable: " + std::string(sqlite3_errmsg(db_)));
+        throw std::runtime_error("SQLiteLogHandle::ToTable: " + std::string(sqlite3_errmsg(db_)));
 
     arrow::ArrayVector arrays;
     arrays.reserve(schema.num_fields());
@@ -289,13 +289,13 @@ std::shared_ptr<arrow::Table> SQLiteLogHandle::toTable() const {
         std::shared_ptr<arrow::Array> arr;
         auto st = b->Finish(&arr);
         if (!st.ok())
-            throw std::runtime_error("SQLiteLogHandle::toTable: " + st.ToString());
+            throw std::runtime_error("SQLiteLogHandle::ToTable: " + st.ToString());
         arrays.push_back(std::move(arr));
     }
 
-    int64_t numRows = arrays.empty() ? 0 : arrays[0]->length();
-    auto schemaPtr  = arrow::schema(schema.fields(), schema.metadata());
-    return arrow::Table::Make(schemaPtr, arrays, numRows);
+    int64_t    num_rows   = arrays.empty() ? 0 : arrays[0]->length();
+    auto       schema_ptr = arrow::schema(schema.fields(), schema.metadata());
+    return arrow::Table::Make(schema_ptr, arrays, num_rows);
 }
 
 SQLiteWAL::SQLiteWAL(const std::string& path) {
@@ -311,55 +311,54 @@ SQLiteWAL::~SQLiteWAL() {
     if (db_) sqlite3_close(db_);
 }
 
-std::unique_ptr<LogHandle> SQLiteWAL::createLog(const arrow::Schema&    schema,
-                                                 const std::vector<int>& keyColumns) {
-    std::string tableName = "log_" + std::to_string(logCounter_++);
+std::unique_ptr<LogHandle> SQLiteWAL::CreateLog(const arrow::Schema&    schema,
+                                                 const std::vector<int>& key_columns) {
+    std::string table_name = "log_" + std::to_string(log_counter_++);
 
-    std::string sql = "CREATE TABLE IF NOT EXISTS " + tableName + " (";
+    std::string sql = "CREATE TABLE IF NOT EXISTS " + table_name + " (";
     for (int i = 0; i < schema.num_fields(); ++i) {
         if (i > 0) sql += ", ";
         const auto& field = schema.field(i);
         sql += field->name();
         sql += ' ';
-        sql += arrowTypeToSQLite(*field->type());
+        sql += ArrowTypeToSQLite(*field->type());
         if (!field->nullable())
             sql += " NOT NULL";
     }
-    if (!keyColumns.empty()) {
+    if (!key_columns.empty()) {
         sql += ", PRIMARY KEY (";
-        for (size_t i = 0; i < keyColumns.size(); ++i) {
+        for (size_t i = 0; i < key_columns.size(); ++i) {
             if (i > 0) sql += ", ";
-            sql += schema.field(keyColumns[i])->name();
+            sql += schema.field(key_columns[i])->name();
         }
         sql += ")";
     }
 
     sql += ");";
 
-    char* errMsg = nullptr;
-    if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errMsg) != SQLITE_OK) {
-        std::string err = errMsg;
-        sqlite3_free(errMsg);
-        throw std::runtime_error("SQLiteWAL::createLog: " + err);
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        std::string err = err_msg;
+        sqlite3_free(err_msg);
+        throw std::runtime_error("SQLiteWAL::CreateLog: " + err);
     }
 
-    std::string insertSql = "INSERT INTO " + tableName + " VALUES (";
+    std::string insert_sql = "INSERT INTO " + table_name + " VALUES (";
     for (int i = 0; i < schema.num_fields(); ++i) {
-        if (i > 0) insertSql += ", ";
-        insertSql += "?";
+        if (i > 0) insert_sql += ", ";
+        insert_sql += "?";
     }
-    insertSql += ");";
+    insert_sql += ");";
 
-    sqlite3_stmt* insertStmt = nullptr;
-    if (sqlite3_prepare_v2(db_, insertSql.c_str(), -1, &insertStmt, nullptr) != SQLITE_OK)
-        throw std::runtime_error("SQLiteWAL::createLog: failed to prepare INSERT statement: "
+    sqlite3_stmt* insert_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, insert_sql.c_str(), -1, &insert_stmt, nullptr) != SQLITE_OK)
+        throw std::runtime_error("SQLiteWAL::CreateLog: failed to prepare INSERT statement: "
                                  + std::string(sqlite3_errmsg(db_)));
 
     return std::make_unique<SQLiteLogHandle>(
-        db_, std::move(tableName), keyColumns,
+        db_, std::move(table_name), key_columns,
         RowCodec(arrow::schema(schema.fields(), schema.metadata())),
-        insertStmt);
+        insert_stmt);
 }
 
-
-} // namespace arrow_row
+}  // namespace arrow_row
