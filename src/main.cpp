@@ -61,19 +61,20 @@ int main() {
                       << (s && s->is_valid ? s->ToString() : "null") << '\n';
         }
 
-        // Batch both rows via the write-ahead log
+        // Batch both rows via the write-ahead log; flush fires after every 2 rows.
         arrow_row::SQLiteWAL wrl(":memory:");
-        arrow_row::GenericRowBatcher batcher(schema, wrl);
+        arrow_row::GenericRowBatcher batcher(
+            schema, wrl, /*batch_size=*/2,
+            [&schema](std::shared_ptr<arrow::Table> table) {
+                std::cout << "\nTable: " << table->num_rows() << " rows, "
+                          << table->num_columns() << " columns\n";
+                for (int c = 0; c < table->num_columns(); ++c) {
+                    std::cout << "  " << schema->field(c)->name() << ": "
+                              << table->column(c)->ToString() << '\n';
+                }
+            });
         batcher.Append(buf);
-        batcher.Append(buf2);
-        auto table = batcher.Flush();
-
-        std::cout << "\nTable: " << table->num_rows() << " rows, "
-                  << table->num_columns() << " columns\n";
-        for (int c = 0; c < table->num_columns(); ++c) {
-            std::cout << "  " << schema->field(c)->name() << ": "
-                      << table->column(c)->ToString() << '\n';
-        }
+        batcher.Append(buf2);  // triggers flush callback
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return 1;

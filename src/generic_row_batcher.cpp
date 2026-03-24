@@ -2,18 +2,21 @@
 
 namespace arrow_row {
 
-GenericRowBatcher::GenericRowBatcher(std::shared_ptr<arrow::Schema> schema, WriteAheadLog& wal)
-    : RowBatcher(std::move(schema)), wal_(wal), handle_(wal_.CreateLog(*schema_, {})) {}
+GenericRowBatcher::GenericRowBatcher(std::shared_ptr<arrow::Schema> schema,
+                                     WriteAheadLog&                 wal,
+                                     int64_t                        batch_size,
+                                     FlushCallback                  on_flush)
+    : RowBatcher(std::move(schema), batch_size, std::move(on_flush))
+    , wal_(wal)
+    , handle_(wal_.CreateLog(*schema_, {})) {}
 
-void GenericRowBatcher::Append(const ArrowRow& buf) {
+void GenericRowBatcher::DoAppend(const ArrowRow& buf) {
     handle_->Log(buf);
-    ++row_count_;
 }
 
-std::shared_ptr<arrow::Table> GenericRowBatcher::Flush() {
+std::shared_ptr<arrow::Table> GenericRowBatcher::DoFlush() {
     auto table = handle_->ToTable();
     handle_    = wal_.CreateLog(*schema_, {});
-    row_count_ = 0;
     return table;
 }
 
