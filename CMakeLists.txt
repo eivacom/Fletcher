@@ -23,6 +23,11 @@ add_library(sqlite_dbs
 target_include_directories(sqlite_dbs PUBLIC include)
 target_link_libraries(sqlite_dbs PUBLIC arrow::arrow SQLite::SQLite3 row_codec)
 
+add_library(arrow_row_capi STATIC
+    src/arrow_row_capi.cpp)
+target_include_directories(arrow_row_capi PUBLIC include)
+target_link_libraries(arrow_row_capi PRIVATE row_codec row_batcher sqlite_dbs arrow::arrow)
+
 add_executable(${PROJECT_NAME}
     src/main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE row_codec row_batcher sqlite_dbs)
