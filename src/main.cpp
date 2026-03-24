@@ -65,13 +65,14 @@ int main() {
         arrow_row::SQLiteWAL wrl(":memory:");
         arrow_row::GenericRowBatcher batcher(
             schema, wrl, /*batch_size=*/2,
-            [&schema](std::shared_ptr<arrow::Table> table) {
+            [&schema](std::shared_ptr<arrow::Table> table) -> bool {
                 std::cout << "\nTable: " << table->num_rows() << " rows, "
                           << table->num_columns() << " columns\n";
                 for (int c = 0; c < table->num_columns(); ++c) {
                     std::cout << "  " << schema->field(c)->name() << ": "
                               << table->column(c)->ToString() << '\n';
                 }
+                return true;
             });
         batcher.Append(buf);
         batcher.Append(buf2);  // triggers flush callback
