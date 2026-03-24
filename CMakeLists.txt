@@ -13,7 +13,8 @@ target_include_directories(row_codec PUBLIC include PRIVATE src)
 target_link_libraries(row_codec PUBLIC arrow::arrow)
 
 add_library(row_batcher
-    src/row_batcher.cpp)
+    src/row_batcher.cpp
+    src/generic_row_batcher.cpp)
 target_include_directories(row_batcher PUBLIC include PRIVATE src)
 target_link_libraries(row_batcher PUBLIC arrow::arrow PRIVATE row_codec)
 

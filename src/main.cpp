@@ -1,4 +1,4 @@
-#include "row_batcher.hpp"
+#include "generic_row_batcher.hpp"
 #include "row_codec.hpp"
 #include "sqlite_wal.hpp"
 
@@ -63,7 +63,7 @@ int main() {
 
         // Batch both rows via the write-ahead log
         arrow_row::SQLiteWAL wrl(":memory:");
-        arrow_row::RowBatcher batcher(schema, wrl);
+        arrow_row::GenericRowBatcher batcher(schema, wrl);
         batcher.Append(buf);
         batcher.Append(buf2);
         auto table = batcher.Flush();
