@@ -25,3 +25,8 @@ target_link_libraries(sqlite_dbs PUBLIC arrow::arrow SQLite::SQLite3 row_codec)
 add_executable(${PROJECT_NAME}
     src/main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE row_codec row_batcher sqlite_dbs)
+
+target_compile_options(${PROJECT_NAME} PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
