@@ -34,8 +34,12 @@ using ArrowRow = std::vector<uint8_t>;
 //                                     int64 nanoseconds (16 bytes)
 //           decimal128        : 16 bytes two's-complement little-endian
 //           decimal256        : 32 bytes two's-complement little-endian
-//       Variable-width types (string, large_string, binary, large_binary):
+//       Variable-width types (string, large_string, binary, large_binary,
+//                             string_view, binary_view):
 //           [LENGTH : 4 bytes uint32] [DATA : <LENGTH> bytes]
+//           string_view / binary_view are materialized to a contiguous buffer
+//           by the Arrow scalar API; the array-level multi-buffer layout is
+//           not visible here.
 //       struct     : fields encoded in order, each with its own NULL_FLAG
 //       list / large_list   : [COUNT : 4 bytes] (NULL_FLAG + element)*
 //       fixed_size_list     : (NULL_FLAG + element)* — no count prefix

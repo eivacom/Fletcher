@@ -71,10 +71,14 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             break;
 
         // Variable-width types share BaseBinaryScalar with a Buffer value.
+        // STRING_VIEW / BINARY_VIEW use the same scalar representation — the
+        // array-level multi-buffer layout is hidden behind the scalar API.
         case T::STRING:
         case T::LARGE_STRING:
         case T::BINARY:
-        case T::LARGE_BINARY: {
+        case T::LARGE_BINARY:
+        case T::STRING_VIEW:
+        case T::BINARY_VIEW: {
             const auto&   s       = static_cast<const arrow::BaseBinaryScalar&>(scalar);
             const int64_t raw_len = s.value->size();
             if (raw_len < 0 || raw_len > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
@@ -288,6 +292,8 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 case T::LARGE_STRING: return std::make_shared<arrow::LargeStringScalar>(ibuf);
                 case T::BINARY:       return std::make_shared<arrow::BinaryScalar>(ibuf);
                 case T::LARGE_BINARY: return std::make_shared<arrow::LargeBinaryScalar>(ibuf);
+                case T::STRING_VIEW:  return std::make_shared<arrow::StringViewScalar>(ibuf);
+                case T::BINARY_VIEW:  return std::make_shared<arrow::BinaryViewScalar>(ibuf);
                 default:              break;
             }
             break;
