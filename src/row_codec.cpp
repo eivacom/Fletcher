@@ -197,6 +197,29 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             EncodeScalar(buf, *us.value);
             break;
         }
+        case T::DICTIONARY: {
+            // Dictionary encoding is a storage optimisation with no meaning at
+            // the single-row level.  Expand by looking up the actual value and
+            // encoding it as the dictionary's value type.  On decode a plain
+            // value scalar is produced (not a DictionaryScalar).
+            const auto& ds        = static_cast<const arrow::DictionaryScalar&>(scalar);
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(*scalar.type);
+            // Extract the index as int64 regardless of the concrete index type.
+            auto idx_result = ds.value.index->CastTo(arrow::int64());
+            if (!idx_result.ok())
+                throw std::invalid_argument(
+                    "EncodeRow: dictionary index cast failed: " +
+                    idx_result.status().ToString());
+            const int64_t idx = std::static_pointer_cast<arrow::Int64Scalar>(*idx_result)->value;
+            auto elem_result = ds.value.dictionary->GetScalar(idx);
+            if (!elem_result.ok())
+                throw std::invalid_argument(
+                    "EncodeRow: dictionary lookup failed: " +
+                    elem_result.status().ToString());
+            EncodeScalar(buf, **elem_result);
+            (void)dict_type;
+            break;
+        }
         case T::MAP: {
             const auto& ms         = static_cast<const arrow::MapScalar&>(scalar);
             const auto& map_type   = static_cast<const arrow::MapType&>(*scalar.type);
@@ -402,6 +425,13 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 throw std::invalid_argument(
                     "DecodeRow: builder finish failed: " + finish.status().ToString());
             return std::make_shared<arrow::FixedSizeListScalar>(*finish, type);
+        }
+        case T::DICTIONARY: {
+            // Encoded as the expanded value type; decoded as the same plain
+            // value scalar.  The result type is dict_type.value_type(), not the
+            // dictionary type — callers must be aware of this lossy decode.
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(*type);
+            return DecodeScalar(r, dict_type.value_type());
         }
         case T::SPARSE_UNION:
         case T::DENSE_UNION: {
