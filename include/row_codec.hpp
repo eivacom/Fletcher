@@ -36,14 +36,6 @@ using ArrowRow = std::vector<uint8_t>;
 //           decimal256        : 32 bytes two's-complement little-endian
 //       Variable-width types (string, large_string, binary, large_binary):
 //           [LENGTH : 4 bytes uint32] [DATA : <LENGTH> bytes]
-//       struct     : fields encoded in order, each with its own NULL_FLAG
-//       list / large_list   : [COUNT : 4 bytes] (NULL_FLAG + element)*
-//       fixed_size_list     : (NULL_FLAG + element)* — no count prefix
-//       map        : [COUNT : 4 bytes] (key, NULL_FLAG + value)* per entry
-//                    key has no null flag (Arrow keys are always non-null)
-//       sparse_union / dense_union : [TYPE_CODE : 1 byte] active-child payload
-//       dictionary : expanded to the value type at encode time; DecodeRow
-//                    returns a plain value scalar, not a DictionaryScalar
 
 static constexpr uint8_t kVersion = 0x01u;
 
