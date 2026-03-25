@@ -1,10 +1,12 @@
 #include "sqlite_wal.hpp"
+#include "scalar_codec.hpp"  // detail::EncodeScalar, detail::DecodeScalar
 
 #include <sqlite3.h>
 
 #include <arrow/builder.h>
 #include <arrow/table.h>
 
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -19,12 +21,22 @@ const char* ArrowTypeToSQLite(const arrow::DataType& type) {
         case T::INT8:   case T::INT16:  case T::INT32:  case T::INT64:
         case T::UINT8:  case T::UINT16: case T::UINT32: case T::UINT64:
         case T::DATE32: case T::DATE64: case T::TIMESTAMP:
+        case T::TIME32: case T::TIME64: case T::DURATION:
+        case T::INTERVAL_MONTHS:
+        case T::HALF_FLOAT:   // stored as raw uint16 bit pattern
             return "INTEGER";
         case T::FLOAT:  case T::DOUBLE:
             return "REAL";
-        case T::STRING: case T::LARGE_STRING:
+        case T::STRING: case T::LARGE_STRING: case T::STRING_VIEW:
             return "TEXT";
-        case T::BINARY: case T::LARGE_BINARY:
+        case T::BINARY: case T::LARGE_BINARY: case T::BINARY_VIEW:
+        case T::FIXED_SIZE_BINARY:
+        case T::DECIMAL128: case T::DECIMAL256:
+        case T::INTERVAL_DAY_TIME: case T::INTERVAL_MONTH_DAY_NANO:
+        case T::STRUCT:
+        case T::LIST:   case T::LARGE_LIST: case T::FIXED_SIZE_LIST:
+        case T::MAP:
+        case T::SPARSE_UNION: case T::DENSE_UNION:
             return "BLOB";
         default:
             throw std::invalid_argument(
@@ -78,6 +90,25 @@ void BindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
             sqlite3_bind_int64(stmt, col,
                 static_cast<const arrow::TimestampScalar&>(scalar).value);
             break;
+        case T::TIME32:
+            sqlite3_bind_int64(stmt, col, static_cast<const arrow::Time32Scalar&>(scalar).value);
+            break;
+        case T::TIME64:
+            sqlite3_bind_int64(stmt, col, static_cast<const arrow::Time64Scalar&>(scalar).value);
+            break;
+        case T::DURATION:
+            sqlite3_bind_int64(stmt, col,
+                static_cast<const arrow::DurationScalar&>(scalar).value);
+            break;
+        case T::INTERVAL_MONTHS:
+            sqlite3_bind_int64(stmt, col,
+                static_cast<const arrow::MonthIntervalScalar&>(scalar).value);
+            break;
+        case T::HALF_FLOAT:
+            // Store the raw uint16 bit pattern so the round-trip is lossless.
+            sqlite3_bind_int64(stmt, col,
+                static_cast<const arrow::HalfFloatScalar&>(scalar).value);
+            break;
         case T::FLOAT:
             sqlite3_bind_double(stmt, col,
                 static_cast<const arrow::FloatScalar&>(scalar).value);
@@ -87,7 +118,8 @@ void BindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
                 static_cast<const arrow::DoubleScalar&>(scalar).value);
             break;
         case T::STRING:
-        case T::LARGE_STRING: {
+        case T::LARGE_STRING:
+        case T::STRING_VIEW: {
             const auto& buf = *static_cast<const arrow::BaseBinaryScalar&>(scalar).value;
             sqlite3_bind_text(stmt, col,
                 reinterpret_cast<const char*>(buf.data()),
@@ -95,10 +127,51 @@ void BindScalar(sqlite3_stmt* stmt, int col, const arrow::Scalar& scalar) {
             break;
         }
         case T::BINARY:
-        case T::LARGE_BINARY: {
+        case T::LARGE_BINARY:
+        case T::BINARY_VIEW:
+        case T::FIXED_SIZE_BINARY: {
             const auto& buf = *static_cast<const arrow::BaseBinaryScalar&>(scalar).value;
             sqlite3_bind_blob(stmt, col, buf.data(),
                 static_cast<int>(buf.size()), SQLITE_TRANSIENT);
+            break;
+        }
+        case T::DECIMAL128: {
+            uint8_t bytes[16];
+            static_cast<const arrow::Decimal128Scalar&>(scalar).value.ToBytes(bytes);
+            sqlite3_bind_blob(stmt, col, bytes, 16, SQLITE_TRANSIENT);
+            break;
+        }
+        case T::DECIMAL256: {
+            uint8_t bytes[32];
+            static_cast<const arrow::Decimal256Scalar&>(scalar).value.ToBytes(bytes);
+            sqlite3_bind_blob(stmt, col, bytes, 32, SQLITE_TRANSIENT);
+            break;
+        }
+        case T::INTERVAL_DAY_TIME: {
+            const auto& v = static_cast<const arrow::DayTimeIntervalScalar&>(scalar).value;
+            uint8_t bytes[8];
+            std::memcpy(bytes,     &v.days,         4);
+            std::memcpy(bytes + 4, &v.milliseconds, 4);
+            sqlite3_bind_blob(stmt, col, bytes, 8, SQLITE_TRANSIENT);
+            break;
+        }
+        case T::INTERVAL_MONTH_DAY_NANO: {
+            const auto& v = static_cast<const arrow::MonthDayNanoIntervalScalar&>(scalar).value;
+            uint8_t bytes[16];
+            std::memcpy(bytes,      &v.months,      4);
+            std::memcpy(bytes + 4,  &v.days,        4);
+            std::memcpy(bytes + 8,  &v.nanoseconds, 8);
+            sqlite3_bind_blob(stmt, col, bytes, 16, SQLITE_TRANSIENT);
+            break;
+        }
+        case T::STRUCT:
+        case T::LIST:   case T::LARGE_LIST: case T::FIXED_SIZE_LIST:
+        case T::MAP:
+        case T::SPARSE_UNION: case T::DENSE_UNION: {
+            std::vector<uint8_t> blob;
+            detail::EncodeScalar(blob, scalar);
+            sqlite3_bind_blob(stmt, col, blob.data(),
+                static_cast<int>(blob.size()), SQLITE_TRANSIENT);
             break;
         }
         default:
@@ -160,6 +233,26 @@ void AppendColumn(sqlite3_stmt* stmt, int col, arrow::ArrayBuilder& builder,
             st = static_cast<arrow::TimestampBuilder&>(builder).Append(
                 sqlite3_column_int64(stmt, col));
             break;
+        case T::TIME32:
+            st = static_cast<arrow::Time32Builder&>(builder).Append(
+                static_cast<int32_t>(sqlite3_column_int64(stmt, col)));
+            break;
+        case T::TIME64:
+            st = static_cast<arrow::Time64Builder&>(builder).Append(
+                sqlite3_column_int64(stmt, col));
+            break;
+        case T::DURATION:
+            st = static_cast<arrow::DurationBuilder&>(builder).Append(
+                sqlite3_column_int64(stmt, col));
+            break;
+        case T::INTERVAL_MONTHS:
+            st = static_cast<arrow::MonthIntervalBuilder&>(builder).Append(
+                static_cast<int32_t>(sqlite3_column_int64(stmt, col)));
+            break;
+        case T::HALF_FLOAT:
+            st = static_cast<arrow::HalfFloatBuilder&>(builder).Append(
+                static_cast<uint16_t>(sqlite3_column_int64(stmt, col)));
+            break;
         case T::FLOAT:
             st = static_cast<arrow::FloatBuilder&>(builder).Append(
                 static_cast<float>(sqlite3_column_double(stmt, col)));
@@ -190,6 +283,63 @@ void AppendColumn(sqlite3_stmt* stmt, int col, arrow::ArrayBuilder& builder,
             const void* blob = sqlite3_column_blob(stmt, col);
             st = static_cast<arrow::LargeBinaryBuilder&>(builder).Append(
                 static_cast<const uint8_t*>(blob), sqlite3_column_bytes(stmt, col));
+            break;
+        }
+        case T::STRING_VIEW: {
+            const char* text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, col));
+            st = static_cast<arrow::StringViewBuilder&>(builder).Append(
+                text, sqlite3_column_bytes(stmt, col));
+            break;
+        }
+        case T::BINARY_VIEW: {
+            const void* blob = sqlite3_column_blob(stmt, col);
+            st = static_cast<arrow::BinaryViewBuilder&>(builder).Append(
+                static_cast<const uint8_t*>(blob), sqlite3_column_bytes(stmt, col));
+            break;
+        }
+        case T::FIXED_SIZE_BINARY: {
+            const void* blob = sqlite3_column_blob(stmt, col);
+            st = static_cast<arrow::FixedSizeBinaryBuilder&>(builder).Append(
+                static_cast<const uint8_t*>(blob));
+            break;
+        }
+        case T::DECIMAL128: {
+            const auto* ptr = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, col));
+            st = static_cast<arrow::Decimal128Builder&>(builder).Append(
+                arrow::Decimal128(ptr));
+            break;
+        }
+        case T::DECIMAL256: {
+            const auto* ptr = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, col));
+            st = static_cast<arrow::Decimal256Builder&>(builder).Append(
+                arrow::Decimal256(ptr));
+            break;
+        }
+        case T::INTERVAL_DAY_TIME: {
+            const auto* raw = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, col));
+            arrow::DayTimeIntervalType::DayMilliseconds v;
+            std::memcpy(&v.days,         raw,     4);
+            std::memcpy(&v.milliseconds, raw + 4, 4);
+            st = static_cast<arrow::DayTimeIntervalBuilder&>(builder).Append(v);
+            break;
+        }
+        case T::INTERVAL_MONTH_DAY_NANO: {
+            const auto* raw = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, col));
+            arrow::MonthDayNanoIntervalType::MonthDayNanos v;
+            std::memcpy(&v.months,      raw,     4);
+            std::memcpy(&v.days,        raw + 4, 4);
+            std::memcpy(&v.nanoseconds, raw + 8, 8);
+            st = static_cast<arrow::MonthDayNanoIntervalBuilder&>(builder).Append(v);
+            break;
+        }
+        case T::STRUCT:
+        case T::LIST:   case T::LARGE_LIST: case T::FIXED_SIZE_LIST:
+        case T::MAP:
+        case T::SPARSE_UNION: case T::DENSE_UNION: {
+            const auto* raw  = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, col));
+            const int   size = sqlite3_column_bytes(stmt, col);
+            auto scalar = detail::DecodeScalar(raw, static_cast<size_t>(size), builder.type());
+            st = builder.AppendScalar(*scalar);
             break;
         }
         default:

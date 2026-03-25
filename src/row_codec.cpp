@@ -1,5 +1,6 @@
 #include "row_codec.hpp"
 #include "row_reader.hpp"    // detail::Reader
+#include "scalar_codec.hpp"  // detail::EncodeScalar, detail::DecodeScalar
 
 #include <arrow/scalar.h>
 #include <arrow/type.h>
@@ -14,7 +15,8 @@ namespace arrow_row {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Encoder helpers
+// Encoder helpers (internal to this TU; visible throughout arrow_row via the
+// anonymous namespace's using-directive injection into the enclosing scope)
 // ---------------------------------------------------------------------------
 
 template <typename T>
@@ -29,6 +31,10 @@ void AppendVariableLength(std::vector<uint8_t>& buf,
     AppendFixed(buf, len);
     buf.insert(buf.end(), data, data + len);
 }
+
+}  // namespace
+
+namespace detail {
 
 void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
     using T = arrow::Type;
@@ -247,13 +253,17 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
     }
 }
 
+}  // namespace detail
+
+namespace {
+
 // ---------------------------------------------------------------------------
 // Decoder helpers
 // ---------------------------------------------------------------------------
 
 using detail::Reader;
 
-std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                                 r,
+std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                                 r,
                                              const std::shared_ptr<arrow::DataType>& type) {
     using T = arrow::Type;
     switch (type->id()) {
@@ -363,7 +373,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 if (null_flag == 0x01u) {
                     children.push_back(arrow::MakeNullScalar(stype.field(i)->type()));
                 } else {
-                    children.push_back(DecodeScalar(r, stype.field(i)->type()));
+                    children.push_back(DecodeScalarImpl(r, stype.field(i)->type()));
                 }
             }
             return std::make_shared<arrow::StructScalar>(std::move(children), type);
@@ -382,7 +392,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 const uint8_t null_flag = r.Read<uint8_t>();
                 arrow::Status st = (null_flag == 0x01u)
                     ? builder->AppendNull()
-                    : builder->AppendScalar(*DecodeScalar(r, elem_type));
+                    : builder->AppendScalar(*DecodeScalarImpl(r, elem_type));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: builder append failed: " + st.ToString());
@@ -409,7 +419,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 const uint8_t null_flag = r.Read<uint8_t>();
                 arrow::Status st = (null_flag == 0x01u)
                     ? builder->AppendNull()
-                    : builder->AppendScalar(*DecodeScalar(r, elem_type));
+                    : builder->AppendScalar(*DecodeScalarImpl(r, elem_type));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: builder append failed: " + st.ToString());
@@ -433,7 +443,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
             if (child_id < 0)
                 throw std::invalid_argument(
                     "DecodeRow: unknown union type_code " + std::to_string(type_code));
-            auto child_value = DecodeScalar(r, union_type.field(child_id)->type());
+            auto child_value = DecodeScalarImpl(r, union_type.field(child_id)->type());
             if (type->id() == arrow::Type::SPARSE_UNION)
                 return std::make_shared<arrow::SparseUnionScalar>(child_value, type_code, type);
             return std::make_shared<arrow::DenseUnionScalar>(child_value, type_code, type);
@@ -451,7 +461,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                     "DecodeRow: MakeBuilder(value) failed: " + maybe_val_b.status().ToString());
             for (uint32_t i = 0; i < count; ++i) {
                 // Key — no null flag (Arrow keys are non-null by convention).
-                auto st = (*maybe_key_b)->AppendScalar(*DecodeScalar(r, map_type.key_type()));
+                auto st = (*maybe_key_b)->AppendScalar(*DecodeScalarImpl(r, map_type.key_type()));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: key append failed: " + st.ToString());
@@ -459,7 +469,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 const uint8_t null_flag = r.Read<uint8_t>();
                 st = (null_flag == 0x01u)
                     ? (*maybe_val_b)->AppendNull()
-                    : (*maybe_val_b)->AppendScalar(*DecodeScalar(r, map_type.item_type()));
+                    : (*maybe_val_b)->AppendScalar(*DecodeScalarImpl(r, map_type.item_type()));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: value append failed: " + st.ToString());
@@ -507,6 +517,18 @@ uint64_t Fnv1a64(const std::string& s) {
 
 }  // namespace
 
+namespace detail {
+
+std::shared_ptr<arrow::Scalar> DecodeScalar(
+    const uint8_t*                          data,
+    size_t                                  size,
+    const std::shared_ptr<arrow::DataType>& type) {
+    Reader r{data, size};
+    return DecodeScalarImpl(r, type);
+}
+
+}  // namespace detail
+
 // ---------------------------------------------------------------------------
 // RowCodec
 // ---------------------------------------------------------------------------
@@ -546,7 +568,7 @@ ArrowRow RowCodec::EncodeRow(
                 ", got " + scalar->type->ToString());
 
         buf.push_back(0x00u);
-        EncodeScalar(buf, *scalar);
+        detail::EncodeScalar(buf, *scalar);
     }
 
     return buf;
@@ -555,7 +577,7 @@ ArrowRow RowCodec::EncodeRow(
 std::vector<std::shared_ptr<arrow::Scalar>> RowCodec::DecodeRow(
     const ArrowRow& buf) const {
 
-    Reader r{buf.data(), buf.size()};
+    detail::Reader r{buf.data(), buf.size()};
 
     uint64_t hash = r.Read<uint64_t>();
     if (hash != schema_hash_)
@@ -575,7 +597,7 @@ std::vector<std::shared_ptr<arrow::Scalar>> RowCodec::DecodeRow(
         if (null_flag == 0x01u) {
             values.push_back(arrow::MakeNullScalar(schema_->field(i)->type()));
         } else {
-            values.push_back(DecodeScalar(r, schema_->field(i)->type()));
+            values.push_back(DecodeScalarImpl(r, schema_->field(i)->type()));
         }
     }
 
