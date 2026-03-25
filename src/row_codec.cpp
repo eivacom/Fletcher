@@ -146,6 +146,18 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             buf.insert(buf.end(), bytes, bytes + 32);
             break;
         }
+        case T::STRUCT: {
+            const auto& ss         = static_cast<const arrow::StructScalar&>(scalar);
+            const auto& stype      = static_cast<const arrow::StructType&>(*scalar.type);
+            const int   num_fields = stype.num_fields();
+            for (int i = 0; i < num_fields; ++i) {
+                const auto& child   = ss.value[static_cast<size_t>(i)];
+                const bool  is_null = !child || !child->is_valid;
+                buf.push_back(is_null ? 0x01u : 0x00u);
+                if (!is_null) EncodeScalar(buf, *child);
+            }
+            break;
+        }
 
         default:
             throw std::invalid_argument(
@@ -256,6 +268,21 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
             const uint8_t* ptr = r.ReadBytes(32);
             return std::make_shared<arrow::Decimal256Scalar>(
                 arrow::Decimal256(ptr), type);
+        }
+        case T::STRUCT: {
+            const auto& stype      = static_cast<const arrow::StructType&>(*type);
+            const int   num_fields = stype.num_fields();
+            arrow::ScalarVector children;
+            children.reserve(num_fields);
+            for (int i = 0; i < num_fields; ++i) {
+                const uint8_t null_flag = r.Read<uint8_t>();
+                if (null_flag == 0x01u) {
+                    children.push_back(arrow::MakeNullScalar(stype.field(i)->type()));
+                } else {
+                    children.push_back(DecodeScalar(r, stype.field(i)->type()));
+                }
+            }
+            return std::make_shared<arrow::StructScalar>(std::move(children), type);
         }
 
         default:
