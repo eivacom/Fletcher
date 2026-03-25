@@ -204,7 +204,11 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
         case T::DENSE_UNION: {
             const auto& us = static_cast<const arrow::UnionScalar&>(scalar);
             AppendFixed(buf, us.type_code);
-            EncodeScalar(buf, *us.value);
+            const arrow::Scalar& child =
+                (scalar.type->id() == arrow::Type::SPARSE_UNION)
+                    ? *static_cast<const arrow::SparseUnionScalar&>(scalar).value
+                    : *static_cast<const arrow::DenseUnionScalar&>(scalar).value;
+            EncodeScalar(buf, child);
             break;
         }
         case T::MAP: {
