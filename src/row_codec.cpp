@@ -113,6 +113,39 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             buf.insert(buf.end(), data, data + byte_width);
             break;
         }
+        case T::HALF_FLOAT:
+            AppendFixed(buf, static_cast<const arrow::HalfFloatScalar&>(scalar).value);
+            break;
+        case T::INTERVAL_MONTHS:
+            AppendFixed(buf, static_cast<const arrow::MonthIntervalScalar&>(scalar).value);
+            break;
+        case T::INTERVAL_DAY_TIME: {
+            const auto& v = static_cast<const arrow::DayTimeIntervalScalar&>(scalar).value;
+            AppendFixed(buf, v.days);
+            AppendFixed(buf, v.milliseconds);
+            break;
+        }
+        case T::INTERVAL_MONTH_DAY_NANO: {
+            const auto& v = static_cast<const arrow::MonthDayNanoIntervalScalar&>(scalar).value;
+            AppendFixed(buf, v.months);
+            AppendFixed(buf, v.days);
+            AppendFixed(buf, v.nanoseconds);
+            break;
+        }
+        case T::DECIMAL128: {
+            const auto& v = static_cast<const arrow::Decimal128Scalar&>(scalar).value;
+            uint8_t bytes[16];
+            v.ToBytes(bytes);
+            buf.insert(buf.end(), bytes, bytes + 16);
+            break;
+        }
+        case T::DECIMAL256: {
+            const auto& v = static_cast<const arrow::Decimal256Scalar&>(scalar).value;
+            uint8_t bytes[32];
+            v.ToBytes(bytes);
+            buf.insert(buf.end(), bytes, bytes + 32);
+            break;
+        }
 
         default:
             throw std::invalid_argument(
@@ -196,6 +229,33 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
             const uint8_t* ptr  = r.ReadBytes(byte_width);
             auto           ibuf = std::make_shared<arrow::Buffer>(ptr, byte_width);
             return std::make_shared<arrow::FixedSizeBinaryScalar>(ibuf, type);
+        }
+        case T::HALF_FLOAT:
+            return std::make_shared<arrow::HalfFloatScalar>(r.Read<uint16_t>());
+        case T::INTERVAL_MONTHS:
+            return std::make_shared<arrow::MonthIntervalScalar>(r.Read<int32_t>());
+        case T::INTERVAL_DAY_TIME: {
+            arrow::DayTimeIntervalType::DayMilliseconds v;
+            v.days         = r.Read<int32_t>();
+            v.milliseconds = r.Read<int32_t>();
+            return std::make_shared<arrow::DayTimeIntervalScalar>(v);
+        }
+        case T::INTERVAL_MONTH_DAY_NANO: {
+            arrow::MonthDayNanoIntervalType::MonthDayNanos v;
+            v.months      = r.Read<int32_t>();
+            v.days        = r.Read<int32_t>();
+            v.nanoseconds = r.Read<int64_t>();
+            return std::make_shared<arrow::MonthDayNanoIntervalScalar>(v);
+        }
+        case T::DECIMAL128: {
+            const uint8_t* ptr = r.ReadBytes(16);
+            return std::make_shared<arrow::Decimal128Scalar>(
+                arrow::Decimal128(ptr), type);
+        }
+        case T::DECIMAL256: {
+            const uint8_t* ptr = r.ReadBytes(32);
+            return std::make_shared<arrow::Decimal256Scalar>(
+                arrow::Decimal256(ptr), type);
         }
 
         default:

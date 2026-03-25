@@ -19,12 +19,21 @@ using ArrowRow = std::vector<uint8_t>;
 //   For each field (in schema order):
 //     [NULL_FLAG : 1 byte ] 0x00 = valid, 0x01 = null
 //     If valid, field payload:
-//       Fixed-width types (bool, int*, uint*, float, double,
+//       Fixed-width types (bool, int*, uint*, float, double, half_float,
 //                          date32, date64, timestamp,
 //                          time32, time64, duration,
-//                          fixed_size_binary):
-//           raw bytes, little-endian (fixed_size_binary: byte_width bytes,
-//           no length prefix — width is known from the schema type)
+//                          fixed_size_binary,
+//                          interval_months,
+//                          interval_day_time,
+//                          interval_month_day_nano,
+//                          decimal128, decimal256):
+//           raw bytes, little-endian
+//           fixed_size_binary : byte_width bytes, no length prefix
+//           interval_day_time : int32 days, int32 milliseconds (8 bytes)
+//           interval_month_day_nano : int32 months, int32 days,
+//                                     int64 nanoseconds (16 bytes)
+//           decimal128        : 16 bytes two's-complement little-endian
+//           decimal256        : 32 bytes two's-complement little-endian
 //       Variable-width types (string, large_string, binary, large_binary):
 //           [LENGTH : 4 bytes uint32] [DATA : <LENGTH> bytes]
 
