@@ -226,6 +226,17 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             break;
         }
 
+        case T::DICTIONARY:
+            // Dictionary encoding is a columnar storage optimisation: the value
+            // is an index into a shared dictionary array that lives outside the
+            // row.  There is no meaningful way to embed that dictionary in a
+            // self-contained per-row buffer without either discarding it (lossy)
+            // or duplicating it in every row (prohibitively expensive).
+            // Use a non-dictionary schema field instead.
+            throw std::invalid_argument(
+                "EncodeRow: DICTIONARY type is not supported in the per-row format; "
+                "use a non-dictionary schema field instead");
+
         default:
             throw std::invalid_argument(
                 "EncodeRow: unsupported Arrow type: " + scalar.type->ToString());
@@ -462,6 +473,11 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 arrow::ArrayVector{*key_finish, *val_finish});
             return std::make_shared<arrow::MapScalar>(entries, type);
         }
+
+        case T::DICTIONARY:
+            throw std::invalid_argument(
+                "DecodeRow: DICTIONARY type is not supported in the per-row format; "
+                "use a non-dictionary schema field instead");
 
         default:
             throw std::invalid_argument(
