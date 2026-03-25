@@ -200,15 +200,27 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             }
             break;
         }
-        case T::SPARSE_UNION:
-        case T::DENSE_UNION: {
-            const auto& us = static_cast<const arrow::UnionScalar&>(scalar);
+        case T::SPARSE_UNION: {
+            // value is a ScalarVector — one slot per child type.  Find the
+            // active child by matching type_code to its index.
+            const auto& us         = static_cast<const arrow::SparseUnionScalar&>(scalar);
+            const auto& union_type = static_cast<const arrow::SparseUnionType&>(*scalar.type);
             AppendFixed(buf, us.type_code);
-            const arrow::Scalar& child =
-                (scalar.type->id() == arrow::Type::SPARSE_UNION)
-                    ? *static_cast<const arrow::SparseUnionScalar&>(scalar).value
-                    : *static_cast<const arrow::DenseUnionScalar&>(scalar).value;
-            EncodeScalar(buf, child);
+            const auto& codes = union_type.type_codes();
+            int child_id = -1;
+            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
+                if (codes[i] == us.type_code) { child_id = i; break; }
+            }
+            if (child_id < 0 || child_id >= static_cast<int>(us.value.size()))
+                throw std::invalid_argument("EncodeScalar: invalid sparse union type_code");
+            EncodeScalar(buf, *us.value[static_cast<size_t>(child_id)]);
+            break;
+        }
+        case T::DENSE_UNION: {
+            // value is a shared_ptr<Scalar> — only the active child is stored.
+            const auto& us = static_cast<const arrow::DenseUnionScalar&>(scalar);
+            AppendFixed(buf, us.type_code);
+            EncodeScalar(buf, *us.value);
             break;
         }
         case T::MAP: {
@@ -434,11 +446,9 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
                     "DecodeRow: builder finish failed: " + finish.status().ToString());
             return std::make_shared<arrow::FixedSizeListScalar>(*finish, type);
         }
-        case T::SPARSE_UNION:
-        case T::DENSE_UNION: {
-            const auto& union_type = static_cast<const arrow::UnionType&>(*type);
+        case T::SPARSE_UNION: {
+            const auto& union_type = static_cast<const arrow::SparseUnionType&>(*type);
             const int8_t type_code = r.Read<int8_t>();
-            // Find child index whose type_code matches.
             const auto& codes = union_type.type_codes();
             int child_id = -1;
             for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
@@ -446,11 +456,32 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
             }
             if (child_id < 0)
                 throw std::invalid_argument(
-                    "DecodeRow: unknown union type_code " + std::to_string(type_code));
-            auto child_value = DecodeScalarImpl(r, union_type.field(child_id)->type());
-            if (type->id() == arrow::Type::SPARSE_UNION)
-                return std::make_shared<arrow::SparseUnionScalar>(child_value, type_code, type);
-            return std::make_shared<arrow::DenseUnionScalar>(child_value, type_code, type);
+                    "DecodeRow: unknown sparse union type_code " + std::to_string(type_code));
+            auto active = DecodeScalarImpl(r, union_type.field(child_id)->type());
+            // ScalarVector must have one slot per child; fill inactive ones with null.
+            arrow::ScalarVector children;
+            children.reserve(union_type.num_fields());
+            for (int i = 0; i < union_type.num_fields(); ++i) {
+                children.push_back(i == child_id
+                    ? active
+                    : arrow::MakeNullScalar(union_type.field(i)->type()));
+            }
+            return std::make_shared<arrow::SparseUnionScalar>(
+                std::move(children), type_code, type);
+        }
+        case T::DENSE_UNION: {
+            const auto& union_type = static_cast<const arrow::DenseUnionType&>(*type);
+            const int8_t type_code = r.Read<int8_t>();
+            const auto& codes = union_type.type_codes();
+            int child_id = -1;
+            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
+                if (codes[i] == type_code) { child_id = i; break; }
+            }
+            if (child_id < 0)
+                throw std::invalid_argument(
+                    "DecodeRow: unknown dense union type_code " + std::to_string(type_code));
+            auto value = DecodeScalarImpl(r, union_type.field(child_id)->type());
+            return std::make_shared<arrow::DenseUnionScalar>(value, type_code, type);
         }
         case T::MAP: {
             const auto& map_type = static_cast<const arrow::MapType&>(*type);
