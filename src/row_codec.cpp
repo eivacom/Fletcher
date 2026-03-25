@@ -190,6 +190,34 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             }
             break;
         }
+        case T::MAP: {
+            const auto& ms         = static_cast<const arrow::MapScalar&>(scalar);
+            const auto& map_type   = static_cast<const arrow::MapType&>(*scalar.type);
+            auto struct_arr        = std::static_pointer_cast<arrow::StructArray>(ms.value);
+            const int64_t count    = struct_arr->length();
+            auto key_arr           = struct_arr->field(0);
+            auto val_arr           = struct_arr->field(1);
+            AppendFixed(buf, static_cast<uint32_t>(count));
+            for (int64_t i = 0; i < count; ++i) {
+                // Keys are non-null by Arrow convention — no null flag.
+                auto key_result = key_arr->GetScalar(i);
+                if (!key_result.ok())
+                    throw std::invalid_argument(
+                        "EncodeRow: GetScalar (map key) failed: " +
+                        key_result.status().ToString());
+                EncodeScalar(buf, **key_result);
+                auto val_result = val_arr->GetScalar(i);
+                if (!val_result.ok())
+                    throw std::invalid_argument(
+                        "EncodeRow: GetScalar (map value) failed: " +
+                        val_result.status().ToString());
+                const auto& val = *val_result;
+                buf.push_back(!val->is_valid ? 0x01u : 0x00u);
+                if (val->is_valid) EncodeScalar(buf, *val);
+            }
+            (void)map_type;
+            break;
+        }
 
         default:
             throw std::invalid_argument(
@@ -367,6 +395,47 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 throw std::invalid_argument(
                     "DecodeRow: builder finish failed: " + finish.status().ToString());
             return std::make_shared<arrow::FixedSizeListScalar>(*finish, type);
+        }
+        case T::MAP: {
+            const auto& map_type = static_cast<const arrow::MapType&>(*type);
+            const uint32_t count = r.Read<uint32_t>();
+            auto maybe_key_b     = arrow::MakeBuilder(map_type.key_type());
+            if (!maybe_key_b.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: MakeBuilder(key) failed: " + maybe_key_b.status().ToString());
+            auto maybe_val_b = arrow::MakeBuilder(map_type.item_type());
+            if (!maybe_val_b.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: MakeBuilder(value) failed: " + maybe_val_b.status().ToString());
+            for (uint32_t i = 0; i < count; ++i) {
+                // Key — no null flag (Arrow keys are non-null by convention).
+                auto st = (*maybe_key_b)->AppendScalar(*DecodeScalar(r, map_type.key_type()));
+                if (!st.ok())
+                    throw std::invalid_argument(
+                        "DecodeRow: key append failed: " + st.ToString());
+                // Value — may be null.
+                const uint8_t null_flag = r.Read<uint8_t>();
+                st = (null_flag == 0x01u)
+                    ? (*maybe_val_b)->AppendNull()
+                    : (*maybe_val_b)->AppendScalar(*DecodeScalar(r, map_type.item_type()));
+                if (!st.ok())
+                    throw std::invalid_argument(
+                        "DecodeRow: value append failed: " + st.ToString());
+            }
+            auto key_finish = (*maybe_key_b)->Finish();
+            if (!key_finish.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: key builder finish failed: " + key_finish.status().ToString());
+            auto val_finish = (*maybe_val_b)->Finish();
+            if (!val_finish.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: value builder finish failed: " + val_finish.status().ToString());
+            // MapScalar::value is a StructArray with key and value child arrays.
+            auto entries = std::make_shared<arrow::StructArray>(
+                arrow::struct_({map_type.key_field(), map_type.item_field()}),
+                static_cast<int64_t>(count),
+                arrow::ArrayVector{*key_finish, *val_finish});
+            return std::make_shared<arrow::MapScalar>(entries, type);
         }
 
         default:
