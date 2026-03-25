@@ -158,6 +158,23 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             }
             break;
         }
+        case T::LIST:
+        case T::LARGE_LIST: {
+            const auto& ls     = static_cast<const arrow::BaseListScalar&>(scalar);
+            const int64_t len  = ls.value->length();
+            AppendFixed(buf, static_cast<uint32_t>(len));
+            for (int64_t i = 0; i < len; ++i) {
+                auto result = ls.value->GetScalar(i);
+                if (!result.ok())
+                    throw std::invalid_argument(
+                        "EncodeRow: GetScalar failed: " + result.status().ToString());
+                const auto& elem    = *result;
+                const bool  is_null = !elem->is_valid;
+                buf.push_back(is_null ? 0x01u : 0x00u);
+                if (!is_null) EncodeScalar(buf, *elem);
+            }
+            break;
+        }
 
         default:
             throw std::invalid_argument(
@@ -283,6 +300,33 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
                 }
             }
             return std::make_shared<arrow::StructScalar>(std::move(children), type);
+        }
+        case T::LIST:
+        case T::LARGE_LIST: {
+            const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
+            const auto  elem_type = list_type.value_type();
+            const uint32_t count  = r.Read<uint32_t>();
+            auto maybe_builder    = arrow::MakeBuilder(elem_type);
+            if (!maybe_builder.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: MakeBuilder failed: " + maybe_builder.status().ToString());
+            auto& builder = *maybe_builder;
+            for (uint32_t i = 0; i < count; ++i) {
+                const uint8_t null_flag = r.Read<uint8_t>();
+                arrow::Status st = (null_flag == 0x01u)
+                    ? builder->AppendNull()
+                    : builder->AppendScalar(*DecodeScalar(r, elem_type));
+                if (!st.ok())
+                    throw std::invalid_argument(
+                        "DecodeRow: builder append failed: " + st.ToString());
+            }
+            auto finish = builder->Finish();
+            if (!finish.ok())
+                throw std::invalid_argument(
+                    "DecodeRow: builder finish failed: " + finish.status().ToString());
+            if (type->id() == arrow::Type::LIST)
+                return std::make_shared<arrow::ListScalar>(*finish, type);
+            return std::make_shared<arrow::LargeListScalar>(*finish, type);
         }
 
         default:
