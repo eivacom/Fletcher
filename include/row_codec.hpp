@@ -20,8 +20,11 @@ using ArrowRow = std::vector<uint8_t>;
 //     [NULL_FLAG : 1 byte ] 0x00 = valid, 0x01 = null
 //     If valid, field payload:
 //       Fixed-width types (bool, int*, uint*, float, double,
-//                          date32, date64, timestamp):
-//           raw bytes, little-endian
+//                          date32, date64, timestamp,
+//                          time32, time64, duration,
+//                          fixed_size_binary):
+//           raw bytes, little-endian (fixed_size_binary: byte_width bytes,
+//           no length prefix — width is known from the schema type)
 //       Variable-width types (string, large_string, binary, large_binary):
 //           [LENGTH : 4 bytes uint32] [DATA : <LENGTH> bytes]
 
@@ -31,10 +34,20 @@ static constexpr uint8_t kVersion = 0x01u;
 //
 // Two schemas with identical fields, types, and nullability produce the same
 // hash.  Field-level metadata is not included (Arrow fingerprints omit it).
+// Field names are not included; only types and nullability are compared.
 //
 // Throws std::invalid_argument if the schema contains types that Arrow cannot
 // fingerprint (e.g. unregistered extension types).
 uint64_t FingerprintHash(const arrow::Schema& schema);
+
+// Like FingerprintHash, but also folds each field's name into the hash.
+//
+// Two schemas must have identical field names, types, and nullability to
+// produce the same hash.  Use this when field names are semantically
+// significant and a schema rename should produce a different hash.
+//
+// Throws std::invalid_argument if the schema cannot be fingerprinted.
+uint64_t FingerprintHashWithFieldNames(const arrow::Schema& schema);
 
 // Binds a schema to EncodeRow / DecodeRow so callers don't pass it on every call.
 class RowCodec {

@@ -96,6 +96,23 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
         case T::TIMESTAMP:
             AppendFixed(buf, static_cast<const arrow::TimestampScalar&>(scalar).value);
             break;
+        case T::TIME32:
+            AppendFixed(buf, static_cast<const arrow::Time32Scalar&>(scalar).value);
+            break;
+        case T::TIME64:
+            AppendFixed(buf, static_cast<const arrow::Time64Scalar&>(scalar).value);
+            break;
+        case T::DURATION:
+            AppendFixed(buf, static_cast<const arrow::DurationScalar&>(scalar).value);
+            break;
+        case T::FIXED_SIZE_BINARY: {
+            const auto&   s          = static_cast<const arrow::FixedSizeBinaryScalar&>(scalar);
+            const int32_t byte_width =
+                static_cast<const arrow::FixedSizeBinaryType&>(*scalar.type).byte_width();
+            const auto* data = reinterpret_cast<const uint8_t*>(s.value->data());
+            buf.insert(buf.end(), data, data + byte_width);
+            break;
+        }
 
         default:
             throw std::invalid_argument(
@@ -160,6 +177,25 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(Reader&                             
         case T::TIMESTAMP: {
             int64_t v = r.Read<int64_t>();
             return std::make_shared<arrow::TimestampScalar>(v, type);
+        }
+        case T::TIME32: {
+            int32_t v = r.Read<int32_t>();
+            return std::make_shared<arrow::Time32Scalar>(v, type);
+        }
+        case T::TIME64: {
+            int64_t v = r.Read<int64_t>();
+            return std::make_shared<arrow::Time64Scalar>(v, type);
+        }
+        case T::DURATION: {
+            int64_t v = r.Read<int64_t>();
+            return std::make_shared<arrow::DurationScalar>(v, type);
+        }
+        case T::FIXED_SIZE_BINARY: {
+            const int32_t byte_width =
+                static_cast<const arrow::FixedSizeBinaryType&>(*type).byte_width();
+            const uint8_t* ptr  = r.ReadBytes(byte_width);
+            auto           ibuf = std::make_shared<arrow::Buffer>(ptr, byte_width);
+            return std::make_shared<arrow::FixedSizeBinaryScalar>(ibuf, type);
         }
 
         default:
@@ -269,6 +305,22 @@ uint64_t FingerprintHash(const arrow::Schema& schema) {
         throw std::invalid_argument(
             "FingerprintHash: schema contains types that cannot be fingerprinted");
     return Fnv1a64(fp);
+}
+
+uint64_t FingerprintHashWithFieldNames(const arrow::Schema& schema) {
+    const std::string fp = schema.fingerprint();
+    if (fp.empty())
+        throw std::invalid_argument(
+            "FingerprintHashWithFieldNames: schema contains types that cannot be fingerprinted");
+
+    // Combine the structural fingerprint with each field name, separated by
+    // null bytes (which cannot appear in valid field names).
+    std::string combined = fp;
+    for (int i = 0; i < schema.num_fields(); ++i) {
+        combined += '\0';
+        combined += schema.field(i)->name();
+    }
+    return Fnv1a64(combined);
 }
 
 }  // namespace arrow_row
