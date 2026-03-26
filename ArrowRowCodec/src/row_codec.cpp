@@ -309,7 +309,9 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
         case T::STRING:
         case T::LARGE_STRING:
         case T::BINARY:
-        case T::LARGE_BINARY: {
+        case T::LARGE_BINARY:
+        case T::STRING_VIEW:
+        case T::BINARY_VIEW: {
             uint32_t       len  = r.Read<uint32_t>();
             const uint8_t* ptr  = r.ReadBytes(len);
             auto           ibuf = std::make_shared<arrow::Buffer>(ptr, len);
