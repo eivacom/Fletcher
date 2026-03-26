@@ -1,0 +1,10 @@
+[package]
+name    = "arrow-row-codec"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow = { version = "52", features = ["ipc"] }
+
+[build-dependencies]
+cmake = "0.1"

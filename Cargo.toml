@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "ArrowRowCodec/bindings/rust",
+    "ArrowRowBatcher/bindings/rust",
+]
+resolver = "2"
