@@ -651,20 +651,4 @@ uint64_t FingerprintHash(const arrow::Schema& schema) {
     return Fnv1a64(fp);
 }
 
-uint64_t FingerprintHashWithFieldNames(const arrow::Schema& schema) {
-    const std::string fp = schema.fingerprint();
-    if (fp.empty())
-        throw std::invalid_argument(
-            "FingerprintHashWithFieldNames: schema contains types that cannot be fingerprinted");
-
-    // Combine the structural fingerprint with each field name, separated by
-    // null bytes (which cannot appear in valid field names).
-    std::string combined = fp;
-    for (int i = 0; i < schema.num_fields(); ++i) {
-        combined += '\0';
-        combined += schema.field(i)->name();
-    }
-    return Fnv1a64(combined);
-}
-
 }  // namespace arrow_row

@@ -56,22 +56,12 @@ static constexpr uint8_t kVersion = 0x01u;
 
 // Compute a 64-bit FNV-1a hash of the schema's structural fingerprint.
 //
-// Two schemas with identical fields, types, and nullability produce the same
-// hash.  Field-level metadata is not included (Arrow fingerprints omit it).
-// Field names are not included; only types and nullability are compared.
+// Two schemas with identical field names, types, and nullability produce the
+// same hash.  Field-level metadata is not included (Arrow fingerprints omit it).
 //
 // Throws std::invalid_argument if the schema contains types that Arrow cannot
 // fingerprint (e.g. unregistered extension types).
 uint64_t FingerprintHash(const arrow::Schema& schema);
-
-// Like FingerprintHash, but also folds each field's name into the hash.
-//
-// Two schemas must have identical field names, types, and nullability to
-// produce the same hash.  Use this when field names are semantically
-// significant and a schema rename should produce a different hash.
-//
-// Throws std::invalid_argument if the schema cannot be fingerprinted.
-uint64_t FingerprintHashWithFieldNames(const arrow::Schema& schema);
 
 // Binds a schema to EncodeRow / DecodeRow so callers don't pass it on every call.
 class RowCodec {
