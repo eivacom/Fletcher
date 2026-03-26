@@ -1,6 +1,9 @@
 [requires]
 arrow/23.0.1
 sqlite3/3.47.2
+
+[test_requires]
+catch2/3.7.1
 [generators]
 CMakeDeps
 CMakeToolchain
