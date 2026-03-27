@@ -39,7 +39,7 @@ set(PROTO_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-set(PROTO_STEMS simple temporal nested collections maps complex)
+set(PROTO_STEMS simple temporal nested collections maps complex pubsub)
 
 set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package integration;
+
+import "google/protobuf/empty.proto";
+
+// Self-contained message for pub/sub integration test.
+message Telemetry {
+    int32  device_id   = 1;
+    double value       = 2;
+    int64  timestamp   = 3;
+    string metric_name = 4;
+}
+
+// Valid pub/sub service: client-streaming, returns Empty.
+service TelemetryFeed {
+    rpc TelemetryStream(stream Telemetry) returns (google.protobuf.Empty);
+}

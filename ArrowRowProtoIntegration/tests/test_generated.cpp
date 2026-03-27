@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
+#include <pubsub_provider.hpp>
 #include <row_codec.hpp>
+
+#include <map>
 
 // Generated headers — produced by protoc-gen-arrow-row from each .proto file.
 #include "simple.arrow_row.pb.h"
@@ -8,6 +11,7 @@
 #include "nested.arrow_row.pb.h"
 #include "collections.arrow_row.pb.h"
 #include "maps.arrow_row.pb.h"
+#include "pubsub.arrow_row.pb.h"
 #include "complex.arrow_row.pb.h"
 
 // Helper: decode an encoded row using the same schema as the generated class.
@@ -429,4 +433,129 @@ TEST_CASE("OrderItem: optional note null then valid") {
         REQUIRE(n != nullptr);
         CHECK(n->value->ToString() == "fragile");
     }
+}
+
+// =============================================================================
+// pubsub.proto — TelemetryFeed_TelemetryStreamTopic
+// =============================================================================
+
+namespace {
+
+// Minimal mock that records calls and delivers published rows to subscribers.
+class MockPubSubProvider : public arrow_row::PubSubProvider {
+ public:
+    struct CreatedTopic {
+        std::vector<std::string> segments;
+        std::shared_ptr<arrow::Schema> schema;
+    };
+
+    std::vector<CreatedTopic> created_topics;
+    std::vector<std::pair<std::vector<std::string>, arrow_row::ArrowRow>> published;
+    std::map<std::vector<std::string>, SubscribeCallback> subscribers;
+
+    void CreateTopic(const std::vector<std::string>& segments,
+                     std::shared_ptr<arrow::Schema> schema) override {
+        created_topics.push_back({segments, schema});
+    }
+
+    void Publish(const std::vector<std::string>& segments,
+                 const arrow_row::ArrowRow& row) override {
+        published.push_back({segments, row});
+        auto it = subscribers.find(segments);
+        if (it != subscribers.end())
+            it->second(row);
+    }
+
+    void Subscribe(const std::vector<std::string>& segments,
+                   SubscribeCallback callback) override {
+        subscribers[segments] = std::move(callback);
+    }
+
+    void Unsubscribe(const std::vector<std::string>& segments) override {
+        subscribers.erase(segments);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("TelemetryTopic: construction creates topic with correct schema") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+
+    REQUIRE(mock->created_topics.size() == 1);
+    CHECK(mock->created_topics[0].segments ==
+          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
+    CHECK(mock->created_topics[0].schema->num_fields() == 4);
+}
+
+TEST_CASE("TelemetryTopic: publish encodes and delivers to provider") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+
+    integration::TelemetryArrowRow row;
+    row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
+    topic.Publish(row);
+
+    REQUIRE(mock->published.size() == 1);
+    CHECK(mock->published[0].first ==
+          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
+    CHECK_FALSE(mock->published[0].second.empty());
+}
+
+TEST_CASE("TelemetryTopic: subscribe receives decoded scalars") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+
+    std::vector<std::shared_ptr<arrow::Scalar>> received;
+    topic.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>> scalars) {
+        received = std::move(scalars);
+    });
+
+    integration::TelemetryArrowRow row;
+    row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
+    topic.Publish(row);
+
+    REQUIRE(received.size() == 4);
+
+    auto* id = dynamic_cast<arrow::Int32Scalar*>(received[0].get());
+    REQUIRE(id != nullptr);
+    CHECK(id->value == 42);
+
+    auto* name = dynamic_cast<arrow::StringScalar*>(received[3].get());
+    REQUIRE(name != nullptr);
+    CHECK(name->value->ToString() == "cpu");
+}
+
+TEST_CASE("TelemetryTopic: unsubscribe stops delivery") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+
+    int count = 0;
+    topic.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>>) { ++count; });
+
+    integration::TelemetryArrowRow row;
+    row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
+
+    topic.Publish(row);
+    CHECK(count == 1);
+
+    topic.Unsubscribe();
+    topic.Publish(row);
+    CHECK(count == 1);  // no delivery after unsubscribe
+}
+
+TEST_CASE("TelemetryTopic: multiple publishes accumulate") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+
+    integration::TelemetryArrowRow r1, r2, r3;
+    r1.set_device_id(1).set_value(1.0).set_timestamp(100LL).set_metric_name("a");
+    r2.set_device_id(2).set_value(2.0).set_timestamp(200LL).set_metric_name("b");
+    r3.set_device_id(3).set_value(3.0).set_timestamp(300LL).set_metric_name("c");
+
+    topic.Publish(r1);
+    topic.Publish(r2);
+    topic.Publish(r3);
+
+    CHECK(mock->published.size() == 3);
 }

@@ -472,6 +472,106 @@ std::string GenerateMessageClass(const google::protobuf::Descriptor* msg,
 }
 
 // -----------------------------------------------------------------------
+// Service method validation
+// -----------------------------------------------------------------------
+
+bool ValidateServiceMethod(
+    const google::protobuf::MethodDescriptor* method,
+    const std::set<const google::protobuf::Descriptor*>& generated_msgs,
+    std::string* reason)
+{
+    if (!method->client_streaming()) {
+        *reason = "request is not streaming (pub/sub requires 'stream' on request)";
+        return false;
+    }
+    if (method->server_streaming()) {
+        *reason = "server-streaming is not supported for pub/sub (no replies)";
+        return false;
+    }
+    if (method->output_type()->full_name() != "google.protobuf.Empty") {
+        *reason = "return type must be google.protobuf.Empty for pub/sub";
+        return false;
+    }
+    if (!generated_msgs.count(method->input_type())) {
+        *reason = "input message '" + method->input_type()->name()
+                + "' has no generated Arrow mapping in this file";
+        return false;
+    }
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Topic class generation for a single service method
+// -----------------------------------------------------------------------
+
+std::string GenerateTopicClass(const google::protobuf::MethodDescriptor* method,
+                               const std::string& package) {
+    const std::string svc_name    = method->service()->name();
+    const std::string method_name = method->name();
+    const std::string cls         = svc_name + "_" + method_name + "Topic";
+    const std::string msg_class   = ClassName(method->input_type());
+
+    std::ostringstream o;
+
+    o << "class " << cls << " {\n public:\n";
+
+    // TopicSegments()
+    o << "    static const std::vector<std::string>& TopicSegments() {\n"
+      << "        static const std::vector<std::string> kSegments = {";
+    if (!package.empty())
+        o << "\n            \"" << package << "\",";
+    o << "\n            \"" << svc_name << "\","
+      << "\n            \"" << method_name << "\"\n"
+      << "        };\n"
+      << "        return kSegments;\n"
+      << "    }\n\n";
+
+    // Schema()
+    o << "    static std::shared_ptr<arrow::Schema> Schema() {\n"
+      << "        return " << msg_class << "::ArrowSchema();\n"
+      << "    }\n\n";
+
+    // Constructor
+    o << "    explicit " << cls << "(\n"
+      << "            std::shared_ptr<arrow_row::PubSubProvider> provider)\n"
+      << "        : provider_(std::move(provider))\n"
+      << "    {\n"
+      << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
+      << "    }\n\n";
+
+    // Publish
+    o << "    void Publish(const " << msg_class << "& row) {\n"
+      << "        provider_->Publish(TopicSegments(), row.Encode());\n"
+      << "    }\n\n";
+
+    // Subscribe — delivers decoded scalars to the caller
+    o << "    void Subscribe(\n"
+      << "        std::function<void(std::vector<std::shared_ptr<arrow::Scalar>>)> cb)\n"
+      << "    {\n"
+      << "        provider_->Subscribe(TopicSegments(),\n"
+      << "            [cb = std::move(cb)](const arrow_row::ArrowRow& raw) {\n"
+      << "                cb(Codec().DecodeRow(raw));\n"
+      << "            });\n"
+      << "    }\n\n";
+
+    // Unsubscribe
+    o << "    void Unsubscribe() {\n"
+      << "        provider_->Unsubscribe(TopicSegments());\n"
+      << "    }\n\n";
+
+    // Private
+    o << " private:\n"
+      << "    static arrow_row::RowCodec& Codec() {\n"
+      << "        static arrow_row::RowCodec kCodec(Schema());\n"
+      << "        return kCodec;\n"
+      << "    }\n"
+      << "    std::shared_ptr<arrow_row::PubSubProvider> provider_;\n"
+      << "};\n";
+
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
 // Whole-file generation
 // -----------------------------------------------------------------------
 
@@ -489,7 +589,13 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
       << "#include <string>\n"
       << "#include <string_view>\n"
       << "#include <utility>\n"
-      << "#include <vector>\n\n";
+      << "#include <vector>\n";
+
+    if (file->service_count() > 0) {
+        o << "#include <pubsub_provider.hpp>\n"
+          << "#include <functional>\n";
+    }
+    o << "\n";
 
     const std::string ns = DotToColons(file->package());
     if (!ns.empty())
@@ -497,6 +603,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
 
     // Emit classes in dependency order (nested messages before their users).
     auto messages = OrderedMessages(file);
+
+    std::set<const google::protobuf::Descriptor*> generated_msgs;
 
     for (const auto* msg : messages) {
         std::string skipped;
@@ -508,12 +616,29 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
             continue;
         }
 
+        generated_msgs.insert(msg);
+
         if (!skipped.empty()) {
             o << "// Note: the following fields of " << msg->name()
               << " have no Arrow mapping and are absent from the schema:\n"
               << skipped << "//\n";
         }
         o << body << "\n";
+    }
+
+    // Service definitions → pub/sub topic classes.
+    for (int si = 0; si < file->service_count(); ++si) {
+        const auto* svc = file->service(si);
+        for (int mi = 0; mi < svc->method_count(); ++mi) {
+            const auto* method = svc->method(mi);
+            std::string reason;
+            if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
+                o << "// Skipped: " << svc->name() << "." << method->name()
+                  << " — " << reason << "\n";
+                continue;
+            }
+            o << GenerateTopicClass(method, file->package()) << "\n";
+        }
     }
 
     if (!ns.empty())
