@@ -1,0 +1,19 @@
+syntax = "proto3";
+package integration;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+// Well-known type mappings:
+//   Timestamp   → arrow::timestamp(NANO)   int64_t
+//   Duration    → arrow::duration(NANO)    int64_t
+//   DoubleValue → nullable double
+//   StringValue → nullable string
+message TimedEvent {
+    string                    event_id    = 1;
+    google.protobuf.Timestamp occurred_at = 2;
+    google.protobuf.Duration  elapsed     = 3;
+    google.protobuf.DoubleValue score     = 4;
+    google.protobuf.StringValue label     = 5;
+}

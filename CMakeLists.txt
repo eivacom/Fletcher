@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Arrow REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(Protobuf REQUIRED)
 
 add_subdirectory(ArrowRowCodec)
 add_subdirectory(ArrowRowBatcher)
+add_subdirectory(ArrowRowProtoPlugin)
+add_subdirectory(ArrowRowProtoIntegration)

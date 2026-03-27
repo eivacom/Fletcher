@@ -1,0 +1,10 @@
+syntax = "proto3";
+package integration;
+
+// map<K,V> fields with scalar values.
+// Maps produce arrow::map(K_type, field("value", V_type, false)) columns.
+message Metrics {
+    string              resource_id = 1;
+    map<string, double> gauges      = 2;   // map(utf8, float64)
+    map<string, int64>  counters    = 3;   // map(utf8, int64)
+}

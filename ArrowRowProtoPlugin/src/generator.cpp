@@ -1,0 +1,545 @@
+#include "generator.hpp"
+#include "type_mapper.hpp"
+
+#include <google/protobuf/descriptor.h>
+#include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/io/zero_copy_stream.h>
+
+#include <algorithm>
+#include <cstring>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace arrow_row_plugin {
+
+namespace {
+
+// -----------------------------------------------------------------------
+// String helpers
+// -----------------------------------------------------------------------
+
+std::string ReplaceAll(std::string s, const std::string& from, const std::string& to) {
+    size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return s;
+}
+
+std::string DotToColons(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
+    for (char c : s) {
+        if (c == '.') out += "::";
+        else          out += c;
+    }
+    return out;
+}
+
+std::string OutputFilename(const std::string& proto_name) {
+    constexpr std::string_view kSuffix = ".proto";
+    std::string base = proto_name;
+    if (base.size() > kSuffix.size()
+        && base.substr(base.size() - kSuffix.size()) == kSuffix)
+        base.resize(base.size() - kSuffix.size());
+    return base + ".arrow_row.pb.h";
+}
+
+bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
+                   const std::string& s, std::string* error) {
+    const char* data = s.data();
+    size_t remaining = s.size();
+    while (remaining > 0) {
+        void* buf;
+        int size;
+        if (!out->Next(&buf, &size)) {
+            *error = "ZeroCopyOutputStream::Next failed";
+            return false;
+        }
+        const size_t n = std::min(static_cast<size_t>(size), remaining);
+        std::memcpy(buf, data, n);
+        if (static_cast<size_t>(size) > n)
+            out->BackUp(static_cast<int>(size - n));
+        data      += n;
+        remaining -= n;
+    }
+    return true;
+}
+
+// -----------------------------------------------------------------------
+// Topological ordering of messages
+// -----------------------------------------------------------------------
+
+void TopologicalVisit(const google::protobuf::Descriptor* msg,
+                      const google::protobuf::FileDescriptor* file,
+                      std::set<const google::protobuf::Descriptor*>& emitted,
+                      std::vector<const google::protobuf::Descriptor*>& order) {
+    if (emitted.count(msg))
+        return;
+    // Skip synthetic map-entry messages.
+    if (msg->options().map_entry())
+        return;
+    // Only generate classes for messages in this file.
+    if (msg->file() != file)
+        return;
+    // Skip recursive messages entirely.
+    if (IsRecursive(msg)) {
+        emitted.insert(msg);
+        return;
+    }
+
+    // Visit nested types first.
+    for (int i = 0; i < msg->nested_type_count(); ++i)
+        TopologicalVisit(msg->nested_type(i), file, emitted, order);
+
+    // Visit message-type dependencies.
+    for (int i = 0; i < msg->field_count(); ++i) {
+        const auto* f = msg->field(i);
+        if (f->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE)
+            continue;
+        if (f->is_map()) {
+            const auto* val = f->message_type()->field(1);
+            if (val->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE)
+                TopologicalVisit(val->message_type(), file, emitted, order);
+        } else {
+            TopologicalVisit(f->message_type(), file, emitted, order);
+        }
+    }
+
+    emitted.insert(msg);
+    order.push_back(msg);
+}
+
+std::vector<const google::protobuf::Descriptor*>
+OrderedMessages(const google::protobuf::FileDescriptor* file) {
+    std::set<const google::protobuf::Descriptor*> emitted;
+    std::vector<const google::protobuf::Descriptor*> order;
+    for (int i = 0; i < file->message_type_count(); ++i)
+        TopologicalVisit(file->message_type(i), file, emitted, order);
+    return order;
+}
+
+// -----------------------------------------------------------------------
+// Per-field information gathered before code generation
+// -----------------------------------------------------------------------
+
+struct FieldInfo {
+    std::string  name;
+    FieldMapping mapping;
+    int          field_number = 0;  // proto field number — stable across renames
+};
+
+// -----------------------------------------------------------------------
+// Arrow type expression for the schema — constructed from the FieldMapping
+// -----------------------------------------------------------------------
+
+std::string ArrowTypeExpr(const FieldInfo& fi) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR:
+            return fi.mapping.scalar.arrow_type_expr;
+
+        case FieldKind::REPEATED_SCALAR:
+            return "arrow::list(arrow::field(\"item\", "
+                 + fi.mapping.element.arrow_type_expr + ", false))";
+
+        case FieldKind::STRUCT:
+            return "arrow::struct_(" + fi.mapping.nested_class
+                 + "::ArrowSchema()->fields())";
+
+        case FieldKind::REPEATED_STRUCT:
+            return "arrow::list(arrow::field(\"item\", arrow::struct_("
+                 + fi.mapping.nested_class
+                 + "::ArrowSchema()->fields()), false))";
+
+        case FieldKind::MAP: {
+            std::string val_type = fi.mapping.map_value_is_message
+                ? "arrow::struct_(" + fi.mapping.map_value_class
+                  + "::ArrowSchema()->fields())"
+                : fi.mapping.map_value.arrow_type_expr;
+            return "arrow::map(" + fi.mapping.map_key.arrow_type_expr
+                 + ", arrow::field(\"value\", " + val_type + ", false))";
+        }
+    }
+    return "/* unknown */";
+}
+
+// -----------------------------------------------------------------------
+// Storage member declaration
+// -----------------------------------------------------------------------
+
+std::string StorageDecl(const FieldInfo& fi) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR:
+            return "std::optional<" + fi.mapping.scalar.storage_type + "> "
+                 + fi.name + "_";
+
+        case FieldKind::REPEATED_SCALAR:
+            return "std::vector<" + fi.mapping.element.storage_type + "> "
+                 + fi.name + "_";
+
+        case FieldKind::STRUCT:
+            return "std::optional<" + fi.mapping.nested_class + "> "
+                 + fi.name + "_";
+
+        case FieldKind::REPEATED_STRUCT:
+            return "std::vector<" + fi.mapping.nested_class + "> "
+                 + fi.name + "_";
+
+        case FieldKind::MAP: {
+            std::string val_type = fi.mapping.map_value_is_message
+                ? fi.mapping.map_value_class
+                : fi.mapping.map_value.storage_type;
+            return "std::vector<std::pair<" + fi.mapping.map_key.storage_type
+                 + ", " + val_type + ">> " + fi.name + "_";
+        }
+    }
+    return "/* unknown */ " + fi.name + "_";
+}
+
+// -----------------------------------------------------------------------
+// Setter generation
+// -----------------------------------------------------------------------
+
+void EmitSetters(std::ostringstream& o, const std::string& cls,
+                 const std::vector<FieldInfo>& fields) {
+    for (const auto& fi : fields) {
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                bool coerce = (fi.mapping.scalar.param_type
+                            != fi.mapping.scalar.storage_type);
+                o << "    " << cls << "& set_" << fi.name
+                  << "(" << fi.mapping.scalar.param_type << " v) {\n";
+                if (coerce)
+                    o << "        " << fi.name << "_ = std::string(v);\n";
+                else
+                    o << "        " << fi.name << "_ = v;\n";
+                o << "        return *this;\n    }\n";
+                if (fi.mapping.nullable) {
+                    o << "    " << cls << "& clear_" << fi.name << "() {\n"
+                      << "        " << fi.name << "_.reset();\n"
+                      << "        return *this;\n    }\n";
+                }
+                break;
+            }
+
+            case FieldKind::REPEATED_SCALAR:
+                o << "    " << cls << "& set_" << fi.name
+                  << "(std::vector<" << fi.mapping.element.storage_type << "> v) {\n"
+                  << "        " << fi.name << "_ = std::move(v);\n"
+                  << "        return *this;\n    }\n";
+                break;
+
+            case FieldKind::STRUCT:
+                o << "    " << cls << "& set_" << fi.name
+                  << "(" << fi.mapping.nested_class << " v) {\n"
+                  << "        " << fi.name << "_ = std::move(v);\n"
+                  << "        return *this;\n    }\n";
+                if (fi.mapping.nullable) {
+                    o << "    " << cls << "& clear_" << fi.name << "() {\n"
+                      << "        " << fi.name << "_.reset();\n"
+                      << "        return *this;\n    }\n";
+                }
+                break;
+
+            case FieldKind::REPEATED_STRUCT:
+                o << "    " << cls << "& set_" << fi.name
+                  << "(std::vector<" << fi.mapping.nested_class << "> v) {\n"
+                  << "        " << fi.name << "_ = std::move(v);\n"
+                  << "        return *this;\n    }\n";
+                break;
+
+            case FieldKind::MAP: {
+                std::string val_type = fi.mapping.map_value_is_message
+                    ? fi.mapping.map_value_class
+                    : fi.mapping.map_value.storage_type;
+                o << "    " << cls << "& set_" << fi.name
+                  << "(std::vector<std::pair<" << fi.mapping.map_key.storage_type
+                  << ", " << val_type << ">> v) {\n"
+                  << "        " << fi.name << "_ = std::move(v);\n"
+                  << "        return *this;\n    }\n";
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// Composite scalar helper methods
+// -----------------------------------------------------------------------
+
+void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
+    const std::string fn = "Make" + fi.name + "Scalar_";
+
+    switch (fi.mapping.kind) {
+        case FieldKind::REPEATED_SCALAR:
+            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
+              << "        " << fi.mapping.element.builder_type << " builder;\n"
+              << "        for (const auto& v : " << fi.name << "_)\n"
+              << "            (void)builder.Append(v);\n"
+              << "        return std::make_shared<arrow::ListScalar>(\n"
+              << "            *builder.Finish());\n"
+              << "    }\n";
+            break;
+
+        case FieldKind::STRUCT:
+            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
+              << "        auto type = arrow::struct_("
+              << fi.mapping.nested_class << "::ArrowSchema()->fields());\n";
+            if (fi.mapping.nullable) {
+                o << "        if (!" << fi.name << "_.has_value())\n"
+                  << "            return arrow::MakeNullScalar(type);\n"
+                  << "        return std::make_shared<arrow::StructScalar>(\n"
+                  << "            " << fi.name << "_->ToScalars(), type);\n";
+            } else {
+                o << "        auto values = " << fi.name << "_.has_value()\n"
+                  << "            ? " << fi.name << "_->ToScalars()\n"
+                  << "            : " << fi.mapping.nested_class
+                  << "().ToScalars();\n"
+                  << "        return std::make_shared<arrow::StructScalar>(\n"
+                  << "            std::move(values), type);\n";
+            }
+            o << "    }\n";
+            break;
+
+        case FieldKind::REPEATED_STRUCT:
+            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
+              << "        auto type = arrow::struct_("
+              << fi.mapping.nested_class << "::ArrowSchema()->fields());\n"
+              << "        auto builder = arrow::MakeBuilder(type).ValueOrDie();\n"
+              << "        for (const auto& v : " << fi.name << "_) {\n"
+              << "            auto s = std::make_shared<arrow::StructScalar>(\n"
+              << "                v.ToScalars(), type);\n"
+              << "            (void)builder->AppendScalar(*s);\n"
+              << "        }\n"
+              << "        return std::make_shared<arrow::ListScalar>(\n"
+              << "            *builder->Finish());\n"
+              << "    }\n";
+            break;
+
+        case FieldKind::MAP: {
+            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
+              << "        " << fi.mapping.map_key.builder_type << " key_builder;\n";
+
+            if (fi.mapping.map_value_is_message) {
+                o << "        auto val_type = arrow::struct_("
+                  << fi.mapping.map_value_class
+                  << "::ArrowSchema()->fields());\n"
+                  << "        auto val_builder = arrow::MakeBuilder(val_type).ValueOrDie();\n"
+                  << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
+                  << "            (void)key_builder.Append(k);\n"
+                  << "            auto s = std::make_shared<arrow::StructScalar>(\n"
+                  << "                v.ToScalars(), val_type);\n"
+                  << "            (void)val_builder->AppendScalar(*s);\n"
+                  << "        }\n"
+                  << "        auto keys = *key_builder.Finish();\n"
+                  << "        auto vals = *val_builder->Finish();\n";
+            } else {
+                o << "        " << fi.mapping.map_value.builder_type
+                  << " val_builder;\n"
+                  << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
+                  << "            (void)key_builder.Append(k);\n"
+                  << "            (void)val_builder.Append(v);\n"
+                  << "        }\n"
+                  << "        auto keys = *key_builder.Finish();\n"
+                  << "        auto vals = *val_builder.Finish();\n";
+            }
+
+            o << "        auto kv = *arrow::StructArray::Make(\n"
+              << "            {keys, vals},\n"
+              << "            std::vector<std::string>{\"key\", \"value\"});\n"
+              << "        return std::make_shared<arrow::MapScalar>(kv);\n"
+              << "    }\n";
+            break;
+        }
+
+        default:
+            break;  // SCALAR — no helper needed
+    }
+}
+
+// -----------------------------------------------------------------------
+// ToScalars() entry for one field
+// -----------------------------------------------------------------------
+
+std::string ScalarEntry(const FieldInfo& fi) {
+    if (fi.mapping.kind != FieldKind::SCALAR) {
+        // Composite types delegate to a helper method.
+        return "Make" + fi.name + "Scalar_()";
+    }
+
+    // Scalar field.
+    if (fi.mapping.nullable) {
+        const std::string ctor =
+            ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", "*" + fi.name + "_");
+        return fi.name + "_.has_value()\n"
+             + "                ? std::shared_ptr<arrow::Scalar>(" + ctor + ")\n"
+             + "                : arrow::MakeNullScalar("
+             + fi.mapping.scalar.arrow_type_expr + ")";
+    }
+
+    const std::string val =
+        fi.name + "_.value_or(" + fi.mapping.scalar.default_value + ")";
+    return ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", val);
+}
+
+// -----------------------------------------------------------------------
+// Full class generation for one message
+// -----------------------------------------------------------------------
+
+std::string GenerateMessageClass(const google::protobuf::Descriptor* msg,
+                                 std::string* skipped_comment) {
+    const std::string cls = ClassName(msg);
+
+    // Gather supported fields.
+    std::vector<FieldInfo> fields;
+    for (int i = 0; i < msg->field_count(); ++i) {
+        const auto* fd = msg->field(i);
+        if (auto m = MapField(fd)) {
+            fields.push_back({fd->name(), std::move(*m), fd->number()});
+        } else {
+            *skipped_comment += "//   " + fd->name() + ": "
+                             + UnsupportedReason(fd) + "\n";
+        }
+    }
+
+    std::ostringstream o;
+
+    // ---- class header ---------------------------------------------------
+    o << "class " << cls << " {\n public:\n";
+
+    // ArrowSchema()
+    o << "    static std::shared_ptr<arrow::Schema> ArrowSchema() {\n"
+      << "        return arrow::schema({\n";
+    for (const auto& fi : fields) {
+        if (!fi.mapping.warning.empty())
+            o << "            // Warning: " << fi.mapping.warning << "\n";
+        o << "            arrow::field(\"" << fi.name << "\", "
+          << ArrowTypeExpr(fi) << ", "
+          << (fi.mapping.nullable ? "true" : "false") << ", "
+          << "arrow::key_value_metadata({\"field_number\"}, {\""
+          << fi.field_number << "\"})),\n";
+    }
+    o << "        }, arrow::key_value_metadata(\n"
+      << "            {\"proto_package\", \"proto_message\"},\n"
+      << "            {\"" << msg->file()->package() << "\", \""
+      << msg->name() << "\"}));\n    }\n\n";
+
+    // Setters
+    EmitSetters(o, cls, fields);
+    o << "\n";
+
+    // ToScalars()
+    o << "    std::vector<std::shared_ptr<arrow::Scalar>> ToScalars() const {\n"
+      << "        return {\n";
+    for (const auto& fi : fields)
+        o << "            " << ScalarEntry(fi) << ",\n";
+    o << "        };\n    }\n\n";
+
+    // Encode()
+    o << "    arrow_row::ArrowRow Encode() const {\n"
+      << "        return Codec().EncodeRow(ToScalars());\n"
+      << "    }\n\n";
+
+    // ---- private section ------------------------------------------------
+    o << " private:\n";
+
+    // Codec singleton
+    o << "    static arrow_row::RowCodec& Codec() {\n"
+      << "        static arrow_row::RowCodec kCodec(ArrowSchema());\n"
+      << "        return kCodec;\n"
+      << "    }\n\n";
+
+    // Composite scalar helpers
+    bool has_helpers = false;
+    for (const auto& fi : fields) {
+        if (fi.mapping.kind != FieldKind::SCALAR) {
+            EmitScalarHelper(o, fi);
+            has_helpers = true;
+        }
+    }
+    if (has_helpers)
+        o << "\n";
+
+    // Storage members
+    for (const auto& fi : fields)
+        o << "    " << StorageDecl(fi) << ";\n";
+
+    o << "};\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
+// Whole-file generation
+// -----------------------------------------------------------------------
+
+std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
+    std::ostringstream o;
+
+    o << "// Generated by protoc-gen-arrow-row. DO NOT EDIT.\n"
+      << "// Source: " << file->name() << "\n"
+      << "#pragma once\n\n"
+      << "#include <arrow/api.h>\n"
+      << "#include <row_codec.hpp>\n\n"
+      << "#include <cstdint>\n"
+      << "#include <memory>\n"
+      << "#include <optional>\n"
+      << "#include <string>\n"
+      << "#include <string_view>\n"
+      << "#include <utility>\n"
+      << "#include <vector>\n\n";
+
+    const std::string ns = DotToColons(file->package());
+    if (!ns.empty())
+        o << "namespace " << ns << " {\n\n";
+
+    // Emit classes in dependency order (nested messages before their users).
+    auto messages = OrderedMessages(file);
+
+    for (const auto* msg : messages) {
+        std::string skipped;
+        std::string body = GenerateMessageClass(msg, &skipped);
+
+        if (IsRecursive(msg)) {
+            o << "// Skipped: " << msg->name()
+              << " is recursive and cannot be represented in Arrow.\n\n";
+            continue;
+        }
+
+        if (!skipped.empty()) {
+            o << "// Note: the following fields of " << msg->name()
+              << " have no Arrow mapping and are absent from the schema:\n"
+              << skipped << "//\n";
+        }
+        o << body << "\n";
+    }
+
+    if (!ns.empty())
+        o << "}  // namespace " << ns << "\n";
+
+    return o.str();
+}
+
+}  // namespace
+
+// -----------------------------------------------------------------------
+// CodeGenerator interface
+// -----------------------------------------------------------------------
+
+bool ArrowRowGenerator::Generate(
+    const google::protobuf::FileDescriptor* file,
+    const std::string& /*parameter*/,
+    google::protobuf::compiler::GeneratorContext* context,
+    std::string* error) const
+{
+    const std::string content  = GenerateFile(file);
+    const std::string out_name = OutputFilename(file->name());
+
+    std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+        context->Open(out_name));
+    return WriteToStream(stream.get(), content, error);
+}
+
+}  // namespace arrow_row_plugin

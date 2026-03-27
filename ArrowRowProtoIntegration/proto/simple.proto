@@ -1,0 +1,19 @@
+syntax = "proto3";
+package integration;
+
+// Flat message covering all supported scalar proto types.
+// Non-optional fields → non-nullable Arrow columns.
+// optional fields    → nullable Arrow columns.
+message SensorReading {
+    int32  sensor_id    = 1;
+    double temperature  = 2;
+    float  pressure     = 3;
+    bool   active       = 4;
+    string location     = 5;
+    bytes  payload      = 6;
+    uint32 sequence     = 7;
+    int64  timestamp_ns = 8;
+
+    optional double humidity = 9;   // nullable double
+    optional string label    = 10;  // nullable string
+}
