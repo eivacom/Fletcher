@@ -3,6 +3,7 @@ arrow/23.0.1
 sqlite3/3.47.2
 catch2/3.7.1
 protobuf/3.21.12
+fast-dds/2.14.3
 [generators]
 CMakeDeps
 CMakeToolchain
