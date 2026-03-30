@@ -43,8 +43,8 @@ set(PROTO_STEMS simple temporal nested collections maps complex pubsub)
 
 set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
-    set(_src  "${PROTO_DIR}/${_stem}.proto")
-    set(_hdr  "${GENERATED_DIR}/${_stem}.arrow_row.pb.h")
+    set(_src "${PROTO_DIR}/${_stem}.proto")
+    set(_hdr "${GENERATED_DIR}/${_stem}.arrow_row.pb.h")
 
     add_custom_command(
         OUTPUT  "${_hdr}"

@@ -39,13 +39,17 @@ std::string DotToColons(const std::string& s) {
     return out;
 }
 
-std::string OutputFilename(const std::string& proto_name) {
+std::string StripProtoSuffix(const std::string& proto_name) {
     constexpr std::string_view kSuffix = ".proto";
     std::string base = proto_name;
     if (base.size() > kSuffix.size()
         && base.substr(base.size() - kSuffix.size()) == kSuffix)
         base.resize(base.size() - kSuffix.size());
-    return base + ".arrow_row.pb.h";
+    return base;
+}
+
+std::string OutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".arrow_row.pb.h";
 }
 
 bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
@@ -501,21 +505,11 @@ bool ValidateServiceMethod(
 }
 
 // -----------------------------------------------------------------------
-// Topic class generation for a single service method
+// Per-class helpers shared by publisher and subscriber generation
 // -----------------------------------------------------------------------
 
-std::string GenerateTopicClass(const google::protobuf::MethodDescriptor* method,
-                               const std::string& package) {
-    const std::string svc_name    = method->service()->name();
-    const std::string method_name = method->name();
-    const std::string cls         = svc_name + "_" + method_name + "Topic";
-    const std::string msg_class   = ClassName(method->input_type());
-
-    std::ostringstream o;
-
-    o << "class " << cls << " {\n public:\n";
-
-    // TopicSegments()
+void EmitTopicSegments(std::ostringstream& o, const std::string& package,
+                       const std::string& svc_name, const std::string& method_name) {
     o << "    static const std::vector<std::string>& TopicSegments() {\n"
       << "        static const std::vector<std::string> kSegments = {";
     if (!package.empty())
@@ -525,11 +519,30 @@ std::string GenerateTopicClass(const google::protobuf::MethodDescriptor* method,
       << "        };\n"
       << "        return kSegments;\n"
       << "    }\n\n";
+}
 
-    // Schema()
+void EmitSchema(std::ostringstream& o, const std::string& msg_class) {
     o << "    static std::shared_ptr<arrow::Schema> Schema() {\n"
       << "        return " << msg_class << "::ArrowSchema();\n"
       << "    }\n\n";
+}
+
+// -----------------------------------------------------------------------
+// Publisher class generation for a single service method
+// -----------------------------------------------------------------------
+
+std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* method,
+                                   const std::string& package) {
+    const std::string svc_name    = method->service()->name();
+    const std::string method_name = method->name();
+    const std::string cls         = svc_name + "_" + method_name + "Publisher";
+    const std::string msg_class   = ClassName(method->input_type());
+
+    std::ostringstream o;
+    o << "class " << cls << " {\n public:\n";
+
+    EmitTopicSegments(o, package, svc_name, method_name);
+    EmitSchema(o, msg_class);
 
     // Constructor
     o << "    explicit " << cls << "(\n"
@@ -542,6 +555,39 @@ std::string GenerateTopicClass(const google::protobuf::MethodDescriptor* method,
     // Publish
     o << "    void Publish(const " << msg_class << "& row) {\n"
       << "        provider_->Publish(TopicSegments(), row.Encode());\n"
+      << "    }\n\n";
+
+    // Private
+    o << " private:\n"
+      << "    std::shared_ptr<arrow_row::PubSubProvider> provider_;\n"
+      << "};\n";
+
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
+// Subscriber class generation for a single service method
+// -----------------------------------------------------------------------
+
+std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* method,
+                                    const std::string& package) {
+    const std::string svc_name    = method->service()->name();
+    const std::string method_name = method->name();
+    const std::string cls         = svc_name + "_" + method_name + "Subscriber";
+    const std::string msg_class   = ClassName(method->input_type());
+
+    std::ostringstream o;
+    o << "class " << cls << " {\n public:\n";
+
+    EmitTopicSegments(o, package, svc_name, method_name);
+    EmitSchema(o, msg_class);
+
+    // Constructor
+    o << "    explicit " << cls << "(\n"
+      << "            std::shared_ptr<arrow_row::PubSubProvider> provider)\n"
+      << "        : provider_(std::move(provider))\n"
+      << "    {\n"
+      << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
       << "    }\n\n";
 
     // Subscribe — delivers decoded scalars to the caller
@@ -572,7 +618,7 @@ std::string GenerateTopicClass(const google::protobuf::MethodDescriptor* method,
 }
 
 // -----------------------------------------------------------------------
-// Whole-file generation
+// File generation
 // -----------------------------------------------------------------------
 
 std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
@@ -601,9 +647,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
     if (!ns.empty())
         o << "namespace " << ns << " {\n\n";
 
-    // Emit classes in dependency order (nested messages before their users).
+    // Emit message classes in dependency order.
     auto messages = OrderedMessages(file);
-
     std::set<const google::protobuf::Descriptor*> generated_msgs;
 
     for (const auto* msg : messages) {
@@ -626,7 +671,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
         o << body << "\n";
     }
 
-    // Service definitions → pub/sub topic classes.
+    // Service definitions → publisher and subscriber classes.
     for (int si = 0; si < file->service_count(); ++si) {
         const auto* svc = file->service(si);
         for (int mi = 0; mi < svc->method_count(); ++mi) {
@@ -637,7 +682,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
                   << " — " << reason << "\n";
                 continue;
             }
-            o << GenerateTopicClass(method, file->package()) << "\n";
+            o << GeneratePublisherClass(method, file->package()) << "\n"
+              << GenerateSubscriberClass(method, file->package()) << "\n";
         }
     }
 

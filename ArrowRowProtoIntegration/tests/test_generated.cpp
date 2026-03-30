@@ -436,7 +436,7 @@ TEST_CASE("OrderItem: optional note null then valid") {
 }
 
 // =============================================================================
-// pubsub.proto — TelemetryFeed_TelemetryStreamTopic
+// pubsub.proto — Publisher and Subscriber classes
 // =============================================================================
 
 namespace {
@@ -478,9 +478,11 @@ class MockPubSubProvider : public arrow_row::PubSubProvider {
 
 }  // namespace
 
-TEST_CASE("TelemetryTopic: construction creates topic with correct schema") {
+// ---- Publisher tests -----------------------------------------------------
+
+TEST_CASE("Publisher: construction creates topic with correct schema") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     REQUIRE(mock->created_topics.size() == 1);
     CHECK(mock->created_topics[0].segments ==
@@ -488,13 +490,13 @@ TEST_CASE("TelemetryTopic: construction creates topic with correct schema") {
     CHECK(mock->created_topics[0].schema->num_fields() == 4);
 }
 
-TEST_CASE("TelemetryTopic: publish encodes and delivers to provider") {
+TEST_CASE("Publisher: publish encodes and delivers to provider") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     integration::TelemetryArrowRow row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
-    topic.Publish(row);
+    pub.Publish(row);
 
     REQUIRE(mock->published.size() == 1);
     CHECK(mock->published[0].first ==
@@ -502,18 +504,46 @@ TEST_CASE("TelemetryTopic: publish encodes and delivers to provider") {
     CHECK_FALSE(mock->published[0].second.empty());
 }
 
-TEST_CASE("TelemetryTopic: subscribe receives decoded scalars") {
+TEST_CASE("Publisher: multiple publishes accumulate") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+
+    integration::TelemetryArrowRow r1, r2, r3;
+    r1.set_device_id(1).set_value(1.0).set_timestamp(100LL).set_metric_name("a");
+    r2.set_device_id(2).set_value(2.0).set_timestamp(200LL).set_metric_name("b");
+    r3.set_device_id(3).set_value(3.0).set_timestamp(300LL).set_metric_name("c");
+
+    pub.Publish(r1);
+    pub.Publish(r2);
+    pub.Publish(r3);
+
+    CHECK(mock->published.size() == 3);
+}
+
+// ---- Subscriber tests ----------------------------------------------------
+
+TEST_CASE("Subscriber: construction creates topic") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    REQUIRE(mock->created_topics.size() == 1);
+    CHECK(mock->created_topics[0].segments ==
+          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
+}
+
+TEST_CASE("Subscriber: receives decoded scalars from published rows") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     std::vector<std::shared_ptr<arrow::Scalar>> received;
-    topic.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>> scalars) {
+    sub.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>> scalars) {
         received = std::move(scalars);
     });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
-    topic.Publish(row);
+    pub.Publish(row);
 
     REQUIRE(received.size() == 4);
 
@@ -526,36 +556,21 @@ TEST_CASE("TelemetryTopic: subscribe receives decoded scalars") {
     CHECK(name->value->ToString() == "cpu");
 }
 
-TEST_CASE("TelemetryTopic: unsubscribe stops delivery") {
+TEST_CASE("Subscriber: unsubscribe stops delivery") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    topic.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>>) { ++count; });
+    sub.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>>) { ++count; });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
 
-    topic.Publish(row);
+    pub.Publish(row);
     CHECK(count == 1);
 
-    topic.Unsubscribe();
-    topic.Publish(row);
+    sub.Unsubscribe();
+    pub.Publish(row);
     CHECK(count == 1);  // no delivery after unsubscribe
-}
-
-TEST_CASE("TelemetryTopic: multiple publishes accumulate") {
-    auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamTopic topic(mock);
-
-    integration::TelemetryArrowRow r1, r2, r3;
-    r1.set_device_id(1).set_value(1.0).set_timestamp(100LL).set_metric_name("a");
-    r2.set_device_id(2).set_value(2.0).set_timestamp(200LL).set_metric_name("b");
-    r3.set_device_id(3).set_value(3.0).set_timestamp(300LL).set_metric_name("c");
-
-    topic.Publish(r1);
-    topic.Publish(r2);
-    topic.Publish(r3);
-
-    CHECK(mock->published.size() == 3);
 }
