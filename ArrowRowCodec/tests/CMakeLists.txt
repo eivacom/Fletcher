@@ -1,4 +1,3 @@
-find_package(Catch2 REQUIRED)
 include(CTest)
 
 add_executable(arrow_row_codec_tests

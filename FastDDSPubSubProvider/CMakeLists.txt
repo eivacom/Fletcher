@@ -1,5 +1,3 @@
-find_package(fastdds REQUIRED)
-
 add_library(fast_dds_pubsub_provider
     src/fast_dds_pubsub_provider.cpp)
 target_include_directories(fast_dds_pubsub_provider PUBLIC include)

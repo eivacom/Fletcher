@@ -9,6 +9,62 @@ namespace {
 using FD = google::protobuf::FieldDescriptor;
 
 // -----------------------------------------------------------------------
+// Cross-file reference helpers
+// -----------------------------------------------------------------------
+
+static std::string DotToColonsTM(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
+    for (char c : s) {
+        if (c == '.') out += "::";
+        else          out += c;
+    }
+    return out;
+}
+
+// Compute the bare (unqualified) ArrowRow class name for a message.
+// Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
+// (Mirrors the public ClassName() function below; defined here so the
+// cross-file helpers can call it without a forward declaration.)
+static std::string ClassNameImpl(const google::protobuf::Descriptor* msg) {
+    std::string name = msg->name();
+    const auto* parent = msg->containing_type();
+    while (parent) {
+        name = parent->name() + "_" + name;
+        parent = parent->containing_type();
+    }
+    return name + "ArrowRow";
+}
+
+// C++ globally-qualified class reference for msg, as seen from context_file.
+// Returns the plain class name when both are in the same file; otherwise prefixes
+// with "::<package>::" so the reference is valid regardless of current namespace.
+static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
+                                      const google::protobuf::FileDescriptor* context_file) {
+    const std::string bare = ClassNameImpl(msg);
+    if (msg->file() == context_file)
+        return bare;
+    const std::string& pkg = msg->file()->package();
+    if (pkg.empty())
+        return "::" + bare;
+    return "::" + DotToColonsTM(pkg) + "::" + bare;
+}
+
+// Include path for the generated header of msg's file, relative to the proto root.
+// Returns empty string when msg is in the same file as context_file.
+static std::string CrossFileHeader(const google::protobuf::Descriptor* msg,
+                                   const google::protobuf::FileDescriptor* context_file) {
+    if (msg->file() == context_file)
+        return "";
+    const std::string& name = msg->file()->name();
+    constexpr std::string_view kSuffix = ".proto";
+    if (name.size() > kSuffix.size()
+        && name.substr(name.size() - kSuffix.size()) == kSuffix)
+        return name.substr(0, name.size() - kSuffix.size()) + ".arrow_row.pb.h";
+    return name + ".arrow_row.pb.h";
+}
+
+// -----------------------------------------------------------------------
 // Scalar base mappings (nullable=false; caller patches later)
 // -----------------------------------------------------------------------
 
@@ -227,16 +283,14 @@ std::optional<FieldMapping> MapRepeatedEnum(const FD* /*field*/) {
 
 std::optional<FieldMapping> MapStructField(const FD* field) {
     const auto* msg = field->message_type();
-    // Cross-file references: only support messages in the same file.
-    if (msg->file() != field->file())
-        return std::nullopt;
     if (IsRecursive(msg))
         return std::nullopt;
 
     FieldMapping m{};
-    m.kind         = FieldKind::STRUCT;
-    m.nullable     = IsFieldNullable(field);
-    m.nested_class = ClassName(msg);
+    m.kind          = FieldKind::STRUCT;
+    m.nullable      = IsFieldNullable(field);
+    m.nested_class  = QualifiedClassName(msg, field->file());
+    m.nested_header = CrossFileHeader(msg, field->file());
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
@@ -247,15 +301,14 @@ std::optional<FieldMapping> MapStructField(const FD* field) {
 
 std::optional<FieldMapping> MapRepeatedMessage(const FD* field) {
     const auto* msg = field->message_type();
-    if (msg->file() != field->file())
-        return std::nullopt;
     if (IsRecursive(msg))
         return std::nullopt;
 
     FieldMapping m{};
-    m.kind         = FieldKind::REPEATED_STRUCT;
-    m.nullable     = false;
-    m.nested_class = ClassName(msg);
+    m.kind          = FieldKind::REPEATED_STRUCT;
+    m.nullable      = false;
+    m.nested_class  = QualifiedClassName(msg, field->file());
+    m.nested_header = CrossFileHeader(msg, field->file());
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
@@ -286,12 +339,11 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
         m.map_value = *BaseScalar(FD::TYPE_ENUM);
     } else if (val_fd->type() == FD::TYPE_MESSAGE) {
         const auto* val_msg = val_fd->message_type();
-        if (val_msg->file() != field->file())
-            return std::nullopt;
         if (IsRecursive(val_msg))
             return std::nullopt;
         m.map_value_is_message = true;
-        m.map_value_class = ClassName(val_msg);
+        m.map_value_class  = QualifiedClassName(val_msg, field->file());
+        m.map_value_header = CrossFileHeader(val_msg, field->file());
         m.warning += "; map with message values has fragile Parquet round-trip";
     } else {
         const ScalarTypeInfo* vi = BaseScalar(val_fd->type());
@@ -402,8 +454,6 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field) {
         if (fqn == "google.protobuf.Struct")
             return "google.protobuf.Struct has a dynamic schema and cannot be mapped to Arrow";
 
-        if (msg->file() != field->file())
-            return "cross-file message reference '" + fqn + "' is not yet supported";
         if (IsRecursive(msg))
             return "message '" + fqn + "' is recursive and cannot be represented in Arrow";
     }

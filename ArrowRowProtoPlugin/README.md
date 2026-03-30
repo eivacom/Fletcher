@@ -9,7 +9,8 @@ A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files an
 For each file the generator:
 1. Orders messages dependency-first (DFS topological sort) so nested types are always defined before the messages that reference them.
 2. Maps every field via `type_mapper.cpp` to an Arrow type and a C++ setter.
-3. Emits one `.arrow_row.pb.h` header containing all generated classes.
+3. Scans all field mappings to discover references to messages in other `.proto` files.
+4. Emits one `.arrow_row.pb.h` header containing all generated classes, with `#include` directives for any cross-file generated headers required.
 
 The output file is placed in the directory passed to `--arrow-row_out`.
 
@@ -59,8 +60,9 @@ All other singular fields are non-nullable in the generated schema. `repeated` f
 
 ### Nested messages (struct)
 
-A singular message field that is not a well-known type and not recursive is mapped to `arrow::struct_()`:
+A singular message field that is not a well-known type and not recursive is mapped to `arrow::struct_()`.
 
+**Same-file reference:**
 ```proto
 message Address { string city = 1; string country = 2; }
 message Person  { string name = 1; Address address = 2; }
@@ -75,7 +77,24 @@ Person schema:
 
 The nested class (`AddressArrowRow`) is emitted before `PersonArrowRow` in the output file because of topological ordering.
 
-A deep-nesting warning (depth ≥ 3) is emitted as a code comment. The code still compiles but some Arrow consumers (particularly Parquet writers and certain query engines) do not handle arbitrarily deep struct nesting reliably.
+**Cross-file reference:**
+```proto
+// common/address.proto  (package "common")
+message Address { string city = 1; string country = 2; }
+
+// orders/person.proto  (package "orders")
+import "common/address.proto";
+message Person { string name = 1; common.Address address = 2; }
+```
+
+`person.arrow_row.pb.h` will contain:
+```cpp
+#include "common/address.arrow_row.pb.h"   // emitted automatically
+```
+
+The generated setter and storage type use a globally-qualified C++ name (`::common::AddressArrowRow`) so the reference resolves regardless of which namespace the consuming code is in.
+
+A deep-nesting warning (depth ≥ 3) is emitted as a code comment for both same-file and cross-file struct fields. The code still compiles but some Arrow consumers (particularly Parquet writers and certain query engines) do not handle arbitrarily deep struct nesting reliably.
 
 ### Repeated fields (list)
 
@@ -188,21 +207,6 @@ google.protobuf.Struct attributes = 1;
 ```
 
 `Struct` has a dynamic key set (`map<string, Value>` where `Value` is a recursive oneof). It suffers from both the oneof and the recursive-message limitations simultaneously.
-
-### Cross-file message references
-
-```proto
-// file_a.proto
-message Address { ... }
-
-// file_b.proto  — NOT SUPPORTED
-import "file_a.proto";
-message Person {
-    Address addr = 1;  // cross-file reference — skipped
-}
-```
-
-Cross-file message references are skipped with a comment. The generated code for `Person` would need the `AddressArrowRow` class from `file_a.arrow_row.pb.h`, but the generator does not currently emit cross-file `#include` directives or resolve dependency order across files. This is a planned feature, not a fundamental limitation.
 
 ### proto2 `group` fields
 

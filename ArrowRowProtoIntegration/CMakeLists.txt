@@ -4,7 +4,6 @@ project(ArrowRowProtoIntegration CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Catch2 REQUIRED)
 include(CTest)
 
 # ---- Locate protobuf WKT include directory at configure time ----

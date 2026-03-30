@@ -74,6 +74,38 @@ bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
 }
 
 // -----------------------------------------------------------------------
+// Cross-file include collection
+// -----------------------------------------------------------------------
+
+// Scan all supported field mappings in a message (and its nested types) and
+// accumulate the include paths of any cross-file generated headers needed.
+void CollectCrossFileIncludesFromMessage(
+    const google::protobuf::Descriptor* msg,
+    std::set<std::string>& headers)
+{
+    for (int fi = 0; fi < msg->field_count(); ++fi) {
+        const auto* fd = msg->field(fi);
+        if (auto m = MapField(fd)) {
+            if (!m->nested_header.empty())
+                headers.insert(m->nested_header);
+            if (!m->map_value_header.empty())
+                headers.insert(m->map_value_header);
+        }
+    }
+    for (int ni = 0; ni < msg->nested_type_count(); ++ni)
+        CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
+}
+
+std::set<std::string> CollectCrossFileIncludes(
+    const google::protobuf::FileDescriptor* file)
+{
+    std::set<std::string> headers;
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
+    return headers;
+}
+
+// -----------------------------------------------------------------------
 // Topological ordering of messages
 // -----------------------------------------------------------------------
 
@@ -640,6 +672,14 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
     if (file->service_count() > 0) {
         o << "#include <pubsub_provider.hpp>\n"
           << "#include <functional>\n";
+    }
+
+    // Cross-file generated headers (for referenced messages from other .proto files).
+    const auto cross_includes = CollectCrossFileIncludes(file);
+    if (!cross_includes.empty()) {
+        o << "\n";
+        for (const auto& h : cross_includes)
+            o << "#include \"" << h << "\"\n";
     }
     o << "\n";
 

@@ -492,3 +492,204 @@ TEST_CASE("ClassName: nested message uses underscore separator") {
     REQUIRE(file);
     CHECK(ClassName(file->message_type(0)->nested_type(0)) == "Outer_InnerArrowRow");
 }
+
+// ===========================================================================
+// Cross-file message references
+// ===========================================================================
+
+namespace {
+
+// Builds a "dep" file (dependency) containing a single message named DepMsg
+// with one int32 field, optionally under the given proto package.
+const FileDescriptor* BuildDepFile(DescriptorPool& pool,
+                                   const std::string& filename,
+                                   const std::string& package = "") {
+    FileDescriptorProto dep;
+    dep.set_name(filename);
+    dep.set_syntax("proto3");
+    if (!package.empty())
+        dep.set_package(package);
+    auto* msg = dep.add_message_type();
+    msg->set_name("DepMsg");
+    auto* f = msg->add_field();
+    f->set_name("value");
+    f->set_number(1);
+    f->set_type(FieldDescriptorProto::TYPE_INT32);
+    f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
+    return pool.BuildFile(dep);
+}
+
+// Builds a "consumer" file that has one field referencing DepMsg from dep_filename.
+// field_label selects singular (LABEL_OPTIONAL) or repeated (LABEL_REPEATED).
+// Returns the consumer FileDescriptor; the field is on message ConsumerMsg.
+const FileDescriptor* BuildConsumerFile(DescriptorPool& pool,
+                                        const std::string& consumer_filename,
+                                        const std::string& dep_filename,
+                                        const std::string& dep_full_type,
+                                        FieldDescriptorProto::Label label,
+                                        const std::string& package = "") {
+    FileDescriptorProto fdp;
+    fdp.set_name(consumer_filename);
+    fdp.set_syntax("proto3");
+    if (!package.empty())
+        fdp.set_package(package);
+    fdp.add_dependency(dep_filename);
+
+    auto* msg = fdp.add_message_type();
+    msg->set_name("ConsumerMsg");
+    auto* f = msg->add_field();
+    f->set_name("dep_field");
+    f->set_number(1);
+    f->set_type(FieldDescriptorProto::TYPE_MESSAGE);
+    f->set_type_name(dep_full_type);
+    f->set_label(label);
+
+    return pool.BuildFile(fdp);
+}
+
+}  // namespace
+
+TEST_CASE("MapField: cross-file singular message succeeds (same package)") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_same_pkg.proto", "mypkg"));
+
+    auto* consumer = BuildConsumerFile(
+        pool, "consumer_same_pkg.proto", "dep_same_pkg.proto",
+        ".mypkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mypkg");
+    REQUIRE(consumer);
+
+    const auto* fd = consumer->message_type(0)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->kind == FieldKind::STRUCT);
+    // Same package → no global qualification needed; nested_header must be set.
+    CHECK(m->nested_class == "DepMsgArrowRow");
+    CHECK(m->nested_header == "dep_same_pkg.arrow_row.pb.h");
+}
+
+TEST_CASE("MapField: cross-file singular message succeeds (different packages)") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_other_pkg.proto", "other.pkg"));
+
+    auto* consumer = BuildConsumerFile(
+        pool, "consumer_diff_pkg.proto", "dep_other_pkg.proto",
+        ".other.pkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
+    REQUIRE(consumer);
+
+    const auto* fd = consumer->message_type(0)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->kind == FieldKind::STRUCT);
+    // Different package → globally qualified.
+    CHECK(m->nested_class == "::other::pkg::DepMsgArrowRow");
+    CHECK(m->nested_header == "dep_other_pkg.arrow_row.pb.h");
+}
+
+TEST_CASE("MapField: cross-file singular message — no-package dep") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_no_pkg.proto", ""));
+
+    auto* consumer = BuildConsumerFile(
+        pool, "consumer_no_dep_pkg.proto", "dep_no_pkg.proto",
+        ".DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
+    REQUIRE(consumer);
+
+    const auto* fd = consumer->message_type(0)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->nested_class == "::DepMsgArrowRow");
+    CHECK(m->nested_header == "dep_no_pkg.arrow_row.pb.h");
+}
+
+TEST_CASE("MapField: cross-file repeated message succeeds") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_repeated.proto", "ext"));
+
+    auto* consumer = BuildConsumerFile(
+        pool, "consumer_repeated.proto", "dep_repeated.proto",
+        ".ext.DepMsg", FieldDescriptorProto::LABEL_REPEATED, "mine");
+    REQUIRE(consumer);
+
+    const auto* fd = consumer->message_type(0)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->kind == FieldKind::REPEATED_STRUCT);
+    CHECK(m->nested_class == "::ext::DepMsgArrowRow");
+    CHECK(m->nested_header == "dep_repeated.arrow_row.pb.h");
+}
+
+TEST_CASE("MapField: same-file message still has empty nested_header") {
+    DescriptorPool pool;
+    auto* file = BuildNestedMsg(pool, "same_file_header", FieldDescriptorProto::LABEL_OPTIONAL);
+    REQUIRE(file);
+
+    // Outer's "inner" field references Inner from the same file.
+    const auto* fd = file->message_type(1)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->kind == FieldKind::STRUCT);
+    CHECK(m->nested_header.empty());
+}
+
+TEST_CASE("MapField: cross-file map with message value succeeds") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_map_val.proto", "ext"));
+
+    // Build a file with map<string, ext.DepMsg>
+    FileDescriptorProto fdp;
+    fdp.set_name("consumer_map_val.proto");
+    fdp.set_syntax("proto3");
+    fdp.set_package("mine");
+    fdp.add_dependency("dep_map_val.proto");
+
+    auto* msg = fdp.add_message_type();
+    msg->set_name("ConsumerMsg");
+
+    // Synthetic map entry
+    auto* entry = msg->add_nested_type();
+    entry->set_name("DepFieldEntry");
+    entry->mutable_options()->set_map_entry(true);
+    auto* key_f = entry->add_field();
+    key_f->set_name("key");
+    key_f->set_number(1);
+    key_f->set_type(FieldDescriptorProto::TYPE_STRING);
+    key_f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
+    auto* val_f = entry->add_field();
+    val_f->set_name("value");
+    val_f->set_number(2);
+    val_f->set_type(FieldDescriptorProto::TYPE_MESSAGE);
+    val_f->set_type_name(".ext.DepMsg");
+    val_f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
+
+    auto* map_field = msg->add_field();
+    map_field->set_name("dep_field");
+    map_field->set_number(1);
+    map_field->set_type(FieldDescriptorProto::TYPE_MESSAGE);
+    map_field->set_type_name(".mine.ConsumerMsg.DepFieldEntry");
+    map_field->set_label(FieldDescriptorProto::LABEL_REPEATED);
+
+    auto* consumer = pool.BuildFile(fdp);
+    REQUIRE(consumer);
+
+    const auto* fd = consumer->message_type(0)->field(0);
+    auto m = MapField(fd);
+    REQUIRE(m.has_value());
+    CHECK(m->kind == FieldKind::MAP);
+    CHECK(m->map_value_is_message);
+    CHECK(m->map_value_class == "::ext::DepMsgArrowRow");
+    CHECK(m->map_value_header == "dep_map_val.arrow_row.pb.h");
+}
+
+TEST_CASE("UnsupportedReason: cross-file reference is no longer unsupported") {
+    DescriptorPool pool;
+    REQUIRE(BuildDepFile(pool, "dep_reason.proto", "ext"));
+
+    auto* consumer = BuildConsumerFile(
+        pool, "consumer_reason.proto", "dep_reason.proto",
+        ".ext.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mine");
+    REQUIRE(consumer);
+
+    // MapField should now succeed for cross-file references.
+    const auto* fd = consumer->message_type(0)->field(0);
+    CHECK(MapField(fd).has_value());
+}

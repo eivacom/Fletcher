@@ -38,12 +38,14 @@ struct FieldMapping {
     ScalarTypeInfo element;
 
     // STRUCT / REPEATED_STRUCT kind — the C++ generated class for the message:
-    std::string nested_class;  // e.g. "AddressArrowRow"
+    std::string nested_class;   // C++ type reference (globally qualified when cross-file)
+    std::string nested_header;  // non-empty → #include this path (cross-file dependency)
 
     // MAP kind:
     ScalarTypeInfo map_key;
-    ScalarTypeInfo map_value;          // populated when value is a scalar type
-    std::string    map_value_class;    // populated when value is a message type
+    ScalarTypeInfo map_value;           // populated when value is a scalar type
+    std::string    map_value_class;     // C++ type reference (globally qualified when cross-file)
+    std::string    map_value_header;    // non-empty → #include this path (cross-file dep)
     bool           map_value_is_message = false;
 };
 
