@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "name": "conan-debug",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "v143",
+      "buildRoot": "${projectDir}\\build\\build",
+      "cmakeToolchain": "${projectDir}\\build\\build\\generators\\conan_toolchain.cmake",
+      "configurationType": "Debug",
+      "inheritEnvironments": [ "msvc_x64_x64" ]
+    },
+    {
+      "name": "conan-release",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "v143",
+      "buildRoot": "${projectDir}\\build\\build",
+      "cmakeToolchain": "${projectDir}\\build\\build\\generators\\conan_toolchain.cmake",
+      "configurationType": "Release",
+      "inheritEnvironments": [ "msvc_x64_x64" ]
+    }
+  ]
+}
