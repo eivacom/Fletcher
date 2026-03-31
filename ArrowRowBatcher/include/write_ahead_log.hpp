@@ -19,7 +19,7 @@ class LogHandle {
 
     // Insert the row encoded in buffer into the table represented by this handle.
     // Throws std::runtime_error on database errors.
-    virtual void Log(const ArrowRow& buffer) = 0;
+    virtual void Log(const EncodedRow& buffer) = 0;
 
     // Read all rows from the log and return them as an Arrow Table, ordered by
     // the key columns in the sequence they appear in key_columns().

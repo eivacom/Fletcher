@@ -1,5 +1,5 @@
 // Mirrors C++ RowCodec: encodes and decodes Arrow rows to/from the compact
-// binary ArrowRow wire format.
+// binary EncodedRow wire format.
 
 use std::os::raw::c_char;
 
@@ -32,7 +32,7 @@ impl RowCodec {
         }
     }
 
-    /// Encode a single-row `RecordBatch` into a compact `ArrowRow` byte buffer.
+    /// Encode a single-row `RecordBatch` into a compact `EncodedRow` byte buffer.
     pub fn encode_row(&self, batch: &RecordBatch) -> Result<Vec<u8>, Error> {
         let ipc_bytes = ipc::serialize_batch(batch)?;
         let mut out_data: *mut u8 = std::ptr::null_mut();
@@ -57,7 +57,7 @@ impl RowCodec {
         }
     }
 
-    /// Decode an `ArrowRow` byte buffer into a single-row `RecordBatch`.
+    /// Decode an `EncodedRow` byte buffer into a single-row `RecordBatch`.
     pub fn decode_row(&self, row: &[u8]) -> Result<RecordBatch, Error> {
         let mut out_ipc: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;

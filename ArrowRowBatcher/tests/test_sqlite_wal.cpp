@@ -15,7 +15,7 @@ auto TwoFieldSchema() {
 }
 
 // Encode a row with the given id and name (nullptr = null name).
-ArrowRow MakeRow(RowCodec& codec, int32_t id, const char* name) {
+EncodedRow MakeRow(RowCodec& codec, int32_t id, const char* name) {
     std::shared_ptr<arrow::Scalar> name_scalar =
         name ? std::make_shared<arrow::StringScalar>(name)
              : arrow::MakeNullScalar(arrow::utf8());

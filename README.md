@@ -6,7 +6,7 @@ A C++ library system for serialising structured data as compact, self-describing
 
 ### ArrowRowCodec
 
-The foundational layer. Defines the `ArrowRow` wire format (a schema-hashed binary buffer encoding one Arrow row) and the `RowCodec` class that encodes and decodes it. Also defines the abstract `PubSubProvider` interface that pub/sub generated code programs against.
+The foundational layer. Defines the `EncodedRow` wire format (a schema-hashed binary buffer encoding one Arrow row) and the `RowCodec` class that encodes and decodes it. An `ArrowRow` is a `std::vector<std::shared_ptr<arrow::Scalar>>` representing a single row as Arrow scalars. Also defines the abstract `PubSubProvider` interface that pub/sub generated code programs against.
 
 Used by every other subproject. See [ArrowRowCodec/README.md](ArrowRowCodec/README.md).
 
@@ -14,7 +14,7 @@ Used by every other subproject. See [ArrowRowCodec/README.md](ArrowRowCodec/READ
 
 ### ArrowRowBatcher
 
-Accumulates `ArrowRow` buffers and flushes them as an `arrow::Table` once a configured batch size is reached. Includes a write-ahead log (WAL) abstraction backed by SQLite so rows are durable during accumulation.
+Accumulates `EncodedRow` buffers and flushes them as an `arrow::Table` once a configured batch size is reached. Includes a write-ahead log (WAL) abstraction backed by SQLite so rows are durable during accumulation.
 
 Use this when you need to bridge a row-at-a-time source (sensor feed, event stream) with a batch-oriented sink (Parquet writer, columnar database). See [ArrowRowBatcher/README.md](ArrowRowBatcher/README.md).
 
@@ -22,7 +22,7 @@ Use this when you need to bridge a row-at-a-time source (sensor feed, event stre
 
 ### ArrowRowProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an `ArrowRow` wrapper class with typed setters and a `Build()` method. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
+A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
 
 Use this to avoid writing schema and serialisation boilerplate by hand when your data model is already described in Protocol Buffers. See [ArrowRowProtoPlugin/README.md](ArrowRowProtoPlugin/README.md).
 
@@ -38,7 +38,7 @@ Not a library — exists only to validate the plugin and codec together. See [Ar
 
 ### FastDDSPubSubProvider
 
-A concrete `PubSubProvider` implementation backed by [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/). Transports `ArrowRow` buffers over a DDS domain using RELIABLE reliability, KEEP_ALL history, and TRANSIENT_LOCAL durability to minimise message loss.
+A concrete `PubSubProvider` implementation backed by [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/). Transports `EncodedRow` buffers over a DDS domain using RELIABLE reliability, KEEP_ALL history, and TRANSIENT_LOCAL durability to minimise message loss.
 
 Use this as the transport layer when plugging generated `Publisher`/`Subscriber` classes into a DDS-based system. See [FastDDSPubSubProvider/README.md](FastDDSPubSubProvider/README.md).
 

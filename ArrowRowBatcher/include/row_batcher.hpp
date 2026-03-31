@@ -31,13 +31,13 @@ class RowBatcher {
     // reaches batch_size the flush callback is dispatched on a new thread and
     // the counter is reset; Append returns without waiting for the callback.
     // Throws std::invalid_argument on a malformed or schema-mismatched buffer.
-    void Append(const ArrowRow& buf);
+    void Append(const EncodedRow& buf);
 
     // Rows accumulated since construction or the last automatic flush.
     int64_t row_count() const noexcept { return row_count_; }
 
  protected:
-    virtual void DoAppend(const ArrowRow& buf) = 0;
+    virtual void DoAppend(const EncodedRow& buf) = 0;
     virtual std::shared_ptr<arrow::Table> DoFlush() = 0;
 
     // Called on the flush thread after the callback returns true.

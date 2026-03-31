@@ -18,7 +18,7 @@ RowBatcher::~RowBatcher() {
         f.wait();
 }
 
-void RowBatcher::Append(const ArrowRow& buf) {
+void RowBatcher::Append(const EncodedRow& buf) {
     std::shared_ptr<arrow::Table> table;
     {
         std::lock_guard<std::mutex> lock(append_mutex_);

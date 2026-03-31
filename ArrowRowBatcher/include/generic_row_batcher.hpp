@@ -18,7 +18,7 @@ class GenericRowBatcher : public RowBatcher {
                       FlushCallback                  on_flush);
 
  protected:
-    void DoAppend(const ArrowRow& buf) override;
+    void DoAppend(const EncodedRow& buf) override;
     std::shared_ptr<arrow::Table> DoFlush() override;
 
  private:

@@ -97,7 +97,7 @@ bool arrow_row_codec_encode_row(const ArrowRowCodec* codec,
         const auto* c = reinterpret_cast<const arrow_row::RowCodec*>(codec);
         auto batch = DeserializeBatch(ipc_data, ipc_len);
 
-        std::vector<std::shared_ptr<arrow::Scalar>> scalars;
+        arrow_row::ArrowRow scalars;
         scalars.reserve(batch->num_columns());
         for (int i = 0; i < batch->num_columns(); ++i)
             scalars.push_back(Unwrap(batch->column(i)->GetScalar(0)));
@@ -122,7 +122,7 @@ bool arrow_row_codec_decode_row(const ArrowRowCodec* codec,
                                  char**               out_error) {
     try {
         const auto* c = reinterpret_cast<const arrow_row::RowCodec*>(codec);
-        arrow_row::ArrowRow row(row_data, row_data + row_len);
+        arrow_row::EncodedRow row(row_data, row_data + row_len);
         auto scalars = c->DecodeRow(row);
 
         const arrow::Schema& schema = c->schema();

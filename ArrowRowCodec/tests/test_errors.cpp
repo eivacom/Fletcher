@@ -54,7 +54,7 @@ TEST_CASE("Empty buffer throws on decode") {
     auto schema = arrow::schema({arrow::field("x", arrow::int32())});
     arrow_row::RowCodec codec(schema);
 
-    arrow_row::ArrowRow empty;
+    arrow_row::EncodedRow empty;
     REQUIRE_THROWS(codec.DecodeRow(empty));
 }
 

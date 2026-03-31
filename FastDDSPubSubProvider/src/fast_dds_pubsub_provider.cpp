@@ -1,6 +1,6 @@
 // Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
 //
-// The custom TopicDataType (RawBytesTopicType) serialises ArrowRow —
+// The custom TopicDataType (RawBytesTopicType) serialises EncodedRow —
 // std::vector<uint8_t> — as a CDR-LE octet sequence: 4-byte encapsulation
 // header, 4-byte uint32 length, then raw payload bytes.
 
@@ -30,7 +30,7 @@ namespace arrow_row {
 namespace {
 
 // -----------------------------------------------------------------------
-// Raw-bytes DDS type — transports ArrowRow as an opaque octet sequence.
+// Raw-bytes DDS type — transports EncodedRow as an opaque octet sequence.
 // -----------------------------------------------------------------------
 
 struct RawBytes {
@@ -248,7 +248,7 @@ void FastDDSPubSubProvider::CreateTopic(
 
 void FastDDSPubSubProvider::Publish(
     const std::vector<std::string>& topic_segments,
-    const ArrowRow& row) {
+    const EncodedRow& row) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 

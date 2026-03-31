@@ -42,7 +42,7 @@ void arrow_row_codec_free(ArrowRowCodec* codec);
 
 // Encode one row.
 // ipc_data: Arrow IPC stream with exactly one record batch (one row).
-// out_data/out_len: encoded ArrowRow bytes, caller must free with
+// out_data/out_len: encoded row bytes, caller must free with
 //   arrow_row_free_bytes.
 bool arrow_row_codec_encode_row(const ArrowRowCodec* codec,
                                  const uint8_t*       ipc_data,

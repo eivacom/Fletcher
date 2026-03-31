@@ -368,7 +368,7 @@ SQLiteLogHandle::~SQLiteLogHandle() {
                  nullptr, nullptr, nullptr);
 }
 
-void SQLiteLogHandle::Log(const ArrowRow& buffer) {
+void SQLiteLogHandle::Log(const EncodedRow& buffer) {
     auto scalars = codec_.DecodeRow(buffer);
     const arrow::Schema& schema = codec_.schema();
 

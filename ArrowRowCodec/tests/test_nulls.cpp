@@ -121,7 +121,7 @@ TEST_CASE("Multi-field row with some null values") {
     });
     arrow_row::RowCodec codec(schema);
 
-    std::vector<std::shared_ptr<arrow::Scalar>> in = {
+    arrow_row::ArrowRow in = {
         std::make_shared<arrow::Int32Scalar>(7),
         arrow::MakeNullScalar(arrow::utf8()),
         std::make_shared<arrow::DoubleScalar>(9.5),

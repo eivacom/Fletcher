@@ -1,6 +1,6 @@
 # ArrowRowBatcher
 
-Accumulates `ArrowRow` buffers and flushes them as an Apache Arrow `Table` once a configured batch size is reached. Includes a write-ahead log (WAL) interface backed by SQLite for durability during accumulation.
+Accumulates `EncodedRow` buffers and flushes them as an Apache Arrow `Table` once a configured batch size is reached. Includes a write-ahead log (WAL) interface backed by SQLite for durability during accumulation.
 
 ## Components
 
@@ -54,7 +54,7 @@ class WriteAheadLog {
 };
 
 class LogHandle {
-    virtual void Log(const ArrowRow& buffer) = 0;
+    virtual void Log(const EncodedRow& buffer) = 0;
     virtual std::shared_ptr<arrow::Table> ToTable() const = 0;
 };
 ```

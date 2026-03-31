@@ -114,7 +114,7 @@ bool arrow_row_batcher_append(ArrowRowBatcher* batcher,
                                size_t           row_len,
                                char**           out_error) {
     try {
-        arrow_row::ArrowRow row(row_data, row_data + row_len);
+        arrow_row::EncodedRow row(row_data, row_data + row_len);
         reinterpret_cast<arrow_row::GenericRowBatcher*>(batcher)->Append(row);
         return true;
     } catch (const std::exception& e) {

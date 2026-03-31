@@ -19,7 +19,7 @@ auto SimpleSchema() {
                           arrow::field("name", arrow::utf8(),  true)});
 }
 
-ArrowRow MakeRow(RowCodec& codec, int32_t id, const char* name) {
+EncodedRow MakeRow(RowCodec& codec, int32_t id, const char* name) {
     return codec.EncodeRow({
         std::make_shared<arrow::Int32Scalar>(id),
         std::make_shared<arrow::StringScalar>(name)
@@ -291,6 +291,6 @@ TEST_CASE("GenericRowBatcher Append throws on truncated buffer") {
     SQLiteWAL wal(":memory:");
     GenericRowBatcher batcher(schema, wal, 10, [](auto) { return true; });
 
-    ArrowRow garbage{0x01, 0x02, 0x03};
+    EncodedRow garbage{0x01, 0x02, 0x03};
     CHECK_THROWS(batcher.Append(garbage));
 }

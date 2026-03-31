@@ -9,7 +9,8 @@
 
 namespace arrow_row {
 
-using ArrowRow = std::vector<uint8_t>;
+using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
+using EncodedRow = std::vector<uint8_t>;
 
 // Custom row buffer format (little-endian throughout):
 //
@@ -68,11 +69,9 @@ class RowCodec {
  public:
     explicit RowCodec(std::shared_ptr<arrow::Schema> schema);
 
-    ArrowRow EncodeRow(
-        const std::vector<std::shared_ptr<arrow::Scalar>>& values) const;
+    EncodedRow EncodeRow(const ArrowRow& values) const;
 
-    std::vector<std::shared_ptr<arrow::Scalar>> DecodeRow(
-        const ArrowRow& buf) const;
+    ArrowRow DecodeRow(const EncodedRow& buf) const;
 
     const arrow::Schema& schema()      const noexcept { return *schema_; }
     uint64_t             schema_hash() const noexcept { return schema_hash_; }

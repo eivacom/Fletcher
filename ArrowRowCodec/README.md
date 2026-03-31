@@ -1,18 +1,18 @@
 # ArrowRowCodec
 
-Core serialization library for the ArrowRowSerializer system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`ArrowRow`). Also defines the abstract `PubSubProvider` interface used by generated pub/sub code.
+Core serialization library for the ArrowRowSerializer system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`EncodedRow`). Also defines the abstract `PubSubProvider` interface used by generated pub/sub code.
 
 ## Contents
 
 | Header | Purpose |
 |---|---|
-| `include/row_codec.hpp` | `RowCodec` class, `ArrowRow` type alias, wire format documentation |
+| `include/row_codec.hpp` | `RowCodec` class, `ArrowRow` / `EncodedRow` type aliases, wire format documentation |
 | `include/pubsub_provider.hpp` | Abstract pub/sub transport interface |
 | `include/arrow_row_codec_capi.h` | Pure-C API for cross-language interop |
 
-## ArrowRow wire format
+## EncodedRow wire format
 
-An `ArrowRow` is a `std::vector<uint8_t>` with the following layout (all values little-endian):
+An `EncodedRow` is a `std::vector<uint8_t>` with the following layout (all values little-endian):
 
 ```
 [SCHEMA_HASH : 8 bytes]   FNV-1a 64-bit hash of the schema fingerprint
@@ -68,7 +68,7 @@ auto schema = arrow::schema({
 RowCodec codec(schema);
 
 // Encode
-ArrowRow row = codec.EncodeRow({
+EncodedRow row = codec.EncodeRow({
     std::make_shared<arrow::Int32Scalar>(42),
     std::make_shared<arrow::DoubleScalar>(3.14),
 });
@@ -95,11 +95,11 @@ class PubSubProvider {
 
     // Publish one encoded row.
     virtual void Publish(const std::vector<std::string>& topic_segments,
-                         const ArrowRow& row) = 0;
+                         const EncodedRow& row) = 0;
 
-    // Subscribe. Callback receives raw ArrowRow bytes; decoding is the
+    // Subscribe. Callback receives raw EncodedRow bytes; decoding is the
     // responsibility of the generated Subscriber class, not the provider.
-    using SubscribeCallback = std::function<void(const ArrowRow&)>;
+    using SubscribeCallback = std::function<void(const EncodedRow&)>;
     virtual void Subscribe(const std::vector<std::string>& topic_segments,
                            SubscribeCallback callback) = 0;
 

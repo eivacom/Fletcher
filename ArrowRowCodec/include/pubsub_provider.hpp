@@ -18,7 +18,7 @@ namespace arrow_row {
 // is free to join them with dots, slashes, or any separator that suits
 // the underlying transport.
 //
-// The binary payload exchanged over the wire is always a single ArrowRow
+// The binary payload exchanged over the wire is always a single EncodedRow
 // (i.e. RowCodec::EncodeRow output).
 class PubSubProvider {
  public:
@@ -32,12 +32,12 @@ class PubSubProvider {
 
     // Publish a single encoded row to the named topic.
     virtual void Publish(const std::vector<std::string>& topic_segments,
-                         const ArrowRow& row) = 0;
+                         const EncodedRow& row) = 0;
 
     // Subscribe to incoming rows on the named topic.
-    // The callback receives raw ArrowRow bytes — decoding is handled
+    // The callback receives raw EncodedRow bytes — decoding is handled
     // by the generated topic class, not the provider.
-    using SubscribeCallback = std::function<void(const ArrowRow&)>;
+    using SubscribeCallback = std::function<void(const EncodedRow&)>;
     virtual void Subscribe(const std::vector<std::string>& topic_segments,
                            SubscribeCallback callback) = 0;
 

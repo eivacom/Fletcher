@@ -10,7 +10,7 @@ GenericRowBatcher::GenericRowBatcher(std::shared_ptr<arrow::Schema> schema,
     , wal_(wal)
     , handle_(wal_.CreateLog(*schema_, {})) {}
 
-void GenericRowBatcher::DoAppend(const ArrowRow& buf) {
+void GenericRowBatcher::DoAppend(const EncodedRow& buf) {
     handle_->Log(buf);
 }
 

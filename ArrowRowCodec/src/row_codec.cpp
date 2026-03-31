@@ -573,8 +573,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(
 RowCodec::RowCodec(std::shared_ptr<arrow::Schema> schema)
     : schema_(std::move(schema)), schema_hash_(FingerprintHash(*schema_)) {}
 
-ArrowRow RowCodec::EncodeRow(
-    const std::vector<std::shared_ptr<arrow::Scalar>>& values) const {
+EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
 
     const int num_fields = schema_->num_fields();
 
@@ -611,8 +610,7 @@ ArrowRow RowCodec::EncodeRow(
     return buf;
 }
 
-std::vector<std::shared_ptr<arrow::Scalar>> RowCodec::DecodeRow(
-    const ArrowRow& buf) const {
+ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
 
     detail::Reader r{buf.data(), buf.size()};
 
@@ -626,7 +624,7 @@ std::vector<std::shared_ptr<arrow::Scalar>> RowCodec::DecodeRow(
             "DecodeRow: unsupported version " + std::to_string(version));
 
     const int num_fields = schema_->num_fields();
-    std::vector<std::shared_ptr<arrow::Scalar>> values;
+    ArrowRow values;
     values.reserve(num_fields);
 
     for (int i = 0; i < num_fields; ++i) {

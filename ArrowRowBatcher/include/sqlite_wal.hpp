@@ -24,7 +24,7 @@ class SQLiteLogHandle : public LogHandle {
     SQLiteLogHandle(SQLiteLogHandle&&)                 = delete;
     SQLiteLogHandle& operator=(SQLiteLogHandle&&)      = delete;
 
-    void Log(const ArrowRow& buffer) override;
+    void Log(const EncodedRow& buffer) override;
     std::shared_ptr<arrow::Table> ToTable() const override;
 
  private:

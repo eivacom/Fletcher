@@ -42,7 +42,7 @@ row.set_device_id(42)
    .set_value(3.14)
    .set_label("sensor-A");
 
-arrow_row::ArrowRow encoded = row.Build();
+arrow_row::EncodedRow encoded = row.Encode();
 
 // Decode back to scalars:
 arrow_row::RowCodec codec(SimpleArrowRow::Schema());

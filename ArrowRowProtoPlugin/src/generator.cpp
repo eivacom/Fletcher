@@ -422,7 +422,7 @@ std::string ScalarEntry(const FieldInfo& fi) {
 }
 
 // -----------------------------------------------------------------------
-// Field extraction for SetFromScalars_ / ArrowRow constructor
+// Field extraction for SetFromScalars_ / EncodedRow constructor
 // -----------------------------------------------------------------------
 
 void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
@@ -588,11 +588,11 @@ std::string GenerateMessageClass(const std::string& cls,
     // ---- class header ---------------------------------------------------
     o << "class " << cls << " {\n public:\n";
 
-    // Default constructor (explicit because we add the ArrowRow constructor)
+    // Default constructor (explicit because we add the EncodedRow constructor)
     o << "    " << cls << "() = default;\n\n";
 
-    // ArrowRow constructor
-    o << "    explicit " << cls << "(const arrow_row::ArrowRow& row) {\n"
+    // EncodedRow constructor
+    o << "    explicit " << cls << "(const arrow_row::EncodedRow& row) {\n"
       << "        SetFromScalars_(Codec().DecodeRow(row));\n"
       << "    }\n\n";
 
@@ -602,20 +602,20 @@ std::string GenerateMessageClass(const std::string& cls,
 
     // SetFromScalars_ — public so parent classes can call it for struct fields
     o << "    void SetFromScalars_(\n"
-      << "        const std::vector<std::shared_ptr<arrow::Scalar>>& scalars) {\n";
+      << "        const arrow_row::ArrowRow& scalars) {\n";
     for (size_t i = 0; i < fields.size(); ++i)
         EmitFieldExtraction(o, fields[i], i);
     o << "    }\n\n";
 
     // ToScalars() — public because parent-class struct helpers call it on nested types
-    o << "    std::vector<std::shared_ptr<arrow::Scalar>> ToScalars() const {\n"
+    o << "    arrow_row::ArrowRow ToScalars() const {\n"
       << "        return {\n";
     for (const auto& fi : fields)
         o << "            " << ScalarEntry(fi) << ",\n";
     o << "        };\n    }\n\n";
 
     // Encode()
-    o << "    arrow_row::ArrowRow Encode() const {\n"
+    o << "    arrow_row::EncodedRow Encode() const {\n"
       << "        return Codec().EncodeRow(ToScalars());\n"
       << "    }\n\n";
 
@@ -762,9 +762,9 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
       << "    }\n\n";
 
-    // Subscribe — delivers the raw ArrowRow to the caller
+    // Subscribe — delivers the raw EncodedRow to the caller
     o << "    void Subscribe(\n"
-      << "        std::function<void(const arrow_row::ArrowRow&)> cb)\n"
+      << "        std::function<void(const arrow_row::EncodedRow&)> cb)\n"
       << "    {\n"
       << "        provider_->Subscribe(TopicSegments(), std::move(cb));\n"
       << "    }\n\n";

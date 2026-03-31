@@ -1,12 +1,12 @@
 # FastDDSPubSubProvider
 
-Implements `arrow_row::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `ArrowRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
+Implements `arrow_row::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
 ## How it works
 
 A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
 
-The binary payload sent over the DDS bus is a raw `ArrowRow` (the output of `RowCodec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. A custom `TopicDataType` (`RawBytesTopicType`) handles the CDR serialisation without requiring IDL generation as a build step.
+The binary payload sent over the DDS bus is a raw `EncodedRow` (the output of `RowCodec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. A custom `TopicDataType` (`RawBytesTopicType`) handles the CDR serialisation without requiring IDL generation as a build step.
 
 ### Topic name
 
@@ -29,7 +29,7 @@ These three policies together implement "at-least-once" delivery within a single
 using namespace arrow_row;
 
 // Create a provider on DDS domain 0 (default).
-// max_payload_bytes controls how large a single ArrowRow may be.
+// max_payload_bytes controls how large a single EncodedRow may be.
 auto provider = std::make_shared<FastDDSPubSubProvider>(
     /*domain_id=*/0,
     /*max_payload_bytes=*/1024 * 1024);  // 1 MB
@@ -54,7 +54,7 @@ Or used directly through the `PubSubProvider` interface:
 ```cpp
 provider->CreateTopic({"my", "topic"}, schema);
 provider->Publish({"my", "topic"}, encoded_row);
-provider->Subscribe({"my", "topic"}, [](const ArrowRow& row) { ... });
+provider->Subscribe({"my", "topic"}, [](const EncodedRow& row) { ... });
 provider->Unsubscribe({"my", "topic"});
 ```
 
