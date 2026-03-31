@@ -12,8 +12,8 @@ TEST_CASE("Decoding with a mismatched schema throws") {
     auto schema_a = arrow::schema({arrow::field("x", arrow::int32())});
     auto schema_b = arrow::schema({arrow::field("x", arrow::utf8())});  // different type
 
-    arrow_row::RowCodec codec_a(schema_a);
-    arrow_row::RowCodec codec_b(schema_b);
+    fletcher::RowCodec codec_a(schema_a);
+    fletcher::RowCodec codec_b(schema_b);
 
     auto row = codec_a.EncodeRow({std::make_shared<arrow::Int32Scalar>(42)});
     REQUIRE_THROWS_AS(codec_b.DecodeRow(row), std::invalid_argument);
@@ -24,8 +24,8 @@ TEST_CASE("Decoding with a schema of different field count throws") {
     auto schema_b = arrow::schema({arrow::field("x", arrow::int32()),
                                     arrow::field("y", arrow::int32())});
 
-    arrow_row::RowCodec codec_a(schema_a);
-    arrow_row::RowCodec codec_b(schema_b);
+    fletcher::RowCodec codec_a(schema_a);
+    fletcher::RowCodec codec_b(schema_b);
 
     auto row = codec_a.EncodeRow({std::make_shared<arrow::Int32Scalar>(1)});
     REQUIRE_THROWS_AS(codec_b.DecodeRow(row), std::invalid_argument);
@@ -38,7 +38,7 @@ TEST_CASE("Decoding with a schema of different field count throws") {
 TEST_CASE("Truncated buffer throws on decode") {
     auto schema = arrow::schema({arrow::field("x", arrow::int32()),
                                   arrow::field("y", arrow::utf8())});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
     auto row = codec.EncodeRow({
         std::make_shared<arrow::Int32Scalar>(1),
@@ -52,9 +52,9 @@ TEST_CASE("Truncated buffer throws on decode") {
 
 TEST_CASE("Empty buffer throws on decode") {
     auto schema = arrow::schema({arrow::field("x", arrow::int32())});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
-    arrow_row::EncodedRow empty;
+    fletcher::EncodedRow empty;
     REQUIRE_THROWS(codec.DecodeRow(empty));
 }
 
@@ -64,7 +64,7 @@ TEST_CASE("Empty buffer throws on decode") {
 
 TEST_CASE("RowCodec embeds the schema hash in every encoded row") {
     auto schema = arrow::schema({arrow::field("v", arrow::int32())});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
     auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(0)});
 
@@ -77,7 +77,7 @@ TEST_CASE("RowCodec embeds the schema hash in every encoded row") {
 
 TEST_CASE("Version byte is 0x01") {
     auto schema = arrow::schema({arrow::field("v", arrow::int32())});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
     auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(0)});
 
@@ -93,7 +93,7 @@ TEST_CASE("Version byte is 0x01") {
 TEST_CASE("Encoding a DICTIONARY scalar throws std::invalid_argument") {
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
     auto schema    = arrow::schema({arrow::field("d", dict_type)});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
     // Build a minimal dictionary array and extract a DictionaryScalar from it.
     arrow::StringBuilder str_builder;

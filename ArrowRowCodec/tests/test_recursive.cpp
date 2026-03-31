@@ -15,7 +15,7 @@ std::shared_ptr<arrow::Scalar> Roundtrip(
     const std::shared_ptr<arrow::Scalar>&   in)
 {
     auto schema = arrow::schema({arrow::field("v", type, /*nullable=*/true)});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
     auto row     = codec.EncodeRow({in});
     auto decoded = codec.DecodeRow(row);
     REQUIRE(decoded.size() == 1);

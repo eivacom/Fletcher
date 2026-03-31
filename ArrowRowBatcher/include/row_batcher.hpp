@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_INCLUDE_ROW_BATCHER_HPP_
-#define ARROW_ROW_INCLUDE_ROW_BATCHER_HPP_
+#ifndef FLETCHER_INCLUDE_ROW_BATCHER_HPP_
+#define FLETCHER_INCLUDE_ROW_BATCHER_HPP_
 
 #include "row_codec.hpp"
 
@@ -12,7 +12,7 @@
 #include <mutex>
 #include <vector>
 
-namespace arrow_row {
+namespace fletcher {
 
 class RowBatcher {
  public:
@@ -61,6 +61,6 @@ class RowBatcher {
     std::vector<std::future<void>> pending_flushes_;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_ROW_BATCHER_HPP_
+#endif  // FLETCHER_INCLUDE_ROW_BATCHER_HPP_

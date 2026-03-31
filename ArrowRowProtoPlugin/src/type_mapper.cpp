@@ -2,7 +2,7 @@
 
 #include <set>
 
-namespace arrow_row_plugin {
+namespace fletcher_plugin {
 
 namespace {
 
@@ -505,4 +505,4 @@ std::string ClassName(const google::protobuf::Descriptor* msg) {
     return name + "ArrowRow";
 }
 
-}  // namespace arrow_row_plugin
+}  // namespace fletcher_plugin

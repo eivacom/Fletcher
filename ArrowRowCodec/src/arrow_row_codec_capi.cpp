@@ -76,7 +76,7 @@ ArrowRowCodec* arrow_row_codec_new(const uint8_t* schema_ipc,
     try {
         auto schema = DeserializeSchema(schema_ipc, schema_ipc_len);
         return reinterpret_cast<ArrowRowCodec*>(
-            new arrow_row::RowCodec(std::move(schema)));
+            new fletcher::RowCodec(std::move(schema)));
     } catch (const std::exception& e) {
         SetError(out_error, e.what());
         return nullptr;
@@ -84,7 +84,7 @@ ArrowRowCodec* arrow_row_codec_new(const uint8_t* schema_ipc,
 }
 
 void arrow_row_codec_free(ArrowRowCodec* codec) {
-    delete reinterpret_cast<arrow_row::RowCodec*>(codec);
+    delete reinterpret_cast<fletcher::RowCodec*>(codec);
 }
 
 bool arrow_row_codec_encode_row(const ArrowRowCodec* codec,
@@ -94,10 +94,10 @@ bool arrow_row_codec_encode_row(const ArrowRowCodec* codec,
                                  size_t*              out_len,
                                  char**               out_error) {
     try {
-        const auto* c = reinterpret_cast<const arrow_row::RowCodec*>(codec);
+        const auto* c = reinterpret_cast<const fletcher::RowCodec*>(codec);
         auto batch = DeserializeBatch(ipc_data, ipc_len);
 
-        arrow_row::ArrowRow scalars;
+        fletcher::ArrowRow scalars;
         scalars.reserve(batch->num_columns());
         for (int i = 0; i < batch->num_columns(); ++i)
             scalars.push_back(Unwrap(batch->column(i)->GetScalar(0)));
@@ -121,8 +121,8 @@ bool arrow_row_codec_decode_row(const ArrowRowCodec* codec,
                                  size_t*              out_ipc_len,
                                  char**               out_error) {
     try {
-        const auto* c = reinterpret_cast<const arrow_row::RowCodec*>(codec);
-        arrow_row::EncodedRow row(row_data, row_data + row_len);
+        const auto* c = reinterpret_cast<const fletcher::RowCodec*>(codec);
+        fletcher::EncodedRow row(row_data, row_data + row_len);
         auto scalars = c->DecodeRow(row);
 
         const arrow::Schema& schema = c->schema();

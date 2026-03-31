@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_SRC_SCALAR_CODEC_HPP_
-#define ARROW_ROW_SRC_SCALAR_CODEC_HPP_
+#ifndef FLETCHER_SRC_SCALAR_CODEC_HPP_
+#define FLETCHER_SRC_SCALAR_CODEC_HPP_
 
 // Internal header — not part of the public API.
 // Exposes scalar-level encode/decode so that translation units other than
@@ -14,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-namespace arrow_row {
+namespace fletcher {
 namespace detail {
 
 // Append the binary encoding of scalar to buf.
@@ -29,6 +29,6 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(
     const std::shared_ptr<arrow::DataType>& type);
 
 }  // namespace detail
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_SRC_SCALAR_CODEC_HPP_
+#endif  // FLETCHER_SRC_SCALAR_CODEC_HPP_

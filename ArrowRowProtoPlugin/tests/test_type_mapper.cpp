@@ -5,7 +5,7 @@
 
 #include "type_mapper.hpp"
 
-using namespace arrow_row_plugin;
+using namespace fletcher_plugin;
 using namespace google::protobuf;
 
 // ===========================================================================

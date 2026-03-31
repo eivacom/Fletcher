@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
-namespace arrow_row {
+namespace fletcher {
 
 RowBatcher::RowBatcher(std::shared_ptr<arrow::Schema> schema,
                        int64_t                        batch_size,
@@ -52,4 +52,4 @@ void RowBatcher::DispatchFlush(std::shared_ptr<arrow::Table> table) {
     pending_flushes_.push_back(std::move(future));
 }
 
-}  // namespace arrow_row
+}  // namespace fletcher

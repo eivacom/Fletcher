@@ -15,10 +15,10 @@
 #include "complex.arrow_row.pb.h"
 
 // Helper: decode an encoded row using the given schema.
-arrow_row::ArrowRow RoundTrip(
-    const arrow_row::EncodedRow& encoded,
+fletcher::ArrowRow RoundTrip(
+    const fletcher::EncodedRow& encoded,
     std::shared_ptr<arrow::Schema> schema) {
-    arrow_row::RowCodec codec(std::move(schema));
+    fletcher::RowCodec codec(std::move(schema));
     return codec.DecodeRow(encoded);
 }
 
@@ -442,7 +442,7 @@ TEST_CASE("OrderItem: optional note null then valid") {
 namespace {
 
 // Minimal mock that records calls and delivers published rows to subscribers.
-class MockPubSubProvider : public arrow_row::PubSubProvider {
+class MockPubSubProvider : public fletcher::PubSubProvider {
  public:
     struct CreatedTopic {
         std::vector<std::string> segments;
@@ -450,7 +450,7 @@ class MockPubSubProvider : public arrow_row::PubSubProvider {
     };
 
     std::vector<CreatedTopic> created_topics;
-    std::vector<std::pair<std::vector<std::string>, arrow_row::EncodedRow>> published;
+    std::vector<std::pair<std::vector<std::string>, fletcher::EncodedRow>> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
     void CreateTopic(const std::vector<std::string>& segments,
@@ -459,7 +459,7 @@ class MockPubSubProvider : public arrow_row::PubSubProvider {
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const arrow_row::EncodedRow& row) override {
+                 const fletcher::EncodedRow& row) override {
         published.push_back({segments, row});
         auto it = subscribers.find(segments);
         if (it != subscribers.end())
@@ -536,8 +536,8 @@ TEST_CASE("Subscriber: receives EncodedRow from published rows") {
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    arrow_row::EncodedRow received;
-    sub.Subscribe([&](const arrow_row::EncodedRow& raw) {
+    fletcher::EncodedRow received;
+    sub.Subscribe([&](const fletcher::EncodedRow& raw) {
         received = raw;
     });
 
@@ -567,7 +567,7 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](const arrow_row::EncodedRow&) { ++count; });
+    sub.Subscribe([&](const fletcher::EncodedRow&) { ++count; });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");

@@ -5,7 +5,7 @@
 #include "row_codec.hpp"
 #include "sqlite_wal.hpp"
 
-using namespace arrow_row;
+using namespace fletcher;
 
 namespace {
 

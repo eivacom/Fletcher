@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace arrow_row {
+namespace fletcher {
 namespace {
 
 const char* ArrowTypeToSQLite(const arrow::DataType& type) {
@@ -511,4 +511,4 @@ std::unique_ptr<LogHandle> SQLiteWAL::CreateLog(const arrow::Schema&    schema,
         insert_stmt);
 }
 
-}  // namespace arrow_row
+}  // namespace fletcher

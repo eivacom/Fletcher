@@ -1,6 +1,6 @@
 #include "generic_row_batcher.hpp"
 
-namespace arrow_row {
+namespace fletcher {
 
 GenericRowBatcher::GenericRowBatcher(std::shared_ptr<arrow::Schema> schema,
                                      WriteAheadLog&                 wal,
@@ -20,4 +20,4 @@ std::shared_ptr<arrow::Table> GenericRowBatcher::DoFlush() {
     return table;
 }
 
-}  // namespace arrow_row
+}  // namespace fletcher

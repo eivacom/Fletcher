@@ -1,12 +1,12 @@
-#ifndef ARROW_ROW_INCLUDE_GENERIC_ROW_BATCHER_HPP_
-#define ARROW_ROW_INCLUDE_GENERIC_ROW_BATCHER_HPP_
+#ifndef FLETCHER_INCLUDE_GENERIC_ROW_BATCHER_HPP_
+#define FLETCHER_INCLUDE_GENERIC_ROW_BATCHER_HPP_
 
 #include "row_batcher.hpp"
 #include "write_ahead_log.hpp"
 
 #include <memory>
 
-namespace arrow_row {
+namespace fletcher {
 
 // Concrete RowBatcher that buffers rows through a WriteAheadLog and delivers
 // them as an Arrow Table to the flush callback once batch_size rows accumulate.
@@ -26,6 +26,6 @@ class GenericRowBatcher : public RowBatcher {
     std::unique_ptr<LogHandle> handle_;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_GENERIC_ROW_BATCHER_HPP_
+#endif  // FLETCHER_INCLUDE_GENERIC_ROW_BATCHER_HPP_

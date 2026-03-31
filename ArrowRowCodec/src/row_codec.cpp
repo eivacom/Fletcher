@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace arrow_row {
+namespace fletcher {
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -651,4 +651,4 @@ uint64_t FingerprintHash(const arrow::Schema& schema) {
     return Fnv1a64(fp);
 }
 
-}  // namespace arrow_row
+}  // namespace fletcher

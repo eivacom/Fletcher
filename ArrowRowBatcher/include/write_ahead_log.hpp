@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_INCLUDE_WRITE_AHEAD_LOG_HPP_
-#define ARROW_ROW_INCLUDE_WRITE_AHEAD_LOG_HPP_
+#ifndef FLETCHER_INCLUDE_WRITE_AHEAD_LOG_HPP_
+#define FLETCHER_INCLUDE_WRITE_AHEAD_LOG_HPP_
 
 #include "row_codec.hpp"
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-namespace arrow_row {
+namespace fletcher {
 
 class LogHandle {
  public:
@@ -50,6 +50,6 @@ class WriteAheadLog {
                                                   const std::vector<int>& key_columns) = 0;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_WRITE_AHEAD_LOG_HPP_
+#endif  // FLETCHER_INCLUDE_WRITE_AHEAD_LOG_HPP_

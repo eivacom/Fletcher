@@ -1,6 +1,6 @@
 # FastDDSPubSubProvider
 
-Implements `arrow_row::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
+Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
 ## How it works
 
@@ -26,7 +26,7 @@ These three policies together implement "at-least-once" delivery within a single
 
 ```cpp
 #include <fast_dds_pubsub_provider.hpp>
-using namespace arrow_row;
+using namespace fletcher;
 
 // Create a provider on DDS domain 0 (default).
 // max_payload_bytes controls how large a single EncodedRow may be.

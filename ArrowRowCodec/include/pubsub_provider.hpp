@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_INCLUDE_PUBSUB_PROVIDER_HPP_
-#define ARROW_ROW_INCLUDE_PUBSUB_PROVIDER_HPP_
+#ifndef FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
+#define FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
 
 #include <arrow/api.h>
 #include <row_codec.hpp>
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace arrow_row {
+namespace fletcher {
 
 // Abstract transport layer for pub/sub over Arrow-encoded rows.
 //
@@ -45,6 +45,6 @@ class PubSubProvider {
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_PUBSUB_PROVIDER_HPP_
+#endif  // FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace arrow_row_plugin {
+namespace fletcher_plugin {
 
 class ArrowRowGenerator : public google::protobuf::compiler::CodeGenerator {
  public:
@@ -20,4 +20,4 @@ class ArrowRowGenerator : public google::protobuf::compiler::CodeGenerator {
     }
 };
 
-}  // namespace arrow_row_plugin
+}  // namespace fletcher_plugin

@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-namespace arrow_row_plugin {
+namespace fletcher_plugin {
 
 // Describes a scalar (or scalar-like) Arrow type: enough information for the
 // code generator to emit setters, builders, and scalar constructors.
@@ -69,4 +69,4 @@ int NestingDepth(const google::protobuf::Descriptor* msg);
 // Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
 std::string ClassName(const google::protobuf::Descriptor* msg);
 
-}  // namespace arrow_row_plugin
+}  // namespace fletcher_plugin

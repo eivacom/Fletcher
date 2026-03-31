@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
-#define ARROW_ROW_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
+#ifndef FLETCHER_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
+#define FLETCHER_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
 
 // Pure-C public API for the ArrowRowCodec library.
 //
@@ -65,4 +65,4 @@ bool arrow_row_codec_decode_row(const ArrowRowCodec* codec,
 }
 #endif
 
-#endif  // ARROW_ROW_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
+#endif  // FLETCHER_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_

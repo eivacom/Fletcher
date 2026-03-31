@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace arrow_row_plugin {
+namespace fletcher_plugin {
 
 namespace {
 
@@ -592,7 +592,7 @@ std::string GenerateMessageClass(const std::string& cls,
     o << "    " << cls << "() = default;\n\n";
 
     // EncodedRow constructor
-    o << "    explicit " << cls << "(const arrow_row::EncodedRow& row) {\n"
+    o << "    explicit " << cls << "(const fletcher::EncodedRow& row) {\n"
       << "        SetFromScalars_(Codec().DecodeRow(row));\n"
       << "    }\n\n";
 
@@ -602,20 +602,20 @@ std::string GenerateMessageClass(const std::string& cls,
 
     // SetFromScalars_ — public so parent classes can call it for struct fields
     o << "    void SetFromScalars_(\n"
-      << "        const arrow_row::ArrowRow& scalars) {\n";
+      << "        const fletcher::ArrowRow& scalars) {\n";
     for (size_t i = 0; i < fields.size(); ++i)
         EmitFieldExtraction(o, fields[i], i);
     o << "    }\n\n";
 
     // ToScalars() — public because parent-class struct helpers call it on nested types
-    o << "    arrow_row::ArrowRow ToScalars() const {\n"
+    o << "    fletcher::ArrowRow ToScalars() const {\n"
       << "        return {\n";
     for (const auto& fi : fields)
         o << "            " << ScalarEntry(fi) << ",\n";
     o << "        };\n    }\n\n";
 
     // Encode()
-    o << "    arrow_row::EncodedRow Encode() const {\n"
+    o << "    fletcher::EncodedRow Encode() const {\n"
       << "        return Codec().EncodeRow(ToScalars());\n"
       << "    }\n\n";
 
@@ -623,8 +623,8 @@ std::string GenerateMessageClass(const std::string& cls,
     o << " private:\n";
 
     // Codec singleton
-    o << "    static arrow_row::RowCodec& Codec() {\n"
-      << "        static arrow_row::RowCodec kCodec(" << cls << "Schema());\n"
+    o << "    static fletcher::RowCodec& Codec() {\n"
+      << "        static fletcher::RowCodec kCodec(" << cls << "Schema());\n"
       << "        return kCodec;\n"
       << "    }\n\n";
 
@@ -718,7 +718,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
 
     // Constructor
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<arrow_row::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
       << "        : provider_(std::move(provider))\n"
       << "    {\n"
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
@@ -731,7 +731,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<arrow_row::PubSubProvider> provider_;\n"
+      << "    std::shared_ptr<fletcher::PubSubProvider> provider_;\n"
       << "};\n";
 
     return o.str();
@@ -756,7 +756,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Constructor
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<arrow_row::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
       << "        : provider_(std::move(provider))\n"
       << "    {\n"
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
@@ -764,7 +764,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Subscribe — delivers the raw EncodedRow to the caller
     o << "    void Subscribe(\n"
-      << "        std::function<void(const arrow_row::EncodedRow&)> cb)\n"
+      << "        std::function<void(const fletcher::EncodedRow&)> cb)\n"
       << "    {\n"
       << "        provider_->Subscribe(TopicSegments(), std::move(cb));\n"
       << "    }\n\n";
@@ -776,7 +776,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<arrow_row::PubSubProvider> provider_;\n"
+      << "    std::shared_ptr<fletcher::PubSubProvider> provider_;\n"
       << "};\n";
 
     return o.str();
@@ -915,4 +915,4 @@ bool ArrowRowGenerator::Generate(
     return WriteToStream(stream.get(), content, error);
 }
 
-}  // namespace arrow_row_plugin
+}  // namespace fletcher_plugin

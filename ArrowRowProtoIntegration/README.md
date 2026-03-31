@@ -42,10 +42,10 @@ row.set_device_id(42)
    .set_value(3.14)
    .set_label("sensor-A");
 
-arrow_row::EncodedRow encoded = row.Encode();
+fletcher::EncodedRow encoded = row.Encode();
 
 // Decode back to scalars:
-arrow_row::RowCodec codec(SimpleArrowRow::Schema());
+fletcher::RowCodec codec(SimpleArrowRow::Schema());
 auto scalars = codec.DecodeRow(encoded);
 ```
 
@@ -55,7 +55,7 @@ auto scalars = codec.DecodeRow(encoded);
 #include "pubsub.arrow_row.pb.h"   // generated from pubsub.proto
 #include <fast_dds_pubsub_provider.hpp>   // or any other PubSubProvider
 
-auto provider = std::make_shared<arrow_row::FastDDSPubSubProvider>();
+auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>();
 
 // Publisher
 TelemetryFeed_TelemetryStreamPublisher pub(provider);

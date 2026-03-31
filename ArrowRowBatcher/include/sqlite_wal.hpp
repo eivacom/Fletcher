@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_
-#define ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_
+#ifndef FLETCHER_INCLUDE_SQLITE_WAL_HPP_
+#define FLETCHER_INCLUDE_SQLITE_WAL_HPP_
 
 #include "row_codec.hpp"
 #include "write_ahead_log.hpp"
@@ -9,7 +9,7 @@
 struct sqlite3;       // forward declaration - keeps <sqlite3.h> out of the public header
 struct sqlite3_stmt;  // forward declaration
 
-namespace arrow_row {
+namespace fletcher {
 
 class SQLiteLogHandle : public LogHandle {
  public:
@@ -56,6 +56,6 @@ class SQLiteWAL : public WriteAheadLog {
     unsigned int log_counter_{0};
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_SQLITE_WAL_HPP_
+#endif  // FLETCHER_INCLUDE_SQLITE_WAL_HPP_

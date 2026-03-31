@@ -239,7 +239,7 @@ class FooArrowRow {
     // ... one setter per supported field
 
     // Encode the current field values into an EncodedRow buffer.
-    arrow_row::EncodedRow Encode() const;
+    fletcher::EncodedRow Encode() const;
 };
 ```
 
@@ -249,7 +249,7 @@ For each eligible service RPC `Bar` on service `Svc`, the plugin generates:
 // Publisher: encodes and publishes rows on CreateTopic / Publish.
 class Svc_BarPublisher {
  public:
-    Svc_BarPublisher(std::shared_ptr<arrow_row::PubSubProvider> provider);
+    Svc_BarPublisher(std::shared_ptr<fletcher::PubSubProvider> provider);
     void Publish(const FooArrowRow& row);
 };
 
@@ -257,7 +257,7 @@ class Svc_BarPublisher {
 class Svc_BarSubscriber {
  public:
     using Callback = std::function<void(/*one arg per schema field*/)>;
-    Svc_BarSubscriber(std::shared_ptr<arrow_row::PubSubProvider> provider,
+    Svc_BarSubscriber(std::shared_ptr<fletcher::PubSubProvider> provider,
                       Callback callback);
     ~Svc_BarSubscriber();  // calls Unsubscribe on destruction
 };

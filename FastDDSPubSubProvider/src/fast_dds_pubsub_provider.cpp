@@ -26,7 +26,7 @@
 
 using namespace eprosima::fastdds::dds;
 
-namespace arrow_row {
+namespace fletcher {
 namespace {
 
 // -----------------------------------------------------------------------
@@ -321,4 +321,4 @@ void FastDDSPubSubProvider::Unsubscribe(
     }
 }
 
-}  // namespace arrow_row
+}  // namespace fletcher

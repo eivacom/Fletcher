@@ -58,7 +58,7 @@ The schema hash allows a receiver to detect schema mismatches before attempting 
 
 ```cpp
 #include <row_codec.hpp>
-using namespace arrow_row;
+using namespace fletcher;
 
 auto schema = arrow::schema({
     arrow::field("device_id", arrow::int32()),

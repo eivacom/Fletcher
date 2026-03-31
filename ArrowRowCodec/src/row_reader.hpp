@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_SRC_ROW_READER_HPP_
-#define ARROW_ROW_SRC_ROW_READER_HPP_
+#ifndef FLETCHER_SRC_ROW_READER_HPP_
+#define FLETCHER_SRC_ROW_READER_HPP_
 
 // Internal implementation detail shared between row_codec.cpp and
 // row_batcher.cpp.  Not part of the public API.
@@ -9,7 +9,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace arrow_row {
+namespace fletcher {
 namespace detail {
 
 struct Reader {
@@ -20,7 +20,7 @@ struct Reader {
     template <typename T>
     T Read() {
         if (pos + sizeof(T) > size)
-            throw std::invalid_argument("arrow_row: buffer underrun");
+            throw std::invalid_argument("fletcher: buffer underrun");
         T value;
         std::memcpy(&value, data + pos, sizeof(T));
         pos += sizeof(T);
@@ -29,7 +29,7 @@ struct Reader {
 
     const uint8_t* ReadBytes(size_t n) {
         if (pos + n > size)
-            throw std::invalid_argument("arrow_row: buffer underrun");
+            throw std::invalid_argument("fletcher: buffer underrun");
         const uint8_t* ptr = data + pos;
         pos += n;
         return ptr;
@@ -37,6 +37,6 @@ struct Reader {
 };
 
 }  // namespace detail
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_SRC_ROW_READER_HPP_
+#endif  // FLETCHER_SRC_ROW_READER_HPP_

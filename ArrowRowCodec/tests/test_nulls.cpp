@@ -14,7 +14,7 @@ std::shared_ptr<arrow::Scalar> RoundtripNull(
     const std::shared_ptr<arrow::DataType>& type)
 {
     auto schema = arrow::schema({arrow::field("v", type, /*nullable=*/true)});
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
     auto null    = arrow::MakeNullScalar(type);
     auto row     = codec.EncodeRow({null});
     auto decoded = codec.DecodeRow(row);
@@ -119,9 +119,9 @@ TEST_CASE("Multi-field row with some null values") {
         arrow::field("name",  arrow::utf8(),   true),
         arrow::field("score", arrow::float64(), true),
     });
-    arrow_row::RowCodec codec(schema);
+    fletcher::RowCodec codec(schema);
 
-    arrow_row::ArrowRow in = {
+    fletcher::ArrowRow in = {
         std::make_shared<arrow::Int32Scalar>(7),
         arrow::MakeNullScalar(arrow::utf8()),
         std::make_shared<arrow::DoubleScalar>(9.5),

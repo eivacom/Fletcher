@@ -68,7 +68,7 @@ extern "C" {
 ArrowRowSQLiteWAL* arrow_row_sqlite_wal_new(const char* path, char** out_error) {
     try {
         return reinterpret_cast<ArrowRowSQLiteWAL*>(
-            new arrow_row::SQLiteWAL(path));
+            new fletcher::SQLiteWAL(path));
     } catch (const std::exception& e) {
         SetError(out_error, e.what());
         return nullptr;
@@ -76,7 +76,7 @@ ArrowRowSQLiteWAL* arrow_row_sqlite_wal_new(const char* path, char** out_error) 
 }
 
 void arrow_row_sqlite_wal_free(ArrowRowSQLiteWAL* wal) {
-    delete reinterpret_cast<arrow_row::SQLiteWAL*>(wal);
+    delete reinterpret_cast<fletcher::SQLiteWAL*>(wal);
 }
 
 ArrowRowBatcher* arrow_row_batcher_new(ArrowRowSQLiteWAL* wal,
@@ -88,16 +88,16 @@ ArrowRowBatcher* arrow_row_batcher_new(ArrowRowSQLiteWAL* wal,
                                         char**             out_error) {
     try {
         auto schema   = DeserializeSchema(schema_ipc, schema_ipc_len);
-        auto* wal_obj = reinterpret_cast<arrow_row::SQLiteWAL*>(wal);
+        auto* wal_obj = reinterpret_cast<fletcher::SQLiteWAL*>(wal);
 
-        arrow_row::RowBatcher::FlushCallback cpp_callback =
+        fletcher::RowBatcher::FlushCallback cpp_callback =
             [on_flush, userdata](std::shared_ptr<arrow::Table> table) -> bool {
                 auto ipc = SerializeTable(*table);
                 return on_flush(ipc.data(), ipc.size(), userdata);
             };
 
         return reinterpret_cast<ArrowRowBatcher*>(
-            new arrow_row::GenericRowBatcher(
+            new fletcher::GenericRowBatcher(
                 std::move(schema), *wal_obj, batch_size, std::move(cpp_callback)));
     } catch (const std::exception& e) {
         SetError(out_error, e.what());
@@ -106,7 +106,7 @@ ArrowRowBatcher* arrow_row_batcher_new(ArrowRowSQLiteWAL* wal,
 }
 
 void arrow_row_batcher_free(ArrowRowBatcher* batcher) {
-    delete reinterpret_cast<arrow_row::GenericRowBatcher*>(batcher);
+    delete reinterpret_cast<fletcher::GenericRowBatcher*>(batcher);
 }
 
 bool arrow_row_batcher_append(ArrowRowBatcher* batcher,
@@ -114,8 +114,8 @@ bool arrow_row_batcher_append(ArrowRowBatcher* batcher,
                                size_t           row_len,
                                char**           out_error) {
     try {
-        arrow_row::EncodedRow row(row_data, row_data + row_len);
-        reinterpret_cast<arrow_row::GenericRowBatcher*>(batcher)->Append(row);
+        fletcher::EncodedRow row(row_data, row_data + row_len);
+        reinterpret_cast<fletcher::GenericRowBatcher*>(batcher)->Append(row);
         return true;
     } catch (const std::exception& e) {
         SetError(out_error, e.what());
@@ -124,7 +124,7 @@ bool arrow_row_batcher_append(ArrowRowBatcher* batcher,
 }
 
 int64_t arrow_row_batcher_row_count(const ArrowRowBatcher* batcher) {
-    return reinterpret_cast<const arrow_row::GenericRowBatcher*>(batcher)->row_count();
+    return reinterpret_cast<const fletcher::GenericRowBatcher*>(batcher)->row_count();
 }
 
 }  // extern "C"

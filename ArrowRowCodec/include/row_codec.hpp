@@ -1,5 +1,5 @@
-#ifndef ARROW_ROW_INCLUDE_ROW_CODEC_HPP_
-#define ARROW_ROW_INCLUDE_ROW_CODEC_HPP_
+#ifndef FLETCHER_INCLUDE_ROW_CODEC_HPP_
+#define FLETCHER_INCLUDE_ROW_CODEC_HPP_
 
 #include <arrow/api.h>
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace arrow_row {
+namespace fletcher {
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
 using EncodedRow = std::vector<uint8_t>;
@@ -81,6 +81,6 @@ class RowCodec {
     uint64_t                       schema_hash_;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
-#endif  // ARROW_ROW_INCLUDE_ROW_CODEC_HPP_
+#endif  // FLETCHER_INCLUDE_ROW_CODEC_HPP_

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace arrow_row {
+namespace fletcher {
 
 /// PubSubProvider backed by eProsima Fast DDS.
 ///
@@ -41,6 +41,6 @@ class FastDDSPubSubProvider : public PubSubProvider {
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace arrow_row
+}  // namespace fletcher
 
 #endif  // FAST_DDS_PUBSUB_PROVIDER_HPP_

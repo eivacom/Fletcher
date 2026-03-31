@@ -10,7 +10,7 @@
 #include "generic_row_batcher.hpp"
 #include "sqlite_wal.hpp"
 
-using namespace arrow_row;
+using namespace fletcher;
 
 namespace {
 

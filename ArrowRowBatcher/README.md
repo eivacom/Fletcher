@@ -18,7 +18,7 @@ Accumulates `EncodedRow` buffers and flushes them as an Apache Arrow `Table` onc
 ```cpp
 #include <generic_row_batcher.hpp>
 #include <sqlite_wal.hpp>
-using namespace arrow_row;
+using namespace fletcher;
 
 auto schema = arrow::schema({ arrow::field("x", arrow::int32()) });
 
