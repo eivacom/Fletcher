@@ -73,43 +73,53 @@ const ScalarTypeInfo* BaseScalar(FD::Type type) {
     static const ScalarTypeInfo kBool{
         "arrow::boolean()", "bool", "bool",
         "std::make_shared<arrow::BooleanScalar>({val})",
-        "false", "arrow::BooleanBuilder"};
+        "false", "arrow::BooleanBuilder",
+        "arrow::BooleanScalar", false};
     static const ScalarTypeInfo kInt32{
         "arrow::int32()", "int32_t", "int32_t",
         "std::make_shared<arrow::Int32Scalar>({val})",
-        "0", "arrow::Int32Builder"};
+        "0", "arrow::Int32Builder",
+        "arrow::Int32Scalar", false};
     static const ScalarTypeInfo kInt64{
         "arrow::int64()", "int64_t", "int64_t",
         "std::make_shared<arrow::Int64Scalar>({val})",
-        "INT64_C(0)", "arrow::Int64Builder"};
+        "INT64_C(0)", "arrow::Int64Builder",
+        "arrow::Int64Scalar", false};
     static const ScalarTypeInfo kUInt32{
         "arrow::uint32()", "uint32_t", "uint32_t",
         "std::make_shared<arrow::UInt32Scalar>({val})",
-        "0u", "arrow::UInt32Builder"};
+        "0u", "arrow::UInt32Builder",
+        "arrow::UInt32Scalar", false};
     static const ScalarTypeInfo kUInt64{
         "arrow::uint64()", "uint64_t", "uint64_t",
         "std::make_shared<arrow::UInt64Scalar>({val})",
-        "UINT64_C(0)", "arrow::UInt64Builder"};
+        "UINT64_C(0)", "arrow::UInt64Builder",
+        "arrow::UInt64Scalar", false};
     static const ScalarTypeInfo kFloat{
         "arrow::float32()", "float", "float",
         "std::make_shared<arrow::FloatScalar>({val})",
-        "0.0f", "arrow::FloatBuilder"};
+        "0.0f", "arrow::FloatBuilder",
+        "arrow::FloatScalar", false};
     static const ScalarTypeInfo kDouble{
         "arrow::float64()", "double", "double",
         "std::make_shared<arrow::DoubleScalar>({val})",
-        "0.0", "arrow::DoubleBuilder"};
+        "0.0", "arrow::DoubleBuilder",
+        "arrow::DoubleScalar", false};
     static const ScalarTypeInfo kString{
         "arrow::utf8()", "std::string", "std::string_view",
         "std::make_shared<arrow::StringScalar>({val})",
-        "\"\"", "arrow::StringBuilder"};
+        "\"\"", "arrow::StringBuilder",
+        "arrow::StringScalar", true};
     static const ScalarTypeInfo kBytes{
         "arrow::binary()", "std::string", "std::string_view",
         "std::make_shared<arrow::BinaryScalar>({val})",
-        "\"\"", "arrow::BinaryBuilder"};
+        "\"\"", "arrow::BinaryBuilder",
+        "arrow::BinaryScalar", true};
     static const ScalarTypeInfo kEnum{
         "arrow::int32()", "int32_t", "int32_t",
         "std::make_shared<arrow::Int32Scalar>(static_cast<int32_t>({val}))",
-        "0", "arrow::Int32Builder"};
+        "0", "arrow::Int32Builder",
+        "arrow::Int32Scalar", false};
     // clang-format on
 
     switch (type) {
@@ -156,39 +166,48 @@ const ScalarTypeInfo* WrapperTypeInfo(const std::string& fqn) {
     static const ScalarTypeInfo kBoolVal{
         "arrow::boolean()", "bool", "bool",
         "std::make_shared<arrow::BooleanScalar>({val})",
-        "false", "arrow::BooleanBuilder"};
+        "false", "arrow::BooleanBuilder",
+        "arrow::BooleanScalar", false};
     static const ScalarTypeInfo kInt32Val{
         "arrow::int32()", "int32_t", "int32_t",
         "std::make_shared<arrow::Int32Scalar>({val})",
-        "0", "arrow::Int32Builder"};
+        "0", "arrow::Int32Builder",
+        "arrow::Int32Scalar", false};
     static const ScalarTypeInfo kInt64Val{
         "arrow::int64()", "int64_t", "int64_t",
         "std::make_shared<arrow::Int64Scalar>({val})",
-        "INT64_C(0)", "arrow::Int64Builder"};
+        "INT64_C(0)", "arrow::Int64Builder",
+        "arrow::Int64Scalar", false};
     static const ScalarTypeInfo kUInt32Val{
         "arrow::uint32()", "uint32_t", "uint32_t",
         "std::make_shared<arrow::UInt32Scalar>({val})",
-        "0u", "arrow::UInt32Builder"};
+        "0u", "arrow::UInt32Builder",
+        "arrow::UInt32Scalar", false};
     static const ScalarTypeInfo kUInt64Val{
         "arrow::uint64()", "uint64_t", "uint64_t",
         "std::make_shared<arrow::UInt64Scalar>({val})",
-        "UINT64_C(0)", "arrow::UInt64Builder"};
+        "UINT64_C(0)", "arrow::UInt64Builder",
+        "arrow::UInt64Scalar", false};
     static const ScalarTypeInfo kFloatVal{
         "arrow::float32()", "float", "float",
         "std::make_shared<arrow::FloatScalar>({val})",
-        "0.0f", "arrow::FloatBuilder"};
+        "0.0f", "arrow::FloatBuilder",
+        "arrow::FloatScalar", false};
     static const ScalarTypeInfo kDoubleVal{
         "arrow::float64()", "double", "double",
         "std::make_shared<arrow::DoubleScalar>({val})",
-        "0.0", "arrow::DoubleBuilder"};
+        "0.0", "arrow::DoubleBuilder",
+        "arrow::DoubleScalar", false};
     static const ScalarTypeInfo kStringVal{
         "arrow::utf8()", "std::string", "std::string_view",
         "std::make_shared<arrow::StringScalar>({val})",
-        "\"\"", "arrow::StringBuilder"};
+        "\"\"", "arrow::StringBuilder",
+        "arrow::StringScalar", true};
     static const ScalarTypeInfo kBytesVal{
         "arrow::binary()", "std::string", "std::string_view",
         "std::make_shared<arrow::BinaryScalar>({val})",
-        "\"\"", "arrow::BinaryBuilder"};
+        "\"\"", "arrow::BinaryBuilder",
+        "arrow::BinaryScalar", true};
 
     if (fqn == "google.protobuf.BoolValue")   return &kBoolVal;
     if (fqn == "google.protobuf.Int32Value")   return &kInt32Val;
@@ -368,7 +387,8 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
             "int64_t", "int64_t",
             "std::make_shared<arrow::TimestampScalar>"
                 "({val}, arrow::timestamp(arrow::TimeUnit::NANO))",
-            "INT64_C(0)", "arrow::TimestampBuilder"};
+            "INT64_C(0)", "arrow::TimestampBuilder",
+            "arrow::TimestampScalar", false};
         return m;
     }
 
@@ -382,7 +402,8 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
             "int64_t", "int64_t",
             "std::make_shared<arrow::DurationScalar>"
                 "({val}, arrow::duration(arrow::TimeUnit::NANO))",
-            "INT64_C(0)", "arrow::DurationBuilder"};
+            "INT64_C(0)", "arrow::DurationBuilder",
+            "arrow::DurationScalar", false};
         return m;
     }
 

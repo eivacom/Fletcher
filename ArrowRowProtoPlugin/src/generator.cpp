@@ -183,17 +183,17 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
 
         case FieldKind::STRUCT:
             return "arrow::struct_(" + fi.mapping.nested_class
-                 + "::ArrowSchema()->fields())";
+                 + "Schema()->fields())";
 
         case FieldKind::REPEATED_STRUCT:
             return "arrow::list(arrow::field(\"item\", arrow::struct_("
                  + fi.mapping.nested_class
-                 + "::ArrowSchema()->fields()), false))";
+                 + "Schema()->fields()), false))";
 
         case FieldKind::MAP: {
             std::string val_type = fi.mapping.map_value_is_message
                 ? "arrow::struct_(" + fi.mapping.map_value_class
-                  + "::ArrowSchema()->fields())"
+                  + "Schema()->fields())"
                 : fi.mapping.map_value.arrow_type_expr;
             return "arrow::map(" + fi.mapping.map_key.arrow_type_expr
                  + ", arrow::field(\"value\", " + val_type + ", false))";
@@ -323,7 +323,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
         case FieldKind::STRUCT:
             o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
               << "        auto type = arrow::struct_("
-              << fi.mapping.nested_class << "::ArrowSchema()->fields());\n";
+              << fi.mapping.nested_class << "Schema()->fields());\n";
             if (fi.mapping.nullable) {
                 o << "        if (!" << fi.name << "_.has_value())\n"
                   << "            return arrow::MakeNullScalar(type);\n"
@@ -343,7 +343,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
         case FieldKind::REPEATED_STRUCT:
             o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
               << "        auto type = arrow::struct_("
-              << fi.mapping.nested_class << "::ArrowSchema()->fields());\n"
+              << fi.mapping.nested_class << "Schema()->fields());\n"
               << "        auto builder = arrow::MakeBuilder(type).ValueOrDie();\n"
               << "        for (const auto& v : " << fi.name << "_) {\n"
               << "            auto s = std::make_shared<arrow::StructScalar>(\n"
@@ -362,7 +362,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             if (fi.mapping.map_value_is_message) {
                 o << "        auto val_type = arrow::struct_("
                   << fi.mapping.map_value_class
-                  << "::ArrowSchema()->fields());\n"
+                  << "Schema()->fields());\n"
                   << "        auto val_builder = arrow::MakeBuilder(val_type).ValueOrDie();\n"
                   << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
                   << "            (void)key_builder.Append(k);\n"
@@ -422,14 +422,122 @@ std::string ScalarEntry(const FieldInfo& fi) {
 }
 
 // -----------------------------------------------------------------------
-// Full class generation for one message
+// Field extraction for SetFromScalars_ / ArrowRow constructor
 // -----------------------------------------------------------------------
 
-std::string GenerateMessageClass(const google::protobuf::Descriptor* msg,
-                                 std::string* skipped_comment) {
-    const std::string cls = ClassName(msg);
+void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
+    const std::string si = std::to_string(idx);
 
-    // Gather supported fields.
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            const auto& sc = fi.mapping.scalar;
+            std::string extract = sc.value_is_buffer
+                ? "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value->ToString()"
+                : "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value";
+            if (fi.mapping.nullable) {
+                o << "        if (scalars[" << si << "]->is_valid)\n"
+                  << "            " << fi.name << "_ = " << extract << ";\n"
+                  << "        else\n"
+                  << "            " << fi.name << "_.reset();\n";
+            } else {
+                o << "        " << fi.name << "_ = " << extract << ";\n";
+            }
+            break;
+        }
+
+        case FieldKind::STRUCT:
+            if (fi.mapping.nullable) {
+                o << "        if (scalars[" << si << "]->is_valid) {\n"
+                  << "            " << fi.name << "_.emplace();\n"
+                  << "            " << fi.name << "_->SetFromScalars_(\n"
+                  << "                static_cast<const arrow::StructScalar&>(\n"
+                  << "                    *scalars[" << si << "]).value);\n"
+                  << "        } else {\n"
+                  << "            " << fi.name << "_.reset();\n"
+                  << "        }\n";
+            } else {
+                o << "        " << fi.name << "_.emplace();\n"
+                  << "        " << fi.name << "_->SetFromScalars_(\n"
+                  << "            static_cast<const arrow::StructScalar&>(\n"
+                  << "                *scalars[" << si << "]).value);\n";
+            }
+            break;
+
+        case FieldKind::REPEATED_SCALAR: {
+            const auto& el = fi.mapping.element;
+            std::string extract = el.value_is_buffer
+                ? "static_cast<const " + el.scalar_type + "&>(*s).value->ToString()"
+                : "static_cast<const " + el.scalar_type + "&>(*s).value";
+            o << "        {\n"
+              << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+              << "                *scalars[" << si << "]);\n"
+              << "            " << fi.name << "_.clear();\n"
+              << "            " << fi.name << "_.reserve(ls.value->length());\n"
+              << "            for (int64_t j = 0; j < ls.value->length(); ++j) {\n"
+              << "                auto s = ls.value->GetScalar(j).ValueOrDie();\n"
+              << "                " << fi.name << "_.push_back(" << extract << ");\n"
+              << "            }\n"
+              << "        }\n";
+            break;
+        }
+
+        case FieldKind::REPEATED_STRUCT:
+            o << "        {\n"
+              << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+              << "                *scalars[" << si << "]);\n"
+              << "            " << fi.name << "_.clear();\n"
+              << "            " << fi.name << "_.resize(ls.value->length());\n"
+              << "            for (int64_t j = 0; j < ls.value->length(); ++j) {\n"
+              << "                auto s = ls.value->GetScalar(j).ValueOrDie();\n"
+              << "                " << fi.name << "_[j].SetFromScalars_(\n"
+              << "                    static_cast<const arrow::StructScalar&>(*s).value);\n"
+              << "            }\n"
+              << "        }\n";
+            break;
+
+        case FieldKind::MAP: {
+            std::string key_extract = fi.mapping.map_key.value_is_buffer
+                ? "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value->ToString()"
+                : "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value";
+
+            o << "        {\n"
+              << "            const auto& ms = static_cast<const arrow::MapScalar&>(\n"
+              << "                *scalars[" << si << "]);\n"
+              << "            const auto& sa = static_cast<const arrow::StructArray&>(\n"
+              << "                *ms.value);\n"
+              << "            " << fi.name << "_.clear();\n"
+              << "            " << fi.name << "_.reserve(sa.length());\n"
+              << "            for (int64_t j = 0; j < sa.length(); ++j) {\n"
+              << "                auto ks = sa.field(0)->GetScalar(j).ValueOrDie();\n"
+              << "                auto vs = sa.field(1)->GetScalar(j).ValueOrDie();\n";
+
+            if (fi.mapping.map_value_is_message) {
+                o << "                " << fi.name << "_.emplace_back(\n"
+                  << "                    " << key_extract << ",\n"
+                  << "                    " << fi.mapping.map_value_class << "());\n"
+                  << "                " << fi.name << "_.back().second.SetFromScalars_(\n"
+                  << "                    static_cast<const arrow::StructScalar&>(*vs).value);\n";
+            } else {
+                std::string val_extract = fi.mapping.map_value.value_is_buffer
+                    ? "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value->ToString()"
+                    : "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value";
+                o << "                " << fi.name << "_.emplace_back(\n"
+                  << "                    " << key_extract << ", " << val_extract << ");\n";
+            }
+
+            o << "            }\n"
+              << "        }\n";
+            break;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// Gather supported fields from a message
+// -----------------------------------------------------------------------
+
+std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
+                                    std::string* skipped_comment) {
     std::vector<FieldInfo> fields;
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
@@ -440,34 +548,66 @@ std::string GenerateMessageClass(const google::protobuf::Descriptor* msg,
                              + UnsupportedReason(fd) + "\n";
         }
     }
+    return fields;
+}
 
+// -----------------------------------------------------------------------
+// Free schema function for one message
+// -----------------------------------------------------------------------
+
+std::string GenerateSchemaFunction(const std::string& cls,
+                                   const std::vector<FieldInfo>& fields,
+                                   const google::protobuf::Descriptor* msg) {
     std::ostringstream o;
-
-    // ---- class header ---------------------------------------------------
-    o << "class " << cls << " {\n public:\n";
-
-    // ArrowSchema()
-    o << "    static std::shared_ptr<arrow::Schema> ArrowSchema() {\n"
-      << "        return arrow::schema({\n";
+    o << "inline std::shared_ptr<arrow::Schema> " << cls << "Schema() {\n"
+      << "    return arrow::schema({\n";
     for (const auto& fi : fields) {
         if (!fi.mapping.warning.empty())
-            o << "            // Warning: " << fi.mapping.warning << "\n";
-        o << "            arrow::field(\"" << fi.name << "\", "
+            o << "        // Warning: " << fi.mapping.warning << "\n";
+        o << "        arrow::field(\"" << fi.name << "\", "
           << ArrowTypeExpr(fi) << ", "
           << (fi.mapping.nullable ? "true" : "false") << ", "
           << "arrow::key_value_metadata({\"field_number\"}, {\""
           << fi.field_number << "\"})),\n";
     }
-    o << "        }, arrow::key_value_metadata(\n"
-      << "            {\"proto_package\", \"proto_message\"},\n"
-      << "            {\"" << msg->file()->package() << "\", \""
-      << msg->name() << "\"}));\n    }\n\n";
+    o << "    }, arrow::key_value_metadata(\n"
+      << "        {\"proto_package\", \"proto_message\"},\n"
+      << "        {\"" << msg->file()->package() << "\", \""
+      << msg->name() << "\"}));\n}\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
+// Full class generation for one message
+// -----------------------------------------------------------------------
+
+std::string GenerateMessageClass(const std::string& cls,
+                                 const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+
+    // ---- class header ---------------------------------------------------
+    o << "class " << cls << " {\n public:\n";
+
+    // Default constructor (explicit because we add the ArrowRow constructor)
+    o << "    " << cls << "() = default;\n\n";
+
+    // ArrowRow constructor
+    o << "    explicit " << cls << "(const arrow_row::ArrowRow& row) {\n"
+      << "        SetFromScalars_(Codec().DecodeRow(row));\n"
+      << "    }\n\n";
 
     // Setters
     EmitSetters(o, cls, fields);
     o << "\n";
 
-    // ToScalars()
+    // SetFromScalars_ — public so parent classes can call it for struct fields
+    o << "    void SetFromScalars_(\n"
+      << "        const std::vector<std::shared_ptr<arrow::Scalar>>& scalars) {\n";
+    for (size_t i = 0; i < fields.size(); ++i)
+        EmitFieldExtraction(o, fields[i], i);
+    o << "    }\n\n";
+
+    // ToScalars() — public because parent-class struct helpers call it on nested types
     o << "    std::vector<std::shared_ptr<arrow::Scalar>> ToScalars() const {\n"
       << "        return {\n";
     for (const auto& fi : fields)
@@ -484,7 +624,7 @@ std::string GenerateMessageClass(const google::protobuf::Descriptor* msg,
 
     // Codec singleton
     o << "    static arrow_row::RowCodec& Codec() {\n"
-      << "        static arrow_row::RowCodec kCodec(ArrowSchema());\n"
+      << "        static arrow_row::RowCodec kCodec(" << cls << "Schema());\n"
       << "        return kCodec;\n"
       << "    }\n\n";
 
@@ -555,7 +695,7 @@ void EmitTopicSegments(std::ostringstream& o, const std::string& package,
 
 void EmitSchema(std::ostringstream& o, const std::string& msg_class) {
     o << "    static std::shared_ptr<arrow::Schema> Schema() {\n"
-      << "        return " << msg_class << "::ArrowSchema();\n"
+      << "        return " << msg_class << "Schema();\n"
       << "    }\n\n";
 }
 
@@ -622,14 +762,11 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
       << "    }\n\n";
 
-    // Subscribe — delivers decoded scalars to the caller
+    // Subscribe — delivers the raw ArrowRow to the caller
     o << "    void Subscribe(\n"
-      << "        std::function<void(std::vector<std::shared_ptr<arrow::Scalar>>)> cb)\n"
+      << "        std::function<void(const arrow_row::ArrowRow&)> cb)\n"
       << "    {\n"
-      << "        provider_->Subscribe(TopicSegments(),\n"
-      << "            [cb = std::move(cb)](const arrow_row::ArrowRow& raw) {\n"
-      << "                cb(Codec().DecodeRow(raw));\n"
-      << "            });\n"
+      << "        provider_->Subscribe(TopicSegments(), std::move(cb));\n"
       << "    }\n\n";
 
     // Unsubscribe
@@ -639,10 +776,6 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Private
     o << " private:\n"
-      << "    static arrow_row::RowCodec& Codec() {\n"
-      << "        static arrow_row::RowCodec kCodec(Schema());\n"
-      << "        return kCodec;\n"
-      << "    }\n"
       << "    std::shared_ptr<arrow_row::PubSubProvider> provider_;\n"
       << "};\n";
 
@@ -653,23 +786,32 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 // File generation
 // -----------------------------------------------------------------------
 
-std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
+std::string GenerateFile(const google::protobuf::FileDescriptor* file,
+                         bool schema_only) {
     std::ostringstream o;
 
     o << "// Generated by protoc-gen-arrow-row. DO NOT EDIT.\n"
       << "// Source: " << file->name() << "\n"
       << "#pragma once\n\n"
-      << "#include <arrow/api.h>\n"
-      << "#include <row_codec.hpp>\n\n"
+      << "#include <arrow/api.h>\n";
+
+    if (!schema_only) {
+        o << "#include <row_codec.hpp>\n";
+    }
+
+    o << "\n"
       << "#include <cstdint>\n"
       << "#include <memory>\n"
-      << "#include <optional>\n"
-      << "#include <string>\n"
-      << "#include <string_view>\n"
-      << "#include <utility>\n"
       << "#include <vector>\n";
 
-    if (file->service_count() > 0) {
+    if (!schema_only) {
+        o << "#include <optional>\n"
+          << "#include <string>\n"
+          << "#include <string_view>\n"
+          << "#include <utility>\n";
+    }
+
+    if (!schema_only && file->service_count() > 0) {
         o << "#include <pubsub_provider.hpp>\n"
           << "#include <functional>\n";
     }
@@ -687,19 +829,20 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
     if (!ns.empty())
         o << "namespace " << ns << " {\n\n";
 
-    // Emit message classes in dependency order.
+    // Emit messages in dependency order.
     auto messages = OrderedMessages(file);
     std::set<const google::protobuf::Descriptor*> generated_msgs;
 
     for (const auto* msg : messages) {
-        std::string skipped;
-        std::string body = GenerateMessageClass(msg, &skipped);
-
         if (IsRecursive(msg)) {
             o << "// Skipped: " << msg->name()
               << " is recursive and cannot be represented in Arrow.\n\n";
             continue;
         }
+
+        std::string skipped;
+        auto fields = GatherFields(msg, &skipped);
+        const std::string cls = ClassName(msg);
 
         generated_msgs.insert(msg);
 
@@ -708,22 +851,30 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
               << " have no Arrow mapping and are absent from the schema:\n"
               << skipped << "//\n";
         }
-        o << body << "\n";
+
+        // Always emit the free schema function.
+        o << GenerateSchemaFunction(cls, fields, msg) << "\n";
+
+        // Optionally emit the row class.
+        if (!schema_only)
+            o << GenerateMessageClass(cls, fields) << "\n";
     }
 
-    // Service definitions → publisher and subscriber classes.
-    for (int si = 0; si < file->service_count(); ++si) {
-        const auto* svc = file->service(si);
-        for (int mi = 0; mi < svc->method_count(); ++mi) {
-            const auto* method = svc->method(mi);
-            std::string reason;
-            if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
-                o << "// Skipped: " << svc->name() << "." << method->name()
-                  << " — " << reason << "\n";
-                continue;
+    // Service definitions → publisher and subscriber classes (skip in schema_only mode).
+    if (!schema_only) {
+        for (int si = 0; si < file->service_count(); ++si) {
+            const auto* svc = file->service(si);
+            for (int mi = 0; mi < svc->method_count(); ++mi) {
+                const auto* method = svc->method(mi);
+                std::string reason;
+                if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
+                    o << "// Skipped: " << svc->name() << "." << method->name()
+                      << " — " << reason << "\n";
+                    continue;
+                }
+                o << GeneratePublisherClass(method, file->package()) << "\n"
+                  << GenerateSubscriberClass(method, file->package()) << "\n";
             }
-            o << GeneratePublisherClass(method, file->package()) << "\n"
-              << GenerateSubscriberClass(method, file->package()) << "\n";
         }
     }
 
@@ -741,11 +892,22 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file) {
 
 bool ArrowRowGenerator::Generate(
     const google::protobuf::FileDescriptor* file,
-    const std::string& /*parameter*/,
+    const std::string& parameter,
     google::protobuf::compiler::GeneratorContext* context,
     std::string* error) const
 {
-    const std::string content  = GenerateFile(file);
+    // Parse comma-separated options from --arrow-row_opt=...
+    bool schema_only = false;
+    {
+        std::istringstream ss(parameter);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            if (token == "schema_only")
+                schema_only = true;
+        }
+    }
+
+    const std::string content  = GenerateFile(file, schema_only);
     const std::string out_name = OutputFilename(file->name());
 
     std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(

@@ -16,6 +16,8 @@ struct ScalarTypeInfo {
     std::string scalar_ctor;       // format string with {val} token
     std::string default_value;     // proto3 zero-default as C++ literal
     std::string builder_type;      // e.g. "arrow::Int32Builder"
+    std::string scalar_type;       // e.g. "arrow::Int32Scalar" — for downcasting when decoding
+    bool        value_is_buffer = false;  // true for string/binary (value->ToString())
 };
 
 enum class FieldKind {

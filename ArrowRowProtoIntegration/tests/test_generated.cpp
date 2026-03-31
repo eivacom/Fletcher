@@ -14,11 +14,11 @@
 #include "pubsub.arrow_row.pb.h"
 #include "complex.arrow_row.pb.h"
 
-// Helper: decode an encoded row using the same schema as the generated class.
-template <typename GeneratedClass>
-std::vector<std::shared_ptr<arrow::Scalar>> RoundTrip(const GeneratedClass& obj) {
-    auto encoded = obj.Encode();
-    arrow_row::RowCodec codec(GeneratedClass::ArrowSchema());
+// Helper: decode an encoded row using the given schema.
+std::vector<std::shared_ptr<arrow::Scalar>> RoundTrip(
+    const arrow_row::ArrowRow& encoded,
+    std::shared_ptr<arrow::Schema> schema) {
+    arrow_row::RowCodec codec(std::move(schema));
     return codec.DecodeRow(encoded);
 }
 
@@ -27,7 +27,7 @@ std::vector<std::shared_ptr<arrow::Scalar>> RoundTrip(const GeneratedClass& obj)
 // =============================================================================
 
 TEST_CASE("SensorReading: schema structure") {
-    auto schema = integration::SensorReadingArrowRow::ArrowSchema();
+    auto schema = integration::SensorReadingArrowRowSchema();
     REQUIRE(schema->num_fields() == 10);
 
     // Non-optional scalars are not nullable.
@@ -77,7 +77,7 @@ TEST_CASE("SensorReading: roundtrip — scalar values") {
      .set_sequence(7u)
      .set_timestamp_ns(1'000'000'000LL);
 
-    auto scalars = RoundTrip(r);
+    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
     REQUIRE(scalars.size() == 10);
 
     auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
@@ -107,7 +107,7 @@ TEST_CASE("SensorReading: optional fields null when not set") {
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
 
-    auto scalars = RoundTrip(r);
+    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
     CHECK_FALSE(scalars[8]->is_valid);  // humidity
     CHECK_FALSE(scalars[9]->is_valid);  // label
 }
@@ -118,7 +118,7 @@ TEST_CASE("SensorReading: optional fields valid when set") {
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL).set_humidity(55.3).set_label("humid");
 
-    auto scalars = RoundTrip(r);
+    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
     REQUIRE(scalars[8]->is_valid);
     REQUIRE(scalars[9]->is_valid);
 
@@ -136,7 +136,7 @@ TEST_CASE("SensorReading: optional fields valid when set") {
 // =============================================================================
 
 TEST_CASE("TimedEvent: schema structure") {
-    auto schema = integration::TimedEventArrowRow::ArrowSchema();
+    auto schema = integration::TimedEventArrowRowSchema();
     REQUIRE(schema->num_fields() == 5);
 
     CHECK(schema->field(0)->name() == "event_id");
@@ -172,7 +172,7 @@ TEST_CASE("TimedEvent: roundtrip — WKT values") {
       .set_score(9.5);
     // label intentionally left unset → null
 
-    auto scalars = RoundTrip(ev);
+    auto scalars = RoundTrip(ev.Encode(), integration::TimedEventArrowRowSchema());
     REQUIRE(scalars.size() == 5);
 
     auto* ts = dynamic_cast<arrow::TimestampScalar*>(scalars[1].get());
@@ -197,7 +197,7 @@ TEST_CASE("TimedEvent: roundtrip — WKT values") {
 // =============================================================================
 
 TEST_CASE("GeoPoint: schema is flat scalars") {
-    auto schema = integration::GeoPointArrowRow::ArrowSchema();
+    auto schema = integration::GeoPointArrowRowSchema();
     REQUIRE(schema->num_fields() == 3);
     CHECK(schema->field(0)->name() == "latitude");
     CHECK(schema->field(0)->type()->id() == arrow::Type::DOUBLE);
@@ -207,7 +207,7 @@ TEST_CASE("GeoPoint: schema is flat scalars") {
 }
 
 TEST_CASE("Location: schema embeds struct fields") {
-    auto schema = integration::LocationArrowRow::ArrowSchema();
+    auto schema = integration::LocationArrowRowSchema();
     REQUIRE(schema->num_fields() == 3);
 
     CHECK(schema->field(0)->name() == "point");
@@ -231,7 +231,7 @@ TEST_CASE("Location: roundtrip — nested structs") {
     integration::LocationArrowRow loc;
     loc.set_point(gp).set_address(addr).set_name("HQ");
 
-    auto scalars = RoundTrip(loc);
+    auto scalars = RoundTrip(loc.Encode(), integration::LocationArrowRowSchema());
     REQUIRE(scalars.size() == 3);
 
     CHECK(scalars[0]->type->id() == arrow::Type::STRUCT);
@@ -250,7 +250,7 @@ TEST_CASE("Location: roundtrip — nested structs") {
 // =============================================================================
 
 TEST_CASE("Team: schema has list fields") {
-    auto schema = integration::TeamArrowRow::ArrowSchema();
+    auto schema = integration::TeamArrowRowSchema();
     REQUIRE(schema->num_fields() == 4);
 
     CHECK(schema->field(0)->name() == "name");
@@ -278,7 +278,7 @@ TEST_CASE("Team: roundtrip — repeated scalars and structs") {
         .set_scores({95.0, 87.5, 92.0})
         .set_roster({p1, p2});
 
-    auto scalars = RoundTrip(team);
+    auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
     REQUIRE(scalars.size() == 4);
 
     auto* name = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
@@ -302,7 +302,7 @@ TEST_CASE("Team: empty repeated fields produce empty lists") {
     integration::TeamArrowRow team;
     team.set_name("Empty");
 
-    auto scalars = RoundTrip(team);
+    auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
     REQUIRE(scalars.size() == 4);
 
     auto* members = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
@@ -315,7 +315,7 @@ TEST_CASE("Team: empty repeated fields produce empty lists") {
 // =============================================================================
 
 TEST_CASE("Metrics: schema has map fields") {
-    auto schema = integration::MetricsArrowRow::ArrowSchema();
+    auto schema = integration::MetricsArrowRowSchema();
     REQUIRE(schema->num_fields() == 3);
 
     CHECK(schema->field(0)->name() == "resource_id");
@@ -334,7 +334,7 @@ TEST_CASE("Metrics: roundtrip — map fields") {
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
      .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
-    auto scalars = RoundTrip(m);
+    auto scalars = RoundTrip(m.Encode(), integration::MetricsArrowRowSchema());
     REQUIRE(scalars.size() == 3);
 
     CHECK(scalars[1]->type->id() == arrow::Type::MAP);
@@ -347,7 +347,7 @@ TEST_CASE("Metrics: roundtrip — map fields") {
 // =============================================================================
 
 TEST_CASE("Order: schema combines WKT, list<struct>, map, and optional") {
-    auto schema = integration::OrderArrowRow::ArrowSchema();
+    auto schema = integration::OrderArrowRowSchema();
     REQUIRE(schema->num_fields() == 5);
 
     CHECK(schema->field(0)->name() == "order_id");
@@ -383,7 +383,7 @@ TEST_CASE("Order: roundtrip — full complex row") {
          .set_tags({{"priority", 1}, {"region", 3}})
          .set_customer_note("Leave at door");
 
-    auto scalars = RoundTrip(order);
+    auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
     REQUIRE(scalars.size() == 5);
 
     auto* oid = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
@@ -411,7 +411,7 @@ TEST_CASE("Order: customer_note null when not set") {
     integration::OrderArrowRow order;
     order.set_order_id("ORD-0").set_created_at(0LL);
 
-    auto scalars = RoundTrip(order);
+    auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
     REQUIRE(scalars.size() == 5);
     CHECK_FALSE(scalars[4]->is_valid);
 }
@@ -421,13 +421,13 @@ TEST_CASE("OrderItem: optional note null then valid") {
     item.set_product_id("SKU-X").set_quantity(1).set_unit_price(5.0);
 
     {
-        auto scalars = RoundTrip(item);
+        auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
         CHECK_FALSE(scalars[3]->is_valid);  // note not set
     }
 
     item.set_note("fragile");
     {
-        auto scalars = RoundTrip(item);
+        auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
         CHECK(scalars[3]->is_valid);
         auto* n = dynamic_cast<arrow::StringScalar*>(scalars[3].get());
         REQUIRE(n != nullptr);
@@ -531,27 +531,32 @@ TEST_CASE("Subscriber: construction creates topic") {
           std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
 }
 
-TEST_CASE("Subscriber: receives decoded scalars from published rows") {
+TEST_CASE("Subscriber: receives ArrowRow from published rows") {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    std::vector<std::shared_ptr<arrow::Scalar>> received;
-    sub.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>> scalars) {
-        received = std::move(scalars);
+    arrow_row::ArrowRow received;
+    sub.Subscribe([&](const arrow_row::ArrowRow& raw) {
+        received = raw;
     });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
-    REQUIRE(received.size() == 4);
+    REQUIRE(!received.empty());
 
-    auto* id = dynamic_cast<arrow::Int32Scalar*>(received[0].get());
+    // Decode via the ArrowRow constructor to verify contents.
+    integration::TelemetryArrowRow decoded(received);
+    auto scalars = RoundTrip(decoded.Encode(), integration::TelemetryArrowRowSchema());
+    REQUIRE(scalars.size() == 4);
+
+    auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
     REQUIRE(id != nullptr);
     CHECK(id->value == 42);
 
-    auto* name = dynamic_cast<arrow::StringScalar*>(received[3].get());
+    auto* name = dynamic_cast<arrow::StringScalar*>(scalars[3].get());
     REQUIRE(name != nullptr);
     CHECK(name->value->ToString() == "cpu");
 }
@@ -562,7 +567,7 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](std::vector<std::shared_ptr<arrow::Scalar>>) { ++count; });
+    sub.Subscribe([&](const arrow_row::ArrowRow&) { ++count; });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
