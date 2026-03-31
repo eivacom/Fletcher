@@ -1,5 +1,5 @@
 fn main() {
-    // Build the ArrowRowBatcher C++ project via the root CMakeLists.txt.
+    // Build the Batcher C++ project via the root CMakeLists.txt.
     // Conan must have already generated the CMake toolchain files under
     // <repo_root>/build/build/generators/ before this runs.
     let dst = cmake::Config::new("../../..")
@@ -23,6 +23,6 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=arrow");
     println!("cargo:rustc-link-lib=dylib=sqlite3");
 
-    println!("cargo:rerun-if-changed=../../../ArrowRowBatcher/src/arrow_row_batcher_capi.cpp");
-    println!("cargo:rerun-if-changed=../../../ArrowRowBatcher/include/arrow_row_batcher_capi.h");
+    println!("cargo:rerun-if-changed=../../../Batcher/src/arrow_row_batcher_capi.cpp");
+    println!("cargo:rerun-if-changed=../../../Batcher/include/arrow_row_batcher_capi.h");
 }

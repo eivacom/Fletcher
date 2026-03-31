@@ -4,35 +4,35 @@ A C++ library system for serialising structured data as compact, self-describing
 
 ## Subprojects
 
-### ArrowRowCodec
+### Codec
 
 The foundational layer. Defines the `EncodedRow` wire format (a schema-hashed binary buffer encoding one Arrow row) and the `RowCodec` class that encodes and decodes it. An `ArrowRow` is a `std::vector<std::shared_ptr<arrow::Scalar>>` representing a single row as Arrow scalars. Also defines the abstract `PubSubProvider` interface that pub/sub generated code programs against.
 
-Used by every other subproject. See [ArrowRowCodec/README.md](ArrowRowCodec/README.md).
+Used by every other subproject. See [Codec/README.md](Codec/README.md).
 
 ---
 
-### ArrowRowBatcher
+### Batcher
 
 Accumulates `EncodedRow` buffers and flushes them as an `arrow::Table` once a configured batch size is reached. Includes a write-ahead log (WAL) abstraction backed by SQLite so rows are durable during accumulation.
 
-Use this when you need to bridge a row-at-a-time source (sensor feed, event stream) with a batch-oriented sink (Parquet writer, columnar database). See [ArrowRowBatcher/README.md](ArrowRowBatcher/README.md).
+Use this when you need to bridge a row-at-a-time source (sensor feed, event stream) with a batch-oriented sink (Parquet writer, columnar database). See [Batcher/README.md](Batcher/README.md).
 
 ---
 
-### ArrowRowProtoPlugin
+### ProtoPlugin
 
 A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
 
-Use this to avoid writing schema and serialisation boilerplate by hand when your data model is already described in Protocol Buffers. See [ArrowRowProtoPlugin/README.md](ArrowRowProtoPlugin/README.md).
+Use this to avoid writing schema and serialisation boilerplate by hand when your data model is already described in Protocol Buffers. See [ProtoPlugin/README.md](ProtoPlugin/README.md).
 
 ---
 
-### ArrowRowProtoIntegration
+### ProtoIntegration
 
 End-to-end integration tests for the proto plugin. Compiles a set of `.proto` files covering all supported constructs (scalars, optional fields, nested messages, repeated fields, maps, well-known types, and service pub/sub), generates code from them at build time, and runs Catch2 tests to verify the full pipeline.
 
-Not a library — exists only to validate the plugin and codec together. See [ArrowRowProtoIntegration/README.md](ArrowRowProtoIntegration/README.md).
+Not a library — exists only to validate the plugin and codec together. See [ProtoIntegration/README.md](ProtoIntegration/README.md).
 
 ---
 
@@ -48,19 +48,19 @@ Use this as the transport layer when plugging generated `Publisher`/`Subscriber`
 
 ```
 FastDDSPubSubProvider
-    └── ArrowRowCodec
+    └── Codec
 
-ArrowRowProtoIntegration  (tests only)
-    ├── ArrowRowProtoPlugin  (build-time, via protoc)
-    └── ArrowRowCodec
+ProtoIntegration  (tests only)
+    ├── ProtoPlugin  (build-time, via protoc)
+    └── Codec
 
-ArrowRowProtoPlugin
-    └── ArrowRowCodec  (pubsub_provider.hpp, row_codec.hpp)
+ProtoPlugin
+    └── Codec  (pubsub_provider.hpp, row_codec.hpp)
 
-ArrowRowBatcher
-    └── ArrowRowCodec
+Batcher
+    └── Codec
 
-ArrowRowCodec
+Codec
     └── Apache Arrow
 ```
 

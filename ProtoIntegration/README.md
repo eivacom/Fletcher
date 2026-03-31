@@ -1,10 +1,10 @@
-# ArrowRowProtoIntegration
+# ProtoIntegration
 
 Integration test project that exercises the `protoc-gen-arrow-row` plugin end-to-end. It compiles a set of `.proto` files spanning the full range of supported proto constructs, generates Arrow row code from them, and runs Catch2 tests against the generated classes.
 
 ## Purpose
 
-This project exists to catch regressions in the plugin and the codec together. Unit tests in `ArrowRowProtoPlugin/tests` and `ArrowRowCodec/tests` test the components in isolation; this project verifies that the complete pipeline — proto → code generator → generated class → RowCodec → decoded scalars — produces correct results.
+This project exists to catch regressions in the plugin and the codec together. Unit tests in `ProtoPlugin/tests` and `Codec/tests` test the components in isolation; this project verifies that the complete pipeline — proto → code generator → generated class → RowCodec → decoded scalars — produces correct results.
 
 ## Proto files
 
@@ -86,7 +86,7 @@ ctest --test-dir build/build -C Release -R arrow_row_proto_integration
 Or run the executable directly:
 
 ```
-build/build/ArrowRowProtoIntegration/Release/arrow_row_proto_integration_tests.exe
+build/build/ProtoIntegration/Release/arrow_row_proto_integration_tests.exe
 ```
 
 ## Dependencies

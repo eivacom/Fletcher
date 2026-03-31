@@ -1,6 +1,6 @@
-# ArrowRowCodec
+# Codec
 
-Core serialization library for the ArrowRowSerializer system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`EncodedRow`). Also defines the abstract `PubSubProvider` interface used by generated pub/sub code.
+Core serialization library for the Fletcher system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`EncodedRow`). Also defines the abstract `PubSubProvider` interface used by generated pub/sub code.
 
 ## Contents
 

@@ -1,4 +1,4 @@
-// arrow-row-codec: Rust bindings for the ArrowRowCodec C library.
+// arrow-row-codec: Rust bindings for the Codec C library.
 //
 // Module layout:
 //   ffi    — raw unsafe C declarations (private)

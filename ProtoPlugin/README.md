@@ -1,4 +1,4 @@
-# ArrowRowProtoPlugin
+# ProtoPlugin
 
 A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files containing ArrowRow wrapper classes. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()` and can convert to/from an `ArrowRow` (vector of scalars), along with the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 

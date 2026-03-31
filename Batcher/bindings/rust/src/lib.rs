@@ -1,4 +1,4 @@
-// arrow-row-batcher: Rust bindings for the ArrowRowBatcher C library.
+// arrow-row-batcher: Rust bindings for the Batcher C library.
 //
 // Module layout:
 //   ffi     — raw unsafe C declarations (private)

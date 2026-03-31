@@ -1,7 +1,7 @@
 #ifndef FLETCHER_BATCHER_INCLUDE_ARROW_ROW_BATCHER_CAPI_H_
 #define FLETCHER_BATCHER_INCLUDE_ARROW_ROW_BATCHER_CAPI_H_
 
-// Pure-C public API for the ArrowRowBatcher library.
+// Pure-C public API for the Batcher library.
 //
 // This header includes arrow_row_codec_capi.h and therefore also exposes
 // arrow_row_free_string, arrow_row_free_bytes, and the RowCodec functions.

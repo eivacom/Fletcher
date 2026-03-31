@@ -1,4 +1,4 @@
-# ArrowRowBatcher
+# Batcher
 
 Accumulates `EncodedRow` buffers and flushes them as an Apache Arrow `Table` once a configured batch size is reached. Includes a write-ahead log (WAL) interface backed by SQLite for durability during accumulation.
 

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "ArrowRowCodec/bindings/rust",
-    "ArrowRowBatcher/bindings/rust",
+    "Codec/bindings/rust",
+    "Batcher/bindings/rust",
 ]
 resolver = "2"

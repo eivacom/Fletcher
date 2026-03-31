@@ -1,7 +1,7 @@
 #ifndef FLETCHER_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
 #define FLETCHER_CODEC_INCLUDE_ARROW_ROW_CODEC_CAPI_H_
 
-// Pure-C public API for the ArrowRowCodec library.
+// Pure-C public API for the Codec library.
 //
 // Schema and record-batch data are exchanged as Arrow IPC stream bytes:
 //   - schema_ipc: an Arrow IPC stream written with zero record batches
