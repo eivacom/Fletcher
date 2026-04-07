@@ -44,6 +44,10 @@ static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
     const std::string bare = ClassNameImpl(msg);
     if (msg->file() == context_file)
         return bare;
+    // Same package → no global qualification needed; the #include brings
+    // the class into the same namespace the consumer is already in.
+    if (msg->file()->package() == context_file->package())
+        return bare;
     const std::string& pkg = msg->file()->package();
     if (pkg.empty())
         return "::" + bare;
