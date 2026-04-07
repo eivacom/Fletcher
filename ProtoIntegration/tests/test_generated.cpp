@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
-#include <pubsub_provider.hpp>
+#include <pubsub/pubsub_provider.hpp>
 #include <row_codec.hpp>
 
 #include <map>

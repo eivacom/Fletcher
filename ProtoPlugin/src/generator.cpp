@@ -826,7 +826,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
     }
 
     if (!schema_only && file->service_count() > 0) {
-        o << "#include <pubsub_provider.hpp>\n"
+        o << "#include <pubsub/pubsub_provider.hpp>\n"
           << "#include <functional>\n";
     }
 

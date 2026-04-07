@@ -1,7 +1,7 @@
 #ifndef FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FAST_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <pubsub_provider.hpp>
+#include <pubsub/pubsub_provider.hpp>
 
 #include <cstdint>
 #include <memory>

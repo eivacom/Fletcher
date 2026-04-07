@@ -2,6 +2,7 @@
 #define FLETCHER_INCLUDE_ROW_CODEC_HPP_
 
 #include <arrow/api.h>
+#include <pubsub/envelope.hpp>
 
 #include "schema_evolution.hpp"
 
@@ -14,7 +15,6 @@
 namespace fletcher {
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
-using EncodedRow = std::vector<uint8_t>;
 
 // Tagged row buffer format (little-endian throughout):
 //
