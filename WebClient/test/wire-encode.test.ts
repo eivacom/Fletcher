@@ -1,0 +1,154 @@
+import { describe, it, expect, beforeAll } from 'vitest';
+import { WasmDecoder } from '../src/wasm-decoder.js';
+import { WireTypeId } from '../src/wire-types.js';
+import { ObjectBackend } from '../src/codec/object-backend.js';
+import { encodeRow } from '../src/codec/row-encoder.js';
+import type { SchemaDescriptor } from '../src/codec/schema-descriptor.js';
+
+describe('Row encoder + decoder roundtrip', () => {
+  let decoder: WasmDecoder;
+  let backend: ObjectBackend;
+
+  beforeAll(async () => {
+    decoder = new WasmDecoder();
+    await decoder.init();
+    backend = new ObjectBackend();
+  });
+
+  it('round-trips scalar fields', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 0xDEADBEEFn,
+      fields: [
+        { name: 'a', fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+        { name: 'b', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
+        { name: 'c', fieldNumber: 3, wireType: WireTypeId.BOOL,    nullable: false },
+        { name: 'd', fieldNumber: 4, wireType: WireTypeId.UINT32,  nullable: false },
+      ],
+    };
+
+    const original = { a: -7, b: 1.23, c: true, d: 999 };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder);
+
+    expect(decoded.a).toBe(-7);
+    expect(decoded.b).toBeCloseTo(1.23);
+    expect(decoded.c).toBe(true);
+    expect(decoded.d).toBe(999);
+  });
+
+  it('round-trips 64-bit integers as bigint', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        { name: 'ts', fieldNumber: 1, wireType: WireTypeId.TIMESTAMP_NANO, nullable: false },
+        { name: 'id', fieldNumber: 2, wireType: WireTypeId.UINT64, nullable: false },
+      ],
+    };
+
+    const original = { ts: 1234567890123456789n, id: 18446744073709551615n };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder);
+
+    expect(decoded.ts).toBe(1234567890123456789n);
+    expect(decoded.id).toBe(18446744073709551615n);
+  });
+
+  it('round-trips strings', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        { name: 'name', fieldNumber: 1, wireType: WireTypeId.STRING, nullable: false },
+      ],
+    };
+
+    const original = { name: 'hello, world! 🎉' };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder);
+    expect(decoded.name).toBe('hello, world! 🎉');
+  });
+
+  it('round-trips null fields', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        { name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32,  nullable: true },
+        { name: 'y', fieldNumber: 2, wireType: WireTypeId.STRING, nullable: true },
+      ],
+    };
+
+    const original = { x: null, y: 'present' };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder);
+    expect(decoded.x).toBeNull();
+    expect(decoded.y).toBe('present');
+  });
+
+  it('round-trips binary data', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        { name: 'data', fieldNumber: 1, wireType: WireTypeId.BINARY, nullable: false },
+      ],
+    };
+
+    const blob = new Uint8Array([0xFF, 0x00, 0xAB, 0xCD]);
+    const encoded = encodeRow(schema, { data: blob });
+    const decoded = backend.decode(schema, encoded, decoder);
+    expect(decoded.data).toEqual(blob);
+  });
+
+  it('preserves schema hash in encoded row', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 0x123456789ABCDEF0n,
+      fields: [
+        { name: 'v', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
+      ],
+    };
+
+    const encoded = encodeRow(schema, { v: 1 });
+    const hash = decoder.getSchemaHash(encoded);
+    expect(hash).toBe(0x123456789ABCDEF0n);
+  });
+
+  it('round-trips a list of int32', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        {
+          name: 'nums',
+          fieldNumber: 1,
+          wireType: WireTypeId.LIST,
+          nullable: false,
+          element: { name: '', fieldNumber: 0, wireType: WireTypeId.INT32, nullable: false },
+        },
+      ],
+    };
+
+    const original = { nums: [10, 20, 30] };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder);
+    expect(decoded.nums).toEqual([10, 20, 30]);
+  });
+
+  it('round-trips a map of string → int32', () => {
+    const schema: SchemaDescriptor = {
+      schemaHash: 1n,
+      fields: [
+        {
+          name: 'tags',
+          fieldNumber: 1,
+          wireType: WireTypeId.MAP,
+          nullable: false,
+          mapKey: { name: '', fieldNumber: 0, wireType: WireTypeId.STRING, nullable: false },
+          mapValue: { name: '', fieldNumber: 0, wireType: WireTypeId.INT32, nullable: false },
+        },
+      ],
+    };
+
+    const original = { tags: new Map([['a', 1], ['b', 2]]) };
+    const encoded = encodeRow(schema, original);
+    const decoded = backend.decode(schema, encoded, decoder) as { tags: Map<string, number> };
+    expect(decoded.tags.get('a')).toBe(1);
+    expect(decoded.tags.get('b')).toBe(2);
+  });
+});

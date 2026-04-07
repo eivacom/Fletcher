@@ -505,4 +505,64 @@ std::string ClassName(const google::protobuf::Descriptor* msg) {
     return name + "ArrowRow";
 }
 
+// -----------------------------------------------------------------------
+// TypeScript code generation helpers
+// -----------------------------------------------------------------------
+
+std::string TsScalarType(google::protobuf::FieldDescriptor::Type type) {
+    using FDT = google::protobuf::FieldDescriptor;
+    switch (type) {
+        case FDT::TYPE_BOOL:     return "boolean";
+        case FDT::TYPE_INT32:
+        case FDT::TYPE_SINT32:
+        case FDT::TYPE_SFIXED32: return "number";
+        case FDT::TYPE_INT64:
+        case FDT::TYPE_SINT64:
+        case FDT::TYPE_SFIXED64: return "bigint";
+        case FDT::TYPE_UINT32:
+        case FDT::TYPE_FIXED32:  return "number";
+        case FDT::TYPE_UINT64:
+        case FDT::TYPE_FIXED64:  return "bigint";
+        case FDT::TYPE_FLOAT:    return "number";
+        case FDT::TYPE_DOUBLE:   return "number";
+        case FDT::TYPE_STRING:   return "string";
+        case FDT::TYPE_BYTES:    return "Uint8Array";
+        case FDT::TYPE_ENUM:     return "number";
+        default:                 return "";
+    }
+}
+
+std::string WireTypeIdName(google::protobuf::FieldDescriptor::Type type) {
+    using FDT = google::protobuf::FieldDescriptor;
+    switch (type) {
+        case FDT::TYPE_BOOL:     return "WireTypeId.BOOL";
+        case FDT::TYPE_INT32:
+        case FDT::TYPE_SINT32:
+        case FDT::TYPE_SFIXED32: return "WireTypeId.INT32";
+        case FDT::TYPE_INT64:
+        case FDT::TYPE_SINT64:
+        case FDT::TYPE_SFIXED64: return "WireTypeId.INT64";
+        case FDT::TYPE_UINT32:
+        case FDT::TYPE_FIXED32:  return "WireTypeId.UINT32";
+        case FDT::TYPE_UINT64:
+        case FDT::TYPE_FIXED64:  return "WireTypeId.UINT64";
+        case FDT::TYPE_FLOAT:    return "WireTypeId.FLOAT32";
+        case FDT::TYPE_DOUBLE:   return "WireTypeId.FLOAT64";
+        case FDT::TYPE_STRING:   return "WireTypeId.STRING";
+        case FDT::TYPE_BYTES:    return "WireTypeId.BINARY";
+        case FDT::TYPE_ENUM:     return "WireTypeId.INT32";
+        default:                 return "";
+    }
+}
+
+std::string TsInterfaceName(const google::protobuf::Descriptor* msg) {
+    std::string name = msg->name();
+    const auto* parent = msg->containing_type();
+    while (parent) {
+        name = parent->name() + "_" + name;
+        parent = parent->containing_type();
+    }
+    return "I" + name;
+}
+
 }  // namespace fletcher_plugin
