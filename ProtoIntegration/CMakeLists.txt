@@ -38,7 +38,7 @@ set(PROTO_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-set(PROTO_STEMS simple temporal nested collections maps complex pubsub)
+set(PROTO_STEMS simple temporal nested collections maps complex pubsub evolution_v1 evolution_v2)
 
 set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
@@ -67,6 +67,7 @@ add_custom_target(arrow_row_proto_codegen ALL
 # ---- Test executable ----
 add_executable(arrow_row_proto_integration_tests
     tests/test_generated.cpp
+    tests/test_schema_evolution.cpp
 )
 add_dependencies(arrow_row_proto_integration_tests arrow_row_proto_codegen)
 

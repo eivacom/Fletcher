@@ -5,12 +5,16 @@
 #include "row_codec.hpp"
 
 // ---------------------------------------------------------------------------
-// Schema hash mismatch
+// Schema hash mismatch with incompatible types
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Decoding with a mismatched schema throws") {
-    auto schema_a = arrow::schema({arrow::field("x", arrow::int32())});
-    auto schema_b = arrow::schema({arrow::field("x", arrow::utf8())});  // different type
+TEST_CASE("Decoding with an incompatible type throws (ILLEGAL promotion)") {
+    auto schema_a = arrow::schema({
+        arrow::field("x", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"}))});
+    auto schema_b = arrow::schema({
+        arrow::field("x", arrow::utf8(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"}))});
 
     fletcher::RowCodec codec_a(schema_a);
     fletcher::RowCodec codec_b(schema_b);
@@ -19,16 +23,55 @@ TEST_CASE("Decoding with a mismatched schema throws") {
     REQUIRE_THROWS_AS(codec_b.DecodeRow(row), std::invalid_argument);
 }
 
-TEST_CASE("Decoding with a schema of different field count throws") {
-    auto schema_a = arrow::schema({arrow::field("x", arrow::int32())});
-    auto schema_b = arrow::schema({arrow::field("x", arrow::int32()),
-                                    arrow::field("y", arrow::int32())});
+// ---------------------------------------------------------------------------
+// Schema evolution: added column fills with null
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Decoding with extra reader column fills null (evolution)") {
+    auto schema_a = arrow::schema({
+        arrow::field("x", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"}))});
+    auto schema_b = arrow::schema({
+        arrow::field("x", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"})),
+        arrow::field("y", arrow::int32(), true,
+                     arrow::key_value_metadata({"field_number"}, {"2"}))});
 
     fletcher::RowCodec codec_a(schema_a);
     fletcher::RowCodec codec_b(schema_b);
 
     auto row = codec_a.EncodeRow({std::make_shared<arrow::Int32Scalar>(1)});
-    REQUIRE_THROWS_AS(codec_b.DecodeRow(row), std::invalid_argument);
+    auto decoded = codec_b.DecodeRow(row);
+
+    REQUIRE(decoded.size() == 2);
+    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 1);
+    CHECK(!decoded[1]->is_valid);  // missing field → null
+}
+
+// ---------------------------------------------------------------------------
+// Schema evolution: dropped column is skipped
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Decoding with fewer reader columns skips unknown fields") {
+    auto schema_a = arrow::schema({
+        arrow::field("x", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"})),
+        arrow::field("y", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"2"}))});
+    auto schema_b = arrow::schema({
+        arrow::field("x", arrow::int32(), false,
+                     arrow::key_value_metadata({"field_number"}, {"1"}))});
+
+    fletcher::RowCodec codec_a(schema_a);
+    fletcher::RowCodec codec_b(schema_b);
+
+    auto row = codec_a.EncodeRow({
+        std::make_shared<arrow::Int32Scalar>(10),
+        std::make_shared<arrow::Int32Scalar>(20)});
+    auto decoded = codec_b.DecodeRow(row);
+
+    REQUIRE(decoded.size() == 1);
+    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 10);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,15 +118,21 @@ TEST_CASE("RowCodec embeds the schema hash in every encoded row") {
     CHECK(embedded == codec.schema_hash());
 }
 
-TEST_CASE("Version byte is 0x01") {
-    auto schema = arrow::schema({arrow::field("v", arrow::int32())});
+TEST_CASE("Field count follows schema hash in wire format") {
+    auto schema = arrow::schema({arrow::field("a", arrow::int32()),
+                                  arrow::field("b", arrow::utf8())});
     fletcher::RowCodec codec(schema);
 
-    auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(0)});
+    auto row = codec.EncodeRow({
+        std::make_shared<arrow::Int32Scalar>(0),
+        std::make_shared<arrow::StringScalar>("x"),
+    });
 
-    // Byte 8 (after 8-byte hash) is the version.
-    REQUIRE(row.size() >= 9u);
-    CHECK(row[8] == 0x01u);
+    // Bytes 8-9 (after 8-byte hash) are the field count (uint16).
+    REQUIRE(row.size() >= 10u);
+    uint16_t count = 0;
+    std::memcpy(&count, row.data() + 8, 2);
+    CHECK(count == 2);
 }
 
 // ---------------------------------------------------------------------------

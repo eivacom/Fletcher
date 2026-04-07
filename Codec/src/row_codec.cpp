@@ -1,6 +1,7 @@
 #include "row_codec.hpp"
-#include "row_reader.hpp"    // detail::Reader
-#include "scalar_codec.hpp"  // detail::EncodeScalar, detail::DecodeScalar
+#include "row_reader.hpp"
+#include "scalar_codec.hpp"
+#include "schema_evolution.hpp"
 
 #include <arrow/scalar.h>
 #include <arrow/type.h>
@@ -15,8 +16,7 @@ namespace fletcher {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Encoder helpers (internal to this TU; visible throughout arrow_row via the
-// anonymous namespace's using-directive injection into the enclosing scope)
+// Encoder helpers
 // ---------------------------------------------------------------------------
 
 template <typename T>
@@ -32,7 +32,332 @@ void AppendVariableLength(std::vector<uint8_t>& buf,
     buf.insert(buf.end(), data, data + len);
 }
 
+// Extract the integer "field_number" metadata value from an Arrow field.
+// When no metadata is present, returns the positional fallback (1-indexed).
+int GetFieldNumber(const arrow::Field& field, int positional_fallback) {
+    auto meta = field.metadata();
+    if (!meta) return positional_fallback;
+    auto idx = meta->FindKey("field_number");
+    if (idx < 0) return positional_fallback;
+    return std::stoi(meta->value(idx));
+}
+
+// ---------------------------------------------------------------------------
+// Tagged struct encoder (recursive)
+// ---------------------------------------------------------------------------
+
+void EncodeStructTagged(std::vector<uint8_t>& buf,
+                        const arrow::StructScalar& scalar,
+                        const arrow::StructType& stype);
+
+// Encode a single value's payload bytes.
+// For struct types, uses the recursive tagged format.
+// For other composites (list, map, union), encodes elements using
+// detail::EncodeScalar for leaf scalars and recursion for struct elements.
+void EncodePayload(std::vector<uint8_t>& buf,
+                   const arrow::Scalar& scalar) {
+    using T = arrow::Type;
+
+    switch (scalar.type->id()) {
+    case T::STRUCT: {
+        const auto& ss    = static_cast<const arrow::StructScalar&>(scalar);
+        const auto& stype = static_cast<const arrow::StructType&>(*scalar.type);
+        EncodeStructTagged(buf, ss, stype);
+        return;
+    }
+    case T::LIST:
+    case T::LARGE_LIST: {
+        const auto& ls    = static_cast<const arrow::BaseListScalar&>(scalar);
+        const int64_t len = ls.value->length();
+        AppendFixed(buf, static_cast<uint32_t>(len));
+        for (int64_t i = 0; i < len; ++i) {
+            auto elem = ls.value->GetScalar(i).ValueOrDie();
+            const bool is_null = !elem->is_valid;
+            buf.push_back(is_null ? 0x01u : 0x00u);
+            if (!is_null) EncodePayload(buf, *elem);
+        }
+        return;
+    }
+    case T::FIXED_SIZE_LIST: {
+        const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
+        for (int64_t i = 0; i < ls.value->length(); ++i) {
+            auto elem = ls.value->GetScalar(i).ValueOrDie();
+            const bool is_null = !elem->is_valid;
+            buf.push_back(is_null ? 0x01u : 0x00u);
+            if (!is_null) EncodePayload(buf, *elem);
+        }
+        return;
+    }
+    case T::MAP: {
+        const auto& ms       = static_cast<const arrow::MapScalar&>(scalar);
+        auto struct_arr      = std::static_pointer_cast<arrow::StructArray>(ms.value);
+        const int64_t count  = struct_arr->length();
+        auto key_arr         = struct_arr->field(0);
+        auto val_arr         = struct_arr->field(1);
+        AppendFixed(buf, static_cast<uint32_t>(count));
+        for (int64_t i = 0; i < count; ++i) {
+            auto key = key_arr->GetScalar(i).ValueOrDie();
+            detail::EncodeScalar(buf, *key);
+            auto val = val_arr->GetScalar(i).ValueOrDie();
+            buf.push_back(!val->is_valid ? 0x01u : 0x00u);
+            if (val->is_valid) EncodePayload(buf, *val);
+        }
+        return;
+    }
+    case T::SPARSE_UNION: {
+        const auto& us         = static_cast<const arrow::SparseUnionScalar&>(scalar);
+        const auto& union_type = static_cast<const arrow::SparseUnionType&>(*scalar.type);
+        AppendFixed(buf, us.type_code);
+        const auto& codes = union_type.type_codes();
+        int child_id = -1;
+        for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
+            if (codes[i] == us.type_code) { child_id = i; break; }
+        }
+        if (child_id < 0 || child_id >= static_cast<int>(us.value.size()))
+            throw std::invalid_argument("EncodeRow: invalid sparse union type_code");
+        detail::EncodeScalar(buf, *us.value[static_cast<size_t>(child_id)]);
+        return;
+    }
+    case T::DENSE_UNION: {
+        const auto& us = static_cast<const arrow::DenseUnionScalar&>(scalar);
+        AppendFixed(buf, us.type_code);
+        detail::EncodeScalar(buf, *us.value);
+        return;
+    }
+    default:
+        // Scalar types — delegate to the raw encoder.
+        detail::EncodeScalar(buf, scalar);
+        return;
+    }
+}
+
+void EncodeStructTagged(std::vector<uint8_t>& buf,
+                        const arrow::StructScalar& scalar,
+                        const arrow::StructType& stype) {
+    const int num_fields = stype.num_fields();
+    AppendFixed(buf, static_cast<uint16_t>(num_fields));
+
+    for (int i = 0; i < num_fields; ++i) {
+        const auto& child_field = stype.field(i);
+        const auto& child       = scalar.value[static_cast<size_t>(i)];
+        const bool  is_null     = !child || !child->is_valid;
+
+        uint32_t field_num = static_cast<uint32_t>(GetFieldNumber(*child_field, i + 1));
+        WireTypeId wire_type = ArrowTypeToWireTypeId(*child_field->type());
+
+        AppendFixed(buf, field_num);
+        buf.push_back(static_cast<uint8_t>(wire_type));
+        buf.push_back(is_null ? 0x01u : 0x00u);
+
+        if (!is_null) {
+            std::vector<uint8_t> payload;
+            payload.reserve(32);
+            EncodePayload(payload, *child);
+            AppendFixed(buf, static_cast<uint32_t>(payload.size()));
+            buf.insert(buf.end(), payload.begin(), payload.end());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tagged struct decoder (recursive)
+// ---------------------------------------------------------------------------
+
+// Forward declarations.
+std::shared_ptr<arrow::Scalar> DecodeStructTagged(
+    detail::Reader& r,
+    const DecodingMap& map,
+    const std::shared_ptr<arrow::DataType>& struct_type);
+
+// Map WireTypeId to a representative arrow::DataType for decoding wire bytes
+// when the wire type differs from the reader type (promotion case).
+std::shared_ptr<arrow::DataType> WireTypeIdToDecodeType(WireTypeId id) {
+    switch (id) {
+        case WireTypeId::BOOL:       return arrow::boolean();
+        case WireTypeId::INT8:       return arrow::int8();
+        case WireTypeId::INT16:      return arrow::int16();
+        case WireTypeId::INT32:      return arrow::int32();
+        case WireTypeId::INT64:      return arrow::int64();
+        case WireTypeId::UINT8:      return arrow::uint8();
+        case WireTypeId::UINT16:     return arrow::uint16();
+        case WireTypeId::UINT32:     return arrow::uint32();
+        case WireTypeId::UINT64:     return arrow::uint64();
+        case WireTypeId::FLOAT32:    return arrow::float32();
+        case WireTypeId::FLOAT64:    return arrow::float64();
+        case WireTypeId::STRING:     return arrow::utf8();
+        case WireTypeId::BINARY:     return arrow::binary();
+        case WireTypeId::LARGE_STRING: return arrow::large_utf8();
+        case WireTypeId::LARGE_BINARY: return arrow::large_binary();
+        default:
+            throw std::invalid_argument(
+                "WireTypeIdToDecodeType: unsupported wire type for promotion");
+    }
+}
+
+// Promote a decoded scalar from wire type to reader type.
+std::shared_ptr<arrow::Scalar> PromoteScalar(
+    const std::shared_ptr<arrow::Scalar>& scalar,
+    PromotionKind promotion,
+    const std::shared_ptr<arrow::DataType>& target_type) {
+
+    if (promotion == PromotionKind::IDENTITY)
+        return scalar;
+
+    using T = arrow::Type;
+
+    switch (promotion) {
+    case PromotionKind::WIDEN_INT: {
+        switch (target_type->id()) {
+            case T::INT16:
+                if (scalar->type->id() == T::INT8)
+                    return std::make_shared<arrow::Int16Scalar>(
+                        static_cast<const arrow::Int8Scalar&>(*scalar).value);
+                break;
+            case T::INT32:
+                if (scalar->type->id() == T::INT8)
+                    return std::make_shared<arrow::Int32Scalar>(
+                        static_cast<int32_t>(static_cast<const arrow::Int8Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::INT16)
+                    return std::make_shared<arrow::Int32Scalar>(
+                        static_cast<int32_t>(static_cast<const arrow::Int16Scalar&>(*scalar).value));
+                break;
+            case T::INT64:
+                if (scalar->type->id() == T::INT8)
+                    return std::make_shared<arrow::Int64Scalar>(
+                        static_cast<int64_t>(static_cast<const arrow::Int8Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::INT16)
+                    return std::make_shared<arrow::Int64Scalar>(
+                        static_cast<int64_t>(static_cast<const arrow::Int16Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::INT32)
+                    return std::make_shared<arrow::Int64Scalar>(
+                        static_cast<int64_t>(static_cast<const arrow::Int32Scalar&>(*scalar).value));
+                break;
+            case T::UINT16:
+                if (scalar->type->id() == T::UINT8)
+                    return std::make_shared<arrow::UInt16Scalar>(
+                        static_cast<const arrow::UInt8Scalar&>(*scalar).value);
+                break;
+            case T::UINT32:
+                if (scalar->type->id() == T::UINT8)
+                    return std::make_shared<arrow::UInt32Scalar>(
+                        static_cast<uint32_t>(static_cast<const arrow::UInt8Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::UINT16)
+                    return std::make_shared<arrow::UInt32Scalar>(
+                        static_cast<uint32_t>(static_cast<const arrow::UInt16Scalar&>(*scalar).value));
+                break;
+            case T::UINT64:
+                if (scalar->type->id() == T::UINT8)
+                    return std::make_shared<arrow::UInt64Scalar>(
+                        static_cast<uint64_t>(static_cast<const arrow::UInt8Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::UINT16)
+                    return std::make_shared<arrow::UInt64Scalar>(
+                        static_cast<uint64_t>(static_cast<const arrow::UInt16Scalar&>(*scalar).value));
+                if (scalar->type->id() == T::UINT32)
+                    return std::make_shared<arrow::UInt64Scalar>(
+                        static_cast<uint64_t>(static_cast<const arrow::UInt32Scalar&>(*scalar).value));
+                break;
+            case T::DECIMAL256: {
+                const auto& d128 = static_cast<const arrow::Decimal128Scalar&>(*scalar);
+                return std::make_shared<arrow::Decimal256Scalar>(
+                    arrow::Decimal256(d128.value), target_type);
+            }
+            default: break;
+        }
+        break;
+    }
+    case PromotionKind::WIDEN_FLOAT: {
+        float v = static_cast<const arrow::FloatScalar&>(*scalar).value;
+        return std::make_shared<arrow::DoubleScalar>(static_cast<double>(v));
+    }
+    case PromotionKind::INT_TO_FLOAT: {
+        int32_t v = static_cast<const arrow::Int32Scalar&>(*scalar).value;
+        return std::make_shared<arrow::DoubleScalar>(static_cast<double>(v));
+    }
+    default: break;
+    }
+
+    throw std::invalid_argument(
+        "PromoteScalar: unhandled promotion from " + scalar->type->ToString() +
+        " to " + target_type->ToString());
+}
+
+std::shared_ptr<arrow::Scalar> DecodeStructTagged(
+    detail::Reader& r,
+    const DecodingMap& map,
+    const std::shared_ptr<arrow::DataType>& struct_type) {
+
+    const auto& stype = static_cast<const arrow::StructType&>(*struct_type);
+    const int num_reader_fields = stype.num_fields();
+
+    // Pre-fill with nulls.
+    arrow::ScalarVector children(num_reader_fields);
+    for (int i = 0; i < num_reader_fields; ++i)
+        children[i] = arrow::MakeNullScalar(stype.field(i)->type());
+
+    uint16_t wire_field_count = r.Read<uint16_t>();
+
+    for (uint16_t wi = 0; wi < wire_field_count; ++wi) {
+        /*uint32_t field_num =*/ r.Read<uint32_t>();
+        auto wire_tid = static_cast<WireTypeId>(r.Read<uint8_t>());
+        uint8_t null_flag = r.Read<uint8_t>();
+
+        if (wi >= map.wire_to_reader.size())
+            throw std::invalid_argument("DecodeStructTagged: wire field index out of range");
+
+        const auto& slot = map.wire_to_reader[wi];
+
+        if (null_flag == 0x01u)
+            continue;
+
+        uint32_t data_len = r.Read<uint32_t>();
+        size_t payload_start = r.pos;
+
+        if (slot.reader_index < 0) {
+            r.pos = payload_start + data_len;
+            continue;
+        }
+
+        if (slot.sub_map) {
+            auto child = DecodeStructTagged(r, *slot.sub_map, slot.reader_type);
+            children[slot.reader_index] = PromoteScalar(child, slot.promotion, slot.reader_type);
+        } else {
+            // Determine decode type: for promotions, decode as the wire type first.
+            std::shared_ptr<arrow::DataType> decode_type;
+            if (slot.promotion == PromotionKind::IDENTITY) {
+                decode_type = slot.reader_type;
+            } else {
+                decode_type = WireTypeIdToDecodeType(wire_tid);
+            }
+
+            detail::Reader sub{r.data + payload_start, data_len};
+            auto decoded = detail::DecodeScalarFromReader(sub, decode_type);
+            children[slot.reader_index] = PromoteScalar(decoded, slot.promotion, slot.reader_type);
+        }
+
+        r.pos = payload_start + data_len;
+    }
+
+    return std::make_shared<arrow::StructScalar>(std::move(children), struct_type);
+}
+
+// ---------------------------------------------------------------------------
+// FNV-1a hasher
+// ---------------------------------------------------------------------------
+
+uint64_t Fnv1a64(const std::string& s) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char c : s) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// detail:: scalar encode/decode (raw payload bytes — unchanged from v1)
+// ---------------------------------------------------------------------------
 
 namespace detail {
 
@@ -76,9 +401,6 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             AppendFixed(buf, static_cast<const arrow::DoubleScalar&>(scalar).value);
             break;
 
-        // Variable-width types share BaseBinaryScalar with a Buffer value.
-        // STRING_VIEW / BINARY_VIEW use the same scalar representation — the
-        // array-level multi-buffer layout is hidden behind the scalar API.
         case T::STRING:
         case T::LARGE_STRING:
         case T::BINARY:
@@ -156,109 +478,8 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             buf.insert(buf.end(), bytes, bytes + 32);
             break;
         }
-        case T::STRUCT: {
-            const auto& ss         = static_cast<const arrow::StructScalar&>(scalar);
-            const auto& stype      = static_cast<const arrow::StructType&>(*scalar.type);
-            const int   num_fields = stype.num_fields();
-            for (int i = 0; i < num_fields; ++i) {
-                const auto& child   = ss.value[static_cast<size_t>(i)];
-                const bool  is_null = !child || !child->is_valid;
-                buf.push_back(is_null ? 0x01u : 0x00u);
-                if (!is_null) EncodeScalar(buf, *child);
-            }
-            break;
-        }
-        case T::LIST:
-        case T::LARGE_LIST: {
-            const auto& ls     = static_cast<const arrow::BaseListScalar&>(scalar);
-            const int64_t len  = ls.value->length();
-            AppendFixed(buf, static_cast<uint32_t>(len));
-            for (int64_t i = 0; i < len; ++i) {
-                auto result = ls.value->GetScalar(i);
-                if (!result.ok())
-                    throw std::invalid_argument(
-                        "EncodeRow: GetScalar failed: " + result.status().ToString());
-                const auto& elem    = *result;
-                const bool  is_null = !elem->is_valid;
-                buf.push_back(is_null ? 0x01u : 0x00u);
-                if (!is_null) EncodeScalar(buf, *elem);
-            }
-            break;
-        }
-        case T::FIXED_SIZE_LIST: {
-            // No count prefix — element count is fixed in the type.
-            const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
-            for (int64_t i = 0; i < ls.value->length(); ++i) {
-                auto result = ls.value->GetScalar(i);
-                if (!result.ok())
-                    throw std::invalid_argument(
-                        "EncodeRow: GetScalar failed: " + result.status().ToString());
-                const auto& elem    = *result;
-                const bool  is_null = !elem->is_valid;
-                buf.push_back(is_null ? 0x01u : 0x00u);
-                if (!is_null) EncodeScalar(buf, *elem);
-            }
-            break;
-        }
-        case T::SPARSE_UNION: {
-            // value is a ScalarVector — one slot per child type.  Find the
-            // active child by matching type_code to its index.
-            const auto& us         = static_cast<const arrow::SparseUnionScalar&>(scalar);
-            const auto& union_type = static_cast<const arrow::SparseUnionType&>(*scalar.type);
-            AppendFixed(buf, us.type_code);
-            const auto& codes = union_type.type_codes();
-            int child_id = -1;
-            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
-                if (codes[i] == us.type_code) { child_id = i; break; }
-            }
-            if (child_id < 0 || child_id >= static_cast<int>(us.value.size()))
-                throw std::invalid_argument("EncodeScalar: invalid sparse union type_code");
-            EncodeScalar(buf, *us.value[static_cast<size_t>(child_id)]);
-            break;
-        }
-        case T::DENSE_UNION: {
-            // value is a shared_ptr<Scalar> — only the active child is stored.
-            const auto& us = static_cast<const arrow::DenseUnionScalar&>(scalar);
-            AppendFixed(buf, us.type_code);
-            EncodeScalar(buf, *us.value);
-            break;
-        }
-        case T::MAP: {
-            const auto& ms         = static_cast<const arrow::MapScalar&>(scalar);
-            const auto& map_type   = static_cast<const arrow::MapType&>(*scalar.type);
-            auto struct_arr        = std::static_pointer_cast<arrow::StructArray>(ms.value);
-            const int64_t count    = struct_arr->length();
-            auto key_arr           = struct_arr->field(0);
-            auto val_arr           = struct_arr->field(1);
-            AppendFixed(buf, static_cast<uint32_t>(count));
-            for (int64_t i = 0; i < count; ++i) {
-                // Keys are non-null by Arrow convention — no null flag.
-                auto key_result = key_arr->GetScalar(i);
-                if (!key_result.ok())
-                    throw std::invalid_argument(
-                        "EncodeRow: GetScalar (map key) failed: " +
-                        key_result.status().ToString());
-                EncodeScalar(buf, **key_result);
-                auto val_result = val_arr->GetScalar(i);
-                if (!val_result.ok())
-                    throw std::invalid_argument(
-                        "EncodeRow: GetScalar (map value) failed: " +
-                        val_result.status().ToString());
-                const auto& val = *val_result;
-                buf.push_back(!val->is_valid ? 0x01u : 0x00u);
-                if (val->is_valid) EncodeScalar(buf, *val);
-            }
-            (void)map_type;
-            break;
-        }
 
         case T::DICTIONARY:
-            // Dictionary encoding is a columnar storage optimisation: the value
-            // is an index into a shared dictionary array that lives outside the
-            // row.  There is no meaningful way to embed that dictionary in a
-            // self-contained per-row buffer without either discarding it (lossy)
-            // or duplicating it in every row (prohibitively expensive).
-            // Use a non-dictionary schema field instead.
             throw std::invalid_argument(
                 "EncodeRow: DICTIONARY type is not supported in the per-row format; "
                 "use a non-dictionary schema field instead");
@@ -269,18 +490,13 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
     }
 }
 
-}  // namespace detail
+// Decode a single scalar from a Reader, advancing the reader position.
+// Handles all scalar types.  Composite types (list, map, struct, union)
+// use the raw (non-tagged) element encoding for list/map elements.
+std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
+    Reader& r,
+    const std::shared_ptr<arrow::DataType>& type) {
 
-namespace {
-
-// ---------------------------------------------------------------------------
-// Decoder helpers
-// ---------------------------------------------------------------------------
-
-using detail::Reader;
-
-std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                                 r,
-                                             const std::shared_ptr<arrow::DataType>& type) {
     using T = arrow::Type;
     switch (type->id()) {
         case T::BOOL:
@@ -382,17 +598,28 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
                 arrow::Decimal256(ptr), type);
         }
         case T::STRUCT: {
-            const auto& stype      = static_cast<const arrow::StructType&>(*type);
-            const int   num_fields = stype.num_fields();
-            arrow::ScalarVector children;
-            children.reserve(num_fields);
-            for (int i = 0; i < num_fields; ++i) {
-                const uint8_t null_flag = r.Read<uint8_t>();
-                if (null_flag == 0x01u) {
-                    children.push_back(arrow::MakeNullScalar(stype.field(i)->type()));
-                } else {
-                    children.push_back(DecodeScalarImpl(r, stype.field(i)->type()));
+            // Decode a struct from the recursive tagged format.
+            // Reads field_count + per-field tagged entries and matches them
+            // positionally to the struct type's child fields.
+            const auto& stype = static_cast<const arrow::StructType&>(*type);
+            const int num_fields = stype.num_fields();
+            arrow::ScalarVector children(num_fields);
+            for (int i = 0; i < num_fields; ++i)
+                children[i] = arrow::MakeNullScalar(stype.field(i)->type());
+
+            uint16_t wire_field_count = r.Read<uint16_t>();
+            for (uint16_t wi = 0; wi < wire_field_count; ++wi) {
+                /*uint32_t field_num =*/ r.Read<uint32_t>();
+                /*WireTypeId wire_tid =*/ r.Read<uint8_t>();
+                uint8_t null_flag = r.Read<uint8_t>();
+                if (null_flag == 0x01u) continue;
+                uint32_t data_len = r.Read<uint32_t>();
+                size_t payload_start = r.pos;
+                if (wi < static_cast<uint16_t>(num_fields)) {
+                    Reader sub{r.data + payload_start, data_len};
+                    children[wi] = DecodeScalarFromReader(sub, stype.field(wi)->type());
                 }
+                r.pos = payload_start + data_len;
             }
             return std::make_shared<arrow::StructScalar>(std::move(children), type);
         }
@@ -401,52 +628,46 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
             const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
             const auto  elem_type = list_type.value_type();
             const uint32_t count  = r.Read<uint32_t>();
-            auto maybe_builder    = arrow::MakeBuilder(elem_type);
-            if (!maybe_builder.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: MakeBuilder failed: " + maybe_builder.status().ToString());
-            auto& builder = *maybe_builder;
+            auto builder          = arrow::MakeBuilder(elem_type).ValueOrDie();
             for (uint32_t i = 0; i < count; ++i) {
                 const uint8_t null_flag = r.Read<uint8_t>();
                 arrow::Status st = (null_flag == 0x01u)
                     ? builder->AppendNull()
-                    : builder->AppendScalar(*DecodeScalarImpl(r, elem_type));
+                    : builder->AppendScalar(*DecodeScalarFromReader(r, elem_type));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: builder append failed: " + st.ToString());
             }
-            auto finish = builder->Finish();
-            if (!finish.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: builder finish failed: " + finish.status().ToString());
-            if (type->id() == arrow::Type::LIST)
-                return std::make_shared<arrow::ListScalar>(*finish, type);
-            return std::make_shared<arrow::LargeListScalar>(*finish, type);
+            auto arr = builder->Finish().ValueOrDie();
+            // Construct list type from the actual array type to avoid
+            // nullability mismatches (schema may say "not null" but
+            // MakeBuilder produces a nullable-typed array).
+            if (type->id() == arrow::Type::LIST) {
+                auto actual_type = arrow::list(arr->type());
+                return std::make_shared<arrow::ListScalar>(arr, actual_type);
+            }
+            {
+                auto actual_type = arrow::large_list(arr->type());
+                return std::make_shared<arrow::LargeListScalar>(arr, actual_type);
+            }
         }
         case T::FIXED_SIZE_LIST: {
-            // No count prefix — element count comes from the type.
             const auto& fsl_type  = static_cast<const arrow::FixedSizeListType&>(*type);
             const auto  elem_type = fsl_type.value_type();
             const int32_t count   = fsl_type.list_size();
-            auto maybe_builder    = arrow::MakeBuilder(elem_type);
-            if (!maybe_builder.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: MakeBuilder failed: " + maybe_builder.status().ToString());
-            auto& builder = *maybe_builder;
+            auto builder          = arrow::MakeBuilder(elem_type).ValueOrDie();
             for (int32_t i = 0; i < count; ++i) {
                 const uint8_t null_flag = r.Read<uint8_t>();
                 arrow::Status st = (null_flag == 0x01u)
                     ? builder->AppendNull()
-                    : builder->AppendScalar(*DecodeScalarImpl(r, elem_type));
+                    : builder->AppendScalar(*DecodeScalarFromReader(r, elem_type));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: builder append failed: " + st.ToString());
             }
-            auto finish = builder->Finish();
-            if (!finish.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: builder finish failed: " + finish.status().ToString());
-            return std::make_shared<arrow::FixedSizeListScalar>(*finish, type);
+            auto arr = builder->Finish().ValueOrDie();
+            auto actual_type = arrow::fixed_size_list(arr->type(), count);
+            return std::make_shared<arrow::FixedSizeListScalar>(arr, actual_type);
         }
         case T::SPARSE_UNION: {
             const auto& union_type = static_cast<const arrow::SparseUnionType&>(*type);
@@ -459,8 +680,7 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
             if (child_id < 0)
                 throw std::invalid_argument(
                     "DecodeRow: unknown sparse union type_code " + std::to_string(type_code));
-            auto active = DecodeScalarImpl(r, union_type.field(child_id)->type());
-            // ScalarVector must have one slot per child; fill inactive ones with null.
+            auto active = DecodeScalarFromReader(r, union_type.field(child_id)->type());
             arrow::ScalarVector children;
             children.reserve(union_type.num_fields());
             for (int i = 0; i < union_type.num_fields(); ++i) {
@@ -482,49 +702,41 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
             if (child_id < 0)
                 throw std::invalid_argument(
                     "DecodeRow: unknown dense union type_code " + std::to_string(type_code));
-            auto value = DecodeScalarImpl(r, union_type.field(child_id)->type());
+            auto value = DecodeScalarFromReader(r, union_type.field(child_id)->type());
             return std::make_shared<arrow::DenseUnionScalar>(value, type_code, type);
         }
         case T::MAP: {
             const auto& map_type = static_cast<const arrow::MapType&>(*type);
             const uint32_t count = r.Read<uint32_t>();
-            auto maybe_key_b     = arrow::MakeBuilder(map_type.key_type());
-            if (!maybe_key_b.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: MakeBuilder(key) failed: " + maybe_key_b.status().ToString());
-            auto maybe_val_b = arrow::MakeBuilder(map_type.item_type());
-            if (!maybe_val_b.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: MakeBuilder(value) failed: " + maybe_val_b.status().ToString());
+            auto key_builder = arrow::MakeBuilder(map_type.key_type()).ValueOrDie();
+            auto val_builder = arrow::MakeBuilder(map_type.item_type()).ValueOrDie();
             for (uint32_t i = 0; i < count; ++i) {
-                // Key — no null flag (Arrow keys are non-null by convention).
-                auto st = (*maybe_key_b)->AppendScalar(*DecodeScalarImpl(r, map_type.key_type()));
+                auto key = DecodeScalarFromReader(r, map_type.key_type());
+                auto st = key_builder->AppendScalar(*key);
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: key append failed: " + st.ToString());
-                // Value — may be null.
                 const uint8_t null_flag = r.Read<uint8_t>();
                 st = (null_flag == 0x01u)
-                    ? (*maybe_val_b)->AppendNull()
-                    : (*maybe_val_b)->AppendScalar(*DecodeScalarImpl(r, map_type.item_type()));
+                    ? val_builder->AppendNull()
+                    : val_builder->AppendScalar(*DecodeScalarFromReader(r, map_type.item_type()));
                 if (!st.ok())
                     throw std::invalid_argument(
                         "DecodeRow: value append failed: " + st.ToString());
             }
-            auto key_finish = (*maybe_key_b)->Finish();
-            if (!key_finish.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: key builder finish failed: " + key_finish.status().ToString());
-            auto val_finish = (*maybe_val_b)->Finish();
-            if (!val_finish.ok())
-                throw std::invalid_argument(
-                    "DecodeRow: value builder finish failed: " + val_finish.status().ToString());
-            // MapScalar::value is a StructArray with key and value child arrays.
+            auto key_arr = key_builder->Finish().ValueOrDie();
+            auto val_arr = val_builder->Finish().ValueOrDie();
+            // Build the entries struct type from the actual array types to
+            // avoid nullability mismatches with the schema's map type.
+            auto entries_type = arrow::struct_({
+                arrow::field("key", key_arr->type(), false),
+                arrow::field("value", val_arr->type())});
             auto entries = std::make_shared<arrow::StructArray>(
-                arrow::struct_({map_type.key_field(), map_type.item_field()}),
+                entries_type,
                 static_cast<int64_t>(count),
-                arrow::ArrayVector{*key_finish, *val_finish});
-            return std::make_shared<arrow::MapScalar>(entries, type);
+                arrow::ArrayVector{key_arr, val_arr});
+            auto actual_map_type = arrow::map(key_arr->type(), val_arr->type());
+            return std::make_shared<arrow::MapScalar>(entries, actual_map_type);
         }
 
         case T::DICTIONARY:
@@ -539,29 +751,13 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
     throw std::invalid_argument("DecodeRow: unsupported Arrow type: " + type->ToString());
 }
 
-// ---------------------------------------------------------------------------
-// FNV-1a hasher
-// ---------------------------------------------------------------------------
-
-uint64_t Fnv1a64(const std::string& s) {
-    uint64_t hash = 14695981039346656037ULL;
-    for (unsigned char c : s) {
-        hash ^= c;
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
-
-}  // namespace
-
-namespace detail {
-
+// Convenience wrapper.
 std::shared_ptr<arrow::Scalar> DecodeScalar(
     const uint8_t*                          data,
     size_t                                  size,
     const std::shared_ptr<arrow::DataType>& type) {
     Reader r{data, size};
-    return DecodeScalarImpl(r, type);
+    return DecodeScalarFromReader(r, type);
 }
 
 }  // namespace detail
@@ -571,7 +767,9 @@ std::shared_ptr<arrow::Scalar> DecodeScalar(
 // ---------------------------------------------------------------------------
 
 RowCodec::RowCodec(std::shared_ptr<arrow::Schema> schema)
-    : schema_(std::move(schema)), schema_hash_(FingerprintHash(*schema_)) {}
+    : schema_(std::move(schema))
+    , schema_hash_(FingerprintHash(*schema_))
+    , cache_mutex_(std::make_unique<std::mutex>()) {}
 
 EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
 
@@ -583,28 +781,46 @@ EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
             ") does not match schema.num_fields() (" + std::to_string(num_fields) + ")");
 
     std::vector<uint8_t> buf;
-    buf.reserve(64);
+    buf.reserve(128);
 
+    // Header: schema_hash (8 bytes) + field_count (2 bytes).
     AppendFixed(buf, schema_hash_);
-    AppendFixed(buf, kVersion);
+    AppendFixed(buf, static_cast<uint16_t>(num_fields));
 
     for (int i = 0; i < num_fields; ++i) {
+        const auto& field  = schema_->field(i);
         const auto& scalar = values[i];
         const bool  is_null = !scalar || !scalar->is_valid;
+
+        uint32_t field_num = static_cast<uint32_t>(GetFieldNumber(*field, i + 1));
+        WireTypeId wire_type = ArrowTypeToWireTypeId(*field->type());
+
+        AppendFixed(buf, field_num);
+        buf.push_back(static_cast<uint8_t>(wire_type));
 
         if (is_null) {
             buf.push_back(0x01u);
             continue;
         }
 
-        if (!scalar->type->Equals(*schema_->field(i)->type()))
+        // Compare top-level type ID only.  Nested nullability (e.g. list
+        // item nullable vs non-nullable) may differ between the generated
+        // code and the declared schema without affecting wire encoding.
+        if (scalar->type->id() != field->type()->id())
             throw std::invalid_argument(
-                "EncodeRow: type mismatch for field '" + schema_->field(i)->name() +
-                "': schema expects " + schema_->field(i)->type()->ToString() +
+                "EncodeRow: type mismatch for field '" + field->name() +
+                "': schema expects " + field->type()->ToString() +
                 ", got " + scalar->type->ToString());
 
         buf.push_back(0x00u);
-        detail::EncodeScalar(buf, *scalar);
+
+        // Encode payload to temp buffer to measure data_len.
+        std::vector<uint8_t> payload;
+        payload.reserve(32);
+        EncodePayload(payload, *scalar);
+
+        AppendFixed(buf, static_cast<uint32_t>(payload.size()));
+        buf.insert(buf.end(), payload.begin(), payload.end());
     }
 
     return buf;
@@ -614,26 +830,75 @@ ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
 
     detail::Reader r{buf.data(), buf.size()};
 
-    uint64_t hash = r.Read<uint64_t>();
-    if (hash != schema_hash_)
-        throw std::invalid_argument("DecodeRow: schema hash mismatch");
+    uint64_t writer_hash = r.Read<uint64_t>();
+    uint16_t field_count = r.Read<uint16_t>();
 
-    uint8_t version = r.Read<uint8_t>();
-    if (version != kVersion)
-        throw std::invalid_argument(
-            "DecodeRow: unsupported version " + std::to_string(version));
-
-    const int num_fields = schema_->num_fields();
-    ArrowRow values;
-    values.reserve(num_fields);
-
-    for (int i = 0; i < num_fields; ++i) {
-        uint8_t null_flag = r.Read<uint8_t>();
-        if (null_flag == 0x01u) {
-            values.push_back(arrow::MakeNullScalar(schema_->field(i)->type()));
+    // Get or build the DecodingMap for this writer hash.
+    const DecodingMap* map_ptr = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(*cache_mutex_);
+        auto it = decoding_cache_.find(writer_hash);
+        if (it == decoding_cache_.end()) {
+            // BuildDecodingMap expects data starting at FIELD_COUNT.
+            // r.pos is currently after hash(8) + field_count(2) = 10.
+            // Rewind to include the field_count in the slice.
+            auto new_map = BuildDecodingMap(
+                *schema_,
+                buf.data() + 8,
+                buf.size() - 8);
+            new_map.writer_hash = writer_hash;
+            auto [ins_it, _] = decoding_cache_.emplace(writer_hash, std::move(new_map));
+            map_ptr = &ins_it->second;
         } else {
-            values.push_back(DecodeScalarImpl(r, schema_->field(i)->type()));
+            map_ptr = &it->second;
         }
+    }
+
+    const auto& map = *map_ptr;
+    const int num_reader_fields = schema_->num_fields();
+
+    // Pre-allocate output filled with nulls.
+    ArrowRow values(num_reader_fields);
+    for (int i = 0; i < num_reader_fields; ++i)
+        values[i] = arrow::MakeNullScalar(schema_->field(i)->type());
+
+    // Decode each wire field using the cached map.
+    for (uint16_t wi = 0; wi < field_count; ++wi) {
+        /*uint32_t field_num =*/ r.Read<uint32_t>();
+        auto wire_tid = static_cast<WireTypeId>(r.Read<uint8_t>());
+        uint8_t null_flag = r.Read<uint8_t>();
+
+        const auto& slot = map.wire_to_reader[wi];
+
+        if (null_flag == 0x01u)
+            continue;
+
+        uint32_t data_len = r.Read<uint32_t>();
+        size_t payload_start = r.pos;
+
+        if (slot.reader_index < 0) {
+            r.pos = payload_start + data_len;
+            continue;
+        }
+
+        if (slot.sub_map) {
+            auto child = DecodeStructTagged(r, *slot.sub_map, slot.reader_type);
+            values[slot.reader_index] = PromoteScalar(child, slot.promotion, slot.reader_type);
+        } else {
+            // For type promotions, decode as the wire type first, then promote.
+            std::shared_ptr<arrow::DataType> decode_type;
+            if (slot.promotion == PromotionKind::IDENTITY) {
+                decode_type = slot.reader_type;
+            } else {
+                decode_type = WireTypeIdToDecodeType(wire_tid);
+            }
+
+            detail::Reader sub{r.data + payload_start, data_len};
+            auto decoded = detail::DecodeScalarFromReader(sub, decode_type);
+            values[slot.reader_index] = PromoteScalar(decoded, slot.promotion, slot.reader_type);
+        }
+
+        r.pos = payload_start + data_len;
     }
 
     return values;

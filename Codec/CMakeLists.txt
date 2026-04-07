@@ -1,5 +1,6 @@
 add_library(row_codec
-    src/row_codec.cpp)
+    src/row_codec.cpp
+    src/schema_evolution.cpp)
 target_include_directories(row_codec PUBLIC include PRIVATE src)
 target_link_libraries(row_codec PUBLIC arrow::arrow)
 

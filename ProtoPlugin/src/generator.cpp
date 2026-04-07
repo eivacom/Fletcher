@@ -166,6 +166,7 @@ struct FieldInfo {
     std::string  name;
     FieldMapping mapping;
     int          field_number = 0;  // proto field number — stable across renames
+    std::string  field_id;          // string form of field_number for metadata
 };
 
 // -----------------------------------------------------------------------
@@ -383,9 +384,12 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << "        auto vals = *val_builder.Finish();\n";
             }
 
-            o << "        auto kv = *arrow::StructArray::Make(\n"
-              << "            {keys, vals},\n"
-              << "            std::vector<std::string>{\"key\", \"value\"});\n"
+            o << "        auto kv_type = arrow::struct_({\n"
+              << "            arrow::field(\"key\", keys->type(), false),\n"
+              << "            arrow::field(\"value\", vals->type())});\n"
+              << "        auto kv = std::make_shared<arrow::StructArray>(\n"
+              << "            kv_type, keys->length(),\n"
+              << "            arrow::ArrayVector{keys, vals});\n"
               << "        return std::make_shared<arrow::MapScalar>(kv);\n"
               << "    }\n";
             break;
@@ -542,7 +546,8 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
         if (auto m = MapField(fd)) {
-            fields.push_back({fd->name(), std::move(*m), fd->number()});
+            fields.push_back({fd->name(), std::move(*m), fd->number(),
+                              std::to_string(fd->number())});
         } else {
             *skipped_comment += "//   " + fd->name() + ": "
                              + UnsupportedReason(fd) + "\n";
@@ -567,8 +572,8 @@ std::string GenerateSchemaFunction(const std::string& cls,
         o << "        arrow::field(\"" << fi.name << "\", "
           << ArrowTypeExpr(fi) << ", "
           << (fi.mapping.nullable ? "true" : "false") << ", "
-          << "arrow::key_value_metadata({\"field_number\"}, {\""
-          << fi.field_number << "\"})),\n";
+          << "arrow::key_value_metadata({\"field_number\", \"field_id\"}, {\""
+          << fi.field_number << "\", \"" << fi.field_id << "\"})),\n";
     }
     o << "    }, arrow::key_value_metadata(\n"
       << "        {\"proto_package\", \"proto_message\"},\n"
