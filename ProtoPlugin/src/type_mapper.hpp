@@ -69,4 +69,19 @@ int NestingDepth(const google::protobuf::Descriptor* msg);
 // Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
 std::string ClassName(const google::protobuf::Descriptor* msg);
 
+// -----------------------------------------------------------------------
+// TypeScript code generation helpers
+// -----------------------------------------------------------------------
+
+// TypeScript type string for a scalar proto field type.
+// Returns "" for unsupported types.  e.g. TYPE_BOOL → "boolean", TYPE_INT64 → "bigint".
+std::string TsScalarType(google::protobuf::FieldDescriptor::Type type);
+
+// WireTypeId enum member name for a scalar proto field type.
+// Returns "" for unsupported types.  e.g. TYPE_BOOL → "WireTypeId.BOOL".
+std::string WireTypeIdName(google::protobuf::FieldDescriptor::Type type);
+
+// TypeScript interface name for a message: Outer.Inner → "IOuter_Inner".
+std::string TsInterfaceName(const google::protobuf::Descriptor* msg);
+
 }  // namespace fletcher_plugin

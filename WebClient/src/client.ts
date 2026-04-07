@@ -1,0 +1,231 @@
+/**
+ * FletcherClient — WebSocket manager for the Fletcher WebGateway.
+ *
+ * Connects over WebSocket, sends binary-protocol frames, and dispatches
+ * decoded messages to subscriber callbacks.
+ */
+
+import { WasmDecoder } from './wasm-decoder.js';
+import { deserializeEnvelope, serializeEnvelope } from './envelope.js';
+import type { Envelope } from './envelope.js';
+import {
+  buildCreateTopic,
+  buildSubscribe,
+  buildUnsubscribe,
+  buildPublish,
+  buildListTopics,
+  parseResponse,
+  ResponseTag,
+} from './ws-protocol.js';
+import type { ServerResponse, SubscribedResponse, TopicsResponse, ErrorResponse } from './ws-protocol.js';
+import { ObjectBackend } from './codec/object-backend.js';
+import type { DecoderBackend } from './codec/row-decoder.js';
+import { encodeRow } from './codec/row-encoder.js';
+import type { SchemaDescriptor } from './codec/schema-descriptor.js';
+import type { FletcherClientOptions, MessageCallback } from './types.js';
+
+interface PendingRequest {
+  resolve: (resp: ServerResponse) => void;
+  reject: (err: Error) => void;
+  expectedTag: ResponseTag;
+}
+
+interface Subscription {
+  schema: SchemaDescriptor;
+  callback: MessageCallback;
+}
+
+export class FletcherClient {
+  private ws: WebSocket | null = null;
+  private decoder = new WasmDecoder();
+  private backend: DecoderBackend<unknown>;
+  private opts: Required<FletcherClientOptions>;
+  private pendingQueue: PendingRequest[] = [];
+  private subscriptions = new Map<bigint, Subscription>();
+
+  constructor(options: FletcherClientOptions) {
+    this.opts = {
+      url: options.url,
+      backend: options.backend ?? 'object',
+      wasmFactory: options.wasmFactory ?? (() => Promise.resolve(undefined as unknown)),
+      reconnectDelay: options.reconnectDelay ?? 0,
+    };
+
+    if (this.opts.backend === 'arrow') {
+      // Lazy-load arrow backend to keep the optional peer dep truly optional.
+      throw new Error(
+        'Arrow backend not yet implemented. Use backend: "object" for now.',
+      );
+    }
+    this.backend = new ObjectBackend();
+  }
+
+  /** Initialize the WASM decoder (optional) and connect to the gateway. */
+  async connect(): Promise<void> {
+    await this.decoder.init(
+      this.opts.wasmFactory as (() => Promise<never>) | undefined,
+    );
+    await this.connectWs();
+  }
+
+  /** Create a topic on the server. */
+  async createTopic(topic: string): Promise<void> {
+    const resp = await this.sendAndWait(
+      buildCreateTopic(topic),
+      ResponseTag.TOPIC_CREATED,
+    );
+    if (resp.tag === ResponseTag.ERROR) {
+      throw new Error((resp as ErrorResponse).message);
+    }
+  }
+
+  /** Subscribe to a topic.  Returns the subscription ID. */
+  async subscribe<T = Record<string, unknown>>(
+    topic: string,
+    schema: SchemaDescriptor,
+    callback: MessageCallback<T>,
+  ): Promise<bigint> {
+    const resp = await this.sendAndWait(
+      buildSubscribe(topic),
+      ResponseTag.SUBSCRIBED,
+    );
+    if (resp.tag === ResponseTag.ERROR) {
+      throw new Error((resp as ErrorResponse).message);
+    }
+    const sub = resp as SubscribedResponse;
+    this.subscriptions.set(sub.subId, {
+      schema,
+      callback: callback as MessageCallback,
+    });
+    return sub.subId;
+  }
+
+  /** Unsubscribe from a subscription. */
+  async unsubscribe(subId: bigint): Promise<void> {
+    const resp = await this.sendAndWait(
+      buildUnsubscribe(subId),
+      ResponseTag.UNSUBSCRIBED,
+    );
+    if (resp.tag === ResponseTag.ERROR) {
+      throw new Error((resp as ErrorResponse).message);
+    }
+    this.subscriptions.delete(subId);
+  }
+
+  /** Publish a message to a topic. */
+  async publish(
+    topic: string,
+    schema: SchemaDescriptor,
+    data: Record<string, unknown>,
+    attachments?: Map<string, Uint8Array>,
+  ): Promise<void> {
+    const rowBytes = encodeRow(schema, data);
+    const envelope: Envelope = {
+      row: rowBytes,
+      attachments: attachments ?? new Map(),
+    };
+    const envBytes = serializeEnvelope(envelope);
+    const resp = await this.sendAndWait(
+      buildPublish(topic, envBytes),
+      ResponseTag.PUBLISHED,
+    );
+    if (resp.tag === ResponseTag.ERROR) {
+      throw new Error((resp as ErrorResponse).message);
+    }
+  }
+
+  /** List all topics on the server. */
+  async listTopics(): Promise<string[]> {
+    const resp = await this.sendAndWait(
+      buildListTopics(),
+      ResponseTag.TOPICS,
+    );
+    if (resp.tag === ResponseTag.ERROR) {
+      throw new Error((resp as ErrorResponse).message);
+    }
+    return (resp as TopicsResponse).topics;
+  }
+
+  /** Close the connection and clean up. */
+  close(): void {
+    this.subscriptions.clear();
+    for (const p of this.pendingQueue) {
+      p.reject(new Error('Client closed'));
+    }
+    this.pendingQueue = [];
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.decoder.dispose();
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal
+  // -----------------------------------------------------------------------
+
+  private connectWs(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(this.opts.url);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        this.ws = ws;
+        resolve();
+      };
+
+      ws.onerror = () => {
+        reject(new Error(`WebSocket connection failed: ${this.opts.url}`));
+      };
+
+      ws.onclose = () => {
+        this.ws = null;
+      };
+
+      ws.onmessage = (event: MessageEvent) => {
+        this.onMessage(event);
+      };
+    });
+  }
+
+  private onMessage(event: MessageEvent): void {
+    const data = new Uint8Array(event.data as ArrayBuffer);
+    let resp: ServerResponse;
+    try {
+      resp = parseResponse(data);
+    } catch {
+      return; // Malformed frame — ignore.
+    }
+
+    // MESSAGE frames are routed to subscriptions, not the pending queue.
+    if (resp.tag === ResponseTag.MESSAGE) {
+      const sub = this.subscriptions.get(resp.subId);
+      if (sub) {
+        const envelope = deserializeEnvelope(resp.envelope);
+        const decoded = this.backend.decode(sub.schema, envelope.row, this.decoder);
+        sub.callback(decoded, envelope.attachments);
+      }
+      return;
+    }
+
+    // All other responses resolve the next pending request.
+    const pending = this.pendingQueue.shift();
+    if (pending) {
+      pending.resolve(resp);
+    }
+  }
+
+  private sendAndWait(
+    frame: Uint8Array,
+    expectedTag: ResponseTag,
+  ): Promise<ServerResponse> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+      this.pendingQueue.push({ resolve, reject, expectedTag });
+      this.ws.send(frame);
+    });
+  }
+}

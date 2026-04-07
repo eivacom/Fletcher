@@ -898,6 +898,275 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
     return o.str();
 }
 
+// -----------------------------------------------------------------------
+// TypeScript file generation
+// -----------------------------------------------------------------------
+
+std::string TsOutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".fletcher.ts";
+}
+
+// Convert a package "foo.bar" to "foo/bar" for topic paths.
+std::string DotToSlash(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '.') out += '/';
+        else          out += c;
+    }
+    return out;
+}
+
+// Schema const name for a message: Outer.Inner → "Outer_InnerSchema".
+std::string TsSchemaConstName(const google::protobuf::Descriptor* msg) {
+    std::string name = msg->name();
+    const auto* parent = msg->containing_type();
+    while (parent) {
+        name = parent->name() + "_" + name;
+        parent = parent->containing_type();
+    }
+    return name + "Schema";
+}
+
+// TypeScript type for a FieldInfo, handling scalars, composites, and well-known types.
+std::string TsFieldType(const FieldInfo& fi,
+                        const google::protobuf::FieldDescriptor* fd) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            // Check well-known types first.
+            if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+                const auto& fqn = fd->message_type()->full_name();
+                if (fqn == "google.protobuf.Timestamp" ||
+                    fqn == "google.protobuf.Duration")
+                    return "bigint";
+                // Wrapper types: the scalar info tells us the underlying type.
+                return TsScalarType(fd->message_type()->field(0)->type());
+            }
+            return TsScalarType(fd->type());
+        }
+
+        case FieldKind::REPEATED_SCALAR:
+            return TsScalarType(fd->type()) + "[]";
+
+        case FieldKind::STRUCT:
+            return TsInterfaceName(fd->message_type());
+
+        case FieldKind::REPEATED_STRUCT:
+            return TsInterfaceName(fd->message_type()) + "[]";
+
+        case FieldKind::MAP: {
+            std::string key_type = TsScalarType(
+                fd->message_type()->field(0)->type());
+            const auto* val_fd = fd->message_type()->field(1);
+            std::string val_type;
+            if (fi.mapping.map_value_is_message) {
+                val_type = TsInterfaceName(val_fd->message_type());
+            } else {
+                val_type = TsScalarType(val_fd->type());
+            }
+            return "Map<" + key_type + ", " + val_type + ">";
+        }
+    }
+    return "unknown";
+}
+
+// WireTypeId name for a FieldInfo.
+std::string TsWireTypeId(const FieldInfo& fi,
+                         const google::protobuf::FieldDescriptor* fd) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+                const auto& fqn = fd->message_type()->full_name();
+                if (fqn == "google.protobuf.Timestamp")
+                    return "WireTypeId.TIMESTAMP_NANO";
+                if (fqn == "google.protobuf.Duration")
+                    return "WireTypeId.DURATION_NANO";
+                // Wrapper types: use the underlying scalar's wire type.
+                return WireTypeIdName(fd->message_type()->field(0)->type());
+            }
+            return WireTypeIdName(fd->type());
+        }
+        case FieldKind::REPEATED_SCALAR:
+            return "WireTypeId.LIST";
+        case FieldKind::STRUCT:
+            return "WireTypeId.STRUCT";
+        case FieldKind::REPEATED_STRUCT:
+            return "WireTypeId.LIST";
+        case FieldKind::MAP:
+            return "WireTypeId.MAP";
+    }
+    return "WireTypeId.UNKNOWN";
+}
+
+// Emit the FieldDescriptor literal for a field, with nested descriptors
+// for composite types.
+void EmitTsFieldDescriptor(std::ostringstream& o,
+                           const FieldInfo& fi,
+                           const google::protobuf::FieldDescriptor* fd,
+                           const std::string& indent) {
+    o << indent << "{ "
+      << "name: '" << fi.name << "', "
+      << "fieldNumber: " << fi.field_number << ", "
+      << "wireType: " << TsWireTypeId(fi, fd) << ", "
+      << "nullable: " << (fi.mapping.nullable ? "true" : "false");
+
+    // Nested descriptors for composite types.
+    if (fi.mapping.kind == FieldKind::REPEATED_SCALAR) {
+        o << ", element: { name: '', fieldNumber: 0, wireType: "
+          << WireTypeIdName(fd->type())
+          << ", nullable: false }";
+    } else if (fi.mapping.kind == FieldKind::STRUCT) {
+        o << ", fields: " << TsSchemaConstName(fd->message_type()) << ".fields";
+    } else if (fi.mapping.kind == FieldKind::REPEATED_STRUCT) {
+        o << ", element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
+          << ", nullable: false, fields: "
+          << TsSchemaConstName(fd->message_type()) << ".fields }";
+    } else if (fi.mapping.kind == FieldKind::MAP) {
+        const auto* key_fd = fd->message_type()->field(0);
+        const auto* val_fd = fd->message_type()->field(1);
+        o << ", mapKey: { name: '', fieldNumber: 0, wireType: "
+          << WireTypeIdName(key_fd->type()) << ", nullable: false }";
+        o << ", mapValue: { name: '', fieldNumber: 0, wireType: ";
+        if (fi.mapping.map_value_is_message) {
+            o << "WireTypeId.STRUCT, nullable: false, fields: "
+              << TsSchemaConstName(val_fd->message_type()) << ".fields";
+        } else {
+            o << WireTypeIdName(val_fd->type()) << ", nullable: false";
+        }
+        o << " }";
+    }
+
+    o << " },\n";
+}
+
+// Generate TypeScript interface + SchemaDescriptor for a single message.
+std::string GenerateTsMessage(const google::protobuf::Descriptor* msg,
+                              const google::protobuf::FileDescriptor* file) {
+    std::string skipped;
+    auto fields = GatherFields(msg, &skipped);
+    if (fields.empty()) return "";
+
+    const std::string iface = TsInterfaceName(msg);
+    const std::string schema_name = TsSchemaConstName(msg);
+
+    std::ostringstream o;
+
+    // Interface
+    o << "export interface " << iface << " {\n";
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const auto* fd = msg->field(
+            // Find the FieldDescriptor matching our FieldInfo by field number.
+            // GatherFields iterates msg->field(i) in order, so we search.
+            0);
+        // Correct lookup: find fd by field number.
+        for (int fi = 0; fi < msg->field_count(); ++fi) {
+            if (msg->field(fi)->number() == fields[i].field_number) {
+                fd = msg->field(fi);
+                break;
+            }
+        }
+        std::string ts_type = TsFieldType(fields[i], fd);
+        if (fields[i].mapping.nullable)
+            ts_type += " | null";
+        o << "  " << fields[i].name << ": " << ts_type << ";\n";
+    }
+    o << "}\n\n";
+
+    // SchemaDescriptor
+    o << "export const " << schema_name << ": SchemaDescriptor = {\n"
+      << "  schemaHash: 0n,  // Set at runtime or from C++ FingerprintHash\n"
+      << "  fields: [\n";
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const google::protobuf::FieldDescriptor* fd = nullptr;
+        for (int fi = 0; fi < msg->field_count(); ++fi) {
+            if (msg->field(fi)->number() == fields[i].field_number) {
+                fd = msg->field(fi);
+                break;
+            }
+        }
+        EmitTsFieldDescriptor(o, fields[i], fd, "    ");
+    }
+    o << "  ],\n"
+      << "  protoPackage: '" << msg->file()->package() << "',\n"
+      << "  protoMessage: '" << msg->name() << "',\n"
+      << "};\n\n";
+
+    return o.str();
+}
+
+// Generate the full .fletcher.ts file for a .proto file.
+std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file) {
+    std::ostringstream o;
+
+    o << "// Generated by protoc-gen-arrow-row. DO NOT EDIT.\n"
+      << "// Source: " << file->name() << "\n\n"
+      << "import type { SchemaDescriptor } from '@fletcher/web-client';\n"
+      << "import { WireTypeId } from '@fletcher/web-client';\n\n";
+
+    // Collect cross-file TypeScript imports.
+    std::set<std::string> ts_imports; // set of .proto filenames we depend on
+    auto messages = OrderedMessages(file);
+    for (const auto* msg : messages) {
+        if (IsRecursive(msg)) continue;
+        for (int fi = 0; fi < msg->field_count(); ++fi) {
+            const auto* fd = msg->field(fi);
+            if (auto m = MapField(fd)) {
+                if (m->kind == FieldKind::STRUCT || m->kind == FieldKind::REPEATED_STRUCT) {
+                    if (fd->message_type()->file() != file)
+                        ts_imports.insert(fd->message_type()->file()->name());
+                }
+                if (m->kind == FieldKind::MAP && m->map_value_is_message) {
+                    const auto* val_fd = fd->message_type()->field(1);
+                    if (val_fd->message_type()->file() != file)
+                        ts_imports.insert(val_fd->message_type()->file()->name());
+                }
+            }
+        }
+    }
+    for (const auto& proto_file : ts_imports) {
+        o << "import { "
+          << "/* cross-file types */ "
+          << "} from './" << StripProtoSuffix(proto_file) << ".fletcher.js';\n";
+    }
+    if (!ts_imports.empty()) o << "\n";
+
+    // Emit messages in dependency order.
+    for (const auto* msg : messages) {
+        if (IsRecursive(msg)) {
+            o << "// Skipped: " << msg->name()
+              << " is recursive and cannot be represented.\n\n";
+            continue;
+        }
+        o << GenerateTsMessage(msg, file);
+    }
+
+    // Topic constants for service methods.
+    std::set<const google::protobuf::Descriptor*> generated_msgs(
+        messages.begin(), messages.end());
+
+    for (int si = 0; si < file->service_count(); ++si) {
+        const auto* svc = file->service(si);
+        for (int mi = 0; mi < svc->method_count(); ++mi) {
+            const auto* method = svc->method(mi);
+            std::string reason;
+            if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
+                o << "// Skipped: " << svc->name() << "." << method->name()
+                  << " — " << reason << "\n";
+                continue;
+            }
+
+            const std::string pkg = file->package();
+            std::string topic_path;
+            if (!pkg.empty()) topic_path += DotToSlash(pkg) + "/";
+            topic_path += svc->name() + "/" + method->name();
+
+            o << "export const " << svc->name() << "_" << method->name()
+              << "Topic = '" << topic_path << "';\n\n";
+        }
+    }
+
+    return o.str();
+}
+
 }  // namespace
 
 // -----------------------------------------------------------------------
@@ -912,21 +1181,39 @@ bool ArrowRowGenerator::Generate(
 {
     // Parse comma-separated options from --arrow-row_opt=...
     bool schema_only = false;
+    bool emit_ts     = false;
     {
         std::istringstream ss(parameter);
         std::string token;
         while (std::getline(ss, token, ',')) {
             if (token == "schema_only")
                 schema_only = true;
+            else if (token == "ts")
+                emit_ts = true;
         }
     }
 
-    const std::string content  = GenerateFile(file, schema_only);
-    const std::string out_name = OutputFilename(file->name());
+    // Always emit the C++ header.
+    {
+        const std::string content  = GenerateFile(file, schema_only);
+        const std::string out_name = OutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error))
+            return false;
+    }
 
-    std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
-        context->Open(out_name));
-    return WriteToStream(stream.get(), content, error);
+    // Optionally emit the TypeScript file.
+    if (emit_ts) {
+        const std::string ts_content  = GenerateTypeScriptFile(file);
+        const std::string ts_out_name = TsOutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(ts_out_name));
+        if (!WriteToStream(stream.get(), ts_content, error))
+            return false;
+    }
+
+    return true;
 }
 
 }  // namespace fletcher_plugin
