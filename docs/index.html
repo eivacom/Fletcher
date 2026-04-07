@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fletcher &mdash; Arrow Row Serializer</title>
+<style>
+/* ── Reset & base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 16px; line-height: 1.65; color: #1a1a2e;
+  background: #f8f9fc;
+}
+a { color: #3a6cf4; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Layout ────────────────────────────────────────────────────────── */
+.page { display: flex; min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; width: 260px; flex-shrink: 0;
+  background: #1a1a2e; color: #c0c0d0; overflow-y: auto;
+  padding: 1.5rem 0; font-size: 0.85rem;
+}
+.sidebar h2 {
+  color: #fff; font-size: 1rem; padding: 0 1.2rem;
+  margin-bottom: 1.2rem; letter-spacing: 0.02em;
+}
+.sidebar ul { list-style: none; }
+.sidebar li a {
+  display: block; padding: 0.35rem 1.2rem; color: #a0a0c0;
+  transition: background .15s, color .15s;
+}
+.sidebar li a:hover { background: #2a2a4a; color: #fff; text-decoration: none; }
+.sidebar li.section { margin-top: 1rem; }
+.sidebar li.section > span {
+  display: block; padding: 0.35rem 1.2rem; font-weight: 600;
+  color: #7878a0; text-transform: uppercase; font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+.main {
+  flex: 1; max-width: 900px; padding: 2.5rem 3rem 4rem;
+  margin: 0 auto;
+}
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { padding: 1.5rem; }
+}
+
+/* ── Typography ────────────────────────────────────────────────────── */
+h1 { font-size: 2.2rem; margin-bottom: 0.3rem; color: #0d0d1a; }
+h2 {
+  font-size: 1.5rem; margin-top: 3rem; margin-bottom: 0.8rem;
+  padding-bottom: 0.4rem; border-bottom: 2px solid #e0e4ee; color: #0d0d1a;
+}
+h3 { font-size: 1.15rem; margin-top: 2rem; margin-bottom: 0.5rem; color: #1a1a2e; }
+p, ul, ol, table { margin-bottom: 1rem; }
+ul, ol { padding-left: 1.6rem; }
+li + li { margin-top: 0.25rem; }
+.subtitle { font-size: 1.1rem; color: #555; margin-bottom: 2rem; }
+
+/* ── Code ──────────────────────────────────────────────────────────── */
+code {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.88em; background: #eef0f7; padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+pre {
+  background: #1e1e2e; color: #cdd6f4; padding: 1.2rem 1.4rem;
+  border-radius: 8px; overflow-x: auto; font-size: 0.85rem;
+  line-height: 1.55; margin-bottom: 1.2rem;
+}
+pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+
+/* syntax highlights (minimal) */
+.kw  { color: #cba6f7; }  /* keyword */
+.ty  { color: #89b4fa; }  /* type */
+.str { color: #a6e3a1; }  /* string */
+.num { color: #fab387; }  /* number */
+.cmt { color: #6c7086; }  /* comment */
+.fn  { color: #89dceb; }  /* function */
+
+/* ── Tables ────────────────────────────────────────────────────────── */
+table {
+  width: 100%; border-collapse: collapse; font-size: 0.9rem;
+  margin-bottom: 1.2rem;
+}
+th, td { text-align: left; padding: 0.55rem 0.8rem; border-bottom: 1px solid #dde1ed; }
+th { background: #eef0f7; font-weight: 600; color: #333; }
+tr:hover td { background: #f4f5fb; }
+
+/* ── Info boxes ────────────────────────────────────────────────────── */
+.note, .warn {
+  padding: 0.9rem 1.2rem; border-radius: 6px; margin-bottom: 1.2rem;
+  font-size: 0.92rem; line-height: 1.5;
+}
+.note { background: #e8f0fe; border-left: 4px solid #3a6cf4; }
+.warn { background: #fff8e1; border-left: 4px solid #f9a825; }
+
+/* ── Diagram ───────────────────────────────────────────────────────── */
+.diagram {
+  background: #1e1e2e; color: #cdd6f4; padding: 1.2rem 1.4rem;
+  border-radius: 8px; overflow-x: auto; font-family: monospace;
+  font-size: 0.82rem; line-height: 1.5; margin-bottom: 1.2rem;
+  white-space: pre;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────── */
+.hero {
+  background: linear-gradient(135deg, #1a1a2e 0%, #2d2d5e 100%);
+  color: #fff; padding: 3rem 3rem 2.5rem; border-radius: 12px;
+  margin-bottom: 2.5rem;
+}
+.hero h1 { color: #fff; font-size: 2.4rem; margin-bottom: 0.4rem; }
+.hero .subtitle { color: #b0b8d8; margin-bottom: 1.2rem; }
+.hero .badges { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.hero .badge {
+  display: inline-block; background: rgba(255,255,255,0.12);
+  padding: 0.25rem 0.7rem; border-radius: 4px; font-size: 0.8rem;
+  color: #c8d0f0;
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SIDEBAR
+     ═══════════════════════════════════════════════════════════════════ -->
+<nav class="sidebar">
+  <h2>Fletcher</h2>
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#quickstart">Quick Start</a></li>
+
+    <li class="section"><span>Concepts</span></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#wire-format">Wire Format</a></li>
+    <li><a href="#type-mapping">Type Mapping</a></li>
+    <li><a href="#schema-evolution">Schema Evolution</a></li>
+    <li><a href="#attachments">Attachments</a></li>
+
+    <li class="section"><span>Components</span></li>
+    <li><a href="#protoc-plugin">Protoc Plugin</a></li>
+    <li><a href="#row-codec">RowCodec</a></li>
+    <li><a href="#pubsub">Pub/Sub</a></li>
+    <li><a href="#batcher">Batcher &amp; WAL</a></li>
+    <li><a href="#fastdds">FastDDS Provider</a></li>
+    <li><a href="#capi">C API &amp; Rust</a></li>
+
+    <li class="section"><span>Reference</span></li>
+    <li><a href="#project-structure">Project Structure</a></li>
+    <li><a href="#building">Building</a></li>
+    <li><a href="#testing">Testing</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════════════════════════════ -->
+<main class="main">
+
+<!-- ── Hero ─────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <h1>Fletcher</h1>
+  <p class="subtitle">
+    Compact, self-describing row buffers for Apache Arrow &mdash;
+    generated from Protocol Buffers, with schema evolution, pub/sub
+    transport, and columnar batching built in.
+  </p>
+  <div class="badges">
+    <span class="badge">C++20</span>
+    <span class="badge">Apache Arrow</span>
+    <span class="badge">Protocol Buffers</span>
+    <span class="badge">Schema Evolution</span>
+    <span class="badge">Pub/Sub</span>
+  </div>
+</div>
+
+<!-- ── Overview ─────────────────────────────────────────────────────── -->
+<h2 id="overview">Overview</h2>
+
+<p>
+  Fletcher bridges two worlds: <strong>Protocol Buffers</strong> for message
+  definition and <strong>Apache Arrow</strong> for in-memory analytics.
+  A <code>protoc</code> compiler plugin reads your <code>.proto</code> files
+  and generates C++ wrapper classes that serialize structured data into
+  compact, self-describing binary row buffers backed by Arrow schemas.
+</p>
+
+<p>These row buffers are designed for scenarios where data arrives one row
+  at a time &mdash; telemetry streams, event buses, sensor networks &mdash;
+  but is consumed in columnar batches for analytics, storage, or forwarding.</p>
+
+<p>The system provides four layers that compose cleanly:</p>
+
+<ol>
+  <li><strong>Codec</strong> &mdash; encodes Arrow scalars into a tagged binary
+    row format and decodes them back, with cross-schema evolution support.</li>
+  <li><strong>Protoc Plugin</strong> &mdash; generates typed message classes,
+    publisher/subscriber classes, and Arrow schemas from <code>.proto</code> definitions.</li>
+  <li><strong>Pub/Sub Transport</strong> &mdash; an abstract provider interface
+    (with a Fast DDS implementation) for publishing and subscribing to row streams.</li>
+  <li><strong>Batcher</strong> &mdash; accumulates individual rows into Arrow
+    Tables via a write-ahead log, flushing in configurable batches.</li>
+</ol>
+
+<!-- ── Quick Start ─────────────────────────────────────────────────── -->
+<h2 id="quickstart">Quick Start</h2>
+
+<h3>1. Define your message</h3>
+
+<pre><code><span class="cmt">// telemetry.proto</span>
+<span class="kw">syntax</span> = <span class="str">"proto3"</span>;
+<span class="kw">package</span> myapp;
+
+<span class="kw">import</span> <span class="str">"google/protobuf/empty.proto"</span>;
+
+<span class="kw">message</span> <span class="ty">SensorReading</span> {
+    <span class="ty">int32</span>  sensor_id    = <span class="num">1</span>;
+    <span class="ty">double</span> temperature  = <span class="num">2</span>;
+    <span class="ty">string</span> location     = <span class="num">3</span>;
+    <span class="kw">optional</span> <span class="ty">double</span> humidity = <span class="num">4</span>;  <span class="cmt">// nullable</span>
+}
+
+<span class="kw">service</span> <span class="ty">SensorFeed</span> {
+    <span class="kw">rpc</span> <span class="fn">Stream</span>(<span class="kw">stream</span> <span class="ty">SensorReading</span>) <span class="kw">returns</span> (<span class="ty">google.protobuf.Empty</span>);
+}</code></pre>
+
+<h3>2. Generate code</h3>
+
+<p>The <code>protoc-gen-arrow-row</code> plugin runs during your CMake build.
+  For each <code>.proto</code> file it produces a
+  <code>.arrow_row.pb.h</code> header containing:</p>
+<ul>
+  <li>An <strong>Arrow schema function</strong>
+    (<code>SensorReadingArrowRowSchema()</code>)</li>
+  <li>A <strong>typed row class</strong>
+    (<code>SensorReadingArrowRow</code>) with chainable setters,
+    <code>Encode()</code>, and a decoding constructor</li>
+  <li><strong>Publisher/Subscriber classes</strong> for each service RPC</li>
+</ul>
+
+<h3>3. Encode and decode</h3>
+
+<pre><code><span class="cmt">#include</span> <span class="str">"telemetry.arrow_row.pb.h"</span>
+
+<span class="cmt">// Build a row with typed setters</span>
+myapp::<span class="ty">SensorReadingArrowRow</span> row;
+row.<span class="fn">set_sensor_id</span>(<span class="num">42</span>)
+   .<span class="fn">set_temperature</span>(<span class="num">23.5</span>)
+   .<span class="fn">set_location</span>(<span class="str">"Room 101"</span>)
+   .<span class="fn">set_humidity</span>(<span class="num">55.3</span>);
+
+<span class="cmt">// Encode to a compact binary buffer</span>
+fletcher::<span class="ty">EncodedRow</span> encoded = row.<span class="fn">Encode</span>();
+
+<span class="cmt">// Decode back (same schema or an evolved one)</span>
+myapp::<span class="ty">SensorReadingArrowRow</span> restored(encoded);</code></pre>
+
+<h3>4. Publish and subscribe</h3>
+
+<pre><code><span class="cmt">#include</span> <span class="str">&lt;fast_dds_pubsub_provider.hpp&gt;</span>
+
+<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();
+
+<span class="cmt">// Publisher</span>
+myapp::<span class="ty">SensorFeed_StreamPublisher</span> pub(provider);
+pub.<span class="fn">Publish</span>(row);
+
+<span class="cmt">// Subscriber</span>
+myapp::<span class="ty">SensorFeed_StreamSubscriber</span> sub(provider);
+sub.<span class="fn">Subscribe</span>([](const fletcher::<span class="ty">Envelope</span>&amp; env) {
+    myapp::<span class="ty">SensorReadingArrowRow</span> msg(env.row);
+    std::cout &lt;&lt; <span class="str">"Temperature: "</span> &lt;&lt; msg.temperature() &lt;&lt; <span class="str">"\n"</span>;
+});</code></pre>
+
+<h3>5. Batch into Arrow Tables</h3>
+
+<pre><code>fletcher::<span class="ty">SQLiteWAL</span> wal(<span class="str">":memory:"</span>);
+fletcher::<span class="ty">GenericRowBatcher</span> batcher(
+    myapp::<span class="fn">SensorReadingArrowRowSchema</span>(),
+    wal,
+    <span class="cmt">/*batch_size=*/</span><span class="num">1000</span>,
+    [](std::shared_ptr&lt;arrow::<span class="ty">Table</span>&gt; table) -&gt; <span class="ty">bool</span> {
+        <span class="cmt">// Write to Parquet, send to a data lake, etc.</span>
+        <span class="kw">return</span> <span class="num">true</span>;
+    });
+
+sub.<span class="fn">Subscribe</span>([&amp;](const fletcher::<span class="ty">Envelope</span>&amp; env) {
+    batcher.<span class="fn">Append</span>(env.row);  <span class="cmt">// triggers flush every 1000 rows</span>
+});</code></pre>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     CONCEPTS
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="architecture">Architecture</h2>
+
+<div class="diagram">  .proto files
+       |
+       v
+  protoc-gen-arrow-row          (build-time code generation)
+       |
+       v
+  Generated .arrow_row.pb.h     (typed row classes + pub/sub wrappers)
+       |
+       +------ Encode() ------> EncodedRow (compact binary buffer)
+       |                              |
+       |                     +--------+--------+
+       |                     |                 |
+       |                     v                 v
+       |              PubSubProvider      RowBatcher
+       |              (transport)        (accumulation)
+       |                     |                 |
+       |                     v                 v
+       |              Fast DDS / ...     arrow::Table
+       |                     |           (columnar batch)
+       |                     v
+       +---- Decode() <-- Subscriber
+</div>
+
+<p>Each layer is independent. You can use the codec without pub/sub,
+  the batcher without the protoc plugin, or the full pipeline end-to-end.</p>
+
+
+<!-- ── Wire Format ─────────────────────────────────────────────────── -->
+<h2 id="wire-format">Wire Format</h2>
+
+<p>Every <code>EncodedRow</code> is a self-describing, tagged binary buffer
+  (little-endian throughout):</p>
+
+<pre><code>[SCHEMA_HASH  : 8 bytes]   FNV-1a 64-bit hash of the Arrow schema fingerprint
+[FIELD_COUNT  : 2 bytes]   uint16 &mdash; number of top-level fields
+
+For each field (in schema order):
+  [FIELD_NUM    : 4 bytes]  uint32 &mdash; protobuf field number
+  [WIRE_TYPE_ID : 1 byte ]  type tag (see below)
+  [NULL_FLAG    : 1 byte ]  0x00 = valid, 0x01 = null
+  If valid:
+    [DATA_LEN   : 4 bytes]  uint32 &mdash; payload byte length
+    [PAYLOAD    : DATA_LEN bytes]</code></pre>
+
+<p>The <strong>field number</strong> and <strong>wire type ID</strong> in every
+  field make each row self-describing. A reader with a different schema can
+  match fields by number, skip unknown fields via <code>DATA_LEN</code>,
+  and promote compatible types &mdash; all without any handshake.</p>
+
+<h3>Payload encoding by kind</h3>
+<table>
+  <tr><th>Kind</th><th>Encoding</th></tr>
+  <tr><td>Scalars (int, float, bool, ...)</td><td>Raw little-endian bytes</td></tr>
+  <tr><td>String / Binary</td><td><code>[LEN:4][DATA:LEN]</code></td></tr>
+  <tr><td>Struct</td><td>Recursive tagged fields: <code>[FIELD_COUNT:2]</code> + per-field tags (no schema hash)</td></tr>
+  <tr><td>List / Large List</td><td><code>[COUNT:4]</code> + per element: <code>[NULL_FLAG:1]</code> + payload</td></tr>
+  <tr><td>Map</td><td><code>[COUNT:4]</code> + per entry: key payload + <code>[NULL_FLAG:1]</code> + value payload</td></tr>
+  <tr><td>Union</td><td><code>[TYPE_CODE:1]</code> + active child payload</td></tr>
+</table>
+
+
+<!-- ── Type Mapping ────────────────────────────────────────────────── -->
+<h2 id="type-mapping">Type Mapping</h2>
+
+<h3>Scalar types</h3>
+<table>
+  <tr><th>Proto Type</th><th>Arrow Type</th><th>C++ Storage</th></tr>
+  <tr><td><code>bool</code></td><td><code>boolean()</code></td><td><code>bool</code></td></tr>
+  <tr><td><code>int32</code>, <code>sint32</code>, <code>sfixed32</code></td><td><code>int32()</code></td><td><code>int32_t</code></td></tr>
+  <tr><td><code>int64</code>, <code>sint64</code>, <code>sfixed64</code></td><td><code>int64()</code></td><td><code>int64_t</code></td></tr>
+  <tr><td><code>uint32</code>, <code>fixed32</code></td><td><code>uint32()</code></td><td><code>uint32_t</code></td></tr>
+  <tr><td><code>uint64</code>, <code>fixed64</code></td><td><code>uint64()</code></td><td><code>uint64_t</code></td></tr>
+  <tr><td><code>float</code></td><td><code>float32()</code></td><td><code>float</code></td></tr>
+  <tr><td><code>double</code></td><td><code>float64()</code></td><td><code>double</code></td></tr>
+  <tr><td><code>string</code></td><td><code>utf8()</code></td><td><code>std::string</code></td></tr>
+  <tr><td><code>bytes</code></td><td><code>binary()</code></td><td><code>std::string</code></td></tr>
+  <tr><td><code>enum</code></td><td><code>int32()</code></td><td><code>int32_t</code></td></tr>
+</table>
+
+<h3>Composite types</h3>
+<table>
+  <tr><th>Proto Construct</th><th>Arrow Type</th></tr>
+  <tr><td>Nested message</td><td><code>struct_({child fields...})</code></td></tr>
+  <tr><td><code>repeated T</code></td><td><code>list(T)</code></td></tr>
+  <tr><td><code>repeated Message</code></td><td><code>list(struct_(...))</code></td></tr>
+  <tr><td><code>map&lt;K, V&gt;</code></td><td><code>map(K, V)</code></td></tr>
+</table>
+
+<h3>Well-known types</h3>
+<p>Google's well-known wrapper types are <em>flattened</em> to scalar Arrow
+  fields rather than nested structs:</p>
+<table>
+  <tr><th>Proto WKT</th><th>Arrow Type</th><th>Notes</th></tr>
+  <tr><td><code>google.protobuf.Timestamp</code></td><td><code>timestamp(NANO)</code></td><td><code>seconds * 10<sup>9</sup> + nanos</code></td></tr>
+  <tr><td><code>google.protobuf.Duration</code></td><td><code>duration(NANO)</code></td><td><code>seconds * 10<sup>9</sup> + nanos</code></td></tr>
+  <tr><td><code>DoubleValue</code>, <code>FloatValue</code>, ...</td><td>Corresponding scalar</td><td>Always nullable</td></tr>
+  <tr><td><code>StringValue</code>, <code>BytesValue</code></td><td><code>utf8()</code> / <code>binary()</code></td><td>Always nullable</td></tr>
+</table>
+
+<h3>Nullability rules</h3>
+<ul>
+  <li>Proto3 <code>optional</code> fields &rarr; <strong>nullable</strong> Arrow columns</li>
+  <li>All other singular fields &rarr; <strong>non-nullable</strong></li>
+  <li>Wrapper types (<code>DoubleValue</code>, etc.) &rarr; always nullable</li>
+  <li><code>repeated</code> and <code>map</code> fields &rarr; non-nullable (but may be empty)</li>
+</ul>
+
+
+<!-- ── Schema Evolution ────────────────────────────────────────────── -->
+<h2 id="schema-evolution">Schema Evolution</h2>
+
+<p>Because every field in the wire format carries its proto
+  <strong>field number</strong> and <strong>type ID</strong>, a reader with a
+  different schema version can decode rows without any handshake or schema
+  exchange. Evolution follows
+  <a href="https://iceberg.apache.org/spec/#schema-evolution">Apache Iceberg rules</a>:</p>
+
+<table>
+  <tr><th>Scenario</th><th>Behavior</th></tr>
+  <tr><td>Field <strong>added</strong> in reader schema</td><td>Missing from wire &rarr; filled with <code>null</code></td></tr>
+  <tr><td>Field <strong>removed</strong> from reader schema</td><td>Unknown wire field &rarr; skipped via <code>DATA_LEN</code></td></tr>
+  <tr><td>Field <strong>renamed</strong></td><td>Matched by <code>field_number</code>, not name</td></tr>
+  <tr><td>Type <strong>widened</strong></td><td>Automatic promotion (see table below)</td></tr>
+  <tr><td>Type <strong>narrowed</strong></td><td>Rejected as <code>ILLEGAL</code> (throws at decode)</td></tr>
+</table>
+
+<h3>Legal type promotions</h3>
+<table>
+  <tr><th>Wire Type</th><th>Reader Type</th><th>Promotion</th></tr>
+  <tr><td><code>int8/16/32</code></td><td><code>int16/32/64</code> (wider)</td><td>WIDEN_INT</td></tr>
+  <tr><td><code>uint8/16/32</code></td><td><code>uint16/32/64</code> (wider)</td><td>WIDEN_INT</td></tr>
+  <tr><td><code>float32</code></td><td><code>float64</code></td><td>WIDEN_FLOAT</td></tr>
+  <tr><td><code>int32</code></td><td><code>float64</code></td><td>INT_TO_FLOAT</td></tr>
+  <tr><td><code>decimal128</code></td><td><code>decimal256</code></td><td>WIDEN_INT</td></tr>
+</table>
+
+<h3>How it works internally</h3>
+<p>On the first row from an unknown schema hash, <code>RowCodec::DecodeRow</code>
+  builds a <strong>DecodingMap</strong> &mdash; a cached mapping from wire
+  field positions to reader field indices, with promotion rules for each slot.
+  Subsequent rows with the same hash reuse the cached map, decoding at
+  near-positional speed.</p>
+
+<pre><code><span class="cmt">// Writer uses schema V1 (float temperature)</span>
+fletcher::<span class="ty">RowCodec</span> writer(v1_schema);
+<span class="kw">auto</span> row = writer.<span class="fn">EncodeRow</span>({std::make_shared&lt;arrow::<span class="ty">FloatScalar</span>&gt;(<span class="num">23.5f</span>)});
+
+<span class="cmt">// Reader uses schema V2 (double temperature) &mdash; promotion happens automatically</span>
+fletcher::<span class="ty">RowCodec</span> reader(v2_schema);
+<span class="kw">auto</span> decoded = reader.<span class="fn">DecodeRow</span>(row);
+<span class="cmt">// decoded[0] is a DoubleScalar with value 23.5</span></code></pre>
+
+
+<!-- ── Attachments ─────────────────────────────────────────────────── -->
+<h2 id="attachments">Attachments (Sidecar Blobs)</h2>
+
+<p>Large binary data &mdash; images, audio, firmware blobs &mdash;
+  should not be embedded in the Arrow row structure. Instead, the message
+  references a blob by key (a plain <code>string</code> field), while the
+  actual data travels alongside it as an <strong>attachment</strong>.</p>
+
+<pre><code><span class="cmt">// The Arrow row contains just a reference</span>
+row.<span class="fn">set_image_ref</span>(<span class="str">"frame_001"</span>);
+
+<span class="cmt">// The blob travels as a sidecar attachment</span>
+<span class="kw">auto</span> image = std::make_shared&lt;<span class="kw">const</span> std::vector&lt;<span class="ty">uint8_t</span>&gt;&gt;(<span class="fn">load_image</span>());
+pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>, image}});</code></pre>
+
+<p>On the subscriber side, the <code>Envelope</code> contains both the
+  encoded row and the attachments map:</p>
+
+<pre><code>sub.<span class="fn">Subscribe</span>([&amp;](const fletcher::<span class="ty">Envelope</span>&amp; env) {
+    MyMessage msg(env.row);                              <span class="cmt">// structured data</span>
+    <span class="kw">auto</span> it = env.attachments.<span class="fn">find</span>(msg.<span class="fn">image_ref</span>());
+    <span class="kw">if</span> (it != env.attachments.<span class="fn">end</span>())
+        <span class="fn">save_image</span>(*it-&gt;second);                       <span class="cmt">// blob data</span>
+
+    batcher.<span class="fn">Append</span>(env.row);                             <span class="cmt">// batcher sees only the row</span>
+});</code></pre>
+
+<h3>Types</h3>
+<table>
+  <tr><th>Type</th><th>Definition</th><th>Purpose</th></tr>
+  <tr><td><code>Blob</code></td><td><code>shared_ptr&lt;const vector&lt;uint8_t&gt;&gt;</code></td><td>Zero-copy binary data</td></tr>
+  <tr><td><code>Attachments</code></td><td><code>unordered_map&lt;string, Blob&gt;</code></td><td>Key/value blob pairs</td></tr>
+  <tr><td><code>Envelope</code></td><td><code>{ EncodedRow row; Attachments attachments; }</code></td><td>Row + sidecar bundle</td></tr>
+</table>
+
+<p><code>SerializeEnvelope()</code> and <code>DeserializeEnvelope()</code>
+  provide a wire format for transport providers that send everything as a
+  single byte stream. The codec and batcher are completely unaware of
+  attachments &mdash; they remain a transport-layer concern.</p>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     COMPONENTS
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="protoc-plugin">Protoc Plugin</h2>
+
+<p>The <code>protoc-gen-arrow-row</code> plugin is a standard protobuf
+  compiler plugin. During a CMake build, <code>protoc</code> invokes it for
+  each <code>.proto</code> file and it emits a single
+  <code>.arrow_row.pb.h</code> header.</p>
+
+<h3>What gets generated</h3>
+
+<p><strong>For each message:</strong></p>
+<ul>
+  <li>A free function <code>{Message}ArrowRowSchema()</code> returning the Arrow
+    schema with <code>field_number</code> metadata on each field and
+    <code>proto_package</code>/<code>proto_message</code> on the schema.</li>
+  <li>A class <code>{Message}ArrowRow</code> with:
+    <ul>
+      <li>Chainable setters (<code>set_*()</code>, <code>clear_*()</code> for optionals)</li>
+      <li><code>Encode()</code> &rarr; <code>EncodedRow</code></li>
+      <li>Constructor from <code>EncodedRow</code> (decodes)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>For each eligible service RPC</strong>
+  (client-streaming, returns <code>google.protobuf.Empty</code>):</p>
+<ul>
+  <li><code>{Service}_{Method}Publisher</code> &mdash; wraps
+    <code>PubSubProvider::Publish</code>, provides
+    <code>Publish(row)</code> and <code>Publish(row, attachments)</code></li>
+  <li><code>{Service}_{Method}Subscriber</code> &mdash; wraps
+    <code>PubSubProvider::Subscribe</code>, delivers
+    <code>Envelope</code> to callback</li>
+</ul>
+
+<h3>Unsupported constructs</h3>
+<ul>
+  <li><code>oneof</code> &mdash; use separate <code>optional</code> fields instead</li>
+  <li>Recursive messages &mdash; detected at generation time, skipped with a comment</li>
+  <li><code>google.protobuf.Any</code> and <code>google.protobuf.Struct</code> &mdash; dynamically typed</li>
+</ul>
+
+
+<!-- ── RowCodec ────────────────────────────────────────────────────── -->
+<h2 id="row-codec">RowCodec</h2>
+
+<p>The core encode/decode engine. You rarely use it directly &mdash;
+  the generated classes call it internally &mdash; but it is available for
+  manual use with hand-crafted Arrow schemas.</p>
+
+<pre><code><span class="kw">auto</span> schema = arrow::<span class="fn">schema</span>({
+    arrow::<span class="fn">field</span>(<span class="str">"id"</span>,   arrow::<span class="fn">int32</span>(),   <span class="num">false</span>),
+    arrow::<span class="fn">field</span>(<span class="str">"name"</span>, arrow::<span class="fn">utf8</span>(),    <span class="num">true</span>),
+});
+
+fletcher::<span class="ty">RowCodec</span> codec(schema);
+
+<span class="cmt">// Encode</span>
+fletcher::<span class="ty">EncodedRow</span> row = codec.<span class="fn">EncodeRow</span>({
+    std::make_shared&lt;arrow::<span class="ty">Int32Scalar</span>&gt;(<span class="num">42</span>),
+    std::make_shared&lt;arrow::<span class="ty">StringScalar</span>&gt;(<span class="str">"Alice"</span>),
+});
+
+<span class="cmt">// Decode</span>
+fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">DecodeRow</span>(row);
+<span class="cmt">// scalars[0] is an Int32Scalar, scalars[1] is a StringScalar</span></code></pre>
+
+<div class="note">
+  <strong>DecodingMap cache:</strong> When the schema hash in the wire buffer
+  doesn't match the reader's hash, a <code>DecodingMap</code> is built once
+  and cached under a mutex. Subsequent rows from the same writer schema
+  decode without rebuilding the map.
+</div>
+
+
+<!-- ── Pub/Sub ─────────────────────────────────────────────────────── -->
+<h2 id="pubsub">Pub/Sub Transport</h2>
+
+<p>The <code>PubSubProvider</code> is an abstract interface that decouples
+  message transport from encoding. Implement it to plug in any message bus.</p>
+
+<pre><code><span class="kw">class</span> <span class="ty">PubSubProvider</span> {
+<span class="kw">public</span>:
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">CreateTopic</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        std::shared_ptr&lt;arrow::<span class="ty">Schema</span>&gt; schema) = <span class="num">0</span>;
+
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Publish</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        <span class="kw">const</span> <span class="ty">Envelope</span>&amp; envelope) = <span class="num">0</span>;
+
+    <span class="kw">using</span> <span class="ty">SubscribeCallback</span> = std::function&lt;<span class="ty">void</span>(<span class="kw">const</span> <span class="ty">Envelope</span>&amp;)&gt;;
+
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Subscribe</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        <span class="ty">SubscribeCallback</span> callback) = <span class="num">0</span>;
+
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Unsubscribe</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments) = <span class="num">0</span>;
+};</code></pre>
+
+<p>Topic names are a list of string segments so each provider can join them
+  with its preferred separator (e.g., <code>/</code> for DDS,
+  <code>.</code> for MQTT). The generated code uses
+  <code>{package, service, method}</code> as segments.</p>
+
+
+<!-- ── Batcher ─────────────────────────────────────────────────────── -->
+<h2 id="batcher">Batcher &amp; Write-Ahead Log</h2>
+
+<p>The batcher accumulates individual <code>EncodedRow</code> buffers and
+  flushes them as columnar <code>arrow::Table</code> batches. A
+  <strong>write-ahead log</strong> (WAL) backed by SQLite provides durability
+  between flushes.</p>
+
+<pre><code>fletcher::<span class="ty">SQLiteWAL</span> wal(<span class="str">"wal.db"</span>);  <span class="cmt">// or ":memory:" for in-memory</span>
+fletcher::<span class="ty">GenericRowBatcher</span> batcher(
+    schema,
+    wal,
+    <span class="cmt">/*batch_size=*/</span><span class="num">1000</span>,
+    [](std::shared_ptr&lt;arrow::<span class="ty">Table</span>&gt; table) -&gt; <span class="ty">bool</span> {
+        <span class="fn">write_parquet</span>(table);
+        <span class="kw">return</span> <span class="num">true</span>;  <span class="cmt">// return false to signal failure</span>
+    });
+
+<span class="cmt">// Thread-safe: call from subscriber callbacks or any thread</span>
+batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
+
+<h3>Flush behavior</h3>
+<ul>
+  <li><code>Append()</code> is <strong>thread-safe</strong> (mutex-protected)</li>
+  <li>When <code>row_count</code> reaches <code>batch_size</code>, the flush
+    callback is dispatched on a <strong>background thread</strong></li>
+  <li>The callback returns <code>bool</code>: <code>true</code> = success,
+    <code>false</code> = failure</li>
+  <li>The destructor <strong>joins</strong> all pending flush futures</li>
+</ul>
+
+<div class="note">
+  <strong>WAL column types:</strong> The SQLite WAL maps Arrow types to
+  SQLite types (INTEGER, REAL, TEXT, BLOB). Composite types (struct, list,
+  map) are not supported in the WAL and will throw at log creation time.
+</div>
+
+
+<!-- ── FastDDS ─────────────────────────────────────────────────────── -->
+<h2 id="fastdds">FastDDS Provider</h2>
+
+<p>A concrete <code>PubSubProvider</code> implementation using
+  <a href="https://www.eprosima.com/index.php/products-all/eprosima-fast-dds">eProsima Fast DDS</a>
+  for reliable, real-time publish/subscribe over RTPS.</p>
+
+<pre><code><span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;(
+    <span class="cmt">/*domain_id=*/</span><span class="num">0</span>,
+    <span class="cmt">/*max_payload_bytes=*/</span><span class="num">1024</span> * <span class="num">1024</span>  <span class="cmt">// 1 MB</span>
+);</code></pre>
+
+<h3>QoS configuration</h3>
+<table>
+  <tr><th>Policy</th><th>Setting</th><th>Effect</th></tr>
+  <tr><td>Reliability</td><td>RELIABLE</td><td>Middleware retransmits lost samples</td></tr>
+  <tr><td>History</td><td>KEEP_ALL</td><td>All samples retained until acknowledged</td></tr>
+  <tr><td>Durability</td><td>TRANSIENT_LOCAL</td><td>Late-joining subscribers receive buffered history</td></tr>
+</table>
+
+<p>The provider serializes each <code>Envelope</code> (row + attachments)
+  into a single DDS sample using the envelope wire format.
+  On the receiver side, it deserializes back into an <code>Envelope</code>
+  before invoking the subscriber callback.</p>
+
+
+<!-- ── C API / Rust ────────────────────────────────────────────────── -->
+<h2 id="capi">C API &amp; Rust Bindings</h2>
+
+<p>The codec and batcher expose a <strong>pure-C API</strong> for cross-language
+  interop. Schemas and record batches are exchanged as Arrow IPC stream bytes.</p>
+
+<pre><code><span class="cmt">// C API (arrow_row_codec_capi.h)</span>
+<span class="ty">ArrowRowCodec</span>* codec = <span class="fn">arrow_row_codec_new</span>(schema_ipc, schema_len, &amp;err);
+<span class="fn">arrow_row_codec_encode_row</span>(codec, row_ipc, row_len, &amp;out, &amp;out_len, &amp;err);
+<span class="fn">arrow_row_codec_decode_row</span>(codec, buf, buf_len, &amp;out_ipc, &amp;out_len, &amp;err);
+<span class="fn">arrow_row_codec_free</span>(codec);</code></pre>
+
+<p><strong>Rust bindings</strong> wrap the C API with safe types via the
+  <code>arrow-row-codec</code> and <code>arrow-row-batcher</code> crates
+  (under <code>Codec/bindings/rust/</code> and <code>Batcher/bindings/rust/</code>).
+  They use the <code>cmake</code> crate to link against the C++ libraries at
+  build time.</p>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     REFERENCE
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="project-structure">Project Structure</h2>
+
+<pre><code>ArrowRowSerializer/
+  CMakeLists.txt               Root build &mdash; Conan integration, all subdirectories
+  conanfile.txt                Dependencies: Arrow, protobuf, SQLite3, Catch2, Fast DDS
+
+  Codec/
+    include/
+      row_codec.hpp            RowCodec class, EncodedRow/ArrowRow type aliases
+      pubsub_provider.hpp      Abstract PubSubProvider interface
+      envelope.hpp             Envelope, Attachments, Blob, Serialize/Deserialize
+      schema_evolution.hpp     WireTypeId, PromotionKind, DecodingMap
+      arrow_row_codec_capi.h   C API
+    src/
+      row_codec.cpp            Encode/decode implementation
+      schema_evolution.cpp     Evolution logic (BuildDecodingMap, ClassifyPromotion)
+    tests/                     74 Catch2 test cases
+    bindings/rust/             arrow-row-codec Rust crate
+
+  Batcher/
+    include/
+      row_batcher.hpp          RowBatcher base class
+      generic_row_batcher.hpp  GenericRowBatcher (WAL-backed)
+      write_ahead_log.hpp      WriteAheadLog / LogHandle interfaces
+      sqlite_wal.hpp           SQLiteWAL implementation
+    tests/                     23 Catch2 test cases
+    bindings/rust/             arrow-row-batcher Rust crate
+
+  ProtoPlugin/
+    src/
+      generator.cpp            Code generation logic
+      type_mapper.cpp          Proto &rarr; Arrow type mapping
+      main.cpp                 protoc plugin entry point
+    tests/                     Type mapper unit tests
+
+  ProtoIntegration/
+    proto/                     Test .proto files (simple, temporal, nested, ...)
+    tests/                     32 integration test cases (roundtrips, pub/sub, evolution)
+
+  FastDDSPubSubProvider/
+    include/                   FastDDSPubSubProvider class
+    src/                       DDS setup, CDR serialization, envelope transport</code></pre>
+
+
+<!-- ── Building ────────────────────────────────────────────────────── -->
+<h2 id="building">Building</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li><strong>CMake</strong> 3.15+</li>
+  <li><strong>Conan 2</strong> package manager</li>
+  <li>A C++20 compiler (MSVC 2022, GCC 12+, Clang 15+)</li>
+</ul>
+
+<h3>Steps</h3>
+
+<pre><code><span class="cmt"># 1. Install dependencies via Conan</span>
+conan install . --build=missing --output-folder=build
+
+<span class="cmt"># 2. Configure with CMake (uses the Conan-generated toolchain)</span>
+cmake --preset conan-default
+
+<span class="cmt"># 3. Build</span>
+cmake --build build --config Release</code></pre>
+
+<div class="note">
+  <strong>Windows / Visual Studio:</strong> The root CMakeLists.txt forces
+  <code>/MD</code> (MultiThreadedDLL) for all targets and patches Conan's
+  imported targets so that Release-only packages (protobuf, Fast DDS) work
+  correctly in Debug builds. Multi-config generators are fully supported.
+</div>
+
+<h3>Dependencies</h3>
+<table>
+  <tr><th>Package</th><th>Version</th><th>Purpose</th></tr>
+  <tr><td>Apache Arrow</td><td>23.0.1</td><td>Columnar data types and schemas</td></tr>
+  <tr><td>Protocol Buffers</td><td>3.21.12</td><td>Message definitions and compiler</td></tr>
+  <tr><td>SQLite3</td><td>3.47.2</td><td>Write-ahead log for the batcher</td></tr>
+  <tr><td>Catch2</td><td>3.7.1</td><td>Test framework</td></tr>
+  <tr><td>Fast DDS</td><td>2.14.3</td><td>DDS pub/sub transport</td></tr>
+</table>
+
+
+<!-- ── Testing ─────────────────────────────────────────────────────── -->
+<h2 id="testing">Testing</h2>
+
+<p>All tests use <a href="https://github.com/catchorg/Catch2">Catch2 v3</a>
+  and are discovered via CTest:</p>
+
+<pre><code><span class="cmt"># Run all tests</span>
+ctest --test-dir build --config Release
+
+<span class="cmt"># Run specific test suites</span>
+ctest --test-dir build -R codec        <span class="cmt"># 74 codec tests</span>
+ctest --test-dir build -R integration   <span class="cmt"># 32 integration tests</span>
+ctest --test-dir build -R batcher       <span class="cmt"># 23 batcher tests</span></code></pre>
+
+<h3>Test coverage</h3>
+<table>
+  <tr><th>Suite</th><th>Cases</th><th>Covers</th></tr>
+  <tr><td>Codec</td><td>83</td><td>Scalar types, nulls, composites, errors, fingerprints, schema evolution, envelope serialization</td></tr>
+  <tr><td>Integration</td><td>32</td><td>Generated code roundtrips for all proto constructs, pub/sub with mock provider, cross-version evolution</td></tr>
+  <tr><td>Batcher</td><td>23</td><td>Row accumulation, flush triggering, WAL log/read, key columns, thread safety</td></tr>
+  <tr><td>Plugin</td><td>varies</td><td>Type mapping for all proto field kinds</td></tr>
+</table>
+
+
+</main>
+</div>
+</body>
+</html>
