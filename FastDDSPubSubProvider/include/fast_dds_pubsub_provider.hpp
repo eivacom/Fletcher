@@ -17,7 +17,7 @@ namespace fletcher {
 class FastDDSPubSubProvider : public PubSubProvider {
  public:
     /// @param domain_id         DDS domain ID (default 0).
-    /// @param max_payload_bytes Maximum EncodedRow payload in bytes (default 1 MB).
+    /// @param max_payload_bytes Maximum serialized envelope in bytes (default 1 MB).
     explicit FastDDSPubSubProvider(uint32_t domain_id = 0,
                                    uint32_t max_payload_bytes = 1024 * 1024);
     ~FastDDSPubSubProvider() override;
@@ -29,7 +29,7 @@ class FastDDSPubSubProvider : public PubSubProvider {
                      std::shared_ptr<arrow::Schema> schema) override;
 
     void Publish(const std::vector<std::string>& topic_segments,
-                 const EncodedRow& row) override;
+                 const Envelope& envelope) override;
 
     void Subscribe(const std::vector<std::string>& topic_segments,
                    SubscribeCallback callback) override;

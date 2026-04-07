@@ -1,8 +1,9 @@
 // Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
 //
-// The custom TopicDataType (RawBytesTopicType) serialises EncodedRow —
-// std::vector<uint8_t> — as a CDR-LE octet sequence: 4-byte encapsulation
-// header, 4-byte uint32 length, then raw payload bytes.
+// The custom TopicDataType (RawBytesTopicType) serialises an Envelope —
+// an EncodedRow with optional key/value attachments — as a CDR-LE octet
+// sequence: 4-byte encapsulation header, 4-byte uint32 length, then
+// the SerializeEnvelope() payload bytes.
 
 #include "fast_dds_pubsub_provider.hpp"
 
@@ -124,7 +125,7 @@ class SubscriptionListener : public DataReaderListener {
         SampleInfo info;
         while (reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK) {
             if (info.valid_data) {
-                callback_(raw.data);
+                callback_(DeserializeEnvelope(raw.data));
             }
         }
     }
@@ -248,7 +249,7 @@ void FastDDSPubSubProvider::CreateTopic(
 
 void FastDDSPubSubProvider::Publish(
     const std::vector<std::string>& topic_segments,
-    const EncodedRow& row) {
+    const Envelope& envelope) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -272,7 +273,7 @@ void FastDDSPubSubProvider::Publish(
     }
 
     RawBytes raw_bytes;
-    raw_bytes.data = row;
+    raw_bytes.data = SerializeEnvelope(envelope);
     ts.writer->write(&raw_bytes);
 }
 

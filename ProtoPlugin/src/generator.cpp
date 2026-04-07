@@ -729,9 +729,18 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
       << "    }\n\n";
 
-    // Publish
+    // Publish (without attachments)
     o << "    void Publish(const " << msg_class << "& row) {\n"
-      << "        provider_->Publish(TopicSegments(), row.Encode());\n"
+      << "        provider_->Publish(TopicSegments(),\n"
+      << "                           fletcher::Envelope{row.Encode(), {}});\n"
+      << "    }\n\n";
+
+    // Publish (with attachments)
+    o << "    void Publish(const " << msg_class << "& row,\n"
+      << "                 fletcher::Attachments attachments) {\n"
+      << "        provider_->Publish(TopicSegments(),\n"
+      << "                           fletcher::Envelope{row.Encode(),\n"
+      << "                                              std::move(attachments)});\n"
       << "    }\n\n";
 
     // Private
@@ -767,9 +776,9 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
       << "    }\n\n";
 
-    // Subscribe — delivers the raw EncodedRow to the caller
+    // Subscribe — delivers the Envelope (row + attachments) to the caller
     o << "    void Subscribe(\n"
-      << "        std::function<void(const fletcher::EncodedRow&)> cb)\n"
+      << "        std::function<void(const fletcher::Envelope&)> cb)\n"
       << "    {\n"
       << "        provider_->Subscribe(TopicSegments(), std::move(cb));\n"
       << "    }\n\n";

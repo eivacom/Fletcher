@@ -441,7 +441,7 @@ TEST_CASE("OrderItem: optional note null then valid") {
 
 namespace {
 
-// Minimal mock that records calls and delivers published rows to subscribers.
+// Minimal mock that records calls and delivers published envelopes to subscribers.
 class MockPubSubProvider : public fletcher::PubSubProvider {
  public:
     struct CreatedTopic {
@@ -450,7 +450,7 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
     };
 
     std::vector<CreatedTopic> created_topics;
-    std::vector<std::pair<std::vector<std::string>, fletcher::EncodedRow>> published;
+    std::vector<std::pair<std::vector<std::string>, fletcher::Envelope>> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
     void CreateTopic(const std::vector<std::string>& segments,
@@ -459,11 +459,11 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const fletcher::EncodedRow& row) override {
-        published.push_back({segments, row});
+                 const fletcher::Envelope& envelope) override {
+        published.push_back({segments, envelope});
         auto it = subscribers.find(segments);
         if (it != subscribers.end())
-            it->second(row);
+            it->second(envelope);
     }
 
     void Subscribe(const std::vector<std::string>& segments,
@@ -501,7 +501,7 @@ TEST_CASE("Publisher: publish encodes and delivers to provider") {
     REQUIRE(mock->published.size() == 1);
     CHECK(mock->published[0].first ==
           std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
-    CHECK_FALSE(mock->published[0].second.empty());
+    CHECK_FALSE(mock->published[0].second.row.empty());
 }
 
 TEST_CASE("Publisher: multiple publishes accumulate") {
@@ -531,24 +531,24 @@ TEST_CASE("Subscriber: construction creates topic") {
           std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
 }
 
-TEST_CASE("Subscriber: receives EncodedRow from published rows") {
+TEST_CASE("Subscriber: receives Envelope from published rows") {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    fletcher::EncodedRow received;
-    sub.Subscribe([&](const fletcher::EncodedRow& raw) {
-        received = raw;
+    fletcher::Envelope received;
+    sub.Subscribe([&](const fletcher::Envelope& env) {
+        received = env;
     });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
-    REQUIRE(!received.empty());
+    REQUIRE(!received.row.empty());
 
     // Decode via the EncodedRow constructor to verify contents.
-    integration::TelemetryArrowRow decoded(received);
+    integration::TelemetryArrowRow decoded(received.row);
     auto scalars = RoundTrip(decoded.Encode(), integration::TelemetryArrowRowSchema());
     REQUIRE(scalars.size() == 4);
 
@@ -567,7 +567,7 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](const fletcher::EncodedRow&) { ++count; });
+    sub.Subscribe([&](const fletcher::Envelope&) { ++count; });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
@@ -578,4 +578,47 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     sub.Unsubscribe();
     pub.Publish(row);
     CHECK(count == 1);  // no delivery after unsubscribe
+}
+
+TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    fletcher::Envelope received;
+    sub.Subscribe([&](const fletcher::Envelope& env) {
+        received = env;
+    });
+
+    integration::TelemetryArrowRow row;
+    row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
+
+    auto blob = std::make_shared<const std::vector<uint8_t>>(
+        std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+    pub.Publish(row, {{"image", blob}});
+
+    REQUIRE(!received.row.empty());
+    REQUIRE(received.attachments.size() == 1);
+    REQUIRE(received.attachments.count("image") == 1);
+    CHECK(*received.attachments.at("image") == std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+
+    // Verify the row decodes correctly alongside the attachment.
+    integration::TelemetryArrowRow decoded(received.row);
+    auto scalars = RoundTrip(decoded.Encode(), integration::TelemetryArrowRowSchema());
+    auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
+    REQUIRE(id != nullptr);
+    CHECK(id->value == 42);
+}
+
+TEST_CASE("Publisher: publish without attachments has empty attachments") {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+
+    integration::TelemetryArrowRow row;
+    row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
+    pub.Publish(row);
+
+    REQUIRE(mock->published.size() == 1);
+    CHECK(mock->published[0].second.attachments.empty());
+    CHECK_FALSE(mock->published[0].second.row.empty());
 }
