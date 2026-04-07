@@ -1,6 +1,6 @@
 # ProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files containing ArrowRow wrapper classes. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()` and can convert to/from an `ArrowRow` (vector of scalars), along with the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
+A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files containing ArrowRow wrapper classes. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()` and can convert to/from an `ArrowRow` (vector of scalars), along with the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 
 ## How the plugin works
 
@@ -10,22 +10,22 @@ For each file the generator:
 1. Orders messages dependency-first (DFS topological sort) so nested types are always defined before the messages that reference them.
 2. Maps every field via `type_mapper.cpp` to an Arrow type and a C++ setter.
 3. Scans all field mappings to discover references to messages in other `.proto` files.
-4. Emits one `.arrow_row.pb.h` header containing all generated classes, with `#include` directives for any cross-file generated headers required.
+4. Emits one `.fletcher.pb.h` header containing all generated classes, with `#include` directives for any cross-file generated headers required.
 
-The output file is placed in the directory passed to `--arrow-row_out`.
+The output file is placed in the directory passed to `--fletcher_out`.
 
 ## Using the plugin in CMake
 
 ```cmake
 add_custom_command(
-    OUTPUT  "${GENERATED_DIR}/${stem}.arrow_row.pb.h"
+    OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=protoc-gen-arrow-row=$<TARGET_FILE:protoc-gen-arrow-row>"
-            "--arrow-row_out=${GENERATED_DIR}"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:protoc-gen-fletcher>"
+            "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"   # path to google/protobuf/*.proto
             "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" protoc-gen-arrow-row
+    DEPENDS "${PROTO_DIR}/${stem}.proto" protoc-gen-fletcher
 )
 ```
 
@@ -87,9 +87,9 @@ import "common/address.proto";
 message Person { string name = 1; common.Address address = 2; }
 ```
 
-`person.arrow_row.pb.h` will contain:
+`person.fletcher.pb.h` will contain:
 ```cpp
-#include "common/address.arrow_row.pb.h"   // emitted automatically
+#include "common/address.fletcher.pb.h"   // emitted automatically
 ```
 
 The generated setter and storage type use a globally-qualified C++ name (`::common::AddressArrowRow`) so the reference resolves regardless of which namespace the consuming code is in.

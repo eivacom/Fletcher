@@ -60,8 +60,8 @@ static std::string CrossFileHeader(const google::protobuf::Descriptor* msg,
     constexpr std::string_view kSuffix = ".proto";
     if (name.size() > kSuffix.size()
         && name.substr(name.size() - kSuffix.size()) == kSuffix)
-        return name.substr(0, name.size() - kSuffix.size()) + ".arrow_row.pb.h";
-    return name + ".arrow_row.pb.h";
+        return name.substr(0, name.size() - kSuffix.size()) + ".fletcher.pb.h";
+    return name + ".fletcher.pb.h";
 }
 
 // -----------------------------------------------------------------------

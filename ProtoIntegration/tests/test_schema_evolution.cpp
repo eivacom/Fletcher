@@ -6,8 +6,8 @@
 #include "schema_evolution.hpp"
 
 // Generated headers for the evolution test messages.
-#include "evolution_v1.arrow_row.pb.h"
-#include "evolution_v2.arrow_row.pb.h"
+#include "evolution_v1.fletcher.pb.h"
+#include "evolution_v2.fletcher.pb.h"
 
 using namespace fletcher;
 

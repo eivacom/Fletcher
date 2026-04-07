@@ -1,6 +1,6 @@
 # ProtoIntegration
 
-Integration test project that exercises the `protoc-gen-arrow-row` plugin end-to-end. It compiles a set of `.proto` files spanning the full range of supported proto constructs, generates Arrow row code from them, and runs Catch2 tests against the generated classes.
+Integration test project that exercises the `protoc-gen-fletcher` plugin end-to-end. It compiles a set of `.proto` files spanning the full range of supported proto constructs, generates Arrow row code from them, and runs Catch2 tests against the generated classes.
 
 ## Purpose
 
@@ -23,10 +23,10 @@ This project exists to catch regressions in the plugin and the codec together. U
 The plugin emits one file per proto:
 
 ```
-build/generated/simple.arrow_row.pb.h
-build/generated/temporal.arrow_row.pb.h
+build/generated/simple.fletcher.pb.h
+build/generated/temporal.fletcher.pb.h
 ...
-build/generated/pubsub.arrow_row.pb.h
+build/generated/pubsub.fletcher.pb.h
 ```
 
 These are generated at build time via `add_custom_command` in `CMakeLists.txt`. They are not committed to source control.
@@ -34,7 +34,7 @@ These are generated at build time via `add_custom_command` in `CMakeLists.txt`. 
 ## Using generated classes
 
 ```cpp
-#include "simple.arrow_row.pb.h"   // generated from simple.proto
+#include "simple.fletcher.pb.h"   // generated from simple.proto
 
 // Build and encode a row:
 SimpleArrowRow row;
@@ -52,7 +52,7 @@ auto scalars = codec.DecodeRow(encoded);
 ### Pub/sub usage
 
 ```cpp
-#include "pubsub.arrow_row.pb.h"   // generated from pubsub.proto
+#include "pubsub.fletcher.pb.h"   // generated from pubsub.proto
 #include <fast_dds_pubsub_provider.hpp>   // or any other PubSubProvider
 
 auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>();
@@ -80,13 +80,13 @@ The tests are built as part of the root project build:
 
 ```
 cmake --build build/build --config Release
-ctest --test-dir build/build -C Release -R arrow_row_proto_integration
+ctest --test-dir build/build -C Release -R fletcher_proto_integration
 ```
 
 Or run the executable directly:
 
 ```
-build/build/ProtoIntegration/Release/arrow_row_proto_integration_tests.exe
+build/build/ProtoIntegration/Release/fletcher_proto_integration_tests.exe
 ```
 
 ## Dependencies

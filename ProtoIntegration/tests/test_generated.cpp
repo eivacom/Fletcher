@@ -5,14 +5,14 @@
 
 #include <map>
 
-// Generated headers — produced by protoc-gen-arrow-row from each .proto file.
-#include "simple.arrow_row.pb.h"
-#include "temporal.arrow_row.pb.h"
-#include "nested.arrow_row.pb.h"
-#include "collections.arrow_row.pb.h"
-#include "maps.arrow_row.pb.h"
-#include "pubsub.arrow_row.pb.h"
-#include "complex.arrow_row.pb.h"
+// Generated headers — produced by protoc-gen-fletcher from each .proto file.
+#include "simple.fletcher.pb.h"
+#include "temporal.fletcher.pb.h"
+#include "nested.fletcher.pb.h"
+#include "collections.fletcher.pb.h"
+#include "maps.fletcher.pb.h"
+#include "pubsub.fletcher.pb.h"
+#include "complex.fletcher.pb.h"
 
 // Helper: decode an encoded row using the given schema.
 fletcher::ArrowRow RoundTrip(

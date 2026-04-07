@@ -30,9 +30,9 @@ Use this when you need to bridge a row-at-a-time source (sensor feed, event stre
 
 ### ProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-arrow-row`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
+A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
 
-With `--arrow-row_opt=ts`, the plugin also emits `.fletcher.ts` files containing TypeScript interfaces, `SchemaDescriptor` constants (with field numbers, wire types, nullability, and nested descriptors), and topic path constants for service methods.
+With `--fletcher_opt=ts`, the plugin also emits `.fletcher.ts` files containing TypeScript interfaces, `SchemaDescriptor` constants (with field numbers, wire types, nullability, and nested descriptors), and topic path constants for service methods.
 
 Use this to avoid writing schema and serialisation boilerplate by hand when your data model is already described in Protocol Buffers. See [ProtoPlugin/README.md](ProtoPlugin/README.md).
 
@@ -87,7 +87,7 @@ TypeScript client library (`@fletcher/web-client`) for the WebGateway. Connects 
 - **WASM decoder** (`wasm/src/decoder.c`) — C row parser compiled to WebAssembly via Emscripten. Parses the tagged field table with minimal WASM/JS boundary crossings. Falls back to a pure TypeScript implementation when WASM is unavailable.
 - **Row encoder** — pure TypeScript encoder supporting all scalar types (including `bigint` for 64-bit integers), strings, binary, structs, lists, and maps.
 - **FletcherClient** — WebSocket manager with `connect()`, `createTopic()`, `subscribe()`, `unsubscribe()`, `publish()`, `listTopics()`, and automatic envelope deserialization with row decoding via the configured backend.
-- **Protoc-generated types** — use `--arrow-row_opt=ts` to generate TypeScript interfaces and `SchemaDescriptor` constants from `.proto` files.
+- **Protoc-generated types** — use `--fletcher_opt=ts` to generate TypeScript interfaces and `SchemaDescriptor` constants from `.proto` files.
 
 ```
 npm install
@@ -159,8 +159,8 @@ npm run build:wasm
 To generate TypeScript types from `.proto` files:
 
 ```
-protoc --plugin=protoc-gen-arrow-row=build/ProtoPlugin/Release/protoc-gen-arrow-row \
-       --arrow-row_out=. --arrow-row_opt=ts \
+protoc --plugin=protoc-gen-fletcher=build/ProtoPlugin/Release/protoc-gen-fletcher \
+       --fletcher_out=. --fletcher_opt=ts \
        -I proto -I <protobuf_include> \
        your_messages.proto
 ```

@@ -43,41 +43,41 @@ set(PROTO_STEMS simple temporal nested collections maps complex pubsub evolution
 set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
     set(_src "${PROTO_DIR}/${_stem}.proto")
-    set(_hdr "${GENERATED_DIR}/${_stem}.arrow_row.pb.h")
+    set(_hdr "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
 
     add_custom_command(
         OUTPUT  "${_hdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
-                "--plugin=protoc-gen-arrow-row=$<TARGET_FILE:protoc-gen-arrow-row>"
-                "--arrow-row_out=${GENERATED_DIR}"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:protoc-gen-fletcher>"
+                "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" protoc-gen-arrow-row
-        COMMENT "protoc-gen-arrow-row: ${_stem}.proto"
+        DEPENDS "${_src}" protoc-gen-fletcher
+        COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
     list(APPEND GENERATED_HEADERS "${_hdr}")
 endforeach()
 
-add_custom_target(arrow_row_proto_codegen ALL
+add_custom_target(fletcher_proto_codegen ALL
     DEPENDS ${GENERATED_HEADERS}
 )
 
 # ---- Test executable ----
-add_executable(arrow_row_proto_integration_tests
+add_executable(fletcher_proto_integration_tests
     tests/test_generated.cpp
     tests/test_schema_evolution.cpp
 )
-add_dependencies(arrow_row_proto_integration_tests arrow_row_proto_codegen)
+add_dependencies(fletcher_proto_integration_tests fletcher_proto_codegen)
 
-target_include_directories(arrow_row_proto_integration_tests PRIVATE
+target_include_directories(fletcher_proto_integration_tests PRIVATE
     "${GENERATED_DIR}"
 )
-target_link_libraries(arrow_row_proto_integration_tests PRIVATE
+target_link_libraries(fletcher_proto_integration_tests PRIVATE
     Catch2::Catch2WithMain
     row_codec
 )
 
 include(Catch)
-catch_discover_tests(arrow_row_proto_integration_tests)
+catch_discover_tests(fletcher_proto_integration_tests)

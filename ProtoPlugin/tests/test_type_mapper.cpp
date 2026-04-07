@@ -564,7 +564,7 @@ TEST_CASE("MapField: cross-file singular message succeeds (same package)") {
     CHECK(m->kind == FieldKind::STRUCT);
     // Same package → no global qualification needed; nested_header must be set.
     CHECK(m->nested_class == "DepMsgArrowRow");
-    CHECK(m->nested_header == "dep_same_pkg.arrow_row.pb.h");
+    CHECK(m->nested_header == "dep_same_pkg.fletcher.pb.h");
 }
 
 TEST_CASE("MapField: cross-file singular message succeeds (different packages)") {
@@ -582,7 +582,7 @@ TEST_CASE("MapField: cross-file singular message succeeds (different packages)")
     CHECK(m->kind == FieldKind::STRUCT);
     // Different package → globally qualified.
     CHECK(m->nested_class == "::other::pkg::DepMsgArrowRow");
-    CHECK(m->nested_header == "dep_other_pkg.arrow_row.pb.h");
+    CHECK(m->nested_header == "dep_other_pkg.fletcher.pb.h");
 }
 
 TEST_CASE("MapField: cross-file singular message — no-package dep") {
@@ -598,7 +598,7 @@ TEST_CASE("MapField: cross-file singular message — no-package dep") {
     auto m = MapField(fd);
     REQUIRE(m.has_value());
     CHECK(m->nested_class == "::DepMsgArrowRow");
-    CHECK(m->nested_header == "dep_no_pkg.arrow_row.pb.h");
+    CHECK(m->nested_header == "dep_no_pkg.fletcher.pb.h");
 }
 
 TEST_CASE("MapField: cross-file repeated message succeeds") {
@@ -615,7 +615,7 @@ TEST_CASE("MapField: cross-file repeated message succeeds") {
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::REPEATED_STRUCT);
     CHECK(m->nested_class == "::ext::DepMsgArrowRow");
-    CHECK(m->nested_header == "dep_repeated.arrow_row.pb.h");
+    CHECK(m->nested_header == "dep_repeated.fletcher.pb.h");
 }
 
 TEST_CASE("MapField: same-file message still has empty nested_header") {
@@ -677,7 +677,7 @@ TEST_CASE("MapField: cross-file map with message value succeeds") {
     CHECK(m->kind == FieldKind::MAP);
     CHECK(m->map_value_is_message);
     CHECK(m->map_value_class == "::ext::DepMsgArrowRow");
-    CHECK(m->map_value_header == "dep_map_val.arrow_row.pb.h");
+    CHECK(m->map_value_header == "dep_map_val.fletcher.pb.h");
 }
 
 TEST_CASE("UnsupportedReason: cross-file reference is no longer unsupported") {
