@@ -144,7 +144,9 @@ tr:hover td { background: #f4f5fb; }
     <li class="section"><span>Components</span></li>
     <li><a href="#protoc-plugin">Protoc Plugin</a></li>
     <li><a href="#row-codec">RowCodec</a></li>
-    <li><a href="#pubsub">Pub/Sub</a></li>
+    <li><a href="#pubsub">Pub/Sub &amp; Driver</a></li>
+    <li><a href="#web-gateway">WebGateway</a></li>
+    <li><a href="#web-client">WebClient (TS)</a></li>
     <li><a href="#batcher">Batcher &amp; WAL</a></li>
     <li><a href="#fastdds">FastDDS Provider</a></li>
     <li><a href="#capi">C API &amp; Rust</a></li>
@@ -171,9 +173,12 @@ tr:hover td { background: #f4f5fb; }
   </p>
   <div class="badges">
     <span class="badge">C++20</span>
+    <span class="badge">TypeScript</span>
     <span class="badge">Apache Arrow</span>
     <span class="badge">Protocol Buffers</span>
     <span class="badge">Schema Evolution</span>
+    <span class="badge">WebSocket</span>
+    <span class="badge">WASM</span>
     <span class="badge">Pub/Sub</span>
   </div>
 </div>
@@ -193,15 +198,22 @@ tr:hover td { background: #f4f5fb; }
   at a time &mdash; telemetry streams, event buses, sensor networks &mdash;
   but is consumed in columnar batches for analytics, storage, or forwarding.</p>
 
-<p>The system provides four layers that compose cleanly:</p>
+<p>The system provides six layers that compose cleanly:</p>
 
 <ol>
   <li><strong>Codec</strong> &mdash; encodes Arrow scalars into a tagged binary
     row format and decodes them back, with cross-schema evolution support.</li>
-  <li><strong>Protoc Plugin</strong> &mdash; generates typed message classes,
-    publisher/subscriber classes, and Arrow schemas from <code>.proto</code> definitions.</li>
-  <li><strong>Pub/Sub Transport</strong> &mdash; an abstract provider interface
-    (with a Fast DDS implementation) for publishing and subscribing to row streams.</li>
+  <li><strong>Protoc Plugin</strong> &mdash; generates typed C++ message classes,
+    TypeScript interfaces, publisher/subscriber classes, and Arrow schemas from
+    <code>.proto</code> definitions.</li>
+  <li><strong>PubSub &amp; Driver</strong> &mdash; an abstract provider interface
+    (with a Fast DDS implementation) for publishing and subscribing, plus a
+    Driver class with multi-subscriber fan-out and subscription IDs.</li>
+  <li><strong>WebGateway</strong> &mdash; a Boost.Beast WebSocket server that
+    exposes the Driver to browser clients over an all-binary protocol.</li>
+  <li><strong>WebClient</strong> &mdash; a TypeScript client library with
+    WASM-accelerated row decoding and two interchangeable backends (plain objects
+    or Apache Arrow JS).</li>
   <li><strong>Batcher</strong> &mdash; accumulates individual rows into Arrow
     Tables via a write-ahead log, flushing in configurable batches.</li>
 </ol>
@@ -304,26 +316,29 @@ sub.<span class="fn">Subscribe</span>([&amp;](const fletcher::<span class="ty">E
        v
   protoc-gen-arrow-row          (build-time code generation)
        |
-       v
-  Generated .arrow_row.pb.h     (typed row classes + pub/sub wrappers)
+       +---> .arrow_row.pb.h    (C++ typed row classes + pub/sub wrappers)
+       +---> .fletcher.ts       (TypeScript interfaces + schema descriptors)
        |
        +------ Encode() ------> EncodedRow (compact binary buffer)
        |                              |
-       |                     +--------+--------+
-       |                     |                 |
-       |                     v                 v
-       |              PubSubProvider      RowBatcher
-       |              (transport)        (accumulation)
-       |                     |                 |
-       |                     v                 v
-       |              Fast DDS / ...     arrow::Table
-       |                     |           (columnar batch)
-       |                     v
-       +---- Decode() <-- Subscriber
+       |                 +------------+------------+
+       |                 |            |            |
+       |                 v            v            v
+       |          PubSubProvider  RowBatcher   WebGateway
+       |          (transport)   (accumulation) (WebSocket)
+       |                 |            |            |
+       |                 v            v            v
+       |          Fast DDS / ...  arrow::Table  Browser
+       |                 |       (columnar)        |
+       |                 v                         v
+       +---- Decode() <-- Subscriber        WebClient (TS)
+                                          WASM decoder +
+                                        Object / Arrow JS
 </div>
 
 <p>Each layer is independent. You can use the codec without pub/sub,
-  the batcher without the protoc plugin, or the full pipeline end-to-end.</p>
+  the batcher without the protoc plugin, the web gateway without DDS,
+  or the full pipeline end-to-end.</p>
 
 
 <!-- ── Wire Format ─────────────────────────────────────────────────── -->
@@ -501,10 +516,11 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
 
 <p>The <code>protoc-gen-arrow-row</code> plugin is a standard protobuf
   compiler plugin. During a CMake build, <code>protoc</code> invokes it for
-  each <code>.proto</code> file and it emits a single
-  <code>.arrow_row.pb.h</code> header.</p>
+  each <code>.proto</code> file and it emits a
+  <code>.arrow_row.pb.h</code> C++ header. With the <code>ts</code> option,
+  it also emits a <code>.fletcher.ts</code> TypeScript file.</p>
 
-<h3>What gets generated</h3>
+<h3>What gets generated (C++)</h3>
 
 <p><strong>For each message:</strong></p>
 <ul>
@@ -537,6 +553,49 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
   <li>Recursive messages &mdash; detected at generation time, skipped with a comment</li>
   <li><code>google.protobuf.Any</code> and <code>google.protobuf.Struct</code> &mdash; dynamically typed</li>
 </ul>
+
+<h3>TypeScript generation (<code>--arrow-row_opt=ts</code>)</h3>
+
+<p>When the <code>ts</code> option is passed, the plugin also emits a
+  <code>.fletcher.ts</code> file alongside the C++ header:</p>
+
+<pre><code><span class="cmt">// Generated by protoc-gen-arrow-row. DO NOT EDIT.</span>
+<span class="kw">import type</span> { <span class="ty">SchemaDescriptor</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+<span class="kw">import</span> { <span class="ty">WireTypeId</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+
+<span class="kw">export interface</span> <span class="ty">ISensorReading</span> {
+  sensor_id: <span class="ty">number</span>;
+  temperature: <span class="ty">number</span>;
+  location: <span class="ty">string</span>;
+  humidity: <span class="ty">number</span> | <span class="num">null</span>;
+}
+
+<span class="kw">export const</span> <span class="fn">SensorReadingSchema</span>: <span class="ty">SchemaDescriptor</span> = {
+  schemaHash: <span class="num">0n</span>,
+  fields: [
+    { name: <span class="str">'sensor_id'</span>,   fieldNumber: <span class="num">1</span>, wireType: <span class="ty">WireTypeId</span>.INT32,   nullable: <span class="num">false</span> },
+    { name: <span class="str">'temperature'</span>, fieldNumber: <span class="num">2</span>, wireType: <span class="ty">WireTypeId</span>.FLOAT64, nullable: <span class="num">false</span> },
+    { name: <span class="str">'location'</span>,    fieldNumber: <span class="num">3</span>, wireType: <span class="ty">WireTypeId</span>.STRING,  nullable: <span class="num">false</span> },
+    { name: <span class="str">'humidity'</span>,    fieldNumber: <span class="num">4</span>, wireType: <span class="ty">WireTypeId</span>.FLOAT64, nullable: <span class="num">true</span>  },
+  ],
+  protoPackage: <span class="str">'myapp'</span>,
+  protoMessage: <span class="str">'SensorReading'</span>,
+};
+
+<span class="kw">export const</span> <span class="fn">SensorFeed_StreamTopic</span> = <span class="str">'myapp/SensorFeed/Stream'</span>;</code></pre>
+
+<p><strong>Type mapping (Proto &rarr; TypeScript):</strong></p>
+<table>
+  <tr><th>Proto Type</th><th>TypeScript</th></tr>
+  <tr><td><code>bool</code></td><td><code>boolean</code></td></tr>
+  <tr><td><code>int32</code>, <code>uint32</code>, <code>float</code>, <code>double</code>, <code>enum</code></td><td><code>number</code></td></tr>
+  <tr><td><code>int64</code>, <code>uint64</code>, Timestamp, Duration</td><td><code>bigint</code></td></tr>
+  <tr><td><code>string</code></td><td><code>string</code></td></tr>
+  <tr><td><code>bytes</code></td><td><code>Uint8Array</code></td></tr>
+  <tr><td><code>repeated T</code></td><td><code>T[]</code></td></tr>
+  <tr><td><code>map&lt;K, V&gt;</code></td><td><code>Map&lt;K, V&gt;</code></td></tr>
+  <tr><td>Nested message</td><td>Nested <code>I{Message}</code> interface</td></tr>
+</table>
 
 
 <!-- ── RowCodec ────────────────────────────────────────────────────── -->
@@ -572,7 +631,7 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 
 
 <!-- ── Pub/Sub ─────────────────────────────────────────────────────── -->
-<h2 id="pubsub">Pub/Sub Transport</h2>
+<h2 id="pubsub">Pub/Sub &amp; Driver</h2>
 
 <p>The <code>PubSubProvider</code> is an abstract interface that decouples
   message transport from encoding. Implement it to plug in any message bus.</p>
@@ -601,6 +660,124 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
   with its preferred separator (e.g., <code>/</code> for DDS,
   <code>.</code> for MQTT). The generated code uses
   <code>{package, service, method}</code> as segments.</p>
+
+<h3>Driver</h3>
+
+<p>The <code>Driver</code> class wraps a <code>PubSubProvider</code> with
+  higher-level features needed by the WebGateway and application code:</p>
+
+<ul>
+  <li><strong>Multi-subscriber fan-out</strong> &mdash; multiple subscribers per topic,
+    each receiving its own callback. The provider sees only one subscription per topic.</li>
+  <li><strong>Subscription IDs</strong> &mdash; each <code>Subscribe()</code> call returns a
+    <code>uint64_t</code> ID for targeted unsubscribe.</li>
+  <li><strong>Topic registry</strong> &mdash; <code>ListTopics()</code> and
+    <code>HasTopic()</code> for discovery.</li>
+  <li><strong>Lifecycle management</strong> &mdash; automatically unsubscribes from the
+    provider when the last subscriber for a topic is removed.</li>
+</ul>
+
+<pre><code><span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();
+<span class="kw">auto</span> driver   = std::make_shared&lt;fletcher::<span class="ty">Driver</span>&gt;(provider);
+
+driver-&gt;<span class="fn">CreateTopic</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, schema);
+
+<span class="kw">auto</span> sub1 = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback1);
+<span class="kw">auto</span> sub2 = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback2);
+
+driver-&gt;<span class="fn">Unsubscribe</span>(sub1);  <span class="cmt">// sub2 still active</span></code></pre>
+
+
+<!-- ── WebGateway ─────────────────────────────────────────────────── -->
+<h2 id="web-gateway">WebGateway</h2>
+
+<p>A Boost.Beast WebSocket server that exposes the <code>Driver</code> to
+  browser clients over an <strong>all-binary protocol</strong>. No JSON is
+  involved &mdash; all frames are binary with 1-byte action/response tags
+  and little-endian payloads.</p>
+
+<pre><code>fletcher::<span class="ty">WebGatewayOptions</span> opts;
+opts.port = <span class="num">9090</span>;
+opts.io_threads = <span class="num">2</span>;
+
+fletcher::<span class="ty">WebGateway</span> gw(driver, opts);
+gw.<span class="fn">Start</span>();   <span class="cmt">// non-blocking, spawns IO threads</span>
+<span class="cmt">// ... gateway serves until:</span>
+gw.<span class="fn">Stop</span>();</code></pre>
+
+<h3>Binary protocol</h3>
+
+<table>
+  <tr><th>Direction</th><th>Tag</th><th>Frame Layout</th></tr>
+  <tr><td>Client &rarr; Server</td><td><code>CREATE_TOPIC</code> (0x01)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>SUBSCRIBE</code> (0x02)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>UNSUBSCRIBE</code> (0x03)</td><td><code>[TAG:1] [SUB_ID:8]</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>PUBLISH</code> (0x04)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>LIST_TOPICS</code> (0x05)</td><td><code>[TAG:1]</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>SUBSCRIBED</code> (0x02)</td><td><code>[TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>MESSAGE</code> (0x06)</td><td><code>[TAG:1] [SUB_ID:8] [ENVELOPE:rest]</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>ERROR</code> (0xFF)</td><td><code>[TAG:1] [MSG_LEN:2] [MSG:N]</code></td></tr>
+</table>
+
+<p>Each WebSocket connection gets its own session with independent subscriptions.
+  Subscriptions are automatically cleaned up when the connection closes.</p>
+
+
+<!-- ── WebClient ──────────────────────────────────────────────────── -->
+<h2 id="web-client">WebClient (TypeScript)</h2>
+
+<p>The <code>@fletcher/web-client</code> npm package connects to the
+  WebGateway and decodes/encodes the Fletcher wire format in the browser.
+  It offers two interchangeable decoder backends:</p>
+
+<ul>
+  <li><strong>Object backend</strong> &mdash; zero dependencies, decodes rows into
+    plain <code>Record&lt;string, unknown&gt;</code> objects.</li>
+  <li><strong>Arrow backend</strong> &mdash; (planned) decodes into Apache Arrow JS
+    <code>RecordBatch</code> via the optional <code>apache-arrow</code> peer dependency.</li>
+</ul>
+
+<h3>Quick example</h3>
+
+<pre><code><span class="kw">import</span> { <span class="ty">FletcherClient</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+<span class="kw">import</span> { <span class="fn">SensorReadingSchema</span>, <span class="ty">ISensorReading</span>,
+         <span class="fn">SensorFeed_StreamTopic</span> } <span class="kw">from</span> <span class="str">'./telemetry.fletcher.js'</span>;
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="ty">FletcherClient</span>({ url: <span class="str">'ws://localhost:9090'</span> });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
+
+<span class="kw">const</span> subId = <span class="kw">await</span> client.<span class="fn">subscribe</span>&lt;<span class="ty">ISensorReading</span>&gt;(
+  <span class="fn">SensorFeed_StreamTopic</span>,
+  <span class="fn">SensorReadingSchema</span>,
+  (msg, attachments) =&gt; {
+    console.<span class="fn">log</span>(msg.sensor_id, msg.temperature);
+  }
+);
+
+<span class="cmt">// Later...</span>
+<span class="kw">await</span> client.<span class="fn">unsubscribe</span>(subId);
+client.<span class="fn">close</span>();</code></pre>
+
+<h3>WASM decoder</h3>
+
+<p>Row parsing is accelerated by a C decoder compiled to WebAssembly via
+  Emscripten. It parses the tagged row wire format into a flat field table
+  that TypeScript reads directly from WASM linear memory via
+  <code>DataView</code>. When WASM is unavailable (SSR, testing), a pure
+  TypeScript fallback is used transparently.</p>
+
+<h3>Key modules</h3>
+<table>
+  <tr><th>Module</th><th>Purpose</th></tr>
+  <tr><td><code>wire-types.ts</code></td><td><code>WireTypeId</code> enum mirroring C++ values</td></tr>
+  <tr><td><code>envelope.ts</code></td><td>Envelope serialize/deserialize (row + attachments)</td></tr>
+  <tr><td><code>ws-protocol.ts</code></td><td>Binary frame builders &amp; parsers</td></tr>
+  <tr><td><code>wasm-decoder.ts</code></td><td>WASM/TS dual-mode row parser</td></tr>
+  <tr><td><code>codec/row-decoder.ts</code></td><td>Scalar, struct, list, map decode orchestration</td></tr>
+  <tr><td><code>codec/row-encoder.ts</code></td><td>Pure-TS row encoder (inverse of decoder)</td></tr>
+  <tr><td><code>codec/object-backend.ts</code></td><td>Decodes rows to plain objects</td></tr>
+  <tr><td><code>client.ts</code></td><td><code>FletcherClient</code> WebSocket manager</td></tr>
+</table>
 
 
 <!-- ── Batcher ─────────────────────────────────────────────────────── -->
@@ -694,44 +871,77 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
 
 <pre><code>ArrowRowSerializer/
   CMakeLists.txt               Root build &mdash; Conan integration, all subdirectories
-  conanfile.txt                Dependencies: Arrow, protobuf, SQLite3, Catch2, Fast DDS
+  conanfile.txt                Dependencies: Arrow, protobuf, SQLite3, Catch2, Fast DDS, Boost
+
+  PubSub/
+    include/pubsub/
+      envelope.hpp             Envelope, Attachments, Blob, Serialize/Deserialize
+      pubsub_provider.hpp      Abstract PubSubProvider interface
+      driver.hpp               Driver class (multi-subscriber fan-out)
+    src/driver.cpp             Driver implementation
+    tests/                     14 Catch2 test cases
 
   Codec/
     include/
       row_codec.hpp            RowCodec class, EncodedRow/ArrowRow type aliases
-      pubsub_provider.hpp      Abstract PubSubProvider interface
-      envelope.hpp             Envelope, Attachments, Blob, Serialize/Deserialize
+      pubsub_provider.hpp      Forwarding header &rarr; pubsub/pubsub_provider.hpp
+      envelope.hpp             Forwarding header &rarr; pubsub/envelope.hpp
       schema_evolution.hpp     WireTypeId, PromotionKind, DecodingMap
       arrow_row_codec_capi.h   C API
     src/
       row_codec.cpp            Encode/decode implementation
       schema_evolution.cpp     Evolution logic (BuildDecodingMap, ClassifyPromotion)
-    tests/                     74 Catch2 test cases
+    tests/                     Catch2 test cases
     bindings/rust/             arrow-row-codec Rust crate
 
   Batcher/
-    include/
-      row_batcher.hpp          RowBatcher base class
-      generic_row_batcher.hpp  GenericRowBatcher (WAL-backed)
-      write_ahead_log.hpp      WriteAheadLog / LogHandle interfaces
-      sqlite_wal.hpp           SQLiteWAL implementation
+    include/                   RowBatcher, GenericRowBatcher, SQLiteWAL
     tests/                     23 Catch2 test cases
     bindings/rust/             arrow-row-batcher Rust crate
 
   ProtoPlugin/
     src/
-      generator.cpp            Code generation logic
-      type_mapper.cpp          Proto &rarr; Arrow type mapping
+      generator.cpp            C++ and TypeScript code generation
+      type_mapper.cpp          Proto &rarr; Arrow/TypeScript type mapping
       main.cpp                 protoc plugin entry point
     tests/                     Type mapper unit tests
 
   ProtoIntegration/
     proto/                     Test .proto files (simple, temporal, nested, ...)
-    tests/                     32 integration test cases (roundtrips, pub/sub, evolution)
+    tests/                     32 integration test cases
 
   FastDDSPubSubProvider/
     include/                   FastDDSPubSubProvider class
-    src/                       DDS setup, CDR serialization, envelope transport</code></pre>
+    src/                       DDS setup, CDR serialization, envelope transport
+
+  WebGateway/
+    include/web_gateway/
+      web_gateway.hpp          WebGateway class (Boost.Beast WebSocket server)
+    src/
+      web_gateway.cpp          Listener, IO thread pool
+      ws_session.cpp/.hpp      Per-connection session, binary protocol handling
+    examples/
+      gateway_main.cpp         Standalone example with in-process mock provider
+
+  WebClient/
+    package.json               @fletcher/web-client npm package
+    tsconfig.json              TypeScript configuration
+    wasm/
+      src/decoder.c/.h         C row parser for WASM (Emscripten)
+      CMakeLists.txt           Emscripten build
+    src/
+      wire-types.ts            WireTypeId enum (mirrors C++)
+      envelope.ts              Envelope serialize/deserialize
+      ws-protocol.ts           WebSocket binary frame builders/parsers
+      wasm-decoder.ts          WASM/TS dual-mode decoder
+      client.ts                FletcherClient WebSocket manager
+      codec/
+        schema-descriptor.ts   SchemaDescriptor, FieldDescriptor types
+        row-decoder.ts         Decode orchestration (scalars, structs, lists, maps)
+        row-encoder.ts         Pure-TS row encoder
+        object-backend.ts      Decode to plain objects
+        arrow-backend.ts       Decode to Arrow JS (placeholder)
+    test/                      35 Vitest tests</code></pre>
 
 
 <!-- ── Building ────────────────────────────────────────────────────── -->
@@ -755,6 +965,24 @@ cmake --preset conan-default
 <span class="cmt"># 3. Build</span>
 cmake --build build --config Release</code></pre>
 
+<h3>WebClient (TypeScript)</h3>
+
+<pre><code><span class="cmt"># Install dependencies and run tests</span>
+<span class="kw">cd</span> WebClient
+npm install
+npm test            <span class="cmt"># 35 Vitest tests</span>
+
+<span class="cmt"># TypeScript compilation</span>
+npm run build:ts
+
+<span class="cmt"># WASM build (requires Emscripten)</span>
+npm run build:wasm
+
+<span class="cmt"># Generate TypeScript from .proto files</span>
+protoc --plugin=protoc-gen-arrow-row=build/ProtoPlugin/Release/protoc-gen-arrow-row \
+       --arrow-row_out=. --arrow-row_opt=ts \
+       -I proto your_messages.proto</code></pre>
+
 <div class="note">
   <strong>Windows / Visual Studio:</strong> The root CMakeLists.txt forces
   <code>/MD</code> (MultiThreadedDLL) for all targets and patches Conan's
@@ -767,33 +995,42 @@ cmake --build build --config Release</code></pre>
   <tr><th>Package</th><th>Version</th><th>Purpose</th></tr>
   <tr><td>Apache Arrow</td><td>23.0.1</td><td>Columnar data types and schemas</td></tr>
   <tr><td>Protocol Buffers</td><td>3.21.12</td><td>Message definitions and compiler</td></tr>
+  <tr><td>Boost</td><td>&mdash;</td><td>Beast/Asio for WebGateway (header-only)</td></tr>
   <tr><td>SQLite3</td><td>3.47.2</td><td>Write-ahead log for the batcher</td></tr>
-  <tr><td>Catch2</td><td>3.7.1</td><td>Test framework</td></tr>
+  <tr><td>Catch2</td><td>3.7.1</td><td>C++ test framework</td></tr>
   <tr><td>Fast DDS</td><td>2.14.3</td><td>DDS pub/sub transport</td></tr>
+  <tr><td>Node.js</td><td>18+</td><td>TypeScript build and tests (WebClient only)</td></tr>
 </table>
 
 
 <!-- ── Testing ─────────────────────────────────────────────────────── -->
 <h2 id="testing">Testing</h2>
 
-<p>All tests use <a href="https://github.com/catchorg/Catch2">Catch2 v3</a>
-  and are discovered via CTest:</p>
+<p>C++ tests use <a href="https://github.com/catchorg/Catch2">Catch2 v3</a>
+  and are discovered via CTest. TypeScript tests use
+  <a href="https://vitest.dev/">Vitest</a>.</p>
 
-<pre><code><span class="cmt"># Run all tests</span>
+<pre><code><span class="cmt"># Run all C++ tests</span>
 ctest --test-dir build --config Release
 
-<span class="cmt"># Run specific test suites</span>
-ctest --test-dir build -R codec        <span class="cmt"># 74 codec tests</span>
+<span class="cmt"># Run specific C++ test suites</span>
+ctest --test-dir build -R codec        <span class="cmt"># codec tests</span>
 ctest --test-dir build -R integration   <span class="cmt"># 32 integration tests</span>
-ctest --test-dir build -R batcher       <span class="cmt"># 23 batcher tests</span></code></pre>
+ctest --test-dir build -R batcher       <span class="cmt"># 23 batcher tests</span>
+ctest --test-dir build -R pubsub        <span class="cmt"># 14 driver tests</span>
+
+<span class="cmt"># Run TypeScript tests</span>
+<span class="kw">cd</span> WebClient &amp;&amp; npm test              <span class="cmt"># 35 Vitest tests</span></code></pre>
 
 <h3>Test coverage</h3>
 <table>
   <tr><th>Suite</th><th>Cases</th><th>Covers</th></tr>
-  <tr><td>Codec</td><td>83</td><td>Scalar types, nulls, composites, errors, fingerprints, schema evolution, envelope serialization</td></tr>
-  <tr><td>Integration</td><td>32</td><td>Generated code roundtrips for all proto constructs, pub/sub with mock provider, cross-version evolution</td></tr>
-  <tr><td>Batcher</td><td>23</td><td>Row accumulation, flush triggering, WAL log/read, key columns, thread safety</td></tr>
-  <tr><td>Plugin</td><td>varies</td><td>Type mapping for all proto field kinds</td></tr>
+  <tr><td>Codec (C++)</td><td>55</td><td>Scalar types, nulls, composites, errors, fingerprints, schema evolution, envelope serialization</td></tr>
+  <tr><td>Integration (C++)</td><td>32</td><td>Generated code roundtrips for all proto constructs, pub/sub with mock provider, cross-version evolution</td></tr>
+  <tr><td>PubSub/Driver (C++)</td><td>14</td><td>Topic creation, fan-out, subscription IDs, lifecycle, ListTopics/HasTopic</td></tr>
+  <tr><td>Batcher (C++)</td><td>23</td><td>Row accumulation, flush triggering, WAL log/read, key columns, thread safety</td></tr>
+  <tr><td>Plugin (C++)</td><td>36</td><td>Type mapping for all proto field kinds</td></tr>
+  <tr><td>WebClient (TS)</td><td>35</td><td>Envelope roundtrips, WS protocol frames, WASM decoder (TS fallback), object backend, encode/decode roundtrips for scalars, bigints, strings, lists, maps</td></tr>
 </table>
 
 
