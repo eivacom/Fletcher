@@ -5,136 +5,112 @@ import {
   buildUnsubscribe,
   buildPublish,
   buildListTopics,
-  parseResponse,
+  parseTextResponse,
+  parseBinaryMessage,
 } from '../src/ws-protocol.js';
 
-describe('WS Protocol frame builders', () => {
-  it('buildCreateTopic encodes correctly', () => {
-    const frame = buildCreateTopic('demo/telemetry');
-    expect(frame[0]).toBe(0x01); // CREATE_TOPIC tag
-    const view = new DataView(frame.buffer, frame.byteOffset);
-    const topicLen = view.getUint16(1, true);
-    expect(topicLen).toBe(14); // "demo/telemetry".length
-    const topic = new TextDecoder().decode(frame.subarray(3, 3 + topicLen));
-    expect(topic).toBe('demo/telemetry');
+describe('Text frame builders (client → server)', () => {
+  it('buildCreateTopic returns JSON with action and topic', () => {
+    const json = JSON.parse(buildCreateTopic('demo/telemetry'));
+    expect(json.action).toBe('create_topic');
+    expect(json.topic).toBe('demo/telemetry');
   });
 
-  it('buildSubscribe encodes correctly', () => {
-    const frame = buildSubscribe('test/topic');
-    expect(frame[0]).toBe(0x02); // SUBSCRIBE tag
-    const view = new DataView(frame.buffer, frame.byteOffset);
-    const topicLen = view.getUint16(1, true);
-    expect(topicLen).toBe(10);
+  it('buildSubscribe returns JSON with action and topic', () => {
+    const json = JSON.parse(buildSubscribe('test/topic'));
+    expect(json.action).toBe('subscribe');
+    expect(json.topic).toBe('test/topic');
   });
 
-  it('buildUnsubscribe encodes sub_id as uint64 LE', () => {
-    const frame = buildUnsubscribe(42n);
-    expect(frame[0]).toBe(0x03); // UNSUBSCRIBE tag
-    const view = new DataView(frame.buffer, frame.byteOffset);
-    expect(view.getBigUint64(1, true)).toBe(42n);
+  it('buildUnsubscribe stringifies bigint subId', () => {
+    const json = JSON.parse(buildUnsubscribe(9007199254740993n)); // > 2^53
+    expect(json.action).toBe('unsubscribe');
+    expect(json.subId).toBe('9007199254740993');
   });
 
-  it('buildPublish includes topic + envelope bytes', () => {
-    const envBytes = new Uint8Array([0xAA, 0xBB]);
-    const frame = buildPublish('t', envBytes);
-    expect(frame[0]).toBe(0x04); // PUBLISH tag
-    const view = new DataView(frame.buffer, frame.byteOffset);
-    const topicLen = view.getUint16(1, true);
-    expect(topicLen).toBe(1);
-    expect(frame[3]).toBe(0x74); // 't'
-    expect(frame[4]).toBe(0xAA);
-    expect(frame[5]).toBe(0xBB);
-  });
-
-  it('buildListTopics is a single byte', () => {
-    const frame = buildListTopics();
-    expect(frame.byteLength).toBe(1);
-    expect(frame[0]).toBe(0x05);
+  it('buildListTopics returns JSON with action only', () => {
+    const json = JSON.parse(buildListTopics());
+    expect(json.action).toBe('list_topics');
+    expect(Object.keys(json)).toEqual(['action']);
   });
 });
 
-describe('WS Protocol response parser', () => {
-  it('parses TOPIC_CREATED', () => {
-    const resp = parseResponse(new Uint8Array([0x01]));
-    expect(resp.tag).toBe(0x01);
+describe('Binary frame builder (client → server)', () => {
+  it('buildPublish encodes [TOPIC_LEN:2][TOPIC:N][ENVELOPE:rest]', () => {
+    const envBytes = new Uint8Array([0xAA, 0xBB]);
+    const frame = buildPublish('t', envBytes);
+    const view = new DataView(frame.buffer, frame.byteOffset);
+    expect(view.getUint16(0, true)).toBe(1); // topic length
+    expect(frame[2]).toBe(0x74); // 't'
+    expect(frame[3]).toBe(0xAA);
+    expect(frame[4]).toBe(0xBB);
+    expect(frame.byteLength).toBe(2 + 1 + 2);
+  });
+});
+
+describe('Text response parser (server → client)', () => {
+  it('parses topic_created', () => {
+    const resp = parseTextResponse('{"type":"topic_created"}');
+    expect(resp.type).toBe('topic_created');
   });
 
-  it('parses SUBSCRIBED', () => {
-    // [TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]
-    const topic = new TextEncoder().encode('a/b');
-    const buf = new Uint8Array(1 + 8 + 2 + topic.byteLength);
-    const view = new DataView(buf.buffer);
-    buf[0] = 0x02;
-    view.setBigUint64(1, 99n, true);
-    view.setUint16(9, topic.byteLength, true);
-    buf.set(topic, 11);
-
-    const resp = parseResponse(buf);
-    expect(resp.tag).toBe(0x02);
-    if (resp.tag === 0x02) {
-      expect(resp.subId).toBe(99n);
+  it('parses subscribed with bigint subId', () => {
+    const resp = parseTextResponse(
+      '{"type":"subscribed","subId":"9007199254740993","topic":"a/b"}',
+    );
+    expect(resp.type).toBe('subscribed');
+    if (resp.type === 'subscribed') {
+      expect(resp.subId).toBe(9007199254740993n);
       expect(resp.topic).toBe('a/b');
     }
   });
 
-  it('parses TOPICS', () => {
-    // [TAG:1] [COUNT:2] {[TOPIC_LEN:2] [TOPIC:N]}*
-    const t1 = new TextEncoder().encode('x');
-    const t2 = new TextEncoder().encode('y');
-    const buf = new Uint8Array(1 + 2 + (2 + t1.byteLength) + (2 + t2.byteLength));
-    const view = new DataView(buf.buffer);
-    buf[0] = 0x05;
-    view.setUint16(1, 2, true); // count = 2
-    let pos = 3;
-    view.setUint16(pos, t1.byteLength, true); pos += 2;
-    buf.set(t1, pos); pos += t1.byteLength;
-    view.setUint16(pos, t2.byteLength, true); pos += 2;
-    buf.set(t2, pos);
+  it('parses unsubscribed', () => {
+    const resp = parseTextResponse('{"type":"unsubscribed"}');
+    expect(resp.type).toBe('unsubscribed');
+  });
 
-    const resp = parseResponse(buf);
-    expect(resp.tag).toBe(0x05);
-    if (resp.tag === 0x05) {
+  it('parses published', () => {
+    const resp = parseTextResponse('{"type":"published"}');
+    expect(resp.type).toBe('published');
+  });
+
+  it('parses topics_list', () => {
+    const resp = parseTextResponse('{"type":"topics_list","topics":["x","y"]}');
+    expect(resp.type).toBe('topics_list');
+    if (resp.type === 'topics_list') {
       expect(resp.topics).toEqual(['x', 'y']);
     }
   });
 
-  it('parses MESSAGE', () => {
-    // [TAG:1] [SUB_ID:8] [ENVELOPE:rest]
-    const envBytes = new Uint8Array([0xCA, 0xFE]);
-    const buf = new Uint8Array(1 + 8 + envBytes.byteLength);
-    const view = new DataView(buf.buffer);
-    buf[0] = 0x06;
-    view.setBigUint64(1, 7n, true);
-    buf.set(envBytes, 9);
-
-    const resp = parseResponse(buf);
-    expect(resp.tag).toBe(0x06);
-    if (resp.tag === 0x06) {
-      expect(resp.subId).toBe(7n);
-      expect(resp.envelope).toEqual(envBytes);
-    }
-  });
-
-  it('parses ERROR', () => {
-    const msg = new TextEncoder().encode('bad');
-    const buf = new Uint8Array(1 + 2 + msg.byteLength);
-    const view = new DataView(buf.buffer);
-    buf[0] = 0xFF;
-    view.setUint16(1, msg.byteLength, true);
-    buf.set(msg, 3);
-
-    const resp = parseResponse(buf);
-    expect(resp.tag).toBe(0xFF);
-    if (resp.tag === 0xFF) {
+  it('parses error', () => {
+    const resp = parseTextResponse('{"type":"error","message":"bad"}');
+    expect(resp.type).toBe('error');
+    if (resp.type === 'error') {
       expect(resp.message).toBe('bad');
     }
   });
 
-  it('throws on empty frame', () => {
-    expect(() => parseResponse(new Uint8Array(0))).toThrow();
+  it('throws on unknown type', () => {
+    expect(() => parseTextResponse('{"type":"unknown"}')).toThrow(/Unknown response type/);
+  });
+});
+
+describe('Binary message parser (server → client)', () => {
+  it('parses [SUB_ID:8][ENVELOPE:rest]', () => {
+    const buf = new Uint8Array(8 + 3);
+    const view = new DataView(buf.buffer);
+    view.setBigUint64(0, 42n, true);
+    buf[8] = 0xCA;
+    buf[9] = 0xFE;
+    buf[10] = 0x00;
+
+    const msg = parseBinaryMessage(buf);
+    expect(msg.subId).toBe(42n);
+    expect(msg.envelope).toEqual(new Uint8Array([0xCA, 0xFE, 0x00]));
   });
 
-  it('throws on unknown tag', () => {
-    expect(() => parseResponse(new Uint8Array([0x99]))).toThrow(/unknown tag/);
+  it('throws on frame shorter than 8 bytes', () => {
+    expect(() => parseBinaryMessage(new Uint8Array(7))).toThrow(/too short/);
   });
 });

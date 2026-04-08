@@ -6,9 +6,8 @@
 //
 // Test with any WebSocket client, e.g.:
 //   wscat -c ws://localhost:9090
-// Then send a binary subscribe frame (hex):
-//   02 000E 64656D6F2F74656C656D65747279
-//   ^tag  ^len=14  ^"demo/telemetry"
+// Then send a JSON text frame:
+//   {"action":"subscribe","topic":"demo/telemetry"}
 
 #include <web_gateway/web_gateway.hpp>
 #include <pubsub/driver.hpp>

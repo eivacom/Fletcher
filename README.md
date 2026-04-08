@@ -56,20 +56,29 @@ Use this as the transport layer when plugging generated `Publisher`/`Subscriber`
 
 ### WebGateway
 
-A Boost.Beast WebSocket server that exposes the `Driver` to browser clients over an all-binary protocol. Each WebSocket connection gets its own session with independent subscriptions that are automatically cleaned up on disconnect. The binary protocol uses 1-byte action/response tags with little-endian payloads — no JSON involved.
+A Boost.Beast WebSocket server that exposes the `Driver` to browser clients over a split text/binary WebSocket protocol. Each WebSocket connection gets its own session with independent subscriptions that are automatically cleaned up on disconnect. Control messages use JSON text frames; data messages use binary frames with minimal headers.
 
-**Binary protocol summary:**
+**Control messages (JSON text frames):**
 
-| Direction | Tag | Frame |
+| Direction | Action/Type | Example |
 |---|---|---|
-| Client → Server | `CREATE_TOPIC` (0x01) | `[TAG:1] [TOPIC_LEN:2] [TOPIC:N]` |
-| Client → Server | `SUBSCRIBE` (0x02) | `[TAG:1] [TOPIC_LEN:2] [TOPIC:N]` |
-| Client → Server | `UNSUBSCRIBE` (0x03) | `[TAG:1] [SUB_ID:8]` |
-| Client → Server | `PUBLISH` (0x04) | `[TAG:1] [TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]` |
-| Client → Server | `LIST_TOPICS` (0x05) | `[TAG:1]` |
-| Server → Client | `SUBSCRIBED` (0x02) | `[TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]` |
-| Server → Client | `MESSAGE` (0x06) | `[TAG:1] [SUB_ID:8] [ENVELOPE:rest]` |
-| Server → Client | `ERROR` (0xFF) | `[TAG:1] [MSG_LEN:2] [MSG:N]` |
+| Client → Server | `create_topic` | `{"action":"create_topic","topic":"demo/telemetry"}` |
+| Client → Server | `subscribe` | `{"action":"subscribe","topic":"demo/telemetry"}` |
+| Client → Server | `unsubscribe` | `{"action":"unsubscribe","subId":"123"}` |
+| Client → Server | `list_topics` | `{"action":"list_topics"}` |
+| Server → Client | `topic_created` | `{"type":"topic_created"}` |
+| Server → Client | `subscribed` | `{"type":"subscribed","subId":"123","topic":"demo/telemetry"}` |
+| Server → Client | `topics_list` | `{"type":"topics_list","topics":["demo/telemetry"]}` |
+| Server → Client | `error` | `{"type":"error","message":"unknown topic"}` |
+
+**Data messages (binary frames):**
+
+| Direction | Frame |
+|---|---|
+| Client → Server (PUBLISH) | `[TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]` |
+| Server → Client (MESSAGE) | `[SUB_ID:8] [ENVELOPE:rest]` |
+
+Sub IDs are stringified in JSON to avoid JavaScript Number precision loss. All multi-byte integers in binary frames are little-endian.
 
 Includes a standalone example (`gateway_main.cpp`) with an in-process mock provider.
 
@@ -91,7 +100,7 @@ TypeScript client library (`@fletcher/web-client`) for the WebGateway. Connects 
 
 ```
 npm install
-npm test         # 35 Vitest tests
+npm test         # 37 Vitest tests
 npm run build:ts # TypeScript compilation
 npm run build:wasm # WASM compilation (requires Emscripten)
 ```
@@ -106,7 +115,8 @@ WebClient (TypeScript)
 
 WebGateway
     ├── PubSub (Driver)
-    └── Boost.Beast / Boost.Asio
+    ├── Boost.Beast / Boost.Asio
+    └── nlohmann/json
 
 FastDDSPubSubProvider
     └── PubSub

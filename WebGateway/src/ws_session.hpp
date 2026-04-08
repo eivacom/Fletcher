@@ -23,46 +23,35 @@ namespace beast = boost::beast;
 namespace ws    = beast::websocket;
 
 // ---------------------------------------------------------------------------
-// Binary WebSocket protocol
+// Split text/binary WebSocket protocol
 //
-// All frames are binary.  Each message starts with a 1-byte action/type tag.
+// Text frames (JSON) — control messages:
 //
 // Client → Server:
-//   CREATE_TOPIC  (0x01): [TAG:1] [TOPIC_LEN:2] [TOPIC:N]
-//   SUBSCRIBE     (0x02): [TAG:1] [TOPIC_LEN:2] [TOPIC:N]
-//   UNSUBSCRIBE   (0x03): [TAG:1] [SUB_ID:8]
-//   PUBLISH       (0x04): [TAG:1] [TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]
-//   LIST_TOPICS   (0x05): [TAG:1]
+//   { "action": "create_topic", "topic": "<topic>" }
+//   { "action": "subscribe",    "topic": "<topic>" }
+//   { "action": "unsubscribe",  "subId": "<uint64>" }
+//   { "action": "list_topics" }
 //
 // Server → Client:
-//   TOPIC_CREATED (0x01): [TAG:1]
-//   SUBSCRIBED    (0x02): [TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]
-//   UNSUBSCRIBED  (0x03): [TAG:1]
-//   PUBLISHED     (0x04): [TAG:1]
-//   TOPICS        (0x05): [TAG:1] [COUNT:2] {[TOPIC_LEN:2] [TOPIC:N]}*
-//   MESSAGE       (0x06): [TAG:1] [SUB_ID:8] [ENVELOPE:rest]
-//   ERROR         (0xFF): [TAG:1] [MSG_LEN:2] [MSG:N]
+//   { "type": "topic_created" }
+//   { "type": "subscribed",   "subId": "<uint64>", "topic": "<topic>" }
+//   { "type": "unsubscribed" }
+//   { "type": "published" }
+//   { "type": "topics_list",  "topics": ["<topic>", ...] }
+//   { "type": "error",        "message": "<text>" }
 //
-// All multi-byte integers are little-endian.
+// Binary frames — data messages:
+//
+// Client → Server (PUBLISH):
+//   [TOPIC_LEN:2 LE] [TOPIC:N] [ENVELOPE:rest]
+//
+// Server → Client (MESSAGE):
+//   [SUB_ID:8 LE] [ENVELOPE:rest]
+//
+// Sub IDs are stringified in JSON to avoid JS Number precision loss.
+// All multi-byte integers in binary frames are little-endian.
 // ---------------------------------------------------------------------------
-
-enum class ActionTag : uint8_t {
-    kCreateTopic = 0x01,
-    kSubscribe   = 0x02,
-    kUnsubscribe = 0x03,
-    kPublish     = 0x04,
-    kListTopics  = 0x05,
-};
-
-enum class ResponseTag : uint8_t {
-    kTopicCreated = 0x01,
-    kSubscribed   = 0x02,
-    kUnsubscribed = 0x03,
-    kPublished    = 0x04,
-    kTopics       = 0x05,
-    kMessage      = 0x06,
-    kError        = 0xFF,
-};
 
 /// A single WebSocket connection.
 ///
@@ -84,18 +73,24 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     void DoRead();
     void OnRead(beast::error_code ec, std::size_t bytes_transferred);
 
-    // Dispatch the binary frame.
-    void HandleFrame(const uint8_t* data, size_t len);
+    // Frame dispatch.
+    void HandleTextFrame(const std::string& text);
+    void HandleBinaryFrame(const uint8_t* data, size_t len);
 
     // Action handlers.
-    void OnCreateTopic(const uint8_t* data, size_t len);
-    void OnSubscribe(const uint8_t* data, size_t len);
-    void OnUnsubscribe(const uint8_t* data, size_t len);
+    void OnCreateTopic(const std::string& topic);
+    void OnSubscribe(const std::string& topic);
+    void OnUnsubscribe(uint64_t sub_id);
     void OnPublish(const uint8_t* data, size_t len);
     void OnListTopics();
 
     // Send helpers — always called on the strand.
-    void Send(std::vector<uint8_t> frame);
+    struct OutgoingFrame {
+        std::vector<uint8_t> data;
+        bool is_text;
+    };
+    void SendText(std::string json);
+    void SendBinary(std::vector<uint8_t> frame);
     void DoWrite();
     void SendError(const std::string& msg);
 
@@ -110,8 +105,8 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     beast::flat_buffer             read_buf_;
 
     // Outgoing write queue (strand-serialised).
-    std::deque<std::vector<uint8_t>> write_queue_;
-    bool                             writing_ = false;
+    std::deque<OutgoingFrame> write_queue_;
+    bool                      writing_ = false;
 
     // Active Driver subscriptions owned by this session.
     std::unordered_map<uint64_t, std::string> subscriptions_;  // sub_id → topic

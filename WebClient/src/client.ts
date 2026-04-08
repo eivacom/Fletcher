@@ -1,8 +1,8 @@
 /**
  * FletcherClient — WebSocket manager for the Fletcher WebGateway.
  *
- * Connects over WebSocket, sends binary-protocol frames, and dispatches
- * decoded messages to subscriber callbacks.
+ * Connects over WebSocket, sends JSON control frames and binary data
+ * frames, and dispatches decoded messages to subscriber callbacks.
  */
 
 import { WasmDecoder } from './wasm-decoder.js';
@@ -14,10 +14,10 @@ import {
   buildUnsubscribe,
   buildPublish,
   buildListTopics,
-  parseResponse,
-  ResponseTag,
+  parseTextResponse,
+  parseBinaryMessage,
 } from './ws-protocol.js';
-import type { ServerResponse, SubscribedResponse, TopicsResponse, ErrorResponse } from './ws-protocol.js';
+import type { ServerResponse, SubscribedResponse, TopicsListResponse, ErrorResponse } from './ws-protocol.js';
 import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/row-decoder.js';
 import { encodeRow } from './codec/row-encoder.js';
@@ -27,7 +27,7 @@ import type { FletcherClientOptions, MessageCallback } from './types.js';
 interface PendingRequest {
   resolve: (resp: ServerResponse) => void;
   reject: (err: Error) => void;
-  expectedTag: ResponseTag;
+  expectedType: string;
 }
 
 interface Subscription {
@@ -52,7 +52,6 @@ export class FletcherClient {
     };
 
     if (this.opts.backend === 'arrow') {
-      // Lazy-load arrow backend to keep the optional peer dep truly optional.
       throw new Error(
         'Arrow backend not yet implemented. Use backend: "object" for now.',
       );
@@ -72,9 +71,9 @@ export class FletcherClient {
   async createTopic(topic: string): Promise<void> {
     const resp = await this.sendAndWait(
       buildCreateTopic(topic),
-      ResponseTag.TOPIC_CREATED,
+      'topic_created',
     );
-    if (resp.tag === ResponseTag.ERROR) {
+    if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
   }
@@ -87,9 +86,9 @@ export class FletcherClient {
   ): Promise<bigint> {
     const resp = await this.sendAndWait(
       buildSubscribe(topic),
-      ResponseTag.SUBSCRIBED,
+      'subscribed',
     );
-    if (resp.tag === ResponseTag.ERROR) {
+    if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
     const sub = resp as SubscribedResponse;
@@ -104,9 +103,9 @@ export class FletcherClient {
   async unsubscribe(subId: bigint): Promise<void> {
     const resp = await this.sendAndWait(
       buildUnsubscribe(subId),
-      ResponseTag.UNSUBSCRIBED,
+      'unsubscribed',
     );
-    if (resp.tag === ResponseTag.ERROR) {
+    if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
     this.subscriptions.delete(subId);
@@ -127,9 +126,9 @@ export class FletcherClient {
     const envBytes = serializeEnvelope(envelope);
     const resp = await this.sendAndWait(
       buildPublish(topic, envBytes),
-      ResponseTag.PUBLISHED,
+      'published',
     );
-    if (resp.tag === ResponseTag.ERROR) {
+    if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
   }
@@ -138,12 +137,12 @@ export class FletcherClient {
   async listTopics(): Promise<string[]> {
     const resp = await this.sendAndWait(
       buildListTopics(),
-      ResponseTag.TOPICS,
+      'topics_list',
     );
-    if (resp.tag === ResponseTag.ERROR) {
+    if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
-    return (resp as TopicsResponse).topics;
+    return (resp as TopicsListResponse).topics;
   }
 
   /** Close the connection and clean up. */
@@ -189,42 +188,48 @@ export class FletcherClient {
   }
 
   private onMessage(event: MessageEvent): void {
-    const data = new Uint8Array(event.data as ArrayBuffer);
-    let resp: ServerResponse;
-    try {
-      resp = parseResponse(data);
-    } catch {
-      return; // Malformed frame — ignore.
-    }
+    if (typeof event.data === 'string') {
+      // Text frame → JSON control response.
+      let resp: ServerResponse;
+      try {
+        resp = parseTextResponse(event.data);
+      } catch {
+        return; // Malformed JSON — ignore.
+      }
 
-    // MESSAGE frames are routed to subscriptions, not the pending queue.
-    if (resp.tag === ResponseTag.MESSAGE) {
-      const sub = this.subscriptions.get(resp.subId);
+      const pending = this.pendingQueue.shift();
+      if (pending) {
+        pending.resolve(resp);
+      }
+    } else {
+      // Binary frame → MESSAGE data delivery.
+      const data = new Uint8Array(event.data as ArrayBuffer);
+      let msg;
+      try {
+        msg = parseBinaryMessage(data);
+      } catch {
+        return;
+      }
+
+      const sub = this.subscriptions.get(msg.subId);
       if (sub) {
-        const envelope = deserializeEnvelope(resp.envelope);
+        const envelope = deserializeEnvelope(msg.envelope);
         const decoded = this.backend.decode(sub.schema, envelope.row, this.decoder);
         sub.callback(decoded, envelope.attachments);
       }
-      return;
-    }
-
-    // All other responses resolve the next pending request.
-    const pending = this.pendingQueue.shift();
-    if (pending) {
-      pending.resolve(resp);
     }
   }
 
   private sendAndWait(
-    frame: Uint8Array,
-    expectedTag: ResponseTag,
+    frame: string | Uint8Array,
+    expectedType: string,
   ): Promise<ServerResponse> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not connected'));
         return;
       }
-      this.pendingQueue.push({ resolve, reject, expectedTag });
+      this.pendingQueue.push({ resolve, reject, expectedType });
       this.ws.send(frame);
     });
   }

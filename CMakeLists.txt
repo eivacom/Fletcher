@@ -45,12 +45,13 @@ set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG          Release)
 set(CMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL     Release)
 set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
 
-find_package(Arrow    REQUIRED)
-find_package(Boost    REQUIRED)
-find_package(SQLite3  REQUIRED)
-find_package(Protobuf REQUIRED)
-find_package(fastdds  REQUIRED)
-find_package(Catch2   REQUIRED)
+find_package(Arrow         REQUIRED)
+find_package(Boost         REQUIRED)
+find_package(SQLite3       REQUIRED)
+find_package(Protobuf      REQUIRED)
+find_package(fastdds       REQUIRED)
+find_package(Catch2        REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # (2b) protobuf::protoc is an IMPORTED executable with only IMPORTED_LOCATION
 #      (no config suffix).  CMAKE_MAP_IMPORTED_CONFIG_DEBUG = Release causes

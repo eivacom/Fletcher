@@ -210,7 +210,7 @@ tr:hover td { background: #f4f5fb; }
     (with a Fast DDS implementation) for publishing and subscribing, plus a
     Driver class with multi-subscriber fan-out and subscription IDs.</li>
   <li><strong>WebGateway</strong> &mdash; a Boost.Beast WebSocket server that
-    exposes the Driver to browser clients over an all-binary protocol.</li>
+    exposes the Driver to browser clients over a split text/binary protocol.</li>
   <li><strong>WebClient</strong> &mdash; a TypeScript client library with
     WASM-accelerated row decoding and two interchangeable backends (plain objects
     or Apache Arrow JS).</li>
@@ -692,9 +692,10 @@ driver-&gt;<span class="fn">Unsubscribe</span>(sub1);  <span class="cmt">// sub2
 <h2 id="web-gateway">WebGateway</h2>
 
 <p>A Boost.Beast WebSocket server that exposes the <code>Driver</code> to
-  browser clients over an <strong>all-binary protocol</strong>. No JSON is
-  involved &mdash; all frames are binary with 1-byte action/response tags
-  and little-endian payloads.</p>
+  browser clients over a <strong>split text/binary WebSocket protocol</strong>.
+  Control messages use JSON text frames for simplicity and debuggability;
+  data messages (publish and message delivery) use binary frames to avoid
+  base64 overhead.</p>
 
 <pre><code>fletcher::<span class="ty">WebGatewayOptions</span> opts;
 opts.port = <span class="num">9090</span>;
@@ -705,21 +706,30 @@ gw.<span class="fn">Start</span>();   <span class="cmt">// non-blocking, spawns 
 <span class="cmt">// ... gateway serves until:</span>
 gw.<span class="fn">Stop</span>();</code></pre>
 
-<h3>Binary protocol</h3>
+<h3>Control messages (JSON text frames)</h3>
 
 <table>
-  <tr><th>Direction</th><th>Tag</th><th>Frame Layout</th></tr>
-  <tr><td>Client &rarr; Server</td><td><code>CREATE_TOPIC</code> (0x01)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
-  <tr><td>Client &rarr; Server</td><td><code>SUBSCRIBE</code> (0x02)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
-  <tr><td>Client &rarr; Server</td><td><code>UNSUBSCRIBE</code> (0x03)</td><td><code>[TAG:1] [SUB_ID:8]</code></td></tr>
-  <tr><td>Client &rarr; Server</td><td><code>PUBLISH</code> (0x04)</td><td><code>[TAG:1] [TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]</code></td></tr>
-  <tr><td>Client &rarr; Server</td><td><code>LIST_TOPICS</code> (0x05)</td><td><code>[TAG:1]</code></td></tr>
-  <tr><td>Server &rarr; Client</td><td><code>SUBSCRIBED</code> (0x02)</td><td><code>[TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]</code></td></tr>
-  <tr><td>Server &rarr; Client</td><td><code>MESSAGE</code> (0x06)</td><td><code>[TAG:1] [SUB_ID:8] [ENVELOPE:rest]</code></td></tr>
-  <tr><td>Server &rarr; Client</td><td><code>ERROR</code> (0xFF)</td><td><code>[TAG:1] [MSG_LEN:2] [MSG:N]</code></td></tr>
+  <tr><th>Direction</th><th>Action / Type</th><th>Example</th></tr>
+  <tr><td>Client &rarr; Server</td><td><code>create_topic</code></td><td><code>{"action":"create_topic","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>subscribe</code></td><td><code>{"action":"subscribe","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>unsubscribe</code></td><td><code>{"action":"unsubscribe","subId":"123"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>list_topics</code></td><td><code>{"action":"list_topics"}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>subscribed</code></td><td><code>{"type":"subscribed","subId":"123","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>topics_list</code></td><td><code>{"type":"topics_list","topics":[...]}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>error</code></td><td><code>{"type":"error","message":"unknown topic"}</code></td></tr>
 </table>
 
-<p>Each WebSocket connection gets its own session with independent subscriptions.
+<h3>Data messages (binary frames)</h3>
+
+<table>
+  <tr><th>Direction</th><th>Frame Layout</th></tr>
+  <tr><td>Client &rarr; Server (PUBLISH)</td><td><code>[TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]</code></td></tr>
+  <tr><td>Server &rarr; Client (MESSAGE)</td><td><code>[SUB_ID:8] [ENVELOPE:rest]</code></td></tr>
+</table>
+
+<p>Sub IDs are stringified in JSON to avoid JavaScript <code>Number</code>
+  precision loss. All multi-byte integers in binary frames are little-endian.
+  Each WebSocket connection gets its own session with independent subscriptions.
   Subscriptions are automatically cleaned up when the connection closes.</p>
 
 
@@ -771,7 +781,7 @@ client.<span class="fn">close</span>();</code></pre>
   <tr><th>Module</th><th>Purpose</th></tr>
   <tr><td><code>wire-types.ts</code></td><td><code>WireTypeId</code> enum mirroring C++ values</td></tr>
   <tr><td><code>envelope.ts</code></td><td>Envelope serialize/deserialize (row + attachments)</td></tr>
-  <tr><td><code>ws-protocol.ts</code></td><td>Binary frame builders &amp; parsers</td></tr>
+  <tr><td><code>ws-protocol.ts</code></td><td>JSON/binary frame builders &amp; parsers</td></tr>
   <tr><td><code>wasm-decoder.ts</code></td><td>WASM/TS dual-mode row parser</td></tr>
   <tr><td><code>codec/row-decoder.ts</code></td><td>Scalar, struct, list, map decode orchestration</td></tr>
   <tr><td><code>codec/row-encoder.ts</code></td><td>Pure-TS row encoder (inverse of decoder)</td></tr>
@@ -919,7 +929,7 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
       web_gateway.hpp          WebGateway class (Boost.Beast WebSocket server)
     src/
       web_gateway.cpp          Listener, IO thread pool
-      ws_session.cpp/.hpp      Per-connection session, binary protocol handling
+      ws_session.cpp/.hpp      Per-connection session, JSON/binary protocol handling
     examples/
       gateway_main.cpp         Standalone example with in-process mock provider
 
@@ -941,7 +951,7 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
         row-encoder.ts         Pure-TS row encoder
         object-backend.ts      Decode to plain objects
         arrow-backend.ts       Decode to Arrow JS (placeholder)
-    test/                      35 Vitest tests</code></pre>
+    test/                      37 Vitest tests</code></pre>
 
 
 <!-- ── Building ────────────────────────────────────────────────────── -->
@@ -970,7 +980,7 @@ cmake --build build --config Release</code></pre>
 <pre><code><span class="cmt"># Install dependencies and run tests</span>
 <span class="kw">cd</span> WebClient
 npm install
-npm test            <span class="cmt"># 35 Vitest tests</span>
+npm test            <span class="cmt"># 37 Vitest tests</span>
 
 <span class="cmt"># TypeScript compilation</span>
 npm run build:ts
@@ -999,6 +1009,7 @@ protoc --plugin=protoc-gen-fletcher=build/ProtoPlugin/Release/protoc-gen-fletche
   <tr><td>SQLite3</td><td>3.47.2</td><td>Write-ahead log for the batcher</td></tr>
   <tr><td>Catch2</td><td>3.7.1</td><td>C++ test framework</td></tr>
   <tr><td>Fast DDS</td><td>2.14.3</td><td>DDS pub/sub transport</td></tr>
+  <tr><td>nlohmann/json</td><td>3.11.3</td><td>JSON parsing for WebGateway control protocol</td></tr>
   <tr><td>Node.js</td><td>18+</td><td>TypeScript build and tests (WebClient only)</td></tr>
 </table>
 
@@ -1020,7 +1031,7 @@ ctest --test-dir build -R batcher       <span class="cmt"># 23 batcher tests</sp
 ctest --test-dir build -R pubsub        <span class="cmt"># 14 driver tests</span>
 
 <span class="cmt"># Run TypeScript tests</span>
-<span class="kw">cd</span> WebClient &amp;&amp; npm test              <span class="cmt"># 35 Vitest tests</span></code></pre>
+<span class="kw">cd</span> WebClient &amp;&amp; npm test              <span class="cmt"># 37 Vitest tests</span></code></pre>
 
 <h3>Test coverage</h3>
 <table>

@@ -16,7 +16,8 @@ export {
   buildUnsubscribe,
   buildPublish,
   buildListTopics,
-  parseResponse,
+  parseTextResponse,
+  parseBinaryMessage,
 } from './ws-protocol.js';
 export type {
   ServerResponse,
@@ -24,8 +25,8 @@ export type {
   SubscribedResponse,
   UnsubscribedResponse,
   PublishedResponse,
-  TopicsResponse,
-  MessageResponse,
+  TopicsListResponse,
+  MessageData,
   ErrorResponse,
 } from './ws-protocol.js';
 

@@ -1,12 +1,16 @@
 #include "ws_session.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <cstring>
 #include <stdexcept>
 
 namespace fletcher {
 
+using json = nlohmann::json;
+
 // -----------------------------------------------------------------------
-// Binary helpers
+// Binary helpers (used for PUBLISH and MESSAGE frames only)
 // -----------------------------------------------------------------------
 
 namespace {
@@ -17,29 +21,9 @@ uint16_t ReadU16(const uint8_t* p) {
     return v;
 }
 
-uint64_t ReadU64(const uint8_t* p) {
-    uint64_t v;
-    std::memcpy(&v, p, 8);
-    return v;
-}
-
-void AppendU8(std::vector<uint8_t>& buf, uint8_t v) {
-    buf.push_back(v);
-}
-
-void AppendU16(std::vector<uint8_t>& buf, uint16_t v) {
-    auto* p = reinterpret_cast<const uint8_t*>(&v);
-    buf.insert(buf.end(), p, p + 2);
-}
-
 void AppendU64(std::vector<uint8_t>& buf, uint64_t v) {
     auto* p = reinterpret_cast<const uint8_t*>(&v);
     buf.insert(buf.end(), p, p + 8);
-}
-
-void AppendString(std::vector<uint8_t>& buf, const std::string& s) {
-    AppendU16(buf, static_cast<uint16_t>(s.size()));
-    buf.insert(buf.end(), s.begin(), s.end());
 }
 
 void AppendBytes(std::vector<uint8_t>& buf,
@@ -66,9 +50,6 @@ void WsSession::Run() {
     ws_.set_option(ws::stream_base::timeout::suggested(
         beast::role_type::server));
 
-    // Force binary mode — all frames are binary.
-    ws_.binary(true);
-
     auto self = shared_from_this();
     ws_.async_accept([self](beast::error_code ec) {
         if (ec) return;
@@ -94,10 +75,15 @@ void WsSession::OnRead(beast::error_code ec, std::size_t /*bytes_transferred*/) 
     }
 
     auto data = read_buf_.data();
-    auto* ptr = static_cast<const uint8_t*>(data.data());
-    auto  len = data.size();
 
-    HandleFrame(ptr, len);
+    if (ws_.got_text()) {
+        std::string text(static_cast<const char*>(data.data()), data.size());
+        HandleTextFrame(text);
+    } else {
+        auto* ptr = static_cast<const uint8_t*>(data.data());
+        HandleBinaryFrame(ptr, data.size());
+    }
+
     read_buf_.consume(read_buf_.size());
     DoRead();
 }
@@ -106,27 +92,31 @@ void WsSession::OnRead(beast::error_code ec, std::size_t /*bytes_transferred*/) 
 // Frame dispatch
 // -----------------------------------------------------------------------
 
-void WsSession::HandleFrame(const uint8_t* data, size_t len) {
-    if (len < 1) {
-        SendError("empty frame");
-        return;
-    }
-
-    auto tag = static_cast<ActionTag>(data[0]);
-    const uint8_t* payload = data + 1;
-    size_t payload_len = len - 1;
-
+void WsSession::HandleTextFrame(const std::string& text) {
     try {
-        switch (tag) {
-            case ActionTag::kCreateTopic: OnCreateTopic(payload, payload_len); break;
-            case ActionTag::kSubscribe:   OnSubscribe(payload, payload_len);   break;
-            case ActionTag::kUnsubscribe: OnUnsubscribe(payload, payload_len); break;
-            case ActionTag::kPublish:     OnPublish(payload, payload_len);     break;
-            case ActionTag::kListTopics:  OnListTopics();                      break;
-            default:
-                SendError("unknown action tag");
-                break;
+        auto j = json::parse(text);
+        auto action = j.at("action").get<std::string>();
+
+        if (action == "create_topic") {
+            OnCreateTopic(j.at("topic").get<std::string>());
+        } else if (action == "subscribe") {
+            OnSubscribe(j.at("topic").get<std::string>());
+        } else if (action == "unsubscribe") {
+            auto sub_id = std::stoull(j.at("subId").get<std::string>());
+            OnUnsubscribe(sub_id);
+        } else if (action == "list_topics") {
+            OnListTopics();
+        } else {
+            SendError("unknown action: " + action);
         }
+    } catch (const std::exception& e) {
+        SendError(e.what());
+    }
+}
+
+void WsSession::HandleBinaryFrame(const uint8_t* data, size_t len) {
+    try {
+        OnPublish(data, len);
     } catch (const std::exception& e) {
         SendError(e.what());
     }
@@ -151,33 +141,14 @@ std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
     return segments;
 }
 
-void WsSession::OnCreateTopic(const uint8_t* data, size_t len) {
-    // [TOPIC_LEN:2] [TOPIC:N]
-    if (len < 2) throw std::invalid_argument("create_topic: frame too short");
-    uint16_t topic_len = ReadU16(data);
-    if (2 + topic_len > len) throw std::invalid_argument("create_topic: truncated");
-    std::string topic(reinterpret_cast<const char*>(data + 2), topic_len);
-
+void WsSession::OnCreateTopic(const std::string& topic) {
     driver_->CreateTopic(SplitTopic(topic), nullptr);
-
-    std::vector<uint8_t> resp;
-    AppendU8(resp, static_cast<uint8_t>(ResponseTag::kTopicCreated));
-    Send(std::move(resp));
+    SendText(json{{"type", "topic_created"}}.dump());
 }
 
-void WsSession::OnSubscribe(const uint8_t* data, size_t len) {
-    // [TOPIC_LEN:2] [TOPIC:N]
-    if (len < 2) throw std::invalid_argument("subscribe: frame too short");
-    uint16_t topic_len = ReadU16(data);
-    if (2 + topic_len > len) throw std::invalid_argument("subscribe: truncated");
-    std::string topic(reinterpret_cast<const char*>(data + 2), topic_len);
-
+void WsSession::OnSubscribe(const std::string& topic) {
     auto segments = SplitTopic(topic);
 
-    // The Driver callback may fire on any thread.  Post writes to the
-    // WebSocket through the stream's executor to avoid races.
-    // We share the sub_id via a shared_ptr so the callback can reference
-    // it even though Subscribe returns after the lambda is created.
     auto sub_id_ptr = std::make_shared<uint64_t>(0);
     std::weak_ptr<WsSession> weak = shared_from_this();
 
@@ -189,42 +160,31 @@ void WsSession::OnSubscribe(const uint8_t* data, size_t len) {
             auto binary = SerializeEnvelope(env);
 
             std::vector<uint8_t> frame;
-            frame.reserve(1 + 8 + binary.size());
-            AppendU8(frame, static_cast<uint8_t>(ResponseTag::kMessage));
+            frame.reserve(8 + binary.size());
             AppendU64(frame, *sub_id_ptr);
             AppendBytes(frame, binary.data(), binary.size());
 
             net::post(
                 self->ws_.get_executor(),
                 [self, f = std::move(frame)]() mutable {
-                    self->Send(std::move(f));
+                    self->SendBinary(std::move(f));
                 });
         });
 
     *sub_id_ptr = sub_id;
-
     subscriptions_[sub_id] = topic;
 
-    // Response: [TAG:1] [SUB_ID:8] [TOPIC_LEN:2] [TOPIC:N]
-    std::vector<uint8_t> resp;
-    resp.reserve(1 + 8 + 2 + topic.size());
-    AppendU8(resp, static_cast<uint8_t>(ResponseTag::kSubscribed));
-    AppendU64(resp, sub_id);
-    AppendString(resp, topic);
-    Send(std::move(resp));
+    SendText(json{
+        {"type", "subscribed"},
+        {"subId", std::to_string(sub_id)},
+        {"topic", topic},
+    }.dump());
 }
 
-void WsSession::OnUnsubscribe(const uint8_t* data, size_t len) {
-    // [SUB_ID:8]
-    if (len < 8) throw std::invalid_argument("unsubscribe: frame too short");
-    uint64_t sub_id = ReadU64(data);
-
+void WsSession::OnUnsubscribe(uint64_t sub_id) {
     driver_->Unsubscribe(sub_id);
     subscriptions_.erase(sub_id);
-
-    std::vector<uint8_t> resp;
-    AppendU8(resp, static_cast<uint8_t>(ResponseTag::kUnsubscribed));
-    Send(std::move(resp));
+    SendText(json{{"type", "unsubscribed"}}.dump());
 }
 
 void WsSession::OnPublish(const uint8_t* data, size_t len) {
@@ -239,27 +199,33 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     auto envelope = DeserializeEnvelope(data + env_offset, len - env_offset);
     driver_->Publish(SplitTopic(topic), envelope);
 
-    std::vector<uint8_t> resp;
-    AppendU8(resp, static_cast<uint8_t>(ResponseTag::kPublished));
-    Send(std::move(resp));
+    SendText(json{{"type", "published"}}.dump());
 }
 
 void WsSession::OnListTopics() {
     auto topics = driver_->ListTopics();
-
-    std::vector<uint8_t> resp;
-    AppendU8(resp, static_cast<uint8_t>(ResponseTag::kTopics));
-    AppendU16(resp, static_cast<uint16_t>(topics.size()));
-    for (auto& t : topics)
-        AppendString(resp, t);
-    Send(std::move(resp));
+    SendText(json{
+        {"type", "topics_list"},
+        {"topics", topics},
+    }.dump());
 }
 
 // -----------------------------------------------------------------------
 // Write queue
 // -----------------------------------------------------------------------
 
-void WsSession::Send(std::vector<uint8_t> frame) {
+void WsSession::SendText(std::string text) {
+    OutgoingFrame frame;
+    frame.data.assign(text.begin(), text.end());
+    frame.is_text = true;
+    write_queue_.push_back(std::move(frame));
+    if (!writing_) DoWrite();
+}
+
+void WsSession::SendBinary(std::vector<uint8_t> data) {
+    OutgoingFrame frame;
+    frame.data = std::move(data);
+    frame.is_text = false;
     write_queue_.push_back(std::move(frame));
     if (!writing_) DoWrite();
 }
@@ -271,9 +237,11 @@ void WsSession::DoWrite() {
     }
 
     writing_ = true;
+    ws_.text(write_queue_.front().is_text);
+
     auto self = shared_from_this();
     ws_.async_write(
-        net::buffer(write_queue_.front()),
+        net::buffer(write_queue_.front().data),
         [self](beast::error_code ec, std::size_t) {
             if (ec) return;
             self->write_queue_.pop_front();
@@ -282,11 +250,7 @@ void WsSession::DoWrite() {
 }
 
 void WsSession::SendError(const std::string& msg) {
-    std::vector<uint8_t> frame;
-    frame.reserve(1 + 2 + msg.size());
-    AppendU8(frame, static_cast<uint8_t>(ResponseTag::kError));
-    AppendString(frame, msg);
-    Send(std::move(frame));
+    SendText(json{{"type", "error"}, {"message", msg}}.dump());
 }
 
 // -----------------------------------------------------------------------
