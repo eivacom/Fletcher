@@ -304,6 +304,94 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
 }
 
 // -----------------------------------------------------------------------
+// Getter generation (mutable class — returns const refs to internal storage)
+// -----------------------------------------------------------------------
+
+void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
+    for (const auto& fi : fields) {
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                const auto& sc = fi.mapping.scalar;
+
+                if (fi.mapping.nullable) {
+                    if (sc.value_is_buffer) {
+                        o << "    std::optional<std::string_view> " << fi.name
+                          << "() const {\n"
+                          << "        if (!" << fi.name
+                          << "_.has_value()) return std::nullopt;\n"
+                          << "        return std::string_view{*" << fi.name
+                          << "_};\n"
+                          << "    }\n";
+                    } else {
+                        o << "    std::optional<" << sc.storage_type << "> "
+                          << fi.name << "() const { return " << fi.name
+                          << "_; }\n";
+                    }
+                } else {
+                    if (sc.value_is_buffer) {
+                        // Can't use value_or("") — temporary would dangle.
+                        o << "    std::string_view " << fi.name
+                          << "() const {\n"
+                          << "        if (!" << fi.name
+                          << "_.has_value()) return {};\n"
+                          << "        return *" << fi.name << "_;\n"
+                          << "    }\n";
+                    } else {
+                        o << "    " << sc.storage_type << " " << fi.name
+                          << "() const { return " << fi.name
+                          << "_.value_or(" << sc.default_value << "); }\n";
+                    }
+                }
+                break;
+            }
+
+            case FieldKind::STRUCT:
+                if (fi.mapping.nullable) {
+                    o << "    const " << fi.mapping.nested_class << "* "
+                      << fi.name << "() const {\n"
+                      << "        return " << fi.name
+                      << "_.has_value() ? &*" << fi.name
+                      << "_ : nullptr;\n"
+                      << "    }\n";
+                } else {
+                    o << "    const " << fi.mapping.nested_class << "& "
+                      << fi.name << "() const {\n"
+                      << "        static const " << fi.mapping.nested_class
+                      << " kDefault{};\n"
+                      << "        return " << fi.name
+                      << "_.has_value() ? *" << fi.name
+                      << "_ : kDefault;\n"
+                      << "    }\n";
+                }
+                break;
+
+            case FieldKind::REPEATED_SCALAR:
+                o << "    const std::vector<" << fi.mapping.element.storage_type
+                  << ">& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+
+            case FieldKind::REPEATED_STRUCT:
+                o << "    const std::vector<" << fi.mapping.nested_class
+                  << ">& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+
+            case FieldKind::MAP: {
+                std::string val_type = fi.mapping.map_value_is_message
+                    ? fi.mapping.map_value_class
+                    : fi.mapping.map_value.storage_type;
+                o << "    const std::vector<std::pair<"
+                  << fi.mapping.map_key.storage_type << ", " << val_type
+                  << ">>& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
 // Composite scalar helper methods
 // -----------------------------------------------------------------------
 
@@ -817,6 +905,10 @@ std::string GenerateMessageClass(const std::string& cls,
 
     // Setters
     EmitSetters(o, cls, fields);
+    o << "\n";
+
+    // Getters
+    EmitGetters(o, fields);
     o << "\n";
 
     // SetFromScalars_ — public so parent classes can call it for struct fields
