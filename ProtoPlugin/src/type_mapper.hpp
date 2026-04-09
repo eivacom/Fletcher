@@ -69,6 +69,10 @@ int NestingDepth(const google::protobuf::Descriptor* msg);
 // Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
 std::string ClassName(const google::protobuf::Descriptor* msg);
 
+// C++ class name for the generated immutable ArrowRowView wrapper.
+// Handles nested messages: Outer.Inner → "Outer_InnerArrowRowView".
+std::string ViewClassName(const google::protobuf::Descriptor* msg);
+
 // -----------------------------------------------------------------------
 // TypeScript code generation helpers
 // -----------------------------------------------------------------------

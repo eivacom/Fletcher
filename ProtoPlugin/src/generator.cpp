@@ -304,6 +304,94 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
 }
 
 // -----------------------------------------------------------------------
+// Getter generation (mutable class — returns const refs to internal storage)
+// -----------------------------------------------------------------------
+
+void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
+    for (const auto& fi : fields) {
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                const auto& sc = fi.mapping.scalar;
+
+                if (fi.mapping.nullable) {
+                    if (sc.value_is_buffer) {
+                        o << "    std::optional<std::string_view> " << fi.name
+                          << "() const {\n"
+                          << "        if (!" << fi.name
+                          << "_.has_value()) return std::nullopt;\n"
+                          << "        return std::string_view{*" << fi.name
+                          << "_};\n"
+                          << "    }\n";
+                    } else {
+                        o << "    std::optional<" << sc.storage_type << "> "
+                          << fi.name << "() const { return " << fi.name
+                          << "_; }\n";
+                    }
+                } else {
+                    if (sc.value_is_buffer) {
+                        // Can't use value_or("") — temporary would dangle.
+                        o << "    std::string_view " << fi.name
+                          << "() const {\n"
+                          << "        if (!" << fi.name
+                          << "_.has_value()) return {};\n"
+                          << "        return *" << fi.name << "_;\n"
+                          << "    }\n";
+                    } else {
+                        o << "    " << sc.storage_type << " " << fi.name
+                          << "() const { return " << fi.name
+                          << "_.value_or(" << sc.default_value << "); }\n";
+                    }
+                }
+                break;
+            }
+
+            case FieldKind::STRUCT:
+                if (fi.mapping.nullable) {
+                    o << "    const " << fi.mapping.nested_class << "* "
+                      << fi.name << "() const {\n"
+                      << "        return " << fi.name
+                      << "_.has_value() ? &*" << fi.name
+                      << "_ : nullptr;\n"
+                      << "    }\n";
+                } else {
+                    o << "    const " << fi.mapping.nested_class << "& "
+                      << fi.name << "() const {\n"
+                      << "        static const " << fi.mapping.nested_class
+                      << " kDefault{};\n"
+                      << "        return " << fi.name
+                      << "_.has_value() ? *" << fi.name
+                      << "_ : kDefault;\n"
+                      << "    }\n";
+                }
+                break;
+
+            case FieldKind::REPEATED_SCALAR:
+                o << "    const std::vector<" << fi.mapping.element.storage_type
+                  << ">& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+
+            case FieldKind::REPEATED_STRUCT:
+                o << "    const std::vector<" << fi.mapping.nested_class
+                  << ">& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+
+            case FieldKind::MAP: {
+                std::string val_type = fi.mapping.map_value_is_message
+                    ? fi.mapping.map_value_class
+                    : fi.mapping.map_value.storage_type;
+                o << "    const std::vector<std::pair<"
+                  << fi.mapping.map_key.storage_type << ", " << val_type
+                  << ">>& " << fi.name << "() const { return " << fi.name
+                  << "_; }\n";
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
 // Composite scalar helper methods
 // -----------------------------------------------------------------------
 
@@ -583,6 +671,220 @@ std::string GenerateSchemaFunction(const std::string& cls,
 }
 
 // -----------------------------------------------------------------------
+// View helpers — derive Arrow array type from scalar type, getter return
+// type from ScalarTypeInfo
+// -----------------------------------------------------------------------
+
+std::string ArrayTypeFromScalar(const std::string& scalar_type) {
+    constexpr std::string_view suffix = "Scalar";
+    if (scalar_type.size() > suffix.size()
+        && scalar_type.compare(scalar_type.size() - suffix.size(),
+                               suffix.size(), suffix) == 0) {
+        return scalar_type.substr(0, scalar_type.size() - suffix.size())
+             + "Array";
+    }
+    return scalar_type;
+}
+
+std::string GetterType(const ScalarTypeInfo& sc) {
+    return sc.value_is_buffer ? "std::string_view" : sc.storage_type;
+}
+
+// -----------------------------------------------------------------------
+// View getter generation
+// -----------------------------------------------------------------------
+
+void EmitViewGetters(std::ostringstream& o,
+                     const std::vector<FieldInfo>& fields) {
+    for (size_t idx = 0; idx < fields.size(); ++idx) {
+        const auto& fi = fields[idx];
+        const std::string si = std::to_string(idx);
+
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                const auto& sc = fi.mapping.scalar;
+                std::string ret = GetterType(sc);
+
+                if (fi.mapping.nullable) {
+                    o << "    std::optional<" << ret << "> " << fi.name
+                      << "() const {\n"
+                      << "        if (!scalars_[" << si
+                      << "]->is_valid) return std::nullopt;\n";
+                    if (sc.value_is_buffer) {
+                        o << "        const auto& s = static_cast<const "
+                          << sc.scalar_type << "&>(*scalars_[" << si << "]);\n"
+                          << "        return std::string_view{\n"
+                          << "            reinterpret_cast<const char*>"
+                             "(s.value->data()),\n"
+                          << "            static_cast<size_t>"
+                             "(s.value->size())};\n";
+                    } else {
+                        o << "        return static_cast<const "
+                          << sc.scalar_type << "&>(*scalars_[" << si
+                          << "]).value;\n";
+                    }
+                    o << "    }\n";
+                } else {
+                    o << "    " << ret << " " << fi.name << "() const {\n";
+                    if (sc.value_is_buffer) {
+                        o << "        const auto& s = static_cast<const "
+                          << sc.scalar_type << "&>(*scalars_[" << si << "]);\n"
+                          << "        return {reinterpret_cast<const char*>"
+                             "(s.value->data()),\n"
+                          << "                static_cast<size_t>"
+                             "(s.value->size())};\n";
+                    } else {
+                        o << "        return static_cast<const "
+                          << sc.scalar_type << "&>(*scalars_[" << si
+                          << "]).value;\n";
+                    }
+                    o << "    }\n";
+                }
+                break;
+            }
+
+            case FieldKind::STRUCT: {
+                std::string vt = fi.mapping.nested_class + "View";
+                if (fi.mapping.nullable) {
+                    o << "    std::optional<" << vt << "> " << fi.name
+                      << "() const {\n"
+                      << "        if (!scalars_[" << si
+                      << "]->is_valid) return std::nullopt;\n"
+                      << "        return " << vt << "(scalars_[" << si
+                      << "]);\n"
+                      << "    }\n";
+                } else {
+                    o << "    " << vt << " " << fi.name << "() const {\n"
+                      << "        return " << vt << "(scalars_[" << si
+                      << "]);\n"
+                      << "    }\n";
+                }
+                break;
+            }
+
+            case FieldKind::REPEATED_SCALAR: {
+                const auto& el = fi.mapping.element;
+                std::string vt = GetterType(el);
+                std::string at = ArrayTypeFromScalar(el.scalar_type);
+                o << "    fletcher::ArrowScalarList<" << vt << ", " << at
+                  << "> " << fi.name << "() const {\n"
+                  << "        const auto& ls = static_cast"
+                     "<const arrow::ListScalar&>(\n"
+                  << "            *scalars_[" << si << "]);\n"
+                  << "        return fletcher::ArrowScalarList<" << vt << ", "
+                  << at << ">(ls.value);\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::REPEATED_STRUCT: {
+                std::string vt = fi.mapping.nested_class + "View";
+                o << "    fletcher::ArrowRowViewList<" << vt << "> "
+                  << fi.name << "() const {\n"
+                  << "        const auto& ls = static_cast"
+                     "<const arrow::ListScalar&>(\n"
+                  << "            *scalars_[" << si << "]);\n"
+                  << "        return fletcher::ArrowRowViewList<" << vt
+                  << ">(ls.value);\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::MAP: {
+                std::string kv = GetterType(fi.mapping.map_key);
+                std::string ka =
+                    ArrayTypeFromScalar(fi.mapping.map_key.scalar_type);
+
+                if (fi.mapping.map_value_is_message) {
+                    std::string vt = fi.mapping.map_value_class + "View";
+                    o << "    fletcher::ArrowRowViewMap<" << kv << ", " << ka
+                      << ", " << vt << "> " << fi.name << "() const {\n"
+                      << "        const auto& ms = static_cast"
+                         "<const arrow::MapScalar&>(\n"
+                      << "            *scalars_[" << si << "]);\n"
+                      << "        return fletcher::ArrowRowViewMap<" << kv
+                      << ", " << ka << ", " << vt << ">(ms.value);\n"
+                      << "    }\n";
+                } else {
+                    std::string vv = GetterType(fi.mapping.map_value);
+                    std::string va =
+                        ArrayTypeFromScalar(fi.mapping.map_value.scalar_type);
+                    o << "    fletcher::ArrowScalarMap<" << kv << ", " << ka
+                      << ", " << vv << ", " << va << "> " << fi.name
+                      << "() const {\n"
+                      << "        const auto& ms = static_cast"
+                         "<const arrow::MapScalar&>(\n"
+                      << "            *scalars_[" << si << "]);\n"
+                      << "        return fletcher::ArrowScalarMap<" << kv
+                      << ", " << ka << ", " << vv << ", " << va
+                      << ">(ms.value);\n"
+                      << "    }\n";
+                }
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// Full immutable view class generation for one message
+// -----------------------------------------------------------------------
+
+std::string GenerateViewClass(const std::string& view_cls,
+                              const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+
+    o << "class " << view_cls << " {\n public:\n";
+
+    // Constructor from ArrowRow (vector of scalars)
+    o << "    explicit " << view_cls << "(fletcher::ArrowRow scalars)\n"
+      << "        : scalars_(std::move(scalars)) {}\n\n";
+
+    // Constructor from shared_ptr<Scalar> (for nested struct views)
+    o << "    explicit " << view_cls
+      << "(std::shared_ptr<arrow::Scalar> scalar)\n"
+      << "        : scalars_(static_cast<const arrow::StructScalar&>"
+         "(*scalar).value) {}\n\n";
+
+    // Constructor from RecordBatch + row index
+    o << "    " << view_cls
+      << "(const arrow::RecordBatch& batch, int64_t row) {\n"
+      << "        scalars_.reserve(batch.num_columns());\n"
+      << "        for (int i = 0; i < batch.num_columns(); ++i)\n"
+      << "            scalars_.push_back(\n"
+      << "                batch.column(i)->GetScalar(row).ValueOrDie());\n"
+      << "    }\n\n";
+
+    // Constructor from Table + row index
+    o << "    " << view_cls
+      << "(const arrow::Table& table, int64_t row) {\n"
+      << "        scalars_.reserve(table.num_columns());\n"
+      << "        for (int i = 0; i < table.num_columns(); ++i) {\n"
+      << "            const auto& chunked = *table.column(i);\n"
+      << "            int64_t offset = row;\n"
+      << "            for (const auto& chunk : chunked.chunks()) {\n"
+      << "                if (offset < chunk->length()) {\n"
+      << "                    scalars_.push_back(\n"
+      << "                        chunk->GetScalar(offset).ValueOrDie());\n"
+      << "                    break;\n"
+      << "                }\n"
+      << "                offset -= chunk->length();\n"
+      << "            }\n"
+      << "        }\n"
+      << "    }\n\n";
+
+    // Getters
+    EmitViewGetters(o, fields);
+
+    // Private
+    o << "\n private:\n"
+      << "    fletcher::ArrowRow scalars_;\n";
+
+    o << "};\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
 // Full class generation for one message
 // -----------------------------------------------------------------------
 
@@ -603,6 +905,10 @@ std::string GenerateMessageClass(const std::string& cls,
 
     // Setters
     EmitSetters(o, cls, fields);
+    o << "\n";
+
+    // Getters
+    EmitGetters(o, fields);
     o << "\n";
 
     // SetFromScalars_ — public so parent classes can call it for struct fields
@@ -808,7 +1114,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
       << "#include <arrow/api.h>\n";
 
     if (!schema_only) {
-        o << "#include <row_codec.hpp>\n";
+        o << "#include <row_codec.hpp>\n"
+          << "#include <arrow_row_view.hpp>\n";
     }
 
     o << "\n"
@@ -867,9 +1174,11 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
         // Always emit the free schema function.
         o << GenerateSchemaFunction(cls, fields, msg) << "\n";
 
-        // Optionally emit the row class.
-        if (!schema_only)
+        // Optionally emit the row class and its immutable view.
+        if (!schema_only) {
             o << GenerateMessageClass(cls, fields) << "\n";
+            o << GenerateViewClass(cls + "View", fields) << "\n";
+        }
     }
 
     // Service definitions → publisher and subscriber classes (skip in schema_only mode).
