@@ -1,8 +1,9 @@
 // Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
 //
 // The custom TopicDataType serialises ArrowRow + Attachments directly
-// into the DDS payload buffer via WriteBuffer, avoiding intermediate
-// allocations on the publish path.  The envelope wire format is:
+// into the DDS payload buffer via WriteBuffer on publish, and decodes
+// directly from the DDS payload buffer on subscribe — no intermediate
+// buffer copies on either path.  The envelope wire format is:
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // wrapped in a CDR-LE octet sequence.
 
@@ -39,8 +40,8 @@ namespace {
 //
 // On publish: holds pointers to the ArrowRow/Attachments/RowCodec.
 //   serialize() encodes directly into the DDS payload buffer.
-// On subscribe: holds received raw bytes.
-//   deserialize() copies from the DDS buffer.
+// On subscribe: codec pointer is set by the listener before
+//   take_next_sample; deserialize() decodes in-place from the DDS buffer.
 // -----------------------------------------------------------------------
 
 struct TransportData {
@@ -49,8 +50,9 @@ struct TransportData {
     const Attachments*  attachments = nullptr;
     const RowCodec*     codec = nullptr;
 
-    // Subscribe path (set by deserialize, read by listener).
-    std::vector<uint8_t> received;
+    // Subscribe path (decoded in-place by deserialize, moved by listener).
+    ArrowRow    decoded_row;
+    Attachments decoded_attachments;
 };
 
 // -----------------------------------------------------------------------
@@ -116,9 +118,41 @@ class ArrowRowTopicType : public TopicDataType {
         std::memcpy(&data_size, payload->data + 4, sizeof(data_size));
         if (8 + data_size > payload->length) return false;
 
-        d->received.resize(data_size);
-        if (data_size > 0) {
-            std::memcpy(d->received.data(), payload->data + 8, data_size);
+        // Decode directly from the DDS payload buffer — no intermediate copy.
+        const uint8_t* ptr = payload->data + 8;
+        size_t total = data_size;
+        if (total < 4) return false;
+
+        uint32_t row_len;
+        std::memcpy(&row_len, ptr, 4);
+        if (4 + row_len > total) return false;
+
+        d->decoded_row = d->codec->DecodeRow(ptr + 4, row_len);
+
+        // Parse attachments in-place.
+        d->decoded_attachments.clear();
+        size_t pos = 4 + row_len;
+        if (pos + 4 <= total) {
+            uint32_t att_count;
+            std::memcpy(&att_count, ptr + pos, 4);
+            pos += 4;
+            for (uint32_t i = 0; i < att_count && pos + 4 <= total; ++i) {
+                uint32_t key_len;
+                std::memcpy(&key_len, ptr + pos, 4);
+                pos += 4;
+                if (pos + key_len > total) break;
+                std::string key(reinterpret_cast<const char*>(ptr + pos), key_len);
+                pos += key_len;
+                if (pos + 4 > total) break;
+                uint32_t blob_len;
+                std::memcpy(&blob_len, ptr + pos, 4);
+                pos += 4;
+                if (pos + blob_len > total) break;
+                auto blob = std::make_shared<const std::vector<uint8_t>>(
+                    ptr + pos, ptr + pos + blob_len);
+                pos += blob_len;
+                d->decoded_attachments[std::move(key)] = std::move(blob);
+            }
         }
         return true;
     }
@@ -155,48 +189,12 @@ class SubscriptionListener : public DataReaderListener {
 
     void on_data_available(DataReader* reader) override {
         TransportData data;
+        data.codec = codec_;  // stash so deserialize() can decode in-place
         SampleInfo info;
         while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) continue;
-
-            // Parse envelope format directly from received bytes.
-            const uint8_t* ptr = data.received.data();
-            size_t total = data.received.size();
-            if (total < 4) continue;
-
-            uint32_t row_len;
-            std::memcpy(&row_len, ptr, 4);
-            if (4 + row_len > total) continue;
-
-            ArrowRow row = codec_->DecodeRow(ptr + 4, row_len);
-
-            // Parse attachments.
-            Attachments attachments;
-            size_t pos = 4 + row_len;
-            if (pos + 4 <= total) {
-                uint32_t att_count;
-                std::memcpy(&att_count, ptr + pos, 4);
-                pos += 4;
-                for (uint32_t i = 0; i < att_count && pos + 4 <= total; ++i) {
-                    uint32_t key_len;
-                    std::memcpy(&key_len, ptr + pos, 4);
-                    pos += 4;
-                    if (pos + key_len > total) break;
-                    std::string key(reinterpret_cast<const char*>(ptr + pos), key_len);
-                    pos += key_len;
-                    if (pos + 4 > total) break;
-                    uint32_t blob_len;
-                    std::memcpy(&blob_len, ptr + pos, 4);
-                    pos += 4;
-                    if (pos + blob_len > total) break;
-                    auto blob = std::make_shared<const std::vector<uint8_t>>(
-                        ptr + pos, ptr + pos + blob_len);
-                    pos += blob_len;
-                    attachments[std::move(key)] = std::move(blob);
-                }
-            }
-
-            callback_(std::move(row), std::move(attachments));
+            callback_(std::move(data.decoded_row),
+                      std::move(data.decoded_attachments));
         }
     }
 
