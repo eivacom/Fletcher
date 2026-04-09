@@ -509,6 +509,10 @@ std::string ClassName(const google::protobuf::Descriptor* msg) {
     return name + "ArrowRow";
 }
 
+std::string ViewClassName(const google::protobuf::Descriptor* msg) {
+    return ClassName(msg) + "View";
+}
+
 // -----------------------------------------------------------------------
 // TypeScript code generation helpers
 // -----------------------------------------------------------------------
