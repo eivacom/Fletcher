@@ -1,26 +1,17 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_ENVELOPE_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_ENVELOPE_HPP_
 
+#include "pubsub/types.hpp"
+
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <stdexcept>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace fletcher {
 
-// Binary-encoded row data.  Defined here (rather than in row_codec.hpp) so
-// that the pub/sub layer has no dependency on the codec or Arrow.
+// Binary-encoded row data (used internally for the envelope wire format).
 using EncodedRow = std::vector<uint8_t>;
-
-// Opaque binary blob.  shared_ptr gives zero-copy sharing from publisher
-// through provider to subscriber callback.
-using Blob = std::shared_ptr<const std::vector<uint8_t>>;
-
-// Key-value sidecar data attached to a message during transit.
-using Attachments = std::unordered_map<std::string, Blob>;
 
 // An encoded row bundled with optional attachments.
 struct Envelope {

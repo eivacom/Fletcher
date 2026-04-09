@@ -1,7 +1,9 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_PUBSUB_PROVIDER_HPP_
 
-#include "pubsub/envelope.hpp"
+#include "pubsub/types.hpp"
+
+#include <row_codec.hpp>
 
 #include <arrow/type_fwd.h>
 
@@ -15,9 +17,8 @@ namespace fletcher {
 /// Abstract transport provider for Arrow-row pub/sub.
 ///
 /// Implementations supply topic creation, message publication, and
-/// subscription delivery.  The binary payload exchanged over the wire
-/// is an `Envelope` containing an `EncodedRow` and optional sidecar
-/// `Attachments` (key/value blob pairs).
+/// subscription delivery.  The provider encodes/decodes ArrowRow data
+/// internally — callers work with typed Arrow scalars, never raw bytes.
 ///
 /// Topic names are represented as a list of string segments so that
 /// the provider can join them with any separator it prefers (dots,
@@ -28,18 +29,21 @@ class PubSubProvider {
 
     /// Called once per topic before any Publish / Subscribe calls.
     /// The schema describes the Arrow structure of the rows that will
-    /// flow on this topic.  The provider may use it for type metadata,
-    /// logging, or schema registry integration.
+    /// flow on this topic.  The provider uses it to create a RowCodec
+    /// for internal encoding/decoding.
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
                              std::shared_ptr<arrow::Schema> schema) = 0;
 
-    /// Publish an envelope (encoded row + optional attachments) to a
-    /// named topic.
+    /// Publish an ArrowRow with optional attachments to a named topic.
+    /// The provider encodes the row internally.
     virtual void Publish(const std::vector<std::string>& topic_segments,
-                         const Envelope& envelope) = 0;
+                         const ArrowRow& row,
+                         const Attachments& attachments = {}) = 0;
 
-    /// Callback signature for Subscribe.
-    using SubscribeCallback = std::function<void(const Envelope&)>;
+    /// Callback signature for Subscribe — delivers decoded ArrowRow
+    /// and any sidecar attachments.
+    using SubscribeCallback = std::function<void(ArrowRow row,
+                                                 Attachments attachments)>;
 
     /// Register a subscription callback for a named topic.
     /// Each call replaces a previously registered callback (if any).

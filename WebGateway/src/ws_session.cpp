@@ -1,5 +1,7 @@
 #include "ws_session.hpp"
 
+#include <pubsub/envelope.hpp>
+
 #include <nlohmann/json.hpp>
 
 #include <cstring>
@@ -153,10 +155,13 @@ void WsSession::OnSubscribe(const std::string& topic) {
     std::weak_ptr<WsSession> weak = shared_from_this();
 
     auto sub_id = driver_->Subscribe(segments,
-        [weak, sub_id_ptr](const Envelope& env) {
+        [weak, sub_id_ptr, segments](ArrowRow row, Attachments att) {
             auto self = weak.lock();
             if (!self) return;
 
+            // Re-encode for the WebSocket wire format.
+            auto encoded_row = self->driver_->EncodeRow(segments, row);
+            Envelope env{std::move(encoded_row), std::move(att)};
             auto binary = SerializeEnvelope(env);
 
             std::vector<uint8_t> frame;
@@ -196,8 +201,10 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     std::string topic(reinterpret_cast<const char*>(data + 2), topic_len);
     size_t env_offset = 2 + topic_len;
 
+    auto segments = SplitTopic(topic);
     auto envelope = DeserializeEnvelope(data + env_offset, len - env_offset);
-    driver_->Publish(SplitTopic(topic), envelope);
+    auto row = driver_->DecodeRow(segments, envelope.row);
+    driver_->Publish(segments, row, envelope.attachments);
 
     SendText(json{{"type", "published"}}.dump());
 }

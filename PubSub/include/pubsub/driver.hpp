@@ -33,19 +33,30 @@ class Driver {
     void CreateTopic(const std::vector<std::string>& segments,
                      std::shared_ptr<arrow::Schema> schema);
 
-    /// Publish an envelope to a topic.
+    /// Publish an ArrowRow with optional attachments to a topic.
     void Publish(const std::vector<std::string>& segments,
-                 const Envelope& envelope);
+                 const ArrowRow& row,
+                 const Attachments& attachments = {});
 
     /// Subscribe to a topic.  Returns a subscription ID.
     /// Multiple subscribers per topic are supported; each receives
-    /// every published envelope via internal fan-out.
-    using SubscribeCallback = std::function<void(const Envelope&)>;
+    /// every published message via internal fan-out.
+    using SubscribeCallback = std::function<void(ArrowRow row,
+                                                 Attachments attachments)>;
     uint64_t Subscribe(const std::vector<std::string>& segments,
                        SubscribeCallback cb);
 
     /// Remove a subscription by ID.
     void Unsubscribe(uint64_t subscription_id);
+
+    /// Encode an ArrowRow using the codec for the given topic.
+    /// Useful for relay scenarios (e.g. WebGateway).
+    EncodedRow EncodeRow(const std::vector<std::string>& segments,
+                         const ArrowRow& row) const;
+
+    /// Decode an EncodedRow using the codec for the given topic.
+    ArrowRow DecodeRow(const std::vector<std::string>& segments,
+                       const EncodedRow& encoded) const;
 
     /// List all registered topic names (joined with "/").
     std::vector<std::string> ListTopics() const;

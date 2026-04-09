@@ -1,7 +1,8 @@
 include(CTest)
 
 add_executable(pubsub_tests
-    test_driver.cpp)
+    test_driver.cpp
+    test_envelope.cpp)
 
 target_link_libraries(pubsub_tests PRIVATE
     Catch2::Catch2WithMain

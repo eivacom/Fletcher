@@ -2,7 +2,6 @@
 #define FLETCHER_WEB_GATEWAY_WS_SESSION_HPP_
 
 #include <pubsub/driver.hpp>
-#include <pubsub/envelope.hpp>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>

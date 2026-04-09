@@ -1,7 +1,7 @@
 // Minimal smoke test for the WebGateway.
 //
 // Starts a WebSocket server on port 9090 with an in-process mock provider.
-// Creates a topic "demo/telemetry", then publishes a test envelope every
+// Creates a topic "demo/telemetry", then publishes a test row every
 // second so that a connecting client can subscribe and see data flowing.
 //
 // Test with any WebSocket client, e.g.:
@@ -12,7 +12,6 @@
 #include <web_gateway/web_gateway.hpp>
 #include <pubsub/driver.hpp>
 #include <pubsub/pubsub_provider.hpp>
-#include <pubsub/envelope.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -39,7 +38,8 @@ class InProcessProvider : public fletcher::PubSubProvider {
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const fletcher::Envelope& envelope) override {
+                 const fletcher::ArrowRow& row,
+                 const fletcher::Attachments& attachments) override {
         SubscribeCallback cb;
         {
             std::lock_guard lock(mu_);
@@ -47,7 +47,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
             if (it == topics_.end()) return;
             cb = it->second;
         }
-        if (cb) cb(envelope);
+        if (cb) cb(row, attachments);
     }
 
     void Subscribe(const std::vector<std::string>& segments,
@@ -100,17 +100,16 @@ int main() {
     std::printf("Topic: demo/telemetry\n");
     std::printf("Press Ctrl+C to stop.\n\n");
 
-    // Publish a test envelope every second.
+    // Publish a test row every second.
     std::atomic<bool> running{true};
     std::thread publisher([&] {
         uint32_t seq = 0;
         while (running) {
-            fletcher::Envelope env;
-            // Simple payload: 4-byte sequence number.
-            env.row.resize(4);
-            std::memcpy(env.row.data(), &seq, 4);
+            fletcher::ArrowRow row = {
+                std::make_shared<arrow::UInt32Scalar>(seq)
+            };
 
-            driver->Publish(topic, env);
+            driver->Publish(topic, row);
             std::printf("Published seq=%u\n", seq);
             seq++;
 

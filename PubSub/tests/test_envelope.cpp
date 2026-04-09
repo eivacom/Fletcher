@@ -1,6 +1,6 @@
 #include <catch2/catch_all.hpp>
 
-#include "envelope.hpp"
+#include <pubsub/envelope.hpp>
 
 using namespace fletcher;
 

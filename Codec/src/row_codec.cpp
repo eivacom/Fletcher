@@ -43,17 +43,13 @@ int GetFieldNumber(const arrow::Field& field, int positional_fallback) {
 }
 
 // ---------------------------------------------------------------------------
-// Tagged struct encoder (recursive)
+// Tagged struct encoder (recursive) — vector-based (legacy path)
 // ---------------------------------------------------------------------------
 
 void EncodeStructTagged(std::vector<uint8_t>& buf,
                         const arrow::StructScalar& scalar,
                         const arrow::StructType& stype);
 
-// Encode a single value's payload bytes.
-// For struct types, uses the recursive tagged format.
-// For other composites (list, map, union), encodes elements using
-// detail::EncodeScalar for leaf scalars and recursion for struct elements.
 void EncodePayload(std::vector<uint8_t>& buf,
                    const arrow::Scalar& scalar) {
     using T = arrow::Type;
@@ -125,7 +121,6 @@ void EncodePayload(std::vector<uint8_t>& buf,
         return;
     }
     default:
-        // Scalar types — delegate to the raw encoder.
         detail::EncodeScalar(buf, scalar);
         return;
     }
@@ -155,6 +150,198 @@ void EncodeStructTagged(std::vector<uint8_t>& buf,
             EncodePayload(payload, *child);
             AppendFixed(buf, static_cast<uint32_t>(payload.size()));
             buf.insert(buf.end(), payload.begin(), payload.end());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WriteBuffer-based encoder (direct-write path, no temp vectors)
+// ---------------------------------------------------------------------------
+
+void EncodeStructTaggedTo(WriteBuffer& buf,
+                          const arrow::StructScalar& scalar,
+                          const arrow::StructType& stype);
+
+// Encode a scalar's raw binary representation into a WriteBuffer.
+void EncodeScalarTo(WriteBuffer& buf, const arrow::Scalar& scalar) {
+    using T = arrow::Type;
+    switch (scalar.type->id()) {
+    case T::BOOL:
+        buf.AppendByte(static_cast<const arrow::BooleanScalar&>(scalar).value ? 1u : 0u);
+        break;
+    case T::INT8:   buf.AppendFixed(static_cast<const arrow::Int8Scalar&>(scalar).value); break;
+    case T::INT16:  buf.AppendFixed(static_cast<const arrow::Int16Scalar&>(scalar).value); break;
+    case T::INT32:  buf.AppendFixed(static_cast<const arrow::Int32Scalar&>(scalar).value); break;
+    case T::INT64:  buf.AppendFixed(static_cast<const arrow::Int64Scalar&>(scalar).value); break;
+    case T::UINT8:  buf.AppendFixed(static_cast<const arrow::UInt8Scalar&>(scalar).value); break;
+    case T::UINT16: buf.AppendFixed(static_cast<const arrow::UInt16Scalar&>(scalar).value); break;
+    case T::UINT32: buf.AppendFixed(static_cast<const arrow::UInt32Scalar&>(scalar).value); break;
+    case T::UINT64: buf.AppendFixed(static_cast<const arrow::UInt64Scalar&>(scalar).value); break;
+    case T::FLOAT:  buf.AppendFixed(static_cast<const arrow::FloatScalar&>(scalar).value); break;
+    case T::DOUBLE: buf.AppendFixed(static_cast<const arrow::DoubleScalar&>(scalar).value); break;
+    case T::STRING: case T::LARGE_STRING:
+    case T::BINARY: case T::LARGE_BINARY:
+    case T::STRING_VIEW: case T::BINARY_VIEW: {
+        const auto& s       = static_cast<const arrow::BaseBinaryScalar&>(scalar);
+        const int64_t raw_len = s.value->size();
+        if (raw_len < 0 || raw_len > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
+            throw std::invalid_argument("EncodeRow: variable-length field exceeds 4 GiB limit");
+        auto len32 = static_cast<uint32_t>(raw_len);
+        buf.AppendFixed(len32);
+        buf.Append(reinterpret_cast<const uint8_t*>(s.value->data()), len32);
+        break;
+    }
+    case T::DATE32:    buf.AppendFixed(static_cast<const arrow::Date32Scalar&>(scalar).value); break;
+    case T::DATE64:    buf.AppendFixed(static_cast<const arrow::Date64Scalar&>(scalar).value); break;
+    case T::TIMESTAMP: buf.AppendFixed(static_cast<const arrow::TimestampScalar&>(scalar).value); break;
+    case T::TIME32:    buf.AppendFixed(static_cast<const arrow::Time32Scalar&>(scalar).value); break;
+    case T::TIME64:    buf.AppendFixed(static_cast<const arrow::Time64Scalar&>(scalar).value); break;
+    case T::DURATION:  buf.AppendFixed(static_cast<const arrow::DurationScalar&>(scalar).value); break;
+    case T::FIXED_SIZE_BINARY: {
+        const auto& s = static_cast<const arrow::FixedSizeBinaryScalar&>(scalar);
+        const int32_t bw = static_cast<const arrow::FixedSizeBinaryType&>(*scalar.type).byte_width();
+        buf.Append(reinterpret_cast<const uint8_t*>(s.value->data()), bw);
+        break;
+    }
+    case T::HALF_FLOAT:
+        buf.AppendFixed(static_cast<const arrow::HalfFloatScalar&>(scalar).value);
+        break;
+    case T::INTERVAL_MONTHS:
+        buf.AppendFixed(static_cast<const arrow::MonthIntervalScalar&>(scalar).value);
+        break;
+    case T::INTERVAL_DAY_TIME: {
+        const auto& v = static_cast<const arrow::DayTimeIntervalScalar&>(scalar).value;
+        buf.AppendFixed(v.days);
+        buf.AppendFixed(v.milliseconds);
+        break;
+    }
+    case T::INTERVAL_MONTH_DAY_NANO: {
+        const auto& v = static_cast<const arrow::MonthDayNanoIntervalScalar&>(scalar).value;
+        buf.AppendFixed(v.months);
+        buf.AppendFixed(v.days);
+        buf.AppendFixed(v.nanoseconds);
+        break;
+    }
+    case T::DECIMAL128: {
+        const auto& v = static_cast<const arrow::Decimal128Scalar&>(scalar).value;
+        uint8_t bytes[16];
+        v.ToBytes(bytes);
+        buf.Append(bytes, 16);
+        break;
+    }
+    case T::DECIMAL256: {
+        const auto& v = static_cast<const arrow::Decimal256Scalar&>(scalar).value;
+        uint8_t bytes[32];
+        v.ToBytes(bytes);
+        buf.Append(bytes, 32);
+        break;
+    }
+    case T::DICTIONARY:
+        throw std::invalid_argument(
+            "EncodeRow: DICTIONARY type is not supported in the per-row format");
+    default:
+        throw std::invalid_argument(
+            "EncodeRow: unsupported Arrow type: " + scalar.type->ToString());
+    }
+}
+
+// Encode a value's payload bytes into a WriteBuffer (recursive).
+void EncodePayloadTo(WriteBuffer& buf, const arrow::Scalar& scalar) {
+    using T = arrow::Type;
+
+    switch (scalar.type->id()) {
+    case T::STRUCT: {
+        const auto& ss    = static_cast<const arrow::StructScalar&>(scalar);
+        const auto& stype = static_cast<const arrow::StructType&>(*scalar.type);
+        EncodeStructTaggedTo(buf, ss, stype);
+        return;
+    }
+    case T::LIST:
+    case T::LARGE_LIST: {
+        const auto& ls    = static_cast<const arrow::BaseListScalar&>(scalar);
+        const int64_t len = ls.value->length();
+        buf.AppendFixed(static_cast<uint32_t>(len));
+        for (int64_t i = 0; i < len; ++i) {
+            auto elem = ls.value->GetScalar(i).ValueOrDie();
+            buf.AppendByte(!elem->is_valid ? 0x01u : 0x00u);
+            if (elem->is_valid) EncodePayloadTo(buf, *elem);
+        }
+        return;
+    }
+    case T::FIXED_SIZE_LIST: {
+        const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
+        for (int64_t i = 0; i < ls.value->length(); ++i) {
+            auto elem = ls.value->GetScalar(i).ValueOrDie();
+            buf.AppendByte(!elem->is_valid ? 0x01u : 0x00u);
+            if (elem->is_valid) EncodePayloadTo(buf, *elem);
+        }
+        return;
+    }
+    case T::MAP: {
+        const auto& ms       = static_cast<const arrow::MapScalar&>(scalar);
+        auto struct_arr      = std::static_pointer_cast<arrow::StructArray>(ms.value);
+        const int64_t count  = struct_arr->length();
+        auto key_arr         = struct_arr->field(0);
+        auto val_arr         = struct_arr->field(1);
+        buf.AppendFixed(static_cast<uint32_t>(count));
+        for (int64_t i = 0; i < count; ++i) {
+            auto key = key_arr->GetScalar(i).ValueOrDie();
+            EncodeScalarTo(buf, *key);
+            auto val = val_arr->GetScalar(i).ValueOrDie();
+            buf.AppendByte(!val->is_valid ? 0x01u : 0x00u);
+            if (val->is_valid) EncodePayloadTo(buf, *val);
+        }
+        return;
+    }
+    case T::SPARSE_UNION: {
+        const auto& us         = static_cast<const arrow::SparseUnionScalar&>(scalar);
+        const auto& union_type = static_cast<const arrow::SparseUnionType&>(*scalar.type);
+        buf.AppendFixed(us.type_code);
+        const auto& codes = union_type.type_codes();
+        int child_id = -1;
+        for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
+            if (codes[i] == us.type_code) { child_id = i; break; }
+        }
+        if (child_id < 0 || child_id >= static_cast<int>(us.value.size()))
+            throw std::invalid_argument("EncodeRow: invalid sparse union type_code");
+        EncodeScalarTo(buf, *us.value[static_cast<size_t>(child_id)]);
+        return;
+    }
+    case T::DENSE_UNION: {
+        const auto& us = static_cast<const arrow::DenseUnionScalar&>(scalar);
+        buf.AppendFixed(us.type_code);
+        EncodeScalarTo(buf, *us.value);
+        return;
+    }
+    default:
+        EncodeScalarTo(buf, scalar);
+        return;
+    }
+}
+
+void EncodeStructTaggedTo(WriteBuffer& buf,
+                          const arrow::StructScalar& scalar,
+                          const arrow::StructType& stype) {
+    const int num_fields = stype.num_fields();
+    buf.AppendFixed(static_cast<uint16_t>(num_fields));
+
+    for (int i = 0; i < num_fields; ++i) {
+        const auto& child_field = stype.field(i);
+        const auto& child       = scalar.value[static_cast<size_t>(i)];
+        const bool  is_null     = !child || !child->is_valid;
+
+        uint32_t field_num = static_cast<uint32_t>(GetFieldNumber(*child_field, i + 1));
+        WireTypeId wire_type = ArrowTypeToWireTypeId(*child_field->type());
+
+        buf.AppendFixed(field_num);
+        buf.AppendByte(static_cast<uint8_t>(wire_type));
+        buf.AppendByte(is_null ? 0x01u : 0x00u);
+
+        if (!is_null) {
+            size_t len_pos = buf.WriteLengthPlaceholder();
+            size_t data_start = buf.Position();
+            EncodePayloadTo(buf, *child);
+            buf.PatchU32(len_pos, static_cast<uint32_t>(buf.Position() - data_start));
         }
     }
 }
@@ -771,7 +958,7 @@ RowCodec::RowCodec(std::shared_ptr<arrow::Schema> schema)
     , schema_hash_(FingerprintHash(*schema_))
     , cache_mutex_(std::make_unique<std::mutex>()) {}
 
-EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
+void RowCodec::EncodeRow(const ArrowRow& values, WriteBuffer& buf) const {
 
     const int num_fields = schema_->num_fields();
 
@@ -780,12 +967,9 @@ EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
             "EncodeRow: values.size() (" + std::to_string(values.size()) +
             ") does not match schema.num_fields() (" + std::to_string(num_fields) + ")");
 
-    std::vector<uint8_t> buf;
-    buf.reserve(128);
-
     // Header: schema_hash (8 bytes) + field_count (2 bytes).
-    AppendFixed(buf, schema_hash_);
-    AppendFixed(buf, static_cast<uint16_t>(num_fields));
+    buf.AppendFixed(schema_hash_);
+    buf.AppendFixed(static_cast<uint16_t>(num_fields));
 
     for (int i = 0; i < num_fields; ++i) {
         const auto& field  = schema_->field(i);
@@ -795,40 +979,41 @@ EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
         uint32_t field_num = static_cast<uint32_t>(GetFieldNumber(*field, i + 1));
         WireTypeId wire_type = ArrowTypeToWireTypeId(*field->type());
 
-        AppendFixed(buf, field_num);
-        buf.push_back(static_cast<uint8_t>(wire_type));
+        buf.AppendFixed(field_num);
+        buf.AppendByte(static_cast<uint8_t>(wire_type));
 
         if (is_null) {
-            buf.push_back(0x01u);
+            buf.AppendByte(0x01u);
             continue;
         }
 
-        // Compare top-level type ID only.  Nested nullability (e.g. list
-        // item nullable vs non-nullable) may differ between the generated
-        // code and the declared schema without affecting wire encoding.
         if (scalar->type->id() != field->type()->id())
             throw std::invalid_argument(
                 "EncodeRow: type mismatch for field '" + field->name() +
                 "': schema expects " + field->type()->ToString() +
                 ", got " + scalar->type->ToString());
 
-        buf.push_back(0x00u);
+        buf.AppendByte(0x00u);
 
-        // Encode payload to temp buffer to measure data_len.
-        std::vector<uint8_t> payload;
-        payload.reserve(32);
-        EncodePayload(payload, *scalar);
-
-        AppendFixed(buf, static_cast<uint32_t>(payload.size()));
-        buf.insert(buf.end(), payload.begin(), payload.end());
+        // Write length placeholder, encode payload, patch length.
+        size_t len_pos = buf.WriteLengthPlaceholder();
+        size_t data_start = buf.Position();
+        EncodePayloadTo(buf, *scalar);
+        buf.PatchU32(len_pos, static_cast<uint32_t>(buf.Position() - data_start));
     }
-
-    return buf;
 }
 
-ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
+EncodedRow RowCodec::EncodeRow(const ArrowRow& values) const {
+    EncodedRow result;
+    result.reserve(128);
+    VectorWriteBuffer buf(result);
+    EncodeRow(values, buf);
+    return result;
+}
 
-    detail::Reader r{buf.data(), buf.size()};
+ArrowRow RowCodec::DecodeRow(const uint8_t* data, size_t len) const {
+
+    detail::Reader r{data, len};
 
     uint64_t writer_hash = r.Read<uint64_t>();
     uint16_t field_count = r.Read<uint16_t>();
@@ -839,13 +1024,10 @@ ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
         std::lock_guard<std::mutex> lock(*cache_mutex_);
         auto it = decoding_cache_.find(writer_hash);
         if (it == decoding_cache_.end()) {
-            // BuildDecodingMap expects data starting at FIELD_COUNT.
-            // r.pos is currently after hash(8) + field_count(2) = 10.
-            // Rewind to include the field_count in the slice.
             auto new_map = BuildDecodingMap(
                 *schema_,
-                buf.data() + 8,
-                buf.size() - 8);
+                data + 8,
+                len - 8);
             new_map.writer_hash = writer_hash;
             auto [ins_it, _] = decoding_cache_.emplace(writer_hash, std::move(new_map));
             map_ptr = &ins_it->second;
@@ -857,12 +1039,10 @@ ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
     const auto& map = *map_ptr;
     const int num_reader_fields = schema_->num_fields();
 
-    // Pre-allocate output filled with nulls.
     ArrowRow values(num_reader_fields);
     for (int i = 0; i < num_reader_fields; ++i)
         values[i] = arrow::MakeNullScalar(schema_->field(i)->type());
 
-    // Decode each wire field using the cached map.
     for (uint16_t wi = 0; wi < field_count; ++wi) {
         /*uint32_t field_num =*/ r.Read<uint32_t>();
         auto wire_tid = static_cast<WireTypeId>(r.Read<uint8_t>());
@@ -885,7 +1065,6 @@ ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
             auto child = DecodeStructTagged(r, *slot.sub_map, slot.reader_type);
             values[slot.reader_index] = PromoteScalar(child, slot.promotion, slot.reader_type);
         } else {
-            // For type promotions, decode as the wire type first, then promote.
             std::shared_ptr<arrow::DataType> decode_type;
             if (slot.promotion == PromotionKind::IDENTITY) {
                 decode_type = slot.reader_type;
@@ -902,6 +1081,10 @@ ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
     }
 
     return values;
+}
+
+ArrowRow RowCodec::DecodeRow(const EncodedRow& buf) const {
+    return DecodeRow(buf.data(), buf.size());
 }
 
 // ---------------------------------------------------------------------------

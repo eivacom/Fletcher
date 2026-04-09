@@ -1,11 +1,15 @@
 // Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
 //
-// The custom TopicDataType (RawBytesTopicType) serialises an Envelope —
-// an EncodedRow with optional key/value attachments — as a CDR-LE octet
-// sequence: 4-byte encapsulation header, 4-byte uint32 length, then
-// the SerializeEnvelope() payload bytes.
+// The custom TopicDataType serialises ArrowRow + Attachments directly
+// into the DDS payload buffer via WriteBuffer, avoiding intermediate
+// allocations on the publish path.  The envelope wire format is:
+//   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
+// wrapped in a CDR-LE octet sequence.
 
 #include "fast_dds_pubsub_provider.hpp"
+
+#include <pubsub/envelope.hpp>
+#include <write_buffer.hpp>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
@@ -31,18 +35,32 @@ namespace fletcher {
 namespace {
 
 // -----------------------------------------------------------------------
-// Raw-bytes DDS type — transports EncodedRow as an opaque octet sequence.
+// Transport data — dual-purpose type for publish and subscribe.
+//
+// On publish: holds pointers to the ArrowRow/Attachments/RowCodec.
+//   serialize() encodes directly into the DDS payload buffer.
+// On subscribe: holds received raw bytes.
+//   deserialize() copies from the DDS buffer.
 // -----------------------------------------------------------------------
 
-struct RawBytes {
-    std::vector<uint8_t> data;
+struct TransportData {
+    // Publish path (set by Publish, read by serialize).
+    const ArrowRow*     row = nullptr;
+    const Attachments*  attachments = nullptr;
+    const RowCodec*     codec = nullptr;
+
+    // Subscribe path (set by deserialize, read by listener).
+    std::vector<uint8_t> received;
 };
 
-class RawBytesTopicType : public TopicDataType {
+// -----------------------------------------------------------------------
+// DDS TopicDataType — encodes ArrowRow directly into DDS payload.
+// -----------------------------------------------------------------------
+
+class ArrowRowTopicType : public TopicDataType {
  public:
-    explicit RawBytesTopicType(uint32_t max_payload) {
+    explicit ArrowRowTopicType(uint32_t max_payload) {
         setName("ArrowRow");
-        // Encapsulation (4) + CDR sequence header (4) + payload.
         m_typeSize = 4 + 4 + max_payload;
         m_isGetKeyDefined = false;
     }
@@ -50,57 +68,71 @@ class RawBytesTopicType : public TopicDataType {
     bool serialize(
         void* data,
         eprosima::fastrtps::rtps::SerializedPayload_t* payload) override {
-        auto* raw = static_cast<RawBytes*>(data);
-        auto data_size = static_cast<uint32_t>(raw->data.size());
-        uint32_t total = 4 + 4 + data_size;
+        auto* d = static_cast<TransportData*>(data);
 
-        if (total > payload->max_size) return false;
+        FixedWriteBuffer buf(payload->data, payload->max_size);
 
         // CDR little-endian encapsulation header.
         payload->encapsulation = CDR_LE;
-        payload->data[0] = 0x00;
-        payload->data[1] = 0x01;
-        payload->data[2] = 0x00;
-        payload->data[3] = 0x00;
+        const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
+        buf.Append(cdr_header, 4);
 
-        // CDR octet-sequence: uint32 length followed by raw bytes.
-        std::memcpy(payload->data + 4, &data_size, sizeof(data_size));
-        if (data_size > 0) {
-            std::memcpy(payload->data + 8, raw->data.data(), data_size);
+        // CDR octet-sequence: uint32 length placeholder.
+        size_t seq_len_pos = buf.WriteLengthPlaceholder();
+        size_t seq_start = buf.Position();
+
+        // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
+        size_t row_len_pos = buf.WriteLengthPlaceholder();
+        size_t row_start = buf.Position();
+        d->codec->EncodeRow(*d->row, buf);
+        buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
+
+        // Attachments.
+        const auto& att = *d->attachments;
+        buf.AppendFixed(static_cast<uint32_t>(att.size()));
+        for (const auto& [key, blob] : att) {
+            buf.AppendFixed(static_cast<uint32_t>(key.size()));
+            buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
+            uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+            buf.AppendFixed(blob_len);
+            if (blob_len > 0) buf.Append(blob->data(), blob_len);
         }
-        payload->length = total;
+
+        // Patch CDR sequence length.
+        buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
+
+        payload->length = static_cast<uint32_t>(buf.Position());
         return true;
     }
 
     bool deserialize(
         eprosima::fastrtps::rtps::SerializedPayload_t* payload,
         void* data) override {
-        auto* raw = static_cast<RawBytes*>(data);
+        auto* d = static_cast<TransportData*>(data);
         if (payload->length < 8) return false;
 
-        // Skip 4-byte encapsulation, read 4-byte length.
+        // Skip 4-byte CDR encapsulation, read 4-byte sequence length.
         uint32_t data_size = 0;
         std::memcpy(&data_size, payload->data + 4, sizeof(data_size));
         if (8 + data_size > payload->length) return false;
 
-        raw->data.resize(data_size);
+        d->received.resize(data_size);
         if (data_size > 0) {
-            std::memcpy(raw->data.data(), payload->data + 8, data_size);
+            std::memcpy(d->received.data(), payload->data + 8, data_size);
         }
         return true;
     }
 
     std::function<uint32_t()> getSerializedSizeProvider(
-        void* data) override {
-        auto* raw = static_cast<RawBytes*>(data);
-        uint32_t sz = 4 + 4 + static_cast<uint32_t>(raw->data.size());
+        void* /*data*/) override {
+        uint32_t sz = static_cast<uint32_t>(m_typeSize);
         return [sz]() { return sz; };
     }
 
-    void* createData() override { return new RawBytes(); }
+    void* createData() override { return new TransportData(); }
 
     void deleteData(void* data) override {
-        delete static_cast<RawBytes*>(data);
+        delete static_cast<TransportData*>(data);
     }
 
     bool getKey(
@@ -112,26 +144,65 @@ class RawBytesTopicType : public TopicDataType {
 };
 
 // -----------------------------------------------------------------------
-// DataReaderListener — dispatches received rows to a user callback.
+// DataReaderListener — decodes received data and delivers ArrowRow.
 // -----------------------------------------------------------------------
 
 class SubscriptionListener : public DataReaderListener {
  public:
-    explicit SubscriptionListener(PubSubProvider::SubscribeCallback cb)
-        : callback_(std::move(cb)) {}
+    SubscriptionListener(PubSubProvider::SubscribeCallback cb,
+                         RowCodec* codec)
+        : callback_(std::move(cb)), codec_(codec) {}
 
     void on_data_available(DataReader* reader) override {
-        RawBytes raw;
+        TransportData data;
         SampleInfo info;
-        while (reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK) {
-            if (info.valid_data) {
-                callback_(DeserializeEnvelope(raw.data));
+        while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
+            if (!info.valid_data) continue;
+
+            // Parse envelope format directly from received bytes.
+            const uint8_t* ptr = data.received.data();
+            size_t total = data.received.size();
+            if (total < 4) continue;
+
+            uint32_t row_len;
+            std::memcpy(&row_len, ptr, 4);
+            if (4 + row_len > total) continue;
+
+            ArrowRow row = codec_->DecodeRow(ptr + 4, row_len);
+
+            // Parse attachments.
+            Attachments attachments;
+            size_t pos = 4 + row_len;
+            if (pos + 4 <= total) {
+                uint32_t att_count;
+                std::memcpy(&att_count, ptr + pos, 4);
+                pos += 4;
+                for (uint32_t i = 0; i < att_count && pos + 4 <= total; ++i) {
+                    uint32_t key_len;
+                    std::memcpy(&key_len, ptr + pos, 4);
+                    pos += 4;
+                    if (pos + key_len > total) break;
+                    std::string key(reinterpret_cast<const char*>(ptr + pos), key_len);
+                    pos += key_len;
+                    if (pos + 4 > total) break;
+                    uint32_t blob_len;
+                    std::memcpy(&blob_len, ptr + pos, 4);
+                    pos += 4;
+                    if (pos + blob_len > total) break;
+                    auto blob = std::make_shared<const std::vector<uint8_t>>(
+                        ptr + pos, ptr + pos + blob_len);
+                    pos += blob_len;
+                    attachments[std::move(key)] = std::move(blob);
+                }
             }
+
+            callback_(std::move(row), std::move(attachments));
         }
     }
 
  private:
     PubSubProvider::SubscribeCallback callback_;
+    RowCodec* codec_;
 };
 
 // -----------------------------------------------------------------------
@@ -160,6 +231,7 @@ struct FastDDSPubSubProvider::Impl {
         DataWriter* writer = nullptr;
         DataReader* reader = nullptr;
         std::unique_ptr<SubscriptionListener> listener;
+        std::unique_ptr<RowCodec> codec;
     };
 
     uint32_t             max_payload = 0;
@@ -180,7 +252,6 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(uint32_t domain_id,
     : impl_(std::make_unique<Impl>()) {
     impl_->max_payload = max_payload_bytes;
 
-    // --- Domain participant ---
     DomainParticipantQos pqos = PARTICIPANT_QOS_DEFAULT;
     pqos.name("ArrowRowParticipant");
     impl_->participant = DomainParticipantFactory::get_instance()
@@ -188,11 +259,9 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(uint32_t domain_id,
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    // --- Register the raw-bytes type ---
-    impl_->type_support.reset(new RawBytesTopicType(max_payload_bytes));
+    impl_->type_support.reset(new ArrowRowTopicType(max_payload_bytes));
     impl_->type_support.register_type(impl_->participant);
 
-    // --- Publisher / subscriber (shared across all topics) ---
     impl_->publisher =
         impl_->participant->create_publisher(PUBLISHER_QOS_DEFAULT);
     if (!impl_->publisher)
@@ -232,7 +301,7 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 
 void FastDDSPubSubProvider::CreateTopic(
     const std::vector<std::string>& topic_segments,
-    std::shared_ptr<arrow::Schema> /*schema*/) {
+    std::shared_ptr<arrow::Schema> schema) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -244,12 +313,16 @@ void FastDDSPubSubProvider::CreateTopic(
     if (!topic)
         throw std::runtime_error("FastDDS: failed to create topic: " + name);
 
-    impl_->topics[name].topic = topic;
+    auto& ts = impl_->topics[name];
+    ts.topic = topic;
+    if (schema)
+        ts.codec = std::make_unique<RowCodec>(std::move(schema));
 }
 
 void FastDDSPubSubProvider::Publish(
     const std::vector<std::string>& topic_segments,
-    const Envelope& envelope) {
+    const ArrowRow& row,
+    const Attachments& attachments) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -258,6 +331,8 @@ void FastDDSPubSubProvider::Publish(
         throw std::runtime_error("FastDDS: unknown topic: " + name);
 
     auto& ts = it->second;
+    if (!ts.codec)
+        throw std::runtime_error("FastDDS: topic has no schema (cannot encode): " + name);
 
     // Lazily create the DataWriter on first publish.
     if (!ts.writer) {
@@ -272,9 +347,13 @@ void FastDDSPubSubProvider::Publish(
                 "FastDDS: failed to create DataWriter for: " + name);
     }
 
-    RawBytes raw_bytes;
-    raw_bytes.data = SerializeEnvelope(envelope);
-    ts.writer->write(&raw_bytes);
+    // Set up TransportData with pointers — serialize() will encode
+    // directly into the DDS payload buffer via FixedWriteBuffer.
+    TransportData transport;
+    transport.row = &row;
+    transport.attachments = &attachments;
+    transport.codec = ts.codec.get();
+    ts.writer->write(&transport);
 }
 
 void FastDDSPubSubProvider::Subscribe(
@@ -290,8 +369,11 @@ void FastDDSPubSubProvider::Subscribe(
     auto& ts = it->second;
     if (ts.reader)
         throw std::runtime_error("FastDDS: already subscribed to: " + name);
+    if (!ts.codec)
+        throw std::runtime_error("FastDDS: topic has no schema (cannot decode): " + name);
 
-    ts.listener = std::make_unique<SubscriptionListener>(std::move(callback));
+    ts.listener = std::make_unique<SubscriptionListener>(
+        std::move(callback), ts.codec.get());
 
     DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
     rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
