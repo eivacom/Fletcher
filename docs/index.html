@@ -151,6 +151,7 @@ tr:hover td { background: #f4f5fb; }
     <li><a href="#web-client">WebClient (TS)</a></li>
     <li><a href="#batcher">Batcher &amp; WAL</a></li>
     <li><a href="#fastdds">FastDDS Provider</a></li>
+    <li><a href="#xrce-dds">XRCE-DDS Provider</a></li>
     <li><a href="#capi">C API &amp; Rust</a></li>
 
     <li class="section"><span>Reference</span></li>
@@ -1044,6 +1045,59 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
   nanoarrow and retained for late-joining subscribers.</p>
 
 
+<!-- ── XRCE-DDS ──────────────────────────────────────────────────────── -->
+<h2 id="xrce-dds">XRCE-DDS Provider</h2>
+
+<p>A <code>PubSubProvider</code> implementation using
+  <a href="https://github.com/eProsima/Micro-XRCE-DDS-Client">eProsima Micro XRCE-DDS Client</a>
+  for <strong>extremely resource-constrained environments</strong> (MCUs,
+  embedded Linux, &lt;75&thinsp;KB Flash). The XRCE-DDS standard uses a
+  client/agent split: the thin client runs on the device while a separate
+  Agent process bridges to the full DDS network.</p>
+
+<pre><code>fletcher::<span class="ty">XrceConfig</span> cfg;
+cfg.transport  = fletcher::<span class="ty">XrceTransport</span>::kUdp;
+cfg.agent_ip   = <span class="str">"192.168.1.10"</span>;
+cfg.agent_port = <span class="num">2018</span>;
+cfg.max_payload = <span class="num">512</span>;
+
+<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">XrceDDSPubSubProvider</span>&gt;(cfg);</code></pre>
+
+<h3>Architecture</h3>
+<table>
+  <tr><th>Aspect</th><th>FastDDS</th><th>XRCE-DDS</th></tr>
+  <tr><td>Deployment</td><td>Desktop / server</td><td>MCU / embedded Linux</td></tr>
+  <tr><td>Footprint</td><td>~10+ MB</td><td>&lt;75 KB Flash</td></tr>
+  <tr><td>Subscribe model</td><td>Per-topic listener</td><td>Single global callback, reader-ID demux</td></tr>
+  <tr><td>Zero-copy publish</td><td><code>FixedWriteBuffer</code> on DDS payload</td><td>Two-pass (encode &rarr; memcpy into stream)</td></tr>
+  <tr><td>Agent required</td><td>No</td><td>Yes (<code>MicroXRCEAgent</code>)</td></tr>
+</table>
+
+<h3>Configuration</h3>
+<table>
+  <tr><th>Field</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>transport</code></td><td><code>kUdp</code></td><td>UDP, TCP, or Serial</td></tr>
+  <tr><td><code>agent_ip</code></td><td><code>127.0.0.1</code></td><td>Agent IP address</td></tr>
+  <tr><td><code>agent_port</code></td><td><code>2018</code></td><td>Agent port</td></tr>
+  <tr><td><code>max_payload</code></td><td><code>512</code></td><td>Maximum envelope size (bytes)</td></tr>
+  <tr><td><code>stream_history</code></td><td><code>4</code></td><td>Reliable stream history depth (power of 2)</td></tr>
+  <tr><td><code>run_loop_ms</code></td><td><code>10</code></td><td>Background run-loop period (ms)</td></tr>
+  <tr><td><code>session_key</code></td><td><code>0xAABBCCDD</code></td><td>Unique client ID on the Agent</td></tr>
+</table>
+
+<h3>Schema delivery</h3>
+<p>Uses the same companion <code>/__schema</code> topic pattern as FastDDS
+  with RELIABLE + TRANSIENT_LOCAL + KEEP_LAST(1) QoS. The envelope wire
+  format is identical, so XRCE-DDS and FastDDS clients interoperate
+  through a shared Agent.</p>
+
+<h3>Dependencies</h3>
+<p>Fetched automatically via CMake FetchContent (Micro-CDR v2.0.1 +
+  Micro XRCE-DDS Client v2.4.3). No Conan package or system install
+  required. Links <code>PUBLIC pubsub</code> (nanoarrow) and
+  <code>PRIVATE microxrcedds_client</code> &mdash; no Arrow C++ dependency.</p>
+
+
 <!-- ── C API / Rust ────────────────────────────────────────────────── -->
 <h2 id="capi">C API &amp; Rust Bindings</h2>
 
@@ -1135,6 +1189,10 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
     include/                   FastDDSPubSubProvider class
     src/                       DDS setup, companion __schema topic, zero-copy transport
 
+  XrceDDSPubSubProvider/
+    include/                   XrceDDSPubSubProvider class + XrceConfig
+    src/                       XRCE session, reader-ID demux, schema companion topic
+
   WebGateway/
     include/web_gateway/
       web_gateway.hpp          WebGateway class (Boost.Beast WebSocket server)
@@ -1165,42 +1223,45 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
 <h2 id="dependency-graph">Dependency Graph</h2>
 
 <div class="diagram">
-                     +------------------+
-                     |    nanoarrow     |   (vendored, ~100 KB)
-                     +--------+---------+
-                              |
-                     +--------v---------+
-                     |      pubsub      |   (nanoarrow only, edge-ready)
-                     +--------+---------+
-                              |
-              +---------------+-------------------+
-              |                                   |
-   +----------v------------+         +-----------v-----------+
-   | fast_dds_pubsub_prov. |         |      row_codec        |
-   | (nanoarrow + FastDDS)  |         |   (Arrow C++, server)  |
-   +------------------------+         +-----------+-----------+
-                                                  |
-                                      +-----------v-----------+
-                                      |     pubsub_arrow      |
-                                      | (pubsub + row_codec   |
-                                      |  + Arrow C++)          |
-                                      +-----------+-----------+
-                                                  |
-              +-------------------+-------------------+-------------------+
-              |                   |                   |                   |
-   +----------v-------+  +------v---------+  +------v--------+  +------v--------+
-   |   web_gateway    |  | pubsub_arrow   |  |  row_batcher  |  | proto_integr. |
-   | (pubsub +        |  | (pubsub +      |  | (Arrow C++ +  |  | (test suite)  |
-   |  Boost.Beast,    |  |  row_codec +   |  |  row_codec)   |  +---------------+
-   |  nanoarrow only) |  |  Arrow C++)    |  +---------------+
-   +------------------+  +----------------+
+                        +------------------+
+                        |    nanoarrow     |   (vendored, ~100 KB)
+                        +--------+---------+
+                                 |
+                        +--------v---------+
+                        |      pubsub      |   (nanoarrow only, edge-ready)
+                        +--------+---------+
+                                 |
+         +--------------+--------+---------+-------------------+
+         |              |                                      |
++--------v---------+  +-v-------------------+      +-----------v-----------+
+| fast_dds_pubsub  |  | xrce_dds_pubsub    |      |      row_codec        |
+| (nanoarrow +     |  | (nanoarrow +        |      |   (Arrow C++, server)  |
+|  Fast DDS)       |  |  Micro XRCE-DDS,   |      +-----------+-----------+
++------------------+  |  &lt;75 KB Flash)  |                    |
+                      +---------------------+      +-----------v-----------+
+                                                   |     pubsub_arrow      |
+                                                   | (pubsub + row_codec   |
+                                                   |  + Arrow C++)          |
+                                                   +-----------+-----------+
+                                                               |
+                 +-------------------+-------------------+-------------------+
+                 |                   |                   |                   |
+      +----------v-------+  +------v---------+  +------v--------+  +------v--------+
+      |   web_gateway    |  | pubsub_arrow   |  |  row_batcher  |  | proto_integr. |
+      | (pubsub +        |  | (pubsub +      |  | (Arrow C++ +  |  | (test suite)  |
+      |  Boost.Beast,    |  |  row_codec +   |  |  row_codec)   |  +---------------+
+      |  nanoarrow only) |  |  Arrow C++)    |  +---------------+
+      +------------------+  +----------------+
 </div>
 
 <p><strong>Edge binary</strong> (e.g., sensor gateway): links
-  <code>pubsub</code> + <code>fast_dds_pubsub_provider</code> +
-  generated <code>.fletcher.pb.h</code> code. Total added dependency:
-  nanoarrow (~100 KB). No Arrow C++ required. The <code>web_gateway</code>
-  also falls on this side &mdash; it is nanoarrow-only.</p>
+  <code>pubsub</code> + a transport provider
+  (<code>fast_dds_pubsub_provider</code> for full DDS networks, or
+  <code>xrce_dds_pubsub_provider</code> for resource-constrained
+  environments) + generated <code>.fletcher.pb.h</code> code. Total added
+  dependency: nanoarrow (~100 KB). No Arrow C++ required. The
+  <code>web_gateway</code> also falls on this side &mdash; it is
+  nanoarrow-only.</p>
 
 <p><strong>Server binary</strong> (e.g., data pipeline): additionally links
   <code>pubsub_arrow</code> + <code>row_codec</code> + <code>row_batcher</code>
