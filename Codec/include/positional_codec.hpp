@@ -2,7 +2,6 @@
 #define FLETCHER_INCLUDE_POSITIONAL_CODEC_HPP_
 
 #include <arrow/api.h>
-#include <pubsub/envelope.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -11,6 +10,7 @@
 namespace fletcher {
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
+using EncodedRow = std::vector<uint8_t>;
 
 // Positional row buffer format (little-endian throughout):
 //

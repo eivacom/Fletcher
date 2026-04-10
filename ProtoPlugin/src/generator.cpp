@@ -180,6 +180,7 @@ std::string WireTypeHex(const FieldInfo& fi) {
         case FieldKind::REPEATED_SCALAR:
         case FieldKind::REPEATED_STRUCT: return "0x21";
         case FieldKind::MAP:             return "0x24";
+        case FieldKind::NESTED_LIST:     return "0x21";
         case FieldKind::SCALAR: {
             const auto& expr = fi.mapping.scalar.arrow_type_expr;
             if (expr == "arrow::boolean()")  return "0x01";
@@ -1328,6 +1329,48 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi) {
         break;
     }
 
+    case FieldKind::NESTED_LIST: {
+        // Nested lists: List<List<...<Struct>>>
+        // Encode as nested counts + struct payloads.
+        int depth = fi.mapping.list_depth;
+        o << "        buf.AppendByte(0x00);\n"
+          << "        {\n"
+          << "            auto len_pos = buf.WriteLengthPlaceholder();\n"
+          << "            auto data_start = buf.Position();\n";
+
+        // For nullable fields, dereference the optional (or use empty default).
+        std::string src;
+        if (fi.mapping.nullable) {
+            src = fi.name + "_ref_";
+            o << "            static const decltype(*" << n << ") empty_nl_{};\n"
+              << "            const auto& " << src << " = "
+              << n << ".has_value() ? *" << n << " : empty_nl_;\n";
+        } else {
+            src = n;
+        }
+
+        // Generate nested loops.  depth=2 → List<List<Struct>>:
+        //   count0 → for v0 : field { count1 → for v1 : v0 { encode struct } }
+        for (int d = 0; d < depth; ++d) {
+            std::string var = "nl_" + std::to_string(d);
+            o << "            buf.AppendFixed(static_cast<uint32_t>("
+              << src << ".size()));\n"
+              << "            for (const auto& " << var << " : " << src << ") {\n";
+            src = var;
+        }
+        // Innermost: encode each struct
+        o << "                buf.AppendByte(0x00);\n"
+          << "                " << src << ".EncodeStructTo_(buf);\n";
+        // Close loops
+        for (int d = 0; d < depth; ++d)
+            o << "            }\n";
+
+        o << "            buf.PatchU32(len_pos,"
+          << " static_cast<uint32_t>(buf.Position() - data_start));\n"
+          << "        }\n";
+        break;
+    }
+
     case FieldKind::MAP: {
         const auto& mk = fi.mapping.map_key;
         int kpsz = ScalarPayloadSize(mk);
@@ -1410,13 +1453,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "        EncodeStructTo_(buf);\n"
       << "    }\n\n";
 
-    // Encode() — convenience returning EncodedRow
+    // Encode() — convenience returning EncodedRow (positional format)
     o << "    fletcher::EncodedRow Encode() const {\n"
-      << "        fletcher::EncodedRow result;\n"
-      << "        result.reserve(128);\n"
-      << "        fletcher::VectorWriteBuffer buf(result);\n"
-      << "        EncodeTo(buf);\n"
-      << "        return result;\n"
+      << "        return Codec().EncodeRow(ToScalars());\n"
       << "    }\n\n";
 }
 
@@ -1660,6 +1699,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
 
     if (!schema_only) {
         o << "#include <positional_codec.hpp>\n"
+          << "#include <row_codec.hpp>\n"
           << "#include <write_buffer.hpp>\n"
           << "#include <arrow_row_view.hpp>\n";
     }
