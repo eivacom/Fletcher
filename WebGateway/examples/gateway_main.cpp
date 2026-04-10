@@ -12,6 +12,10 @@
 #include <web_gateway/web_gateway.hpp>
 #include <pubsub/driver.hpp>
 #include <pubsub/pubsub_provider.hpp>
+#include <pubsub/owned_schema.hpp>
+#include <pubsub/write_buffer.hpp>
+
+#include <nanoarrow/nanoarrow.h>
 
 #include <atomic>
 #include <chrono>
@@ -31,15 +35,20 @@
 class InProcessProvider : public fletcher::PubSubProvider {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> /*schema*/) override {
+                     fletcher::OwnedSchema /*schema*/) override {
         std::lock_guard lock(mu_);
         auto key = Join(segments);
         topics_[key] = {};
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const fletcher::ArrowRow& row,
+                 RowEncoder encoder,
                  const fletcher::Attachments& attachments) override {
+        // Encode into a temporary buffer.
+        std::vector<uint8_t> buf;
+        fletcher::VectorWriteBuffer wb(buf);
+        encoder(wb);
+
         SubscribeCallback cb;
         {
             std::lock_guard lock(mu_);
@@ -47,7 +56,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
             if (it == topics_.end()) return;
             cb = it->second;
         }
-        if (cb) cb(row, attachments);
+        if (cb) cb(buf.data(), buf.size(), attachments);
     }
 
     fletcher::SubscriptionResult Subscribe(
@@ -84,13 +93,19 @@ class InProcessProvider : public fletcher::PubSubProvider {
 // ---------------------------------------------------------------------------
 
 int main() {
-    // Set up provider → driver → gateway.
+    // Set up provider -> driver -> gateway.
     auto provider = std::make_shared<InProcessProvider>();
     auto driver   = std::make_shared<fletcher::Driver>(provider);
 
-    // Create a topic before the gateway starts.
+    // Build a simple schema via nanoarrow: struct{ seq: uint32 }.
+    fletcher::OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "seq");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_UINT32);
+
     std::vector<std::string> topic = {"demo", "telemetry"};
-    driver->CreateTopic(topic, nullptr);
+    driver->CreateTopic(topic, std::move(schema));
 
     fletcher::WebGatewayOptions opts;
     opts.port = 9090;
@@ -107,11 +122,12 @@ int main() {
     std::thread publisher([&] {
         uint32_t seq = 0;
         while (running) {
-            fletcher::ArrowRow row = {
-                std::make_shared<arrow::UInt32Scalar>(seq)
-            };
+            driver->Publish(topic,
+                [seq](fletcher::WriteBuffer& buf) {
+                    buf.AppendByte(0x00);              // null bitfield: not null
+                    buf.AppendFixed<uint32_t>(seq);
+                });
 
-            driver->Publish(topic, row);
             std::printf("Published seq=%u\n", seq);
             seq++;
 

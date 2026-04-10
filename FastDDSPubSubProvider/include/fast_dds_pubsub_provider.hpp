@@ -26,15 +26,11 @@ class FastDDSPubSubProvider : public PubSubProvider {
     FastDDSPubSubProvider& operator=(const FastDDSPubSubProvider&) = delete;
 
     void CreateTopic(const std::vector<std::string>& topic_segments,
-                     std::shared_ptr<arrow::Schema> schema) override;
+                     OwnedSchema schema) override;
 
     void Publish(const std::vector<std::string>& topic_segments,
-                 const ArrowRow& row,
+                 RowEncoder encoder,
                  const Attachments& attachments = {}) override;
-
-    void PublishDirect(const std::vector<std::string>& topic_segments,
-                       RowEncoder encoder,
-                       const Attachments& attachments = {}) override;
 
     SubscriptionResult Subscribe(
         const std::vector<std::string>& topic_segments,

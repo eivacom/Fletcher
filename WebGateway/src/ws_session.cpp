@@ -2,8 +2,11 @@
 
 #include <pubsub/schema_ipc.hpp>
 #include <pubsub/envelope.hpp>
+#include <pubsub/owned_schema.hpp>
+#include <pubsub/write_buffer.hpp>
 
 #include <arrow/api.h>
+#include <arrow/c/bridge.h>
 
 #include <nlohmann/json.hpp>
 
@@ -209,10 +212,7 @@ std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
 }
 
 void WsSession::OnCreateTopic(const std::string& topic) {
-    // TODO: accept schema from the client so rows can be encoded/decoded.
-    // Without a schema the topic can relay pre-encoded envelopes but not
-    // re-encode ArrowRow data (EncodeRow/DecodeRow will throw).
-    driver_->CreateTopic(SplitTopic(topic), nullptr);
+    driver_->CreateTopic(SplitTopic(topic), OwnedSchema{});
     SendText(json{{"type", "topic_created"}}.dump());
 }
 
@@ -223,14 +223,15 @@ void WsSession::OnSubscribe(const std::string& topic) {
     std::weak_ptr<WsSession> weak = shared_from_this();
 
     auto result = driver_->Subscribe(segments,
-        [weak, sub_id_ptr, segments](ArrowRow row, Attachments att) {
+        [weak, sub_id_ptr](const uint8_t* data, size_t len, Attachments att) {
             auto self = weak.lock();
             if (!self) return;
 
             try {
-                // Re-encode for the WebSocket wire format.
-                auto encoded_row = self->driver_->EncodeRow(segments, row);
-                Envelope env{std::move(encoded_row), std::move(att)};
+                // Build envelope directly from raw row bytes.
+                Envelope env;
+                env.row.assign(data, data + len);
+                env.attachments = std::move(att);
                 auto binary = SerializeEnvelope(env);
 
                 std::vector<uint8_t> frame;
@@ -244,7 +245,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
                         self->SendBinary(std::move(f));
                     });
             } catch (...) {
-                // Encoding/serialization failure — drop this message
+                // Serialization failure — drop this message
                 // rather than crashing the subscriber callback thread.
             }
         });
@@ -260,9 +261,14 @@ void WsSession::OnSubscribe(const std::string& topic) {
     };
 
     if (result.schema) {
-        auto ipc_bytes = SerializeSchemaIpc(*result.schema);
+        auto ipc_bytes = SerializeSchemaIpc(result.schema.get());
         response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-        response["schema"] = SchemaToJson(*result.schema);
+
+        // Convert nanoarrow schema to Arrow C++ for JSON serialization.
+        OwnedSchema copy = OwnedSchema::DeepCopy(result.schema.get());
+        auto imported = arrow::ImportSchema(copy.get());
+        if (imported.ok())
+            response["schema"] = SchemaToJson(**imported);
     }
 
     SendText(response.dump());
@@ -285,8 +291,13 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
 
     auto segments = SplitTopic(topic);
     auto envelope = DeserializeEnvelope(data + env_offset, len - env_offset);
-    auto row = driver_->DecodeRow(segments, envelope.row);
-    driver_->Publish(segments, row, envelope.attachments);
+
+    // Pass raw row bytes through to the driver.
+    driver_->Publish(segments,
+        [row_data = std::move(envelope.row)](WriteBuffer& buf) {
+            buf.Append(row_data.data(), row_data.size());
+        },
+        envelope.attachments);
 
     SendText(json{{"type", "published"}}.dump());
 }

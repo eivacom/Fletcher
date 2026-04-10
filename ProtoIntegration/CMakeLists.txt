@@ -46,9 +46,10 @@ set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
     set(_src "${PROTO_DIR}/${_stem}.proto")
     set(_hdr "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
+    set(_vhdr "${GENERATED_DIR}/${_stem}.fletcher.view.pb.h")
 
     add_custom_command(
-        OUTPUT  "${_hdr}"
+        OUTPUT  "${_hdr}" "${_vhdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:protoc-gen-fletcher>"
                 "--fletcher_out=${GENERATED_DIR}"
@@ -60,7 +61,7 @@ foreach(_stem ${PROTO_STEMS})
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
-    list(APPEND GENERATED_HEADERS "${_hdr}")
+    list(APPEND GENERATED_HEADERS "${_hdr}" "${_vhdr}")
 endforeach()
 
 # GeoArrow proto lives under the repo-root proto/ directory.
@@ -68,8 +69,9 @@ endforeach()
 file(MAKE_DIRECTORY "${GENERATED_DIR}/geoarrow")
 set(_geoarrow_src "${GEOARROW_PROTO_DIR}/geoarrow/geoarrow.proto")
 set(_geoarrow_hdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.pb.h")
+set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.view.pb.h")
 add_custom_command(
-    OUTPUT  "${_geoarrow_hdr}"
+    OUTPUT  "${_geoarrow_hdr}" "${_geoarrow_vhdr}"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:protoc-gen-fletcher>"
             "--fletcher_out=${GENERATED_DIR}/geoarrow"
@@ -80,7 +82,7 @@ add_custom_command(
     COMMENT "protoc-gen-fletcher: geoarrow/geoarrow.proto"
     VERBATIM
 )
-list(APPEND GENERATED_HEADERS "${_geoarrow_hdr}")
+list(APPEND GENERATED_HEADERS "${_geoarrow_hdr}" "${_geoarrow_vhdr}")
 
 add_custom_target(fletcher_proto_codegen ALL
     DEPENDS ${GENERATED_HEADERS}
@@ -101,6 +103,7 @@ target_link_libraries(fletcher_proto_integration_tests PRIVATE
     Catch2::Catch2WithMain
     row_codec
     pubsub
+    arrow::arrow
 )
 
 include(Catch)

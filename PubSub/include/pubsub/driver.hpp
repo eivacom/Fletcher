@@ -31,49 +31,28 @@ class Driver {
     /// Create a topic on the underlying provider and register it
     /// in the local topic registry.
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> schema);
-
-    /// Publish an ArrowRow with optional attachments to a topic.
-    void Publish(const std::vector<std::string>& segments,
-                 const ArrowRow& row,
-                 const Attachments& attachments = {});
+                     OwnedSchema schema);
 
     /// Publish by writing encoded row directly into the provider's buffer.
-    /// The encoder callback writes the row into the provided WriteBuffer.
-    void PublishDirect(const std::vector<std::string>& segments,
-                       PubSubProvider::RowEncoder encoder,
-                       const Attachments& attachments = {});
+    void Publish(const std::vector<std::string>& segments,
+                 PubSubProvider::RowEncoder encoder,
+                 const Attachments& attachments = {});
 
-    /// Result returned by Subscribe, carrying the subscription ID and
-    /// the schema that the publisher provided when it created the topic.
+    /// Result returned by Subscribe.
     struct SubscribeResult {
         uint64_t subscription_id;
-        std::shared_ptr<arrow::Schema> schema;
+        OwnedSchema schema;
     };
 
-    /// Subscribe to a topic.  Returns the subscription ID and the
-    /// schema.  If the topic was not previously registered locally
-    /// (e.g. a subscriber-only process), the provider is queried for
-    /// the schema via the companion topic.
-    ///
-    /// Multiple subscribers per topic are supported; each receives
-    /// every published message via internal fan-out.
-    using SubscribeCallback = std::function<void(ArrowRow row,
+    /// Subscribe to a topic.  Returns the subscription ID and the schema.
+    using SubscribeCallback = std::function<void(const uint8_t* data,
+                                                 size_t len,
                                                  Attachments attachments)>;
     SubscribeResult Subscribe(const std::vector<std::string>& segments,
                               SubscribeCallback cb);
 
     /// Remove a subscription by ID.
     void Unsubscribe(uint64_t subscription_id);
-
-    /// Encode an ArrowRow using the codec for the given topic.
-    /// Useful for relay scenarios (e.g. WebGateway).
-    EncodedRow EncodeRow(const std::vector<std::string>& segments,
-                         const ArrowRow& row) const;
-
-    /// Decode an EncodedRow using the codec for the given topic.
-    ArrowRow DecodeRow(const std::vector<std::string>& segments,
-                       const EncodedRow& encoded) const;
 
     /// List all registered topic names (joined with "/").
     std::vector<std::string> ListTopics() const;

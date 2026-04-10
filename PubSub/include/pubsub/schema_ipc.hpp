@@ -1,23 +1,23 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_SCHEMA_IPC_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_SCHEMA_IPC_HPP_
 
-#include <arrow/type_fwd.h>
+#include "pubsub/owned_schema.hpp"
+
+#include <nanoarrow/nanoarrow.h>
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 namespace fletcher {
 
-/// Serialize an Arrow schema to IPC stream format (schema-only, no batches).
+/// Serialize an ArrowSchema to IPC stream format (schema-only, no batches).
 /// The result is a self-contained byte buffer suitable for storage or
-/// transmission.
-std::vector<uint8_t> SerializeSchemaIpc(const arrow::Schema& schema);
+/// transmission.  Wire-compatible with Apache Arrow C++ IPC.
+std::vector<uint8_t> SerializeSchemaIpc(const ArrowSchema* schema);
 
-/// Deserialize an Arrow schema from IPC stream bytes produced by
+/// Deserialize an ArrowSchema from IPC stream bytes produced by
 /// SerializeSchemaIpc.
-std::shared_ptr<arrow::Schema> DeserializeSchemaIpc(const uint8_t* data,
-                                                     size_t len);
+OwnedSchema DeserializeSchemaIpc(const uint8_t* data, size_t len);
 
 }  // namespace fletcher
 

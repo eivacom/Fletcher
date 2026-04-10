@@ -1,9 +1,9 @@
 // Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
 //
-// The custom TopicDataType serialises ArrowRow + Attachments directly
-// into the DDS payload buffer via WriteBuffer on publish, and decodes
-// directly from the DDS payload buffer on subscribe — no intermediate
-// buffer copies on either path.  The envelope wire format is:
+// The custom TopicDataType serialises encoded row bytes + Attachments
+// directly into the DDS payload buffer via WriteBuffer on publish, and
+// delivers raw row bytes to the subscriber callback — no Arrow C++
+// dependency.  The envelope wire format is:
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // wrapped in a CDR-LE octet sequence.
 
@@ -11,7 +11,7 @@
 
 #include <pubsub/schema_ipc.hpp>
 #include <pubsub/envelope.hpp>
-#include <write_buffer.hpp>
+#include <pubsub/write_buffer.hpp>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
@@ -97,31 +97,22 @@ class RawBytesTopicType : public TopicDataType {
 };
 
 // -----------------------------------------------------------------------
-// Transport data — dual-purpose type for publish and subscribe.
-//
-// On publish: holds pointers to the ArrowRow/Attachments/RowCodec.
-//   serialize() encodes directly into the DDS payload buffer.
-// On subscribe: codec pointer is set by the listener before
-//   take_next_sample; deserialize() decodes in-place from the DDS buffer.
+// Transport data — carries RowEncoder on publish, raw bytes on subscribe.
 // -----------------------------------------------------------------------
 
 struct TransportData {
-    // Publish path (set by Publish, read by serialize).
-    const ArrowRow*     row = nullptr;
-    const Attachments*  attachments = nullptr;
-    const RowCodec*     codec = nullptr;
-
-    // PublishDirect path — encoder writes row bytes directly into
-    // the DDS payload buffer, bypassing RowCodec and ArrowRow entirely.
+    // Publish path — encoder writes row bytes directly into
+    // the DDS payload buffer via FixedWriteBuffer.
     PubSubProvider::RowEncoder encoder;
+    const Attachments* attachments = nullptr;
 
     // Subscribe path (decoded in-place by deserialize, moved by listener).
-    ArrowRow    decoded_row;
-    Attachments decoded_attachments;
+    std::vector<uint8_t> decoded_row;
+    Attachments          decoded_attachments;
 };
 
 // -----------------------------------------------------------------------
-// DDS TopicDataType — encodes ArrowRow directly into DDS payload.
+// DDS TopicDataType — encodes row bytes directly into DDS payload.
 // -----------------------------------------------------------------------
 
 class ArrowRowTopicType : public TopicDataType {
@@ -151,13 +142,9 @@ class ArrowRowTopicType : public TopicDataType {
         // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
         size_t row_len_pos = buf.WriteLengthPlaceholder();
         size_t row_start = buf.Position();
-        if (d->encoder) {
-            // PublishDirect path — row bytes written directly by caller.
-            d->encoder(buf);
-        } else {
-            // Publish path — encode via RowCodec from ArrowRow.
-            d->codec->EncodeRow(*d->row, buf);
-        }
+
+        // Row bytes written directly by the encoder.
+        d->encoder(buf);
         buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
 
         // Attachments.
@@ -189,7 +176,6 @@ class ArrowRowTopicType : public TopicDataType {
         std::memcpy(&data_size, payload->data + 4, sizeof(data_size));
         if (8 + data_size > payload->length) return false;
 
-        // Decode directly from the DDS payload buffer — no intermediate copy.
         const uint8_t* ptr = payload->data + 8;
         size_t total = data_size;
         if (total < 4) return false;
@@ -198,7 +184,8 @@ class ArrowRowTopicType : public TopicDataType {
         std::memcpy(&row_len, ptr, 4);
         if (4 + row_len > total) return false;
 
-        d->decoded_row = d->codec->DecodeRow(ptr + 4, row_len);
+        // Deliver raw row bytes — no decoding, no Arrow dependency.
+        d->decoded_row.assign(ptr + 4, ptr + 4 + row_len);
 
         // Parse attachments in-place.
         d->decoded_attachments.clear();
@@ -249,29 +236,27 @@ class ArrowRowTopicType : public TopicDataType {
 };
 
 // -----------------------------------------------------------------------
-// DataReaderListener — decodes received data and delivers ArrowRow.
+// DataReaderListener — delivers raw row bytes to subscriber callback.
 // -----------------------------------------------------------------------
 
 class SubscriptionListener : public DataReaderListener {
  public:
-    SubscriptionListener(PubSubProvider::SubscribeCallback cb,
-                         RowCodec* codec)
-        : callback_(std::move(cb)), codec_(codec) {}
+    explicit SubscriptionListener(PubSubProvider::SubscribeCallback cb)
+        : callback_(std::move(cb)) {}
 
     void on_data_available(DataReader* reader) override {
         TransportData data;
-        data.codec = codec_;  // stash so deserialize() can decode in-place
         SampleInfo info;
         while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) continue;
-            callback_(std::move(data.decoded_row),
+            callback_(data.decoded_row.data(),
+                      data.decoded_row.size(),
                       std::move(data.decoded_attachments));
         }
     }
 
  private:
     PubSubProvider::SubscribeCallback callback_;
-    RowCodec* codec_;
 };
 
 // -----------------------------------------------------------------------
@@ -303,11 +288,9 @@ struct FastDDSPubSubProvider::Impl {
         // Companion schema topic (publisher side).
         Topic* schema_topic = nullptr;
         DataWriter* schema_writer = nullptr;
-        // Schema received from the companion topic (subscriber side)
-        // or stored at CreateTopic time (publisher side).
-        std::shared_ptr<arrow::Schema> schema;
+        // Schema (nanoarrow ArrowSchema).
+        OwnedSchema schema;
         bool is_publisher = false;
-        std::unique_ptr<RowCodec> codec;
     };
 
     uint32_t             max_payload = 0;
@@ -385,7 +368,7 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 
 void FastDDSPubSubProvider::CreateTopic(
     const std::vector<std::string>& topic_segments,
-    std::shared_ptr<arrow::Schema> schema) {
+    OwnedSchema schema) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -400,15 +383,13 @@ void FastDDSPubSubProvider::CreateTopic(
 
     auto& ts = impl_->topics[name];
     ts.topic = topic;
-    ts.schema = schema;
     ts.is_publisher = true;
-
-    if (schema)
-        ts.codec = std::make_unique<RowCodec>(schema);
 
     // Create companion __schema topic and eagerly publish the schema
     // so that late-joining subscribers receive it via TRANSIENT_LOCAL.
     if (schema) {
+        ts.schema = OwnedSchema::DeepCopy(schema.get());
+
         std::string schema_name = name + "/__schema";
         auto* stopic = impl_->participant->create_topic(
             schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
@@ -429,49 +410,12 @@ void FastDDSPubSubProvider::CreateTopic(
                 "FastDDS: failed to create schema DataWriter for: " + schema_name);
 
         RawBytes raw;
-        raw.data = SerializeSchemaIpc(*schema);
+        raw.data = SerializeSchemaIpc(schema.get());
         ts.schema_writer->write(&raw);
     }
 }
 
 void FastDDSPubSubProvider::Publish(
-    const std::vector<std::string>& topic_segments,
-    const ArrowRow& row,
-    const Attachments& attachments) {
-    std::string name = JoinSegments(topic_segments);
-    std::lock_guard lock(impl_->mu);
-
-    auto it = impl_->topics.find(name);
-    if (it == impl_->topics.end())
-        throw std::runtime_error("FastDDS: unknown topic: " + name);
-
-    auto& ts = it->second;
-    if (!ts.codec)
-        throw std::runtime_error("FastDDS: topic has no schema (cannot encode): " + name);
-
-    // Lazily create the DataWriter on first publish.
-    if (!ts.writer) {
-        DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
-        wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-        wqos.history().kind     = KEEP_ALL_HISTORY_QOS;
-        wqos.durability().kind  = TRANSIENT_LOCAL_DURABILITY_QOS;
-
-        ts.writer = impl_->publisher->create_datawriter(ts.topic, wqos);
-        if (!ts.writer)
-            throw std::runtime_error(
-                "FastDDS: failed to create DataWriter for: " + name);
-    }
-
-    // Set up TransportData with pointers — serialize() will encode
-    // directly into the DDS payload buffer via FixedWriteBuffer.
-    TransportData transport;
-    transport.row = &row;
-    transport.attachments = &attachments;
-    transport.codec = ts.codec.get();
-    ts.writer->write(&transport);
-}
-
-void FastDDSPubSubProvider::PublishDirect(
     const std::vector<std::string>& topic_segments,
     RowEncoder encoder,
     const Attachments& attachments) {
@@ -497,8 +441,8 @@ void FastDDSPubSubProvider::PublishDirect(
                 "FastDDS: failed to create DataWriter for: " + name);
     }
 
-    // Zero-copy path: encoder writes row bytes directly into the
-    // DDS payload buffer — no ArrowRow, no RowCodec, no intermediate copy.
+    // Encoder writes row bytes directly into the DDS payload buffer
+    // via FixedWriteBuffer — no intermediate copy.
     TransportData transport;
     transport.encoder = std::move(encoder);
     transport.attachments = &attachments;
@@ -509,7 +453,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
     const std::vector<std::string>& topic_segments,
     SubscribeCallback callback) {
     std::string name = JoinSegments(topic_segments);
-    std::shared_ptr<arrow::Schema> schema;
+    OwnedSchema schema;
 
     // --- Phase 1: read schema from companion topic (outside lock) ---
     {
@@ -518,7 +462,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
         auto it = impl_->topics.find(name);
         if (it != impl_->topics.end() && it->second.schema) {
             // Publisher-side or previously resolved: schema already cached.
-            schema = it->second.schema;
+            schema = OwnedSchema::DeepCopy(it->second.schema.get());
         }
     }
 
@@ -574,11 +518,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
     std::lock_guard lock(impl_->mu);
 
     auto& ts = impl_->topics[name];
-    ts.schema = schema;
-
-    // Create codec if not already present (subscriber-side).
-    if (!ts.codec && schema)
-        ts.codec = std::make_unique<RowCodec>(schema);
+    if (!ts.schema && schema)
+        ts.schema = OwnedSchema::DeepCopy(schema.get());
 
     // Create or find the data DDS topic if not already present.
     if (!ts.topic) {
@@ -590,11 +531,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
 
     if (ts.reader)
         throw std::runtime_error("FastDDS: already subscribed to: " + name);
-    if (!ts.codec)
-        throw std::runtime_error("FastDDS: topic has no schema (cannot decode): " + name);
 
-    ts.listener = std::make_unique<SubscriptionListener>(
-        std::move(callback), ts.codec.get());
+    ts.listener = std::make_unique<SubscriptionListener>(std::move(callback));
 
     DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
     rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -607,7 +545,10 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
         throw std::runtime_error(
             "FastDDS: failed to create DataReader for: " + name);
 
-    return SubscriptionResult{schema};
+    OwnedSchema result_schema;
+    if (ts.schema)
+        result_schema = OwnedSchema::DeepCopy(ts.schema.get());
+    return {std::move(result_schema)};
 }
 
 void FastDDSPubSubProvider::Unsubscribe(
