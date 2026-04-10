@@ -35,7 +35,8 @@ namespace ws    = beast::websocket;
 //
 // Server → Client:
 //   { "type": "topic_created" }
-//   { "type": "subscribed",   "subId": "<uint64>", "topic": "<topic>" }
+//   { "type": "subscribed",   "subId": "<uint64>", "topic": "<topic>",
+//                             "schemaIpc": "<base64>", "schema": {...} }
 //   { "type": "unsubscribed" }
 //   { "type": "published" }
 //   { "type": "topics_list",  "topics": ["<topic>", ...] }

@@ -31,8 +31,9 @@ class FastDDSPubSubProvider : public PubSubProvider {
     void Publish(const std::vector<std::string>& topic_segments,
                  const Envelope& envelope) override;
 
-    void Subscribe(const std::vector<std::string>& topic_segments,
-                   SubscribeCallback callback) override;
+    SubscriptionResult Subscribe(
+        const std::vector<std::string>& topic_segments,
+        SubscribeCallback callback) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

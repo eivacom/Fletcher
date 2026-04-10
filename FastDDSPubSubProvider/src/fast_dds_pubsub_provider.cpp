@@ -7,6 +7,8 @@
 
 #include "fast_dds_pubsub_provider.hpp"
 
+#include <pubsub/schema_ipc.hpp>
+
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
 #include <fastdds/dds/publisher/DataWriter.hpp>
@@ -19,11 +21,13 @@
 #include <fastdds/dds/topic/TopicDataType.hpp>
 #include <fastdds/dds/topic/TypeSupport.hpp>
 
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 using namespace eprosima::fastdds::dds;
 
@@ -160,6 +164,13 @@ struct FastDDSPubSubProvider::Impl {
         DataWriter* writer = nullptr;
         DataReader* reader = nullptr;
         std::unique_ptr<SubscriptionListener> listener;
+        // Companion schema topic (publisher side).
+        Topic* schema_topic = nullptr;
+        DataWriter* schema_writer = nullptr;
+        // Schema received from the companion topic (subscriber side)
+        // or stored at CreateTopic time (publisher side).
+        std::shared_ptr<arrow::Schema> schema;
+        bool is_publisher = false;
     };
 
     uint32_t             max_payload = 0;
@@ -208,10 +219,14 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
     if (!impl_ || !impl_->participant) return;
 
     for (auto& [name, ts] : impl_->topics) {
+        if (ts.schema_writer)
+            impl_->publisher->delete_datawriter(ts.schema_writer);
         if (ts.writer)
             impl_->publisher->delete_datawriter(ts.writer);
         if (ts.reader)
             impl_->subscriber->delete_datareader(ts.reader);
+        if (ts.schema_topic)
+            impl_->participant->delete_topic(ts.schema_topic);
         if (ts.topic)
             impl_->participant->delete_topic(ts.topic);
     }
@@ -232,19 +247,50 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 
 void FastDDSPubSubProvider::CreateTopic(
     const std::vector<std::string>& topic_segments,
-    std::shared_ptr<arrow::Schema> /*schema*/) {
+    std::shared_ptr<arrow::Schema> schema) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     if (impl_->topics.count(name))
         throw std::runtime_error("FastDDS: topic already exists: " + name);
 
+    // Create the data topic.
     auto* topic = impl_->participant->create_topic(
         name, impl_->type_support.get_type_name(), TOPIC_QOS_DEFAULT);
     if (!topic)
         throw std::runtime_error("FastDDS: failed to create topic: " + name);
 
-    impl_->topics[name].topic = topic;
+    auto& ts = impl_->topics[name];
+    ts.topic = topic;
+    ts.schema = schema;
+    ts.is_publisher = true;
+
+    // Create companion __schema topic and eagerly publish the schema
+    // so that late-joining subscribers receive it via TRANSIENT_LOCAL.
+    if (schema) {
+        std::string schema_name = name + "/__schema";
+        auto* stopic = impl_->participant->create_topic(
+            schema_name, impl_->type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+        if (!stopic)
+            throw std::runtime_error(
+                "FastDDS: failed to create schema topic: " + schema_name);
+        ts.schema_topic = stopic;
+
+        DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
+        wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+        wqos.history().kind     = KEEP_LAST_HISTORY_QOS;
+        wqos.history().depth    = 1;
+        wqos.durability().kind  = TRANSIENT_LOCAL_DURABILITY_QOS;
+
+        ts.schema_writer = impl_->publisher->create_datawriter(stopic, wqos);
+        if (!ts.schema_writer)
+            throw std::runtime_error(
+                "FastDDS: failed to create schema DataWriter for: " + schema_name);
+
+        RawBytes raw;
+        raw.data = SerializeSchemaIpc(*schema);
+        ts.schema_writer->write(&raw);
+    }
 }
 
 void FastDDSPubSubProvider::Publish(
@@ -277,17 +323,85 @@ void FastDDSPubSubProvider::Publish(
     ts.writer->write(&raw_bytes);
 }
 
-void FastDDSPubSubProvider::Subscribe(
+SubscriptionResult FastDDSPubSubProvider::Subscribe(
     const std::vector<std::string>& topic_segments,
     SubscribeCallback callback) {
     std::string name = JoinSegments(topic_segments);
+    std::shared_ptr<arrow::Schema> schema;
+
+    // --- Phase 1: read schema from companion topic (outside lock) ---
+    {
+        std::lock_guard lock(impl_->mu);
+
+        auto it = impl_->topics.find(name);
+        if (it != impl_->topics.end() && it->second.schema) {
+            // Publisher-side or previously resolved: schema already cached.
+            schema = it->second.schema;
+        }
+    }
+
+    if (!schema) {
+        // Subscriber-side: read from the companion __schema topic.
+        std::string schema_name = name + "/__schema";
+
+        // Find or create the DDS topic for the schema channel.
+        auto* stopic = impl_->participant->create_topic(
+            schema_name, impl_->type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+        if (!stopic)
+            throw std::runtime_error(
+                "FastDDS: failed to find/create schema topic: " + schema_name);
+
+        DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
+        rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+        rqos.history().kind     = KEEP_LAST_HISTORY_QOS;
+        rqos.history().depth    = 1;
+        rqos.durability().kind  = TRANSIENT_LOCAL_DURABILITY_QOS;
+
+        auto* schema_reader = impl_->subscriber->create_datareader(stopic, rqos);
+        if (!schema_reader)
+            throw std::runtime_error(
+                "FastDDS: failed to create schema DataReader for: " + schema_name);
+
+        // Poll for the retained schema sample (TRANSIENT_LOCAL delivers it
+        // once the DataWriter is matched).
+        RawBytes raw;
+        SampleInfo info;
+        constexpr int kMaxRetries = 50;
+        constexpr int kRetryMs = 100;
+        bool got_schema = false;
+        for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+            if (schema_reader->take_next_sample(&raw, &info) ==
+                    ReturnCode_t::RETCODE_OK && info.valid_data) {
+                schema = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
+                got_schema = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryMs));
+        }
+
+        // Clean up the temporary schema reader.
+        impl_->subscriber->delete_datareader(schema_reader);
+        impl_->participant->delete_topic(stopic);
+
+        if (!got_schema)
+            throw std::runtime_error(
+                "FastDDS: timed out waiting for schema on: " + schema_name);
+    }
+
+    // --- Phase 2: register topic and create data DataReader (under lock) ---
     std::lock_guard lock(impl_->mu);
 
-    auto it = impl_->topics.find(name);
-    if (it == impl_->topics.end())
-        throw std::runtime_error("FastDDS: unknown topic: " + name);
+    auto& ts = impl_->topics[name];
+    ts.schema = schema;
 
-    auto& ts = it->second;
+    // Create or find the data DDS topic if not already present.
+    if (!ts.topic) {
+        ts.topic = impl_->participant->create_topic(
+            name, impl_->type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+        if (!ts.topic)
+            throw std::runtime_error("FastDDS: failed to create topic: " + name);
+    }
+
     if (ts.reader)
         throw std::runtime_error("FastDDS: already subscribed to: " + name);
 
@@ -303,6 +417,8 @@ void FastDDSPubSubProvider::Subscribe(
     if (!ts.reader)
         throw std::runtime_error(
             "FastDDS: failed to create DataReader for: " + name);
+
+    return SubscriptionResult{schema};
 }
 
 void FastDDSPubSubProvider::Unsubscribe(

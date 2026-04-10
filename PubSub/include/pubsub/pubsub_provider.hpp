@@ -12,6 +12,12 @@
 
 namespace fletcher {
 
+/// Result returned by PubSubProvider::Subscribe, carrying the schema
+/// that the publisher registered when it created the topic.
+struct SubscriptionResult {
+    std::shared_ptr<arrow::Schema> schema;
+};
+
 /// Abstract transport provider for Arrow-row pub/sub.
 ///
 /// Implementations supply topic creation, message publication, and
@@ -26,10 +32,10 @@ class PubSubProvider {
  public:
     virtual ~PubSubProvider() = default;
 
-    /// Called once per topic before any Publish / Subscribe calls.
-    /// The schema describes the Arrow structure of the rows that will
-    /// flow on this topic.  The provider may use it for type metadata,
-    /// logging, or schema registry integration.
+    /// Called once per topic by the publisher.  The schema describes the
+    /// Arrow structure of rows on this topic.  The provider stores the
+    /// schema and makes it available to future subscribers (e.g. via a
+    /// companion topic with durable semantics).
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
                              std::shared_ptr<arrow::Schema> schema) = 0;
 
@@ -41,10 +47,15 @@ class PubSubProvider {
     /// Callback signature for Subscribe.
     using SubscribeCallback = std::function<void(const Envelope&)>;
 
-    /// Register a subscription callback for a named topic.
-    /// Each call replaces a previously registered callback (if any).
-    virtual void Subscribe(const std::vector<std::string>& topic_segments,
-                           SubscribeCallback callback) = 0;
+    /// Subscribe to a named topic.  Returns the schema that the
+    /// publisher provided when it created the topic.
+    ///
+    /// The provider retrieves the schema from the transport layer
+    /// (e.g. a companion topic) before returning.  Callers do not
+    /// need to call CreateTopic before subscribing.
+    virtual SubscriptionResult Subscribe(
+        const std::vector<std::string>& topic_segments,
+        SubscribeCallback callback) = 0;
 
     /// Remove a previously registered subscription.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;

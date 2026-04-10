@@ -50,27 +50,33 @@ struct Driver::Impl {
     std::atomic<uint64_t> next_id{1};
 
     // Ensure the provider has a single subscription for this topic that
-    // fans out to all registered Driver subscriptions.
-    void EnsureProviderSubscription(const std::string& key, TopicState& ts) {
-        if (ts.provider_subscribed) return;
+    // fans out to all registered Driver subscriptions.  Returns the
+    // schema from the provider (only meaningful on the first call).
+    std::shared_ptr<arrow::Schema> EnsureProviderSubscription(
+        const std::string& key, TopicState& ts) {
+        if (ts.provider_subscribed) return ts.schema;
 
         // Capture key by value; Impl* is safe because provider subscriptions
         // are torn down in the destructor before Impl is destroyed.
-        provider->Subscribe(ts.segments, [this, key](const Envelope& env) {
-            // Take a snapshot of callbacks under the lock, then invoke outside.
-            std::vector<SubscribeCallback> cbs;
-            {
-                std::lock_guard lock(mu);
-                for (auto& [id, sub] : subscriptions) {
-                    if (sub.topic_key == key)
-                        cbs.push_back(sub.callback);
+        auto result = provider->Subscribe(
+            ts.segments, [this, key](const Envelope& env) {
+                // Take a snapshot of callbacks under the lock, then invoke outside.
+                std::vector<SubscribeCallback> cbs;
+                {
+                    std::lock_guard lock(mu);
+                    for (auto& [id, sub] : subscriptions) {
+                        if (sub.topic_key == key)
+                            cbs.push_back(sub.callback);
+                    }
                 }
-            }
-            for (auto& cb : cbs)
-                cb(env);
-        });
+                for (auto& cb : cbs)
+                    cb(env);
+            });
 
         ts.provider_subscribed = true;
+        if (result.schema && !ts.schema)
+            ts.schema = result.schema;
+        return ts.schema;
     }
 };
 
@@ -126,19 +132,25 @@ void Driver::Publish(const std::vector<std::string>& segments,
 // Subscription
 // -----------------------------------------------------------------------
 
-uint64_t Driver::Subscribe(const std::vector<std::string>& segments,
-                           SubscribeCallback cb) {
+Driver::SubscribeResult Driver::Subscribe(
+    const std::vector<std::string>& segments, SubscribeCallback cb) {
     std::string key = JoinSegments(segments);
     std::lock_guard lock(impl_->mu);
 
+    // Auto-register the topic if it wasn't created locally (subscriber-only
+    // process).  The provider's Subscribe will retrieve the schema.
     auto it = impl_->topics.find(key);
-    if (it == impl_->topics.end())
-        throw std::runtime_error("Driver: unknown topic: " + key);
+    if (it == impl_->topics.end()) {
+        Impl::TopicState ts;
+        ts.segments = segments;
+        impl_->topics[key] = std::move(ts);
+        it = impl_->topics.find(key);
+    }
 
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
-    impl_->EnsureProviderSubscription(key, it->second);
-    return id;
+    auto schema = impl_->EnsureProviderSubscription(key, it->second);
+    return {id, schema};
 }
 
 void Driver::Unsubscribe(uint64_t subscription_id) {

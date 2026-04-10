@@ -466,9 +466,11 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
             it->second(envelope);
     }
 
-    void Subscribe(const std::vector<std::string>& segments,
-                   SubscribeCallback callback) override {
+    fletcher::SubscriptionResult Subscribe(
+        const std::vector<std::string>& segments,
+        SubscribeCallback callback) override {
         subscribers[segments] = std::move(callback);
+        return {};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -522,13 +524,13 @@ TEST_CASE("Publisher: multiple publishes accumulate") {
 
 // ---- Subscriber tests ----------------------------------------------------
 
-TEST_CASE("Subscriber: construction creates topic") {
+TEST_CASE("Subscriber: construction does not create topic") {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    REQUIRE(mock->created_topics.size() == 1);
-    CHECK(mock->created_topics[0].segments ==
-          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
+    // Subscriber-only processes no longer call CreateTopic; the schema
+    // is discovered from the provider when Subscribe() is called.
+    CHECK(mock->created_topics.empty());
 }
 
 TEST_CASE("Subscriber: receives Envelope from published rows") {

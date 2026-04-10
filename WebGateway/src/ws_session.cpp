@@ -1,6 +1,11 @@
 #include "ws_session.hpp"
 
+#include <pubsub/schema_ipc.hpp>
+
+#include <arrow/api.h>
 #include <nlohmann/json.hpp>
+
+#include <schema_evolution.hpp>
 
 #include <cstring>
 #include <stdexcept>
@@ -29,6 +34,66 @@ void AppendU64(std::vector<uint8_t>& buf, uint64_t v) {
 void AppendBytes(std::vector<uint8_t>& buf,
                  const uint8_t* data, size_t len) {
     buf.insert(buf.end(), data, data + len);
+}
+
+std::string Base64Encode(const uint8_t* data, size_t len) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(4 * ((len + 2) / 3));
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t b = static_cast<uint32_t>(data[i]) << 16;
+        if (i + 1 < len) b |= static_cast<uint32_t>(data[i + 1]) << 8;
+        if (i + 2 < len) b |= static_cast<uint32_t>(data[i + 2]);
+        out.push_back(kAlphabet[(b >> 18) & 0x3F]);
+        out.push_back(kAlphabet[(b >> 12) & 0x3F]);
+        out.push_back((i + 1 < len) ? kAlphabet[(b >> 6) & 0x3F] : '=');
+        out.push_back((i + 2 < len) ? kAlphabet[b & 0x3F] : '=');
+    }
+    return out;
+}
+
+json FieldToJson(const arrow::Field& field) {
+    json j;
+    j["name"] = field.name();
+    j["wireType"] = static_cast<int>(ArrowTypeToWireTypeId(*field.type()));
+    j["nullable"] = field.nullable();
+
+    // Include field_number from Arrow metadata if present.
+    if (auto meta = field.metadata()) {
+        auto idx = meta->FindKey("field_number");
+        if (idx >= 0)
+            j["fieldNumber"] = std::stoi(meta->value(idx));
+    }
+
+    // Composite type children.
+    const auto& type = *field.type();
+    if (type.id() == arrow::Type::STRUCT) {
+        json fields_arr = json::array();
+        for (int i = 0; i < type.num_fields(); ++i)
+            fields_arr.push_back(FieldToJson(*type.field(i)));
+        j["fields"] = std::move(fields_arr);
+    } else if (type.id() == arrow::Type::LIST) {
+        j["element"] = FieldToJson(*type.field(0));
+    } else if (type.id() == arrow::Type::LARGE_LIST) {
+        j["element"] = FieldToJson(*type.field(0));
+    } else if (type.id() == arrow::Type::FIXED_SIZE_LIST) {
+        j["element"] = FieldToJson(*type.field(0));
+        j["fixedSize"] = static_cast<const arrow::FixedSizeListType&>(type).list_size();
+    } else if (type.id() == arrow::Type::MAP) {
+        const auto& map_type = static_cast<const arrow::MapType&>(type);
+        j["mapKey"] = FieldToJson(*map_type.key_field());
+        j["mapValue"] = FieldToJson(*map_type.item_field());
+    }
+
+    return j;
+}
+
+json SchemaToJson(const arrow::Schema& schema) {
+    json fields_arr = json::array();
+    for (int i = 0; i < schema.num_fields(); ++i)
+        fields_arr.push_back(FieldToJson(*schema.field(i)));
+    return json{{"fields", std::move(fields_arr)}};
 }
 
 }  // anonymous namespace
@@ -152,7 +217,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
     auto sub_id_ptr = std::make_shared<uint64_t>(0);
     std::weak_ptr<WsSession> weak = shared_from_this();
 
-    auto sub_id = driver_->Subscribe(segments,
+    auto result = driver_->Subscribe(segments,
         [weak, sub_id_ptr](const Envelope& env) {
             auto self = weak.lock();
             if (!self) return;
@@ -171,14 +236,23 @@ void WsSession::OnSubscribe(const std::string& topic) {
                 });
         });
 
+    uint64_t sub_id = result.subscription_id;
     *sub_id_ptr = sub_id;
     subscriptions_[sub_id] = topic;
 
-    SendText(json{
+    json response = {
         {"type", "subscribed"},
         {"subId", std::to_string(sub_id)},
         {"topic", topic},
-    }.dump());
+    };
+
+    if (result.schema) {
+        auto ipc_bytes = SerializeSchemaIpc(*result.schema);
+        response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+        response["schema"] = SchemaToJson(*result.schema);
+    }
+
+    SendText(response.dump());
 }
 
 void WsSession::OnUnsubscribe(uint64_t sub_id) {

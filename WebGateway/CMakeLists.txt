@@ -9,7 +9,7 @@ add_library(web_gateway
 target_include_directories(web_gateway
     PUBLIC  include
     PRIVATE src ${BOOST_INCLUDE_DIR})
-target_link_libraries(web_gateway PUBLIC pubsub PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(web_gateway PUBLIC pubsub PRIVATE row_codec nlohmann_json::nlohmann_json)
 target_compile_definitions(web_gateway PRIVATE
     WIN32_LEAN_AND_MEAN
     _WIN32_WINNT=0x0A00)   # Windows 10+

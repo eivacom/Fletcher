@@ -37,12 +37,20 @@ class Driver {
     void Publish(const std::vector<std::string>& segments,
                  const Envelope& envelope);
 
-    /// Subscribe to a topic.  Returns a subscription ID.
-    /// Multiple subscribers per topic are supported; each receives
-    /// every published envelope via internal fan-out.
+    /// Result returned by Subscribe, carrying the subscription ID and
+    /// the schema that the publisher provided when it created the topic.
+    struct SubscribeResult {
+        uint64_t subscription_id;
+        std::shared_ptr<arrow::Schema> schema;
+    };
+
+    /// Subscribe to a topic.  Returns the subscription ID and the
+    /// schema.  If the topic was not previously registered locally
+    /// (e.g. a subscriber-only process), the provider is queried for
+    /// the schema via the companion topic.
     using SubscribeCallback = std::function<void(const Envelope&)>;
-    uint64_t Subscribe(const std::vector<std::string>& segments,
-                       SubscribeCallback cb);
+    SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                              SubscribeCallback cb);
 
     /// Remove a subscription by ID.
     void Unsubscribe(uint64_t subscription_id);

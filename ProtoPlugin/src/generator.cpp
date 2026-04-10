@@ -1316,19 +1316,18 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     EmitTopicSegments(o, package, svc_name, method_name);
     EmitSchema(o, msg_class);
 
-    // Constructor
+    // Constructor — subscriber does not call CreateTopic; the schema
+    // is discovered from the provider when Subscribe() is called.
     o << "    explicit " << cls << "(\n"
       << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
-      << "        : provider_(std::move(provider))\n"
-      << "    {\n"
-      << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
-      << "    }\n\n";
+      << "        : provider_(std::move(provider)) {}\n\n";
 
-    // Subscribe — delivers the Envelope (row + attachments) to the caller
-    o << "    void Subscribe(\n"
+    // Subscribe — delivers the Envelope (row + attachments) to the caller.
+    // Returns the schema received from the publisher via the provider.
+    o << "    fletcher::SubscriptionResult Subscribe(\n"
       << "        std::function<void(const fletcher::Envelope&)> cb)\n"
       << "    {\n"
-      << "        provider_->Subscribe(TopicSegments(), std::move(cb));\n"
+      << "        return provider_->Subscribe(TopicSegments(), std::move(cb));\n"
       << "    }\n\n";
 
     // Unsubscribe

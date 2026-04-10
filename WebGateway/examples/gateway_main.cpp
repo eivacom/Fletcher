@@ -50,10 +50,12 @@ class InProcessProvider : public fletcher::PubSubProvider {
         if (cb) cb(envelope);
     }
 
-    void Subscribe(const std::vector<std::string>& segments,
-                   SubscribeCallback callback) override {
+    fletcher::SubscriptionResult Subscribe(
+        const std::vector<std::string>& segments,
+        SubscribeCallback callback) override {
         std::lock_guard lock(mu_);
         topics_[Join(segments)] = std::move(callback);
+        return {};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {

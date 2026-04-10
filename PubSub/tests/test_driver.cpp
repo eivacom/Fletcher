@@ -17,9 +17,10 @@ using namespace fletcher;
 class MockProvider : public PubSubProvider {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> /*schema*/) override {
+                     std::shared_ptr<arrow::Schema> schema) override {
         std::string key = Join(segments);
         topics_created.push_back(key);
+        if (schema) schemas_[key] = schema;
     }
 
     void Publish(const std::vector<std::string>& segments,
@@ -30,9 +31,11 @@ class MockProvider : public PubSubProvider {
             it->second(envelope);
     }
 
-    void Subscribe(const std::vector<std::string>& segments,
-                   SubscribeCallback callback) override {
+    SubscriptionResult Subscribe(const std::vector<std::string>& segments,
+                                 SubscribeCallback callback) override {
         callbacks_[Join(segments)] = std::move(callback);
+        auto it = schemas_.find(Join(segments));
+        return {it != schemas_.end() ? it->second : nullptr};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -45,6 +48,7 @@ class MockProvider : public PubSubProvider {
 
  private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
+    std::unordered_map<std::string, std::shared_ptr<arrow::Schema>> schemas_;
 
     static std::string Join(const std::vector<std::string>& segs) {
         std::string out;
@@ -105,19 +109,32 @@ TEST_CASE("Driver: Subscribe returns unique IDs") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto id1 = driver.Subscribe(kTopic, [](const Envelope&) {});
-    auto id2 = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r1 = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r2 = driver.Subscribe(kTopic, [](const Envelope&) {});
 
-    CHECK(id1 != id2);
+    CHECK(r1.subscription_id != r2.subscription_id);
 }
 
-TEST_CASE("Driver: Subscribe to unknown topic throws") {
+TEST_CASE("Driver: Subscribe to unknown topic auto-registers") {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
-    CHECK_THROWS_AS(
-        driver.Subscribe({"no", "such"}, [](const Envelope&) {}),
-        std::runtime_error);
+    // Subscribing to an unknown topic should succeed (subscriber-only process).
+    auto result = driver.Subscribe({"no", "such"}, [](const Envelope&) {});
+    CHECK(result.subscription_id > 0);
+    CHECK(driver.HasTopic({"no", "such"}));
+}
+
+TEST_CASE("Driver: Subscribe returns schema from provider") {
+    auto mock = std::make_shared<MockProvider>();
+    Driver driver(mock);
+
+    auto schema = TestSchema();
+    driver.CreateTopic(kTopic, schema);
+
+    auto result = driver.Subscribe(kTopic, [](const Envelope&) {});
+    REQUIRE(result.schema != nullptr);
+    CHECK(result.schema->Equals(*schema));
 }
 
 TEST_CASE("Driver: multi-subscriber fan-out") {
@@ -147,7 +164,7 @@ TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    auto id_a = driver.Subscribe(kTopic, [&](const Envelope&) { count_a++; });
+    auto ra = driver.Subscribe(kTopic, [&](const Envelope&) { count_a++; });
     driver.Subscribe(kTopic, [&](const Envelope&) { count_b++; });
 
     Envelope env;
@@ -156,7 +173,7 @@ TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
     CHECK(count_a == 1);
     CHECK(count_b == 1);
 
-    driver.Unsubscribe(id_a);
+    driver.Unsubscribe(ra.subscription_id);
     driver.Publish(kTopic, env);
     CHECK(count_a == 1);  // no longer incremented
     CHECK(count_b == 2);
@@ -167,10 +184,10 @@ TEST_CASE("Driver: Unsubscribe last subscriber unsubscribes from provider") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto id = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r = driver.Subscribe(kTopic, [](const Envelope&) {});
     CHECK(mock->unsubscribe_count == 0);
 
-    driver.Unsubscribe(id);
+    driver.Unsubscribe(r.subscription_id);
     CHECK(mock->unsubscribe_count == 1);
 }
 
@@ -179,10 +196,10 @@ TEST_CASE("Driver: Unsubscribe with remaining subscribers keeps provider subscri
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto id1 = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r1 = driver.Subscribe(kTopic, [](const Envelope&) {});
     driver.Subscribe(kTopic, [](const Envelope&) {});
 
-    driver.Unsubscribe(id1);
+    driver.Unsubscribe(r1.subscription_id);
     CHECK(mock->unsubscribe_count == 0);  // still have one subscriber
 }
 

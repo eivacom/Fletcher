@@ -78,12 +78,28 @@ export class FletcherClient {
     }
   }
 
-  /** Subscribe to a topic.  Returns the subscription ID. */
+  /**
+   * Subscribe to a topic.  Returns the subscription ID.
+   *
+   * If `schema` is omitted, the schema is obtained from the server's
+   * subscribe response (requires a publisher to have created the topic
+   * with a schema).
+   */
   async subscribe<T = Record<string, unknown>>(
     topic: string,
-    schema: SchemaDescriptor,
-    callback: MessageCallback<T>,
+    callbackOrSchema: MessageCallback<T> | SchemaDescriptor,
+    maybeCallback?: MessageCallback<T>,
   ): Promise<bigint> {
+    // Support both (topic, schema, cb) and (topic, cb) signatures.
+    let schema: SchemaDescriptor | undefined;
+    let callback: MessageCallback<T>;
+    if (typeof callbackOrSchema === 'function') {
+      callback = callbackOrSchema;
+    } else {
+      schema = callbackOrSchema;
+      callback = maybeCallback!;
+    }
+
     const resp = await this.sendAndWait(
       buildSubscribe(topic),
       'subscribed',
@@ -92,8 +108,18 @@ export class FletcherClient {
       throw new Error((resp as ErrorResponse).message);
     }
     const sub = resp as SubscribedResponse;
+
+    // Use server-provided schema if caller didn't supply one.
+    const resolvedSchema = schema ?? sub.schema;
+    if (!resolvedSchema) {
+      throw new Error(
+        `subscribe: no schema available for topic "${topic}". ` +
+        'Either pass a SchemaDescriptor or ensure the publisher created the topic with a schema.',
+      );
+    }
+
     this.subscriptions.set(sub.subId, {
-      schema,
+      schema: resolvedSchema,
       callback: callback as MessageCallback,
     });
     return sub.subId;
