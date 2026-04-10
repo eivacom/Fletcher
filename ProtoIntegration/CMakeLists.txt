@@ -38,7 +38,9 @@ set(PROTO_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-set(PROTO_STEMS simple temporal nested collections maps complex pubsub evolution_v1 evolution_v2)
+set(PROTO_STEMS simple temporal nested collections maps complex pubsub evolution_v1 evolution_v2 geoarrow_test)
+
+set(GEOARROW_PROTO_DIR "${CMAKE_SOURCE_DIR}/proto")
 
 set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
@@ -52,6 +54,7 @@ foreach(_stem ${PROTO_STEMS})
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+                "-I" "${GEOARROW_PROTO_DIR}"
                 "${_src}"
         DEPENDS "${_src}" protoc-gen-fletcher
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
@@ -59,6 +62,25 @@ foreach(_stem ${PROTO_STEMS})
     )
     list(APPEND GENERATED_HEADERS "${_hdr}")
 endforeach()
+
+# GeoArrow proto lives under the repo-root proto/ directory.
+# Generate its header into a geoarrow/ subdirectory to match the import path.
+file(MAKE_DIRECTORY "${GENERATED_DIR}/geoarrow")
+set(_geoarrow_src "${GEOARROW_PROTO_DIR}/geoarrow/geoarrow.proto")
+set(_geoarrow_hdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.pb.h")
+add_custom_command(
+    OUTPUT  "${_geoarrow_hdr}"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:protoc-gen-fletcher>"
+            "--fletcher_out=${GENERATED_DIR}/geoarrow"
+            "-I" "${GEOARROW_PROTO_DIR}/geoarrow"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_geoarrow_src}"
+    DEPENDS "${_geoarrow_src}" protoc-gen-fletcher
+    COMMENT "protoc-gen-fletcher: geoarrow/geoarrow.proto"
+    VERBATIM
+)
+list(APPEND GENERATED_HEADERS "${_geoarrow_hdr}")
 
 add_custom_target(fletcher_proto_codegen ALL
     DEPENDS ${GENERATED_HEADERS}
@@ -68,6 +90,7 @@ add_custom_target(fletcher_proto_codegen ALL
 add_executable(fletcher_proto_integration_tests
     tests/test_generated.cpp
     tests/test_schema_evolution.cpp
+    tests/test_geoarrow.cpp
 )
 add_dependencies(fletcher_proto_integration_tests fletcher_proto_codegen)
 

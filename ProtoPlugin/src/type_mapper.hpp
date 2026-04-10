@@ -49,6 +49,10 @@ struct FieldMapping {
     std::string    map_value_class;     // C++ type reference (globally qualified when cross-file)
     std::string    map_value_header;    // non-empty → #include this path (cross-file dep)
     bool           map_value_is_message = false;
+
+    // Arrow extension type (empty → no extension).
+    std::string extension_name;         // e.g. "geoarrow.point"
+    std::string extension_metadata;     // JSON metadata string; empty → omit
 };
 
 // Classify a proto field and return enough information to generate Arrow code.
@@ -60,6 +64,10 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
 
 // True if the message (directly or transitively) references itself.
 bool IsRecursive(const google::protobuf::Descriptor* msg);
+
+// True for GeoArrow wrapper messages (LineString, MultiPoint, etc.) that are
+// collapsed into list fields — no ArrowRow class should be generated for these.
+bool IsGeoArrowWrapper(const google::protobuf::Descriptor* msg);
 
 // Maximum struct-nesting depth starting from msg.
 // A flat message (only scalar fields) has depth 0.

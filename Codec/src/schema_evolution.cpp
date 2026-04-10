@@ -53,6 +53,9 @@ WireTypeId ArrowTypeToWireTypeId(const arrow::DataType& type) {
         case T::MAP:                     return WireTypeId::MAP;
         case T::SPARSE_UNION:            return WireTypeId::SPARSE_UNION;
         case T::DENSE_UNION:             return WireTypeId::DENSE_UNION;
+        case T::EXTENSION:
+            return ArrowTypeToWireTypeId(
+                *static_cast<const arrow::ExtensionType&>(type).storage_type());
         default:
             throw std::invalid_argument(
                 "ArrowTypeToWireTypeId: unsupported type: " + type.ToString());

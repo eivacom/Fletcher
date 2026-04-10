@@ -378,6 +378,67 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
     return m;
 }
 
+// -----------------------------------------------------------------------
+// GeoArrow extension type recognition
+// -----------------------------------------------------------------------
+
+// Maps a geoarrow.* FQN to its GeoArrow extension name.
+// Returns empty string if not a recognized GeoArrow type.
+std::string GeoArrowExtensionName(const std::string& fqn) {
+    // Coordinate structs
+    if (fqn == "geoarrow.Point"  || fqn == "geoarrow.PointZ")  return "geoarrow.point";
+    if (fqn == "geoarrow.Box"    || fqn == "geoarrow.BoxZ")    return "geoarrow.box";
+    // List wrappers
+    if (fqn == "geoarrow.LineString"  || fqn == "geoarrow.LineStringZ")  return "geoarrow.linestring";
+    if (fqn == "geoarrow.MultiPoint"  || fqn == "geoarrow.MultiPointZ") return "geoarrow.multipoint";
+    return {};
+}
+
+// Returns true for wrapper messages that are collapsed into list fields
+// (no ArrowRow class is generated for these).
+bool IsGeoArrowWrapper(const std::string& fqn) {
+    return fqn == "geoarrow.LineString"  || fqn == "geoarrow.LineStringZ"
+        || fqn == "geoarrow.MultiPoint"  || fqn == "geoarrow.MultiPointZ";
+}
+
+std::optional<FieldMapping> MapGeoArrow(const FD* field) {
+    const auto* msg = field->message_type();
+    const std::string& fqn = msg->full_name();
+
+    std::string ext_name = GeoArrowExtensionName(fqn);
+    if (ext_name.empty())
+        return std::nullopt;
+
+    // Coordinate structs (Point, PointZ, Box, BoxZ) → STRUCT with extension metadata.
+    if (!IsGeoArrowWrapper(fqn)) {
+        auto m = MapStructField(field);
+        if (!m) return std::nullopt;
+        m->extension_name = std::move(ext_name);
+        return m;
+    }
+
+    // Wrapper messages (LineString, MultiPoint, etc.) → collapse to REPEATED_STRUCT
+    // of the inner coordinate type, with extension metadata.
+    if (msg->field_count() < 1)
+        return std::nullopt;
+    const auto* inner_field = msg->field(0);  // e.g. "repeated Point vertices = 1"
+    if (!inner_field->is_repeated() || inner_field->type() != FD::TYPE_MESSAGE)
+        return std::nullopt;
+
+    const auto* coord_msg = inner_field->message_type();
+    FieldMapping m{};
+    m.kind           = FieldKind::REPEATED_STRUCT;
+    m.nullable       = IsFieldNullable(field);
+    m.nested_class   = QualifiedClassName(coord_msg, field->file());
+    m.nested_header  = CrossFileHeader(coord_msg, field->file());
+    m.extension_name = std::move(ext_name);
+    return m;
+}
+
+// -----------------------------------------------------------------------
+// Well-known type recognition (Timestamp, Duration, *Value wrappers)
+// -----------------------------------------------------------------------
+
 std::optional<FieldMapping> MapWellKnown(const FD* field) {
     const std::string& fqn = field->message_type()->full_name();
 
@@ -420,6 +481,11 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
         m.scalar   = *wrapper;
         return m;
     }
+
+    // GeoArrow extension types
+    auto geo = MapGeoArrow(field);
+    if (geo)
+        return geo;
 
     return std::nullopt;  // unknown well-known or unsupported message
 }
@@ -492,6 +558,10 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field) {
 bool IsRecursive(const google::protobuf::Descriptor* msg) {
     std::set<const google::protobuf::Descriptor*> stack;
     return IsRecursiveImpl(msg, stack);
+}
+
+bool IsGeoArrowWrapper(const google::protobuf::Descriptor* msg) {
+    return IsGeoArrowWrapper(msg->full_name());
 }
 
 int NestingDepth(const google::protobuf::Descriptor* msg) {

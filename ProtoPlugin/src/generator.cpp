@@ -660,8 +660,16 @@ std::string GenerateSchemaFunction(const std::string& cls,
         o << "        arrow::field(\"" << fi.name << "\", "
           << ArrowTypeExpr(fi) << ", "
           << (fi.mapping.nullable ? "true" : "false") << ", "
-          << "arrow::key_value_metadata({\"field_number\", \"field_id\"}, {\""
-          << fi.field_number << "\", \"" << fi.field_id << "\"})),\n";
+          << "arrow::key_value_metadata({\"field_number\", \"field_id\"";
+        if (!fi.mapping.extension_name.empty())
+            o << ", \"ARROW:extension:name\", \"ARROW:extension:metadata\"";
+        o << "}, {\"" << fi.field_number << "\", \"" << fi.field_id << "\"";
+        if (!fi.mapping.extension_name.empty()) {
+            o << ", \"" << fi.mapping.extension_name << "\", \""
+              << (fi.mapping.extension_metadata.empty() ? "{}" : fi.mapping.extension_metadata)
+              << "\"";
+        }
+        o << "})),\n";
     }
     o << "    }, arrow::key_value_metadata(\n"
       << "        {\"proto_package\", \"proto_message\"},\n"
@@ -1160,6 +1168,11 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
               << " is recursive and cannot be represented in Arrow.\n\n";
             continue;
         }
+
+        // GeoArrow wrapper messages (LineString, MultiPoint, etc.) are
+        // collapsed into list fields by the type mapper — skip class generation.
+        if (IsGeoArrowWrapper(msg))
+            continue;
 
         std::string skipped;
         auto fields = GatherFields(msg, &skipped);
