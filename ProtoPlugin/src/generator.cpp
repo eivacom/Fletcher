@@ -191,6 +191,15 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
                  + fi.mapping.nested_class
                  + "Schema()->fields()), false))";
 
+        case FieldKind::NESTED_LIST: {
+            // Build nested arrow::list() from inside out.
+            std::string expr = "arrow::struct_("
+                             + fi.mapping.nested_class + "Schema()->fields())";
+            for (int d = 0; d < fi.mapping.list_depth; ++d)
+                expr = "arrow::list(arrow::field(\"item\", " + expr + ", false))";
+            return expr;
+        }
+
         case FieldKind::MAP: {
             std::string val_type = fi.mapping.map_value_is_message
                 ? "arrow::struct_(" + fi.mapping.map_value_class
@@ -224,6 +233,15 @@ std::string StorageDecl(const FieldInfo& fi) {
         case FieldKind::REPEATED_STRUCT:
             return "std::vector<" + fi.mapping.nested_class + "> "
                  + fi.name + "_";
+
+        case FieldKind::NESTED_LIST: {
+            std::string type = fi.mapping.nested_class;
+            for (int d = 0; d < fi.mapping.list_depth; ++d)
+                type = "std::vector<" + type + ">";
+            if (fi.mapping.nullable)
+                return "std::optional<" + type + "> " + fi.name + "_";
+            return type + " " + fi.name + "_";
+        }
 
         case FieldKind::MAP: {
             std::string val_type = fi.mapping.map_value_is_message
@@ -287,6 +305,22 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 break;
+
+            case FieldKind::NESTED_LIST: {
+                std::string type = fi.mapping.nested_class;
+                for (int d = 0; d < fi.mapping.list_depth; ++d)
+                    type = "std::vector<" + type + ">";
+                o << "    " << cls << "& set_" << fi.name
+                  << "(" << type << " v) {\n"
+                  << "        " << fi.name << "_ = std::move(v);\n"
+                  << "        return *this;\n    }\n";
+                if (fi.mapping.nullable) {
+                    o << "    " << cls << "& clear_" << fi.name << "() {\n"
+                      << "        " << fi.name << "_.reset();\n"
+                      << "        return *this;\n    }\n";
+                }
+                break;
+            }
 
             case FieldKind::MAP: {
                 std::string val_type = fi.mapping.map_value_is_message
@@ -377,6 +411,24 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
                   << "_; }\n";
                 break;
 
+            case FieldKind::NESTED_LIST: {
+                std::string type = fi.mapping.nested_class;
+                for (int d = 0; d < fi.mapping.list_depth; ++d)
+                    type = "std::vector<" + type + ">";
+                if (fi.mapping.nullable) {
+                    o << "    const " << type << "* " << fi.name
+                      << "() const {\n"
+                      << "        return " << fi.name
+                      << "_.has_value() ? &*" << fi.name
+                      << "_ : nullptr;\n"
+                      << "    }\n";
+                } else {
+                    o << "    const " << type << "& " << fi.name
+                      << "() const { return " << fi.name << "_; }\n";
+                }
+                break;
+            }
+
             case FieldKind::MAP: {
                 std::string val_type = fi.mapping.map_value_is_message
                     ? fi.mapping.map_value_class
@@ -443,6 +495,71 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "            *builder->Finish());\n"
               << "    }\n";
             break;
+
+        case FieldKind::NESTED_LIST: {
+            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n";
+
+            // Nullable: return null scalar if not set.
+            if (fi.mapping.nullable) {
+                o << "        if (!" << fi.name << "_.has_value())\n"
+                  << "            return arrow::MakeNullScalar("
+                  << ArrowTypeExpr(fi) << ");\n";
+            }
+
+            // Reference to the data — either *optional or the bare member.
+            std::string data_ref = fi.mapping.nullable
+                ? ("(*" + fi.name + "_)")
+                : (fi.name + "_");
+
+            o << "        auto coord_type = arrow::struct_("
+              << fi.mapping.nested_class << "Schema()->fields());\n";
+
+            if (fi.mapping.list_depth == 2) {
+                // List<List<Struct>>
+                o << "        auto inner_list_type = arrow::list(\n"
+                  << "            arrow::field(\"item\", coord_type, false));\n"
+                  << "        auto outer_builder = arrow::MakeBuilder(inner_list_type).ValueOrDie();\n"
+                  << "        for (const auto& ring : " << data_ref << ") {\n"
+                  << "            auto inner_builder = arrow::MakeBuilder(coord_type).ValueOrDie();\n"
+                  << "            for (const auto& v : ring) {\n"
+                  << "                auto s = std::make_shared<arrow::StructScalar>(\n"
+                  << "                    v.ToScalars(), coord_type);\n"
+                  << "                (void)inner_builder->AppendScalar(*s);\n"
+                  << "            }\n"
+                  << "            (void)outer_builder->AppendScalar(\n"
+                  << "                arrow::ListScalar(*inner_builder->Finish(), inner_list_type));\n"
+                  << "        }\n"
+                  << "        return std::make_shared<arrow::ListScalar>(\n"
+                  << "            *outer_builder->Finish());\n";
+            } else if (fi.mapping.list_depth == 3) {
+                // List<List<List<Struct>>>
+                o << "        auto ring_list_type = arrow::list(\n"
+                  << "            arrow::field(\"item\", coord_type, false));\n"
+                  << "        auto poly_list_type = arrow::list(\n"
+                  << "            arrow::field(\"item\", ring_list_type, false));\n"
+                  << "        auto outer_builder = arrow::MakeBuilder(poly_list_type).ValueOrDie();\n"
+                  << "        for (const auto& poly : " << data_ref << ") {\n"
+                  << "            auto mid_builder = arrow::MakeBuilder(ring_list_type).ValueOrDie();\n"
+                  << "            for (const auto& ring : poly) {\n"
+                  << "                auto inner_builder = arrow::MakeBuilder(coord_type).ValueOrDie();\n"
+                  << "                for (const auto& v : ring) {\n"
+                  << "                    auto s = std::make_shared<arrow::StructScalar>(\n"
+                  << "                        v.ToScalars(), coord_type);\n"
+                  << "                    (void)inner_builder->AppendScalar(*s);\n"
+                  << "                }\n"
+                  << "                (void)mid_builder->AppendScalar(\n"
+                  << "                    arrow::ListScalar(*inner_builder->Finish(), ring_list_type));\n"
+                  << "            }\n"
+                  << "            (void)outer_builder->AppendScalar(\n"
+                  << "                arrow::ListScalar(*mid_builder->Finish(), poly_list_type));\n"
+                  << "        }\n"
+                  << "        return std::make_shared<arrow::ListScalar>(\n"
+                  << "            *outer_builder->Finish());\n";
+            }
+
+            o << "    }\n";
+            break;
+        }
 
         case FieldKind::MAP: {
             o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
@@ -587,6 +704,73 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
               << "        }\n";
             break;
 
+        case FieldKind::NESTED_LIST: {
+            // Nullable: check validity first.
+            if (fi.mapping.nullable) {
+                o << "        if (!scalars[" << si << "]->is_valid) {\n"
+                  << "            " << fi.name << "_.reset();\n"
+                  << "        } else {\n";
+            }
+
+            // Target reference — either the optional's emplaced value or the bare member.
+            std::string target = fi.mapping.nullable
+                ? (fi.name + "_.emplace()")
+                : (fi.name + "_");
+            // For nullable, .emplace() returns the reference, but subsequent access uses *optional.
+            std::string ref = fi.mapping.nullable
+                ? ("(*" + fi.name + "_)")
+                : (fi.name + "_");
+            std::string indent = fi.mapping.nullable ? "    " : "";
+
+            if (fi.mapping.list_depth == 2) {
+                o << indent << "        {\n"
+                  << indent << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+                  << indent << "                *scalars[" << si << "]);\n"
+                  << indent << "            " << target << ";\n"
+                  << indent << "            " << ref << ".clear();\n"
+                  << indent << "            " << ref << ".resize(ls.value->length());\n"
+                  << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
+                  << indent << "                auto inner_s = ls.value->GetScalar(i).ValueOrDie();\n"
+                  << indent << "                const auto& inner_ls = static_cast<const arrow::ListScalar&>(*inner_s);\n"
+                  << indent << "                " << ref << "[i].resize(inner_ls.value->length());\n"
+                  << indent << "                for (int64_t j = 0; j < inner_ls.value->length(); ++j) {\n"
+                  << indent << "                    auto s = inner_ls.value->GetScalar(j).ValueOrDie();\n"
+                  << indent << "                    " << ref << "[i][j].SetFromScalars_(\n"
+                  << indent << "                        static_cast<const arrow::StructScalar&>(*s).value);\n"
+                  << indent << "                }\n"
+                  << indent << "            }\n"
+                  << indent << "        }\n";
+            } else if (fi.mapping.list_depth == 3) {
+                o << indent << "        {\n"
+                  << indent << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+                  << indent << "                *scalars[" << si << "]);\n"
+                  << indent << "            " << target << ";\n"
+                  << indent << "            " << ref << ".clear();\n"
+                  << indent << "            " << ref << ".resize(ls.value->length());\n"
+                  << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
+                  << indent << "                auto mid_s = ls.value->GetScalar(i).ValueOrDie();\n"
+                  << indent << "                const auto& mid_ls = static_cast<const arrow::ListScalar&>(*mid_s);\n"
+                  << indent << "                " << ref << "[i].resize(mid_ls.value->length());\n"
+                  << indent << "                for (int64_t j = 0; j < mid_ls.value->length(); ++j) {\n"
+                  << indent << "                    auto inner_s = mid_ls.value->GetScalar(j).ValueOrDie();\n"
+                  << indent << "                    const auto& inner_ls = static_cast<const arrow::ListScalar&>(*inner_s);\n"
+                  << indent << "                    " << ref << "[i][j].resize(inner_ls.value->length());\n"
+                  << indent << "                    for (int64_t k = 0; k < inner_ls.value->length(); ++k) {\n"
+                  << indent << "                        auto s = inner_ls.value->GetScalar(k).ValueOrDie();\n"
+                  << indent << "                        " << ref << "[i][j][k].SetFromScalars_(\n"
+                  << indent << "                            static_cast<const arrow::StructScalar&>(*s).value);\n"
+                  << indent << "                    }\n"
+                  << indent << "                }\n"
+                  << indent << "            }\n"
+                  << indent << "        }\n";
+            }
+
+            if (fi.mapping.nullable) {
+                o << "        }\n";
+            }
+            break;
+        }
+
         case FieldKind::MAP: {
             std::string key_extract = fi.mapping.map_key.value_is_buffer
                 ? "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value->ToString()"
@@ -651,26 +835,62 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
 std::string GenerateSchemaFunction(const std::string& cls,
                                    const std::vector<FieldInfo>& fields,
                                    const google::protobuf::Descriptor* msg) {
+    // Detect whether any field carries GeoArrow extension metadata.
+    bool has_geo = false;
+    for (const auto& fi : fields)
+        if (!fi.mapping.extension_name.empty()) { has_geo = true; break; }
+
     std::ostringstream o;
-    o << "inline std::shared_ptr<arrow::Schema> " << cls << "Schema() {\n"
-      << "    return arrow::schema({\n";
+
+    if (has_geo) {
+        // Schema function with CRS parameters.
+        o << "inline std::shared_ptr<arrow::Schema> " << cls << "Schema(\n"
+          << "    std::string_view crs = {},\n"
+          << "    const std::vector<std::pair<std::string, std::string>>& field_crs = {}) {\n"
+          << "    // Resolve CRS for a GeoArrow field: runtime per-field → runtime global → compile-time.\n"
+          << "    auto geo_meta = [&](const char* name, const char* ext_name,\n"
+          << "                        const char* fn, const char* fid, const char* compile_crs) {\n"
+          << "        std::string resolved;\n"
+          << "        for (const auto& [n, c] : field_crs)\n"
+          << "            if (n == name) { resolved = fletcher::ResolveCrs(c); break; }\n"
+          << "        if (resolved.empty() && !crs.empty())\n"
+          << "            resolved = fletcher::ResolveCrs(crs);\n"
+          << "        if (resolved.empty() && compile_crs[0] != '\\0')\n"
+          << "            resolved = fletcher::ResolveCrs(compile_crs);\n"
+          << "        return arrow::key_value_metadata(\n"
+          << "            {\"field_number\", \"field_id\", \"ARROW:extension:name\", \"ARROW:extension:metadata\"},\n"
+          << "            {fn, fid, ext_name, fletcher::BuildExtensionMetadata(resolved)});\n"
+          << "    };\n"
+          << "    return arrow::schema({\n";
+    } else {
+        // Plain schema function — no GeoArrow fields, no CRS parameters.
+        o << "inline std::shared_ptr<arrow::Schema> " << cls << "Schema() {\n"
+          << "    return arrow::schema({\n";
+    }
+
     for (const auto& fi : fields) {
         if (!fi.mapping.warning.empty())
             o << "        // Warning: " << fi.mapping.warning << "\n";
         o << "        arrow::field(\"" << fi.name << "\", "
           << ArrowTypeExpr(fi) << ", "
-          << (fi.mapping.nullable ? "true" : "false") << ", "
-          << "arrow::key_value_metadata({\"field_number\", \"field_id\"";
-        if (!fi.mapping.extension_name.empty())
-            o << ", \"ARROW:extension:name\", \"ARROW:extension:metadata\"";
-        o << "}, {\"" << fi.field_number << "\", \"" << fi.field_id << "\"";
+          << (fi.mapping.nullable ? "true" : "false") << ", ";
+
         if (!fi.mapping.extension_name.empty()) {
-            o << ", \"" << fi.mapping.extension_name << "\", \""
-              << (fi.mapping.extension_metadata.empty() ? "{}" : fi.mapping.extension_metadata)
-              << "\"";
+            // GeoArrow field — use the geo_meta lambda.
+            o << "geo_meta(\"" << fi.name << "\", \""
+              << fi.mapping.extension_name << "\", \""
+              << fi.field_number << "\", \""
+              << fi.field_id << "\", \""
+              << fi.mapping.crs << "\")";
+        } else {
+            // Non-geo field — static metadata.
+            o << "arrow::key_value_metadata({\"field_number\", \"field_id\"";
+            o << "}, {\"" << fi.field_number << "\", \"" << fi.field_id << "\"";
+            o << "})";
         }
-        o << "})),\n";
+        o << "),\n";
     }
+
     o << "    }, arrow::key_value_metadata(\n"
       << "        {\"proto_package\", \"proto_message\"},\n"
       << "        {\"" << msg->file()->package() << "\", \""
@@ -794,6 +1014,20 @@ void EmitViewGetters(std::ostringstream& o,
                   << "            *scalars_[" << si << "]);\n"
                   << "        return fletcher::ArrowRowViewList<" << vt
                   << ">(ls.value);\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::NESTED_LIST: {
+                std::string vt = fi.mapping.nested_class + "View";
+                std::string tmpl = (fi.mapping.list_depth == 3)
+                    ? "fletcher::ArrowNestedList2<" + vt + ">"
+                    : "fletcher::ArrowNestedList<" + vt + ">";
+                o << "    " << tmpl << " " << fi.name << "() const {\n"
+                  << "        const auto& ls = static_cast"
+                     "<const arrow::ListScalar&>(\n"
+                  << "            *scalars_[" << si << "]);\n"
+                  << "        return " << tmpl << "(ls.value);\n"
                   << "    }\n";
                 break;
             }
@@ -1145,6 +1379,23 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
           << "#include <functional>\n";
     }
 
+    // Include CRS utilities when any dependency carries GeoArrow types.
+    {
+        bool has_geo_dep = false;
+        for (int i = 0; i < file->dependency_count(); ++i)
+            if (file->dependency(i)->package() == "geoarrow")
+                { has_geo_dep = true; break; }
+        if (has_geo_dep || file->package() == "geoarrow") {
+            o << "#include <crs_utils.hpp>\n";
+            // The CRS-parameterised schema function needs these even in schema_only mode.
+            if (schema_only) {
+                o << "#include <string>\n"
+                  << "#include <string_view>\n"
+                  << "#include <utility>\n";
+            }
+        }
+    }
+
     // Cross-file generated headers (for referenced messages from other .proto files).
     const auto cross_includes = CollectCrossFileIncludes(file);
     if (!cross_includes.empty()) {
@@ -1238,6 +1489,14 @@ std::string DotToSlash(const std::string& s) {
     return out;
 }
 
+// Walk GeoArrow wrapper chain to the innermost coordinate struct.
+const google::protobuf::Descriptor* GeoArrowInnerCoord(
+    const google::protobuf::Descriptor* msg) {
+    while (IsGeoArrowWrapper(msg))
+        msg = msg->field(0)->message_type();
+    return msg;
+}
+
 // Schema const name for a message: Outer.Inner → "Outer_InnerSchema".
 std::string TsSchemaConstName(const google::protobuf::Descriptor* msg) {
     std::string name = msg->name();
@@ -1274,6 +1533,13 @@ std::string TsFieldType(const FieldInfo& fi,
 
         case FieldKind::REPEATED_STRUCT:
             return TsInterfaceName(fd->message_type()) + "[]";
+
+        case FieldKind::NESTED_LIST: {
+            const auto* coord = GeoArrowInnerCoord(fd->message_type());
+            std::string ts = TsInterfaceName(coord);
+            for (int d = 0; d < fi.mapping.list_depth; ++d) ts += "[]";
+            return ts;
+        }
 
         case FieldKind::MAP: {
             std::string key_type = TsScalarType(
@@ -1313,6 +1579,8 @@ std::string TsWireTypeId(const FieldInfo& fi,
             return "WireTypeId.STRUCT";
         case FieldKind::REPEATED_STRUCT:
             return "WireTypeId.LIST";
+        case FieldKind::NESTED_LIST:
+            return "WireTypeId.LIST";
         case FieldKind::MAP:
             return "WireTypeId.MAP";
     }
@@ -1342,6 +1610,16 @@ void EmitTsFieldDescriptor(std::ostringstream& o,
         o << ", element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
           << ", nullable: false, fields: "
           << TsSchemaConstName(fd->message_type()) << ".fields }";
+    } else if (fi.mapping.kind == FieldKind::NESTED_LIST) {
+        // Build nested element descriptors from inside out.
+        const auto* coord = GeoArrowInnerCoord(fd->message_type());
+        std::string inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
+                            ", nullable: false, fields: "
+                          + TsSchemaConstName(coord) + ".fields }";
+        for (int d = 1; d < fi.mapping.list_depth; ++d)
+            inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.LIST"
+                    ", nullable: false, element: " + inner + " }";
+        o << ", element: " << inner;
     } else if (fi.mapping.kind == FieldKind::MAP) {
         const auto* key_fd = fd->message_type()->field(0);
         const auto* val_fd = fd->message_type()->field(1);
@@ -1435,6 +1713,11 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
                 if (m->kind == FieldKind::STRUCT || m->kind == FieldKind::REPEATED_STRUCT) {
                     if (fd->message_type()->file() != file)
                         ts_imports.insert(fd->message_type()->file()->name());
+                }
+                if (m->kind == FieldKind::NESTED_LIST) {
+                    const auto* coord = GeoArrowInnerCoord(fd->message_type());
+                    if (coord->file() != file)
+                        ts_imports.insert(coord->file()->name());
                 }
                 if (m->kind == FieldKind::MAP && m->map_value_is_message) {
                     const auto* val_fd = fd->message_type()->field(1);

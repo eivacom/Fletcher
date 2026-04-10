@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
 #include <row_codec.hpp>
+#include <crs_utils.hpp>
 
 #include "geoarrow_test.fletcher.pb.h"
 
@@ -259,6 +260,348 @@ TEST_CASE("GeoArrow: EncodeTo byte-identical for VehicleTrack") {
 
     // Path B: ToScalars → RowCodec
     fletcher::RowCodec codec(integration::VehicleTrackArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(row.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+// =============================================================================
+// CRS utilities
+// =============================================================================
+
+TEST_CASE("CRS: EpsgToProjJson returns PROJJSON for 4326") {
+    auto pj = fletcher::EpsgToProjJson(4326);
+    REQUIRE_FALSE(pj.empty());
+    CHECK(pj.find("\"EPSG\"") != std::string::npos);
+    CHECK(pj.find("4326") != std::string::npos);
+    CHECK(pj.find("WGS 84") != std::string::npos);
+}
+
+TEST_CASE("CRS: EpsgToProjJson returns PROJJSON for 3857") {
+    auto pj = fletcher::EpsgToProjJson(3857);
+    REQUIRE_FALSE(pj.empty());
+    CHECK(pj.find("3857") != std::string::npos);
+    CHECK(pj.find("Pseudo-Mercator") != std::string::npos);
+}
+
+TEST_CASE("CRS: EpsgToProjJson returns empty for unknown code") {
+    CHECK(fletcher::EpsgToProjJson(99999).empty());
+}
+
+TEST_CASE("CRS: ResolveCrs passes through raw PROJJSON") {
+    std::string projjson = R"({"type":"GeographicCRS"})";
+    CHECK(fletcher::ResolveCrs(projjson) == projjson);
+}
+
+TEST_CASE("CRS: ResolveCrs resolves EPSG codes") {
+    auto resolved = fletcher::ResolveCrs("EPSG:4326");
+    CHECK_FALSE(resolved.empty());
+    CHECK(resolved.find("WGS 84") != std::string::npos);
+}
+
+TEST_CASE("CRS: ResolveCrs returns empty for unknown format") {
+    CHECK(fletcher::ResolveCrs("something").empty());
+}
+
+TEST_CASE("CRS: BuildExtensionMetadata empty CRS") {
+    CHECK(fletcher::BuildExtensionMetadata("") == "{}");
+}
+
+TEST_CASE("CRS: BuildExtensionMetadata with PROJJSON") {
+    std::string pj = R"({"type":"GeographicCRS"})";
+    auto meta = fletcher::BuildExtensionMetadata(pj);
+    CHECK(meta == R"({"crs":{"type":"GeographicCRS"}})");
+}
+
+// =============================================================================
+// Compile-time CRS from proto options
+// =============================================================================
+
+TEST_CASE("CRS: GeoWithCrs compile-time default on location field") {
+    auto schema = integration::GeoWithCrsArrowRowSchema();
+    // location inherits message-level default_crs = "EPSG:4326"
+    auto meta = schema->field(1)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:metadata");
+    REQUIRE(result.ok());
+    CHECK(result->find("WGS 84") != std::string::npos);
+    CHECK(result->find("4326") != std::string::npos);
+}
+
+TEST_CASE("CRS: GeoWithCrs field-level override on path field") {
+    auto schema = integration::GeoWithCrsArrowRowSchema();
+    // path has field-level (fletcher.crs) = "EPSG:3857"
+    auto meta = schema->field(2)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:metadata");
+    REQUIRE(result.ok());
+    CHECK(result->find("3857") != std::string::npos);
+    CHECK(result->find("Pseudo-Mercator") != std::string::npos);
+}
+
+TEST_CASE("CRS: GeoWithCrs extension name preserved") {
+    auto schema = integration::GeoWithCrsArrowRowSchema();
+    auto loc_meta = schema->field(1)->metadata();
+    REQUIRE(loc_meta != nullptr);
+    CHECK(*loc_meta->Get("ARROW:extension:name") == "geoarrow.point");
+
+    auto path_meta = schema->field(2)->metadata();
+    REQUIRE(path_meta != nullptr);
+    CHECK(*path_meta->Get("ARROW:extension:name") == "geoarrow.linestring");
+}
+
+// =============================================================================
+// Runtime CRS overrides
+// =============================================================================
+
+TEST_CASE("CRS: runtime global CRS override") {
+    auto pj3857 = fletcher::EpsgToProjJson(3857);
+    auto schema = integration::GeoWithCrsArrowRowSchema(pj3857);
+
+    // Both fields should have 3857, overriding compile-time defaults
+    auto loc_meta = schema->field(1)->metadata();
+    CHECK(loc_meta->Get("ARROW:extension:metadata")->find("3857") != std::string::npos);
+
+    auto path_meta = schema->field(2)->metadata();
+    CHECK(path_meta->Get("ARROW:extension:metadata")->find("3857") != std::string::npos);
+}
+
+TEST_CASE("CRS: runtime per-field CRS override") {
+    auto pj4326 = fletcher::EpsgToProjJson(4326);
+    auto pj3857 = fletcher::EpsgToProjJson(3857);
+
+    // Global 4326, per-field override on location to 3857
+    auto schema = integration::GeoWithCrsArrowRowSchema(
+        pj4326, {{"location", pj3857}});
+
+    // location: per-field 3857 wins
+    auto loc_meta = schema->field(1)->metadata();
+    CHECK(loc_meta->Get("ARROW:extension:metadata")->find("3857") != std::string::npos);
+
+    // path: global 4326 wins (overrides compile-time 3857)
+    auto path_meta = schema->field(2)->metadata();
+    CHECK(path_meta->Get("ARROW:extension:metadata")->find("4326") != std::string::npos);
+}
+
+TEST_CASE("CRS: VehicleTrack schema without CRS has empty metadata") {
+    auto schema = integration::VehicleTrackArrowRowSchema();
+    auto meta = schema->field(1)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:metadata");
+    REQUIRE(result.ok());
+    CHECK(*result == "{}");
+}
+
+TEST_CASE("CRS: VehicleTrack runtime CRS on previously empty fields") {
+    auto pj4326 = fletcher::EpsgToProjJson(4326);
+    auto schema = integration::VehicleTrackArrowRowSchema(pj4326);
+    auto meta = schema->field(1)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:metadata");
+    REQUIRE(result.ok());
+    CHECK(result->find("WGS 84") != std::string::npos);
+}
+
+// =============================================================================
+// Phase 2: Polygon, MultiLineString, MultiPolygon
+// =============================================================================
+
+// Helper: decode an encoded row for LandParcel.
+static fletcher::ArrowRow LandParcelRoundTrip(
+    const fletcher::EncodedRow& encoded) {
+    fletcher::RowCodec codec(integration::LandParcelArrowRowSchema());
+    return codec.DecodeRow(encoded);
+}
+
+// -- Schema structure ---------------------------------------------------------
+
+TEST_CASE("GeoArrow: LandParcel schema structure") {
+    auto schema = integration::LandParcelArrowRowSchema();
+    REQUIRE(schema->num_fields() == 5);
+
+    CHECK(schema->field(0)->name() == "parcel_id");
+    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
+
+    // boundary — Polygon → List<List<Struct>>
+    CHECK(schema->field(1)->name() == "boundary");
+    CHECK(schema->field(1)->type()->id() == arrow::Type::LIST);
+    auto inner1 = std::static_pointer_cast<arrow::ListType>(schema->field(1)->type());
+    CHECK(inner1->value_type()->id() == arrow::Type::LIST);
+    auto inner2 = std::static_pointer_cast<arrow::ListType>(inner1->value_type());
+    CHECK(inner2->value_type()->id() == arrow::Type::STRUCT);
+
+    // access_roads — MultiLineString → List<List<Struct>>
+    CHECK(schema->field(2)->name() == "access_roads");
+    CHECK(schema->field(2)->type()->id() == arrow::Type::LIST);
+
+    // zones — MultiPolygon → List<List<List<Struct>>>
+    CHECK(schema->field(3)->name() == "zones");
+    CHECK(schema->field(3)->type()->id() == arrow::Type::LIST);
+    auto z1 = std::static_pointer_cast<arrow::ListType>(schema->field(3)->type());
+    CHECK(z1->value_type()->id() == arrow::Type::LIST);
+    auto z2 = std::static_pointer_cast<arrow::ListType>(z1->value_type());
+    CHECK(z2->value_type()->id() == arrow::Type::LIST);
+    auto z3 = std::static_pointer_cast<arrow::ListType>(z2->value_type());
+    CHECK(z3->value_type()->id() == arrow::Type::STRUCT);
+
+    // boundary_3d — optional PolygonZ → nullable
+    CHECK(schema->field(4)->name() == "boundary_3d");
+    CHECK(schema->field(4)->nullable());
+}
+
+// -- Extension metadata -------------------------------------------------------
+
+TEST_CASE("GeoArrow: extension metadata on Polygon field") {
+    auto schema = integration::LandParcelArrowRowSchema();
+    auto meta = schema->field(1)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:name");
+    REQUIRE(result.ok());
+    CHECK(*result == "geoarrow.polygon");
+}
+
+TEST_CASE("GeoArrow: extension metadata on MultiLineString field") {
+    auto schema = integration::LandParcelArrowRowSchema();
+    auto meta = schema->field(2)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:name");
+    REQUIRE(result.ok());
+    CHECK(*result == "geoarrow.multilinestring");
+}
+
+TEST_CASE("GeoArrow: extension metadata on MultiPolygon field") {
+    auto schema = integration::LandParcelArrowRowSchema();
+    auto meta = schema->field(3)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:name");
+    REQUIRE(result.ok());
+    CHECK(*result == "geoarrow.multipolygon");
+}
+
+TEST_CASE("GeoArrow: extension metadata on PolygonZ field") {
+    auto schema = integration::LandParcelArrowRowSchema();
+    auto meta = schema->field(4)->metadata();
+    REQUIRE(meta != nullptr);
+    auto result = meta->Get("ARROW:extension:name");
+    REQUIRE(result.ok());
+    CHECK(*result == "geoarrow.polygon");
+}
+
+// -- Round-trip encode/decode -------------------------------------------------
+
+TEST_CASE("GeoArrow: Polygon round-trip") {
+    integration::LandParcelArrowRow row;
+
+    geoarrow::PointArrowRow p1, p2, p3, p4;
+    p1.set_x(0).set_y(0);
+    p2.set_x(1).set_y(0);
+    p3.set_x(0).set_y(1);
+    p4.set_x(0).set_y(0);
+
+    row.set_parcel_id("p-1").set_boundary({{p1, p2, p3, p4}});
+
+    auto scalars = LandParcelRoundTrip(row.Encode());
+    REQUIRE(scalars.size() == 5);
+
+    auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
+    REQUIRE(outer != nullptr);
+    CHECK(outer->value->length() == 1);  // one ring
+
+    // Decode back to a LandParcelArrowRow and verify values.
+    integration::LandParcelArrowRow decoded(row.Encode());
+    REQUIRE(decoded.boundary().size() == 1);
+    REQUIRE(decoded.boundary()[0].size() == 4);
+    CHECK(decoded.boundary()[0][0].x() == 0.0);
+    CHECK(decoded.boundary()[0][0].y() == 0.0);
+}
+
+TEST_CASE("GeoArrow: MultiLineString round-trip") {
+    integration::LandParcelArrowRow row;
+
+    geoarrow::PointArrowRow a1, a2, b1, b2, b3;
+    a1.set_x(0).set_y(0); a2.set_x(1).set_y(1);
+    b1.set_x(2).set_y(2); b2.set_x(3).set_y(3); b3.set_x(4).set_y(4);
+
+    row.set_parcel_id("p-2").set_access_roads({{a1, a2}, {b1, b2, b3}});
+
+    auto scalars = LandParcelRoundTrip(row.Encode());
+    auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
+    REQUIRE(outer != nullptr);
+    CHECK(outer->value->length() == 2);
+
+    integration::LandParcelArrowRow decoded(row.Encode());
+    REQUIRE(decoded.access_roads().size() == 2);
+    CHECK(decoded.access_roads()[0].size() == 2);
+    CHECK(decoded.access_roads()[1].size() == 3);
+}
+
+TEST_CASE("GeoArrow: MultiPolygon round-trip") {
+    integration::LandParcelArrowRow row;
+
+    geoarrow::PointArrowRow p1, p2, p3, p4;
+    p1.set_x(0).set_y(0); p2.set_x(1).set_y(0);
+    p3.set_x(0).set_y(1); p4.set_x(0).set_y(0);
+
+    geoarrow::PointArrowRow q1, q2, q3, q4;
+    q1.set_x(10).set_y(10); q2.set_x(11).set_y(10);
+    q3.set_x(10).set_y(11); q4.set_x(10).set_y(10);
+
+    row.set_parcel_id("p-3").set_zones({
+        {{p1, p2, p3, p4}},
+        {{q1, q2, q3, q4}}
+    });
+
+    auto scalars = LandParcelRoundTrip(row.Encode());
+    auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[3].get());
+    REQUIRE(outer != nullptr);
+    CHECK(outer->value->length() == 2);
+
+    integration::LandParcelArrowRow decoded(row.Encode());
+    REQUIRE(decoded.zones().size() == 2);
+    REQUIRE(decoded.zones()[0].size() == 1);
+    REQUIRE(decoded.zones()[0][0].size() == 4);
+}
+
+TEST_CASE("GeoArrow: optional PolygonZ null when not set") {
+    integration::LandParcelArrowRow row;
+    row.set_parcel_id("p-4");
+    auto scalars = LandParcelRoundTrip(row.Encode());
+    REQUIRE(scalars.size() == 5);
+    CHECK_FALSE(scalars[4]->is_valid);
+}
+
+TEST_CASE("GeoArrow: optional PolygonZ valid when set") {
+    integration::LandParcelArrowRow row;
+
+    geoarrow::PointZArrowRow p1, p2, p3, p4;
+    p1.set_x(0).set_y(0).set_z(10);
+    p2.set_x(1).set_y(0).set_z(20);
+    p3.set_x(0).set_y(1).set_z(30);
+    p4.set_x(0).set_y(0).set_z(10);
+
+    row.set_parcel_id("p-5").set_boundary_3d({{p1, p2, p3, p4}});
+
+    auto scalars = LandParcelRoundTrip(row.Encode());
+    CHECK(scalars[4]->is_valid);
+}
+
+// -- Byte-identical verification ----------------------------------------------
+
+TEST_CASE("GeoArrow: EncodeTo byte-identical for LandParcel") {
+    integration::LandParcelArrowRow row;
+
+    geoarrow::PointArrowRow p1, p2, p3, p4;
+    p1.set_x(0).set_y(0); p2.set_x(1).set_y(0);
+    p3.set_x(0).set_y(1); p4.set_x(0).set_y(0);
+
+    row.set_parcel_id("lp-test")
+       .set_boundary({{p1, p2, p3, p4}})
+       .set_access_roads({{p1, p2}})
+       .set_zones({{{p1, p2, p3, p4}}});
+
+    auto encoded_direct = row.Encode();
+    fletcher::RowCodec codec(integration::LandParcelArrowRowSchema());
     auto encoded_codec = codec.EncodeRow(row.ToScalars());
 
     REQUIRE(encoded_direct.size() == encoded_codec.size());

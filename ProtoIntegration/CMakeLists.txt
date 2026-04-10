@@ -56,7 +56,7 @@ foreach(_stem ${PROTO_STEMS})
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "-I" "${GEOARROW_PROTO_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" protoc-gen-fletcher
+        DEPENDS "${_src}" protoc-gen-fletcher "${GEOARROW_PROTO_DIR}/fletcher/options.proto"
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )

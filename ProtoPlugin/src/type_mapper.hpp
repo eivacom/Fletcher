@@ -25,6 +25,7 @@ enum class FieldKind {
     REPEATED_SCALAR,  // repeated int32 → list(int32)
     STRUCT,           // Nested message → struct<...>
     REPEATED_STRUCT,  // repeated Message → list(struct<...>)
+    NESTED_LIST,      // List<List<...<Struct>>> — depth-parameterised nested list
     MAP,              // map<K,V>
 };
 
@@ -39,9 +40,10 @@ struct FieldMapping {
     // REPEATED_SCALAR kind — describes the list element:
     ScalarTypeInfo element;
 
-    // STRUCT / REPEATED_STRUCT kind — the C++ generated class for the message:
+    // STRUCT / REPEATED_STRUCT / NESTED_LIST kind:
     std::string nested_class;   // C++ type reference (globally qualified when cross-file)
     std::string nested_header;  // non-empty → #include this path (cross-file dependency)
+    int         list_depth = 0; // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
 
     // MAP kind:
     ScalarTypeInfo map_key;
@@ -53,6 +55,10 @@ struct FieldMapping {
     // Arrow extension type (empty → no extension).
     std::string extension_name;         // e.g. "geoarrow.point"
     std::string extension_metadata;     // JSON metadata string; empty → omit
+
+    // Compile-time CRS from proto option (e.g. "EPSG:4326" or raw PROJJSON).
+    // Empty → no compile-time CRS.  Resolved to PROJJSON at schema-construction time.
+    std::string crs;
 };
 
 // Classify a proto field and return enough information to generate Arrow code.

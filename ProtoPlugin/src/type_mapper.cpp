@@ -1,5 +1,8 @@
 #include "type_mapper.hpp"
 
+#include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/unknown_field_set.h>
+
 #include <set>
 
 namespace fletcher_plugin {
@@ -388,17 +391,50 @@ std::string GeoArrowExtensionName(const std::string& fqn) {
     // Coordinate structs
     if (fqn == "geoarrow.Point"  || fqn == "geoarrow.PointZ")  return "geoarrow.point";
     if (fqn == "geoarrow.Box"    || fqn == "geoarrow.BoxZ")    return "geoarrow.box";
-    // List wrappers
+    // Phase 1 list wrappers (depth 1)
     if (fqn == "geoarrow.LineString"  || fqn == "geoarrow.LineStringZ")  return "geoarrow.linestring";
     if (fqn == "geoarrow.MultiPoint"  || fqn == "geoarrow.MultiPointZ") return "geoarrow.multipoint";
+    // Phase 2 nested list types (depth 2-3)
+    if (fqn == "geoarrow.Polygon"          || fqn == "geoarrow.PolygonZ")          return "geoarrow.polygon";
+    if (fqn == "geoarrow.MultiLineString"  || fqn == "geoarrow.MultiLineStringZ")  return "geoarrow.multilinestring";
+    if (fqn == "geoarrow.MultiPolygon"     || fqn == "geoarrow.MultiPolygonZ")     return "geoarrow.multipolygon";
     return {};
 }
 
 // Returns true for wrapper messages that are collapsed into list fields
 // (no ArrowRow class is generated for these).
 bool IsGeoArrowWrapper(const std::string& fqn) {
-    return fqn == "geoarrow.LineString"  || fqn == "geoarrow.LineStringZ"
-        || fqn == "geoarrow.MultiPoint"  || fqn == "geoarrow.MultiPointZ";
+    return fqn == "geoarrow.LineString"       || fqn == "geoarrow.LineStringZ"
+        || fqn == "geoarrow.MultiPoint"       || fqn == "geoarrow.MultiPointZ"
+        || fqn == "geoarrow.LinearRing"       || fqn == "geoarrow.LinearRingZ"
+        || fqn == "geoarrow.Polygon"          || fqn == "geoarrow.PolygonZ"
+        || fqn == "geoarrow.MultiLineString"  || fqn == "geoarrow.MultiLineStringZ"
+        || fqn == "geoarrow.MultiPolygon"     || fqn == "geoarrow.MultiPolygonZ";
+}
+
+// Search an options message's UnknownFieldSet for a string extension by number.
+// Custom options are stored as unknown fields when the extension isn't compiled
+// into the plugin binary.
+static std::string FindStringOption(const google::protobuf::Message& opts, int number) {
+    const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
+    for (int i = 0; i < unknown.field_count(); ++i) {
+        const auto& f = unknown.field(i);
+        if (f.number() == number &&
+            f.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED)
+            return f.length_delimited();
+    }
+    return {};
+}
+
+// Read the CRS string from fletcher.crs (field option) or fletcher.default_crs
+// (message option).  Returns empty if neither is set.
+std::string ReadCrsOption(const FD* field) {
+    // Field-level: fletcher.crs (extension number 50002)
+    auto crs = FindStringOption(field->options(), 50002);
+    if (!crs.empty()) return crs;
+
+    // Message-level: fletcher.default_crs (extension number 50001)
+    return FindStringOption(field->containing_type()->options(), 50001);
 }
 
 std::optional<FieldMapping> MapGeoArrow(const FD* field) {
@@ -414,24 +450,39 @@ std::optional<FieldMapping> MapGeoArrow(const FD* field) {
         auto m = MapStructField(field);
         if (!m) return std::nullopt;
         m->extension_name = std::move(ext_name);
+        m->crs = ReadCrsOption(field);
         return m;
     }
 
-    // Wrapper messages (LineString, MultiPoint, etc.) → collapse to REPEATED_STRUCT
-    // of the inner coordinate type, with extension metadata.
-    if (msg->field_count() < 1)
-        return std::nullopt;
-    const auto* inner_field = msg->field(0);  // e.g. "repeated Point vertices = 1"
-    if (!inner_field->is_repeated() || inner_field->type() != FD::TYPE_MESSAGE)
-        return std::nullopt;
+    // Walk the wrapper chain to find the innermost coordinate struct.
+    // Each wrapper must have field(0) = repeated Message.
+    int depth = 0;
+    const google::protobuf::Descriptor* current = msg;
+    while (IsGeoArrowWrapper(current->full_name())) {
+        if (current->field_count() < 1)
+            return std::nullopt;
+        const auto* inner_field = current->field(0);
+        if (!inner_field->is_repeated() || inner_field->type() != FD::TYPE_MESSAGE)
+            return std::nullopt;
+        ++depth;
+        current = inner_field->message_type();
+    }
+    // 'current' is now the coordinate struct (Point, PointZ, etc.)
+    // 'depth' is the number of list levels
 
-    const auto* coord_msg = inner_field->message_type();
     FieldMapping m{};
-    m.kind           = FieldKind::REPEATED_STRUCT;
     m.nullable       = IsFieldNullable(field);
-    m.nested_class   = QualifiedClassName(coord_msg, field->file());
-    m.nested_header  = CrossFileHeader(coord_msg, field->file());
+    m.nested_class   = QualifiedClassName(current, field->file());
+    m.nested_header  = CrossFileHeader(current, field->file());
     m.extension_name = std::move(ext_name);
+    m.crs            = ReadCrsOption(field);
+
+    if (depth == 1) {
+        m.kind = FieldKind::REPEATED_STRUCT;
+    } else {
+        m.kind       = FieldKind::NESTED_LIST;
+        m.list_depth = depth;
+    }
     return m;
 }
 

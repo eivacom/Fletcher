@@ -639,16 +639,14 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
                         "DecodeRow: builder append failed: " + st.ToString());
             }
             auto arr = builder->Finish().ValueOrDie();
-            // Construct list type from the actual array type to avoid
-            // nullability mismatches (schema may say "not null" but
-            // MakeBuilder produces a nullable-typed array).
+            // Use the caller-supplied type so that nested list scalars
+            // preserve field nullability and match the parent builder's
+            // expected type during AppendScalar.
             if (type->id() == arrow::Type::LIST) {
-                auto actual_type = arrow::list(arr->type());
-                return std::make_shared<arrow::ListScalar>(arr, actual_type);
+                return std::make_shared<arrow::ListScalar>(arr, type);
             }
             {
-                auto actual_type = arrow::large_list(arr->type());
-                return std::make_shared<arrow::LargeListScalar>(arr, actual_type);
+                return std::make_shared<arrow::LargeListScalar>(arr, type);
             }
         }
         case T::FIXED_SIZE_LIST: {
