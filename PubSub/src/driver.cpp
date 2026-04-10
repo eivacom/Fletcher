@@ -85,13 +85,20 @@ Driver::Driver(std::shared_ptr<PubSubProvider> provider)
 }
 
 Driver::~Driver() {
-    std::lock_guard lock(impl_->mu);
-    for (auto& [key, ts] : impl_->topics) {
-        if (ts.provider_subscribed) {
-            impl_->provider->Unsubscribe(ts.segments);
-            ts.provider_subscribed = false;
+    // Collect segments under lock, then call provider without holding
+    // the mutex to avoid deadlocks if the provider blocks or calls back.
+    std::vector<std::vector<std::string>> to_unsub;
+    {
+        std::lock_guard lock(impl_->mu);
+        for (auto& [key, ts] : impl_->topics) {
+            if (ts.provider_subscribed) {
+                to_unsub.push_back(ts.segments);
+                ts.provider_subscribed = false;
+            }
         }
     }
+    for (auto& segs : to_unsub)
+        impl_->provider->Unsubscribe(segs);
 }
 
 // -----------------------------------------------------------------------
@@ -101,20 +108,25 @@ Driver::~Driver() {
 void Driver::CreateTopic(const std::vector<std::string>& segments,
                          std::shared_ptr<arrow::Schema> schema) {
     std::string key = JoinSegments(segments);
-    std::lock_guard lock(impl_->mu);
+    {
+        std::lock_guard lock(impl_->mu);
+        if (impl_->topics.count(key))
+            throw std::runtime_error("Driver: topic already exists: " + key);
+    }
 
-    if (impl_->topics.count(key))
-        throw std::runtime_error("Driver: topic already exists: " + key);
-
+    // Call provider without holding the mutex to avoid deadlocks.
     impl_->provider->CreateTopic(segments, schema);
     impl_->provider->RegisterCodec(key, schema);
 
-    Impl::TopicState ts;
-    ts.segments = segments;
-    ts.schema   = schema;
-    if (schema)
-        ts.codec = std::make_unique<RowCodec>(schema);
-    impl_->topics[key] = std::move(ts);
+    {
+        std::lock_guard lock(impl_->mu);
+        Impl::TopicState ts;
+        ts.segments = segments;
+        ts.schema   = schema;
+        if (schema)
+            ts.codec = std::make_unique<RowCodec>(schema);
+        impl_->topics[key] = std::move(ts);
+    }
 }
 
 void Driver::Publish(const std::vector<std::string>& segments,
@@ -149,30 +161,37 @@ uint64_t Driver::Subscribe(const std::vector<std::string>& segments,
 }
 
 void Driver::Unsubscribe(uint64_t subscription_id) {
-    std::lock_guard lock(impl_->mu);
+    std::vector<std::string> segments_to_unsub;
+    {
+        std::lock_guard lock(impl_->mu);
 
-    auto it = impl_->subscriptions.find(subscription_id);
-    if (it == impl_->subscriptions.end())
-        throw std::runtime_error("Driver: unknown subscription ID");
+        auto it = impl_->subscriptions.find(subscription_id);
+        if (it == impl_->subscriptions.end())
+            throw std::runtime_error("Driver: unknown subscription ID");
 
-    std::string key = it->second.topic_key;
-    impl_->subscriptions.erase(it);
+        std::string key = it->second.topic_key;
+        impl_->subscriptions.erase(it);
 
-    bool any_remaining = false;
-    for (auto& [id, sub] : impl_->subscriptions) {
-        if (sub.topic_key == key) {
-            any_remaining = true;
-            break;
+        bool any_remaining = false;
+        for (auto& [id, sub] : impl_->subscriptions) {
+            if (sub.topic_key == key) {
+                any_remaining = true;
+                break;
+            }
+        }
+
+        if (!any_remaining) {
+            auto topic_it = impl_->topics.find(key);
+            if (topic_it != impl_->topics.end() && topic_it->second.provider_subscribed) {
+                segments_to_unsub = topic_it->second.segments;
+                topic_it->second.provider_subscribed = false;
+            }
         }
     }
 
-    if (!any_remaining) {
-        auto topic_it = impl_->topics.find(key);
-        if (topic_it != impl_->topics.end() && topic_it->second.provider_subscribed) {
-            impl_->provider->Unsubscribe(topic_it->second.segments);
-            topic_it->second.provider_subscribed = false;
-        }
-    }
+    // Call provider without holding the mutex to avoid deadlocks.
+    if (!segments_to_unsub.empty())
+        impl_->provider->Unsubscribe(segments_to_unsub);
 }
 
 // -----------------------------------------------------------------------

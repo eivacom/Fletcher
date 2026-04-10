@@ -11,8 +11,6 @@ export interface FletcherClientOptions {
   backend?: BackendType;
   /** Optional WASM module factory (for WASM-accelerated decoding). */
   wasmFactory?: () => Promise<unknown>;
-  /** Reconnect delay in ms (0 to disable). Default: 0. */
-  reconnectDelay?: number;
 }
 
 export type MessageCallback<T = unknown> = (

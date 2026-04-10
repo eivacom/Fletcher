@@ -17,15 +17,15 @@ using json = nlohmann::json;
 
 namespace {
 
-uint16_t ReadU16(const uint8_t* p) {
-    uint16_t v;
-    std::memcpy(&v, p, 2);
-    return v;
+uint16_t ReadU16LE(const uint8_t* p) {
+    return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
 }
 
-void AppendU64(std::vector<uint8_t>& buf, uint64_t v) {
-    auto* p = reinterpret_cast<const uint8_t*>(&v);
-    buf.insert(buf.end(), p, p + 8);
+void AppendU64LE(std::vector<uint8_t>& buf, uint64_t v) {
+    for (int i = 0; i < 8; ++i) {
+        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+        v >>= 8;
+    }
 }
 
 void AppendBytes(std::vector<uint8_t>& buf,
@@ -144,6 +144,9 @@ std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
 }
 
 void WsSession::OnCreateTopic(const std::string& topic) {
+    // TODO: accept schema from the client so rows can be encoded/decoded.
+    // Without a schema the topic can relay pre-encoded envelopes but not
+    // re-encode ArrowRow data (EncodeRow/DecodeRow will throw).
     driver_->CreateTopic(SplitTopic(topic), nullptr);
     SendText(json{{"type", "topic_created"}}.dump());
 }
@@ -159,21 +162,26 @@ void WsSession::OnSubscribe(const std::string& topic) {
             auto self = weak.lock();
             if (!self) return;
 
-            // Re-encode for the WebSocket wire format.
-            auto encoded_row = self->driver_->EncodeRow(segments, row);
-            Envelope env{std::move(encoded_row), std::move(att)};
-            auto binary = SerializeEnvelope(env);
+            try {
+                // Re-encode for the WebSocket wire format.
+                auto encoded_row = self->driver_->EncodeRow(segments, row);
+                Envelope env{std::move(encoded_row), std::move(att)};
+                auto binary = SerializeEnvelope(env);
 
-            std::vector<uint8_t> frame;
-            frame.reserve(8 + binary.size());
-            AppendU64(frame, *sub_id_ptr);
-            AppendBytes(frame, binary.data(), binary.size());
+                std::vector<uint8_t> frame;
+                frame.reserve(8 + binary.size());
+                AppendU64LE(frame, *sub_id_ptr);
+                AppendBytes(frame, binary.data(), binary.size());
 
-            net::post(
-                self->ws_.get_executor(),
-                [self, f = std::move(frame)]() mutable {
-                    self->SendBinary(std::move(f));
-                });
+                net::post(
+                    self->ws_.get_executor(),
+                    [self, f = std::move(frame)]() mutable {
+                        self->SendBinary(std::move(f));
+                    });
+            } catch (...) {
+                // Encoding/serialization failure — drop this message
+                // rather than crashing the subscriber callback thread.
+            }
         });
 
     *sub_id_ptr = sub_id;
@@ -195,7 +203,7 @@ void WsSession::OnUnsubscribe(uint64_t sub_id) {
 void WsSession::OnPublish(const uint8_t* data, size_t len) {
     // [TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]
     if (len < 2) throw std::invalid_argument("publish: frame too short");
-    uint16_t topic_len = ReadU16(data);
+    uint16_t topic_len = ReadU16LE(data);
     if (2 + topic_len > len) throw std::invalid_argument("publish: truncated topic");
 
     std::string topic(reinterpret_cast<const char*>(data + 2), topic_len);

@@ -22,7 +22,7 @@ import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/row-decoder.js';
 import { encodeRow } from './codec/row-encoder.js';
 import type { SchemaDescriptor } from './codec/schema-descriptor.js';
-import type { FletcherClientOptions, MessageCallback } from './types.js';
+import type { BackendType, FletcherClientOptions, MessageCallback } from './types.js';
 
 interface PendingRequest {
   resolve: (resp: ServerResponse) => void;
@@ -39,7 +39,11 @@ export class FletcherClient {
   private ws: WebSocket | null = null;
   private decoder = new WasmDecoder();
   private backend: DecoderBackend<unknown>;
-  private opts: Required<FletcherClientOptions>;
+  private opts: {
+    url: string;
+    backend: BackendType;
+    wasmFactory?: () => Promise<unknown>;
+  };
   private pendingQueue: PendingRequest[] = [];
   private subscriptions = new Map<bigint, Subscription>();
 
@@ -47,8 +51,7 @@ export class FletcherClient {
     this.opts = {
       url: options.url,
       backend: options.backend ?? 'object',
-      wasmFactory: options.wasmFactory ?? (() => Promise.resolve(undefined as unknown)),
-      reconnectDelay: options.reconnectDelay ?? 0,
+      wasmFactory: options.wasmFactory,
     };
 
     if (this.opts.backend === 'arrow') {
@@ -61,9 +64,7 @@ export class FletcherClient {
 
   /** Initialize the WASM decoder (optional) and connect to the gateway. */
   async connect(): Promise<void> {
-    await this.decoder.init(
-      this.opts.wasmFactory as (() => Promise<never>) | undefined,
-    );
+    await this.decoder.init(this.opts.wasmFactory);
     await this.connectWs();
   }
 
@@ -179,6 +180,10 @@ export class FletcherClient {
 
       ws.onclose = () => {
         this.ws = null;
+        for (const p of this.pendingQueue) {
+          p.reject(new Error('WebSocket closed'));
+        }
+        this.pendingQueue = [];
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -197,10 +202,12 @@ export class FletcherClient {
         return; // Malformed JSON — ignore.
       }
 
-      const pending = this.pendingQueue.shift();
-      if (pending) {
-        pending.resolve(resp);
-      }
+      const idx = this.pendingQueue.findIndex(
+        p => p.expectedType === resp.type || resp.type === 'error',
+      );
+      if (idx === -1) return;
+      const [pending] = this.pendingQueue.splice(idx, 1);
+      pending.resolve(resp);
     } else {
       // Binary frame → MESSAGE data delivery.
       const data = new Uint8Array(event.data as ArrayBuffer);

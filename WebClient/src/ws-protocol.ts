@@ -84,6 +84,9 @@ export function buildListTopics(): string {
 
 export function buildPublish(topic: string, envelopeBytes: Uint8Array): Uint8Array {
   const topicBytes = textEncoder.encode(topic);
+  if (topicBytes.byteLength > 0xFFFF) {
+    throw new Error(`Topic name too long: ${topicBytes.byteLength} bytes (max 65535)`);
+  }
   const buf = new Uint8Array(2 + topicBytes.byteLength + envelopeBytes.byteLength);
   const view = new DataView(buf.buffer);
   view.setUint16(0, topicBytes.byteLength, true);

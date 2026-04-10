@@ -17,9 +17,10 @@ export class ObjectBackend implements DecoderBackend<Record<string, unknown>> {
   ): Record<string, unknown> {
     const entries = decoder.decodeRow(row);
 
+    const entryMap = new Map(entries.map(e => [e.fieldNumber, e]));
     const result: Record<string, unknown> = {};
     for (const fd of schema.fields) {
-      const entry = entries.find(e => e.fieldNumber === fd.fieldNumber);
+      const entry = entryMap.get(fd.fieldNumber);
       if (!entry) {
         result[fd.name] = null;
       } else {

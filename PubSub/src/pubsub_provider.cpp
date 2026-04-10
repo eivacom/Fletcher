@@ -27,7 +27,7 @@ void PubSubProvider::PublishDirect(
 
     auto* codec = FindCodec(JoinTopic(topic_segments));
     if (!codec) {
-        // No codec registered — cannot decode, fall through to raw path.
+        // No codec registered — cannot decode.
         // This shouldn't happen if CreateTopic was called with a schema.
         throw std::runtime_error(
             "PublishDirect: no codec for topic " + JoinTopic(topic_segments));
