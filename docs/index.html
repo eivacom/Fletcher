@@ -339,8 +339,8 @@ sub.<span class="fn">Subscribe</span>([&amp;](myapp::<span class="ty">SensorRead
        |                 |                |                |
        |                 v                v                v
        |          PubSubProvider     PubSubArrow      WebGateway
-       |        (nanoarrow, edge)   (Arrow C++,     (WebSocket,
-       |         raw bytes I/O      ArrowRow I/O)   Arrow C++)
+       |        (nanoarrow, edge)   (Arrow C++,     (nanoarrow,
+       |         raw bytes I/O      ArrowRow I/O)    WebSocket)
        |                 |                |                |
        |                 v                v                v
        |          Fast DDS / ...   RowBatcher          Browser
@@ -380,13 +380,13 @@ sub.<span class="fn">Subscribe</span>([&amp;](myapp::<span class="ty">SensorRead
     <td><strong>Edge tier</strong></td>
     <td>nanoarrow (~100 KB)</td>
     <td>Generated message classes, <code>PubSubProvider</code>, <code>PositionalWriter</code>/<code>PositionalReader</code>,
-      FastDDS provider, generated publishers/subscribers</td>
+      FastDDS provider, <code>WebGateway</code>, generated publishers/subscribers</td>
   </tr>
   <tr>
     <td><strong>Server tier</strong></td>
     <td>Arrow C++ (~100 MB)</td>
     <td><code>PubSubArrow</code> adapter, view classes (<code>.fletcher.view.pb.h</code>),
-      <code>PositionalCodec</code>, <code>RowBatcher</code>, <code>WebGateway</code></td>
+      <code>PositionalCodec</code>, <code>RowBatcher</code></td>
   </tr>
 </table>
 
@@ -867,9 +867,13 @@ arrow_ps.<span class="fn">Publish</span>({<span class="str">"myapp"</span>, <spa
 <!-- ── WebGateway ─────────────────────────────────────────────────── -->
 <h2 id="web-gateway">WebGateway</h2>
 
-<p>A Boost.Beast WebSocket server that exposes <code>PubSubArrow</code> to
+<p>A Boost.Beast WebSocket server that exposes the <code>Driver</code> to
   browser clients over a <strong>split text/binary WebSocket protocol</strong>.
-  Control messages use JSON text frames for simplicity and debuggability;
+  The WebGateway depends only on nanoarrow (not Arrow C++) &mdash; it walks
+  the nanoarrow <code>ArrowSchema</code> directly to produce the JSON schema
+  response, and passes row data through as raw bytes.</p>
+
+<p>Control messages use JSON text frames for simplicity and debuggability;
   data messages (publish and message delivery) use binary frames to avoid
   base64 overhead.</p>
 
@@ -1182,24 +1186,25 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
                                       |  + Arrow C++)          |
                                       +-----------+-----------+
                                                   |
-                              +-------------------+-------------------+
-                              |                   |                   |
-                   +----------v-------+  +--------v--------+  +------v--------+
-                   |   web_gateway    |  |   row_batcher   |  | proto_integr. |
-                   | (pubsub_arrow +  |  | (Arrow C++ +    |  | (test suite)  |
-                   |  Boost.Beast)    |  |  row_codec)     |  +---------------+
-                   +------------------+  +-----------------+
+              +-------------------+-------------------+-------------------+
+              |                   |                   |                   |
+   +----------v-------+  +------v---------+  +------v--------+  +------v--------+
+   |   web_gateway    |  | pubsub_arrow   |  |  row_batcher  |  | proto_integr. |
+   | (pubsub +        |  | (pubsub +      |  | (Arrow C++ +  |  | (test suite)  |
+   |  Boost.Beast,    |  |  row_codec +   |  |  row_codec)   |  +---------------+
+   |  nanoarrow only) |  |  Arrow C++)    |  +---------------+
+   +------------------+  +----------------+
 </div>
 
 <p><strong>Edge binary</strong> (e.g., sensor gateway): links
   <code>pubsub</code> + <code>fast_dds_pubsub_provider</code> +
   generated <code>.fletcher.pb.h</code> code. Total added dependency:
-  nanoarrow (~100 KB). No Arrow C++ required.</p>
+  nanoarrow (~100 KB). No Arrow C++ required. The <code>web_gateway</code>
+  also falls on this side &mdash; it is nanoarrow-only.</p>
 
 <p><strong>Server binary</strong> (e.g., data pipeline): additionally links
   <code>pubsub_arrow</code> + <code>row_codec</code> + <code>row_batcher</code>
-  + <code>web_gateway</code> and includes <code>.fletcher.view.pb.h</code>
-  view classes.</p>
+  and includes <code>.fletcher.view.pb.h</code> view classes.</p>
 
 
 <!-- ── Building ────────────────────────────────────────────────────── -->

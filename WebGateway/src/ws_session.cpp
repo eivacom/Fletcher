@@ -5,12 +5,9 @@
 #include <pubsub/owned_schema.hpp>
 #include <pubsub/write_buffer.hpp>
 
-#include <arrow/api.h>
-#include <arrow/c/bridge.h>
+#include <nanoarrow/nanoarrow.h>
 
 #include <nlohmann/json.hpp>
-
-#include <schema_evolution.hpp>
 
 #include <cstring>
 #include <stdexcept>
@@ -58,46 +55,97 @@ std::string Base64Encode(const uint8_t* data, size_t len) {
     return out;
 }
 
-json FieldToJson(const arrow::Field& field) {
-    json j;
-    j["name"] = field.name();
-    j["wireType"] = static_cast<int>(ArrowTypeToWireTypeId(*field.type()));
-    j["nullable"] = field.nullable();
+// Map nanoarrow ArrowType to the Fletcher wire-type integer expected by
+// the WebClient.  These values must match WireTypeId in wire-types.ts.
+int NanoarrowTypeToWireType(enum ArrowType type) {
+    switch (type) {
+        case NANOARROW_TYPE_BOOL:               return 0x01;
+        case NANOARROW_TYPE_INT8:               return 0x02;
+        case NANOARROW_TYPE_INT16:              return 0x03;
+        case NANOARROW_TYPE_INT32:              return 0x04;
+        case NANOARROW_TYPE_INT64:              return 0x05;
+        case NANOARROW_TYPE_UINT8:              return 0x06;
+        case NANOARROW_TYPE_UINT16:             return 0x07;
+        case NANOARROW_TYPE_UINT32:             return 0x08;
+        case NANOARROW_TYPE_UINT64:             return 0x09;
+        case NANOARROW_TYPE_FLOAT:              return 0x0A;
+        case NANOARROW_TYPE_DOUBLE:             return 0x0B;
+        case NANOARROW_TYPE_STRING:             return 0x0C;
+        case NANOARROW_TYPE_BINARY:             return 0x0D;
+        case NANOARROW_TYPE_DATE32:             return 0x0E;
+        case NANOARROW_TYPE_DATE64:             return 0x0F;
+        case NANOARROW_TYPE_TIMESTAMP:          return 0x10;
+        case NANOARROW_TYPE_TIME32:             return 0x11;
+        case NANOARROW_TYPE_TIME64:             return 0x12;
+        case NANOARROW_TYPE_DURATION:           return 0x13;
+        case NANOARROW_TYPE_FIXED_SIZE_BINARY:  return 0x14;
+        case NANOARROW_TYPE_HALF_FLOAT:         return 0x15;
+        case NANOARROW_TYPE_DECIMAL128:         return 0x16;
+        case NANOARROW_TYPE_DECIMAL256:         return 0x17;
+        case NANOARROW_TYPE_LARGE_STRING:       return 0x18;
+        case NANOARROW_TYPE_LARGE_BINARY:       return 0x19;
+        case NANOARROW_TYPE_STRING_VIEW:        return 0x1A;
+        case NANOARROW_TYPE_BINARY_VIEW:        return 0x1B;
+        case NANOARROW_TYPE_INTERVAL_MONTHS:    return 0x1C;
+        case NANOARROW_TYPE_INTERVAL_DAY_TIME:  return 0x1D;
+        case NANOARROW_TYPE_INTERVAL_MONTH_DAY_NANO: return 0x1E;
+        case NANOARROW_TYPE_STRUCT:             return 0x20;
+        case NANOARROW_TYPE_LIST:               return 0x21;
+        case NANOARROW_TYPE_LARGE_LIST:         return 0x22;
+        case NANOARROW_TYPE_FIXED_SIZE_LIST:    return 0x23;
+        case NANOARROW_TYPE_MAP:                return 0x24;
+        case NANOARROW_TYPE_SPARSE_UNION:       return 0x25;
+        case NANOARROW_TYPE_DENSE_UNION:        return 0x26;
+        default:                                return 0x00;
+    }
+}
 
-    // Include field_number from Arrow metadata if present.
-    if (auto meta = field.metadata()) {
-        auto idx = meta->FindKey("field_number");
-        if (idx >= 0)
-            j["fieldNumber"] = std::stoi(meta->value(idx));
+json FieldToJson(const ArrowSchema* field) {
+    json j;
+    j["name"] = field->name ? field->name : "";
+    j["nullable"] = (field->flags & ARROW_FLAG_NULLABLE) != 0;
+
+    // Resolve the type via ArrowSchemaView.
+    struct ArrowSchemaView view;
+    ArrowSchemaViewInit(&view, field, nullptr);
+    j["wireType"] = NanoarrowTypeToWireType(view.type);
+
+    // Include field_number from metadata if present.
+    if (field->metadata) {
+        struct ArrowStringView value;
+        if (ArrowMetadataGetValue(field->metadata,
+                ArrowCharView("field_number"), &value) == NANOARROW_OK) {
+            j["fieldNumber"] = std::stoi(std::string(value.data, value.size_bytes));
+        }
     }
 
     // Composite type children.
-    const auto& type = *field.type();
-    if (type.id() == arrow::Type::STRUCT) {
+    if (view.type == NANOARROW_TYPE_STRUCT) {
         json fields_arr = json::array();
-        for (int i = 0; i < type.num_fields(); ++i)
-            fields_arr.push_back(FieldToJson(*type.field(i)));
+        for (int64_t i = 0; i < field->n_children; ++i)
+            fields_arr.push_back(FieldToJson(field->children[i]));
         j["fields"] = std::move(fields_arr);
-    } else if (type.id() == arrow::Type::LIST) {
-        j["element"] = FieldToJson(*type.field(0));
-    } else if (type.id() == arrow::Type::LARGE_LIST) {
-        j["element"] = FieldToJson(*type.field(0));
-    } else if (type.id() == arrow::Type::FIXED_SIZE_LIST) {
-        j["element"] = FieldToJson(*type.field(0));
-        j["fixedSize"] = static_cast<const arrow::FixedSizeListType&>(type).list_size();
-    } else if (type.id() == arrow::Type::MAP) {
-        const auto& map_type = static_cast<const arrow::MapType&>(type);
-        j["mapKey"] = FieldToJson(*map_type.key_field());
-        j["mapValue"] = FieldToJson(*map_type.item_field());
+    } else if (view.type == NANOARROW_TYPE_LIST
+            || view.type == NANOARROW_TYPE_LARGE_LIST) {
+        j["element"] = FieldToJson(field->children[0]);
+    } else if (view.type == NANOARROW_TYPE_FIXED_SIZE_LIST) {
+        j["element"] = FieldToJson(field->children[0]);
+        j["fixedSize"] = view.fixed_size;
+    } else if (view.type == NANOARROW_TYPE_MAP) {
+        // Map schema: children[0] is the "entries" struct with two children
+        // (key, value).
+        const ArrowSchema* entries = field->children[0];
+        j["mapKey"] = FieldToJson(entries->children[0]);
+        j["mapValue"] = FieldToJson(entries->children[1]);
     }
 
     return j;
 }
 
-json SchemaToJson(const arrow::Schema& schema) {
+json SchemaToJson(const ArrowSchema* schema) {
     json fields_arr = json::array();
-    for (int i = 0; i < schema.num_fields(); ++i)
-        fields_arr.push_back(FieldToJson(*schema.field(i)));
+    for (int64_t i = 0; i < schema->n_children; ++i)
+        fields_arr.push_back(FieldToJson(schema->children[i]));
     return json{{"fields", std::move(fields_arr)}};
 }
 
@@ -263,12 +311,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
     if (result.schema) {
         auto ipc_bytes = SerializeSchemaIpc(result.schema.get());
         response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-
-        // Convert nanoarrow schema to Arrow C++ for JSON serialization.
-        OwnedSchema copy = OwnedSchema::DeepCopy(result.schema.get());
-        auto imported = arrow::ImportSchema(copy.get());
-        if (imported.ok())
-            response["schema"] = SchemaToJson(**imported);
+        response["schema"] = SchemaToJson(result.schema.get());
     }
 
     SendText(response.dump());
