@@ -33,8 +33,7 @@ class WebGateway {
     /// threads internally.
     void Start();
 
-    /// Stop accepting new connections, close existing ones, and join
-    /// IO threads.
+    /// Stop the IO context, join IO threads, and release resources.
     void Stop();
 
  private:

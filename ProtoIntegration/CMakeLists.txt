@@ -100,6 +100,7 @@ target_include_directories(fletcher_proto_integration_tests PRIVATE
 target_link_libraries(fletcher_proto_integration_tests PRIVATE
     Catch2::Catch2WithMain
     row_codec
+    pubsub
 )
 
 include(Catch)

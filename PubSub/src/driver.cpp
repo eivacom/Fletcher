@@ -34,6 +34,7 @@ struct Driver::Impl {
     struct TopicState {
         std::vector<std::string>       segments;
         std::shared_ptr<arrow::Schema> schema;
+        std::unique_ptr<RowCodec>      codec;
         bool                           provider_subscribed = false;
     };
 
@@ -59,7 +60,7 @@ struct Driver::Impl {
         // Capture key by value; Impl* is safe because provider subscriptions
         // are torn down in the destructor before Impl is destroyed.
         auto result = provider->Subscribe(
-            ts.segments, [this, key](const Envelope& env) {
+            ts.segments, [this, key](ArrowRow row, Attachments att) {
                 // Take a snapshot of callbacks under the lock, then invoke outside.
                 std::vector<SubscribeCallback> cbs;
                 {
@@ -70,7 +71,7 @@ struct Driver::Impl {
                     }
                 }
                 for (auto& cb : cbs)
-                    cb(env);
+                    cb(row, att);
             });
 
         ts.provider_subscribed = true;
@@ -92,15 +93,20 @@ Driver::Driver(std::shared_ptr<PubSubProvider> provider)
 }
 
 Driver::~Driver() {
-    // Unsubscribe from the provider for all topics to ensure callbacks
-    // stop before Impl is destroyed.
-    std::lock_guard lock(impl_->mu);
-    for (auto& [key, ts] : impl_->topics) {
-        if (ts.provider_subscribed) {
-            impl_->provider->Unsubscribe(ts.segments);
-            ts.provider_subscribed = false;
+    // Collect segments under lock, then call provider without holding
+    // the mutex to avoid deadlocks if the provider blocks or calls back.
+    std::vector<std::vector<std::string>> to_unsub;
+    {
+        std::lock_guard lock(impl_->mu);
+        for (auto& [key, ts] : impl_->topics) {
+            if (ts.provider_subscribed) {
+                to_unsub.push_back(ts.segments);
+                ts.provider_subscribed = false;
+            }
         }
     }
+    for (auto& segs : to_unsub)
+        impl_->provider->Unsubscribe(segs);
 }
 
 // -----------------------------------------------------------------------
@@ -110,22 +116,37 @@ Driver::~Driver() {
 void Driver::CreateTopic(const std::vector<std::string>& segments,
                          std::shared_ptr<arrow::Schema> schema) {
     std::string key = JoinSegments(segments);
-    std::lock_guard lock(impl_->mu);
+    {
+        std::lock_guard lock(impl_->mu);
+        if (impl_->topics.count(key))
+            throw std::runtime_error("Driver: topic already exists: " + key);
+    }
 
-    if (impl_->topics.count(key))
-        throw std::runtime_error("Driver: topic already exists: " + key);
-
+    // Call provider without holding the mutex to avoid deadlocks.
     impl_->provider->CreateTopic(segments, schema);
+    impl_->provider->RegisterCodec(key, schema);
 
-    Impl::TopicState ts;
-    ts.segments = segments;
-    ts.schema   = std::move(schema);
-    impl_->topics[key] = std::move(ts);
+    {
+        std::lock_guard lock(impl_->mu);
+        Impl::TopicState ts;
+        ts.segments = segments;
+        ts.schema   = schema;
+        if (schema)
+            ts.codec = std::make_unique<RowCodec>(schema);
+        impl_->topics[key] = std::move(ts);
+    }
 }
 
 void Driver::Publish(const std::vector<std::string>& segments,
-                     const Envelope& envelope) {
-    impl_->provider->Publish(segments, envelope);
+                     const ArrowRow& row,
+                     const Attachments& attachments) {
+    impl_->provider->Publish(segments, row, attachments);
+}
+
+void Driver::PublishDirect(const std::vector<std::string>& segments,
+                           PubSubProvider::RowEncoder encoder,
+                           const Attachments& attachments) {
+    impl_->provider->PublishDirect(segments, std::move(encoder), attachments);
 }
 
 // -----------------------------------------------------------------------
@@ -154,31 +175,69 @@ Driver::SubscribeResult Driver::Subscribe(
 }
 
 void Driver::Unsubscribe(uint64_t subscription_id) {
+    std::vector<std::string> segments_to_unsub;
+    {
+        std::lock_guard lock(impl_->mu);
+
+        auto it = impl_->subscriptions.find(subscription_id);
+        if (it == impl_->subscriptions.end())
+            throw std::runtime_error("Driver: unknown subscription ID");
+
+        std::string key = it->second.topic_key;
+        impl_->subscriptions.erase(it);
+
+        bool any_remaining = false;
+        for (auto& [id, sub] : impl_->subscriptions) {
+            if (sub.topic_key == key) {
+                any_remaining = true;
+                break;
+            }
+        }
+
+        if (!any_remaining) {
+            auto topic_it = impl_->topics.find(key);
+            if (topic_it != impl_->topics.end() && topic_it->second.provider_subscribed) {
+                segments_to_unsub = topic_it->second.segments;
+                topic_it->second.provider_subscribed = false;
+            }
+        }
+    }
+
+    // Call provider without holding the mutex to avoid deadlocks.
+    if (!segments_to_unsub.empty())
+        impl_->provider->Unsubscribe(segments_to_unsub);
+}
+
+// -----------------------------------------------------------------------
+// Codec helpers (for relay scenarios)
+// -----------------------------------------------------------------------
+
+EncodedRow Driver::EncodeRow(const std::vector<std::string>& segments,
+                             const ArrowRow& row) const {
+    std::string key = JoinSegments(segments);
     std::lock_guard lock(impl_->mu);
 
-    auto it = impl_->subscriptions.find(subscription_id);
-    if (it == impl_->subscriptions.end())
-        throw std::runtime_error("Driver: unknown subscription ID");
+    auto it = impl_->topics.find(key);
+    if (it == impl_->topics.end())
+        throw std::runtime_error("Driver: unknown topic: " + key);
+    if (!it->second.codec)
+        throw std::runtime_error("Driver: topic has no schema (cannot encode): " + key);
 
-    std::string key = it->second.topic_key;
-    impl_->subscriptions.erase(it);
+    return it->second.codec->EncodeRow(row);
+}
 
-    // If no subscriptions remain for this topic, unsubscribe from provider.
-    bool any_remaining = false;
-    for (auto& [id, sub] : impl_->subscriptions) {
-        if (sub.topic_key == key) {
-            any_remaining = true;
-            break;
-        }
-    }
+ArrowRow Driver::DecodeRow(const std::vector<std::string>& segments,
+                           const EncodedRow& encoded) const {
+    std::string key = JoinSegments(segments);
+    std::lock_guard lock(impl_->mu);
 
-    if (!any_remaining) {
-        auto topic_it = impl_->topics.find(key);
-        if (topic_it != impl_->topics.end() && topic_it->second.provider_subscribed) {
-            impl_->provider->Unsubscribe(topic_it->second.segments);
-            topic_it->second.provider_subscribed = false;
-        }
-    }
+    auto it = impl_->topics.find(key);
+    if (it == impl_->topics.end())
+        throw std::runtime_error("Driver: unknown topic: " + key);
+    if (!it->second.codec)
+        throw std::runtime_error("Driver: topic has no schema (cannot decode): " + key);
+
+    return it->second.codec->DecodeRow(encoded);
 }
 
 // -----------------------------------------------------------------------

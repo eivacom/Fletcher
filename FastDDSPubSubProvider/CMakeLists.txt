@@ -3,4 +3,4 @@ add_library(fast_dds_pubsub_provider
 target_include_directories(fast_dds_pubsub_provider PUBLIC include)
 target_link_libraries(fast_dds_pubsub_provider
     PUBLIC  pubsub
-    PRIVATE fast-dds::fast-dds)
+    PRIVATE fast-dds::fast-dds row_codec)

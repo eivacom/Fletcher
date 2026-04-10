@@ -2,9 +2,9 @@
 #define FLETCHER_INCLUDE_ROW_CODEC_HPP_
 
 #include <arrow/api.h>
-#include <pubsub/envelope.hpp>
 
 #include "schema_evolution.hpp"
+#include "write_buffer.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -13,6 +13,9 @@
 #include <vector>
 
 namespace fletcher {
+
+// Binary-encoded row data.
+using EncodedRow = std::vector<uint8_t>;
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
 
@@ -73,7 +76,13 @@ class RowCodec {
 
     EncodedRow EncodeRow(const ArrowRow& values) const;
 
+    // Encode directly into an abstract buffer (avoids intermediate allocations).
+    void EncodeRow(const ArrowRow& values, WriteBuffer& buf) const;
+
     ArrowRow DecodeRow(const EncodedRow& buf) const;
+
+    // Decode from a raw pointer (avoids copying into a vector first).
+    ArrowRow DecodeRow(const uint8_t* data, size_t len) const;
 
     const arrow::Schema& schema()      const noexcept { return *schema_; }
     uint64_t             schema_hash() const noexcept { return schema_hash_; }

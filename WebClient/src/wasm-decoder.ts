@@ -107,21 +107,22 @@ function tsDecodeFields(
 // WasmDecoder class
 // -----------------------------------------------------------------------
 
-/** Maximum fields we allocate table space for. */
-const MAX_FIELDS = 256;
+/** Initial field table capacity — grows dynamically as needed. */
+const INITIAL_TABLE_FIELDS = 64;
 
 export class WasmDecoder {
   private mod: FletcherDecoderModule | null = null;
   private dataPtr = 0;
   private dataCap = 0;
   private tablePtr = 0;
-  private tableCap = MAX_FIELDS * FIELD_ENTRY_SIZE;
+  private tableFields = INITIAL_TABLE_FIELDS;
+  private tableCap = INITIAL_TABLE_FIELDS * FIELD_ENTRY_SIZE;
   private hashPtr = 0; // 8 bytes for lo+hi uint32s
 
   /** Load the WASM module.  Call once before decoding. */
-  async init(wasmFactory?: () => Promise<FletcherDecoderModule>): Promise<void> {
+  async init(wasmFactory?: () => Promise<unknown>): Promise<void> {
     if (wasmFactory) {
-      this.mod = await wasmFactory();
+      this.mod = await wasmFactory() as FletcherDecoderModule;
       this.tablePtr = this.mod._malloc(this.tableCap);
       this.hashPtr  = this.mod._malloc(8);
     }
@@ -188,6 +189,14 @@ export class WasmDecoder {
   // WASM paths
   // -----------------------------------------------------------------------
 
+  private ensureTableBuf(needed: number): void {
+    if (needed <= this.tableFields) return;
+    if (this.tablePtr) this.mod!._free(this.tablePtr);
+    this.tableFields = Math.max(needed, this.tableFields * 2);
+    this.tableCap = this.tableFields * FIELD_ENTRY_SIZE;
+    this.tablePtr = this.mod!._malloc(this.tableCap);
+  }
+
   private ensureDataBuf(size: number): void {
     if (size <= this.dataCap) return;
     if (this.dataPtr) this.mod!._free(this.dataPtr);
@@ -215,6 +224,11 @@ export class WasmDecoder {
   }
 
   private wasmDecodeRow(data: Uint8Array): FieldEntry[] {
+    // Pre-read field count from header to ensure table buffer is large enough.
+    if (data.byteLength >= 10) {
+      const fc = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint16(8, true);
+      this.ensureTableBuf(fc);
+    }
     this.copyToWasm(data);
     const count = this.mod!._fletcher_decode_row(
       this.dataPtr, data.byteLength,
@@ -225,6 +239,11 @@ export class WasmDecoder {
   }
 
   private wasmDecodeStruct(data: Uint8Array): FieldEntry[] {
+    // Pre-read field count from header to ensure table buffer is large enough.
+    if (data.byteLength >= 2) {
+      const fc = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint16(0, true);
+      this.ensureTableBuf(fc);
+    }
     this.copyToWasm(data);
     const count = this.mod!._fletcher_decode_struct(
       this.dataPtr, data.byteLength,

@@ -661,6 +661,66 @@ std::string TsScalarType(google::protobuf::FieldDescriptor::Type type) {
     }
 }
 
+// -----------------------------------------------------------------------
+// C++ wire format helpers
+// -----------------------------------------------------------------------
+
+std::string CppWireTypeIdHex(google::protobuf::FieldDescriptor::Type type) {
+    using FDT = google::protobuf::FieldDescriptor;
+    switch (type) {
+        case FDT::TYPE_BOOL:     return "0x01";
+        case FDT::TYPE_INT32:
+        case FDT::TYPE_SINT32:
+        case FDT::TYPE_SFIXED32: return "0x04";
+        case FDT::TYPE_INT64:
+        case FDT::TYPE_SINT64:
+        case FDT::TYPE_SFIXED64: return "0x05";
+        case FDT::TYPE_UINT32:
+        case FDT::TYPE_FIXED32:  return "0x08";
+        case FDT::TYPE_UINT64:
+        case FDT::TYPE_FIXED64:  return "0x09";
+        case FDT::TYPE_FLOAT:    return "0x0A";
+        case FDT::TYPE_DOUBLE:   return "0x0B";
+        case FDT::TYPE_STRING:   return "0x0C";
+        case FDT::TYPE_BYTES:    return "0x0D";
+        case FDT::TYPE_ENUM:     return "0x04";  // enums map to INT32
+        default:                 return "";
+    }
+}
+
+std::string CppWireTypeIdHex(FieldKind kind) {
+    switch (kind) {
+        case FieldKind::STRUCT:          return "0x20";
+        case FieldKind::REPEATED_SCALAR:
+        case FieldKind::REPEATED_STRUCT: return "0x21";
+        case FieldKind::MAP:             return "0x24";
+        default:                         return "";
+    }
+}
+
+int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type) {
+    using FDT = google::protobuf::FieldDescriptor;
+    switch (type) {
+        case FDT::TYPE_BOOL:     return 1;
+        case FDT::TYPE_INT32:
+        case FDT::TYPE_SINT32:
+        case FDT::TYPE_SFIXED32:
+        case FDT::TYPE_UINT32:
+        case FDT::TYPE_FIXED32:
+        case FDT::TYPE_FLOAT:
+        case FDT::TYPE_ENUM:     return 4;
+        case FDT::TYPE_INT64:
+        case FDT::TYPE_SINT64:
+        case FDT::TYPE_SFIXED64:
+        case FDT::TYPE_UINT64:
+        case FDT::TYPE_FIXED64:
+        case FDT::TYPE_DOUBLE:   return 8;
+        case FDT::TYPE_STRING:
+        case FDT::TYPE_BYTES:    return -1;  // variable-length
+        default:                 return -1;
+    }
+}
+
 std::string WireTypeIdName(google::protobuf::FieldDescriptor::Type type) {
     using FDT = google::protobuf::FieldDescriptor;
     switch (type) {

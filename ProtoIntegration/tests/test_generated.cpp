@@ -446,7 +446,7 @@ TEST_CASE("OrderItem: optional note null then valid") {
 
 namespace {
 
-// Minimal mock that records calls and delivers published envelopes to subscribers.
+// Minimal mock that records calls and delivers published rows to subscribers.
 class MockPubSubProvider : public fletcher::PubSubProvider {
  public:
     struct CreatedTopic {
@@ -454,8 +454,14 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
         std::shared_ptr<arrow::Schema> schema;
     };
 
+    struct PublishedMsg {
+        std::vector<std::string> segments;
+        fletcher::ArrowRow row;
+        fletcher::Attachments attachments;
+    };
+
     std::vector<CreatedTopic> created_topics;
-    std::vector<std::pair<std::vector<std::string>, fletcher::Envelope>> published;
+    std::vector<PublishedMsg> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
     void CreateTopic(const std::vector<std::string>& segments,
@@ -464,11 +470,12 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const fletcher::Envelope& envelope) override {
-        published.push_back({segments, envelope});
+                 const fletcher::ArrowRow& row,
+                 const fletcher::Attachments& attachments) override {
+        published.push_back({segments, row, attachments});
         auto it = subscribers.find(segments);
         if (it != subscribers.end())
-            it->second(envelope);
+            it->second(row, attachments);
     }
 
     fletcher::SubscriptionResult Subscribe(
@@ -506,9 +513,9 @@ TEST_CASE("Publisher: publish encodes and delivers to provider") {
     pub.Publish(row);
 
     REQUIRE(mock->published.size() == 1);
-    CHECK(mock->published[0].first ==
+    CHECK(mock->published[0].segments ==
           std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
-    CHECK_FALSE(mock->published[0].second.row.empty());
+    CHECK_FALSE(mock->published[0].row.empty());
 }
 
 TEST_CASE("Publisher: multiple publishes accumulate") {
@@ -538,32 +545,27 @@ TEST_CASE("Subscriber: construction does not create topic") {
     CHECK(mock->created_topics.empty());
 }
 
-TEST_CASE("Subscriber: receives Envelope from published rows") {
+TEST_CASE("Subscriber: receives ArrowRow from published rows") {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    fletcher::Envelope received;
-    sub.Subscribe([&](const fletcher::Envelope& env) {
-        received = env;
+    fletcher::ArrowRow received;
+    sub.Subscribe([&](fletcher::ArrowRow row, fletcher::Attachments) {
+        received = std::move(row);
     });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
-    REQUIRE(!received.row.empty());
+    REQUIRE(received.size() == 4);
 
-    // Decode via the EncodedRow constructor to verify contents.
-    integration::TelemetryArrowRow decoded(received.row);
-    auto scalars = RoundTrip(decoded.Encode(), integration::TelemetryArrowRowSchema());
-    REQUIRE(scalars.size() == 4);
-
-    auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
+    auto* id = dynamic_cast<arrow::Int32Scalar*>(received[0].get());
     REQUIRE(id != nullptr);
     CHECK(id->value == 42);
 
-    auto* name = dynamic_cast<arrow::StringScalar*>(scalars[3].get());
+    auto* name = dynamic_cast<arrow::StringScalar*>(received[3].get());
     REQUIRE(name != nullptr);
     CHECK(name->value->ToString() == "cpu");
 }
@@ -574,7 +576,7 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](const fletcher::Envelope&) { ++count; });
+    sub.Subscribe([&](fletcher::ArrowRow, fletcher::Attachments) { ++count; });
 
     integration::TelemetryArrowRow row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
@@ -592,9 +594,11 @@ TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    fletcher::Envelope received;
-    sub.Subscribe([&](const fletcher::Envelope& env) {
-        received = env;
+    fletcher::ArrowRow received_row;
+    fletcher::Attachments received_att;
+    sub.Subscribe([&](fletcher::ArrowRow row, fletcher::Attachments att) {
+        received_row = std::move(row);
+        received_att = std::move(att);
     });
 
     integration::TelemetryArrowRow row;
@@ -604,15 +608,12 @@ TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
         std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
     pub.Publish(row, {{"image", blob}});
 
-    REQUIRE(!received.row.empty());
-    REQUIRE(received.attachments.size() == 1);
-    REQUIRE(received.attachments.count("image") == 1);
-    CHECK(*received.attachments.at("image") == std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+    REQUIRE(received_row.size() == 4);
+    REQUIRE(received_att.size() == 1);
+    REQUIRE(received_att.count("image") == 1);
+    CHECK(*received_att.at("image") == std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
 
-    // Verify the row decodes correctly alongside the attachment.
-    integration::TelemetryArrowRow decoded(received.row);
-    auto scalars = RoundTrip(decoded.Encode(), integration::TelemetryArrowRowSchema());
-    auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
+    auto* id = dynamic_cast<arrow::Int32Scalar*>(received_row[0].get());
     REQUIRE(id != nullptr);
     CHECK(id->value == 42);
 }
@@ -626,6 +627,139 @@ TEST_CASE("Publisher: publish without attachments has empty attachments") {
     pub.Publish(row);
 
     REQUIRE(mock->published.size() == 1);
-    CHECK(mock->published[0].second.attachments.empty());
-    CHECK_FALSE(mock->published[0].second.row.empty());
+    CHECK(mock->published[0].attachments.empty());
+    CHECK_FALSE(mock->published[0].row.empty());
+}
+
+// =============================================================================
+// Byte-identical verification: EncodeTo vs ToScalars→RowCodec
+//
+// These tests verify that the generated EncodeTo(WriteBuffer&) produces
+// identical wire bytes to the existing ToScalars() → RowCodec::EncodeRow path.
+// =============================================================================
+
+TEST_CASE("EncodeTo: simple scalars — byte identical to RowCodec path") {
+    integration::SensorReadingArrowRow r;
+    r.set_sensor_id(42)
+     .set_temperature(23.5)
+     .set_pressure(1013.25f)
+     .set_active(true)
+     .set_location("Room 101")
+     .set_payload("\xDE\xAD\xBE\xEF")
+     .set_sequence(7u)
+     .set_timestamp_ns(1'000'000'000LL)
+     .set_humidity(55.3)
+     .set_label("humid");
+
+    // Path A: EncodeTo (direct from C++ members)
+    auto encoded_direct = r.Encode();
+
+    // Path B: ToScalars → RowCodec::EncodeRow
+    fletcher::RowCodec codec(integration::SensorReadingArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(r.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: optional nulls — byte identical") {
+    integration::SensorReadingArrowRow r;
+    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
+     .set_active(false).set_location("").set_payload("").set_sequence(0u)
+     .set_timestamp_ns(0LL);
+    // humidity and label intentionally left null
+
+    auto encoded_direct = r.Encode();
+    fletcher::RowCodec codec(integration::SensorReadingArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(r.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: nested structs — byte identical") {
+    integration::GeoPointArrowRow gp;
+    gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
+
+    integration::AddressArrowRow addr;
+    addr.set_street("1 Market St").set_city("San Francisco").set_country("US");
+
+    integration::LocationArrowRow loc;
+    loc.set_point(gp).set_address(addr).set_name("HQ");
+
+    auto encoded_direct = loc.Encode();
+    fletcher::RowCodec codec(integration::LocationArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(loc.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: repeated scalars and structs — byte identical") {
+    integration::PlayerArrowRow p1, p2;
+    p1.set_name("Alice").set_level(5);
+    p2.set_name("Bob").set_level(3);
+
+    integration::TeamArrowRow team;
+    team.set_name("Alpha")
+        .set_members({"Alice", "Bob", "Carol"})
+        .set_scores({95.0, 87.5, 92.0})
+        .set_roster({p1, p2});
+
+    auto encoded_direct = team.Encode();
+    fletcher::RowCodec codec(integration::TeamArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(team.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: map fields — byte identical") {
+    integration::MetricsArrowRow m;
+    m.set_resource_id("srv-1")
+     .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
+     .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
+
+    auto encoded_direct = m.Encode();
+    fletcher::RowCodec codec(integration::MetricsArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(m.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: WKT + list<struct> + map + optional — byte identical") {
+    integration::OrderItemArrowRow item1, item2;
+    item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
+    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
+         .set_note("gift wrap");
+
+    integration::OrderArrowRow order;
+    order.set_order_id("ORD-12345")
+         .set_created_at(1'700'000'000'000'000'000LL)
+         .set_items({item1, item2})
+         .set_tags({{"priority", 1}, {"region", 3}})
+         .set_customer_note("Leave at door");
+
+    auto encoded_direct = order.Encode();
+    fletcher::RowCodec codec(integration::OrderArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(order.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: temporal WKT — byte identical") {
+    integration::TimedEventArrowRow ev;
+    ev.set_event_id("evt-001")
+      .set_occurred_at(1'700'000'000'000'000'000LL)
+      .set_elapsed(5'000'000'000LL)
+      .set_score(9.5);
+
+    auto encoded_direct = ev.Encode();
+    fletcher::RowCodec codec(integration::TimedEventArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(ev.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
 }

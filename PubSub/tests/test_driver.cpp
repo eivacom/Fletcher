@@ -24,11 +24,12 @@ class MockProvider : public PubSubProvider {
     }
 
     void Publish(const std::vector<std::string>& segments,
-                 const Envelope& envelope) override {
+                 const ArrowRow& row,
+                 const Attachments& attachments) override {
         std::string key = Join(segments);
         auto it = callbacks_.find(key);
         if (it != callbacks_.end())
-            it->second(envelope);
+            it->second(row, attachments);
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
@@ -66,6 +67,10 @@ static auto TestSchema() {
 
 static const std::vector<std::string> kTopic = {"test", "topic"};
 
+static ArrowRow MakeTestRow(int32_t x) {
+    return { std::make_shared<arrow::Int32Scalar>(x) };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -93,15 +98,14 @@ TEST_CASE("Driver: Publish delegates to provider") {
 
     driver.CreateTopic(kTopic, TestSchema());
 
-    // Subscribe so the mock has a callback to verify delivery.
-    Envelope received;
-    driver.Subscribe(kTopic, [&](const Envelope& env) { received = env; });
+    ArrowRow received;
+    driver.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
 
-    Envelope sent;
-    sent.row = {0x01, 0x02, 0x03};
+    auto sent = MakeTestRow(42);
     driver.Publish(kTopic, sent);
 
-    CHECK(received.row == sent.row);
+    REQUIRE(received.size() == 1);
+    CHECK(static_cast<const arrow::Int32Scalar&>(*received[0]).value == 42);
 }
 
 TEST_CASE("Driver: Subscribe returns unique IDs") {
@@ -109,8 +113,8 @@ TEST_CASE("Driver: Subscribe returns unique IDs") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r1 = driver.Subscribe(kTopic, [](const Envelope&) {});
-    auto r2 = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r1 = driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
+    auto r2 = driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
     CHECK(r1.subscription_id != r2.subscription_id);
 }
@@ -120,7 +124,7 @@ TEST_CASE("Driver: Subscribe to unknown topic auto-registers") {
     Driver driver(mock);
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
-    auto result = driver.Subscribe({"no", "such"}, [](const Envelope&) {});
+    auto result = driver.Subscribe({"no", "such"}, [](ArrowRow, Attachments) {});
     CHECK(result.subscription_id > 0);
     CHECK(driver.HasTopic({"no", "such"}));
 }
@@ -132,7 +136,7 @@ TEST_CASE("Driver: Subscribe returns schema from provider") {
     auto schema = TestSchema();
     driver.CreateTopic(kTopic, schema);
 
-    auto result = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto result = driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
     REQUIRE(result.schema != nullptr);
     CHECK(result.schema->Equals(*schema));
 }
@@ -143,17 +147,15 @@ TEST_CASE("Driver: multi-subscriber fan-out") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    driver.Subscribe(kTopic, [&](const Envelope&) { count_a++; });
-    driver.Subscribe(kTopic, [&](const Envelope&) { count_b++; });
+    driver.Subscribe(kTopic, [&](ArrowRow, Attachments) { count_a++; });
+    driver.Subscribe(kTopic, [&](ArrowRow, Attachments) { count_b++; });
 
-    Envelope env;
-    env.row = {0xAA};
-    driver.Publish(kTopic, env);
+    driver.Publish(kTopic, MakeTestRow(1));
 
     CHECK(count_a == 1);
     CHECK(count_b == 1);
 
-    driver.Publish(kTopic, env);
+    driver.Publish(kTopic, MakeTestRow(2));
     CHECK(count_a == 2);
     CHECK(count_b == 2);
 }
@@ -164,17 +166,15 @@ TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    auto ra = driver.Subscribe(kTopic, [&](const Envelope&) { count_a++; });
-    driver.Subscribe(kTopic, [&](const Envelope&) { count_b++; });
+    auto ra = driver.Subscribe(kTopic, [&](ArrowRow, Attachments) { count_a++; });
+    driver.Subscribe(kTopic, [&](ArrowRow, Attachments) { count_b++; });
 
-    Envelope env;
-    env.row = {0xBB};
-    driver.Publish(kTopic, env);
+    driver.Publish(kTopic, MakeTestRow(1));
     CHECK(count_a == 1);
     CHECK(count_b == 1);
 
     driver.Unsubscribe(ra.subscription_id);
-    driver.Publish(kTopic, env);
+    driver.Publish(kTopic, MakeTestRow(2));
     CHECK(count_a == 1);  // no longer incremented
     CHECK(count_b == 2);
 }
@@ -184,7 +184,7 @@ TEST_CASE("Driver: Unsubscribe last subscriber unsubscribes from provider") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r = driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r = driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
     CHECK(mock->unsubscribe_count == 0);
 
     driver.Unsubscribe(r.subscription_id);
@@ -196,8 +196,8 @@ TEST_CASE("Driver: Unsubscribe with remaining subscribers keeps provider subscri
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r1 = driver.Subscribe(kTopic, [](const Envelope&) {});
-    driver.Subscribe(kTopic, [](const Envelope&) {});
+    auto r1 = driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
+    driver.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
     driver.Unsubscribe(r1.subscription_id);
     CHECK(mock->unsubscribe_count == 0);  // still have one subscriber
@@ -248,18 +248,20 @@ TEST_CASE("Driver: publish with attachments fans out correctly") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    Envelope received;
-    driver.Subscribe(kTopic, [&](const Envelope& env) { received = env; });
+    ArrowRow received_row;
+    Attachments received_att;
+    driver.Subscribe(kTopic, [&](ArrowRow row, Attachments att) {
+        received_row = std::move(row);
+        received_att = std::move(att);
+    });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(
         std::vector<uint8_t>{0xDE, 0xAD});
 
-    Envelope sent;
-    sent.row = {0x01};
-    sent.attachments["img"] = blob;
-    driver.Publish(kTopic, sent);
+    driver.Publish(kTopic, MakeTestRow(99), {{"img", blob}});
 
-    CHECK(received.row == sent.row);
-    REQUIRE(received.attachments.count("img") == 1);
-    CHECK(*received.attachments.at("img") == *blob);
+    REQUIRE(received_row.size() == 1);
+    CHECK(static_cast<const arrow::Int32Scalar&>(*received_row[0]).value == 99);
+    REQUIRE(received_att.count("img") == 1);
+    CHECK(*received_att.at("img") == *blob);
 }

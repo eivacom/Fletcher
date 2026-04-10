@@ -21,7 +21,7 @@ import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/object-backend.js';
 import { encodePositional } from './codec/positional-encoder.js';
 import type { SchemaDescriptor } from './codec/schema-descriptor.js';
-import type { FletcherClientOptions, MessageCallback } from './types.js';
+import type { BackendType, FletcherClientOptions, MessageCallback } from './types.js';
 
 interface PendingRequest {
   resolve: (resp: ServerResponse) => void;
@@ -37,7 +37,11 @@ interface Subscription {
 export class FletcherClient {
   private ws: WebSocket | null = null;
   private backend: DecoderBackend<unknown>;
-  private opts: Required<FletcherClientOptions>;
+  private opts: {
+    url: string;
+    backend: BackendType;
+    wasmFactory?: () => Promise<unknown>;
+  };
   private pendingQueue: PendingRequest[] = [];
   private subscriptions = new Map<bigint, Subscription>();
 
@@ -198,6 +202,10 @@ export class FletcherClient {
 
       ws.onclose = () => {
         this.ws = null;
+        for (const p of this.pendingQueue) {
+          p.reject(new Error('WebSocket closed'));
+        }
+        this.pendingQueue = [];
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -216,10 +224,12 @@ export class FletcherClient {
         return; // Malformed JSON — ignore.
       }
 
-      const pending = this.pendingQueue.shift();
-      if (pending) {
-        pending.resolve(resp);
-      }
+      const idx = this.pendingQueue.findIndex(
+        p => p.expectedType === resp.type || resp.type === 'error',
+      );
+      if (idx === -1) return;
+      const [pending] = this.pendingQueue.splice(idx, 1);
+      pending.resolve(resp);
     } else {
       // Binary frame → MESSAGE data delivery.
       const data = new Uint8Array(event.data as ArrayBuffer);
