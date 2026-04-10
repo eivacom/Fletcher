@@ -121,10 +121,7 @@ function parseFieldDescriptor(j: any): FieldDescriptor {
 
 function parseSchemaFromJson(j: any): SchemaDescriptor {
   const fields = (j.fields as any[]).map(parseFieldDescriptor);
-  return {
-    schemaHash: 0n,  // not available from the JSON response; will be removed in Phase 2
-    fields,
-  };
+  return { fields };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -1176,8 +1176,8 @@ std::string GenerateMessageClass(const std::string& cls,
     o << " private:\n";
 
     // Codec singleton
-    o << "    static fletcher::RowCodec& Codec() {\n"
-      << "        static fletcher::RowCodec kCodec(" << cls << "Schema());\n"
+    o << "    static fletcher::PositionalCodec& Codec() {\n"
+      << "        static fletcher::PositionalCodec kCodec(" << cls << "Schema());\n"
       << "        return kCodec;\n"
       << "    }\n\n";
 
@@ -1357,7 +1357,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
       << "#include <arrow/api.h>\n";
 
     if (!schema_only) {
-        o << "#include <row_codec.hpp>\n"
+        o << "#include <positional_codec.hpp>\n"
           << "#include <arrow_row_view.hpp>\n";
     }
 

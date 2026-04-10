@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { WasmDecoder } from '../src/wasm-decoder.js';
 import { WireTypeId } from '../src/wire-types.js';
 import { ObjectBackend } from '../src/codec/object-backend.js';
+import { encodePositional } from '../src/codec/positional-encoder.js';
 import type { SchemaDescriptor } from '../src/codec/schema-descriptor.js';
 
 /**
- * Build a tagged row buffer by hand for testing.
+ * Build a tagged row buffer by hand for testing the legacy WasmDecoder.
  */
 function buildRow(
   schemaHash: bigint,
@@ -168,18 +169,14 @@ describe('WasmDecoder (TS fallback)', () => {
   });
 });
 
-describe('ObjectBackend', () => {
-  let decoder: WasmDecoder;
+describe('ObjectBackend (positional)', () => {
   let backend: ObjectBackend;
 
-  beforeAll(async () => {
-    decoder = new WasmDecoder();
-    await decoder.init();
+  beforeAll(() => {
     backend = new ObjectBackend();
   });
 
   const schema: SchemaDescriptor = {
-    schemaHash: 1n,
     fields: [
       { name: 'id',    fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
       { name: 'value', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
@@ -188,38 +185,32 @@ describe('ObjectBackend', () => {
   };
 
   it('decodes a complete row to a plain object', () => {
-    const row = buildRow(1n, [
-      { fieldNum: 1, wireType: WireTypeId.INT32,   isNull: false, payload: int32Payload(10) },
-      { fieldNum: 2, wireType: WireTypeId.FLOAT64, isNull: false, payload: float64Payload(2.5) },
-      { fieldNum: 3, wireType: WireTypeId.STRING,  isNull: false, payload: stringPayload('test') },
-    ]);
-
-    const obj = backend.decode(schema, row, decoder);
+    const row = encodePositional(schema, { id: 10, value: 2.5, label: 'test' });
+    const obj = backend.decode(schema, row);
     expect(obj.id).toBe(10);
     expect(obj.value).toBe(2.5);
     expect(obj.label).toBe('test');
   });
 
-  it('returns null for missing fields', () => {
-    // Row only has field 1.
-    const row = buildRow(1n, [
-      { fieldNum: 1, wireType: WireTypeId.INT32, isNull: false, payload: int32Payload(7) },
-    ]);
+  it('returns null for null fields', () => {
+    const twoFieldSchema: SchemaDescriptor = {
+      fields: [
+        { name: 'id',    fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+        { name: 'value', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: true },
+        { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING,  nullable: true },
+      ],
+    };
 
-    const obj = backend.decode(schema, row, decoder);
+    const row = encodePositional(twoFieldSchema, { id: 7, value: null, label: null });
+    const obj = backend.decode(twoFieldSchema, row);
     expect(obj.id).toBe(7);
     expect(obj.value).toBeNull();
     expect(obj.label).toBeNull();
   });
 
-  it('returns null for null fields', () => {
-    const row = buildRow(1n, [
-      { fieldNum: 1, wireType: WireTypeId.INT32,   isNull: false, payload: int32Payload(1) },
-      { fieldNum: 2, wireType: WireTypeId.FLOAT64, isNull: false, payload: float64Payload(0) },
-      { fieldNum: 3, wireType: WireTypeId.STRING,  isNull: true },
-    ]);
-
-    const obj = backend.decode(schema, row, decoder);
+  it('returns null for explicitly null fields', () => {
+    const row = encodePositional(schema, { id: 1, value: 0, label: null });
+    const obj = backend.decode(schema, row);
     expect(obj.label).toBeNull();
   });
 });

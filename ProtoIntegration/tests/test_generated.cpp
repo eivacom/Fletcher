@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
 #include <pubsub/pubsub_provider.hpp>
-#include <row_codec.hpp>
+#include <positional_codec.hpp>
 
 #include <map>
 
@@ -15,11 +15,16 @@
 #include "complex.fletcher.pb.h"
 
 // Helper: decode an encoded row using the given schema.
+// The encoded data is kept alive in a static to prevent dangling Buffer
+// pointers — DecodeScalarFromReader creates non-owning Buffers into the
+// input data.
 fletcher::ArrowRow RoundTrip(
-    const fletcher::EncodedRow& encoded,
+    fletcher::EncodedRow encoded,
     std::shared_ptr<arrow::Schema> schema) {
-    fletcher::RowCodec codec(std::move(schema));
-    return codec.DecodeRow(encoded);
+    static fletcher::EncodedRow kept_alive;
+    kept_alive = std::move(encoded);
+    fletcher::PositionalCodec codec(std::move(schema));
+    return codec.DecodeRow(kept_alive);
 }
 
 // =============================================================================

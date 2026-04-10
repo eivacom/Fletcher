@@ -32,15 +32,11 @@ export type {
 
 // Codec
 export type { SchemaDescriptor, FieldDescriptor } from './codec/schema-descriptor.js';
-export type { DecoderBackend } from './codec/row-decoder.js';
-export { readScalar, decodeFieldValue } from './codec/row-decoder.js';
-export { encodeRow } from './codec/row-encoder.js';
+export type { DecoderBackend } from './codec/object-backend.js';
 export { ObjectBackend } from './codec/object-backend.js';
 export { ArrowBackend } from './codec/arrow-backend.js';
-
-// WASM decoder
-export { WasmDecoder } from './wasm-decoder.js';
-export type { FieldEntry } from './wasm-decoder.js';
+export { encodePositional } from './codec/positional-encoder.js';
+export { decodePositional } from './codec/positional-decoder.js';
 
 // Client
 export { FletcherClient } from './client.js';

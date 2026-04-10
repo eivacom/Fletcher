@@ -19,8 +19,9 @@ export function encodeRow(
   // Schema hash (8 bytes, little-endian).
   const hashBuf = new Uint8Array(8);
   const hashView = new DataView(hashBuf.buffer);
-  hashView.setUint32(0, Number(schema.schemaHash & 0xFFFFFFFFn), true);
-  hashView.setUint32(4, Number((schema.schemaHash >> 32n) & 0xFFFFFFFFn), true);
+  const hash = schema.schemaHash ?? 0n;
+  hashView.setUint32(0, Number(hash & 0xFFFFFFFFn), true);
+  hashView.setUint32(4, Number((hash >> 32n) & 0xFFFFFFFFn), true);
   parts.push(hashBuf);
 
   // Field count (2 bytes).

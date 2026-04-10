@@ -7,7 +7,8 @@ add_executable(arrow_row_codec_tests
     test_nulls.cpp
     test_errors.cpp
     test_schema_evolution.cpp
-    test_envelope.cpp)
+    test_envelope.cpp
+    test_positional.cpp)
 
 # Catch2::Catch2WithMain must come BEFORE row_codec on the link line.
 # row_codec -> arrow::arrow -> boost::boost pulls in libboost_test_exec_monitor,

@@ -1,16 +1,21 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
-#include <row_codec.hpp>
+#include <positional_codec.hpp>
 #include <crs_utils.hpp>
 
 #include "geoarrow_test.fletcher.pb.h"
 
 // Helper: decode an encoded row using the given schema.
+// The encoded data is kept alive in a static to prevent dangling Buffer
+// pointers — DecodeScalarFromReader creates non-owning Buffers into the
+// input data.
 static fletcher::ArrowRow GeoRoundTrip(
-    const fletcher::EncodedRow& encoded,
+    fletcher::EncodedRow encoded,
     std::shared_ptr<arrow::Schema> schema) {
-    fletcher::RowCodec codec(std::move(schema));
-    return codec.DecodeRow(encoded);
+    static fletcher::EncodedRow kept_alive;
+    kept_alive = std::move(encoded);
+    fletcher::PositionalCodec codec(std::move(schema));
+    return codec.DecodeRow(kept_alive);
 }
 
 // =============================================================================
@@ -230,7 +235,7 @@ TEST_CASE("GeoArrow: MultiPoint round-trip") {
 }
 
 // =============================================================================
-// Byte-identical verification: EncodeTo vs RowCodec
+// Byte-identical verification: EncodeTo vs PositionalCodec
 // =============================================================================
 
 TEST_CASE("GeoArrow: EncodeTo byte-identical for VehicleTrack") {
@@ -258,8 +263,8 @@ TEST_CASE("GeoArrow: EncodeTo byte-identical for VehicleTrack") {
     // Path A: EncodeTo (direct)
     auto encoded_direct = row.Encode();
 
-    // Path B: ToScalars → RowCodec
-    fletcher::RowCodec codec(integration::VehicleTrackArrowRowSchema());
+    // Path B: ToScalars → PositionalCodec
+    fletcher::PositionalCodec codec(integration::VehicleTrackArrowRowSchema());
     auto encoded_codec = codec.EncodeRow(row.ToScalars());
 
     REQUIRE(encoded_direct.size() == encoded_codec.size());
@@ -410,7 +415,7 @@ TEST_CASE("CRS: VehicleTrack runtime CRS on previously empty fields") {
 // Helper: decode an encoded row for LandParcel.
 static fletcher::ArrowRow LandParcelRoundTrip(
     const fletcher::EncodedRow& encoded) {
-    fletcher::RowCodec codec(integration::LandParcelArrowRowSchema());
+    fletcher::PositionalCodec codec(integration::LandParcelArrowRowSchema());
     return codec.DecodeRow(encoded);
 }
 
@@ -601,7 +606,7 @@ TEST_CASE("GeoArrow: EncodeTo byte-identical for LandParcel") {
        .set_zones({{{p1, p2, p3, p4}}});
 
     auto encoded_direct = row.Encode();
-    fletcher::RowCodec codec(integration::LandParcelArrowRowSchema());
+    fletcher::PositionalCodec codec(integration::LandParcelArrowRowSchema());
     auto encoded_codec = codec.EncodeRow(row.ToScalars());
 
     REQUIRE(encoded_direct.size() == encoded_codec.size());

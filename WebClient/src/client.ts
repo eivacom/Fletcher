@@ -5,7 +5,6 @@
  * frames, and dispatches decoded messages to subscriber callbacks.
  */
 
-import { WasmDecoder } from './wasm-decoder.js';
 import { deserializeEnvelope, serializeEnvelope } from './envelope.js';
 import type { Envelope } from './envelope.js';
 import {
@@ -19,8 +18,8 @@ import {
 } from './ws-protocol.js';
 import type { ServerResponse, SubscribedResponse, TopicsListResponse, ErrorResponse } from './ws-protocol.js';
 import { ObjectBackend } from './codec/object-backend.js';
-import type { DecoderBackend } from './codec/row-decoder.js';
-import { encodeRow } from './codec/row-encoder.js';
+import type { DecoderBackend } from './codec/object-backend.js';
+import { encodePositional } from './codec/positional-encoder.js';
 import type { SchemaDescriptor } from './codec/schema-descriptor.js';
 import type { FletcherClientOptions, MessageCallback } from './types.js';
 
@@ -37,7 +36,6 @@ interface Subscription {
 
 export class FletcherClient {
   private ws: WebSocket | null = null;
-  private decoder = new WasmDecoder();
   private backend: DecoderBackend<unknown>;
   private opts: Required<FletcherClientOptions>;
   private pendingQueue: PendingRequest[] = [];
@@ -47,7 +45,6 @@ export class FletcherClient {
     this.opts = {
       url: options.url,
       backend: options.backend ?? 'object',
-      wasmFactory: options.wasmFactory ?? (() => Promise.resolve(undefined as unknown)),
       reconnectDelay: options.reconnectDelay ?? 0,
     };
 
@@ -59,11 +56,8 @@ export class FletcherClient {
     this.backend = new ObjectBackend();
   }
 
-  /** Initialize the WASM decoder (optional) and connect to the gateway. */
+  /** Connect to the gateway. */
   async connect(): Promise<void> {
-    await this.decoder.init(
-      this.opts.wasmFactory as (() => Promise<never>) | undefined,
-    );
     await this.connectWs();
   }
 
@@ -144,7 +138,7 @@ export class FletcherClient {
     data: Record<string, unknown>,
     attachments?: Map<string, Uint8Array>,
   ): Promise<void> {
-    const rowBytes = encodeRow(schema, data);
+    const rowBytes = encodePositional(schema, data);
     const envelope: Envelope = {
       row: rowBytes,
       attachments: attachments ?? new Map(),
@@ -182,7 +176,6 @@ export class FletcherClient {
       this.ws.close();
       this.ws = null;
     }
-    this.decoder.dispose();
   }
 
   // -----------------------------------------------------------------------
@@ -240,7 +233,7 @@ export class FletcherClient {
       const sub = this.subscriptions.get(msg.subId);
       if (sub) {
         const envelope = deserializeEnvelope(msg.envelope);
-        const decoded = this.backend.decode(sub.schema, envelope.row, this.decoder);
+        const decoded = this.backend.decode(sub.schema, envelope.row);
         sub.callback(decoded, envelope.attachments);
       }
     }

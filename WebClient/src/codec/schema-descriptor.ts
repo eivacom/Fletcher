@@ -29,10 +29,10 @@ export interface FieldDescriptor {
 }
 
 export interface SchemaDescriptor {
-  /** FNV-1a hash of the Arrow schema fingerprint (uint64 as bigint). */
-  schemaHash: bigint;
   /** Top-level fields in schema order. */
   fields: FieldDescriptor[];
+  /** @deprecated No longer used by the positional codec. Kept for backward compat with tagged row-encoder. */
+  schemaHash?: bigint;
   /** Originating proto package name. */
   protoPackage?: string;
   /** Originating proto message name. */
