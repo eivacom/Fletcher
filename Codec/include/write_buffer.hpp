@@ -25,6 +25,9 @@ class WriteBuffer {
     // Overwrite 4 bytes at a previous offset (for length prefixes).
     virtual void PatchU32(size_t offset, uint32_t value) = 0;
 
+    // OR a byte into a previous offset (for null bitfield patching).
+    virtual void PatchByte(size_t offset, uint8_t bits) = 0;
+
     template <typename T>
     void AppendFixed(T value) {
         Append(reinterpret_cast<const uint8_t*>(&value), sizeof(T));
@@ -59,6 +62,10 @@ class VectorWriteBuffer : public WriteBuffer {
         std::memcpy(buf_.data() + offset, &value, sizeof(value));
     }
 
+    void PatchByte(size_t offset, uint8_t bits) override {
+        buf_[offset] |= bits;
+    }
+
  private:
     std::vector<uint8_t>& buf_;
 };
@@ -86,6 +93,10 @@ class FixedWriteBuffer : public WriteBuffer {
 
     void PatchU32(size_t offset, uint32_t value) override {
         std::memcpy(data_ + offset, &value, sizeof(value));
+    }
+
+    void PatchByte(size_t offset, uint8_t bits) override {
+        data_[offset] |= bits;
     }
 
  private:

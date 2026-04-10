@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(ArrowRow VERSION 0.1 LANGUAGES CXX)
+project(ArrowRow VERSION 0.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -197,6 +197,7 @@ unset(_fix_clean)
 unset(_fix_dirty)
 unset(_fix_o)
 
+add_subdirectory(third_party/nanoarrow)
 add_subdirectory(PubSub)
 add_subdirectory(Codec)
 add_subdirectory(Batcher)
