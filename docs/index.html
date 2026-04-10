@@ -202,10 +202,10 @@ tr:hover td { background: #f4f5fb; }
   at a time &mdash; telemetry streams, event buses, sensor networks &mdash;
   but is consumed in columnar batches for analytics, storage, or forwarding.</p>
 
-<p>The core pub/sub, codec, and generated code layers depend only on
-  <strong>nanoarrow</strong> (~100 KB), making them suitable for edge and
-  embedded deployment. Server-side features (batching, view classes,
-  WebGateway) use the full Apache Arrow C++ library through a separate
+<p>The core pub/sub, codec, generated code, WebGateway, and transport
+  providers depend only on <strong>nanoarrow</strong> (~100 KB), making them
+  suitable for edge and embedded deployment. Server-side features (batching,
+  view classes) use the full Apache Arrow C++ library through a separate
   <code>PubSubArrow</code> adapter.</p>
 
 <p>The system provides seven layers that compose cleanly:</p>
