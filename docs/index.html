@@ -138,12 +138,12 @@ tr:hover td { background: #f4f5fb; }
     <li><a href="#architecture">Architecture</a></li>
     <li><a href="#wire-format">Wire Format</a></li>
     <li><a href="#type-mapping">Type Mapping</a></li>
-    <li><a href="#schema-evolution">Schema Evolution</a></li>
+    <li><a href="#schema-transport">Schema Transport</a></li>
     <li><a href="#attachments">Attachments</a></li>
 
     <li class="section"><span>Components</span></li>
     <li><a href="#protoc-plugin">Protoc Plugin</a></li>
-    <li><a href="#row-codec">RowCodec</a></li>
+    <li><a href="#positional-codec">PositionalCodec</a></li>
     <li><a href="#pubsub">Pub/Sub &amp; Driver</a></li>
     <li><a href="#web-gateway">WebGateway</a></li>
     <li><a href="#web-client">WebClient (TS)</a></li>
@@ -167,18 +167,17 @@ tr:hover td { background: #f4f5fb; }
 <div class="hero">
   <h1>Fletcher</h1>
   <p class="subtitle">
-    Compact, self-describing row buffers for Apache Arrow &mdash;
-    generated from Protocol Buffers, with schema evolution, pub/sub
-    transport, and columnar batching built in.
+    Compact, positional row buffers for Apache Arrow &mdash;
+    generated from Protocol Buffers, with schema transport, pub/sub
+    delivery, and columnar batching built in.
   </p>
   <div class="badges">
     <span class="badge">C++20</span>
     <span class="badge">TypeScript</span>
     <span class="badge">Apache Arrow</span>
     <span class="badge">Protocol Buffers</span>
-    <span class="badge">Schema Evolution</span>
+    <span class="badge">Schema Transport</span>
     <span class="badge">WebSocket</span>
-    <span class="badge">WASM</span>
     <span class="badge">Pub/Sub</span>
   </div>
 </div>
@@ -191,7 +190,7 @@ tr:hover td { background: #f4f5fb; }
   definition and <strong>Apache Arrow</strong> for in-memory analytics.
   A <code>protoc</code> compiler plugin reads your <code>.proto</code> files
   and generates C++ wrapper classes that serialize structured data into
-  compact, self-describing binary row buffers backed by Arrow schemas.
+  compact, positional binary row buffers backed by Arrow schemas.
 </p>
 
 <p>These row buffers are designed for scenarios where data arrives one row
@@ -201,18 +200,20 @@ tr:hover td { background: #f4f5fb; }
 <p>The system provides six layers that compose cleanly:</p>
 
 <ol>
-  <li><strong>Codec</strong> &mdash; encodes Arrow scalars into a tagged binary
-    row format and decodes them back, with cross-schema evolution support.</li>
+  <li><strong>Codec</strong> &mdash; encodes Arrow scalars into a compact
+    positional binary row format and decodes them back. The publisher&rsquo;s
+    schema is delivered to subscribers automatically, guaranteeing matching
+    schemas on both sides.</li>
   <li><strong>Protoc Plugin</strong> &mdash; generates typed C++ message classes,
     TypeScript interfaces, publisher/subscriber classes, and Arrow schemas from
     <code>.proto</code> definitions.</li>
   <li><strong>PubSub &amp; Driver</strong> &mdash; an abstract provider interface
-    (with a Fast DDS implementation) for publishing and subscribing, plus a
-    Driver class with multi-subscriber fan-out and subscription IDs.</li>
+    (with a Fast DDS implementation) for publishing and subscribing, with
+    provider-level schema transport, multi-subscriber fan-out, and subscription IDs.</li>
   <li><strong>WebGateway</strong> &mdash; a Boost.Beast WebSocket server that
     exposes the Driver to browser clients over a split text/binary protocol.</li>
-  <li><strong>WebClient</strong> &mdash; a TypeScript client library with
-    WASM-accelerated row decoding and two interchangeable backends (plain objects
+  <li><strong>WebClient</strong> &mdash; a TypeScript client library with a
+    pure-TypeScript positional codec and two interchangeable backends (plain objects
     or Apache Arrow JS).</li>
   <li><strong>Batcher</strong> &mdash; accumulates individual rows into Arrow
     Tables via a write-ahead log, flushing in configurable batches.</li>
@@ -268,7 +269,7 @@ row.<span class="fn">set_sensor_id</span>(<span class="num">42</span>)
 <span class="cmt">// Encode to a compact binary buffer</span>
 fletcher::<span class="ty">EncodedRow</span> encoded = row.<span class="fn">Encode</span>();
 
-<span class="cmt">// Decode back (same schema or an evolved one)</span>
+<span class="cmt">// Decode back</span>
 myapp::<span class="ty">SensorReadingArrowRow</span> restored(encoded);</code></pre>
 
 <h3>4. Publish and subscribe</h3>
@@ -319,21 +320,22 @@ sub.<span class="fn">Subscribe</span>([&amp;](const fletcher::<span class="ty">E
        +---> .fletcher.pb.h    (C++ typed row classes + pub/sub wrappers)
        +---> .fletcher.ts       (TypeScript interfaces + schema descriptors)
        |
-       +------ Encode() ------> EncodedRow (compact binary buffer)
+       +------ Encode() ------> EncodedRow (compact positional buffer)
        |                              |
        |                 +------------+------------+
        |                 |            |            |
        |                 v            v            v
        |          PubSubProvider  RowBatcher   WebGateway
-       |          (transport)   (accumulation) (WebSocket)
-       |                 |            |            |
-       |                 v            v            v
-       |          Fast DDS / ...  arrow::Table  Browser
-       |                 |       (columnar)        |
-       |                 v                         v
-       +---- Decode() <-- Subscriber        WebClient (TS)
-                                          WASM decoder +
-                                        Object / Arrow JS
+       |         (transport +   (accumulation) (WebSocket)
+       |        schema delivery)      |            |
+       |                 |            v            v
+       |                 v       arrow::Table   Browser
+       |          Fast DDS / ... (columnar)        |
+       |                 |                         v
+       |                 v                   WebClient (TS)
+       +---- Decode() <-- Subscriber       positional codec +
+                (schema received             Object / Arrow JS
+                 from publisher)
 </div>
 
 <p>Each layer is independent. You can use the codec without pub/sub,
@@ -342,36 +344,38 @@ sub.<span class="fn">Subscribe</span>([&amp;](const fletcher::<span class="ty">E
 
 
 <!-- ── Wire Format ─────────────────────────────────────────────────── -->
-<h2 id="wire-format">Wire Format</h2>
+<h2 id="wire-format">Wire Format (Positional)</h2>
 
-<p>Every <code>EncodedRow</code> is a self-describing, tagged binary buffer
-  (little-endian throughout):</p>
+<p>Every <code>EncodedRow</code> is a compact, positional binary buffer
+  (little-endian throughout). Because the publisher&rsquo;s schema is
+  delivered to subscribers via schema transport, both sides are guaranteed
+  the same schema. This allows the wire format to omit field numbers, wire
+  type tags, and schema hashes &mdash; fields are written in schema order
+  with a compact null bitfield.</p>
 
-<pre><code>[SCHEMA_HASH  : 8 bytes]   FNV-1a 64-bit hash of the Arrow schema fingerprint
-[FIELD_COUNT  : 2 bytes]   uint16 &mdash; number of top-level fields
+<pre><code>[NULL_BITFIELD : ceil(num_fields / 8) bytes, LSB-first bit order]
 
-For each field (in schema order):
-  [FIELD_NUM    : 4 bytes]  uint32 &mdash; protobuf field number
-  [WIRE_TYPE_ID : 1 byte ]  type tag (see below)
-  [NULL_FLAG    : 1 byte ]  0x00 = valid, 0x01 = null
-  If valid:
-    [DATA_LEN   : 4 bytes]  uint32 &mdash; payload byte length
-    [PAYLOAD    : DATA_LEN bytes]</code></pre>
-
-<p>The <strong>field number</strong> and <strong>wire type ID</strong> in every
-  field make each row self-describing. A reader with a different schema can
-  match fields by number, skip unknown fields via <code>DATA_LEN</code>,
-  and promote compatible types &mdash; all without any handshake.</p>
+For each field in schema order (skip if null bit set):
+  [PAYLOAD bytes]   &mdash; size determined by field type from schema</code></pre>
 
 <h3>Payload encoding by kind</h3>
 <table>
   <tr><th>Kind</th><th>Encoding</th></tr>
-  <tr><td>Scalars (int, float, bool, ...)</td><td>Raw little-endian bytes</td></tr>
+  <tr><td>Fixed-size scalars (int, float, bool, ...)</td><td>Raw little-endian bytes (size known from schema type)</td></tr>
   <tr><td>String / Binary</td><td><code>[LEN:4][DATA:LEN]</code></td></tr>
-  <tr><td>Struct</td><td>Recursive tagged fields: <code>[FIELD_COUNT:2]</code> + per-field tags (no schema hash)</td></tr>
-  <tr><td>List / Large List</td><td><code>[COUNT:4]</code> + per element: <code>[NULL_FLAG:1]</code> + payload</td></tr>
-  <tr><td>Map</td><td><code>[COUNT:4]</code> + per entry: key payload + <code>[NULL_FLAG:1]</code> + value payload</td></tr>
+  <tr><td>Struct</td><td><code>[NULL_BITFIELD:ceil(n/8)]</code> + per-field payloads (recursive positional)</td></tr>
+  <tr><td>List / Large List</td><td><code>[COUNT:4][NULL_BITFIELD:ceil(count/8)]</code> + per-element payloads</td></tr>
+  <tr><td>Fixed-size List</td><td><code>[NULL_BITFIELD:ceil(fixed_size/8)]</code> + per-element payloads</td></tr>
+  <tr><td>Map</td><td><code>[COUNT:4]</code> + key payloads + <code>[NULL_BITFIELD:ceil(count/8)]</code> + value payloads</td></tr>
   <tr><td>Union</td><td><code>[TYPE_CODE:1]</code> + active child payload</td></tr>
+</table>
+
+<h3>Wire size savings</h3>
+<p>For a typical 10-field row (6 fixed scalars, 2 strings, 1 struct, 1 list):</p>
+<table>
+  <tr><th>Format</th><th>Overhead</th></tr>
+  <tr><td>Old tagged format</td><td>~110 bytes (8 hash + 2 count + 10 &times; 10 per-field headers)</td></tr>
+  <tr><td>Positional format</td><td>~14 bytes (2 null bitfield + string/composite length prefixes)</td></tr>
 </table>
 
 
@@ -422,49 +426,64 @@ For each field (in schema order):
 </ul>
 
 
-<!-- ── Schema Evolution ────────────────────────────────────────────── -->
-<h2 id="schema-evolution">Schema Evolution</h2>
+<!-- ── Schema Transport ────────────────────────────────────────────── -->
+<h2 id="schema-transport">Schema Transport</h2>
 
-<p>Because every field in the wire format carries its proto
-  <strong>field number</strong> and <strong>type ID</strong>, a reader with a
-  different schema version can decode rows without any handshake or schema
-  exchange. Evolution follows
-  <a href="https://iceberg.apache.org/spec/#schema-evolution">Apache Iceberg rules</a>:</p>
+<p>The positional wire format requires both publisher and subscriber to share
+  the same schema. Fletcher solves this via <strong>provider-level schema
+  transport</strong>: when a publisher creates a topic, the Arrow schema is
+  delivered alongside the topic. When a subscriber joins, the provider
+  returns the schema automatically.</p>
 
-<table>
-  <tr><th>Scenario</th><th>Behavior</th></tr>
-  <tr><td>Field <strong>added</strong> in reader schema</td><td>Missing from wire &rarr; filled with <code>null</code></td></tr>
-  <tr><td>Field <strong>removed</strong> from reader schema</td><td>Unknown wire field &rarr; skipped via <code>DATA_LEN</code></td></tr>
-  <tr><td>Field <strong>renamed</strong></td><td>Matched by <code>field_number</code>, not name</td></tr>
-  <tr><td>Type <strong>widened</strong></td><td>Automatic promotion (see table below)</td></tr>
-  <tr><td>Type <strong>narrowed</strong></td><td>Rejected as <code>ILLEGAL</code> (throws at decode)</td></tr>
-</table>
+<h3>How it works</h3>
+<ol>
+  <li><strong>Publisher calls <code>CreateTopic(segments, schema)</code></strong>
+    &mdash; the provider stores the schema alongside the data topic.</li>
+  <li><strong>Subscriber calls <code>Subscribe(segments, callback)</code></strong>
+    &mdash; the provider returns a <code>SubscriptionResult</code> containing
+    the publisher&rsquo;s schema. No need for the subscriber to know the
+    schema in advance.</li>
+  <li><strong>Both sides use the same schema</strong> for the
+    <code>PositionalCodec</code>, so the compact positional wire format works
+    without any per-field metadata.</li>
+</ol>
 
-<h3>Legal type promotions</h3>
-<table>
-  <tr><th>Wire Type</th><th>Reader Type</th><th>Promotion</th></tr>
-  <tr><td><code>int8/16/32</code></td><td><code>int16/32/64</code> (wider)</td><td>WIDEN_INT</td></tr>
-  <tr><td><code>uint8/16/32</code></td><td><code>uint16/32/64</code> (wider)</td><td>WIDEN_INT</td></tr>
-  <tr><td><code>float32</code></td><td><code>float64</code></td><td>WIDEN_FLOAT</td></tr>
-  <tr><td><code>int32</code></td><td><code>float64</code></td><td>INT_TO_FLOAT</td></tr>
-  <tr><td><code>decimal128</code></td><td><code>decimal256</code></td><td>WIDEN_INT</td></tr>
-</table>
+<h3>FastDDS implementation</h3>
+<p>The FastDDS provider uses a <strong>companion DDS topic</strong> for schema
+  delivery. For each data topic <code>foo/bar</code>, a companion topic
+  <code>foo/bar/__schema</code> is created with TRANSIENT_LOCAL durability
+  and KEEP_LAST(1) QoS. The serialized Arrow IPC schema is published once
+  and retained for late-joining subscribers.</p>
 
-<h3>How it works internally</h3>
-<p>On the first row from an unknown schema hash, <code>RowCodec::DecodeRow</code>
-  builds a <strong>DecodingMap</strong> &mdash; a cached mapping from wire
-  field positions to reader field indices, with promotion rules for each slot.
-  Subsequent rows with the same hash reuse the cached map, decoding at
-  near-positional speed.</p>
+<h3>WebGateway</h3>
+<p>When a WebSocket client subscribes, the <code>subscribed</code> response
+  includes the schema in two forms:</p>
+<ul>
+  <li><code>schema</code> &mdash; a JSON object with field names, wire types,
+    nullability, and composite structure (for easy consumption in JS)</li>
+  <li><code>schemaIpc</code> &mdash; base64-encoded Arrow IPC bytes (for full
+    fidelity when needed)</li>
+</ul>
 
-<pre><code><span class="cmt">// Writer uses schema V1 (float temperature)</span>
-fletcher::<span class="ty">RowCodec</span> writer(v1_schema);
-<span class="kw">auto</span> row = writer.<span class="fn">EncodeRow</span>({std::make_shared&lt;arrow::<span class="ty">FloatScalar</span>&gt;(<span class="num">23.5f</span>)});
+<pre><code>{
+  <span class="str">"type"</span>: <span class="str">"subscribed"</span>,
+  <span class="str">"subId"</span>: <span class="str">"1"</span>,
+  <span class="str">"topic"</span>: <span class="str">"myapp/SensorFeed/Stream"</span>,
+  <span class="str">"schemaIpc"</span>: <span class="str">"QUFBQUFBP..."</span>,
+  <span class="str">"schema"</span>: {
+    <span class="str">"fields"</span>: [
+      {<span class="str">"name"</span>: <span class="str">"sensor_id"</span>, <span class="str">"fieldNumber"</span>: <span class="num">1</span>, <span class="str">"wireType"</span>: <span class="num">4</span>, <span class="str">"nullable"</span>: <span class="num">false</span>},
+      ...
+    ]
+  }
+}</code></pre>
 
-<span class="cmt">// Reader uses schema V2 (double temperature) &mdash; promotion happens automatically</span>
-fletcher::<span class="ty">RowCodec</span> reader(v2_schema);
-<span class="kw">auto</span> decoded = reader.<span class="fn">DecodeRow</span>(row);
-<span class="cmt">// decoded[0] is a DoubleScalar with value 23.5</span></code></pre>
+<div class="note">
+  <strong>Legacy tagged codec:</strong> The older self-describing tagged wire
+  format (<code>RowCodec</code>) and its schema evolution logic are still
+  present in the codebase for backward compatibility but are no longer used
+  by generated code.
+</div>
 
 
 <!-- ── Attachments ─────────────────────────────────────────────────── -->
@@ -571,7 +590,6 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
 }
 
 <span class="kw">export const</span> <span class="fn">SensorReadingSchema</span>: <span class="ty">SchemaDescriptor</span> = {
-  schemaHash: <span class="num">0n</span>,
   fields: [
     { name: <span class="str">'sensor_id'</span>,   fieldNumber: <span class="num">1</span>, wireType: <span class="ty">WireTypeId</span>.INT32,   nullable: <span class="num">false</span> },
     { name: <span class="str">'temperature'</span>, fieldNumber: <span class="num">2</span>, wireType: <span class="ty">WireTypeId</span>.FLOAT64, nullable: <span class="num">false</span> },
@@ -598,8 +616,8 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
 </table>
 
 
-<!-- ── RowCodec ────────────────────────────────────────────────────── -->
-<h2 id="row-codec">RowCodec</h2>
+<!-- ── PositionalCodec ─────────────────────────────────────────────── -->
+<h2 id="positional-codec">PositionalCodec</h2>
 
 <p>The core encode/decode engine. You rarely use it directly &mdash;
   the generated classes call it internally &mdash; but it is available for
@@ -610,7 +628,7 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
     arrow::<span class="fn">field</span>(<span class="str">"name"</span>, arrow::<span class="fn">utf8</span>(),    <span class="num">true</span>),
 });
 
-fletcher::<span class="ty">RowCodec</span> codec(schema);
+fletcher::<span class="ty">PositionalCodec</span> codec(schema);
 
 <span class="cmt">// Encode</span>
 fletcher::<span class="ty">EncodedRow</span> row = codec.<span class="fn">EncodeRow</span>({
@@ -623,10 +641,10 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 <span class="cmt">// scalars[0] is an Int32Scalar, scalars[1] is a StringScalar</span></code></pre>
 
 <div class="note">
-  <strong>DecodingMap cache:</strong> When the schema hash in the wire buffer
-  doesn't match the reader's hash, a <code>DecodingMap</code> is built once
-  and cached under a mutex. Subsequent rows from the same writer schema
-  decode without rebuilding the map.
+  <strong>Positional decoding:</strong> Because both encoder and decoder share
+  the same schema (delivered via schema transport), the codec reads fields by
+  position using the null bitfield &mdash; no field matching, no type tags,
+  no per-field overhead.
 </div>
 
 
@@ -636,7 +654,11 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 <p>The <code>PubSubProvider</code> is an abstract interface that decouples
   message transport from encoding. Implement it to plug in any message bus.</p>
 
-<pre><code><span class="kw">class</span> <span class="ty">PubSubProvider</span> {
+<pre><code><span class="kw">struct</span> <span class="ty">SubscriptionResult</span> {
+    std::shared_ptr&lt;arrow::<span class="ty">Schema</span>&gt; schema;  <span class="cmt">// publisher's schema</span>
+};
+
+<span class="kw">class</span> <span class="ty">PubSubProvider</span> {
 <span class="kw">public</span>:
     <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">CreateTopic</span>(
         <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
@@ -648,7 +670,7 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 
     <span class="kw">using</span> <span class="ty">SubscribeCallback</span> = std::function&lt;<span class="ty">void</span>(<span class="kw">const</span> <span class="ty">Envelope</span>&amp;)&gt;;
 
-    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Subscribe</span>(
+    <span class="kw">virtual</span> <span class="ty">SubscriptionResult</span> <span class="fn">Subscribe</span>(
         <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
         <span class="ty">SubscribeCallback</span> callback) = <span class="num">0</span>;
 
@@ -669,8 +691,11 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 <ul>
   <li><strong>Multi-subscriber fan-out</strong> &mdash; multiple subscribers per topic,
     each receiving its own callback. The provider sees only one subscription per topic.</li>
-  <li><strong>Subscription IDs</strong> &mdash; each <code>Subscribe()</code> call returns a
-    <code>uint64_t</code> ID for targeted unsubscribe.</li>
+  <li><strong>Subscription IDs + schema</strong> &mdash; each <code>Subscribe()</code> call
+    returns a <code>SubscribeResult{subscription_id, schema}</code> with the
+    publisher&rsquo;s Arrow schema and a unique ID for targeted unsubscribe.</li>
+  <li><strong>Auto-registration</strong> &mdash; subscribing to an unknown topic
+    auto-registers it with the schema received from the provider.</li>
   <li><strong>Topic registry</strong> &mdash; <code>ListTopics()</code> and
     <code>HasTopic()</code> for discovery.</li>
   <li><strong>Lifecycle management</strong> &mdash; automatically unsubscribes from the
@@ -682,8 +707,8 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 
 driver-&gt;<span class="fn">CreateTopic</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, schema);
 
-<span class="kw">auto</span> sub1 = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback1);
-<span class="kw">auto</span> sub2 = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback2);
+<span class="kw">auto</span> [sub1, schema1] = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback1);
+<span class="kw">auto</span> [sub2, schema2] = driver-&gt;<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, callback2);
 
 driver-&gt;<span class="fn">Unsubscribe</span>(sub1);  <span class="cmt">// sub2 still active</span></code></pre>
 
@@ -714,7 +739,7 @@ gw.<span class="fn">Stop</span>();</code></pre>
   <tr><td>Client &rarr; Server</td><td><code>subscribe</code></td><td><code>{"action":"subscribe","topic":"demo/telemetry"}</code></td></tr>
   <tr><td>Client &rarr; Server</td><td><code>unsubscribe</code></td><td><code>{"action":"unsubscribe","subId":"123"}</code></td></tr>
   <tr><td>Client &rarr; Server</td><td><code>list_topics</code></td><td><code>{"action":"list_topics"}</code></td></tr>
-  <tr><td>Server &rarr; Client</td><td><code>subscribed</code></td><td><code>{"type":"subscribed","subId":"123","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>subscribed</code></td><td><code>{"type":"subscribed","subId":"123","topic":"...","schema":{...},"schemaIpc":"..."}</code></td></tr>
   <tr><td>Server &rarr; Client</td><td><code>topics_list</code></td><td><code>{"type":"topics_list","topics":[...]}</code></td></tr>
   <tr><td>Server &rarr; Client</td><td><code>error</code></td><td><code>{"type":"error","message":"unknown topic"}</code></td></tr>
 </table>
@@ -737,8 +762,9 @@ gw.<span class="fn">Stop</span>();</code></pre>
 <h2 id="web-client">WebClient (TypeScript)</h2>
 
 <p>The <code>@fletcher/web-client</code> npm package connects to the
-  WebGateway and decodes/encodes the Fletcher wire format in the browser.
-  It offers two interchangeable decoder backends:</p>
+  WebGateway and decodes/encodes the Fletcher positional wire format in the
+  browser. It uses a pure-TypeScript positional codec and offers two
+  interchangeable decoder backends:</p>
 
 <ul>
   <li><strong>Object backend</strong> &mdash; zero dependencies, decodes rows into
@@ -750,15 +776,15 @@ gw.<span class="fn">Stop</span>();</code></pre>
 <h3>Quick example</h3>
 
 <pre><code><span class="kw">import</span> { <span class="ty">FletcherClient</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
-<span class="kw">import</span> { <span class="fn">SensorReadingSchema</span>, <span class="ty">ISensorReading</span>,
+<span class="kw">import</span> { <span class="ty">ISensorReading</span>,
          <span class="fn">SensorFeed_StreamTopic</span> } <span class="kw">from</span> <span class="str">'./telemetry.fletcher.js'</span>;
 
 <span class="kw">const</span> client = <span class="kw">new</span> <span class="ty">FletcherClient</span>({ url: <span class="str">'ws://localhost:9090'</span> });
 <span class="kw">await</span> client.<span class="fn">connect</span>();
 
+<span class="cmt">// Schema is received automatically from the server on subscribe</span>
 <span class="kw">const</span> subId = <span class="kw">await</span> client.<span class="fn">subscribe</span>&lt;<span class="ty">ISensorReading</span>&gt;(
   <span class="fn">SensorFeed_StreamTopic</span>,
-  <span class="fn">SensorReadingSchema</span>,
   (msg, attachments) =&gt; {
     console.<span class="fn">log</span>(msg.sensor_id, msg.temperature);
   }
@@ -768,24 +794,20 @@ gw.<span class="fn">Stop</span>();</code></pre>
 <span class="kw">await</span> client.<span class="fn">unsubscribe</span>(subId);
 client.<span class="fn">close</span>();</code></pre>
 
-<h3>WASM decoder</h3>
-
-<p>Row parsing is accelerated by a C decoder compiled to WebAssembly via
-  Emscripten. It parses the tagged row wire format into a flat field table
-  that TypeScript reads directly from WASM linear memory via
-  <code>DataView</code>. When WASM is unavailable (SSR, testing), a pure
-  TypeScript fallback is used transparently.</p>
+<p>The <code>subscribe</code> method also accepts an explicit
+  <code>SchemaDescriptor</code> as the second argument if you want to
+  override the server-provided schema.</p>
 
 <h3>Key modules</h3>
 <table>
   <tr><th>Module</th><th>Purpose</th></tr>
   <tr><td><code>wire-types.ts</code></td><td><code>WireTypeId</code> enum mirroring C++ values</td></tr>
   <tr><td><code>envelope.ts</code></td><td>Envelope serialize/deserialize (row + attachments)</td></tr>
-  <tr><td><code>ws-protocol.ts</code></td><td>JSON/binary frame builders &amp; parsers</td></tr>
-  <tr><td><code>wasm-decoder.ts</code></td><td>WASM/TS dual-mode row parser</td></tr>
-  <tr><td><code>codec/row-decoder.ts</code></td><td>Scalar, struct, list, map decode orchestration</td></tr>
-  <tr><td><code>codec/row-encoder.ts</code></td><td>Pure-TS row encoder (inverse of decoder)</td></tr>
-  <tr><td><code>codec/object-backend.ts</code></td><td>Decodes rows to plain objects</td></tr>
+  <tr><td><code>ws-protocol.ts</code></td><td>JSON/binary frame builders &amp; parsers, schema JSON parser</td></tr>
+  <tr><td><code>codec/positional-encoder.ts</code></td><td>Encodes plain objects into positional wire format</td></tr>
+  <tr><td><code>codec/positional-decoder.ts</code></td><td>Decodes positional wire format into plain objects</td></tr>
+  <tr><td><code>codec/object-backend.ts</code></td><td><code>DecoderBackend</code> interface + <code>ObjectBackend</code> implementation</td></tr>
+  <tr><td><code>codec/schema-descriptor.ts</code></td><td><code>SchemaDescriptor</code>, <code>FieldDescriptor</code> types</td></tr>
   <tr><td><code>client.ts</code></td><td><code>FletcherClient</code> WebSocket manager</td></tr>
 </table>
 
@@ -853,6 +875,14 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
   On the receiver side, it deserializes back into an <code>Envelope</code>
   before invoking the subscriber callback.</p>
 
+<h3>Schema delivery</h3>
+<p>For each data topic, the provider creates a companion DDS topic with
+  the suffix <code>/__schema</code> using TRANSIENT_LOCAL durability and
+  KEEP_LAST(1) QoS. The publisher serializes the Arrow schema as an IPC
+  stream and publishes it to the companion topic. When a subscriber joins,
+  the provider reads the retained schema sample before creating the data
+  reader, and returns it in the <code>SubscriptionResult</code>.</p>
+
 
 <!-- ── C API / Rust ────────────────────────────────────────────────── -->
 <h2 id="capi">C API &amp; Rust Bindings</h2>
@@ -886,22 +916,27 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
   PubSub/
     include/pubsub/
       envelope.hpp             Envelope, Attachments, Blob, Serialize/Deserialize
-      pubsub_provider.hpp      Abstract PubSubProvider interface
-      driver.hpp               Driver class (multi-subscriber fan-out)
-    src/driver.cpp             Driver implementation
-    tests/                     14 Catch2 test cases
+      pubsub_provider.hpp      Abstract PubSubProvider + SubscriptionResult
+      driver.hpp               Driver class (fan-out, SubscribeResult w/ schema)
+      schema_ipc.hpp           SerializeSchemaIpc / DeserializeSchemaIpc
+    src/
+      driver.cpp               Driver implementation
+      schema_ipc.cpp           Arrow IPC schema serialization
+    tests/                     15 Catch2 test cases
 
   Codec/
     include/
-      row_codec.hpp            RowCodec class, EncodedRow/ArrowRow type aliases
+      positional_codec.hpp     PositionalCodec class (primary codec)
+      row_codec.hpp            RowCodec class (legacy tagged format)
       pubsub_provider.hpp      Forwarding header &rarr; pubsub/pubsub_provider.hpp
       envelope.hpp             Forwarding header &rarr; pubsub/envelope.hpp
-      schema_evolution.hpp     WireTypeId, PromotionKind, DecodingMap
+      schema_evolution.hpp     WireTypeId, PromotionKind, DecodingMap (legacy)
       arrow_row_codec_capi.h   C API
     src/
-      row_codec.cpp            Encode/decode implementation
-      schema_evolution.cpp     Evolution logic (BuildDecodingMap, ClassifyPromotion)
-    tests/                     Catch2 test cases
+      positional_codec.cpp     Positional encode/decode implementation
+      row_codec.cpp            Tagged encode/decode (legacy)
+      schema_evolution.cpp     Evolution logic (legacy)
+    tests/                     101 Catch2 test cases
     bindings/rust/             arrow-row-codec Rust crate
 
   Batcher/
@@ -914,43 +949,39 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
       generator.cpp            C++ and TypeScript code generation
       type_mapper.cpp          Proto &rarr; Arrow/TypeScript type mapping
       main.cpp                 protoc plugin entry point
-    tests/                     Type mapper unit tests
+    tests/                     36 Catch2 test cases
 
   ProtoIntegration/
     proto/                     Test .proto files (simple, temporal, nested, ...)
-    tests/                     32 integration test cases
+    tests/                     72 integration test cases
 
   FastDDSPubSubProvider/
     include/                   FastDDSPubSubProvider class
-    src/                       DDS setup, CDR serialization, envelope transport
+    src/                       DDS setup, companion __schema topic, envelope transport
 
   WebGateway/
     include/web_gateway/
       web_gateway.hpp          WebGateway class (Boost.Beast WebSocket server)
     src/
       web_gateway.cpp          Listener, IO thread pool
-      ws_session.cpp/.hpp      Per-connection session, JSON/binary protocol handling
+      ws_session.cpp/.hpp      Per-connection session, schema JSON + IPC in responses
     examples/
       gateway_main.cpp         Standalone example with in-process mock provider
 
   WebClient/
     package.json               @fletcher/web-client npm package
     tsconfig.json              TypeScript configuration
-    wasm/
-      src/decoder.c/.h         C row parser for WASM (Emscripten)
-      CMakeLists.txt           Emscripten build
     src/
       wire-types.ts            WireTypeId enum (mirrors C++)
       envelope.ts              Envelope serialize/deserialize
-      ws-protocol.ts           WebSocket binary frame builders/parsers
-      wasm-decoder.ts          WASM/TS dual-mode decoder
+      ws-protocol.ts           WebSocket frame builders/parsers, schema JSON parser
       client.ts                FletcherClient WebSocket manager
       codec/
         schema-descriptor.ts   SchemaDescriptor, FieldDescriptor types
-        row-decoder.ts         Decode orchestration (scalars, structs, lists, maps)
-        row-encoder.ts         Pure-TS row encoder
-        object-backend.ts      Decode to plain objects
-        arrow-backend.ts       Decode to Arrow JS (placeholder)
+        positional-encoder.ts  Encodes objects to positional wire format
+        positional-decoder.ts  Decodes positional wire format to objects
+        object-backend.ts      DecoderBackend interface + ObjectBackend
+        arrow-backend.ts       Arrow JS backend (placeholder)
     test/                      37 Vitest tests</code></pre>
 
 
@@ -984,9 +1015,6 @@ npm test            <span class="cmt"># 37 Vitest tests</span>
 
 <span class="cmt"># TypeScript compilation</span>
 npm run build:ts
-
-<span class="cmt"># WASM build (requires Emscripten)</span>
-npm run build:wasm
 
 <span class="cmt"># Generate TypeScript from .proto files</span>
 protoc --plugin=protoc-gen-fletcher=build/ProtoPlugin/Release/protoc-gen-fletcher \
@@ -1036,12 +1064,12 @@ ctest --test-dir build -R pubsub        <span class="cmt"># 14 driver tests</spa
 <h3>Test coverage</h3>
 <table>
   <tr><th>Suite</th><th>Cases</th><th>Covers</th></tr>
-  <tr><td>Codec (C++)</td><td>55</td><td>Scalar types, nulls, composites, errors, fingerprints, schema evolution, envelope serialization</td></tr>
-  <tr><td>Integration (C++)</td><td>32</td><td>Generated code roundtrips for all proto constructs, pub/sub with mock provider, cross-version evolution</td></tr>
-  <tr><td>PubSub/Driver (C++)</td><td>14</td><td>Topic creation, fan-out, subscription IDs, lifecycle, ListTopics/HasTopic</td></tr>
+  <tr><td>Codec (C++)</td><td>101</td><td>Positional codec (all types, nulls, composites, multi-byte bitfields, wire size), legacy tagged codec, scalar types, schema evolution, envelope serialization</td></tr>
+  <tr><td>Integration (C++)</td><td>72</td><td>Generated code roundtrips for all proto constructs, pub/sub with mock provider, GeoArrow extension types, CRS metadata</td></tr>
+  <tr><td>PubSub/Driver (C++)</td><td>15</td><td>Topic creation, fan-out, subscription IDs, lifecycle, schema transport, ListTopics/HasTopic</td></tr>
   <tr><td>Batcher (C++)</td><td>23</td><td>Row accumulation, flush triggering, WAL log/read, key columns, thread safety</td></tr>
   <tr><td>Plugin (C++)</td><td>36</td><td>Type mapping for all proto field kinds</td></tr>
-  <tr><td>WebClient (TS)</td><td>35</td><td>Envelope roundtrips, WS protocol frames, WASM decoder (TS fallback), object backend, encode/decode roundtrips for scalars, bigints, strings, lists, maps</td></tr>
+  <tr><td>WebClient (TS)</td><td>37</td><td>Envelope roundtrips, WS protocol frames (incl. schema parsing), positional codec roundtrips for scalars, bigints, strings, lists, maps, binary, nulls</td></tr>
 </table>
 
 
