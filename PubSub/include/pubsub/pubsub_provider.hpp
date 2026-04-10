@@ -4,12 +4,14 @@
 #include "pubsub/types.hpp"
 
 #include <row_codec.hpp>
+#include <write_buffer.hpp>
 
 #include <arrow/type_fwd.h>
 
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace fletcher {
@@ -40,6 +42,20 @@ class PubSubProvider {
                          const ArrowRow& row,
                          const Attachments& attachments = {}) = 0;
 
+    /// Callback that encodes a row directly into a WriteBuffer.
+    using RowEncoder = std::function<void(WriteBuffer&)>;
+
+    /// Publish by writing the encoded row directly into the provider's
+    /// buffer.  The provider supplies a WriteBuffer; the encoder writes
+    /// into it.  Override in transport providers for zero-copy.
+    ///
+    /// The default implementation encodes into a temp vector, decodes
+    /// back to ArrowRow via the schema passed to CreateTopic, and
+    /// calls Publish().
+    virtual void PublishDirect(const std::vector<std::string>& topic_segments,
+                               RowEncoder encoder,
+                               const Attachments& attachments = {});
+
     /// Callback signature for Subscribe — delivers decoded ArrowRow
     /// and any sidecar attachments.
     using SubscribeCallback = std::function<void(ArrowRow row,
@@ -52,6 +68,15 @@ class PubSubProvider {
 
     /// Remove a previously registered subscription.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
+
+    /// Register a RowCodec for a topic so the default PublishDirect
+    /// fallback can decode pre-encoded rows.  Call after CreateTopic.
+    void RegisterCodec(const std::string& topic_key,
+                       std::shared_ptr<arrow::Schema> schema);
+
+ private:
+    RowCodec* FindCodec(const std::string& topic_key) const;
+    std::unordered_map<std::string, std::unique_ptr<RowCodec>> codecs_;
 };
 
 }  // namespace fletcher

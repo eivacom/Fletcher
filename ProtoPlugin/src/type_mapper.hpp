@@ -74,6 +74,21 @@ std::string ClassName(const google::protobuf::Descriptor* msg);
 std::string ViewClassName(const google::protobuf::Descriptor* msg);
 
 // -----------------------------------------------------------------------
+// C++ wire format helpers (for EncodeTo code generation)
+// -----------------------------------------------------------------------
+
+// WireTypeId hex literal for a scalar proto field type.
+// Returns "" for unsupported types.  e.g. TYPE_BOOL → "0x01", TYPE_INT32 → "0x04".
+std::string CppWireTypeIdHex(google::protobuf::FieldDescriptor::Type type);
+
+// WireTypeId hex literal for a composite field kind.
+// STRUCT → "0x20", LIST → "0x21", MAP → "0x24".
+std::string CppWireTypeIdHex(FieldKind kind);
+
+// Payload byte size for fixed-width scalar types, or -1 for variable-length.
+int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type);
+
+// -----------------------------------------------------------------------
 // TypeScript code generation helpers
 // -----------------------------------------------------------------------
 

@@ -623,3 +623,136 @@ TEST_CASE("Publisher: publish without attachments has empty attachments") {
     CHECK(mock->published[0].attachments.empty());
     CHECK_FALSE(mock->published[0].row.empty());
 }
+
+// =============================================================================
+// Byte-identical verification: EncodeTo vs ToScalars→RowCodec
+//
+// These tests verify that the generated EncodeTo(WriteBuffer&) produces
+// identical wire bytes to the existing ToScalars() → RowCodec::EncodeRow path.
+// =============================================================================
+
+TEST_CASE("EncodeTo: simple scalars — byte identical to RowCodec path") {
+    integration::SensorReadingArrowRow r;
+    r.set_sensor_id(42)
+     .set_temperature(23.5)
+     .set_pressure(1013.25f)
+     .set_active(true)
+     .set_location("Room 101")
+     .set_payload("\xDE\xAD\xBE\xEF")
+     .set_sequence(7u)
+     .set_timestamp_ns(1'000'000'000LL)
+     .set_humidity(55.3)
+     .set_label("humid");
+
+    // Path A: EncodeTo (direct from C++ members)
+    auto encoded_direct = r.Encode();
+
+    // Path B: ToScalars → RowCodec::EncodeRow
+    fletcher::RowCodec codec(integration::SensorReadingArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(r.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: optional nulls — byte identical") {
+    integration::SensorReadingArrowRow r;
+    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
+     .set_active(false).set_location("").set_payload("").set_sequence(0u)
+     .set_timestamp_ns(0LL);
+    // humidity and label intentionally left null
+
+    auto encoded_direct = r.Encode();
+    fletcher::RowCodec codec(integration::SensorReadingArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(r.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: nested structs — byte identical") {
+    integration::GeoPointArrowRow gp;
+    gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
+
+    integration::AddressArrowRow addr;
+    addr.set_street("1 Market St").set_city("San Francisco").set_country("US");
+
+    integration::LocationArrowRow loc;
+    loc.set_point(gp).set_address(addr).set_name("HQ");
+
+    auto encoded_direct = loc.Encode();
+    fletcher::RowCodec codec(integration::LocationArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(loc.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: repeated scalars and structs — byte identical") {
+    integration::PlayerArrowRow p1, p2;
+    p1.set_name("Alice").set_level(5);
+    p2.set_name("Bob").set_level(3);
+
+    integration::TeamArrowRow team;
+    team.set_name("Alpha")
+        .set_members({"Alice", "Bob", "Carol"})
+        .set_scores({95.0, 87.5, 92.0})
+        .set_roster({p1, p2});
+
+    auto encoded_direct = team.Encode();
+    fletcher::RowCodec codec(integration::TeamArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(team.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: map fields — byte identical") {
+    integration::MetricsArrowRow m;
+    m.set_resource_id("srv-1")
+     .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
+     .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
+
+    auto encoded_direct = m.Encode();
+    fletcher::RowCodec codec(integration::MetricsArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(m.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: WKT + list<struct> + map + optional — byte identical") {
+    integration::OrderItemArrowRow item1, item2;
+    item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
+    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
+         .set_note("gift wrap");
+
+    integration::OrderArrowRow order;
+    order.set_order_id("ORD-12345")
+         .set_created_at(1'700'000'000'000'000'000LL)
+         .set_items({item1, item2})
+         .set_tags({{"priority", 1}, {"region", 3}})
+         .set_customer_note("Leave at door");
+
+    auto encoded_direct = order.Encode();
+    fletcher::RowCodec codec(integration::OrderArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(order.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}
+
+TEST_CASE("EncodeTo: temporal WKT — byte identical") {
+    integration::TimedEventArrowRow ev;
+    ev.set_event_id("evt-001")
+      .set_occurred_at(1'700'000'000'000'000'000LL)
+      .set_elapsed(5'000'000'000LL)
+      .set_score(9.5);
+
+    auto encoded_direct = ev.Encode();
+    fletcher::RowCodec codec(integration::TimedEventArrowRowSchema());
+    auto encoded_codec = codec.EncodeRow(ev.ToScalars());
+
+    REQUIRE(encoded_direct.size() == encoded_codec.size());
+    CHECK(encoded_direct == encoded_codec);
+}

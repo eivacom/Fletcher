@@ -50,6 +50,10 @@ struct TransportData {
     const Attachments*  attachments = nullptr;
     const RowCodec*     codec = nullptr;
 
+    // PublishDirect path — encoder writes row bytes directly into
+    // the DDS payload buffer, bypassing RowCodec and ArrowRow entirely.
+    PubSubProvider::RowEncoder encoder;
+
     // Subscribe path (decoded in-place by deserialize, moved by listener).
     ArrowRow    decoded_row;
     Attachments decoded_attachments;
@@ -86,7 +90,13 @@ class ArrowRowTopicType : public TopicDataType {
         // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
         size_t row_len_pos = buf.WriteLengthPlaceholder();
         size_t row_start = buf.Position();
-        d->codec->EncodeRow(*d->row, buf);
+        if (d->encoder) {
+            // PublishDirect path — row bytes written directly by caller.
+            d->encoder(buf);
+        } else {
+            // Publish path — encode via RowCodec from ArrowRow.
+            d->codec->EncodeRow(*d->row, buf);
+        }
         buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
 
         // Attachments.
@@ -351,6 +361,40 @@ void FastDDSPubSubProvider::Publish(
     transport.row = &row;
     transport.attachments = &attachments;
     transport.codec = ts.codec.get();
+    ts.writer->write(&transport);
+}
+
+void FastDDSPubSubProvider::PublishDirect(
+    const std::vector<std::string>& topic_segments,
+    RowEncoder encoder,
+    const Attachments& attachments) {
+    std::string name = JoinSegments(topic_segments);
+    std::lock_guard lock(impl_->mu);
+
+    auto it = impl_->topics.find(name);
+    if (it == impl_->topics.end())
+        throw std::runtime_error("FastDDS: unknown topic: " + name);
+
+    auto& ts = it->second;
+
+    // Lazily create the DataWriter on first publish.
+    if (!ts.writer) {
+        DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
+        wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+        wqos.history().kind     = KEEP_ALL_HISTORY_QOS;
+        wqos.durability().kind  = TRANSIENT_LOCAL_DURABILITY_QOS;
+
+        ts.writer = impl_->publisher->create_datawriter(ts.topic, wqos);
+        if (!ts.writer)
+            throw std::runtime_error(
+                "FastDDS: failed to create DataWriter for: " + name);
+    }
+
+    // Zero-copy path: encoder writes row bytes directly into the
+    // DDS payload buffer — no ArrowRow, no RowCodec, no intermediate copy.
+    TransportData transport;
+    transport.encoder = std::move(encoder);
+    transport.attachments = &attachments;
     ts.writer->write(&transport);
 }
 

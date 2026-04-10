@@ -32,6 +32,10 @@ class FastDDSPubSubProvider : public PubSubProvider {
                  const ArrowRow& row,
                  const Attachments& attachments = {}) override;
 
+    void PublishDirect(const std::vector<std::string>& topic_segments,
+                       RowEncoder encoder,
+                       const Attachments& attachments = {}) override;
+
     void Subscribe(const std::vector<std::string>& topic_segments,
                    SubscribeCallback callback) override;
 

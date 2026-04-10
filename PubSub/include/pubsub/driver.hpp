@@ -38,6 +38,12 @@ class Driver {
                  const ArrowRow& row,
                  const Attachments& attachments = {});
 
+    /// Publish by writing encoded row directly into the provider's buffer.
+    /// The encoder callback writes the row into the provided WriteBuffer.
+    void PublishDirect(const std::vector<std::string>& segments,
+                       PubSubProvider::RowEncoder encoder,
+                       const Attachments& attachments = {});
+
     /// Subscribe to a topic.  Returns a subscription ID.
     /// Multiple subscribers per topic are supported; each receives
     /// every published message via internal fan-out.

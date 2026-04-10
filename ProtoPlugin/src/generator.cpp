@@ -170,6 +170,62 @@ struct FieldInfo {
 };
 
 // -----------------------------------------------------------------------
+// Wire format helpers for EncodeTo code generation
+// -----------------------------------------------------------------------
+
+// Returns the WireTypeId hex byte for a field's Arrow type.
+std::string WireTypeHex(const FieldInfo& fi) {
+    switch (fi.mapping.kind) {
+        case FieldKind::STRUCT:          return "0x20";
+        case FieldKind::REPEATED_SCALAR:
+        case FieldKind::REPEATED_STRUCT: return "0x21";
+        case FieldKind::MAP:             return "0x24";
+        case FieldKind::SCALAR: {
+            const auto& expr = fi.mapping.scalar.arrow_type_expr;
+            if (expr == "arrow::boolean()")  return "0x01";
+            if (expr == "arrow::int32()")    return "0x04";
+            if (expr == "arrow::int64()")    return "0x05";
+            if (expr == "arrow::uint32()")   return "0x08";
+            if (expr == "arrow::uint64()")   return "0x09";
+            if (expr == "arrow::float32()")  return "0x0A";
+            if (expr == "arrow::float64()")  return "0x0B";
+            if (expr == "arrow::utf8()")     return "0x0C";
+            if (expr == "arrow::binary()")   return "0x0D";
+            if (expr.find("timestamp") != std::string::npos) return "0x10";
+            if (expr.find("duration")  != std::string::npos) return "0x13";
+            return "";
+        }
+    }
+    return "";
+}
+
+// Returns the fixed payload byte size for a scalar, or -1 for variable-length.
+int PayloadSize(const FieldInfo& fi) {
+    if (fi.mapping.kind != FieldKind::SCALAR) return -1;
+    const auto& st = fi.mapping.scalar.storage_type;
+    if (st == "bool")     return 1;
+    if (st == "int32_t")  return 4;
+    if (st == "uint32_t") return 4;
+    if (st == "float")    return 4;
+    if (st == "int64_t")  return 8;
+    if (st == "uint64_t") return 8;
+    if (st == "double")   return 8;
+    return -1;  // std::string → variable
+}
+
+// Returns the fixed payload byte size for a scalar type (keys or values).
+int ScalarPayloadSize(const ScalarTypeInfo& info) {
+    if (info.storage_type == "bool")     return 1;
+    if (info.storage_type == "int32_t")  return 4;
+    if (info.storage_type == "uint32_t") return 4;
+    if (info.storage_type == "float")    return 4;
+    if (info.storage_type == "int64_t")  return 8;
+    if (info.storage_type == "uint64_t") return 8;
+    if (info.storage_type == "double")   return 8;
+    return -1;  // string → variable
+}
+
+// -----------------------------------------------------------------------
 // Arrow type expression for the schema — constructed from the FieldMapping
 // -----------------------------------------------------------------------
 
@@ -885,6 +941,244 @@ std::string GenerateViewClass(const std::string& view_cls,
 }
 
 // -----------------------------------------------------------------------
+// EncodeTo / EncodeStructTo_ — direct encoding to WriteBuffer
+// -----------------------------------------------------------------------
+
+// Emit the encoding block for a single field within EncodeTo/EncodeStructTo_.
+void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi) {
+    const std::string n = fi.name + "_";
+    const std::string fn = std::to_string(fi.field_number);
+    const std::string wt = WireTypeHex(fi);
+    const int psz = PayloadSize(fi);
+
+    // Field tag: field_num + wire_type_id
+    o << "        buf.AppendFixed(static_cast<uint32_t>(" << fn << "));\n"
+      << "        buf.AppendByte(" << wt << ");\n";
+
+    switch (fi.mapping.kind) {
+    case FieldKind::SCALAR: {
+        const auto& s = fi.mapping.scalar;
+        if (fi.mapping.nullable) {
+            o << "        if (" << n << ".has_value()) {\n"
+              << "            buf.AppendByte(0x00);\n";
+            if (psz > 0) {
+                // Fixed-width: DATA_LEN is a compile-time constant
+                o << "            buf.AppendFixed(static_cast<uint32_t>("
+                  << psz << "));\n";
+                if (s.storage_type == "bool")
+                    o << "            buf.AppendByte(*" << n << " ? 0x01 : 0x00);\n";
+                else
+                    o << "            buf.AppendFixed(*" << n << ");\n";
+            } else {
+                // Variable-length (string/binary)
+                o << "            auto " << fi.name << "_len = static_cast<uint32_t>("
+                  << n << "->size());\n"
+                  << "            buf.AppendFixed(static_cast<uint32_t>(4 + "
+                  << fi.name << "_len));\n"
+                  << "            buf.AppendFixed(" << fi.name << "_len);\n"
+                  << "            buf.Append(reinterpret_cast<const uint8_t*>("
+                  << n << "->data()), " << fi.name << "_len);\n";
+            }
+            o << "        } else {\n"
+              << "            buf.AppendByte(0x01);\n"
+              << "        }\n";
+        } else {
+            // Non-nullable
+            o << "        buf.AppendByte(0x00);\n";
+            if (psz > 0) {
+                o << "        buf.AppendFixed(static_cast<uint32_t>("
+                  << psz << "));\n";
+                if (s.storage_type == "bool")
+                    o << "        buf.AppendByte(" << n << ".value_or(false)"
+                      << " ? 0x01 : 0x00);\n";
+                else
+                    o << "        buf.AppendFixed(" << n << ".value_or("
+                      << s.default_value << "));\n";
+            } else {
+                // Variable-length (string/binary)
+                o << "        {\n"
+                  << "            const auto& val = " << n << ".value_or("
+                  << s.default_value << ");\n"
+                  << "            auto slen = static_cast<uint32_t>(val.size());\n"
+                  << "            buf.AppendFixed(static_cast<uint32_t>(4 + slen));\n"
+                  << "            buf.AppendFixed(slen);\n"
+                  << "            buf.Append(reinterpret_cast<const uint8_t*>"
+                  << "(val.data()), slen);\n"
+                  << "        }\n";
+            }
+        }
+        break;
+    }
+
+    case FieldKind::STRUCT: {
+        const auto& nc = fi.mapping.nested_class;
+        o << "        buf.AppendByte(0x00);\n"
+          << "        {\n"
+          << "            auto len_pos = buf.WriteLengthPlaceholder();\n"
+          << "            auto data_start = buf.Position();\n";
+        if (fi.mapping.nullable) {
+            o << "            if (" << n << ".has_value())\n"
+              << "                " << n << "->EncodeStructTo_(buf);\n"
+              << "            else\n"
+              << "                " << nc << "().EncodeStructTo_(buf);\n";
+        } else {
+            o << "            if (" << n << ".has_value())\n"
+              << "                " << n << "->EncodeStructTo_(buf);\n"
+              << "            else\n"
+              << "                " << nc << "().EncodeStructTo_(buf);\n";
+        }
+        o << "            buf.PatchU32(len_pos,"
+          << " static_cast<uint32_t>(buf.Position() - data_start));\n"
+          << "        }\n";
+        break;
+    }
+
+    case FieldKind::REPEATED_SCALAR: {
+        const auto& e = fi.mapping.element;
+        int epsz = -1;
+        if (e.storage_type == "bool")     epsz = 1;
+        else if (e.storage_type == "int32_t" || e.storage_type == "uint32_t"
+              || e.storage_type == "float") epsz = 4;
+        else if (e.storage_type == "int64_t" || e.storage_type == "uint64_t"
+              || e.storage_type == "double") epsz = 8;
+
+        o << "        buf.AppendByte(0x00);\n"
+          << "        {\n"
+          << "            auto len_pos = buf.WriteLengthPlaceholder();\n"
+          << "            auto data_start = buf.Position();\n"
+          << "            buf.AppendFixed(static_cast<uint32_t>("
+          << n << ".size()));\n"
+          << "            for (const auto& v : " << n << ") {\n"
+          << "                buf.AppendByte(0x00);\n";
+        if (epsz > 0) {
+            if (e.storage_type == "bool")
+                o << "                buf.AppendByte(v ? 0x01 : 0x00);\n";
+            else
+                o << "                buf.AppendFixed(v);\n";
+        } else {
+            // Variable-length elements (string/binary)
+            o << "                auto elen = static_cast<uint32_t>(v.size());\n"
+              << "                buf.AppendFixed(elen);\n"
+              << "                buf.Append(reinterpret_cast<const uint8_t*>"
+              << "(v.data()), elen);\n";
+        }
+        o << "            }\n"
+          << "            buf.PatchU32(len_pos,"
+          << " static_cast<uint32_t>(buf.Position() - data_start));\n"
+          << "        }\n";
+        break;
+    }
+
+    case FieldKind::REPEATED_STRUCT: {
+        o << "        buf.AppendByte(0x00);\n"
+          << "        {\n"
+          << "            auto len_pos = buf.WriteLengthPlaceholder();\n"
+          << "            auto data_start = buf.Position();\n"
+          << "            buf.AppendFixed(static_cast<uint32_t>("
+          << n << ".size()));\n"
+          << "            for (const auto& v : " << n << ") {\n"
+          << "                buf.AppendByte(0x00);\n"
+          << "                v.EncodeStructTo_(buf);\n"
+          << "            }\n"
+          << "            buf.PatchU32(len_pos,"
+          << " static_cast<uint32_t>(buf.Position() - data_start));\n"
+          << "        }\n";
+        break;
+    }
+
+    case FieldKind::MAP: {
+        const auto& mk = fi.mapping.map_key;
+        int kpsz = ScalarPayloadSize(mk);
+        bool val_is_msg = fi.mapping.map_value_is_message;
+
+        o << "        buf.AppendByte(0x00);\n"
+          << "        {\n"
+          << "            auto len_pos = buf.WriteLengthPlaceholder();\n"
+          << "            auto data_start = buf.Position();\n"
+          << "            buf.AppendFixed(static_cast<uint32_t>("
+          << n << ".size()));\n"
+          << "            for (const auto& [k, v] : " << n << ") {\n";
+
+        // Key encoding
+        if (kpsz > 0) {
+            if (mk.storage_type == "bool")
+                o << "                buf.AppendByte(k ? 0x01 : 0x00);\n";
+            else
+                o << "                buf.AppendFixed(k);\n";
+        } else {
+            // String key
+            o << "                auto klen = static_cast<uint32_t>(k.size());\n"
+              << "                buf.AppendFixed(klen);\n"
+              << "                buf.Append(reinterpret_cast<const uint8_t*>"
+              << "(k.data()), klen);\n";
+        }
+
+        // Value encoding
+        o << "                buf.AppendByte(0x00);\n";
+        if (val_is_msg) {
+            o << "                v.EncodeStructTo_(buf);\n";
+        } else {
+            const auto& mv = fi.mapping.map_value;
+            int vpsz = ScalarPayloadSize(mv);  // same size logic
+            if (vpsz > 0) {
+                if (mv.storage_type == "bool")
+                    o << "                buf.AppendByte(v ? 0x01 : 0x00);\n";
+                else
+                    o << "                buf.AppendFixed(v);\n";
+            } else {
+                // String value
+                o << "                auto vlen = static_cast<uint32_t>(v.size());\n"
+                  << "                buf.AppendFixed(vlen);\n"
+                  << "                buf.Append(reinterpret_cast<const uint8_t*>"
+                  << "(v.data()), vlen);\n";
+            }
+        }
+
+        o << "            }\n"
+          << "            buf.PatchU32(len_pos,"
+          << " static_cast<uint32_t>(buf.Position() - data_start));\n"
+          << "        }\n";
+        break;
+    }
+    }  // switch
+}
+
+// Emit EncodeTo and EncodeStructTo_ methods for a message class.
+void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
+                  const std::vector<FieldInfo>& fields) {
+    std::string fc = std::to_string(fields.size());
+
+    // SchemaHash_ — lazy-init static
+    o << "    static uint64_t SchemaHash_() {\n"
+      << "        static const uint64_t h = fletcher::FingerprintHash(*"
+      << cls << "Schema());\n"
+      << "        return h;\n"
+      << "    }\n\n";
+
+    // EncodeStructTo_ — writes field_count + tagged fields (no schema hash)
+    o << "    void EncodeStructTo_(fletcher::WriteBuffer& buf) const {\n"
+      << "        buf.AppendFixed(static_cast<uint16_t>(" << fc << "));\n";
+    for (const auto& fi : fields)
+        EmitFieldEncode(o, fi);
+    o << "    }\n\n";
+
+    // EncodeTo — writes schema_hash + field_count + tagged fields
+    o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
+      << "        buf.AppendFixed(SchemaHash_());\n"
+      << "        EncodeStructTo_(buf);\n"
+      << "    }\n\n";
+
+    // Encode() — convenience returning EncodedRow
+    o << "    fletcher::EncodedRow Encode() const {\n"
+      << "        fletcher::EncodedRow result;\n"
+      << "        result.reserve(128);\n"
+      << "        fletcher::VectorWriteBuffer buf(result);\n"
+      << "        EncodeTo(buf);\n"
+      << "        return result;\n"
+      << "    }\n\n";
+}
+
+// -----------------------------------------------------------------------
 // Full class generation for one message
 // -----------------------------------------------------------------------
 
@@ -925,10 +1219,8 @@ std::string GenerateMessageClass(const std::string& cls,
         o << "            " << ScalarEntry(fi) << ",\n";
     o << "        };\n    }\n\n";
 
-    // Encode()
-    o << "    fletcher::EncodedRow Encode() const {\n"
-      << "        return Codec().EncodeRow(ToScalars());\n"
-      << "    }\n\n";
+    // EncodeTo / EncodeStructTo_ / Encode — direct WriteBuffer encoding
+    EmitEncodeTo(o, cls, fields);
 
     // ---- private section ------------------------------------------------
     o << " private:\n";
@@ -1027,24 +1319,36 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     EmitTopicSegments(o, package, svc_name, method_name);
     EmitSchema(o, msg_class);
 
+    // Topic key (segments joined with '/')
+    o << "    static const std::string& TopicKey() {\n"
+      << "        static const std::string kKey = \"";
+    if (!package.empty())
+        o << package << "/";
+    o << svc_name << "/" << method_name << "\";\n"
+      << "        return kKey;\n"
+      << "    }\n\n";
+
     // Constructor
     o << "    explicit " << cls << "(\n"
       << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
       << "        : provider_(std::move(provider))\n"
       << "    {\n"
       << "        provider_->CreateTopic(TopicSegments(), Schema());\n"
+      << "        provider_->RegisterCodec(TopicKey(), Schema());\n"
       << "    }\n\n";
 
-    // Publish (without attachments)
+    // Publish (without attachments) — zero-copy via PublishDirect
     o << "    void Publish(const " << msg_class << "& row) {\n"
-      << "        provider_->Publish(TopicSegments(), row.ToScalars());\n"
+      << "        provider_->PublishDirect(TopicSegments(),\n"
+      << "            [&](fletcher::WriteBuffer& buf) { row.EncodeTo(buf); });\n"
       << "    }\n\n";
 
-    // Publish (with attachments)
+    // Publish (with attachments) — zero-copy via PublishDirect
     o << "    void Publish(const " << msg_class << "& row,\n"
       << "                 fletcher::Attachments attachments) {\n"
-      << "        provider_->Publish(TopicSegments(), row.ToScalars(),\n"
-      << "                           std::move(attachments));\n"
+      << "        provider_->PublishDirect(TopicSegments(),\n"
+      << "            [&](fletcher::WriteBuffer& buf) { row.EncodeTo(buf); },\n"
+      << "            std::move(attachments));\n"
       << "    }\n\n";
 
     // Private

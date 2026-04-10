@@ -107,6 +107,7 @@ void Driver::CreateTopic(const std::vector<std::string>& segments,
         throw std::runtime_error("Driver: topic already exists: " + key);
 
     impl_->provider->CreateTopic(segments, schema);
+    impl_->provider->RegisterCodec(key, schema);
 
     Impl::TopicState ts;
     ts.segments = segments;
@@ -120,6 +121,12 @@ void Driver::Publish(const std::vector<std::string>& segments,
                      const ArrowRow& row,
                      const Attachments& attachments) {
     impl_->provider->Publish(segments, row, attachments);
+}
+
+void Driver::PublishDirect(const std::vector<std::string>& segments,
+                           PubSubProvider::RowEncoder encoder,
+                           const Attachments& attachments) {
+    impl_->provider->PublishDirect(segments, std::move(encoder), attachments);
 }
 
 // -----------------------------------------------------------------------
