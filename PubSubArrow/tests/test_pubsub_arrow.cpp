@@ -6,6 +6,7 @@
 #include <arrow/api.h>
 
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 using namespace fletcher;

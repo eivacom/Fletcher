@@ -2,6 +2,9 @@
 
 #include <arrow/api.h>
 
+#include <cstring>
+#include <stdexcept>
+
 #include "row_codec.hpp"
 
 // ---------------------------------------------------------------------------
