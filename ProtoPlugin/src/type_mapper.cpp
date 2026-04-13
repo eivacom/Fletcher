@@ -40,15 +40,15 @@ static std::string ClassNameImpl(const google::protobuf::Descriptor* msg) {
 }
 
 // C++ globally-qualified class reference for msg, as seen from context_file.
-// Returns the plain class name when both are in the same file; otherwise prefixes
-// with "::<package>::" so the reference is valid regardless of current namespace.
+// Returns the plain class name when both are in the same package (or file);
+// otherwise prefixes with "::<package>::" so the reference is valid regardless
+// of the current namespace.
 static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
                                       const google::protobuf::FileDescriptor* context_file) {
     const std::string bare = ClassNameImpl(msg);
     if (msg->file() == context_file)
         return bare;
-    // Same package → no global qualification needed; the #include brings
-    // the class into the same namespace the consumer is already in.
+    // Same package → same C++ namespace, so bare name is sufficient.
     if (msg->file()->package() == context_file->package())
         return bare;
     const std::string& pkg = msg->file()->package();

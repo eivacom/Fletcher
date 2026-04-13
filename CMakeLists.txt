@@ -4,6 +4,8 @@ project(ArrowRow VERSION 0.1 LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+enable_testing()
+
 # ── Conan compatibility: Release-only packages in a multi-config VS build ──────
 #
 # Several Conan packages (protobuf, FastDDS, fastcdr, tinyxml2,

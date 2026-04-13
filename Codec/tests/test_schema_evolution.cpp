@@ -114,7 +114,7 @@ TEST_CASE("Same-schema roundtrip with field_number metadata") {
 // Type promotion at decode time
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Type promotion: int32 → int64") {
+TEST_CASE("Type promotion: int32 -> int64") {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -133,7 +133,7 @@ TEST_CASE("Type promotion: int32 → int64") {
     CHECK(static_cast<const arrow::Int64Scalar&>(*decoded[0]).value == 42);
 }
 
-TEST_CASE("Type promotion: float → double") {
+TEST_CASE("Type promotion: float -> double") {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::float32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -152,7 +152,7 @@ TEST_CASE("Type promotion: float → double") {
     CHECK(static_cast<const arrow::DoubleScalar&>(*decoded[0]).value == Catch::Approx(2.5));
 }
 
-TEST_CASE("Type promotion: int32 → double") {
+TEST_CASE("Type promotion: int32 -> double") {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});

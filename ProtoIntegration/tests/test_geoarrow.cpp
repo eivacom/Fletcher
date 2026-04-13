@@ -248,7 +248,7 @@ TEST_CASE("GeoArrow: MultiPoint round-trip") {
 // Native roundtrip (no Arrow dependency needed)
 // =============================================================================
 
-TEST_CASE("GeoArrow: native roundtrip — VehicleTrack") {
+TEST_CASE("GeoArrow: native roundtrip - VehicleTrack") {
     integration::VehicleTrackArrowRow row;
     geoarrow::PointArrowRow pt;
     pt.set_x(37.7749).set_y(-122.4194);

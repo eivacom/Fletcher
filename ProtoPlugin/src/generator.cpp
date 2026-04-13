@@ -514,7 +514,9 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "        for (const auto& v : " << fi.name << "_)\n"
               << "            (void)builder.Append(v);\n"
               << "        return std::make_shared<arrow::ListScalar>(\n"
-              << "            *builder.Finish());\n"
+              << "            *builder.Finish(),\n"
+              << "            arrow::list(arrow::field(\"item\", "
+              << fi.mapping.element.arrow_type_expr << ", false)));\n"
               << "    }\n";
             break;
 
@@ -549,7 +551,8 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "            (void)builder->AppendScalar(*s);\n"
               << "        }\n"
               << "        return std::make_shared<arrow::ListScalar>(\n"
-              << "            *builder->Finish());\n"
+              << "            *builder->Finish(),\n"
+              << "            arrow::list(arrow::field(\"item\", type, false)));\n"
               << "    }\n";
             break;
 
@@ -646,14 +649,29 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << "        auto vals = *val_builder.Finish();\n";
             }
 
-            o << "        auto kv_type = arrow::struct_({\n"
-              << "            arrow::field(\"key\", keys->type(), false),\n"
-              << "            arrow::field(\"value\", vals->type())});\n"
-              << "        auto kv = std::make_shared<arrow::StructArray>(\n"
-              << "            kv_type, keys->length(),\n"
-              << "            arrow::ArrayVector{keys, vals});\n"
-              << "        return std::make_shared<arrow::MapScalar>(kv);\n"
-              << "    }\n";
+            if (fi.mapping.map_value_is_message) {
+                o << "        auto val_field = arrow::field(\"value\", val_type, false);\n"
+                  << "        auto kv = *arrow::StructArray::Make(\n"
+                  << "            {keys, vals},\n"
+                  << "            {arrow::field(\"key\", "
+                  << fi.mapping.map_key.arrow_type_expr << ", false),\n"
+                  << "             val_field});\n"
+                  << "        return std::make_shared<arrow::MapScalar>(kv,\n"
+                  << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
+                  << ", val_field));\n";
+            } else {
+                o << "        auto val_field = arrow::field(\"value\", "
+                  << fi.mapping.map_value.arrow_type_expr << ", false);\n"
+                  << "        auto kv = *arrow::StructArray::Make(\n"
+                  << "            {keys, vals},\n"
+                  << "            {arrow::field(\"key\", "
+                  << fi.mapping.map_key.arrow_type_expr << ", false),\n"
+                  << "             val_field});\n"
+                  << "        return std::make_shared<arrow::MapScalar>(kv,\n"
+                  << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
+                  << ", val_field));\n";
+            }
+            o << "    }\n";
             break;
         }
 
