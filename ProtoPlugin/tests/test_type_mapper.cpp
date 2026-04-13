@@ -279,7 +279,7 @@ TEST_CASE("MapField: proto3 non-optional field is not nullable") {
 // Repeated scalar fields
 // ===========================================================================
 
-TEST_CASE("MapField: repeated int32 → REPEATED_SCALAR") {
+TEST_CASE("MapField: repeated int32 ->REPEATED_SCALAR") {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(
         pool, "rep_i32", FieldDescriptorProto::TYPE_INT32,
@@ -292,7 +292,7 @@ TEST_CASE("MapField: repeated int32 → REPEATED_SCALAR") {
     CHECK(m->element.builder_type    == "arrow::Int32Builder");
 }
 
-TEST_CASE("MapField: repeated string → REPEATED_SCALAR") {
+TEST_CASE("MapField: repeated string ->REPEATED_SCALAR") {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(
         pool, "rep_str", FieldDescriptorProto::TYPE_STRING,
@@ -307,7 +307,7 @@ TEST_CASE("MapField: repeated string → REPEATED_SCALAR") {
 // Nested message fields (struct)
 // ===========================================================================
 
-TEST_CASE("MapField: singular message → STRUCT") {
+TEST_CASE("MapField: singular message ->STRUCT") {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "struct", FieldDescriptorProto::LABEL_OPTIONAL);
     REQUIRE(file);
@@ -328,7 +328,7 @@ TEST_CASE("MapField: non-optional struct is not nullable") {
     CHECK_FALSE(m->nullable);
 }
 
-TEST_CASE("MapField: repeated message → REPEATED_STRUCT") {
+TEST_CASE("MapField: repeated message ->REPEATED_STRUCT") {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "rep_struct", FieldDescriptorProto::LABEL_REPEATED);
     REQUIRE(file);
@@ -343,7 +343,7 @@ TEST_CASE("MapField: repeated message → REPEATED_STRUCT") {
 // Map fields
 // ===========================================================================
 
-TEST_CASE("MapField: map<string, int32> → MAP") {
+TEST_CASE("MapField: map<string, int32> ->MAP") {
     DescriptorPool pool;
     auto* file = BuildMapField(pool, "map_str_i32", FieldDescriptorProto::TYPE_INT32);
     REQUIRE(file);
@@ -458,7 +458,7 @@ TEST_CASE("NestingDepth: one level of nesting has depth 1") {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "depth1", FieldDescriptorProto::LABEL_OPTIONAL);
     REQUIRE(file);
-    // Outer → Inner (depth 1)
+    // Outer ->Inner (depth 1)
     CHECK(NestingDepth(file->message_type(1)) == 1);
 }
 
@@ -562,7 +562,7 @@ TEST_CASE("MapField: cross-file singular message succeeds (same package)") {
     auto m = MapField(fd);
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::STRUCT);
-    // Same package → no global qualification needed; nested_header must be set.
+    // Same package ->no global qualification needed; nested_header must be set.
     CHECK(m->nested_class == "DepMsgArrowRow");
     CHECK(m->nested_header == "dep_same_pkg.arrow_row.pb.h");
 }
@@ -580,12 +580,12 @@ TEST_CASE("MapField: cross-file singular message succeeds (different packages)")
     auto m = MapField(fd);
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::STRUCT);
-    // Different package → globally qualified.
+    // Different package ->globally qualified.
     CHECK(m->nested_class == "::other::pkg::DepMsgArrowRow");
     CHECK(m->nested_header == "dep_other_pkg.arrow_row.pb.h");
 }
 
-TEST_CASE("MapField: cross-file singular message — no-package dep") {
+TEST_CASE("MapField: cross-file singular message - no-package dep") {
     DescriptorPool pool;
     REQUIRE(BuildDepFile(pool, "dep_no_pkg.proto", ""));
 

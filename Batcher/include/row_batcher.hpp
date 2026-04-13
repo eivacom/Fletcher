@@ -46,6 +46,11 @@ class RowBatcher {
     // Called on the flush thread after the callback returns false.
     virtual void OnBatchFlushFailed() {}
 
+    // Waits for all in-flight flush threads.  Derived classes that override
+    // OnBatchFlushSucceeded / OnBatchFlushFailed should call this in their
+    // own destructor so the callbacks run while the vtable is still intact.
+    void WaitForPendingFlushes();
+
     std::shared_ptr<arrow::Schema> schema_;
 
  private:

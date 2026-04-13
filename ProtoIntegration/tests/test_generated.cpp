@@ -66,7 +66,7 @@ TEST_CASE("SensorReading: encode is non-empty") {
     CHECK_FALSE(r.Encode().empty());
 }
 
-TEST_CASE("SensorReading: roundtrip — scalar values") {
+TEST_CASE("SensorReading: roundtrip -scalar values") {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
@@ -164,7 +164,7 @@ TEST_CASE("TimedEvent: schema structure") {
     CHECK(schema->field(4)->nullable());
 }
 
-TEST_CASE("TimedEvent: roundtrip — WKT values") {
+TEST_CASE("TimedEvent: roundtrip -WKT values") {
     integration::TimedEventArrowRow ev;
     ev.set_event_id("evt-001")
       .set_occurred_at(1'700'000'000'000'000'000LL)
@@ -221,7 +221,7 @@ TEST_CASE("Location: schema embeds struct fields") {
     CHECK(schema->field(2)->type()->id() == arrow::Type::STRING);
 }
 
-TEST_CASE("Location: roundtrip — nested structs") {
+TEST_CASE("Location: roundtrip -nested structs") {
     integration::GeoPointArrowRow gp;
     gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
 
@@ -267,7 +267,7 @@ TEST_CASE("Team: schema has list fields") {
     CHECK(schema->field(3)->type()->id() == arrow::Type::LIST);
 }
 
-TEST_CASE("Team: roundtrip — repeated scalars and structs") {
+TEST_CASE("Team: roundtrip -repeated scalars and structs") {
     integration::PlayerArrowRow p1, p2;
     p1.set_name("Alice").set_level(5);
     p2.set_name("Bob").set_level(3);
@@ -328,7 +328,7 @@ TEST_CASE("Metrics: schema has map fields") {
     CHECK(schema->field(2)->type()->id() == arrow::Type::MAP);
 }
 
-TEST_CASE("Metrics: roundtrip — map fields") {
+TEST_CASE("Metrics: roundtrip -map fields") {
     integration::MetricsArrowRow m;
     m.set_resource_id("srv-1")
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
@@ -370,7 +370,7 @@ TEST_CASE("Order: schema combines WKT, list<struct>, map, and optional") {
     CHECK(schema->field(4)->nullable());
 }
 
-TEST_CASE("Order: roundtrip — full complex row") {
+TEST_CASE("Order: roundtrip -full complex row") {
     integration::OrderItemArrowRow item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
     item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)

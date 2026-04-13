@@ -149,7 +149,7 @@ TEST_CASE("Map<utf8, int32> roundtrip") {
 // Union
 // ---------------------------------------------------------------------------
 
-TEST_CASE("SparseUnion roundtrip — active first child") {
+TEST_CASE("SparseUnion roundtrip -active first child") {
     auto union_type = arrow::sparse_union(
         {arrow::field("i", arrow::int32()), arrow::field("s", arrow::utf8())},
         {0, 1});
@@ -163,7 +163,7 @@ TEST_CASE("SparseUnion roundtrip — active first child") {
     CHECK(decoded->Equals(*scalar));
 }
 
-TEST_CASE("SparseUnion roundtrip — active second child") {
+TEST_CASE("SparseUnion roundtrip -active second child") {
     auto union_type = arrow::sparse_union(
         {arrow::field("i", arrow::int32()), arrow::field("s", arrow::utf8())},
         {0, 1});
@@ -177,7 +177,7 @@ TEST_CASE("SparseUnion roundtrip — active second child") {
     CHECK(decoded->Equals(*scalar));
 }
 
-TEST_CASE("DenseUnion roundtrip — active first child") {
+TEST_CASE("DenseUnion roundtrip -active first child") {
     auto union_type = arrow::dense_union(
         {arrow::field("i", arrow::int32()), arrow::field("s", arrow::utf8())},
         {0, 1});
@@ -188,7 +188,7 @@ TEST_CASE("DenseUnion roundtrip — active first child") {
     CHECK(decoded->Equals(*scalar));
 }
 
-TEST_CASE("DenseUnion roundtrip — active second child") {
+TEST_CASE("DenseUnion roundtrip -active second child") {
     auto union_type = arrow::dense_union(
         {arrow::field("i", arrow::int32()), arrow::field("s", arrow::utf8())},
         {0, 1});

@@ -13,9 +13,14 @@ RowBatcher::RowBatcher(std::shared_ptr<arrow::Schema> schema,
     , on_flush_(std::move(on_flush)) {}
 
 RowBatcher::~RowBatcher() {
+    WaitForPendingFlushes();
+}
+
+void RowBatcher::WaitForPendingFlushes() {
     std::lock_guard<std::mutex> lock(futures_mutex_);
     for (auto& f : pending_flushes_)
-        f.wait();
+        if (f.valid()) f.wait();
+    pending_flushes_.clear();
 }
 
 void RowBatcher::Append(const EncodedRow& buf) {

@@ -39,6 +39,9 @@ class TrackedBatcher : public GenericRowBatcher {
         , failed_(failed)
     {}
 
+    // Wait while our vtable is still intact so the overrides are called.
+    ~TrackedBatcher() override { WaitForPendingFlushes(); }
+
  protected:
     void OnBatchFlushSucceeded() override { succeeded_++; }
     void OnBatchFlushFailed()    override { failed_++;    }

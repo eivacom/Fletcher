@@ -314,7 +314,9 @@ std::shared_ptr<arrow::Scalar> DecodeScalarImpl(Reader&                         
         case T::BINARY_VIEW: {
             uint32_t       len  = r.Read<uint32_t>();
             const uint8_t* ptr  = r.ReadBytes(len);
-            auto           ibuf = std::make_shared<arrow::Buffer>(ptr, len);
+            // Copy into an owning buffer so the scalar outlives the encoded row.
+            auto           ibuf = arrow::Buffer::FromString(
+                std::string(reinterpret_cast<const char*>(ptr), len));
             switch (type->id()) {
                 case T::STRING:       return std::make_shared<arrow::StringScalar>(ibuf);
                 case T::LARGE_STRING: return std::make_shared<arrow::LargeStringScalar>(ibuf);
