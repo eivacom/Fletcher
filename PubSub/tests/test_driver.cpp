@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <pubsub/driver.hpp>
 #include <pubsub/write_buffer.hpp>
@@ -95,7 +95,7 @@ static PubSubProvider::RowEncoder MakeTestEncoder(int32_t x) {
 
 /// Decode the int32 value from a positional-encoded test row.
 static int32_t DecodeTestRow(const uint8_t* data, size_t len) {
-    REQUIRE(len == 5);  // 1 byte null bitfield + 4 bytes int32
+    EXPECT_EQ(len, 5u);  // 1 byte null bitfield + 4 bytes int32
     int32_t value;
     std::memcpy(&value, data + 1, sizeof(value));
     return value;
@@ -105,24 +105,24 @@ static int32_t DecodeTestRow(const uint8_t* data, size_t len) {
 // Tests
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Driver: CreateTopic delegates to provider") {
+TEST(DriverTest, CreateTopicDelegatesToProvider) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
     driver.CreateTopic(kTopic, TestSchema());
-    REQUIRE(mock->topics_created.size() == 1);
-    CHECK(mock->topics_created[0] == "test/topic");
+    ASSERT_EQ(mock->topics_created.size(), 1u);
+    EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST_CASE("Driver: CreateTopic rejects duplicates") {
+TEST(DriverTest, CreateTopicRejectsDuplicates) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
     driver.CreateTopic(kTopic, TestSchema());
-    CHECK_THROWS_AS(driver.CreateTopic(kTopic, TestSchema()), std::runtime_error);
+    EXPECT_THROW(driver.CreateTopic(kTopic, TestSchema()), std::runtime_error);
 }
 
-TEST_CASE("Driver: Publish delegates to provider") {
+TEST(DriverTest, PublishDelegatesToProvider) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
@@ -135,10 +135,10 @@ TEST_CASE("Driver: Publish delegates to provider") {
 
     driver.Publish(kTopic, MakeTestEncoder(42));
 
-    CHECK(received_value == 42);
+    EXPECT_EQ(received_value, 42);
 }
 
-TEST_CASE("Driver: Subscribe returns unique IDs") {
+TEST(DriverTest, SubscribeReturnsUniqueIds) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
@@ -146,21 +146,21 @@ TEST_CASE("Driver: Subscribe returns unique IDs") {
     auto r1 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, Attachments) {});
     auto r2 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, Attachments) {});
 
-    CHECK(r1.subscription_id != r2.subscription_id);
+    EXPECT_NE(r1.subscription_id, r2.subscription_id);
 }
 
-TEST_CASE("Driver: Subscribe to unknown topic auto-registers") {
+TEST(DriverTest, SubscribeToUnknownTopicAutoRegisters) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     auto result = driver.Subscribe({"no", "such"},
                                    [](const uint8_t*, size_t, Attachments) {});
-    CHECK(result.subscription_id > 0);
-    CHECK(driver.HasTopic({"no", "such"}));
+    EXPECT_GT(result.subscription_id, 0u);
+    EXPECT_TRUE(driver.HasTopic({"no", "such"}));
 }
 
-TEST_CASE("Driver: Subscribe returns schema from provider") {
+TEST(DriverTest, SubscribeReturnsSchemaFromProvider) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
@@ -168,14 +168,14 @@ TEST_CASE("Driver: Subscribe returns schema from provider") {
 
     auto result = driver.Subscribe(kTopic,
                                    [](const uint8_t*, size_t, Attachments) {});
-    REQUIRE(result.schema.valid());
+    ASSERT_TRUE(result.schema.valid());
     // Verify structure: one child named "x" with int32 format.
-    CHECK(result.schema->n_children == 1);
-    CHECK(std::string(result.schema->children[0]->name) == "x");
-    CHECK(std::string(result.schema->children[0]->format) == "i");  // int32
+    EXPECT_EQ(result.schema->n_children, 1);
+    EXPECT_EQ(std::string(result.schema->children[0]->name), "x");
+    EXPECT_EQ(std::string(result.schema->children[0]->format), "i");  // int32
 }
 
-TEST_CASE("Driver: multi-subscriber fan-out") {
+TEST(DriverTest, MultiSubscriberFanOut) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
@@ -186,15 +186,15 @@ TEST_CASE("Driver: multi-subscriber fan-out") {
 
     driver.Publish(kTopic, MakeTestEncoder(1));
 
-    CHECK(count_a == 1);
-    CHECK(count_b == 1);
+    EXPECT_EQ(count_a, 1);
+    EXPECT_EQ(count_b, 1);
 
     driver.Publish(kTopic, MakeTestEncoder(2));
-    CHECK(count_a == 2);
-    CHECK(count_b == 2);
+    EXPECT_EQ(count_a, 2);
+    EXPECT_EQ(count_b, 2);
 }
 
-TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
+TEST(DriverTest, UnsubscribeRemovesSpecificSubscriber) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
@@ -204,28 +204,28 @@ TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
     driver.Subscribe(kTopic, [&](const uint8_t*, size_t, Attachments) { count_b++; });
 
     driver.Publish(kTopic, MakeTestEncoder(1));
-    CHECK(count_a == 1);
-    CHECK(count_b == 1);
+    EXPECT_EQ(count_a, 1);
+    EXPECT_EQ(count_b, 1);
 
     driver.Unsubscribe(ra.subscription_id);
     driver.Publish(kTopic, MakeTestEncoder(2));
-    CHECK(count_a == 1);  // no longer incremented
-    CHECK(count_b == 2);
+    EXPECT_EQ(count_a, 1);  // no longer incremented
+    EXPECT_EQ(count_b, 2);
 }
 
-TEST_CASE("Driver: Unsubscribe last subscriber unsubscribes from provider") {
+TEST(DriverTest, UnsubscribeLastSubscriberUnsubscribesFromProvider) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
     auto r = driver.Subscribe(kTopic, [](const uint8_t*, size_t, Attachments) {});
-    CHECK(mock->unsubscribe_count == 0);
+    EXPECT_EQ(mock->unsubscribe_count, 0);
 
     driver.Unsubscribe(r.subscription_id);
-    CHECK(mock->unsubscribe_count == 1);
+    EXPECT_EQ(mock->unsubscribe_count, 1);
 }
 
-TEST_CASE("Driver: Unsubscribe with remaining subscribers keeps provider subscription") {
+TEST(DriverTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscription) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
@@ -234,50 +234,50 @@ TEST_CASE("Driver: Unsubscribe with remaining subscribers keeps provider subscri
     driver.Subscribe(kTopic, [](const uint8_t*, size_t, Attachments) {});
 
     driver.Unsubscribe(r1.subscription_id);
-    CHECK(mock->unsubscribe_count == 0);  // still have one subscriber
+    EXPECT_EQ(mock->unsubscribe_count, 0);  // still have one subscriber
 }
 
-TEST_CASE("Driver: Unsubscribe unknown ID throws") {
+TEST(DriverTest, UnsubscribeUnknownIdThrows) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
-    CHECK_THROWS_AS(driver.Unsubscribe(999), std::runtime_error);
+    EXPECT_THROW(driver.Unsubscribe(999), std::runtime_error);
 }
 
-TEST_CASE("Driver: ListTopics") {
+TEST(DriverTest, ListTopics) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
-    CHECK(driver.ListTopics().empty());
+    EXPECT_TRUE(driver.ListTopics().empty());
 
     driver.CreateTopic({"a", "b"}, TestSchema());
     driver.CreateTopic({"c", "d"}, TestSchema());
 
     auto topics = driver.ListTopics();
-    CHECK(topics.size() == 2);
+    EXPECT_EQ(topics.size(), 2u);
 
     // Sort for deterministic comparison.
     std::sort(topics.begin(), topics.end());
-    CHECK(topics[0] == "a/b");
-    CHECK(topics[1] == "c/d");
+    EXPECT_EQ(topics[0], "a/b");
+    EXPECT_EQ(topics[1], "c/d");
 }
 
-TEST_CASE("Driver: HasTopic") {
+TEST(DriverTest, HasTopic) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
 
-    CHECK_FALSE(driver.HasTopic(kTopic));
+    EXPECT_FALSE(driver.HasTopic(kTopic));
 
     driver.CreateTopic(kTopic, TestSchema());
-    CHECK(driver.HasTopic(kTopic));
-    CHECK_FALSE(driver.HasTopic({"other"}));
+    EXPECT_TRUE(driver.HasTopic(kTopic));
+    EXPECT_FALSE(driver.HasTopic({"other"}));
 }
 
-TEST_CASE("Driver: null provider throws") {
-    CHECK_THROWS_AS(Driver(nullptr), std::invalid_argument);
+TEST(DriverTest, NullProviderThrows) {
+    EXPECT_THROW(Driver(nullptr), std::invalid_argument);
 }
 
-TEST_CASE("Driver: publish with attachments fans out correctly") {
+TEST(DriverTest, PublishWithAttachmentsFansOutCorrectly) {
     auto mock = std::make_shared<MockProvider>();
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
@@ -294,7 +294,7 @@ TEST_CASE("Driver: publish with attachments fans out correctly") {
 
     driver.Publish(kTopic, MakeTestEncoder(99), {{"img", blob}});
 
-    CHECK(received_value == 99);
-    REQUIRE(received_att.count("img") == 1);
-    CHECK(*received_att.at("img") == *blob);
+    EXPECT_EQ(received_value, 99);
+    ASSERT_EQ(received_att.count("img"), 1u);
+    EXPECT_EQ(*received_att.at("img"), *blob);
 }

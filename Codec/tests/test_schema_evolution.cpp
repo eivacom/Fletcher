@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <arrow/api.h>
 
@@ -11,80 +11,80 @@ using namespace fletcher;
 // WireTypeId conversion
 // ---------------------------------------------------------------------------
 
-TEST_CASE("ArrowTypeToWireTypeId round-trips for scalar types") {
-    CHECK(ArrowTypeToWireTypeId(*arrow::boolean())  == WireTypeId::BOOL);
-    CHECK(ArrowTypeToWireTypeId(*arrow::int8())      == WireTypeId::INT8);
-    CHECK(ArrowTypeToWireTypeId(*arrow::int16())     == WireTypeId::INT16);
-    CHECK(ArrowTypeToWireTypeId(*arrow::int32())     == WireTypeId::INT32);
-    CHECK(ArrowTypeToWireTypeId(*arrow::int64())     == WireTypeId::INT64);
-    CHECK(ArrowTypeToWireTypeId(*arrow::uint8())     == WireTypeId::UINT8);
-    CHECK(ArrowTypeToWireTypeId(*arrow::uint16())    == WireTypeId::UINT16);
-    CHECK(ArrowTypeToWireTypeId(*arrow::uint32())    == WireTypeId::UINT32);
-    CHECK(ArrowTypeToWireTypeId(*arrow::uint64())    == WireTypeId::UINT64);
-    CHECK(ArrowTypeToWireTypeId(*arrow::float32())   == WireTypeId::FLOAT32);
-    CHECK(ArrowTypeToWireTypeId(*arrow::float64())   == WireTypeId::FLOAT64);
-    CHECK(ArrowTypeToWireTypeId(*arrow::utf8())      == WireTypeId::STRING);
-    CHECK(ArrowTypeToWireTypeId(*arrow::binary())    == WireTypeId::BINARY);
+TEST(SchemaEvolutionTest, ArrowTypeToWireTypeIdRoundTripsForScalarTypes) {
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::boolean()),  WireTypeId::BOOL);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::int8()),      WireTypeId::INT8);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::int16()),     WireTypeId::INT16);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::int32()),     WireTypeId::INT32);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::int64()),     WireTypeId::INT64);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::uint8()),     WireTypeId::UINT8);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::uint16()),    WireTypeId::UINT16);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::uint32()),    WireTypeId::UINT32);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::uint64()),    WireTypeId::UINT64);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::float32()),   WireTypeId::FLOAT32);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::float64()),   WireTypeId::FLOAT64);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::utf8()),      WireTypeId::STRING);
+    EXPECT_EQ(ArrowTypeToWireTypeId(*arrow::binary()),    WireTypeId::BINARY);
 }
 
 // ---------------------------------------------------------------------------
 // ClassifyPromotion
 // ---------------------------------------------------------------------------
 
-TEST_CASE("ClassifyPromotion: identity") {
-    CHECK(ClassifyPromotion(WireTypeId::INT32, WireTypeId::INT32) == PromotionKind::IDENTITY);
-    CHECK(ClassifyPromotion(WireTypeId::STRING, WireTypeId::STRING) == PromotionKind::IDENTITY);
-    CHECK(ClassifyPromotion(WireTypeId::FLOAT64, WireTypeId::FLOAT64) == PromotionKind::IDENTITY);
+TEST(SchemaEvolutionTest, ClassifyPromotionIdentity) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT32, WireTypeId::INT32), PromotionKind::IDENTITY);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::STRING, WireTypeId::STRING), PromotionKind::IDENTITY);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::FLOAT64, WireTypeId::FLOAT64), PromotionKind::IDENTITY);
 }
 
-TEST_CASE("ClassifyPromotion: signed int widening") {
-    CHECK(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT16)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT32)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT64)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::INT16, WireTypeId::INT32) == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::INT16, WireTypeId::INT64) == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::INT32, WireTypeId::INT64) == PromotionKind::WIDEN_INT);
+TEST(SchemaEvolutionTest, ClassifyPromotionSignedIntWidening) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT16),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT32),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT8, WireTypeId::INT64),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT16, WireTypeId::INT32), PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT16, WireTypeId::INT64), PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT32, WireTypeId::INT64), PromotionKind::WIDEN_INT);
 }
 
-TEST_CASE("ClassifyPromotion: unsigned int widening") {
-    CHECK(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT16)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT32)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT64)  == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::UINT16, WireTypeId::UINT32) == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::UINT16, WireTypeId::UINT64) == PromotionKind::WIDEN_INT);
-    CHECK(ClassifyPromotion(WireTypeId::UINT32, WireTypeId::UINT64) == PromotionKind::WIDEN_INT);
+TEST(SchemaEvolutionTest, ClassifyPromotionUnsignedIntWidening) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT16),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT32),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT8, WireTypeId::UINT64),  PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT16, WireTypeId::UINT32), PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT16, WireTypeId::UINT64), PromotionKind::WIDEN_INT);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT32, WireTypeId::UINT64), PromotionKind::WIDEN_INT);
 }
 
-TEST_CASE("ClassifyPromotion: float widening") {
-    CHECK(ClassifyPromotion(WireTypeId::FLOAT32, WireTypeId::FLOAT64) == PromotionKind::WIDEN_FLOAT);
+TEST(SchemaEvolutionTest, ClassifyPromotionFloatWidening) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::FLOAT32, WireTypeId::FLOAT64), PromotionKind::WIDEN_FLOAT);
 }
 
-TEST_CASE("ClassifyPromotion: int32 to float64") {
-    CHECK(ClassifyPromotion(WireTypeId::INT32, WireTypeId::FLOAT64) == PromotionKind::INT_TO_FLOAT);
+TEST(SchemaEvolutionTest, ClassifyPromotionInt32ToFloat64) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT32, WireTypeId::FLOAT64), PromotionKind::INT_TO_FLOAT);
 }
 
-TEST_CASE("ClassifyPromotion: decimal128 to decimal256") {
-    CHECK(ClassifyPromotion(WireTypeId::DECIMAL128, WireTypeId::DECIMAL256) == PromotionKind::WIDEN_INT);
+TEST(SchemaEvolutionTest, ClassifyPromotionDecimal128ToDecimal256) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::DECIMAL128, WireTypeId::DECIMAL256), PromotionKind::WIDEN_INT);
 }
 
-TEST_CASE("ClassifyPromotion: illegal promotions") {
-    CHECK(ClassifyPromotion(WireTypeId::STRING, WireTypeId::INT32)  == PromotionKind::ILLEGAL);
-    CHECK(ClassifyPromotion(WireTypeId::INT64, WireTypeId::INT32)   == PromotionKind::ILLEGAL);
-    CHECK(ClassifyPromotion(WireTypeId::FLOAT64, WireTypeId::INT32) == PromotionKind::ILLEGAL);
-    CHECK(ClassifyPromotion(WireTypeId::UINT32, WireTypeId::INT32)  == PromotionKind::ILLEGAL);
+TEST(SchemaEvolutionTest, ClassifyPromotionIllegal) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::STRING, WireTypeId::INT32),  PromotionKind::ILLEGAL);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::INT64, WireTypeId::INT32),   PromotionKind::ILLEGAL);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::FLOAT64, WireTypeId::INT32), PromotionKind::ILLEGAL);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::UINT32, WireTypeId::INT32),  PromotionKind::ILLEGAL);
 }
 
-TEST_CASE("ClassifyPromotion: string family is compatible") {
-    CHECK(ClassifyPromotion(WireTypeId::STRING, WireTypeId::LARGE_STRING) == PromotionKind::IDENTITY);
-    CHECK(ClassifyPromotion(WireTypeId::LARGE_STRING, WireTypeId::STRING) == PromotionKind::IDENTITY);
-    CHECK(ClassifyPromotion(WireTypeId::STRING, WireTypeId::STRING_VIEW)  == PromotionKind::IDENTITY);
+TEST(SchemaEvolutionTest, ClassifyPromotionStringFamilyCompatible) {
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::STRING, WireTypeId::LARGE_STRING), PromotionKind::IDENTITY);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::LARGE_STRING, WireTypeId::STRING), PromotionKind::IDENTITY);
+    EXPECT_EQ(ClassifyPromotion(WireTypeId::STRING, WireTypeId::STRING_VIEW),  PromotionKind::IDENTITY);
 }
 
 // ---------------------------------------------------------------------------
 // Same-schema roundtrip with tagged format
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Same-schema roundtrip with field_number metadata") {
+TEST(SchemaEvolutionTest, SameSchemaRoundtripWithFieldNumberMetadata) {
     auto schema = arrow::schema({
         arrow::field("id", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"})),
@@ -104,17 +104,17 @@ TEST_CASE("Same-schema roundtrip with field_number metadata") {
     auto row     = codec.EncodeRow(in);
     auto decoded = codec.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 3);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 42);
-    CHECK(static_cast<const arrow::StringScalar&>(*decoded[1]).value->ToString() == "hello");
-    CHECK(static_cast<const arrow::DoubleScalar&>(*decoded[2]).value == Catch::Approx(3.14));
+    ASSERT_EQ(decoded.size(), 3u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value, 42);
+    EXPECT_EQ(static_cast<const arrow::StringScalar&>(*decoded[1]).value->ToString(), "hello");
+    EXPECT_DOUBLE_EQ(static_cast<const arrow::DoubleScalar&>(*decoded[2]).value, 3.14);
 }
 
 // ---------------------------------------------------------------------------
 // Type promotion at decode time
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Type promotion: int32 -> int64") {
+TEST(SchemaEvolutionTest, TypePromotionInt32ToInt64) {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -128,12 +128,12 @@ TEST_CASE("Type promotion: int32 -> int64") {
     auto row     = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(42)});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 1);
-    CHECK(decoded[0]->type->id() == arrow::Type::INT64);
-    CHECK(static_cast<const arrow::Int64Scalar&>(*decoded[0]).value == 42);
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_EQ(decoded[0]->type->id(), arrow::Type::INT64);
+    EXPECT_EQ(static_cast<const arrow::Int64Scalar&>(*decoded[0]).value, 42);
 }
 
-TEST_CASE("Type promotion: float -> double") {
+TEST(SchemaEvolutionTest, TypePromotionFloatToDouble) {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::float32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -147,12 +147,12 @@ TEST_CASE("Type promotion: float -> double") {
     auto row     = writer.EncodeRow({std::make_shared<arrow::FloatScalar>(2.5f)});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 1);
-    CHECK(decoded[0]->type->id() == arrow::Type::DOUBLE);
-    CHECK(static_cast<const arrow::DoubleScalar&>(*decoded[0]).value == Catch::Approx(2.5));
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_EQ(decoded[0]->type->id(), arrow::Type::DOUBLE);
+    EXPECT_DOUBLE_EQ(static_cast<const arrow::DoubleScalar&>(*decoded[0]).value, 2.5);
 }
 
-TEST_CASE("Type promotion: int32 -> double") {
+TEST(SchemaEvolutionTest, TypePromotionInt32ToDouble) {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -166,16 +166,16 @@ TEST_CASE("Type promotion: int32 -> double") {
     auto row     = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(100)});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 1);
-    CHECK(decoded[0]->type->id() == arrow::Type::DOUBLE);
-    CHECK(static_cast<const arrow::DoubleScalar&>(*decoded[0]).value == Catch::Approx(100.0));
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_EQ(decoded[0]->type->id(), arrow::Type::DOUBLE);
+    EXPECT_DOUBLE_EQ(static_cast<const arrow::DoubleScalar&>(*decoded[0]).value, 100.0);
 }
 
 // ---------------------------------------------------------------------------
 // DecodingMap cache
 // ---------------------------------------------------------------------------
 
-TEST_CASE("DecodingMap is cached across multiple decodes") {
+TEST(SchemaEvolutionTest, DecodingMapCachedAcrossMultipleDecodes) {
     auto writer_schema = arrow::schema({
         arrow::field("v", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -189,19 +189,19 @@ TEST_CASE("DecodingMap is cached across multiple decodes") {
     auto row1 = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(1)});
     auto row2 = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(2)});
 
-    // Both decodes succeed — the second reuses the cached map.
+    // Both decodes succeed -- the second reuses the cached map.
     auto d1 = reader.DecodeRow(row1);
     auto d2 = reader.DecodeRow(row2);
 
-    CHECK(static_cast<const arrow::Int64Scalar&>(*d1[0]).value == 1);
-    CHECK(static_cast<const arrow::Int64Scalar&>(*d2[0]).value == 2);
+    EXPECT_EQ(static_cast<const arrow::Int64Scalar&>(*d1[0]).value, 1);
+    EXPECT_EQ(static_cast<const arrow::Int64Scalar&>(*d2[0]).value, 2);
 }
 
 // ---------------------------------------------------------------------------
 // Add / drop column evolution
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Added column in reader fills null") {
+TEST(SchemaEvolutionTest, AddedColumnInReaderFillsNull) {
     auto v1 = arrow::schema({
         arrow::field("a", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -217,12 +217,12 @@ TEST_CASE("Added column in reader fills null") {
     auto row     = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(7)});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 2);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 7);
-    CHECK(!decoded[1]->is_valid);
+    ASSERT_EQ(decoded.size(), 2u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value, 7);
+    EXPECT_FALSE(decoded[1]->is_valid);
 }
 
-TEST_CASE("Dropped column in reader is silently skipped") {
+TEST(SchemaEvolutionTest, DroppedColumnInReaderSilentlySkipped) {
     auto v1 = arrow::schema({
         arrow::field("a", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"})),
@@ -240,15 +240,15 @@ TEST_CASE("Dropped column in reader is silently skipped") {
         std::make_shared<arrow::StringScalar>("gone")});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 1);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 5);
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value, 5);
 }
 
 // ---------------------------------------------------------------------------
 // 10-field schema matching integration test pattern
 // ---------------------------------------------------------------------------
 
-TEST_CASE("10-field schema roundtrip (SensorReading pattern)") {
+TEST(SchemaEvolutionTest, TenFieldSchemaRoundtripSensorReadingPattern) {
     auto schema = arrow::schema({
         arrow::field("sensor_id", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"})),
@@ -289,24 +289,24 @@ TEST_CASE("10-field schema roundtrip (SensorReading pattern)") {
     auto row = codec.EncodeRow(in);
     auto decoded = codec.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 10);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 42);
-    CHECK(static_cast<const arrow::DoubleScalar&>(*decoded[1]).value == 23.5);
-    CHECK(!decoded[8]->is_valid);
-    CHECK(!decoded[9]->is_valid);
+    ASSERT_EQ(decoded.size(), 10u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value, 42);
+    EXPECT_DOUBLE_EQ(static_cast<const arrow::DoubleScalar&>(*decoded[1]).value, 23.5);
+    EXPECT_FALSE(decoded[8]->is_valid);
+    EXPECT_FALSE(decoded[9]->is_valid);
 
     // Also test with a separate codec for decode (like integration tests do)
     RowCodec codec2(schema);
     auto decoded2 = codec2.DecodeRow(row);
-    REQUIRE(decoded2.size() == 10);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded2[0]).value == 42);
+    ASSERT_EQ(decoded2.size(), 10u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded2[0]).value, 42);
 }
 
 // ---------------------------------------------------------------------------
 // Renamed column (same field_number, different field name)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Renamed column matched by field_number") {
+TEST(SchemaEvolutionTest, RenamedColumnMatchedByFieldNumber) {
     auto v1 = arrow::schema({
         arrow::field("old_name", arrow::int32(), false,
                      arrow::key_value_metadata({"field_number"}, {"1"}))});
@@ -320,6 +320,6 @@ TEST_CASE("Renamed column matched by field_number") {
     auto row     = writer.EncodeRow({std::make_shared<arrow::Int32Scalar>(99)});
     auto decoded = reader.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 1);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value == 99);
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*decoded[0]).value, 99);
 }

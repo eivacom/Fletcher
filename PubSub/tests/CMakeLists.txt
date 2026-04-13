@@ -1,12 +1,10 @@
-include(CTest)
-
 add_executable(pubsub_tests
     test_driver.cpp
     test_envelope.cpp)
 
 target_link_libraries(pubsub_tests PRIVATE
-    Catch2::Catch2WithMain
+    GTest::gtest_main
     pubsub)
 
-include(Catch)
-catch_discover_tests(pubsub_tests)
+include(GoogleTest)
+gtest_discover_tests(pubsub_tests)

@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <arrow/api.h>
 
@@ -57,27 +57,27 @@ class TrackedBatcher : public GenericRowBatcher {
 // row_count behaviour
 // ---------------------------------------------------------------------------
 
-TEST_CASE("GenericRowBatcher row_count starts at zero") {
+TEST(BatcherTest, RowCountStartsAtZero) {
     auto schema = SimpleSchema();
     SQLiteWAL wal(":memory:");
     GenericRowBatcher batcher(schema, wal, 10, [](auto) { return true; });
-    CHECK(batcher.row_count() == 0);
+    EXPECT_EQ(batcher.row_count(), 0);
 }
 
-TEST_CASE("GenericRowBatcher row_count increments with each Append") {
+TEST(BatcherTest, RowCountIncrementsWithEachAppend) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
     GenericRowBatcher batcher(schema, wal, 10, [](auto) { return true; });
 
     batcher.Append(MakeRow(codec, 1, "a"));
-    CHECK(batcher.row_count() == 1);
+    EXPECT_EQ(batcher.row_count(), 1);
 
     batcher.Append(MakeRow(codec, 2, "b"));
-    CHECK(batcher.row_count() == 2);
+    EXPECT_EQ(batcher.row_count(), 2);
 }
 
-TEST_CASE("GenericRowBatcher row_count resets synchronously after flush") {
+TEST(BatcherTest, RowCountResetsSynchronouslyAfterFlush) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -88,14 +88,14 @@ TEST_CASE("GenericRowBatcher row_count resets synchronously after flush") {
     batcher.Append(MakeRow(codec, 3, "c"));  // triggers flush
 
     // row_count_ is reset to 0 under the lock before the async dispatch returns
-    CHECK(batcher.row_count() == 0);
+    EXPECT_EQ(batcher.row_count(), 0);
 }
 
 // ---------------------------------------------------------------------------
 // Flush triggering
 // ---------------------------------------------------------------------------
 
-TEST_CASE("GenericRowBatcher does not flush below batch_size") {
+TEST(BatcherTest, DoesNotFlushBelowBatchSize) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -107,10 +107,10 @@ TEST_CASE("GenericRowBatcher does not flush below batch_size") {
         batcher.Append(MakeRow(codec, 2, "b"));
         batcher.Append(MakeRow(codec, 3, "c"));
     }  // destructor joins all pending futures
-    CHECK(flush_count.load() == 0);
+    EXPECT_EQ(flush_count.load(), 0);
 }
 
-TEST_CASE("GenericRowBatcher flushes exactly at batch_size") {
+TEST(BatcherTest, FlushesExactlyAtBatchSize) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -122,10 +122,10 @@ TEST_CASE("GenericRowBatcher flushes exactly at batch_size") {
         batcher.Append(MakeRow(codec, 2, "b"));
         batcher.Append(MakeRow(codec, 3, "c"));  // batch complete
     }
-    CHECK(flush_count.load() == 1);
+    EXPECT_EQ(flush_count.load(), 1);
 }
 
-TEST_CASE("GenericRowBatcher flushes multiple complete batches") {
+TEST(BatcherTest, FlushesMultipleCompleteBatches) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -136,10 +136,10 @@ TEST_CASE("GenericRowBatcher flushes multiple complete batches") {
         for (int i = 0; i < 6; ++i)
             batcher.Append(MakeRow(codec, i, "x"));
     }
-    CHECK(flush_count.load() == 3);
+    EXPECT_EQ(flush_count.load(), 3);
 }
 
-TEST_CASE("GenericRowBatcher partial batch is not flushed on destruction") {
+TEST(BatcherTest, PartialBatchIsNotFlushedOnDestruction) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -151,14 +151,14 @@ TEST_CASE("GenericRowBatcher partial batch is not flushed on destruction") {
         batcher.Append(MakeRow(codec, 2, "b"));
         batcher.Append(MakeRow(codec, 3, "c"));
     }
-    CHECK(flush_count.load() == 0);
+    EXPECT_EQ(flush_count.load(), 0);
 }
 
 // ---------------------------------------------------------------------------
 // Flushed table contents
 // ---------------------------------------------------------------------------
 
-TEST_CASE("GenericRowBatcher flushed table has batch_size rows") {
+TEST(BatcherTest, FlushedTableHasBatchSizeRows) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -173,10 +173,10 @@ TEST_CASE("GenericRowBatcher flushed table has batch_size rows") {
         batcher.Append(MakeRow(codec, 2, "b"));
         batcher.Append(MakeRow(codec, 3, "c"));
     }
-    CHECK(flushed_rows.load() == 3);
+    EXPECT_EQ(flushed_rows.load(), 3);
 }
 
-TEST_CASE("GenericRowBatcher flushed table schema matches input schema") {
+TEST(BatcherTest, FlushedTableSchemaMatchesInputSchema) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -190,10 +190,10 @@ TEST_CASE("GenericRowBatcher flushed table schema matches input schema") {
         batcher.Append(MakeRow(codec, 1, "a"));
         batcher.Append(MakeRow(codec, 2, "b"));
     }
-    CHECK(schema_matched.load());
+    EXPECT_TRUE(schema_matched.load());
 }
 
-TEST_CASE("GenericRowBatcher flushed table data matches appended rows") {
+TEST(BatcherTest, FlushedTableDataMatchesAppendedRows) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -211,25 +211,25 @@ TEST_CASE("GenericRowBatcher flushed table data matches appended rows") {
         batcher.Append(MakeRow(codec, 20, "world"));
     }  // destructor joins flush thread
 
-    REQUIRE(captured != nullptr);
-    REQUIRE(captured->num_rows() == 2);
+    ASSERT_NE(captured, nullptr);
+    ASSERT_EQ(captured->num_rows(), 2);
 
     auto id_col = std::static_pointer_cast<arrow::Int32Array>(
         captured->GetColumnByName("id")->chunk(0));
-    CHECK(id_col->Value(0) == 10);
-    CHECK(id_col->Value(1) == 20);
+    EXPECT_EQ(id_col->Value(0), 10);
+    EXPECT_EQ(id_col->Value(1), 20);
 
     auto name_col = std::static_pointer_cast<arrow::StringArray>(
         captured->GetColumnByName("name")->chunk(0));
-    CHECK(name_col->GetString(0) == "hello");
-    CHECK(name_col->GetString(1) == "world");
+    EXPECT_EQ(name_col->GetString(0), "hello");
+    EXPECT_EQ(name_col->GetString(1), "world");
 }
 
 // ---------------------------------------------------------------------------
 // Flush hooks
 // ---------------------------------------------------------------------------
 
-TEST_CASE("GenericRowBatcher OnBatchFlushSucceeded called when callback returns true") {
+TEST(BatcherTest, OnBatchFlushSucceededCalledWhenCallbackReturnsTrue) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -240,11 +240,11 @@ TEST_CASE("GenericRowBatcher OnBatchFlushSucceeded called when callback returns 
         batcher.Append(MakeRow(codec, 1, "a"));
         batcher.Append(MakeRow(codec, 2, "b"));
     }
-    CHECK(succeeded.load() == 1);
-    CHECK(failed.load()    == 0);
+    EXPECT_EQ(succeeded.load(), 1);
+    EXPECT_EQ(failed.load(),    0);
 }
 
-TEST_CASE("GenericRowBatcher OnBatchFlushFailed called when callback returns false") {
+TEST(BatcherTest, OnBatchFlushFailedCalledWhenCallbackReturnsFalse) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -255,11 +255,11 @@ TEST_CASE("GenericRowBatcher OnBatchFlushFailed called when callback returns fal
         batcher.Append(MakeRow(codec, 1, "a"));
         batcher.Append(MakeRow(codec, 2, "b"));
     }
-    CHECK(succeeded.load() == 0);
-    CHECK(failed.load()    == 1);
+    EXPECT_EQ(succeeded.load(), 0);
+    EXPECT_EQ(failed.load(),    1);
 }
 
-TEST_CASE("GenericRowBatcher hooks called once per batch") {
+TEST(BatcherTest, HooksCalledOncePerBatch) {
     auto schema = SimpleSchema();
     RowCodec codec(schema);
     SQLiteWAL wal(":memory:");
@@ -270,15 +270,15 @@ TEST_CASE("GenericRowBatcher hooks called once per batch") {
         for (int i = 0; i < 4; ++i)
             batcher.Append(MakeRow(codec, i, "x"));
     }
-    CHECK(succeeded.load() == 2);
-    CHECK(failed.load()    == 0);
+    EXPECT_EQ(succeeded.load(), 2);
+    EXPECT_EQ(failed.load(),    0);
 }
 
 // ---------------------------------------------------------------------------
 // Error handling
 // ---------------------------------------------------------------------------
 
-TEST_CASE("GenericRowBatcher Append throws on schema-mismatched row") {
+TEST(BatcherTest, AppendThrowsOnSchemaMismatchedRow) {
     auto schema_a = SimpleSchema();
     auto schema_b = arrow::schema({arrow::field("x", arrow::float64())});
     RowCodec codec_b(schema_b);
@@ -286,14 +286,14 @@ TEST_CASE("GenericRowBatcher Append throws on schema-mismatched row") {
     GenericRowBatcher batcher(schema_a, wal, 10, [](auto) { return true; });
 
     auto foreign_row = codec_b.EncodeRow({std::make_shared<arrow::DoubleScalar>(3.14)});
-    CHECK_THROWS_AS(batcher.Append(foreign_row), std::invalid_argument);
+    EXPECT_THROW(batcher.Append(foreign_row), std::invalid_argument);
 }
 
-TEST_CASE("GenericRowBatcher Append throws on truncated buffer") {
+TEST(BatcherTest, AppendThrowsOnTruncatedBuffer) {
     auto schema = SimpleSchema();
     SQLiteWAL wal(":memory:");
     GenericRowBatcher batcher(schema, wal, 10, [](auto) { return true; });
 
     EncodedRow garbage{0x01, 0x02, 0x03};
-    CHECK_THROWS(batcher.Append(garbage));
+    EXPECT_ANY_THROW(batcher.Append(garbage));
 }

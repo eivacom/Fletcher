@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <arrow/api.h>
 
@@ -38,28 +38,28 @@ bool IsNull(const std::shared_ptr<arrow::Table>& t, const std::string& col, int 
 
 }  // namespace
 
-TEST_CASE("SQLiteWAL opens in-memory database") {
-    CHECK_NOTHROW(SQLiteWAL(":memory:"));
+TEST(SqliteWalTest, OpensInMemoryDatabase) {
+    EXPECT_NO_THROW(SQLiteWAL(":memory:"));
 }
 
-TEST_CASE("SQLiteWAL::CreateLog returns a valid handle") {
+TEST(SqliteWalTest, CreateLogReturnsValidHandle) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     auto handle = wal.CreateLog(*schema, {});
-    CHECK(handle != nullptr);
+    EXPECT_NE(handle, nullptr);
 }
 
-TEST_CASE("SQLiteLogHandle ToTable on empty log returns zero-row table") {
+TEST(SqliteWalTest, ToTableOnEmptyLogReturnsZeroRowTable) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     auto handle = wal.CreateLog(*schema, {});
     auto table  = handle->ToTable();
-    REQUIRE(table != nullptr);
-    CHECK(table->num_rows() == 0);
-    CHECK(table->num_columns() == 2);
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->num_rows(), 0);
+    EXPECT_EQ(table->num_columns(), 2);
 }
 
-TEST_CASE("SQLiteLogHandle single row roundtrip") {
+TEST(SqliteWalTest, SingleRowRoundtrip) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     RowCodec codec(schema);
@@ -68,12 +68,12 @@ TEST_CASE("SQLiteLogHandle single row roundtrip") {
     handle->Log(MakeRow(codec, 42, "hello"));
 
     auto table = handle->ToTable();
-    REQUIRE(table->num_rows() == 1);
-    CHECK(GetInt(table, "id",   0) == 42);
-    CHECK(GetStr(table, "name", 0) == "hello");
+    ASSERT_EQ(table->num_rows(), 1);
+    EXPECT_EQ(GetInt(table, "id",   0), 42);
+    EXPECT_EQ(GetStr(table, "name", 0), "hello");
 }
 
-TEST_CASE("SQLiteLogHandle multiple rows preserve insertion order") {
+TEST(SqliteWalTest, MultipleRowsPreserveInsertionOrder) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     RowCodec codec(schema);
@@ -84,16 +84,16 @@ TEST_CASE("SQLiteLogHandle multiple rows preserve insertion order") {
     handle->Log(MakeRow(codec, 3, "gamma"));
 
     auto table = handle->ToTable();
-    REQUIRE(table->num_rows() == 3);
-    CHECK(GetInt(table, "id", 0) == 1);
-    CHECK(GetInt(table, "id", 1) == 2);
-    CHECK(GetInt(table, "id", 2) == 3);
-    CHECK(GetStr(table, "name", 0) == "alpha");
-    CHECK(GetStr(table, "name", 1) == "beta");
-    CHECK(GetStr(table, "name", 2) == "gamma");
+    ASSERT_EQ(table->num_rows(), 3);
+    EXPECT_EQ(GetInt(table, "id", 0), 1);
+    EXPECT_EQ(GetInt(table, "id", 1), 2);
+    EXPECT_EQ(GetInt(table, "id", 2), 3);
+    EXPECT_EQ(GetStr(table, "name", 0), "alpha");
+    EXPECT_EQ(GetStr(table, "name", 1), "beta");
+    EXPECT_EQ(GetStr(table, "name", 2), "gamma");
 }
 
-TEST_CASE("SQLiteLogHandle null values round-trip correctly") {
+TEST(SqliteWalTest, NullValuesRoundTripCorrectly) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     RowCodec codec(schema);
@@ -103,13 +103,13 @@ TEST_CASE("SQLiteLogHandle null values round-trip correctly") {
     handle->Log(MakeRow(codec, 2, "present"));
 
     auto table = handle->ToTable();
-    REQUIRE(table->num_rows() == 2);
-    CHECK(IsNull(table, "name", 0));
-    CHECK_FALSE(IsNull(table, "name", 1));
-    CHECK(GetStr(table, "name", 1) == "present");
+    ASSERT_EQ(table->num_rows(), 2);
+    EXPECT_TRUE(IsNull(table, "name", 0));
+    EXPECT_FALSE(IsNull(table, "name", 1));
+    EXPECT_EQ(GetStr(table, "name", 1), "present");
 }
 
-TEST_CASE("SQLiteLogHandle key_columns orders ToTable results") {
+TEST(SqliteWalTest, KeyColumnsOrdersToTableResults) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     RowCodec codec(schema);
@@ -121,16 +121,16 @@ TEST_CASE("SQLiteLogHandle key_columns orders ToTable results") {
     handle->Log(MakeRow(codec, 20, "b"));
 
     auto table = handle->ToTable();
-    REQUIRE(table->num_rows() == 3);
-    CHECK(GetInt(table, "id", 0) == 10);
-    CHECK(GetInt(table, "id", 1) == 20);
-    CHECK(GetInt(table, "id", 2) == 30);
-    CHECK(GetStr(table, "name", 0) == "a");
-    CHECK(GetStr(table, "name", 1) == "b");
-    CHECK(GetStr(table, "name", 2) == "c");
+    ASSERT_EQ(table->num_rows(), 3);
+    EXPECT_EQ(GetInt(table, "id", 0), 10);
+    EXPECT_EQ(GetInt(table, "id", 1), 20);
+    EXPECT_EQ(GetInt(table, "id", 2), 30);
+    EXPECT_EQ(GetStr(table, "name", 0), "a");
+    EXPECT_EQ(GetStr(table, "name", 1), "b");
+    EXPECT_EQ(GetStr(table, "name", 2), "c");
 }
 
-TEST_CASE("SQLiteWAL multiple logs are independent") {
+TEST(SqliteWalTest, MultipleLogsAreIndependent) {
     SQLiteWAL wal(":memory:");
     auto schema = TwoFieldSchema();
     RowCodec codec(schema);
@@ -145,9 +145,9 @@ TEST_CASE("SQLiteWAL multiple logs are independent") {
     auto t1 = h1->ToTable();
     auto t2 = h2->ToTable();
 
-    CHECK(t1->num_rows() == 1);
-    CHECK(t2->num_rows() == 2);
-    CHECK(GetInt(t1, "id", 0) == 1);
-    CHECK(GetInt(t2, "id", 0) == 2);
-    CHECK(GetInt(t2, "id", 1) == 3);
+    EXPECT_EQ(t1->num_rows(), 1);
+    EXPECT_EQ(t2->num_rows(), 2);
+    EXPECT_EQ(GetInt(t1, "id", 0), 1);
+    EXPECT_EQ(GetInt(t2, "id", 0), 2);
+    EXPECT_EQ(GetInt(t2, "id", 1), 3);
 }

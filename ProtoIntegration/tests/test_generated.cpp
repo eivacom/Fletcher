@@ -1,4 +1,4 @@
-#include <catch2/catch_test_macros.hpp>
+#include <gtest/gtest.h>
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <pubsub/pubsub_provider.hpp>
@@ -27,7 +27,7 @@
 // Helper: import an OwnedSchema (nanoarrow) to shared_ptr<arrow::Schema>.
 static std::shared_ptr<arrow::Schema> ImportNano(fletcher::OwnedSchema nano) {
     auto result = arrow::ImportSchema(nano.get());
-    REQUIRE(result.ok());
+    if (!result.ok()) { ADD_FAILURE() << "ImportSchema failed"; return nullptr; }
     return *result;
 }
 
@@ -41,6 +41,7 @@ fletcher::ArrowRow RoundTrip(
     static fletcher::EncodedRow kept_alive;
     kept_alive = std::move(encoded);
     auto schema = ImportNano(std::move(nano_schema));
+    if (!schema) { ADD_FAILURE() << "RoundTrip: ImportNano failed"; return {}; }
     fletcher::PositionalCodec codec(std::move(schema));
     return codec.DecodeRow(kept_alive);
 }
@@ -49,47 +50,47 @@ fletcher::ArrowRow RoundTrip(
 // simple.proto — SensorReadingArrowRow
 // =============================================================================
 
-TEST_CASE("SensorReading: schema structure") {
+TEST(SensorReadingTest, SchemaStructure) {
     auto schema = ImportNano(integration::SensorReadingArrowRowSchema());
-    REQUIRE(schema->num_fields() == 10);
+    ASSERT_EQ(schema->num_fields(), 10);
 
     // Non-optional scalars are not nullable.
-    CHECK(schema->field(0)->name() == "sensor_id");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::INT32);
-    CHECK_FALSE(schema->field(0)->nullable());
+    EXPECT_EQ(schema->field(0)->name(), "sensor_id");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::INT32);
+    EXPECT_FALSE(schema->field(0)->nullable());
 
-    CHECK(schema->field(1)->name() == "temperature");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::DOUBLE);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "temperature");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::DOUBLE);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
-    CHECK(schema->field(3)->name() == "active");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::BOOL);
+    EXPECT_EQ(schema->field(3)->name(), "active");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::BOOL);
 
-    CHECK(schema->field(4)->name() == "location");
-    CHECK(schema->field(4)->type()->id() == arrow::Type::STRING);
+    EXPECT_EQ(schema->field(4)->name(), "location");
+    EXPECT_EQ(schema->field(4)->type()->id(), arrow::Type::STRING);
 
-    CHECK(schema->field(5)->name() == "payload");
-    CHECK(schema->field(5)->type()->id() == arrow::Type::BINARY);
+    EXPECT_EQ(schema->field(5)->name(), "payload");
+    EXPECT_EQ(schema->field(5)->type()->id(), arrow::Type::BINARY);
 
     // optional fields are nullable.
-    CHECK(schema->field(8)->name() == "humidity");
-    CHECK(schema->field(8)->type()->id() == arrow::Type::DOUBLE);
-    CHECK(schema->field(8)->nullable());
+    EXPECT_EQ(schema->field(8)->name(), "humidity");
+    EXPECT_EQ(schema->field(8)->type()->id(), arrow::Type::DOUBLE);
+    EXPECT_TRUE(schema->field(8)->nullable());
 
-    CHECK(schema->field(9)->name() == "label");
-    CHECK(schema->field(9)->type()->id() == arrow::Type::STRING);
-    CHECK(schema->field(9)->nullable());
+    EXPECT_EQ(schema->field(9)->name(), "label");
+    EXPECT_EQ(schema->field(9)->type()->id(), arrow::Type::STRING);
+    EXPECT_TRUE(schema->field(9)->nullable());
 }
 
-TEST_CASE("SensorReading: encode is non-empty") {
+TEST(SensorReadingTest, EncodeIsNonEmpty) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
-    CHECK_FALSE(r.Encode().empty());
+    EXPECT_FALSE(r.Encode().empty());
 }
 
-TEST_CASE("SensorReading: roundtrip -scalar values") {
+TEST(SensorReadingTest, RoundtripScalarValues) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
@@ -101,93 +102,93 @@ TEST_CASE("SensorReading: roundtrip -scalar values") {
      .set_timestamp_ns(1'000'000'000LL);
 
     auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
-    REQUIRE(scalars.size() == 10);
+    ASSERT_EQ(scalars.size(), 10);
 
     auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
-    REQUIRE(id != nullptr);
-    CHECK(id->value == 42);
+    ASSERT_NE(id, nullptr);
+    EXPECT_EQ(id->value, 42);
 
     auto* temp = dynamic_cast<arrow::DoubleScalar*>(scalars[1].get());
-    REQUIRE(temp != nullptr);
-    CHECK(temp->value == 23.5);
+    ASSERT_NE(temp, nullptr);
+    EXPECT_DOUBLE_EQ(temp->value, 23.5);
 
     auto* act = dynamic_cast<arrow::BooleanScalar*>(scalars[3].get());
-    REQUIRE(act != nullptr);
-    CHECK(act->value == true);
+    ASSERT_NE(act, nullptr);
+    EXPECT_EQ(act->value, true);
 
     auto* loc = dynamic_cast<arrow::StringScalar*>(scalars[4].get());
-    REQUIRE(loc != nullptr);
-    CHECK(loc->value->ToString() == "Room 101");
+    ASSERT_NE(loc, nullptr);
+    EXPECT_EQ(loc->value->ToString(), "Room 101");
 
     auto* ts = dynamic_cast<arrow::Int64Scalar*>(scalars[7].get());
-    REQUIRE(ts != nullptr);
-    CHECK(ts->value == 1'000'000'000LL);
+    ASSERT_NE(ts, nullptr);
+    EXPECT_EQ(ts->value, 1'000'000'000LL);
 }
 
-TEST_CASE("SensorReading: optional fields null when not set") {
+TEST(SensorReadingTest, OptionalFieldsNullWhenNotSet) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
 
     auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
-    CHECK_FALSE(scalars[8]->is_valid);  // humidity
-    CHECK_FALSE(scalars[9]->is_valid);  // label
+    EXPECT_FALSE(scalars[8]->is_valid);  // humidity
+    EXPECT_FALSE(scalars[9]->is_valid);  // label
 }
 
-TEST_CASE("SensorReading: optional fields valid when set") {
+TEST(SensorReadingTest, OptionalFieldsValidWhenSet) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL).set_humidity(55.3).set_label("humid");
 
     auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
-    REQUIRE(scalars[8]->is_valid);
-    REQUIRE(scalars[9]->is_valid);
+    ASSERT_TRUE(scalars[8]->is_valid);
+    ASSERT_TRUE(scalars[9]->is_valid);
 
     auto* hum = dynamic_cast<arrow::DoubleScalar*>(scalars[8].get());
-    REQUIRE(hum != nullptr);
-    CHECK(hum->value == 55.3);
+    ASSERT_NE(hum, nullptr);
+    EXPECT_DOUBLE_EQ(hum->value, 55.3);
 
     auto* lbl = dynamic_cast<arrow::StringScalar*>(scalars[9].get());
-    REQUIRE(lbl != nullptr);
-    CHECK(lbl->value->ToString() == "humid");
+    ASSERT_NE(lbl, nullptr);
+    EXPECT_EQ(lbl->value->ToString(), "humid");
 }
 
 // =============================================================================
 // temporal.proto — TimedEventArrowRow
 // =============================================================================
 
-TEST_CASE("TimedEvent: schema structure") {
+TEST(TimedEventTest, SchemaStructure) {
     auto schema = ImportNano(integration::TimedEventArrowRowSchema());
-    REQUIRE(schema->num_fields() == 5);
+    ASSERT_EQ(schema->num_fields(), 5);
 
-    CHECK(schema->field(0)->name() == "event_id");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
-    CHECK_FALSE(schema->field(0)->nullable());
+    EXPECT_EQ(schema->field(0)->name(), "event_id");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRING);
+    EXPECT_FALSE(schema->field(0)->nullable());
 
     // google.protobuf.Timestamp → timestamp(NANO)
-    CHECK(schema->field(1)->name() == "occurred_at");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::TIMESTAMP);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "occurred_at");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::TIMESTAMP);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
     // google.protobuf.Duration → duration(NANO)
-    CHECK(schema->field(2)->name() == "elapsed");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::DURATION);
-    CHECK_FALSE(schema->field(2)->nullable());
+    EXPECT_EQ(schema->field(2)->name(), "elapsed");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::DURATION);
+    EXPECT_FALSE(schema->field(2)->nullable());
 
     // DoubleValue wrapper → nullable double
-    CHECK(schema->field(3)->name() == "score");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::DOUBLE);
-    CHECK(schema->field(3)->nullable());
+    EXPECT_EQ(schema->field(3)->name(), "score");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::DOUBLE);
+    EXPECT_TRUE(schema->field(3)->nullable());
 
     // StringValue wrapper → nullable string
-    CHECK(schema->field(4)->name() == "label");
-    CHECK(schema->field(4)->type()->id() == arrow::Type::STRING);
-    CHECK(schema->field(4)->nullable());
+    EXPECT_EQ(schema->field(4)->name(), "label");
+    EXPECT_EQ(schema->field(4)->type()->id(), arrow::Type::STRING);
+    EXPECT_TRUE(schema->field(4)->nullable());
 }
 
-TEST_CASE("TimedEvent: roundtrip -WKT values") {
+TEST(TimedEventTest, RoundtripWktValues) {
     integration::TimedEventArrowRow ev;
     ev.set_event_id("evt-001")
       .set_occurred_at(1'700'000'000'000'000'000LL)
@@ -196,55 +197,55 @@ TEST_CASE("TimedEvent: roundtrip -WKT values") {
     // label intentionally left unset → null
 
     auto scalars = RoundTrip(ev.Encode(), integration::TimedEventArrowRowSchema());
-    REQUIRE(scalars.size() == 5);
+    ASSERT_EQ(scalars.size(), 5);
 
     auto* ts = dynamic_cast<arrow::TimestampScalar*>(scalars[1].get());
-    REQUIRE(ts != nullptr);
-    CHECK(ts->value == 1'700'000'000'000'000'000LL);
+    ASSERT_NE(ts, nullptr);
+    EXPECT_EQ(ts->value, 1'700'000'000'000'000'000LL);
 
     auto* dur = dynamic_cast<arrow::DurationScalar*>(scalars[2].get());
-    REQUIRE(dur != nullptr);
-    CHECK(dur->value == 5'000'000'000LL);
+    ASSERT_NE(dur, nullptr);
+    EXPECT_EQ(dur->value, 5'000'000'000LL);
 
     auto* sc = dynamic_cast<arrow::DoubleScalar*>(scalars[3].get());
-    REQUIRE(sc != nullptr);
-    CHECK(sc->is_valid);
-    CHECK(sc->value == 9.5);
+    ASSERT_NE(sc, nullptr);
+    EXPECT_TRUE(sc->is_valid);
+    EXPECT_DOUBLE_EQ(sc->value, 9.5);
 
     // label not set → null scalar
-    CHECK_FALSE(scalars[4]->is_valid);
+    EXPECT_FALSE(scalars[4]->is_valid);
 }
 
 // =============================================================================
 // nested.proto — GeoPointArrowRow, AddressArrowRow, LocationArrowRow
 // =============================================================================
 
-TEST_CASE("GeoPoint: schema is flat scalars") {
+TEST(NestedProtoTest, GeoPointSchemaIsFlatScalars) {
     auto schema = ImportNano(integration::GeoPointArrowRowSchema());
-    REQUIRE(schema->num_fields() == 3);
-    CHECK(schema->field(0)->name() == "latitude");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::DOUBLE);
-    CHECK(schema->field(1)->name() == "longitude");
-    CHECK(schema->field(2)->name() == "elevation");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::FLOAT);
+    ASSERT_EQ(schema->num_fields(), 3);
+    EXPECT_EQ(schema->field(0)->name(), "latitude");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::DOUBLE);
+    EXPECT_EQ(schema->field(1)->name(), "longitude");
+    EXPECT_EQ(schema->field(2)->name(), "elevation");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::FLOAT);
 }
 
-TEST_CASE("Location: schema embeds struct fields") {
+TEST(NestedProtoTest, LocationSchemaEmbedsStructFields) {
     auto schema = ImportNano(integration::LocationArrowRowSchema());
-    REQUIRE(schema->num_fields() == 3);
+    ASSERT_EQ(schema->num_fields(), 3);
 
-    CHECK(schema->field(0)->name() == "point");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRUCT);
-    CHECK_FALSE(schema->field(0)->nullable());
+    EXPECT_EQ(schema->field(0)->name(), "point");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRUCT);
+    EXPECT_FALSE(schema->field(0)->nullable());
 
-    CHECK(schema->field(1)->name() == "address");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::STRUCT);
+    EXPECT_EQ(schema->field(1)->name(), "address");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::STRUCT);
 
-    CHECK(schema->field(2)->name() == "name");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::STRING);
+    EXPECT_EQ(schema->field(2)->name(), "name");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::STRING);
 }
 
-TEST_CASE("Location: roundtrip -nested structs") {
+TEST(NestedProtoTest, LocationRoundtripNestedStructs) {
     integration::GeoPointArrowRow gp;
     gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
 
@@ -255,42 +256,42 @@ TEST_CASE("Location: roundtrip -nested structs") {
     loc.set_point(gp).set_address(addr).set_name("HQ");
 
     auto scalars = RoundTrip(loc.Encode(), integration::LocationArrowRowSchema());
-    REQUIRE(scalars.size() == 3);
+    ASSERT_EQ(scalars.size(), 3);
 
-    CHECK(scalars[0]->type->id() == arrow::Type::STRUCT);
-    CHECK(scalars[0]->is_valid);
+    EXPECT_EQ(scalars[0]->type->id(), arrow::Type::STRUCT);
+    EXPECT_TRUE(scalars[0]->is_valid);
 
-    CHECK(scalars[1]->type->id() == arrow::Type::STRUCT);
-    CHECK(scalars[1]->is_valid);
+    EXPECT_EQ(scalars[1]->type->id(), arrow::Type::STRUCT);
+    EXPECT_TRUE(scalars[1]->is_valid);
 
     auto* name = dynamic_cast<arrow::StringScalar*>(scalars[2].get());
-    REQUIRE(name != nullptr);
-    CHECK(name->value->ToString() == "HQ");
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(name->value->ToString(), "HQ");
 }
 
 // =============================================================================
 // collections.proto — PlayerArrowRow, TeamArrowRow
 // =============================================================================
 
-TEST_CASE("Team: schema has list fields") {
+TEST(CollectionProtoTest, TeamSchemaHasListFields) {
     auto schema = ImportNano(integration::TeamArrowRowSchema());
-    REQUIRE(schema->num_fields() == 4);
+    ASSERT_EQ(schema->num_fields(), 4);
 
-    CHECK(schema->field(0)->name() == "name");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
+    EXPECT_EQ(schema->field(0)->name(), "name");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRING);
 
-    CHECK(schema->field(1)->name() == "members");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::LIST);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "members");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::LIST);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
-    CHECK(schema->field(2)->name() == "scores");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(2)->name(), "scores");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::LIST);
 
-    CHECK(schema->field(3)->name() == "roster");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(3)->name(), "roster");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::LIST);
 }
 
-TEST_CASE("Team: roundtrip -repeated scalars and structs") {
+TEST(CollectionProtoTest, TeamRoundtripRepeatedScalarsAndStructs) {
     integration::PlayerArrowRow p1, p2;
     p1.set_name("Alice").set_level(5);
     p2.set_name("Bob").set_level(3);
@@ -302,98 +303,98 @@ TEST_CASE("Team: roundtrip -repeated scalars and structs") {
         .set_roster({p1, p2});
 
     auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
-    REQUIRE(scalars.size() == 4);
+    ASSERT_EQ(scalars.size(), 4);
 
     auto* name = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
-    REQUIRE(name != nullptr);
-    CHECK(name->value->ToString() == "Alpha");
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(name->value->ToString(), "Alpha");
 
     auto* members = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
-    REQUIRE(members != nullptr);
-    CHECK(members->value->length() == 3);
+    ASSERT_NE(members, nullptr);
+    EXPECT_EQ(members->value->length(), 3);
 
     auto* scores = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
-    REQUIRE(scores != nullptr);
-    CHECK(scores->value->length() == 3);
+    ASSERT_NE(scores, nullptr);
+    EXPECT_EQ(scores->value->length(), 3);
 
     auto* roster = dynamic_cast<arrow::ListScalar*>(scalars[3].get());
-    REQUIRE(roster != nullptr);
-    CHECK(roster->value->length() == 2);
+    ASSERT_NE(roster, nullptr);
+    EXPECT_EQ(roster->value->length(), 2);
 }
 
-TEST_CASE("Team: empty repeated fields produce empty lists") {
+TEST(CollectionProtoTest, TeamEmptyRepeatedFieldsProduceEmptyLists) {
     integration::TeamArrowRow team;
     team.set_name("Empty");
 
     auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
-    REQUIRE(scalars.size() == 4);
+    ASSERT_EQ(scalars.size(), 4);
 
     auto* members = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
-    REQUIRE(members != nullptr);
-    CHECK(members->value->length() == 0);
+    ASSERT_NE(members, nullptr);
+    EXPECT_EQ(members->value->length(), 0);
 }
 
 // =============================================================================
 // maps.proto — MetricsArrowRow
 // =============================================================================
 
-TEST_CASE("Metrics: schema has map fields") {
+TEST(MapProtoTest, MetricsSchemaHasMapFields) {
     auto schema = ImportNano(integration::MetricsArrowRowSchema());
-    REQUIRE(schema->num_fields() == 3);
+    ASSERT_EQ(schema->num_fields(), 3);
 
-    CHECK(schema->field(0)->name() == "resource_id");
+    EXPECT_EQ(schema->field(0)->name(), "resource_id");
 
-    CHECK(schema->field(1)->name() == "gauges");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::MAP);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "gauges");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::MAP);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
-    CHECK(schema->field(2)->name() == "counters");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::MAP);
+    EXPECT_EQ(schema->field(2)->name(), "counters");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::MAP);
 }
 
-TEST_CASE("Metrics: roundtrip -map fields") {
+TEST(MapProtoTest, MetricsRoundtripMapFields) {
     integration::MetricsArrowRow m;
     m.set_resource_id("srv-1")
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
      .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
     auto scalars = RoundTrip(m.Encode(), integration::MetricsArrowRowSchema());
-    REQUIRE(scalars.size() == 3);
+    ASSERT_EQ(scalars.size(), 3);
 
-    CHECK(scalars[1]->type->id() == arrow::Type::MAP);
-    CHECK(scalars[1]->is_valid);
-    CHECK(scalars[2]->type->id() == arrow::Type::MAP);
+    EXPECT_EQ(scalars[1]->type->id(), arrow::Type::MAP);
+    EXPECT_TRUE(scalars[1]->is_valid);
+    EXPECT_EQ(scalars[2]->type->id(), arrow::Type::MAP);
 }
 
 // =============================================================================
 // complex.proto — OrderItemArrowRow, OrderArrowRow
 // =============================================================================
 
-TEST_CASE("Order: schema combines WKT, list<struct>, map, and optional") {
+TEST(OrderProtoTest, OrderSchemaCombinesWktListStructMapAndOptional) {
     auto schema = ImportNano(integration::OrderArrowRowSchema());
-    REQUIRE(schema->num_fields() == 5);
+    ASSERT_EQ(schema->num_fields(), 5);
 
-    CHECK(schema->field(0)->name() == "order_id");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
-    CHECK_FALSE(schema->field(0)->nullable());
+    EXPECT_EQ(schema->field(0)->name(), "order_id");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRING);
+    EXPECT_FALSE(schema->field(0)->nullable());
 
-    CHECK(schema->field(1)->name() == "created_at");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::TIMESTAMP);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "created_at");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::TIMESTAMP);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
-    CHECK(schema->field(2)->name() == "items");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::LIST);
-    CHECK_FALSE(schema->field(2)->nullable());
+    EXPECT_EQ(schema->field(2)->name(), "items");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::LIST);
+    EXPECT_FALSE(schema->field(2)->nullable());
 
-    CHECK(schema->field(3)->name() == "tags");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::MAP);
+    EXPECT_EQ(schema->field(3)->name(), "tags");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::MAP);
 
-    CHECK(schema->field(4)->name() == "customer_note");
-    CHECK(schema->field(4)->type()->id() == arrow::Type::STRING);
-    CHECK(schema->field(4)->nullable());
+    EXPECT_EQ(schema->field(4)->name(), "customer_note");
+    EXPECT_EQ(schema->field(4)->type()->id(), arrow::Type::STRING);
+    EXPECT_TRUE(schema->field(4)->nullable());
 }
 
-TEST_CASE("Order: roundtrip -full complex row") {
+TEST(OrderProtoTest, OrderRoundtripFullComplexRow) {
     integration::OrderItemArrowRow item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
     item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
@@ -407,54 +408,54 @@ TEST_CASE("Order: roundtrip -full complex row") {
          .set_customer_note("Leave at door");
 
     auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
-    REQUIRE(scalars.size() == 5);
+    ASSERT_EQ(scalars.size(), 5);
 
     auto* oid = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
-    REQUIRE(oid != nullptr);
-    CHECK(oid->value->ToString() == "ORD-12345");
+    ASSERT_NE(oid, nullptr);
+    EXPECT_EQ(oid->value->ToString(), "ORD-12345");
 
     auto* ts = dynamic_cast<arrow::TimestampScalar*>(scalars[1].get());
-    REQUIRE(ts != nullptr);
-    CHECK(ts->value == 1'700'000'000'000'000'000LL);
+    ASSERT_NE(ts, nullptr);
+    EXPECT_EQ(ts->value, 1'700'000'000'000'000'000LL);
 
     auto* items = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
-    REQUIRE(items != nullptr);
-    CHECK(items->value->length() == 2);
+    ASSERT_NE(items, nullptr);
+    EXPECT_EQ(items->value->length(), 2);
 
-    CHECK(scalars[3]->type->id() == arrow::Type::MAP);
+    EXPECT_EQ(scalars[3]->type->id(), arrow::Type::MAP);
 
     // customer_note was set → valid
-    REQUIRE(scalars[4]->is_valid);
+    ASSERT_TRUE(scalars[4]->is_valid);
     auto* note = dynamic_cast<arrow::StringScalar*>(scalars[4].get());
-    REQUIRE(note != nullptr);
-    CHECK(note->value->ToString() == "Leave at door");
+    ASSERT_NE(note, nullptr);
+    EXPECT_EQ(note->value->ToString(), "Leave at door");
 }
 
-TEST_CASE("Order: customer_note null when not set") {
+TEST(OrderProtoTest, CustomerNoteNullWhenNotSet) {
     integration::OrderArrowRow order;
     order.set_order_id("ORD-0").set_created_at(0LL);
 
     auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
-    REQUIRE(scalars.size() == 5);
-    CHECK_FALSE(scalars[4]->is_valid);
+    ASSERT_EQ(scalars.size(), 5);
+    EXPECT_FALSE(scalars[4]->is_valid);
 }
 
-TEST_CASE("OrderItem: optional note null then valid") {
+TEST(OrderProtoTest, OrderItemOptionalNoteNullThenValid) {
     integration::OrderItemArrowRow item;
     item.set_product_id("SKU-X").set_quantity(1).set_unit_price(5.0);
 
     {
         auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
-        CHECK_FALSE(scalars[3]->is_valid);  // note not set
+        EXPECT_FALSE(scalars[3]->is_valid);  // note not set
     }
 
     item.set_note("fragile");
     {
         auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
-        CHECK(scalars[3]->is_valid);
+        EXPECT_TRUE(scalars[3]->is_valid);
         auto* n = dynamic_cast<arrow::StringScalar*>(scalars[3].get());
-        REQUIRE(n != nullptr);
-        CHECK(n->value->ToString() == "fragile");
+        ASSERT_NE(n, nullptr);
+        EXPECT_EQ(n->value->ToString(), "fragile");
     }
 }
 
@@ -520,19 +521,19 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
 
 // ---- Publisher tests -----------------------------------------------------
 
-TEST_CASE("Publisher: construction creates topic with correct schema") {
+TEST(PubSubProtoTest, PublisherConstructionCreatesTopicWithCorrectSchema) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    REQUIRE(mock->created_topics.size() == 1);
-    CHECK(mock->created_topics[0].segments ==
-          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
+    ASSERT_EQ(mock->created_topics.size(), 1);
+    EXPECT_EQ(mock->created_topics[0].segments,
+          (std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"}));
     auto schema = ImportNano(
         fletcher::OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
-    CHECK(schema->num_fields() == 4);
+    EXPECT_EQ(schema->num_fields(), 4);
 }
 
-TEST_CASE("Publisher: publish encodes and delivers to provider") {
+TEST(PubSubProtoTest, PublishEncodesAndDeliversToProvider) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
@@ -540,13 +541,13 @@ TEST_CASE("Publisher: publish encodes and delivers to provider") {
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
-    REQUIRE(mock->published.size() == 1);
-    CHECK(mock->published[0].segments ==
-          std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"});
-    CHECK_FALSE(mock->published[0].encoded.empty());
+    ASSERT_EQ(mock->published.size(), 1);
+    EXPECT_EQ(mock->published[0].segments,
+          (std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"}));
+    EXPECT_FALSE(mock->published[0].encoded.empty());
 }
 
-TEST_CASE("Publisher: multiple publishes accumulate") {
+TEST(PubSubProtoTest, MultiplePublishesAccumulate) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
@@ -559,21 +560,21 @@ TEST_CASE("Publisher: multiple publishes accumulate") {
     pub.Publish(r2);
     pub.Publish(r3);
 
-    CHECK(mock->published.size() == 3);
+    EXPECT_EQ(mock->published.size(), 3);
 }
 
 // ---- Subscriber tests ----------------------------------------------------
 
-TEST_CASE("Subscriber: construction does not create topic") {
+TEST(PubSubProtoTest, SubscriberConstructionDoesNotCreateTopic) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     // Subscriber-only processes no longer call CreateTopic; the schema
     // is discovered from the provider when Subscribe() is called.
-    CHECK(mock->created_topics.empty());
+    EXPECT_TRUE(mock->created_topics.empty());
 }
 
-TEST_CASE("Subscriber: receives typed message from published rows") {
+TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
@@ -587,13 +588,13 @@ TEST_CASE("Subscriber: receives typed message from published rows") {
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
-    CHECK(received.device_id() == 42);
-    CHECK(received.value() == 3.14);
-    CHECK(received.timestamp() == 1000LL);
-    CHECK(received.metric_name() == "cpu");
+    EXPECT_EQ(received.device_id(), 42);
+    EXPECT_DOUBLE_EQ(received.value(), 3.14);
+    EXPECT_EQ(received.timestamp(), 1000LL);
+    EXPECT_EQ(received.metric_name(), "cpu");
 }
 
-TEST_CASE("Subscriber: unsubscribe stops delivery") {
+TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
@@ -605,14 +606,14 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
 
     pub.Publish(row);
-    CHECK(count == 1);
+    EXPECT_EQ(count, 1);
 
     sub.Unsubscribe();
     pub.Publish(row);
-    CHECK(count == 1);  // no delivery after unsubscribe
+    EXPECT_EQ(count, 1);  // no delivery after unsubscribe
 }
 
-TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
+TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
@@ -631,13 +632,13 @@ TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
         std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
     pub.Publish(row, {{"image", blob}});
 
-    CHECK(received.device_id() == 42);
-    REQUIRE(received_att.size() == 1);
-    REQUIRE(received_att.count("image") == 1);
-    CHECK(*received_att.at("image") == std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+    EXPECT_EQ(received.device_id(), 42);
+    ASSERT_EQ(received_att.size(), 1);
+    ASSERT_EQ(received_att.count("image"), 1);
+    EXPECT_EQ(*received_att.at("image"), (std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF}));
 }
 
-TEST_CASE("Publisher: publish without attachments has empty attachments") {
+TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {
     auto mock = std::make_shared<MockPubSubProvider>();
     integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
@@ -645,9 +646,9 @@ TEST_CASE("Publisher: publish without attachments has empty attachments") {
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
     pub.Publish(row);
 
-    REQUIRE(mock->published.size() == 1);
-    CHECK(mock->published[0].attachments.empty());
-    CHECK_FALSE(mock->published[0].encoded.empty());
+    ASSERT_EQ(mock->published.size(), 1);
+    EXPECT_TRUE(mock->published[0].attachments.empty());
+    EXPECT_FALSE(mock->published[0].encoded.empty());
 }
 
 // =============================================================================
@@ -655,7 +656,7 @@ TEST_CASE("Publisher: publish without attachments has empty attachments") {
 // produces the same values that were encoded.
 // =============================================================================
 
-TEST_CASE("Native roundtrip: simple scalars") {
+TEST(NativeRoundtripTest, SimpleScalars) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
@@ -670,21 +671,21 @@ TEST_CASE("Native roundtrip: simple scalars") {
 
     integration::SensorReadingArrowRow decoded(r.Encode());
 
-    CHECK(decoded.sensor_id() == 42);
-    CHECK(decoded.temperature() == 23.5);
-    CHECK(decoded.pressure() == 1013.25f);
-    CHECK(decoded.active() == true);
-    CHECK(decoded.location() == "Room 101");
-    CHECK(decoded.payload() == "\xDE\xAD\xBE\xEF");
-    CHECK(decoded.sequence() == 7u);
-    CHECK(decoded.timestamp_ns() == 1'000'000'000LL);
-    REQUIRE(decoded.humidity().has_value());
-    CHECK(*decoded.humidity() == 55.3);
-    REQUIRE(decoded.label().has_value());
-    CHECK(*decoded.label() == "humid");
+    EXPECT_EQ(decoded.sensor_id(), 42);
+    EXPECT_DOUBLE_EQ(decoded.temperature(), 23.5);
+    EXPECT_FLOAT_EQ(decoded.pressure(), 1013.25f);
+    EXPECT_EQ(decoded.active(), true);
+    EXPECT_EQ(decoded.location(), "Room 101");
+    EXPECT_EQ(decoded.payload(), "\xDE\xAD\xBE\xEF");
+    EXPECT_EQ(decoded.sequence(), 7u);
+    EXPECT_EQ(decoded.timestamp_ns(), 1'000'000'000LL);
+    ASSERT_TRUE(decoded.humidity().has_value());
+    EXPECT_DOUBLE_EQ(*decoded.humidity(), 55.3);
+    ASSERT_TRUE(decoded.label().has_value());
+    EXPECT_EQ(*decoded.label(), "humid");
 }
 
-TEST_CASE("Native roundtrip: optional nulls") {
+TEST(NativeRoundtripTest, OptionalNulls) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
@@ -692,11 +693,11 @@ TEST_CASE("Native roundtrip: optional nulls") {
     // humidity and label intentionally left null
 
     integration::SensorReadingArrowRow decoded(r.Encode());
-    CHECK_FALSE(decoded.humidity().has_value());
-    CHECK_FALSE(decoded.label().has_value());
+    EXPECT_FALSE(decoded.humidity().has_value());
+    EXPECT_FALSE(decoded.label().has_value());
 }
 
-TEST_CASE("Native roundtrip: nested structs") {
+TEST(NativeRoundtripTest, NestedStructs) {
     integration::GeoPointArrowRow gp;
     gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
 
@@ -707,15 +708,15 @@ TEST_CASE("Native roundtrip: nested structs") {
     loc.set_point(gp).set_address(addr).set_name("HQ");
 
     integration::LocationArrowRow decoded(loc.Encode());
-    CHECK(decoded.point().latitude() == 37.7749);
-    CHECK(decoded.point().longitude() == -122.4194);
-    CHECK(decoded.point().elevation() == 16.0f);
-    CHECK(decoded.address().street() == "1 Market St");
-    CHECK(decoded.address().city() == "San Francisco");
-    CHECK(decoded.name() == "HQ");
+    EXPECT_DOUBLE_EQ(decoded.point().latitude(), 37.7749);
+    EXPECT_DOUBLE_EQ(decoded.point().longitude(), -122.4194);
+    EXPECT_FLOAT_EQ(decoded.point().elevation(), 16.0f);
+    EXPECT_EQ(decoded.address().street(), "1 Market St");
+    EXPECT_EQ(decoded.address().city(), "San Francisco");
+    EXPECT_EQ(decoded.name(), "HQ");
 }
 
-TEST_CASE("Native roundtrip: repeated scalars and structs") {
+TEST(NativeRoundtripTest, RepeatedScalarsAndStructs) {
     integration::PlayerArrowRow p1, p2;
     p1.set_name("Alice").set_level(5);
     p2.set_name("Bob").set_level(3);
@@ -727,32 +728,32 @@ TEST_CASE("Native roundtrip: repeated scalars and structs") {
         .set_roster({p1, p2});
 
     integration::TeamArrowRow decoded(team.Encode());
-    CHECK(decoded.name() == "Alpha");
-    REQUIRE(decoded.members().size() == 3);
-    CHECK(decoded.members()[0] == "Alice");
-    CHECK(decoded.members()[1] == "Bob");
-    CHECK(decoded.members()[2] == "Carol");
-    REQUIRE(decoded.scores().size() == 3);
-    CHECK(decoded.scores()[0] == 95.0);
-    REQUIRE(decoded.roster().size() == 2);
-    CHECK(decoded.roster()[0].name() == "Alice");
-    CHECK(decoded.roster()[0].level() == 5);
-    CHECK(decoded.roster()[1].name() == "Bob");
+    EXPECT_EQ(decoded.name(), "Alpha");
+    ASSERT_EQ(decoded.members().size(), 3);
+    EXPECT_EQ(decoded.members()[0], "Alice");
+    EXPECT_EQ(decoded.members()[1], "Bob");
+    EXPECT_EQ(decoded.members()[2], "Carol");
+    ASSERT_EQ(decoded.scores().size(), 3);
+    EXPECT_DOUBLE_EQ(decoded.scores()[0], 95.0);
+    ASSERT_EQ(decoded.roster().size(), 2);
+    EXPECT_EQ(decoded.roster()[0].name(), "Alice");
+    EXPECT_EQ(decoded.roster()[0].level(), 5);
+    EXPECT_EQ(decoded.roster()[1].name(), "Bob");
 }
 
-TEST_CASE("Native roundtrip: map fields") {
+TEST(NativeRoundtripTest, MapFields) {
     integration::MetricsArrowRow m;
     m.set_resource_id("srv-1")
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
      .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
     integration::MetricsArrowRow decoded(m.Encode());
-    CHECK(decoded.resource_id() == "srv-1");
-    REQUIRE(decoded.gauges().size() == 2);
-    REQUIRE(decoded.counters().size() == 2);
+    EXPECT_EQ(decoded.resource_id(), "srv-1");
+    ASSERT_EQ(decoded.gauges().size(), 2);
+    ASSERT_EQ(decoded.counters().size(), 2);
 }
 
-TEST_CASE("Native roundtrip: complex - WKT + list<struct> + map + optional") {
+TEST(NativeRoundtripTest, ComplexWktListStructMapAndOptional) {
     integration::OrderItemArrowRow item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
     item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
@@ -766,19 +767,19 @@ TEST_CASE("Native roundtrip: complex - WKT + list<struct> + map + optional") {
          .set_customer_note("Leave at door");
 
     integration::OrderArrowRow decoded(order.Encode());
-    CHECK(decoded.order_id() == "ORD-12345");
-    CHECK(decoded.created_at() == 1'700'000'000'000'000'000LL);
-    REQUIRE(decoded.items().size() == 2);
-    CHECK(decoded.items()[0].product_id() == "SKU-001");
-    CHECK(decoded.items()[0].quantity() == 2);
-    CHECK(decoded.items()[1].note().has_value());
-    CHECK(*decoded.items()[1].note() == "gift wrap");
-    REQUIRE(decoded.tags().size() == 2);
-    REQUIRE(decoded.customer_note().has_value());
-    CHECK(*decoded.customer_note() == "Leave at door");
+    EXPECT_EQ(decoded.order_id(), "ORD-12345");
+    EXPECT_EQ(decoded.created_at(), 1'700'000'000'000'000'000LL);
+    ASSERT_EQ(decoded.items().size(), 2);
+    EXPECT_EQ(decoded.items()[0].product_id(), "SKU-001");
+    EXPECT_EQ(decoded.items()[0].quantity(), 2);
+    ASSERT_TRUE(decoded.items()[1].note().has_value());
+    EXPECT_EQ(*decoded.items()[1].note(), "gift wrap");
+    ASSERT_EQ(decoded.tags().size(), 2);
+    ASSERT_TRUE(decoded.customer_note().has_value());
+    EXPECT_EQ(*decoded.customer_note(), "Leave at door");
 }
 
-TEST_CASE("Native roundtrip: temporal WKT") {
+TEST(NativeRoundtripTest, TemporalWkt) {
     integration::TimedEventArrowRow ev;
     ev.set_event_id("evt-001")
       .set_occurred_at(1'700'000'000'000'000'000LL)
@@ -786,19 +787,19 @@ TEST_CASE("Native roundtrip: temporal WKT") {
       .set_score(9.5);
 
     integration::TimedEventArrowRow decoded(ev.Encode());
-    CHECK(decoded.event_id() == "evt-001");
-    CHECK(decoded.occurred_at() == 1'700'000'000'000'000'000LL);
-    CHECK(decoded.elapsed() == 5'000'000'000LL);
-    REQUIRE(decoded.score().has_value());
-    CHECK(*decoded.score() == 9.5);
-    CHECK_FALSE(decoded.label().has_value());
+    EXPECT_EQ(decoded.event_id(), "evt-001");
+    EXPECT_EQ(decoded.occurred_at(), 1'700'000'000'000'000'000LL);
+    EXPECT_EQ(decoded.elapsed(), 5'000'000'000LL);
+    ASSERT_TRUE(decoded.score().has_value());
+    EXPECT_DOUBLE_EQ(*decoded.score(), 9.5);
+    EXPECT_FALSE(decoded.label().has_value());
 }
 
 // =============================================================================
 // View class tests — encode → decode to ArrowRow → construct view → verify
 // =============================================================================
 
-TEST_CASE("View: SensorReading from ArrowRow") {
+TEST(ViewTest, SensorReadingFromArrowRow) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
@@ -814,21 +815,21 @@ TEST_CASE("View: SensorReading from ArrowRow") {
     auto row = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
     integration::SensorReadingArrowRowView view(std::move(row));
 
-    CHECK(view.sensor_id() == 42);
-    CHECK(view.temperature() == 23.5);
-    CHECK(view.pressure() == 1013.25f);
-    CHECK(view.active() == true);
-    CHECK(view.location() == "roof");
-    CHECK(view.payload() == std::string_view("\x01\x02\x03", 3));
-    CHECK(view.sequence() == 100);
-    CHECK(view.timestamp_ns() == 1'700'000'000'000'000'000LL);
-    REQUIRE(view.humidity().has_value());
-    CHECK(*view.humidity() == 65.0);
-    REQUIRE(view.label().has_value());
-    CHECK(*view.label() == "test-label");
+    EXPECT_EQ(view.sensor_id(), 42);
+    EXPECT_DOUBLE_EQ(view.temperature(), 23.5);
+    EXPECT_FLOAT_EQ(view.pressure(), 1013.25f);
+    EXPECT_EQ(view.active(), true);
+    EXPECT_EQ(view.location(), "roof");
+    EXPECT_EQ(view.payload(), std::string_view("\x01\x02\x03", 3));
+    EXPECT_EQ(view.sequence(), 100);
+    EXPECT_EQ(view.timestamp_ns(), 1'700'000'000'000'000'000LL);
+    ASSERT_TRUE(view.humidity().has_value());
+    EXPECT_DOUBLE_EQ(*view.humidity(), 65.0);
+    ASSERT_TRUE(view.label().has_value());
+    EXPECT_EQ(*view.label(), "test-label");
 }
 
-TEST_CASE("View: SensorReading with nulls") {
+TEST(ViewTest, SensorReadingWithNulls) {
     integration::SensorReadingArrowRow r;
     r.set_sensor_id(1)
      .set_temperature(0.0)
@@ -843,12 +844,12 @@ TEST_CASE("View: SensorReading with nulls") {
     auto row = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
     integration::SensorReadingArrowRowView view(std::move(row));
 
-    CHECK(view.sensor_id() == 1);
-    CHECK_FALSE(view.humidity().has_value());
-    CHECK_FALSE(view.label().has_value());
+    EXPECT_EQ(view.sensor_id(), 1);
+    EXPECT_FALSE(view.humidity().has_value());
+    EXPECT_FALSE(view.label().has_value());
 }
 
-TEST_CASE("View: nested Location from ArrowRow") {
+TEST(ViewTest, NestedLocationFromArrowRow) {
     integration::GeoPointArrowRow pt;
     pt.set_latitude(55.6761).set_longitude(12.5683).set_elevation(10.0f);
 
@@ -861,13 +862,13 @@ TEST_CASE("View: nested Location from ArrowRow") {
     auto row = RoundTrip(loc.Encode(), integration::LocationArrowRowSchema());
     integration::LocationArrowRowView view(std::move(row));
 
-    CHECK(view.name() == "Office");
+    EXPECT_EQ(view.name(), "Office");
     auto pv = view.point();
-    CHECK(pv.latitude() == 55.6761);
-    CHECK(pv.longitude() == 12.5683);
-    CHECK(pv.elevation() == 10.0f);
+    EXPECT_DOUBLE_EQ(pv.latitude(), 55.6761);
+    EXPECT_DOUBLE_EQ(pv.longitude(), 12.5683);
+    EXPECT_FLOAT_EQ(pv.elevation(), 10.0f);
     auto av = view.address();
-    CHECK(av.street() == "Nyhavn 1");
-    CHECK(av.city() == "Copenhagen");
-    CHECK(av.country() == "Denmark");
+    EXPECT_EQ(av.street(), "Nyhavn 1");
+    EXPECT_EQ(av.city(), "Copenhagen");
+    EXPECT_EQ(av.country(), "Denmark");
 }

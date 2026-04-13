@@ -10,7 +10,7 @@ enable_testing()
 #
 # Several Conan packages (protobuf, FastDDS, fastcdr, tinyxml2,
 # foonathan_memory) are available only as Release builds, compiled with /MD.
-# Other packages (Arrow, SQLite3, ZLIB, Catch2 …) have both Debug (/MDd) and
+# Other packages (Arrow, SQLite3, ZLIB, GTest …) have both Debug (/MDd) and
 # Release (/MD) Conan builds.
 #
 # Mixing /MD and /MDd static libs in the same binary is a hard MSVC error
@@ -52,7 +52,7 @@ find_package(Boost         REQUIRED)
 find_package(SQLite3       REQUIRED)
 find_package(Protobuf      REQUIRED)
 find_package(fastdds       REQUIRED)
-find_package(Catch2        REQUIRED)
+find_package(GTest         REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 # (2b) protobuf::protoc is an IMPORTED executable with only IMPORTED_LOCATION
