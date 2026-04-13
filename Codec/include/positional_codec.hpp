@@ -3,6 +3,8 @@
 
 #include <arrow/api.h>
 
+#include <pubsub/types.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -10,7 +12,6 @@
 namespace fletcher {
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
-using EncodedRow = std::vector<uint8_t>;
 
 // Positional row buffer format (little-endian throughout):
 //

@@ -5,7 +5,7 @@
 
 #include "type_mapper.hpp"
 
-using namespace fletcher_plugin;
+using namespace fletcher;
 using namespace google::protobuf;
 
 // ===========================================================================

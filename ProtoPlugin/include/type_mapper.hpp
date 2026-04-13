@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-namespace fletcher_plugin {
+namespace fletcher {
 
 // Describes a scalar (or scalar-like) Arrow type: enough information for the
 // code generator to emit setters, builders, and scalar constructors.
@@ -118,4 +118,4 @@ std::string WireTypeIdName(google::protobuf::FieldDescriptor::Type type);
 // TypeScript interface name for a message: Outer.Inner → "IOuter_Inner".
 std::string TsInterfaceName(const google::protobuf::Descriptor* msg);
 
-}  // namespace fletcher_plugin
+}  // namespace fletcher

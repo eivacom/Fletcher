@@ -3,7 +3,7 @@
 add_library(fletcher_plugin_core STATIC
     src/type_mapper.cpp
     src/generator.cpp)
-target_include_directories(fletcher_plugin_core PUBLIC src)
+target_include_directories(fletcher_plugin_core PUBLIC include PRIVATE src)
 target_link_libraries(fletcher_plugin_core PUBLIC
     protobuf::libprotoc
     protobuf::libprotobuf)

@@ -1,5 +1,5 @@
-#ifndef XRCE_DDS_PUBSUB_PROVIDER_HPP_
-#define XRCE_DDS_PUBSUB_PROVIDER_HPP_
+#ifndef FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
+#define FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <pubsub/pubsub_provider.hpp>
 
@@ -70,4 +70,4 @@ class XrceDDSPubSubProvider : public PubSubProvider {
 
 }  // namespace fletcher
 
-#endif  // XRCE_DDS_PUBSUB_PROVIDER_HPP_
+#endif  // FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_

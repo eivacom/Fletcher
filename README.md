@@ -107,6 +107,17 @@ npm run build:wasm # WASM compilation (requires Emscripten)
 
 ---
 
+## Terminology
+
+| Term | Meaning |
+|------|---------|
+| **EncodedRow** | `std::vector<uint8_t>` — the compact binary wire format produced by a codec. This is what travels over the network and is stored in the WAL. |
+| **ArrowRow** | `std::vector<std::shared_ptr<arrow::Scalar>>` — one row represented as a vector of Arrow scalars, used as the intermediate form between user data and the encoded wire format. |
+| **\*ArrowRow class** | A generated C++ wrapper class (e.g. `SensorReadingArrowRow`) produced by the protoc plugin from a `.proto` message. Provides typed setters and `Encode()` / decode constructor. The "ArrowRow" suffix distinguishes it from the original protobuf message class. |
+| **\*ArrowRowView class** | An immutable zero-copy view over an `EncodedRow`, generated alongside the mutable ArrowRow class. |
+
+---
+
 ## Dependency graph
 
 ```
@@ -132,11 +143,11 @@ Batcher
     └── Codec
 
 Codec
-    ├── PubSub (envelope, pubsub_provider — forwarding headers)
+    ├── PubSub (shared types, write buffer)
     └── Apache Arrow
 
 PubSub
-    └── Apache Arrow (schema parameter only)
+    └── nanoarrow
 ```
 
 ## Building

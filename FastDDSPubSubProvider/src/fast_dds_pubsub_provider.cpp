@@ -115,10 +115,10 @@ struct TransportData {
 // DDS TopicDataType — encodes row bytes directly into DDS payload.
 // -----------------------------------------------------------------------
 
-class ArrowRowTopicType : public TopicDataType {
+class FletcherTopicType : public TopicDataType {
  public:
-    explicit ArrowRowTopicType(uint32_t max_payload) {
-        setName("ArrowRow");
+    explicit FletcherTopicType(uint32_t max_payload) {
+        setName("fletcher");
         m_typeSize = 4 + 4 + max_payload;
         m_isGetKeyDefined = false;
     }
@@ -313,13 +313,13 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(uint32_t domain_id,
     impl_->max_payload = max_payload_bytes;
 
     DomainParticipantQos pqos = PARTICIPANT_QOS_DEFAULT;
-    pqos.name("ArrowRowParticipant");
+    pqos.name("FletcherParticipant");
     impl_->participant = DomainParticipantFactory::get_instance()
                              ->create_participant(domain_id, pqos);
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    impl_->type_support.reset(new ArrowRowTopicType(max_payload_bytes));
+    impl_->type_support.reset(new FletcherTopicType(max_payload_bytes));
     impl_->type_support.register_type(impl_->participant);
 
     impl_->schema_type_support.reset(new RawBytesTopicType(max_payload_bytes));

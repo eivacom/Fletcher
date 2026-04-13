@@ -14,9 +14,6 @@
 
 namespace fletcher {
 
-// Binary-encoded row data.
-using EncodedRow = std::vector<uint8_t>;
-
 /// Result returned by PubSubProvider::Subscribe, carrying the schema
 /// that the publisher registered when it created the topic.
 struct SubscriptionResult {

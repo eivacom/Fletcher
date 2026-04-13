@@ -5,7 +5,7 @@
 
 #include <set>
 
-namespace fletcher_plugin {
+namespace fletcher {
 
 namespace {
 
@@ -754,4 +754,4 @@ std::string TsInterfaceName(const google::protobuf::Descriptor* msg) {
     return "I" + name;
 }
 
-}  // namespace fletcher_plugin
+}  // namespace fletcher

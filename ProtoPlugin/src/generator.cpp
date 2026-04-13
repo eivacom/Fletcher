@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace fletcher_plugin {
+namespace fletcher {
 
 namespace {
 
@@ -2603,4 +2603,4 @@ bool ArrowRowGenerator::Generate(
     return true;
 }
 
-}  // namespace fletcher_plugin
+}  // namespace fletcher

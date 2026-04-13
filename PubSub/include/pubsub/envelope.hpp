@@ -10,9 +10,6 @@
 
 namespace fletcher {
 
-// Binary-encoded row data (used internally for the envelope wire format).
-using EncodedRow = std::vector<uint8_t>;
-
 // An encoded row bundled with optional attachments.
 struct Envelope {
     EncodedRow   row;

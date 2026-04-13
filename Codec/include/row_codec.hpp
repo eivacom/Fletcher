@@ -4,7 +4,9 @@
 #include <arrow/api.h>
 
 #include "schema_evolution.hpp"
-#include "write_buffer.hpp"
+
+#include <pubsub/types.hpp>
+#include <pubsub/write_buffer.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -13,9 +15,6 @@
 #include <vector>
 
 namespace fletcher {
-
-// Binary-encoded row data.
-using EncodedRow = std::vector<uint8_t>;
 
 using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
 

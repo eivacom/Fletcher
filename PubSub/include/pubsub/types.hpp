@@ -9,6 +9,9 @@
 
 namespace fletcher {
 
+// Binary-encoded row data.
+using EncodedRow = std::vector<uint8_t>;
+
 // Opaque binary blob.  shared_ptr gives zero-copy sharing from publisher
 // through provider to subscriber callback.
 using Blob = std::shared_ptr<const std::vector<uint8_t>>;

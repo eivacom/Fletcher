@@ -1,5 +1,5 @@
-#ifndef FAST_DDS_PUBSUB_PROVIDER_HPP_
-#define FAST_DDS_PUBSUB_PROVIDER_HPP_
+#ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
+#define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <pubsub/pubsub_provider.hpp>
 
@@ -45,4 +45,4 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
 }  // namespace fletcher
 
-#endif  // FAST_DDS_PUBSUB_PROVIDER_HPP_
+#endif  // FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_

@@ -1,11 +1,3 @@
-cmake_minimum_required(VERSION 3.15)
-project(ProtoIntegration CXX)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-include(CTest)
-
 # ---- Locate protobuf WKT include directory at configure time ----
 # Query each imported config variant; take the first hit.
 foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)
