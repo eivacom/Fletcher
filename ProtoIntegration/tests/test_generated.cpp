@@ -17,12 +17,12 @@
 #include "pubsub.fletcher.pb.h"
 #include "complex.fletcher.pb.h"
 
-// View headers (Arrow C++ dependent, server-side)
-#include "simple.fletcher.view.pb.h"
-#include "nested.fletcher.view.pb.h"
-#include "collections.fletcher.view.pb.h"
-#include "maps.fletcher.view.pb.h"
-#include "complex.fletcher.view.pb.h"
+// Arrow headers (Arrow C++ dependent — view classes + ToArrowRow converters)
+#include "simple.fletcher.arrow.pb.h"
+#include "nested.fletcher.arrow.pb.h"
+#include "collections.fletcher.arrow.pb.h"
+#include "maps.fletcher.arrow.pb.h"
+#include "complex.fletcher.arrow.pb.h"
 
 // Helper: import an OwnedSchema (nanoarrow) to shared_ptr<arrow::Schema>.
 static std::shared_ptr<arrow::Schema> ImportNano(fletcher::OwnedSchema nano) {

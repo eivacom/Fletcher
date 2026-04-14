@@ -218,7 +218,7 @@ tr:hover td { background: #f4f5fb; }
     (Arrow C++).</li>
   <li><strong>Protoc Plugin</strong> &mdash; generates typed C++ message classes
     (<code>.fletcher.pb.h</code>, nanoarrow only) and optional Arrow C++ view
-    classes (<code>.fletcher.view.pb.h</code>), plus TypeScript interfaces.</li>
+    classes (<code>.fletcher.arrow.pb.h</code>), plus TypeScript interfaces.</li>
   <li><strong>PubSub Provider</strong> &mdash; an abstract transport interface
     operating on raw bytes and nanoarrow <code>OwnedSchema</code>, with
     schema transport, zero-copy <code>RowEncoder</code> publishing, and
@@ -264,7 +264,7 @@ tr:hover td { background: #f4f5fb; }
 <ul>
   <li><strong><code>.fletcher.pb.h</code></strong> &mdash; edge-compatible message
     class, schema function, publisher, subscriber. Depends only on nanoarrow.</li>
-  <li><strong><code>.fletcher.view.pb.h</code></strong> &mdash; server-side view class
+  <li><strong><code>.fletcher.arrow.pb.h</code></strong> &mdash; server-side view class
     wrapping <code>ArrowRow</code> with typed getters for <code>RecordBatch</code>,
     <code>Table</code>, and scalar vectors. Depends on Arrow C++.</li>
 </ul>
@@ -331,7 +331,7 @@ sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="
   protoc-gen-fletcher               (build-time code generation)
        |
        +---> .fletcher.pb.h         (C++ message classes, nanoarrow only)
-       +---> .fletcher.view.pb.h    (C++ view classes, Arrow C++)
+       +---> .fletcher.arrow.pb.h    (C++ view classes, Arrow C++)
        +---> .fletcher.ts            (TypeScript interfaces + schema)
        |
        +--- Encode()/EncodeTo() --> EncodedRow (compact positional buffer)
@@ -386,7 +386,7 @@ sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="
   <tr>
     <td><strong>Server tier</strong></td>
     <td>Arrow C++ (~100 MB)</td>
-    <td><code>PubSubArrow</code> adapter, view classes (<code>.fletcher.view.pb.h</code>),
+    <td><code>PubSubArrow</code> adapter, view classes (<code>.fletcher.arrow.pb.h</code>),
       <code>PositionalCodec</code>, <code>RowBatcher</code></td>
   </tr>
 </table>
@@ -599,7 +599,7 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
       decoding constructor, publisher/subscriber classes</td>
   </tr>
   <tr>
-    <td><code>.fletcher.view.pb.h</code></td>
+    <td><code>.fletcher.arrow.pb.h</code></td>
     <td>Arrow C++</td>
     <td>Immutable view class with typed getters, constructors from
       <code>ArrowRow</code>, <code>RecordBatch</code>, and <code>Table</code></td>
@@ -639,7 +639,7 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
     delivers typed <code>{Message}</code> + <code>Attachments</code> to callback</li>
 </ul>
 
-<h3>What gets generated (C++ &mdash; <code>.fletcher.view.pb.h</code>)</h3>
+<h3>What gets generated (C++ &mdash; <code>.fletcher.arrow.pb.h</code>)</h3>
 
 <p><strong>For each message:</strong></p>
 <ul>
@@ -1265,7 +1265,7 @@ cfg.max_payload = <span class="num">512</span>;
 
 <p><strong>Server binary</strong> (e.g., data pipeline): additionally links
   <code>pubsub_arrow</code> + <code>row_codec</code> + <code>row_batcher</code>
-  and includes <code>.fletcher.view.pb.h</code> view classes.</p>
+  and includes <code>.fletcher.arrow.pb.h</code> view classes.</p>
 
 
 <!-- ── Building ────────────────────────────────────────────────────── -->

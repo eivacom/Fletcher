@@ -2168,7 +2168,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
         o << GenerateSchemaFunction(cls, fields, msg) << "\n";
 
         // Optionally emit the row class.
-        // View class omitted — generated separately in .fletcher.view.pb.h (Phase 5).
+        // View class omitted — generated separately in .fletcher.arrow.pb.h.
         if (!schema_only) {
             o << GenerateMessageClass(cls, fields) << "\n";
         }
@@ -2501,15 +2501,276 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 }
 
 // -----------------------------------------------------------------------
-// View file generation (.fletcher.view.pb.h)
+// ToArrowRow() free function generation
 //
-// Generates an Arrow C++ dependent view header for each proto file.
-// The view classes wrap ArrowRow (vector<shared_ptr<arrow::Scalar>>)
-// with typed, zero-copy getters for RecordBatch / Table rows.
+// Generates an inline free function per message that converts a nanoarrow
+// class instance to fletcher::ArrowRow (vector<shared_ptr<arrow::Scalar>>)
+// using only the public getter API.  Found via ADL.
+// -----------------------------------------------------------------------
+
+std::string GenerateToArrowRow(const std::string& cls,
+                               const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+    o << "inline fletcher::ArrowRow ToArrowRow(const " << cls << "& msg) {\n"
+      << "    fletcher::ArrowRow row;\n"
+      << "    row.reserve(" << fields.size() << ");\n";
+
+    for (const auto& fi : fields) {
+        const std::string getter = "msg." + fi.name + "()";
+
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                const auto& sc = fi.mapping.scalar;
+                if (fi.mapping.nullable) {
+                    std::string val_expr;
+                    if (sc.value_is_buffer)
+                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
+                                              "std::string(*" + getter + ")");
+                    else
+                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
+                                              "*" + getter);
+                    o << "    row.push_back(" << getter << ".has_value()\n"
+                      << "        ? std::shared_ptr<arrow::Scalar>("
+                      << val_expr << ")\n"
+                      << "        : arrow::MakeNullScalar("
+                      << sc.arrow_type_expr << "));\n";
+                } else {
+                    std::string val_expr;
+                    if (sc.value_is_buffer)
+                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
+                                              "std::string(" + getter + ")");
+                    else
+                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}", getter);
+                    o << "    row.push_back(" << val_expr << ");\n";
+                }
+                break;
+            }
+
+            case FieldKind::STRUCT: {
+                const auto& nc = fi.mapping.nested_class;
+                o << "    {\n"
+                  << "        auto type = arrow::struct_(\n"
+                  << "            detail::ImportSchema(" << nc
+                  << "Schema())->fields());\n";
+                if (fi.mapping.nullable) {
+                    o << "        if (" << getter << " != nullptr)\n"
+                      << "            row.push_back(std::make_shared"
+                         "<arrow::StructScalar>(\n"
+                      << "                ToArrowRow(*" << getter
+                      << "), type));\n"
+                      << "        else\n"
+                      << "            row.push_back(arrow::MakeNullScalar"
+                         "(type));\n";
+                } else {
+                    o << "        row.push_back(std::make_shared"
+                         "<arrow::StructScalar>(\n"
+                      << "            ToArrowRow(" << getter
+                      << "), type));\n";
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::REPEATED_SCALAR: {
+                const auto& el = fi.mapping.element;
+                o << "    {\n"
+                  << "        " << el.builder_type << " builder;\n"
+                  << "        for (const auto& v : " << getter << ")\n"
+                  << "            (void)builder.Append(v);\n"
+                  << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
+                  << "            *builder.Finish(),\n"
+                  << "            arrow::list(arrow::field(\"item\", "
+                  << el.arrow_type_expr << ", false))));\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::REPEATED_STRUCT: {
+                const auto& nc = fi.mapping.nested_class;
+                o << "    {\n"
+                  << "        auto type = arrow::struct_(\n"
+                  << "            detail::ImportSchema(" << nc
+                  << "Schema())->fields());\n"
+                  << "        auto builder = arrow::MakeBuilder(type)"
+                     ".ValueOrDie();\n"
+                  << "        for (const auto& v : " << getter << ") {\n"
+                  << "            auto s = std::make_shared"
+                     "<arrow::StructScalar>(\n"
+                  << "                ToArrowRow(v), type);\n"
+                  << "            (void)builder->AppendScalar(*s);\n"
+                  << "        }\n"
+                  << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
+                  << "            *builder->Finish(),\n"
+                  << "            arrow::list(arrow::field(\"item\", type,"
+                     " false))));\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::NESTED_LIST: {
+                const auto& nc = fi.mapping.nested_class;
+                o << "    {\n"
+                  << "        auto coord_type = arrow::struct_(\n"
+                  << "            detail::ImportSchema(" << nc
+                  << "Schema())->fields());\n";
+
+                // Reference to the data.
+                std::string data_ref = fi.mapping.nullable
+                    ? ("(*" + getter + ")")
+                    : getter;
+
+                if (fi.mapping.list_depth == 2) {
+                    o << "        auto inner_list_type = arrow::list(\n"
+                      << "            arrow::field(\"item\", coord_type,"
+                         " false));\n";
+                    if (fi.mapping.nullable) {
+                        o << "        if (" << getter << " == nullptr) {\n"
+                          << "            row.push_back(arrow::MakeNullScalar(\n"
+                          << "                arrow::list(arrow::field(\"item\","
+                             " inner_list_type, false))));\n"
+                          << "        } else {\n";
+                    }
+                    o << "        auto outer_builder = arrow::MakeBuilder"
+                         "(inner_list_type).ValueOrDie();\n"
+                      << "        for (const auto& ring : " << data_ref
+                      << ") {\n"
+                      << "            auto inner_builder = arrow::MakeBuilder"
+                         "(coord_type).ValueOrDie();\n"
+                      << "            for (const auto& v : ring) {\n"
+                      << "                auto s = std::make_shared"
+                         "<arrow::StructScalar>(\n"
+                      << "                    ToArrowRow(v), coord_type);\n"
+                      << "                (void)inner_builder->AppendScalar"
+                         "(*s);\n"
+                      << "            }\n"
+                      << "            (void)outer_builder->AppendScalar(\n"
+                      << "                arrow::ListScalar(*inner_builder->"
+                         "Finish(), inner_list_type));\n"
+                      << "        }\n"
+                      << "        row.push_back(std::make_shared"
+                         "<arrow::ListScalar>(\n"
+                      << "            *outer_builder->Finish()));\n";
+                } else if (fi.mapping.list_depth == 3) {
+                    o << "        auto ring_list_type = arrow::list(\n"
+                      << "            arrow::field(\"item\", coord_type,"
+                         " false));\n"
+                      << "        auto poly_list_type = arrow::list(\n"
+                      << "            arrow::field(\"item\", ring_list_type,"
+                         " false));\n";
+                    if (fi.mapping.nullable) {
+                        o << "        if (" << getter << " == nullptr) {\n"
+                          << "            row.push_back(arrow::MakeNullScalar(\n"
+                          << "                arrow::list(arrow::field(\"item\","
+                             " poly_list_type, false))));\n"
+                          << "        } else {\n";
+                    }
+                    o << "        auto outer_builder = arrow::MakeBuilder"
+                         "(poly_list_type).ValueOrDie();\n"
+                      << "        for (const auto& poly : " << data_ref
+                      << ") {\n"
+                      << "            auto mid_builder = arrow::MakeBuilder"
+                         "(ring_list_type).ValueOrDie();\n"
+                      << "            for (const auto& ring : poly) {\n"
+                      << "                auto inner_builder = arrow::MakeBuilder"
+                         "(coord_type).ValueOrDie();\n"
+                      << "                for (const auto& v : ring) {\n"
+                      << "                    auto s = std::make_shared"
+                         "<arrow::StructScalar>(\n"
+                      << "                        ToArrowRow(v), coord_type);\n"
+                      << "                    (void)inner_builder->AppendScalar"
+                         "(*s);\n"
+                      << "                }\n"
+                      << "                (void)mid_builder->AppendScalar(\n"
+                      << "                    arrow::ListScalar("
+                         "*inner_builder->Finish(), ring_list_type));\n"
+                      << "            }\n"
+                      << "            (void)outer_builder->AppendScalar(\n"
+                      << "                arrow::ListScalar(*mid_builder->"
+                         "Finish(), poly_list_type));\n"
+                      << "        }\n"
+                      << "        row.push_back(std::make_shared"
+                         "<arrow::ListScalar>(\n"
+                      << "            *outer_builder->Finish()));\n";
+                }
+
+                if (fi.mapping.nullable) {
+                    o << "        }\n";  // close else
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::MAP: {
+                const auto& mk = fi.mapping.map_key;
+                o << "    {\n"
+                  << "        " << mk.builder_type << " key_builder;\n";
+
+                if (fi.mapping.map_value_is_message) {
+                    const auto& mvc = fi.mapping.map_value_class;
+                    o << "        auto val_type = arrow::struct_(\n"
+                      << "            detail::ImportSchema(" << mvc
+                      << "Schema())->fields());\n"
+                      << "        auto val_builder = arrow::MakeBuilder"
+                         "(val_type).ValueOrDie();\n"
+                      << "        for (const auto& [k, v] : " << getter
+                      << ") {\n"
+                      << "            (void)key_builder.Append(k);\n"
+                      << "            auto s = std::make_shared"
+                         "<arrow::StructScalar>(\n"
+                      << "                ToArrowRow(v), val_type);\n"
+                      << "            (void)val_builder->AppendScalar(*s);\n"
+                      << "        }\n"
+                      << "        auto keys = *key_builder.Finish();\n"
+                      << "        auto vals = *val_builder->Finish();\n";
+                } else {
+                    const auto& mv = fi.mapping.map_value;
+                    o << "        " << mv.builder_type << " val_builder;\n"
+                      << "        for (const auto& [k, v] : " << getter
+                      << ") {\n"
+                      << "            (void)key_builder.Append(k);\n"
+                      << "            (void)val_builder.Append(v);\n"
+                      << "        }\n"
+                      << "        auto keys = *key_builder.Finish();\n"
+                      << "        auto vals = *val_builder.Finish();\n";
+                }
+
+                if (fi.mapping.map_value_is_message) {
+                    o << "        auto val_field = arrow::field(\"value\","
+                         " val_type, false);\n";
+                } else {
+                    o << "        auto val_field = arrow::field(\"value\", "
+                      << fi.mapping.map_value.arrow_type_expr
+                      << ", false);\n";
+                }
+                o << "        auto kv = *arrow::StructArray::Make(\n"
+                  << "            {keys, vals},\n"
+                  << "            {arrow::field(\"key\", "
+                  << mk.arrow_type_expr << ", false), val_field});\n"
+                  << "        row.push_back(std::make_shared"
+                     "<arrow::MapScalar>(kv,\n"
+                  << "            arrow::map(" << mk.arrow_type_expr
+                  << ", val_field)));\n"
+                  << "    }\n";
+                break;
+            }
+        }
+    }
+
+    o << "    return row;\n"
+      << "}\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
+// Arrow file generation (.fletcher.arrow.pb.h)
+//
+// Generates an Arrow C++ dependent header for each proto file.
+// Contains view classes (typed wrappers around ArrowRow / RecordBatch / Table)
+// and ToArrowRow() free functions that convert nanoarrow classes to ArrowRow.
 // -----------------------------------------------------------------------
 
 std::string ViewOutputFilename(const std::string& proto_name) {
-    return StripProtoSuffix(proto_name) + ".fletcher.view.pb.h";
+    return StripProtoSuffix(proto_name) + ".fletcher.arrow.pb.h";
 }
 
 std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
@@ -2528,7 +2789,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 
     o << "// Generated by protoc-gen-fletcher. DO NOT EDIT.\n"
       << "// Source: " << file->name() << "\n"
-      << "// Arrow C++ view classes — server-side only.\n"
+      << "// Arrow C++ view classes and ToArrowRow() converters — server-side only.\n"
       << "#pragma once\n\n"
       << "#include <arrow/api.h>\n"
       << "#include <arrow/c/bridge.h>\n"
@@ -2541,12 +2802,12 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
     if (!cross_includes.empty()) {
         o << "\n";
         for (const auto& h : cross_includes) {
-            // Replace .fletcher.pb.h → .fletcher.view.pb.h
+            // Replace .fletcher.pb.h → .fletcher.arrow.pb.h
             std::string vh = h;
             const std::string suffix = ".fletcher.pb.h";
             if (vh.size() > suffix.size()
                 && vh.substr(vh.size() - suffix.size()) == suffix) {
-                vh = vh.substr(0, vh.size() - suffix.size()) + ".fletcher.view.pb.h";
+                vh = vh.substr(0, vh.size() - suffix.size()) + ".fletcher.arrow.pb.h";
             }
             o << "#include \"" << vh << "\"\n";
         }
@@ -2556,6 +2817,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <cstdint>\n"
       << "#include <memory>\n"
       << "#include <optional>\n"
+      << "#include <string>\n"
       << "#include <string_view>\n"
       << "#include <vector>\n\n";
 
@@ -2592,6 +2854,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         const std::string view_cls = cls + "View";
 
         o << GenerateViewClass(view_cls, fields) << "\n";
+        o << GenerateToArrowRow(cls, fields) << "\n";
     }
 
     if (!ns.empty())

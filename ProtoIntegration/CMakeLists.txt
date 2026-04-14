@@ -38,7 +38,7 @@ set(GENERATED_HEADERS)
 foreach(_stem ${PROTO_STEMS})
     set(_src "${PROTO_DIR}/${_stem}.proto")
     set(_hdr "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
-    set(_vhdr "${GENERATED_DIR}/${_stem}.fletcher.view.pb.h")
+    set(_vhdr "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h")
 
     add_custom_command(
         OUTPUT  "${_hdr}" "${_vhdr}"
@@ -61,7 +61,7 @@ endforeach()
 file(MAKE_DIRECTORY "${GENERATED_DIR}/geoarrow")
 set(_geoarrow_src "${GEOARROW_PROTO_DIR}/geoarrow/geoarrow.proto")
 set(_geoarrow_hdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.pb.h")
-set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.view.pb.h")
+set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.arrow.pb.h")
 add_custom_command(
     OUTPUT  "${_geoarrow_hdr}" "${_geoarrow_vhdr}"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"

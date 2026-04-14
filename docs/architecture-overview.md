@@ -54,7 +54,7 @@ The system is organized into two deployment tiers that share the same wire forma
 
 The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSub` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the WebGateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
 
-The **server tier** adds the full Apache Arrow C++ library. It includes the `PositionalCodec` (Arrow scalar encode/decode), the `PubSubArrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated view classes (`.fletcher.view.pb.h`) for zero-copy access into `RecordBatch` and `Table`.
+The **server tier** adds the full Apache Arrow C++ library. It includes the `PositionalCodec` (Arrow scalar encode/decode), the `PubSubArrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated Arrow classes (`.fletcher.arrow.pb.h`) for zero-copy view access into `RecordBatch` and `Table`, and `ToArrowRow()` converters.
 
 Both tiers produce byte-identical wire format. A row encoded via `PositionalWriter` on an edge device can be decoded by `PositionalCodec` on a server, and vice versa.
 
@@ -63,7 +63,7 @@ Both tiers produce byte-identical wire format. A row encoded via `PositionalWrit
 The system provides seven composable layers:
 
 1. **Codec** — a header-only `PositionalWriter`/`PositionalReader` pair for direct serialization (nanoarrow only), plus a `PositionalCodec` class for server-side ArrowRow encode/decode (Arrow C++).
-2. **Protoc Plugin** — generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes (`.fletcher.view.pb.h`), and TypeScript interfaces with schema descriptors.
+2. **Protoc Plugin** — generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), and TypeScript interfaces with schema descriptors.
 3. **PubSub Provider** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
 4. **PubSubArrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
 5. **WebGateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol.
@@ -213,7 +213,7 @@ The `protoc-gen-fletcher` plugin runs during your CMake build. For each `.proto`
 | File | Depends on | Contents |
 |---|---|---|
 | `.fletcher.pb.h` | nanoarrow only | Schema function, typed row class, publisher/subscriber |
-| `.fletcher.view.pb.h` | Arrow C++ | Immutable view class with typed getters |
+| `.fletcher.arrow.pb.h` | Arrow C++ | Immutable view class with typed getters, `ToArrowRow()` converter |
 | `.fletcher.ts` | — | TypeScript interface, SchemaDescriptor, topic constant |
 
 ### 7.3 Encode and decode

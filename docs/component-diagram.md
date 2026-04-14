@@ -42,7 +42,7 @@ graph TB
     subgraph codegen_layer ["Code Generation (build-time)"]
         PROTOC["protoc + protoc-gen-fletcher<br/><i>Reads .proto files</i>"]
         GEN_EDGE[".fletcher.pb.h<br/><i>Message class + schema<br/>(nanoarrow only)</i>"]
-        GEN_SERVER[".fletcher.view.pb.h<br/><i>View class with typed getters<br/>(Arrow C++)</i>"]
+        GEN_SERVER[".fletcher.arrow.pb.h<br/><i>View class + ToArrowRow<br/>(Arrow C++)</i>"]
         GEN_TS[".fletcher.ts<br/><i>TypeScript interface +<br/>SchemaDescriptor</i>"]
 
         PROTOC --> GEN_EDGE
@@ -151,7 +151,7 @@ graph LR
         C1["Arrow dependency<br/><i>nanoarrow → Arrow C++</i>"]
         C2["Codec level<br/><i>PositionalWriter → PositionalCodec</i>"]
         C3["Schema type<br/><i>OwnedSchema → shared_ptr&lt;arrow::Schema&gt;</i>"]
-        C4["Generated headers<br/><i>.fletcher.pb.h → + .fletcher.view.pb.h</i>"]
+        C4["Generated headers<br/><i>.fletcher.pb.h → + .fletcher.arrow.pb.h</i>"]
     end
 
     subgraph invariant ["What Stays the Same"]

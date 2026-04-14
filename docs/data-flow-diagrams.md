@@ -126,7 +126,7 @@ sequenceDiagram
 
     par Generate outputs
         PLUGIN->>CMAKE: .fletcher.pb.h (nanoarrow only)
-        PLUGIN->>CMAKE: .fletcher.view.pb.h (Arrow C++)
+        PLUGIN->>CMAKE: .fletcher.arrow.pb.h (Arrow C++)
     and TypeScript (if --fletcher_opt=ts)
         PLUGIN->>CMAKE: .fletcher.ts (interfaces + schema)
     end
