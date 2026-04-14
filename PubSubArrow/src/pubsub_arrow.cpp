@@ -48,7 +48,8 @@ PubSubArrow::PubSubArrow(std::shared_ptr<PubSub> provider)
 // -----------------------------------------------------------------------
 
 void PubSubArrow::CreateTopic(const std::vector<std::string>& segments,
-                               std::shared_ptr<arrow::Schema> schema) {
+                               std::shared_ptr<arrow::Schema> schema,
+                               std::any config) {
     OwnedSchema nano;
     if (schema) {
         nano = ExportToNano(*schema);
@@ -57,7 +58,7 @@ void PubSubArrow::CreateTopic(const std::vector<std::string>& segments,
         codecs_[key] = TopicCodec{schema,
                                    std::make_unique<PositionalCodec>(schema)};
     }
-    driver_->CreateTopic(segments, std::move(nano));
+    driver_->CreateTopic(segments, std::move(nano), std::move(config));
 }
 
 // -----------------------------------------------------------------------
@@ -97,7 +98,8 @@ void PubSubArrow::PublishDirect(const std::vector<std::string>& segments,
 // -----------------------------------------------------------------------
 
 PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
-    const std::vector<std::string>& segments, SubscribeCallback callback) {
+    const std::vector<std::string>& segments, SubscribeCallback callback,
+    std::any config) {
     std::string key = JoinSegments(segments);
 
     auto result = driver_->Subscribe(segments,
@@ -112,7 +114,7 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
             }
             auto row = codec->DecodeRow(data, len);
             cb(std::move(row), std::move(att));
-        });
+        }, std::move(config));
 
     // Convert the nanoarrow schema to Arrow C++.
     std::shared_ptr<arrow::Schema> arrow_schema;

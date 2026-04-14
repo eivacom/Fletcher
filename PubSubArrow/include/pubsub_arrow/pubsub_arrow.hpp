@@ -31,7 +31,8 @@ class PubSubArrow {
     /// Create a topic with an Arrow C++ schema.
     /// Passing nullptr is allowed (topic created without schema).
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> schema);
+                     std::shared_ptr<arrow::Schema> schema,
+                     std::any config = {});
 
     /// Publish an ArrowRow (encoded via PositionalCodec).
     void Publish(const std::vector<std::string>& segments,
@@ -51,7 +52,8 @@ class PubSubArrow {
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, Attachments attachments)>;
     SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              SubscribeCallback callback);
+                              SubscribeCallback callback,
+                              std::any config = {});
 
     void Unsubscribe(uint64_t subscription_id);
 

@@ -483,7 +483,8 @@ class MockPubSub : public fletcher::PubSub {
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
     void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema schema) override {
+                     fletcher::OwnedSchema schema,
+                     std::any /*config*/) override {
         created_topics.push_back({segments, std::move(schema)});
     }
 
@@ -501,7 +502,8 @@ class MockPubSub : public fletcher::PubSub {
 
     fletcher::SubscriptionResult Subscribe(
         const std::vector<std::string>& segments,
-        SubscribeCallback callback) override {
+        SubscribeCallback callback,
+        std::any /*config*/) override {
         subscribers[segments] = std::move(callback);
         // Return a schema if we have one for this topic.
         for (const auto& ct : created_topics) {

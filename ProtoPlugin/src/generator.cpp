@@ -1982,12 +1982,17 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     // Constructor
     o << "    /// Creates the publisher and registers the topic with its schema\n"
       << "    /// on the provider. After construction, subscribers can discover\n"
-      << "    /// the topic and receive the schema for decoding.\n";
+      << "    /// the topic and receive the schema for decoding.\n"
+      << "    ///\n"
+      << "    /// @param config  Provider-specific topic configuration (e.g. QoS).\n"
+      << "    ///                Passed through to PubSub::CreateTopic as std::any.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSub> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSub> provider,\n"
+      << "            std::any config = {})\n"
       << "        : provider_(std::move(provider))\n"
       << "    {\n"
-      << "        provider_->CreateTopic(TopicSegments(), " << msg_class << "Schema());\n"
+      << "        provider_->CreateTopic(TopicSegments(), " << msg_class << "Schema(),\n"
+      << "                               std::move(config));\n"
       << "    }\n\n";
 
     // Publish (without attachments)
@@ -2047,15 +2052,19 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
       << "    /// are decoded into a typed message before being delivered to the\n"
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
-      << "    /// Returns the schema advertised by the publisher for this topic.\n";
+      << "    /// Returns the schema advertised by the publisher for this topic.\n"
+      << "    ///\n"
+      << "    /// @param config  Provider-specific subscriber configuration (e.g. QoS).\n"
+      << "    ///                Passed through to PubSub::Subscribe as std::any.\n";
     o << "    fletcher::SubscriptionResult Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
+      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb,\n"
+      << "        std::any config = {})\n"
       << "    {\n"
       << "        return provider_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](const uint8_t* data, size_t len,\n"
       << "                                 fletcher::Attachments att) {\n"
       << "                cb(" << msg_class << "(data, len), std::move(att));\n"
-      << "            });\n"
+      << "            }, std::move(config));\n"
       << "    }\n\n";
 
     // Unsubscribe
@@ -2105,6 +2114,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
 
     if (!schema_only && file->service_count() > 0) {
         o << "#include <pubsub/pubsub.hpp>\n"
+          << "#include <any>\n"
           << "#include <functional>\n";
     }
 

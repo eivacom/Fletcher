@@ -368,7 +368,8 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 
 void FastDDSPubSubProvider::CreateTopic(
     const std::vector<std::string>& topic_segments,
-    OwnedSchema schema) {
+    OwnedSchema schema,
+    std::any /*config*/) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -451,7 +452,8 @@ void FastDDSPubSubProvider::Publish(
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(
     const std::vector<std::string>& topic_segments,
-    SubscribeCallback callback) {
+    SubscribeCallback callback,
+    std::any /*config*/) {
     std::string name = JoinSegments(topic_segments);
     OwnedSchema schema;
 

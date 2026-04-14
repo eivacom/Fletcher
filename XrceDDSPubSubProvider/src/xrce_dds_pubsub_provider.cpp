@@ -273,7 +273,8 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests,
 
 void XrceDDSPubSubProvider::CreateTopic(
     const std::vector<std::string>& topic_segments,
-    OwnedSchema schema) {
+    OwnedSchema schema,
+    std::any /*config*/) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -406,7 +407,8 @@ void XrceDDSPubSubProvider::Publish(
 
 SubscriptionResult XrceDDSPubSubProvider::Subscribe(
     const std::vector<std::string>& topic_segments,
-    SubscribeCallback callback) {
+    SubscribeCallback callback,
+    std::any /*config*/) {
     std::string name = JoinSegments(topic_segments);
     OwnedSchema schema;
 

@@ -50,7 +50,8 @@ struct Driver::Impl {
     std::atomic<uint64_t> next_id{1};
 
     OwnedSchema EnsureProviderSubscription(
-        const std::string& key, TopicState& ts) {
+        const std::string& key, TopicState& ts,
+        std::any config = {}) {
         if (ts.provider_subscribed) {
             if (ts.schema)
                 return OwnedSchema::DeepCopy(ts.schema.get());
@@ -70,7 +71,7 @@ struct Driver::Impl {
                 }
                 for (auto& cb : cbs)
                     cb(data, len, att);
-            });
+            }, std::move(config));
 
         ts.provider_subscribed = true;
         OwnedSchema ret;
@@ -116,7 +117,8 @@ Driver::~Driver() {
 // -----------------------------------------------------------------------
 
 void Driver::CreateTopic(const std::vector<std::string>& segments,
-                         OwnedSchema schema) {
+                         OwnedSchema schema,
+                         std::any config) {
     std::string key = JoinSegments(segments);
     {
         std::lock_guard lock(impl_->mu);
@@ -129,7 +131,7 @@ void Driver::CreateTopic(const std::vector<std::string>& segments,
     if (schema)
         local_copy = OwnedSchema::DeepCopy(schema.get());
 
-    impl_->provider->CreateTopic(segments, std::move(schema));
+    impl_->provider->CreateTopic(segments, std::move(schema), std::move(config));
 
     {
         std::lock_guard lock(impl_->mu);
@@ -151,7 +153,8 @@ void Driver::Publish(const std::vector<std::string>& segments,
 // -----------------------------------------------------------------------
 
 Driver::SubscribeResult Driver::Subscribe(
-    const std::vector<std::string>& segments, SubscribeCallback cb) {
+    const std::vector<std::string>& segments, SubscribeCallback cb,
+    std::any config) {
     std::string key = JoinSegments(segments);
     std::lock_guard lock(impl_->mu);
 
@@ -165,7 +168,8 @@ Driver::SubscribeResult Driver::Subscribe(
 
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
-    auto schema = impl_->EnsureProviderSubscription(key, it->second);
+    auto schema = impl_->EnsureProviderSubscription(key, it->second,
+                                                     std::move(config));
     return {id, std::move(schema)};
 }
 

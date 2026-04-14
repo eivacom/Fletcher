@@ -18,7 +18,8 @@ using namespace fletcher;
 class MockProvider : public PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema) override {
+                     OwnedSchema schema,
+                     std::any /*config*/) override {
         std::string key = Join(segments);
         topics_created.push_back(key);
         if (schema)
@@ -41,7 +42,8 @@ class MockProvider : public PubSub {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback) override {
+                                 SubscribeCallback callback,
+                                 std::any /*config*/) override {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);

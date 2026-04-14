@@ -6,6 +6,7 @@
 
 #include "pubsub/write_buffer.hpp"
 
+#include <any>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -35,8 +36,13 @@ class PubSub {
     /// Called once per topic by the publisher.  The schema describes the
     /// Arrow structure of rows on this topic.  Ownership of the schema
     /// is transferred to the provider.
+    ///
+    /// @param config  Provider-specific topic configuration (e.g. QoS).
+    ///                The provider interprets this via std::any_cast to
+    ///                its own config struct.  Empty = provider defaults.
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
-                             OwnedSchema schema) = 0;
+                             OwnedSchema schema,
+                             std::any config = {}) = 0;
 
     /// Callback that encodes a row directly into a WriteBuffer.
     using RowEncoder = std::function<void(WriteBuffer&)>;
@@ -56,9 +62,13 @@ class PubSub {
 
     /// Subscribe to a named topic.  Returns the schema that the
     /// publisher provided when it created the topic.
+    ///
+    /// @param config  Provider-specific subscriber configuration (e.g. QoS).
+    ///                Empty = provider defaults.
     virtual SubscriptionResult Subscribe(
         const std::vector<std::string>& topic_segments,
-        SubscribeCallback callback) = 0;
+        SubscribeCallback callback,
+        std::any config = {}) = 0;
 
     /// Remove a previously registered subscription.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;

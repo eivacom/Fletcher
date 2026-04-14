@@ -31,7 +31,8 @@ class Driver {
     /// Create a topic on the underlying provider and register it
     /// in the local topic registry.
     void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema);
+                     OwnedSchema schema,
+                     std::any config = {});
 
     /// Publish by writing encoded row directly into the provider's buffer.
     void Publish(const std::vector<std::string>& segments,
@@ -49,7 +50,8 @@ class Driver {
                                                  size_t len,
                                                  Attachments attachments)>;
     SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              SubscribeCallback cb);
+                              SubscribeCallback cb,
+                              std::any config = {});
 
     /// Remove a subscription by ID.
     void Unsubscribe(uint64_t subscription_id);

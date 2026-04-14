@@ -51,7 +51,8 @@ class XrceDDSPubSubProvider : public PubSub {
     XrceDDSPubSubProvider& operator=(const XrceDDSPubSubProvider&) = delete;
 
     void CreateTopic(const std::vector<std::string>& topic_segments,
-                     OwnedSchema schema) override;
+                     OwnedSchema schema,
+                     std::any config = {}) override;
 
     void Publish(const std::vector<std::string>& topic_segments,
                  RowEncoder encoder,
@@ -59,7 +60,8 @@ class XrceDDSPubSubProvider : public PubSub {
 
     SubscriptionResult Subscribe(
         const std::vector<std::string>& topic_segments,
-        SubscribeCallback callback) override;
+        SubscribeCallback callback,
+        std::any config = {}) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

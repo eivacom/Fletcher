@@ -35,7 +35,8 @@
 class InProcessProvider : public fletcher::PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema /*schema*/) override {
+                     fletcher::OwnedSchema /*schema*/,
+                     std::any /*config*/) override {
         std::lock_guard lock(mu_);
         auto key = Join(segments);
         topics_[key] = {};
@@ -61,7 +62,8 @@ class InProcessProvider : public fletcher::PubSub {
 
     fletcher::SubscriptionResult Subscribe(
         const std::vector<std::string>& segments,
-        SubscribeCallback callback) override {
+        SubscribeCallback callback,
+        std::any /*config*/) override {
         std::lock_guard lock(mu_);
         topics_[Join(segments)] = std::move(callback);
         return {};
