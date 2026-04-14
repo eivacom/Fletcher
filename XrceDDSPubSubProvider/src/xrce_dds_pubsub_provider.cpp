@@ -64,7 +64,7 @@ struct XrceDDSPubSubProvider::Impl {
         OwnedSchema schema;
         bool is_publisher = false;
         bool has_reader = false;
-        PubSubProvider::SubscribeCallback callback;
+        PubSub::SubscribeCallback callback;
     };
 
     XrceConfig config;
@@ -268,7 +268,7 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests,
 }  // anonymous namespace
 
 // -----------------------------------------------------------------------
-// PubSubProvider interface
+// PubSub interface
 // -----------------------------------------------------------------------
 
 void XrceDDSPubSubProvider::CreateTopic(

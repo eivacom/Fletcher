@@ -14,7 +14,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** Fletcher must run on edge devices and embedded systems where the full Apache Arrow C++ library (~100 MB) is impractical. The system still needs Arrow schema representation, IPC serialization, and type system support on these constrained targets.
 
-**Decision:** The core pub/sub path — generated message code, the `PubSubProvider` interface, schema IPC serialization, transport providers, and the `PositionalWriter`/`PositionalReader` — depends only on [nanoarrow](https://arrow.apache.org/nanoarrow/) (~100 KB), Apache's lightweight C library that implements the Arrow type system and C Data Interface. Server-side features (batching, view classes, `PositionalCodec`) use the full Arrow C++ library through a separate adapter layer.
+**Decision:** The core pub/sub path — generated message code, the `PubSub` interface, schema IPC serialization, transport providers, and the `PositionalWriter`/`PositionalReader` — depends only on [nanoarrow](https://arrow.apache.org/nanoarrow/) (~100 KB), Apache's lightweight C library that implements the Arrow type system and C Data Interface. Server-side features (batching, view classes, `PositionalCodec`) use the full Arrow C++ library through a separate adapter layer.
 
 **Rationale:** Nanoarrow provides Arrow schema construction, IPC serialization, and the C Data Interface without the full C++ runtime. This enables edge binaries to publish and subscribe to Arrow-typed data streams with minimal footprint. The Arrow C Data Interface (`ArrowSchema`, `ArrowArray`) provides zero-copy interoperability between nanoarrow and Arrow C++ on the server side — schemas can be imported/exported without serialization overhead. Nanoarrow is maintained by the Apache Arrow project, ensuring specification compliance and ongoing support.
 
@@ -62,13 +62,13 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** Sensor data must be transported reliably across vessel networks, from edge devices to workstations, with configurable QoS. The transport must handle both desktop/server environments and resource-constrained embedded devices.
 
-**Decision:** Two DDS implementations are used: [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) for desktop and server environments, and [eProsima Micro XRCE-DDS](https://github.com/eProsima/Micro-XRCE-DDS-Client) for MCU and embedded targets. Both implement the `PubSubProvider` interface and interoperate through the DDS domain (XRCE-DDS via an Agent bridge).
+**Decision:** Two DDS implementations are used: [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) for desktop and server environments, and [eProsima Micro XRCE-DDS](https://github.com/eProsima/Micro-XRCE-DDS-Client) for MCU and embedded targets. Both implement the `PubSub` interface and interoperate through the DDS domain (XRCE-DDS via an Agent bridge).
 
 **Rationale:** DDS provides built-in QoS policies (RELIABLE, TRANSIENT_LOCAL, KEEP_ALL) that implement at-least-once delivery without application-level retry logic. The RTPS discovery protocol enables automatic peer discovery on a network segment. XRCE-DDS provides a client/agent split where the thin client runs on the MCU (<75 KB Flash) while the Agent bridges to the full DDS network. Both providers produce the same `Envelope` wire format, so data flows seamlessly between edge and server. DDS is widely used in robotics and maritime systems, aligning with the target deployment environment.
 
 **Alternatives considered:** MQTT (lighter protocol but weaker QoS guarantees, requires a broker, less natural for peer-to-peer discovery), Zenoh (promising but less mature, smaller ecosystem), ZeroMQ (no built-in QoS or discovery), custom TCP/UDP (maximum control but high implementation cost for reliability, discovery, and QoS).
 
-**Risks:** Fast DDS has a significant binary footprint (~10+ MB), though this only affects desktop/server targets where it is acceptable. DDS configuration (XML profiles, discovery servers for multi-host) can be complex. The `PubSubProvider` abstraction means adding alternative transports is straightforward if DDS proves unsuitable for a specific deployment.
+**Risks:** Fast DDS has a significant binary footprint (~10+ MB), though this only affects desktop/server targets where it is acceptable. DDS configuration (XML profiles, discovery servers for multi-host) can be complex. The `PubSub` abstraction means adding alternative transports is straightforward if DDS proves unsuitable for a specific deployment.
 
 ---
 
@@ -110,7 +110,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** The system must deploy across a wide range of targets: MCUs and embedded Linux gateways with <75 KB Flash, vessel workstations with full operating systems, and server infrastructure. A single dependency profile cannot serve all targets.
 
-**Decision:** The architecture is split into two tiers sharing the same wire format and `PubSubProvider` interface. The edge tier depends only on nanoarrow (~100 KB) and includes generated message classes, positional I/O, transport providers, and the WebGateway. The server tier adds Apache Arrow C++ and includes the `PositionalCodec`, `PubSubArrow` adapter, and view classes.
+**Decision:** The architecture is split into two tiers sharing the same wire format and `PubSub` interface. The edge tier depends only on nanoarrow (~100 KB) and includes generated message classes, positional I/O, transport providers, and the WebGateway. The server tier adds Apache Arrow C++ and includes the `PositionalCodec`, `PubSubArrow` adapter, and view classes.
 
 **Rationale:** The split allows edge binaries to participate fully in the pub/sub network (publish, subscribe, schema transport) without the full Arrow C++ library. The nanoarrow/Arrow C++ boundary is bridged seamlessly via the Arrow C Data Interface — `OwnedSchema` converts to `shared_ptr<arrow::Schema>` with zero copy. Generated code produces two headers: `.fletcher.pb.h` (edge, nanoarrow only) and `.fletcher.view.pb.h` (server, Arrow C++), so the same `.proto` definition serves both tiers. The wire format is byte-identical between tiers, so a row encoded on an MCU decodes correctly on a server.
 

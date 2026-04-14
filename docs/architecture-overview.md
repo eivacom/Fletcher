@@ -12,11 +12,11 @@ Fletcher bridges two worlds: **Protocol Buffers** for message definition and **A
 
 **Arrow-native from the start.** Every row is defined by an Arrow schema. The generated code, the wire format, and the pub/sub layer all operate on Arrow types. There are no intermediate representations or format conversions — a row encoded on an edge sensor arrives at a server-side consumer without impedance mismatch.
 
-**Edge-compatible by default.** The core pub/sub path — generated message code, the `PubSubProvider` interface, schema transport, positional I/O, and transport providers — depends only on nanoarrow (~100 KB). Server-side features (batching, view classes, `PositionalCodec`) use the full Apache Arrow C++ library through a separate adapter. This two-tier split means edge binaries carry no heavyweight dependencies.
+**Edge-compatible by default.** The core pub/sub path — generated message code, the `PubSub` interface, schema transport, positional I/O, and transport providers — depends only on nanoarrow (~100 KB). Server-side features (batching, view classes, `PositionalCodec`) use the full Apache Arrow C++ library through a separate adapter. This two-tier split means edge binaries carry no heavyweight dependencies.
 
 **Code generation over hand-writing.** Schema definitions live in `.proto` files — the single source of truth. The `protoc-gen-fletcher` plugin generates typed C++ message classes, Arrow view classes, and TypeScript interfaces with schema descriptors. No boilerplate to write, no schema drift between languages.
 
-**Transport-agnostic pub/sub.** The `PubSubProvider` interface decouples encoding from transport. Implementations exist for Fast DDS (desktop/server), XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding a new transport (MQTT, Zenoh, custom TCP) requires implementing one interface — no changes to generated code or the codec.
+**Transport-agnostic pub/sub.** The `PubSub` interface decouples encoding from transport. Implementations exist for Fast DDS (desktop/server), XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding a new transport (MQTT, Zenoh, custom TCP) requires implementing one interface — no changes to generated code or the codec.
 
 **Zero-copy where it matters.** Publishers encode directly into the transport's buffer via the `RowEncoder` callback pattern, avoiding intermediate copies. Subscribers receive raw bytes and decode in place. The `PositionalWriter`/`PositionalReader` pair operates without allocation.
 
@@ -52,7 +52,7 @@ Critical requirements: low-latency WebSocket delivery, schema auto-discovery, no
 
 The system is organized into two deployment tiers that share the same wire format and pub/sub interface.
 
-The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSubProvider` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the WebGateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
+The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSub` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the WebGateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
 
 The **server tier** adds the full Apache Arrow C++ library. It includes the `PositionalCodec` (Arrow scalar encode/decode), the `PubSubArrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated view classes (`.fletcher.view.pb.h`) for zero-copy access into `RecordBatch` and `Table`.
 
@@ -222,7 +222,7 @@ The `protoc-gen-fletcher` plugin runs during your CMake build. For each `.proto`
 #include "telemetry.fletcher.pb.h"
 
 // Build a row with typed setters
-myapp::SensorReadingArrowRow row;
+fletcher_gen::myapp::SensorReading row;
 row.set_sensor_id(42)
    .set_temperature(23.5)
    .set_location("Room 101")
@@ -232,7 +232,7 @@ row.set_sensor_id(42)
 fletcher::EncodedRow encoded = row.Encode();
 
 // Decode back from raw bytes
-myapp::SensorReadingArrowRow restored(encoded);
+fletcher_gen::myapp::SensorReading restored(encoded);
 ```
 
 ### 7.4 Publish and subscribe
@@ -243,12 +243,12 @@ myapp::SensorReadingArrowRow restored(encoded);
 auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>();
 
 // Publisher (creates topic with nanoarrow schema, zero-copy encode)
-myapp::SensorFeed_StreamPublisher pub(provider);
+fletcher_gen::myapp::SensorFeed_StreamPublisher pub(provider);
 pub.Publish(row);
 
 // Subscriber (receives typed message, decoded from raw bytes)
-myapp::SensorFeed_StreamSubscriber sub(provider);
-sub.Subscribe([](myapp::SensorReadingArrowRow msg, fletcher::Attachments att) {
+fletcher_gen::myapp::SensorFeed_StreamSubscriber sub(provider);
+sub.Subscribe([](fletcher_gen::myapp::SensorReading msg, fletcher::Attachments att) {
     std::cout << "Temperature: " << msg.temperature() << "\n";
 });
 ```

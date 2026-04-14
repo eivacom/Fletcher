@@ -1,5 +1,5 @@
-#ifndef FLETCHER_INCLUDE_PUBSUB_PUBSUB_PROVIDER_HPP_
-#define FLETCHER_INCLUDE_PUBSUB_PUBSUB_PROVIDER_HPP_
+#ifndef FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
+#define FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
 
 #include "pubsub/owned_schema.hpp"
 #include "pubsub/types.hpp"
@@ -14,7 +14,7 @@
 
 namespace fletcher {
 
-/// Result returned by PubSubProvider::Subscribe, carrying the schema
+/// Result returned by PubSub::Subscribe, carrying the schema
 /// that the publisher registered when it created the topic.
 struct SubscriptionResult {
     OwnedSchema schema;
@@ -28,9 +28,9 @@ struct SubscriptionResult {
 ///
 /// Topic names are represented as a list of string segments so that
 /// the provider can join them with any separator it prefers.
-class PubSubProvider {
+class PubSub {
  public:
-    virtual ~PubSubProvider() = default;
+    virtual ~PubSub() = default;
 
     /// Called once per topic by the publisher.  The schema describes the
     /// Arrow structure of rows on this topic.  Ownership of the schema
@@ -66,4 +66,4 @@ class PubSubProvider {
 
 }  // namespace fletcher
 
-#endif  // FLETCHER_INCLUDE_PUBSUB_PUBSUB_PROVIDER_HPP_
+#endif  // FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_

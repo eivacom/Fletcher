@@ -40,7 +40,7 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
 // Construction
 // -----------------------------------------------------------------------
 
-PubSubArrow::PubSubArrow(std::shared_ptr<PubSubProvider> provider)
+PubSubArrow::PubSubArrow(std::shared_ptr<PubSub> provider)
     : driver_(std::make_unique<Driver>(std::move(provider))) {}
 
 // -----------------------------------------------------------------------
@@ -87,7 +87,7 @@ void PubSubArrow::Publish(const std::vector<std::string>& segments,
 }
 
 void PubSubArrow::PublishDirect(const std::vector<std::string>& segments,
-                                 PubSubProvider::RowEncoder encoder,
+                                 PubSub::RowEncoder encoder,
                                  const Attachments& attachments) {
     driver_->Publish(segments, std::move(encoder), attachments);
 }

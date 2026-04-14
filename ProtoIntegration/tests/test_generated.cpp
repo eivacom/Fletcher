@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
-#include <pubsub/pubsub_provider.hpp>
+#include <pubsub/pubsub.hpp>
 #include <pubsub/owned_schema.hpp>
 #include <pubsub/write_buffer.hpp>
 #include <positional_codec.hpp>
@@ -465,7 +465,7 @@ TEST_CASE("OrderItem: optional note null then valid") {
 namespace {
 
 // Minimal mock that records calls and delivers published rows to subscribers.
-class MockPubSubProvider : public fletcher::PubSubProvider {
+class MockPubSub : public fletcher::PubSub {
  public:
     struct CreatedTopic {
         std::vector<std::string> segments;
@@ -521,7 +521,7 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
 // ---- Publisher tests -----------------------------------------------------
 
 TEST_CASE("Publisher: construction creates topic with correct schema") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     REQUIRE(mock->created_topics.size() == 1);
@@ -533,7 +533,7 @@ TEST_CASE("Publisher: construction creates topic with correct schema") {
 }
 
 TEST_CASE("Publisher: publish encodes and delivers to provider") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     fletcher_gen::integration::Telemetry row;
@@ -547,7 +547,7 @@ TEST_CASE("Publisher: publish encodes and delivers to provider") {
 }
 
 TEST_CASE("Publisher: multiple publishes accumulate") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     fletcher_gen::integration::Telemetry r1, r2, r3;
@@ -565,7 +565,7 @@ TEST_CASE("Publisher: multiple publishes accumulate") {
 // ---- Subscriber tests ----------------------------------------------------
 
 TEST_CASE("Subscriber: construction does not create topic") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     // Subscriber-only processes no longer call CreateTopic; the schema
@@ -574,7 +574,7 @@ TEST_CASE("Subscriber: construction does not create topic") {
 }
 
 TEST_CASE("Subscriber: receives typed message from published rows") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
@@ -594,7 +594,7 @@ TEST_CASE("Subscriber: receives typed message from published rows") {
 }
 
 TEST_CASE("Subscriber: unsubscribe stops delivery") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
@@ -613,7 +613,7 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
 }
 
 TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
@@ -638,7 +638,7 @@ TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
 }
 
 TEST_CASE("Publisher: publish without attachments has empty attachments") {
-    auto mock = std::make_shared<MockPubSubProvider>();
+    auto mock = std::make_shared<MockPubSub>();
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     fletcher_gen::integration::Telemetry row;

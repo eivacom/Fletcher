@@ -14,7 +14,7 @@ using namespace fletcher;
 // Mock provider (nanoarrow interface)
 // ---------------------------------------------------------------------------
 
-class MockProvider : public PubSubProvider {
+class MockProvider : public PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
                      OwnedSchema schema) override {

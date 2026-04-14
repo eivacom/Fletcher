@@ -26,7 +26,7 @@ graph TB
 
     PROTO -->|Build-time| CODEGEN
     CODEGEN -->|Generated classes| SENSORS
-    SENSORS -->|EncodedRow via<br/>PubSubProvider| PUBSUB
+    SENSORS -->|EncodedRow via<br/>PubSub| PUBSUB
     PUBSUB -->|Raw bytes| CODEC
     CODEC -->|ArrowRow| BATCH
     BATCH -->|arrow::Table| SINKS
@@ -54,7 +54,7 @@ graph TB
         NANOARROW["nanoarrow<br/><i>Arrow type system,<br/>schema, IPC</i>"]
 
         subgraph pubsub_core ["PubSub Core"]
-            PROVIDER["PubSubProvider<br/><i>Abstract transport interface</i>"]
+            PROVIDER["PubSub<br/><i>Abstract transport interface</i>"]
             DRIVER["Driver<br/><i>Fan-out, subscription IDs,<br/>topic registry</i>"]
             POS_IO["PositionalWriter / Reader<br/><i>Header-only encode/decode</i>"]
             ENVELOPE["Envelope<br/><i>Row + attachments bundle</i>"]
@@ -157,7 +157,7 @@ graph LR
     subgraph invariant ["What Stays the Same"]
         direction TB
         I1["Wire format (byte-identical)"]
-        I2["PubSubProvider interface"]
+        I2["PubSub interface"]
         I3["Transport providers (DDS)"]
         I4["Schema transport mechanism"]
         I5["Envelope serialization"]

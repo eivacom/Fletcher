@@ -11,7 +11,7 @@
 
 #include <web_gateway/web_gateway.hpp>
 #include <pubsub/driver.hpp>
-#include <pubsub/pubsub_provider.hpp>
+#include <pubsub/pubsub.hpp>
 #include <pubsub/owned_schema.hpp>
 #include <pubsub/write_buffer.hpp>
 
@@ -32,7 +32,7 @@
 // Simple in-process mock provider (no DDS dependency).
 // ---------------------------------------------------------------------------
 
-class InProcessProvider : public fletcher::PubSubProvider {
+class InProcessProvider : public fletcher::PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
                      fletcher::OwnedSchema /*schema*/) override {

@@ -1,20 +1,20 @@
 #ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <pubsub/pubsub_provider.hpp>
+#include <pubsub/pubsub.hpp>
 
 #include <cstdint>
 #include <memory>
 
 namespace fletcher {
 
-/// PubSubProvider backed by eProsima Fast DDS.
+/// PubSub transport backed by eProsima Fast DDS.
 ///
 /// DataWriter / DataReader QoS is set to RELIABLE reliability,
 /// KEEP_ALL history, and TRANSIENT_LOCAL durability so that messages
 /// are not silently dropped and late-joining subscribers receive
 /// historical samples.
-class FastDDSPubSubProvider : public PubSubProvider {
+class FastDDSPubSubProvider : public PubSub {
  public:
     /// @param domain_id         DDS domain ID (default 0).
     /// @param max_payload_bytes Maximum serialized envelope in bytes (default 1 MB).

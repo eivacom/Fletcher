@@ -103,7 +103,7 @@ class RawBytesTopicType : public TopicDataType {
 struct TransportData {
     // Publish path — encoder writes row bytes directly into
     // the DDS payload buffer via FixedWriteBuffer.
-    PubSubProvider::RowEncoder encoder;
+    PubSub::RowEncoder encoder;
     const Attachments* attachments = nullptr;
 
     // Subscribe path (decoded in-place by deserialize, moved by listener).
@@ -241,7 +241,7 @@ class FletcherTopicType : public TopicDataType {
 
 class SubscriptionListener : public DataReaderListener {
  public:
-    explicit SubscriptionListener(PubSubProvider::SubscribeCallback cb)
+    explicit SubscriptionListener(PubSub::SubscribeCallback cb)
         : callback_(std::move(cb)) {}
 
     void on_data_available(DataReader* reader) override {
@@ -256,7 +256,7 @@ class SubscriptionListener : public DataReaderListener {
     }
 
  private:
-    PubSubProvider::SubscribeCallback callback_;
+    PubSub::SubscribeCallback callback_;
 };
 
 // -----------------------------------------------------------------------
@@ -363,7 +363,7 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 }
 
 // -----------------------------------------------------------------------
-// PubSubProvider interface
+// PubSub interface
 // -----------------------------------------------------------------------
 
 void FastDDSPubSubProvider::CreateTopic(

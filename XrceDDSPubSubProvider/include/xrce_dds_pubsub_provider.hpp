@@ -1,7 +1,7 @@
 #ifndef FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <pubsub/pubsub_provider.hpp>
+#include <pubsub/pubsub.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -35,14 +35,14 @@ struct XrceConfig {
     uint32_t      session_key = 0xAABBCCDD;
 };
 
-/// PubSubProvider backed by eProsima Micro XRCE-DDS Client.
+/// PubSub transport backed by eProsima Micro XRCE-DDS Client.
 ///
 /// Requires a running XRCE-DDS Agent process (e.g. MicroXRCEAgent).
 /// The client communicates with the agent over UDP, TCP, or serial.
 ///
 /// Schema delivery uses a companion "__schema" topic with RELIABLE QoS,
 /// matching the FastDDS provider pattern.
-class XrceDDSPubSubProvider : public PubSubProvider {
+class XrceDDSPubSubProvider : public PubSub {
  public:
     explicit XrceDDSPubSubProvider(const XrceConfig& config = {});
     ~XrceDDSPubSubProvider() override;

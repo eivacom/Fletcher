@@ -11,7 +11,7 @@ sequenceDiagram
     participant S as Sensor Driver
     participant AR as ArrowRow (generated)
     participant PW as PositionalWriter
-    participant PP as PubSubProvider
+    participant PP as PubSub
     participant NET as DDS Network
     participant PS as PubSubArrow (server)
     participant PC as PositionalCodec
@@ -38,7 +38,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant PUB as Publisher
-    participant PP as PubSubProvider
+    participant PP as PubSub
     participant DDS as DDS Domain
     participant SUB as Subscriber
 
@@ -142,7 +142,7 @@ sequenceDiagram
     participant APP as Application
     participant ROW as ArrowRow
     participant PUB as Publisher
-    participant PP as PubSubProvider
+    participant PP as PubSub
     participant ENV as Envelope
     participant SUB as Subscriber
 

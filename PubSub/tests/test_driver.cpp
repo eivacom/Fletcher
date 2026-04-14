@@ -15,7 +15,7 @@ using namespace fletcher;
 // Minimal in-process mock provider for testing the Driver.
 // ---------------------------------------------------------------------------
 
-class MockProvider : public PubSubProvider {
+class MockProvider : public PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
                      OwnedSchema schema) override {
@@ -86,7 +86,7 @@ static OwnedSchema TestSchema() {
 static const std::vector<std::string> kTopic = {"test", "topic"};
 
 /// Encode a test row as positional format: [null_bitfield(1 byte)] [int32 LE].
-static PubSubProvider::RowEncoder MakeTestEncoder(int32_t x) {
+static PubSub::RowEncoder MakeTestEncoder(int32_t x) {
     return [x](WriteBuffer& buf) {
         buf.AppendByte(0x00);          // null bitfield: 1 field, not null
         buf.AppendFixed<int32_t>(x);

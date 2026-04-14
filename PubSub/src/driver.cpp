@@ -42,7 +42,7 @@ struct Driver::Impl {
         SubscribeCallback callback;
     };
 
-    std::shared_ptr<PubSubProvider> provider;
+    std::shared_ptr<PubSub> provider;
 
     mutable std::mutex mu;
     std::unordered_map<std::string, TopicState>    topics;
@@ -89,7 +89,7 @@ struct Driver::Impl {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-Driver::Driver(std::shared_ptr<PubSubProvider> provider)
+Driver::Driver(std::shared_ptr<PubSub> provider)
     : impl_(std::make_unique<Impl>()) {
     if (!provider)
         throw std::invalid_argument("Driver: provider must not be null");
@@ -141,7 +141,7 @@ void Driver::CreateTopic(const std::vector<std::string>& segments,
 }
 
 void Driver::Publish(const std::vector<std::string>& segments,
-                     PubSubProvider::RowEncoder encoder,
+                     PubSub::RowEncoder encoder,
                      const Attachments& attachments) {
     impl_->provider->Publish(segments, std::move(encoder), attachments);
 }

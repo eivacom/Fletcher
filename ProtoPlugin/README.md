@@ -250,18 +250,18 @@ For each eligible service RPC `Bar` on service `Svc`, the plugin generates:
 // Publisher: encodes and publishes rows on CreateTopic / Publish.
 class Svc_BarPublisher {
  public:
-    Svc_BarPublisher(std::shared_ptr<fletcher::PubSubProvider> provider);
+    Svc_BarPublisher(std::shared_ptr<fletcher::PubSub> provider);
     void Publish(const Foo& row);
 };
 
 // Subscriber: subscribes and decodes, delivering typed scalars to the callback.
 class Svc_BarSubscriber {
  public:
-    Svc_BarSubscriber(std::shared_ptr<fletcher::PubSubProvider> provider);
+    Svc_BarSubscriber(std::shared_ptr<fletcher::PubSub> provider);
     fletcher::SubscriptionResult Subscribe(
         std::function<void(Foo, fletcher::Attachments)> cb);
     void Unsubscribe();
 };
 ```
 
-Topic name segments passed to the `PubSubProvider` are derived from: `{proto_package, service_name, method_name}`.
+Topic name segments passed to the `PubSub` interface are derived from: `{proto_package, service_name, method_name}`.

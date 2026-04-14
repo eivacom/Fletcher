@@ -1,13 +1,12 @@
 # Codec
 
-Core serialization library for the Fletcher system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`EncodedRow`). Also defines the abstract `PubSubProvider` interface used by generated pub/sub code.
+Core serialization library for the Fletcher system. Encodes and decodes individual Arrow rows as compact, self-describing binary buffers (`EncodedRow`). The abstract `PubSub` interface used by generated pub/sub code lives in the separate PubSub subproject.
 
 ## Contents
 
 | Header | Purpose |
 |---|---|
 | `include/row_codec.hpp` | `RowCodec` class, `ArrowRow` / `EncodedRow` type aliases, wire format documentation |
-| `include/pubsub_provider.hpp` | Abstract pub/sub transport interface |
 | `include/arrow_row_codec_capi.h` | Pure-C API for cross-language interop |
 
 ## EncodedRow wire format
@@ -81,33 +80,9 @@ auto scalars = codec.DecodeRow(row);
 
 `EncodeRow` throws `std::invalid_argument` if the value count or types do not match the schema. `DecodeRow` throws if the buffer is malformed or the schema hash does not match.
 
-## PubSubProvider
+## PubSub Interface
 
-`PubSubProvider` is a pure virtual interface that decouples generated pub/sub classes from any concrete transport protocol. Implement it for DDS, MQTT, Zenoh, or any other message bus.
-
-```cpp
-class PubSubProvider {
- public:
-    // Called once before any Publish/Subscribe on a topic.
-    // Schema is available so providers can propagate type info if needed.
-    virtual void CreateTopic(const std::vector<std::string>& topic_segments,
-                             std::shared_ptr<arrow::Schema> schema) = 0;
-
-    // Publish one encoded row.
-    virtual void Publish(const std::vector<std::string>& topic_segments,
-                         const EncodedRow& row) = 0;
-
-    // Subscribe. Callback receives raw EncodedRow bytes; decoding is the
-    // responsibility of the generated Subscriber class, not the provider.
-    using SubscribeCallback = std::function<void(const EncodedRow&)>;
-    virtual void Subscribe(const std::vector<std::string>& topic_segments,
-                           SubscribeCallback callback) = 0;
-
-    virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
-};
-```
-
-Topic names are passed as a `std::vector<std::string>` of segments so the provider can join them with whatever separator the underlying transport requires (`.` for DDS, `/` for MQTT, etc.). The segments come from the proto package, service name, and method name.
+The `PubSub` abstract interface lives in the PubSub subproject (`pubsub/pubsub.hpp`). It decouples generated pub/sub classes from any concrete transport protocol. Implement it for DDS, MQTT, Zenoh, or any other message bus. See the PubSub subproject for details.
 
 ## C API
 

@@ -2,7 +2,7 @@
 #define FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
 
 #include <pubsub/driver.hpp>
-#include <pubsub/pubsub_provider.hpp>
+#include <pubsub/pubsub.hpp>
 #include <positional_codec.hpp>
 
 #include <arrow/type_fwd.h>
@@ -26,7 +26,7 @@ namespace fletcher {
 /// PubSubArrow for convenience.
 class PubSubArrow {
  public:
-    explicit PubSubArrow(std::shared_ptr<PubSubProvider> provider);
+    explicit PubSubArrow(std::shared_ptr<PubSub> provider);
 
     /// Create a topic with an Arrow C++ schema.
     /// Passing nullptr is allowed (topic created without schema).
@@ -40,7 +40,7 @@ class PubSubArrow {
 
     /// Publish using a direct encoder (passthrough to Driver).
     void PublishDirect(const std::vector<std::string>& segments,
-                       PubSubProvider::RowEncoder encoder,
+                       PubSub::RowEncoder encoder,
                        const Attachments& attachments = {});
 
     struct SubscribeResult {

@@ -1,7 +1,7 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 
-#include "pubsub/pubsub_provider.hpp"
+#include "pubsub/pubsub.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -11,7 +11,7 @@
 
 namespace fletcher {
 
-/// High-level pub/sub API that wraps a PubSubProvider.
+/// High-level pub/sub API that wraps a PubSub.
 ///
 /// Unlike the raw provider (which allows one callback per topic), the
 /// Driver supports multiple subscribers per topic via internal fan-out.
@@ -22,7 +22,7 @@ namespace fletcher {
 /// Thread safety: all public methods are safe to call from any thread.
 class Driver {
  public:
-    explicit Driver(std::shared_ptr<PubSubProvider> provider);
+    explicit Driver(std::shared_ptr<PubSub> provider);
     ~Driver();
 
     Driver(const Driver&) = delete;
@@ -35,7 +35,7 @@ class Driver {
 
     /// Publish by writing encoded row directly into the provider's buffer.
     void Publish(const std::vector<std::string>& segments,
-                 PubSubProvider::RowEncoder encoder,
+                 PubSub::RowEncoder encoder,
                  const Attachments& attachments = {});
 
     /// Result returned by Subscribe.

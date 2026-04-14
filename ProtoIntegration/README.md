@@ -49,7 +49,7 @@ fletcher::EncodedRow encoded = row.Encode();
 
 ```cpp
 #include "pubsub.fletcher.pb.h"   // generated from pubsub.proto
-#include <fast_dds_pubsub_provider.hpp>   // or any other PubSubProvider
+#include <fast_dds_pubsub_provider.hpp>   // or any other PubSub implementation
 
 using namespace fletcher_gen::integration;
 
@@ -90,5 +90,5 @@ build/build/ProtoIntegration/Release/fletcher_proto_integration_tests.exe
 
 - `Catch2` — test framework
 - `row_codec` — codec used directly and indirectly through generated classes
-- `pubsub_provider.hpp` — for `MockPubSubProvider` in pub/sub tests
+- `pubsub/pubsub.hpp` — for `MockPubSub` in pub/sub tests
 - Generated headers — produced by the custom build command at CMake build time

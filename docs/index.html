@@ -290,7 +290,7 @@ fletcher_gen::myapp::<span class="ty">SensorReading</span> restored(encoded);</c
 
 <pre><code><span class="cmt">#include</span> <span class="str">&lt;fast_dds_pubsub_provider.hpp&gt;</span>
 
-<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();
+<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();  <span class="cmt">// implements PubSub</span>
 
 <span class="cmt">// Publisher (creates topic with nanoarrow schema, zero-copy encode)</span>
 fletcher_gen::myapp::<span class="ty">SensorFeed_StreamPublisher</span> pub(provider);
@@ -339,7 +339,7 @@ sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="
        |                 +----------------+----------------+
        |                 |                |                |
        |                 v                v                v
-       |          PubSubProvider     PubSubArrow      WebGateway
+       |          PubSub          PubSubArrow      WebGateway
        |        (nanoarrow, edge)   (Arrow C++,     (nanoarrow,
        |         raw bytes I/O      ArrowRow I/O)    WebSocket)
        |                 |                |                |
@@ -369,7 +369,7 @@ sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="
   and IPC format without the full C++ runtime.</p>
 
 <p>Fletcher's core pub/sub path &mdash; generated message code, the
-  <code>PubSubProvider</code> interface, schema IPC serialization, and transport
+  <code>PubSub</code> interface, schema IPC serialization, and transport
   providers like FastDDS &mdash; depends <strong>only on nanoarrow</strong>.
   This means an edge binary can publish and subscribe to Arrow-typed data
   streams without linking the full Arrow C++ library.</p>
@@ -380,7 +380,7 @@ sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="
   <tr>
     <td><strong>Edge tier</strong></td>
     <td>nanoarrow (~100 KB)</td>
-    <td>Generated message classes, <code>PubSubProvider</code>, <code>PositionalWriter</code>/<code>PositionalReader</code>,
+    <td>Generated message classes, <code>PubSub</code>, <code>PositionalWriter</code>/<code>PositionalReader</code>,
       FastDDS provider, <code>WebGateway</code>, generated publishers/subscribers</td>
   </tr>
   <tr>
@@ -763,9 +763,9 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 
 
 <!-- ── Pub/Sub Provider ───────────────────────────────────────────── -->
-<h2 id="pubsub">PubSub Provider</h2>
+<h2 id="pubsub">PubSub Interface</h2>
 
-<p>The <code>PubSubProvider</code> is an abstract interface that decouples
+<p>The <code>PubSub</code> class is an abstract interface that decouples
   message transport from encoding. It operates on raw bytes and nanoarrow
   schemas &mdash; no Arrow C++ dependency. Implement it to plug in any
   message bus.</p>
@@ -774,7 +774,7 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
     fletcher::<span class="ty">OwnedSchema</span> schema;  <span class="cmt">// nanoarrow ArrowSchema (RAII)</span>
 };
 
-<span class="kw">class</span> <span class="ty">PubSubProvider</span> {
+<span class="kw">class</span> <span class="ty">PubSub</span> {
 <span class="kw">public</span>:
     <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">CreateTopic</span>(
         <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
@@ -818,7 +818,7 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
   <tr><th>Type</th><th>Header</th><th>Purpose</th></tr>
   <tr><td><code>OwnedSchema</code></td><td><code>pubsub/owned_schema.hpp</code></td><td>RAII wrapper for nanoarrow <code>ArrowSchema</code></td></tr>
   <tr><td><code>WriteBuffer</code></td><td><code>pubsub/write_buffer.hpp</code></td><td>Abstract buffer interface (<code>VectorWriteBuffer</code>, <code>FixedWriteBuffer</code>)</td></tr>
-  <tr><td><code>EncodedRow</code></td><td><code>pubsub/pubsub_provider.hpp</code></td><td><code>vector&lt;uint8_t&gt;</code> alias</td></tr>
+  <tr><td><code>EncodedRow</code></td><td><code>pubsub/pubsub.hpp</code></td><td><code>vector&lt;uint8_t&gt;</code> alias</td></tr>
   <tr><td><code>Blob</code>, <code>Attachments</code></td><td><code>pubsub/types.hpp</code></td><td>Sidecar binary data</td></tr>
   <tr><td><code>Envelope</code></td><td><code>pubsub/envelope.hpp</code></td><td>Row + attachments bundle for wire transport</td></tr>
 </table>
@@ -828,7 +828,7 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
 <h2 id="pubsub-arrow">PubSubArrow (Server-Side Adapter)</h2>
 
 <p>A thin adapter library that wraps the nanoarrow-based
-  <code>PubSubProvider</code> with Arrow C++ convenience types for server-side
+  <code>PubSub</code> interface with Arrow C++ convenience types for server-side
   code. Schemas are converted between <code>OwnedSchema</code> and
   <code>shared_ptr&lt;arrow::Schema&gt;</code> via the Arrow C Data Interface.</p>
 
@@ -1009,7 +1009,7 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
 <!-- ── FastDDS ─────────────────────────────────────────────────────── -->
 <h2 id="fastdds">FastDDS Provider</h2>
 
-<p>A concrete <code>PubSubProvider</code> implementation using
+<p>A concrete <code>PubSub</code> implementation using
   <a href="https://www.eprosima.com/index.php/products-all/eprosima-fast-dds">eProsima Fast DDS</a>
   for reliable, real-time publish/subscribe over RTPS. The provider depends
   only on nanoarrow (not Arrow C++), making it suitable for edge deployment.</p>
@@ -1048,7 +1048,7 @@ batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
 <!-- ── XRCE-DDS ──────────────────────────────────────────────────────── -->
 <h2 id="xrce-dds">XRCE-DDS Provider</h2>
 
-<p>A <code>PubSubProvider</code> implementation using
+<p>A <code>PubSub</code> implementation using
   <a href="https://github.com/eProsima/Micro-XRCE-DDS-Client">eProsima Micro XRCE-DDS Client</a>
   for <strong>extremely resource-constrained environments</strong> (MCUs,
   embedded Linux, &lt;75&thinsp;KB Flash). The XRCE-DDS standard uses a
@@ -1135,7 +1135,7 @@ cfg.max_payload = <span class="num">512</span>;
 
   PubSub/
     include/pubsub/
-      pubsub_provider.hpp      Abstract PubSubProvider (nanoarrow, raw bytes I/O)
+      pubsub.hpp               Abstract PubSub interface (nanoarrow, raw bytes I/O)
       owned_schema.hpp         OwnedSchema RAII wrapper for ArrowSchema
       write_buffer.hpp         WriteBuffer abstraction (VectorWriteBuffer, FixedWriteBuffer)
       positional_io.hpp        Header-only PositionalWriter / PositionalReader

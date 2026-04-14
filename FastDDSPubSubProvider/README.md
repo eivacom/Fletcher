@@ -1,6 +1,6 @@
 # FastDDSPubSubProvider
 
-Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
+Implements `fletcher::PubSub` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS / DDS-XRCE). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
 ## How it works
 
@@ -10,7 +10,7 @@ The binary payload sent over the DDS bus is a raw `EncodedRow` (the output of `R
 
 ### Topic name
 
-The `std::vector<std::string>` topic segments from `PubSubProvider` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
+The `std::vector<std::string>` topic segments from `PubSub` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
 
 ### QoS settings (both DataWriter and DataReader)
 
@@ -50,7 +50,7 @@ sub.Subscribe([](Telemetry msg, fletcher::Attachments att) {
 });
 ```
 
-Or used directly through the `PubSubProvider` interface:
+Or used directly through the `PubSub` interface:
 
 ```cpp
 provider->CreateTopic({"my", "topic"}, schema);

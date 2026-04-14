@@ -1847,7 +1847,7 @@ std::string GenerateMessageClass(const std::string& cls,
 
     // Constructor from raw bytes
     o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
-      << "    /// received from a PubSubProvider callback or read from a WAL.\n";
+      << "    /// received from a PubSub callback or read from a WAL.\n";
     o << "    explicit " << cls
       << "(const uint8_t* data, size_t len) {\n"
       << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
@@ -1984,7 +1984,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    /// on the provider. After construction, subscribers can discover\n"
       << "    /// the topic and receive the schema for decoding.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSub> provider)\n"
       << "        : provider_(std::move(provider))\n"
       << "    {\n"
       << "        provider_->CreateTopic(TopicSegments(), " << msg_class << "Schema());\n"
@@ -2011,7 +2011,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<fletcher::PubSubProvider> provider_;\n"
+      << "    std::shared_ptr<fletcher::PubSub> provider_;\n"
       << "};\n";
 
     return o.str();
@@ -2039,7 +2039,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     o << "    /// Binds to the provider without creating a topic — subscribers\n"
       << "    /// discover the topic and its schema when Subscribe() is called.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSub> provider)\n"
       << "        : provider_(std::move(provider)) {}\n\n";
 
     // Subscribe — delivers decoded message + Attachments to the caller.
@@ -2066,7 +2066,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<fletcher::PubSubProvider> provider_;\n"
+      << "    std::shared_ptr<fletcher::PubSub> provider_;\n"
       << "};\n";
 
     return o.str();
@@ -2104,7 +2104,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
     }
 
     if (!schema_only && file->service_count() > 0) {
-        o << "#include <pubsub/pubsub_provider.hpp>\n"
+        o << "#include <pubsub/pubsub.hpp>\n"
           << "#include <functional>\n";
     }
 

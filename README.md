@@ -6,7 +6,7 @@ A C++ library system for serialising structured data as compact, self-describing
 
 ### PubSub
 
-Standalone pub/sub abstraction layer. Defines the `Envelope` type (encoded row + keyed binary attachments), the abstract `PubSubProvider` interface, and the `Driver` class. The Driver wraps a provider with multi-subscriber fan-out (multiple subscribers per topic via `uint64_t` subscription IDs), automatic provider-level subscription lifecycle, and a topic registry with `ListTopics()`/`HasTopic()`.
+Standalone pub/sub abstraction layer. Defines the `Envelope` type (encoded row + keyed binary attachments), the abstract `PubSub` interface, and the `Driver` class. The Driver wraps a provider with multi-subscriber fan-out (multiple subscribers per topic via `uint64_t` subscription IDs), automatic provider-level subscription lifecycle, and a topic registry with `ListTopics()`/`HasTopic()`.
 
 Extracted from Codec so the pub/sub layer has no dependency on Arrow or the codec.
 
@@ -22,7 +22,7 @@ See [Codec/README.md](Codec/README.md).
 
 ### ProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets a wrapper class (in the `fletcher_gen` namespace) with typed setters, `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
+A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets a wrapper class (in the `fletcher_gen` namespace) with typed setters, `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSub`.
 
 With `--fletcher_opt=ts`, the plugin also emits `.fletcher.ts` files containing TypeScript interfaces, `SchemaDescriptor` constants (with field numbers, wire types, nullability, and nested descriptors), and topic path constants for service methods.
 
@@ -40,7 +40,7 @@ Not a library — exists only to validate the plugin and codec together. See [Pr
 
 ### FastDDSPubSubProvider
 
-A concrete `PubSubProvider` implementation backed by [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/). Transports `EncodedRow` buffers over a DDS domain using RELIABLE reliability, KEEP_ALL history, and TRANSIENT_LOCAL durability to minimise message loss.
+A concrete `PubSub` implementation backed by [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/). Transports `EncodedRow` buffers over a DDS domain using RELIABLE reliability, KEEP_ALL history, and TRANSIENT_LOCAL durability to minimise message loss.
 
 Use this as the transport layer when plugging generated `Publisher`/`Subscriber` classes into a DDS-based system. See [FastDDSPubSubProvider/README.md](FastDDSPubSubProvider/README.md).
 
