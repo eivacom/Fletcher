@@ -37,16 +37,12 @@ These are generated at build time via `add_custom_command` in `CMakeLists.txt`. 
 #include "simple.fletcher.pb.h"   // generated from simple.proto
 
 // Build and encode a row:
-SimpleArrowRow row;
+fletcher_gen::integration::SensorReading row;
 row.set_device_id(42)
    .set_value(3.14)
    .set_label("sensor-A");
 
 fletcher::EncodedRow encoded = row.Encode();
-
-// Decode back to scalars:
-fletcher::RowCodec codec(SimpleArrowRow::Schema());
-auto scalars = codec.DecodeRow(encoded);
 ```
 
 ### Pub/sub usage
@@ -55,23 +51,24 @@ auto scalars = codec.DecodeRow(encoded);
 #include "pubsub.fletcher.pb.h"   // generated from pubsub.proto
 #include <fast_dds_pubsub_provider.hpp>   // or any other PubSubProvider
 
+using namespace fletcher_gen::integration;
+
 auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>();
 
 // Publisher
 TelemetryFeed_TelemetryStreamPublisher pub(provider);
-pub.Publish(TelemetryArrowRow()
+pub.Publish(Telemetry()
     .set_device_id(1)
     .set_value(98.6)
     .set_timestamp(now_ns())
     .set_metric_name("temperature"));
 
 // Subscriber
-TelemetryFeed_TelemetryStreamSubscriber sub(
-    provider,
-    [](int32_t device_id, double value, int64_t ts, std::string_view metric) {
-        // Decoded fields delivered here from the DDS thread.
+TelemetryFeed_TelemetryStreamSubscriber sub(provider);
+auto result = sub.Subscribe(
+    [](Telemetry msg, fletcher::Attachments att) {
+        // Decoded message delivered here from the DDS thread.
     });
-// Unsubscribes automatically when sub goes out of scope.
 ```
 
 ## Running the tests

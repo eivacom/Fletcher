@@ -274,7 +274,7 @@ tr:hover td { background: #f4f5fb; }
 <pre><code><span class="cmt">#include</span> <span class="str">"telemetry.fletcher.pb.h"</span>
 
 <span class="cmt">// Build a row with typed setters</span>
-myapp::<span class="ty">SensorReadingArrowRow</span> row;
+fletcher_gen::myapp::<span class="ty">SensorReading</span> row;
 row.<span class="fn">set_sensor_id</span>(<span class="num">42</span>)
    .<span class="fn">set_temperature</span>(<span class="num">23.5</span>)
    .<span class="fn">set_location</span>(<span class="str">"Room 101"</span>)
@@ -284,7 +284,7 @@ row.<span class="fn">set_sensor_id</span>(<span class="num">42</span>)
 fletcher::<span class="ty">EncodedRow</span> encoded = row.<span class="fn">Encode</span>();
 
 <span class="cmt">// Decode back from raw bytes</span>
-myapp::<span class="ty">SensorReadingArrowRow</span> restored(encoded);</code></pre>
+fletcher_gen::myapp::<span class="ty">SensorReading</span> restored(encoded);</code></pre>
 
 <h3>4. Publish and subscribe</h3>
 
@@ -293,12 +293,12 @@ myapp::<span class="ty">SensorReadingArrowRow</span> restored(encoded);</code></
 <span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();
 
 <span class="cmt">// Publisher (creates topic with nanoarrow schema, zero-copy encode)</span>
-myapp::<span class="ty">SensorFeed_StreamPublisher</span> pub(provider);
+fletcher_gen::myapp::<span class="ty">SensorFeed_StreamPublisher</span> pub(provider);
 pub.<span class="fn">Publish</span>(row);
 
 <span class="cmt">// Subscriber (receives typed message, decoded from raw bytes)</span>
-myapp::<span class="ty">SensorFeed_StreamSubscriber</span> sub(provider);
-sub.<span class="fn">Subscribe</span>([](myapp::<span class="ty">SensorReadingArrowRow</span> msg, fletcher::<span class="ty">Attachments</span> att) {
+fletcher_gen::myapp::<span class="ty">SensorFeed_StreamSubscriber</span> sub(provider);
+sub.<span class="fn">Subscribe</span>([](fletcher_gen::myapp::<span class="ty">SensorReading</span> msg, fletcher::<span class="ty">Attachments</span> att) {
     std::cout &lt;&lt; <span class="str">"Temperature: "</span> &lt;&lt; msg.<span class="fn">temperature</span>() &lt;&lt; <span class="str">"\n"</span>;
 });</code></pre>
 
@@ -306,7 +306,7 @@ sub.<span class="fn">Subscribe</span>([](myapp::<span class="ty">SensorReadingAr
 
 <pre><code>fletcher::<span class="ty">SQLiteWAL</span> wal(<span class="str">":memory:"</span>);
 fletcher::<span class="ty">GenericRowBatcher</span> batcher(
-    myapp::<span class="fn">SensorReadingArrowRowSchema</span>(),
+    fletcher_gen::myapp::<span class="fn">SensorReadingSchema</span>(),
     wal,
     <span class="cmt">/*batch_size=*/</span><span class="num">1000</span>,
     [](std::shared_ptr&lt;arrow::<span class="ty">Table</span>&gt; table) -&gt; <span class="ty">bool</span> {
@@ -314,7 +314,7 @@ fletcher::<span class="ty">GenericRowBatcher</span> batcher(
         <span class="kw">return</span> <span class="num">true</span>;
     });
 
-sub.<span class="fn">Subscribe</span>([&amp;](myapp::<span class="ty">SensorReadingArrowRow</span> msg, fletcher::<span class="ty">Attachments</span> att) {
+sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="ty">SensorReading</span> msg, fletcher::<span class="ty">Attachments</span> att) {
     batcher.<span class="fn">Append</span>(msg.<span class="fn">Encode</span>());  <span class="cmt">// triggers flush every 1000 rows</span>
 });</code></pre>
 
@@ -615,11 +615,11 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
 
 <p><strong>For each message:</strong></p>
 <ul>
-  <li>A free function <code>{Message}ArrowRowSchema()</code> returning a
+  <li>A free function <code>{Message}Schema()</code> returning a
     <code>fletcher::OwnedSchema</code> (nanoarrow <code>ArrowSchema</code>)
     with <code>field_number</code> metadata on each field and
     <code>proto_package</code>/<code>proto_message</code> on the schema.</li>
-  <li>A class <code>{Message}ArrowRow</code> with:
+  <li>A class <code>{Message}</code> (in the <code>fletcher_gen</code> namespace) with:
     <ul>
       <li>Chainable setters (<code>set_*()</code>, <code>clear_*()</code> for optionals)</li>
       <li><code>Encode()</code> &rarr; <code>EncodedRow</code> (via <code>PositionalWriter</code>)</li>
@@ -636,14 +636,14 @@ pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>,
   <li><code>{Service}_{Method}Publisher</code> &mdash; creates topic with
     <code>OwnedSchema</code>, publishes via <code>RowEncoder</code> zero-copy path</li>
   <li><code>{Service}_{Method}Subscriber</code> &mdash; subscribes to raw bytes,
-    delivers typed <code>{Message}ArrowRow</code> + <code>Attachments</code> to callback</li>
+    delivers typed <code>{Message}</code> + <code>Attachments</code> to callback</li>
 </ul>
 
 <h3>What gets generated (C++ &mdash; <code>.fletcher.view.pb.h</code>)</h3>
 
 <p><strong>For each message:</strong></p>
 <ul>
-  <li>A class <code>{Message}ArrowRowView</code> with:
+  <li>A class <code>{Message}View</code> with:
     <ul>
       <li>Constructor from <code>ArrowRow</code> (vector of Arrow scalars)</li>
       <li>Constructor from <code>shared_ptr&lt;arrow::Scalar&gt;</code> (struct scalar)</li>

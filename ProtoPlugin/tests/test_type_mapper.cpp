@@ -315,7 +315,7 @@ TEST_CASE("MapField: singular message ->STRUCT") {
     auto m = MapField(file->message_type(1)->field(0));
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::STRUCT);
-    CHECK(m->nested_class == "InnerArrowRow");
+    CHECK(m->nested_class == "Inner");
 }
 
 TEST_CASE("MapField: non-optional struct is not nullable") {
@@ -336,7 +336,7 @@ TEST_CASE("MapField: repeated message ->REPEATED_STRUCT") {
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::REPEATED_STRUCT);
     CHECK_FALSE(m->nullable);
-    CHECK(m->nested_class == "InnerArrowRow");
+    CHECK(m->nested_class == "Inner");
 }
 
 // ===========================================================================
@@ -470,7 +470,7 @@ TEST_CASE("ClassName: top-level message") {
     DescriptorPool pool;
     auto* file = BuildSingleField(pool, "cls", FieldDescriptorProto::TYPE_INT32);
     REQUIRE(file);
-    CHECK(ClassName(file->message_type(0)) == "MsgArrowRow");
+    CHECK(ClassName(file->message_type(0)) == "Msg");
 }
 
 TEST_CASE("ClassName: nested message uses underscore separator") {
@@ -490,7 +490,7 @@ TEST_CASE("ClassName: nested message uses underscore separator") {
 
     auto* file = pool.BuildFile(fdp);
     REQUIRE(file);
-    CHECK(ClassName(file->message_type(0)->nested_type(0)) == "Outer_InnerArrowRow");
+    CHECK(ClassName(file->message_type(0)->nested_type(0)) == "Outer_Inner");
 }
 
 // ===========================================================================
@@ -563,7 +563,7 @@ TEST_CASE("MapField: cross-file singular message succeeds (same package)") {
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::STRUCT);
     // Same package ->no global qualification needed; nested_header must be set.
-    CHECK(m->nested_class == "DepMsgArrowRow");
+    CHECK(m->nested_class == "DepMsg");
     CHECK(m->nested_header == "dep_same_pkg.fletcher.pb.h");
 }
 
@@ -581,7 +581,7 @@ TEST_CASE("MapField: cross-file singular message succeeds (different packages)")
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::STRUCT);
     // Different package ->globally qualified.
-    CHECK(m->nested_class == "::other::pkg::DepMsgArrowRow");
+    CHECK(m->nested_class == "::fletcher_gen::other::pkg::DepMsg");
     CHECK(m->nested_header == "dep_other_pkg.fletcher.pb.h");
 }
 
@@ -597,7 +597,7 @@ TEST_CASE("MapField: cross-file singular message - no-package dep") {
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
     REQUIRE(m.has_value());
-    CHECK(m->nested_class == "::DepMsgArrowRow");
+    CHECK(m->nested_class == "::fletcher_gen::DepMsg");
     CHECK(m->nested_header == "dep_no_pkg.fletcher.pb.h");
 }
 
@@ -614,7 +614,7 @@ TEST_CASE("MapField: cross-file repeated message succeeds") {
     auto m = MapField(fd);
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::REPEATED_STRUCT);
-    CHECK(m->nested_class == "::ext::DepMsgArrowRow");
+    CHECK(m->nested_class == "::fletcher_gen::ext::DepMsg");
     CHECK(m->nested_header == "dep_repeated.fletcher.pb.h");
 }
 
@@ -676,7 +676,7 @@ TEST_CASE("MapField: cross-file map with message value succeeds") {
     REQUIRE(m.has_value());
     CHECK(m->kind == FieldKind::MAP);
     CHECK(m->map_value_is_message);
-    CHECK(m->map_value_class == "::ext::DepMsgArrowRow");
+    CHECK(m->map_value_class == "::fletcher_gen::ext::DepMsg");
     CHECK(m->map_value_header == "dep_map_val.fletcher.pb.h");
 }
 

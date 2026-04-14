@@ -22,7 +22,7 @@ See [Codec/README.md](Codec/README.md).
 
 ### ProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
+A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets a wrapper class (in the `fletcher_gen` namespace) with typed setters, `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
 
 With `--fletcher_opt=ts`, the plugin also emits `.fletcher.ts` files containing TypeScript interfaces, `SchemaDescriptor` constants (with field numbers, wire types, nullability, and nested descriptors), and topic path constants for service methods.
 
@@ -105,8 +105,8 @@ npm run build:wasm # WASM compilation (requires Emscripten)
 |------|---------|
 | **EncodedRow** | `std::vector<uint8_t>` — the compact binary wire format produced by a codec. This is what travels over the network. |
 | **ArrowRow** | `std::vector<std::shared_ptr<arrow::Scalar>>` — one row represented as a vector of Arrow scalars, used as the intermediate form between user data and the encoded wire format. |
-| **\*ArrowRow class** | A generated C++ wrapper class (e.g. `SensorReadingArrowRow`) produced by the protoc plugin from a `.proto` message. Provides typed setters and `Encode()` / decode constructor. The "ArrowRow" suffix distinguishes it from the original protobuf message class. |
-| **\*ArrowRowView class** | An immutable zero-copy view over an `EncodedRow`, generated alongside the mutable ArrowRow class. |
+| **Generated class** | A C++ wrapper class (e.g. `fletcher_gen::myapp::SensorReading`) produced by the protoc plugin from a `.proto` message. Lives in the `fletcher_gen` namespace to avoid collision with the original protobuf message class. Provides typed setters and `Encode()` / decode constructor. |
+| **View class** | An immutable zero-copy view (e.g. `SensorReadingView`) over an `EncodedRow`, generated alongside the mutable wrapper class. |
 
 ---
 

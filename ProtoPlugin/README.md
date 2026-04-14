@@ -1,6 +1,6 @@
 # ProtoPlugin
 
-A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files containing ArrowRow wrapper classes. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()` and can convert to/from an `ArrowRow` (vector of scalars), along with the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
+A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files containing row wrapper classes in the `fletcher_gen` namespace. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()`, along with the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 
 ## How the plugin works
 
@@ -75,7 +75,7 @@ Person schema:
   address : struct<city: utf8 not null, country: utf8 not null> not null
 ```
 
-The nested class (`AddressArrowRow`) is emitted before `PersonArrowRow` in the output file because of topological ordering.
+The nested class (`Address`) is emitted before `Person` in the output file because of topological ordering.
 
 **Cross-file reference:**
 ```proto
@@ -92,7 +92,7 @@ message Person { string name = 1; common.Address address = 2; }
 #include "common/address.fletcher.pb.h"   // emitted automatically
 ```
 
-The generated setter and storage type use a globally-qualified C++ name (`::common::AddressArrowRow`) so the reference resolves regardless of which namespace the consuming code is in.
+The generated setter and storage type use a globally-qualified C++ name (`::fletcher_gen::common::Address`) so the reference resolves regardless of which namespace the consuming code is in.
 
 A deep-nesting warning (depth ≥ 3) is emitted as a code comment for both same-file and cross-file struct fields. The code still compiles but some Arrow consumers (particularly Parquet writers and certain query engines) do not handle arbitrarily deep struct nesting reliably.
 
@@ -225,22 +225,23 @@ The reasoning: a publisher sends a stream of rows and expects no reply — exact
 
 ## Generated class structure
 
-For each eligible message `Foo`, the plugin generates `FooArrowRow` with:
+For each eligible message `Foo`, the plugin generates class `Foo` inside the `fletcher_gen` namespace:
 
 ```cpp
-class FooArrowRow {
- public:
-    // The Arrow schema for this message, constructed once (Meyers singleton).
-    static std::shared_ptr<arrow::Schema> Schema();
+namespace fletcher_gen::<package> {
 
+class Foo {
+ public:
     // Typed setters — return *this for chaining.
-    FooArrowRow& set_field_name(int32_t value);
-    FooArrowRow& set_field_name(std::optional<int32_t> value);   // optional fields
+    Foo& set_field_name(int32_t value);
+    Foo& set_field_name(std::optional<int32_t> value);   // optional fields
     // ... one setter per supported field
 
     // Encode the current field values into an EncodedRow buffer.
     fletcher::EncodedRow Encode() const;
 };
+
+}  // namespace fletcher_gen::<package>
 ```
 
 For each eligible service RPC `Bar` on service `Svc`, the plugin generates:
@@ -250,16 +251,16 @@ For each eligible service RPC `Bar` on service `Svc`, the plugin generates:
 class Svc_BarPublisher {
  public:
     Svc_BarPublisher(std::shared_ptr<fletcher::PubSubProvider> provider);
-    void Publish(const FooArrowRow& row);
+    void Publish(const Foo& row);
 };
 
 // Subscriber: subscribes and decodes, delivering typed scalars to the callback.
 class Svc_BarSubscriber {
  public:
-    using Callback = std::function<void(/*one arg per schema field*/)>;
-    Svc_BarSubscriber(std::shared_ptr<fletcher::PubSubProvider> provider,
-                      Callback callback);
-    ~Svc_BarSubscriber();  // calls Unsubscribe on destruction
+    Svc_BarSubscriber(std::shared_ptr<fletcher::PubSubProvider> provider);
+    fletcher::SubscriptionResult Subscribe(
+        std::function<void(Foo, fletcher::Attachments)> cb);
+    void Unsubscribe();
 };
 ```
 
