@@ -1363,20 +1363,30 @@ std::string GenerateViewClass(const std::string& view_cls,
                               const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
 
-    o << "class " << view_cls << " {\n public:\n";
+    o << "/// Immutable, typed view over a row of Arrow scalars.\n"
+      << "///\n"
+      << "/// Wraps an ArrowRow, a StructScalar, a RecordBatch row, or a Table row\n"
+      << "/// and exposes each field through a zero-copy typed getter.\n"
+      << "class " << view_cls << " {\n public:\n";
 
     // Constructor from ArrowRow (vector of scalars)
-    o << "    explicit " << view_cls << "(fletcher::ArrowRow scalars)\n"
+    o << "    /// Wraps a pre-existing vector of Arrow scalars (e.g. from ToArrowRow()\n"
+      << "    /// or PositionalCodec::Decode).\n"
+      << "    explicit " << view_cls << "(fletcher::ArrowRow scalars)\n"
       << "        : scalars_(std::move(scalars)) {}\n\n";
 
     // Constructor from shared_ptr<Scalar> (for nested struct views)
-    o << "    explicit " << view_cls
+    o << "    /// Wraps a StructScalar — used when this message is a nested struct\n"
+      << "    /// field inside a parent view.\n"
+      << "    explicit " << view_cls
       << "(std::shared_ptr<arrow::Scalar> scalar)\n"
       << "        : scalars_(static_cast<const arrow::StructScalar&>"
          "(*scalar).value) {}\n\n";
 
     // Constructor from RecordBatch + row index
-    o << "    " << view_cls
+    o << "    /// Extracts one row from a RecordBatch by index, materialising each\n"
+      << "    /// column value as a scalar.\n"
+      << "    " << view_cls
       << "(const arrow::RecordBatch& batch, int64_t row) {\n"
       << "        scalars_.reserve(batch.num_columns());\n"
       << "        for (int i = 0; i < batch.num_columns(); ++i)\n"
@@ -1385,7 +1395,9 @@ std::string GenerateViewClass(const std::string& view_cls,
       << "    }\n\n";
 
     // Constructor from Table + row index
-    o << "    " << view_cls
+    o << "    /// Extracts one row from a Table by index, resolving the correct chunk\n"
+      << "    /// in each ChunkedArray.\n"
+      << "    " << view_cls
       << "(const arrow::Table& table, int64_t row) {\n"
       << "        scalars_.reserve(table.num_columns());\n"
       << "        for (int i = 0; i < table.num_columns(); ++i) {\n"
@@ -2511,7 +2523,11 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 std::string GenerateToArrowRow(const std::string& cls,
                                const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
-    o << "inline fletcher::ArrowRow ToArrowRow(const " << cls << "& msg) {\n"
+    o << "/// Converts a nanoarrow-only " << cls << " instance to an ArrowRow\n"
+      << "/// (vector of Arrow scalars).  Uses only public getters, so the\n"
+      << "/// nanoarrow class remains free of any Arrow C++ dependency.\n"
+      << "/// Found via ADL — call as ToArrowRow(msg) without qualification.\n"
+      << "inline fletcher::ArrowRow ToArrowRow(const " << cls << "& msg) {\n"
       << "    fletcher::ArrowRow row;\n"
       << "    row.reserve(" << fields.size() << ");\n";
 
@@ -2837,6 +2853,9 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         o << "#ifndef " << guard << "\n"
           << "#define " << guard << "\n"
           << "namespace detail {\n"
+          << "/// Converts a nanoarrow OwnedSchema to a shared_ptr<arrow::Schema>\n"
+          << "/// via the Arrow C Data Interface.  Used internally by view classes\n"
+          << "/// and ToArrowRow() to obtain Arrow type metadata.\n"
           << "inline std::shared_ptr<arrow::Schema> ImportSchema(fletcher::OwnedSchema nano) {\n"
           << "    auto result = arrow::ImportSchema(nano.get());\n"
           << "    return result.ok() ? *result : nullptr;\n"
