@@ -72,19 +72,19 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
 bool IsRecursive(const google::protobuf::Descriptor* msg);
 
 // True for GeoArrow wrapper messages (LineString, MultiPoint, etc.) that are
-// collapsed into list fields — no ArrowRow class should be generated for these.
+// collapsed into list fields — no class should be generated for these.
 bool IsGeoArrowWrapper(const google::protobuf::Descriptor* msg);
 
 // Maximum struct-nesting depth starting from msg.
 // A flat message (only scalar fields) has depth 0.
 int NestingDepth(const google::protobuf::Descriptor* msg);
 
-// C++ class name for the generated ArrowRow wrapper.
-// Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
+// C++ class name for the generated row wrapper (lives in fletcher_gen:: namespace).
+// Handles nested messages: Outer.Inner → "Outer_Inner".
 std::string ClassName(const google::protobuf::Descriptor* msg);
 
-// C++ class name for the generated immutable ArrowRowView wrapper.
-// Handles nested messages: Outer.Inner → "Outer_InnerArrowRowView".
+// C++ class name for the generated immutable view wrapper.
+// Handles nested messages: Outer.Inner → "Outer_InnerView".
 std::string ViewClassName(const google::protobuf::Descriptor* msg);
 
 // -----------------------------------------------------------------------

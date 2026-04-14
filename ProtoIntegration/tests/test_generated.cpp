@@ -46,11 +46,11 @@ fletcher::ArrowRow RoundTrip(
 }
 
 // =============================================================================
-// simple.proto — SensorReadingArrowRow
+// simple.proto — SensorReading
 // =============================================================================
 
 TEST_CASE("SensorReading: schema structure") {
-    auto schema = ImportNano(integration::SensorReadingArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::SensorReadingSchema());
     REQUIRE(schema->num_fields() == 10);
 
     // Non-optional scalars are not nullable.
@@ -82,7 +82,7 @@ TEST_CASE("SensorReading: schema structure") {
 }
 
 TEST_CASE("SensorReading: encode is non-empty") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
@@ -90,7 +90,7 @@ TEST_CASE("SensorReading: encode is non-empty") {
 }
 
 TEST_CASE("SensorReading: roundtrip -scalar values") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
      .set_pressure(1013.25f)
@@ -100,7 +100,7 @@ TEST_CASE("SensorReading: roundtrip -scalar values") {
      .set_sequence(7u)
      .set_timestamp_ns(1'000'000'000LL);
 
-    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     REQUIRE(scalars.size() == 10);
 
     auto* id = dynamic_cast<arrow::Int32Scalar*>(scalars[0].get());
@@ -125,23 +125,23 @@ TEST_CASE("SensorReading: roundtrip -scalar values") {
 }
 
 TEST_CASE("SensorReading: optional fields null when not set") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
 
-    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     CHECK_FALSE(scalars[8]->is_valid);  // humidity
     CHECK_FALSE(scalars[9]->is_valid);  // label
 }
 
 TEST_CASE("SensorReading: optional fields valid when set") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL).set_humidity(55.3).set_label("humid");
 
-    auto scalars = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     REQUIRE(scalars[8]->is_valid);
     REQUIRE(scalars[9]->is_valid);
 
@@ -155,11 +155,11 @@ TEST_CASE("SensorReading: optional fields valid when set") {
 }
 
 // =============================================================================
-// temporal.proto — TimedEventArrowRow
+// temporal.proto — TimedEvent
 // =============================================================================
 
 TEST_CASE("TimedEvent: schema structure") {
-    auto schema = ImportNano(integration::TimedEventArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::TimedEventSchema());
     REQUIRE(schema->num_fields() == 5);
 
     CHECK(schema->field(0)->name() == "event_id");
@@ -188,14 +188,14 @@ TEST_CASE("TimedEvent: schema structure") {
 }
 
 TEST_CASE("TimedEvent: roundtrip -WKT values") {
-    integration::TimedEventArrowRow ev;
+    fletcher_gen::integration::TimedEvent ev;
     ev.set_event_id("evt-001")
       .set_occurred_at(1'700'000'000'000'000'000LL)
       .set_elapsed(5'000'000'000LL)
       .set_score(9.5);
     // label intentionally left unset → null
 
-    auto scalars = RoundTrip(ev.Encode(), integration::TimedEventArrowRowSchema());
+    auto scalars = RoundTrip(ev.Encode(), fletcher_gen::integration::TimedEventSchema());
     REQUIRE(scalars.size() == 5);
 
     auto* ts = dynamic_cast<arrow::TimestampScalar*>(scalars[1].get());
@@ -216,11 +216,11 @@ TEST_CASE("TimedEvent: roundtrip -WKT values") {
 }
 
 // =============================================================================
-// nested.proto — GeoPointArrowRow, AddressArrowRow, LocationArrowRow
+// nested.proto — GeoPoint, Address, Location
 // =============================================================================
 
 TEST_CASE("GeoPoint: schema is flat scalars") {
-    auto schema = ImportNano(integration::GeoPointArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::GeoPointSchema());
     REQUIRE(schema->num_fields() == 3);
     CHECK(schema->field(0)->name() == "latitude");
     CHECK(schema->field(0)->type()->id() == arrow::Type::DOUBLE);
@@ -230,7 +230,7 @@ TEST_CASE("GeoPoint: schema is flat scalars") {
 }
 
 TEST_CASE("Location: schema embeds struct fields") {
-    auto schema = ImportNano(integration::LocationArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::LocationSchema());
     REQUIRE(schema->num_fields() == 3);
 
     CHECK(schema->field(0)->name() == "point");
@@ -245,16 +245,16 @@ TEST_CASE("Location: schema embeds struct fields") {
 }
 
 TEST_CASE("Location: roundtrip -nested structs") {
-    integration::GeoPointArrowRow gp;
+    fletcher_gen::integration::GeoPoint gp;
     gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
 
-    integration::AddressArrowRow addr;
+    fletcher_gen::integration::Address addr;
     addr.set_street("1 Market St").set_city("San Francisco").set_country("US");
 
-    integration::LocationArrowRow loc;
+    fletcher_gen::integration::Location loc;
     loc.set_point(gp).set_address(addr).set_name("HQ");
 
-    auto scalars = RoundTrip(loc.Encode(), integration::LocationArrowRowSchema());
+    auto scalars = RoundTrip(loc.Encode(), fletcher_gen::integration::LocationSchema());
     REQUIRE(scalars.size() == 3);
 
     CHECK(scalars[0]->type->id() == arrow::Type::STRUCT);
@@ -269,11 +269,11 @@ TEST_CASE("Location: roundtrip -nested structs") {
 }
 
 // =============================================================================
-// collections.proto — PlayerArrowRow, TeamArrowRow
+// collections.proto — Player, Team
 // =============================================================================
 
 TEST_CASE("Team: schema has list fields") {
-    auto schema = ImportNano(integration::TeamArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::TeamSchema());
     REQUIRE(schema->num_fields() == 4);
 
     CHECK(schema->field(0)->name() == "name");
@@ -291,17 +291,17 @@ TEST_CASE("Team: schema has list fields") {
 }
 
 TEST_CASE("Team: roundtrip -repeated scalars and structs") {
-    integration::PlayerArrowRow p1, p2;
+    fletcher_gen::integration::Player p1, p2;
     p1.set_name("Alice").set_level(5);
     p2.set_name("Bob").set_level(3);
 
-    integration::TeamArrowRow team;
+    fletcher_gen::integration::Team team;
     team.set_name("Alpha")
         .set_members({"Alice", "Bob", "Carol"})
         .set_scores({95.0, 87.5, 92.0})
         .set_roster({p1, p2});
 
-    auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
+    auto scalars = RoundTrip(team.Encode(), fletcher_gen::integration::TeamSchema());
     REQUIRE(scalars.size() == 4);
 
     auto* name = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
@@ -322,10 +322,10 @@ TEST_CASE("Team: roundtrip -repeated scalars and structs") {
 }
 
 TEST_CASE("Team: empty repeated fields produce empty lists") {
-    integration::TeamArrowRow team;
+    fletcher_gen::integration::Team team;
     team.set_name("Empty");
 
-    auto scalars = RoundTrip(team.Encode(), integration::TeamArrowRowSchema());
+    auto scalars = RoundTrip(team.Encode(), fletcher_gen::integration::TeamSchema());
     REQUIRE(scalars.size() == 4);
 
     auto* members = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
@@ -334,11 +334,11 @@ TEST_CASE("Team: empty repeated fields produce empty lists") {
 }
 
 // =============================================================================
-// maps.proto — MetricsArrowRow
+// maps.proto — Metrics
 // =============================================================================
 
 TEST_CASE("Metrics: schema has map fields") {
-    auto schema = ImportNano(integration::MetricsArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::MetricsSchema());
     REQUIRE(schema->num_fields() == 3);
 
     CHECK(schema->field(0)->name() == "resource_id");
@@ -352,12 +352,12 @@ TEST_CASE("Metrics: schema has map fields") {
 }
 
 TEST_CASE("Metrics: roundtrip -map fields") {
-    integration::MetricsArrowRow m;
+    fletcher_gen::integration::Metrics m;
     m.set_resource_id("srv-1")
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
      .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
-    auto scalars = RoundTrip(m.Encode(), integration::MetricsArrowRowSchema());
+    auto scalars = RoundTrip(m.Encode(), fletcher_gen::integration::MetricsSchema());
     REQUIRE(scalars.size() == 3);
 
     CHECK(scalars[1]->type->id() == arrow::Type::MAP);
@@ -366,11 +366,11 @@ TEST_CASE("Metrics: roundtrip -map fields") {
 }
 
 // =============================================================================
-// complex.proto — OrderItemArrowRow, OrderArrowRow
+// complex.proto — OrderItem, Order
 // =============================================================================
 
 TEST_CASE("Order: schema combines WKT, list<struct>, map, and optional") {
-    auto schema = ImportNano(integration::OrderArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::integration::OrderSchema());
     REQUIRE(schema->num_fields() == 5);
 
     CHECK(schema->field(0)->name() == "order_id");
@@ -394,19 +394,19 @@ TEST_CASE("Order: schema combines WKT, list<struct>, map, and optional") {
 }
 
 TEST_CASE("Order: roundtrip -full complex row") {
-    integration::OrderItemArrowRow item1, item2;
+    fletcher_gen::integration::OrderItem item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
     item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
          .set_note("gift wrap");
 
-    integration::OrderArrowRow order;
+    fletcher_gen::integration::Order order;
     order.set_order_id("ORD-12345")
          .set_created_at(1'700'000'000'000'000'000LL)
          .set_items({item1, item2})
          .set_tags({{"priority", 1}, {"region", 3}})
          .set_customer_note("Leave at door");
 
-    auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
+    auto scalars = RoundTrip(order.Encode(), fletcher_gen::integration::OrderSchema());
     REQUIRE(scalars.size() == 5);
 
     auto* oid = dynamic_cast<arrow::StringScalar*>(scalars[0].get());
@@ -431,26 +431,26 @@ TEST_CASE("Order: roundtrip -full complex row") {
 }
 
 TEST_CASE("Order: customer_note null when not set") {
-    integration::OrderArrowRow order;
+    fletcher_gen::integration::Order order;
     order.set_order_id("ORD-0").set_created_at(0LL);
 
-    auto scalars = RoundTrip(order.Encode(), integration::OrderArrowRowSchema());
+    auto scalars = RoundTrip(order.Encode(), fletcher_gen::integration::OrderSchema());
     REQUIRE(scalars.size() == 5);
     CHECK_FALSE(scalars[4]->is_valid);
 }
 
 TEST_CASE("OrderItem: optional note null then valid") {
-    integration::OrderItemArrowRow item;
+    fletcher_gen::integration::OrderItem item;
     item.set_product_id("SKU-X").set_quantity(1).set_unit_price(5.0);
 
     {
-        auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
+        auto scalars = RoundTrip(item.Encode(), fletcher_gen::integration::OrderItemSchema());
         CHECK_FALSE(scalars[3]->is_valid);  // note not set
     }
 
     item.set_note("fragile");
     {
-        auto scalars = RoundTrip(item.Encode(), integration::OrderItemArrowRowSchema());
+        auto scalars = RoundTrip(item.Encode(), fletcher_gen::integration::OrderItemSchema());
         CHECK(scalars[3]->is_valid);
         auto* n = dynamic_cast<arrow::StringScalar*>(scalars[3].get());
         REQUIRE(n != nullptr);
@@ -522,7 +522,7 @@ class MockPubSubProvider : public fletcher::PubSubProvider {
 
 TEST_CASE("Publisher: construction creates topic with correct schema") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     REQUIRE(mock->created_topics.size() == 1);
     CHECK(mock->created_topics[0].segments ==
@@ -534,9 +534,9 @@ TEST_CASE("Publisher: construction creates topic with correct schema") {
 
 TEST_CASE("Publisher: publish encodes and delivers to provider") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    integration::TelemetryArrowRow row;
+    fletcher_gen::integration::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
@@ -548,9 +548,9 @@ TEST_CASE("Publisher: publish encodes and delivers to provider") {
 
 TEST_CASE("Publisher: multiple publishes accumulate") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    integration::TelemetryArrowRow r1, r2, r3;
+    fletcher_gen::integration::Telemetry r1, r2, r3;
     r1.set_device_id(1).set_value(1.0).set_timestamp(100LL).set_metric_name("a");
     r2.set_device_id(2).set_value(2.0).set_timestamp(200LL).set_metric_name("b");
     r3.set_device_id(3).set_value(3.0).set_timestamp(300LL).set_metric_name("c");
@@ -566,7 +566,7 @@ TEST_CASE("Publisher: multiple publishes accumulate") {
 
 TEST_CASE("Subscriber: construction does not create topic") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     // Subscriber-only processes no longer call CreateTopic; the schema
     // is discovered from the provider when Subscribe() is called.
@@ -575,15 +575,15 @@ TEST_CASE("Subscriber: construction does not create topic") {
 
 TEST_CASE("Subscriber: receives typed message from published rows") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    integration::TelemetryArrowRow received;
-    sub.Subscribe([&](integration::TelemetryArrowRow msg, fletcher::Attachments) {
+    fletcher_gen::integration::Telemetry received;
+    sub.Subscribe([&](fletcher_gen::integration::Telemetry msg, fletcher::Attachments) {
         received = std::move(msg);
     });
 
-    integration::TelemetryArrowRow row;
+    fletcher_gen::integration::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
@@ -595,13 +595,13 @@ TEST_CASE("Subscriber: receives typed message from published rows") {
 
 TEST_CASE("Subscriber: unsubscribe stops delivery") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](integration::TelemetryArrowRow, fletcher::Attachments) { ++count; });
+    sub.Subscribe([&](fletcher_gen::integration::Telemetry, fletcher::Attachments) { ++count; });
 
-    integration::TelemetryArrowRow row;
+    fletcher_gen::integration::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
 
     pub.Publish(row);
@@ -614,17 +614,17 @@ TEST_CASE("Subscriber: unsubscribe stops delivery") {
 
 TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    integration::TelemetryArrowRow received;
+    fletcher_gen::integration::Telemetry received;
     fletcher::Attachments received_att;
-    sub.Subscribe([&](integration::TelemetryArrowRow msg, fletcher::Attachments att) {
+    sub.Subscribe([&](fletcher_gen::integration::Telemetry msg, fletcher::Attachments att) {
         received = std::move(msg);
         received_att = std::move(att);
     });
 
-    integration::TelemetryArrowRow row;
+    fletcher_gen::integration::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(
@@ -639,9 +639,9 @@ TEST_CASE("Publisher: publish with attachments delivers blob to subscriber") {
 
 TEST_CASE("Publisher: publish without attachments has empty attachments") {
     auto mock = std::make_shared<MockPubSubProvider>();
-    integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    integration::TelemetryArrowRow row;
+    fletcher_gen::integration::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
     pub.Publish(row);
 
@@ -656,7 +656,7 @@ TEST_CASE("Publisher: publish without attachments has empty attachments") {
 // =============================================================================
 
 TEST_CASE("Native roundtrip: simple scalars") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
      .set_pressure(1013.25f)
@@ -668,7 +668,7 @@ TEST_CASE("Native roundtrip: simple scalars") {
      .set_humidity(55.3)
      .set_label("humid");
 
-    integration::SensorReadingArrowRow decoded(r.Encode());
+    fletcher_gen::integration::SensorReading decoded(r.Encode());
 
     CHECK(decoded.sensor_id() == 42);
     CHECK(decoded.temperature() == 23.5);
@@ -685,28 +685,28 @@ TEST_CASE("Native roundtrip: simple scalars") {
 }
 
 TEST_CASE("Native roundtrip: optional nulls") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
      .set_active(false).set_location("").set_payload("").set_sequence(0u)
      .set_timestamp_ns(0LL);
     // humidity and label intentionally left null
 
-    integration::SensorReadingArrowRow decoded(r.Encode());
+    fletcher_gen::integration::SensorReading decoded(r.Encode());
     CHECK_FALSE(decoded.humidity().has_value());
     CHECK_FALSE(decoded.label().has_value());
 }
 
 TEST_CASE("Native roundtrip: nested structs") {
-    integration::GeoPointArrowRow gp;
+    fletcher_gen::integration::GeoPoint gp;
     gp.set_latitude(37.7749).set_longitude(-122.4194).set_elevation(16.0f);
 
-    integration::AddressArrowRow addr;
+    fletcher_gen::integration::Address addr;
     addr.set_street("1 Market St").set_city("San Francisco").set_country("US");
 
-    integration::LocationArrowRow loc;
+    fletcher_gen::integration::Location loc;
     loc.set_point(gp).set_address(addr).set_name("HQ");
 
-    integration::LocationArrowRow decoded(loc.Encode());
+    fletcher_gen::integration::Location decoded(loc.Encode());
     CHECK(decoded.point().latitude() == 37.7749);
     CHECK(decoded.point().longitude() == -122.4194);
     CHECK(decoded.point().elevation() == 16.0f);
@@ -716,17 +716,17 @@ TEST_CASE("Native roundtrip: nested structs") {
 }
 
 TEST_CASE("Native roundtrip: repeated scalars and structs") {
-    integration::PlayerArrowRow p1, p2;
+    fletcher_gen::integration::Player p1, p2;
     p1.set_name("Alice").set_level(5);
     p2.set_name("Bob").set_level(3);
 
-    integration::TeamArrowRow team;
+    fletcher_gen::integration::Team team;
     team.set_name("Alpha")
         .set_members({"Alice", "Bob", "Carol"})
         .set_scores({95.0, 87.5, 92.0})
         .set_roster({p1, p2});
 
-    integration::TeamArrowRow decoded(team.Encode());
+    fletcher_gen::integration::Team decoded(team.Encode());
     CHECK(decoded.name() == "Alpha");
     REQUIRE(decoded.members().size() == 3);
     CHECK(decoded.members()[0] == "Alice");
@@ -741,31 +741,31 @@ TEST_CASE("Native roundtrip: repeated scalars and structs") {
 }
 
 TEST_CASE("Native roundtrip: map fields") {
-    integration::MetricsArrowRow m;
+    fletcher_gen::integration::Metrics m;
     m.set_resource_id("srv-1")
      .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
      .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
-    integration::MetricsArrowRow decoded(m.Encode());
+    fletcher_gen::integration::Metrics decoded(m.Encode());
     CHECK(decoded.resource_id() == "srv-1");
     REQUIRE(decoded.gauges().size() == 2);
     REQUIRE(decoded.counters().size() == 2);
 }
 
 TEST_CASE("Native roundtrip: complex - WKT + list<struct> + map + optional") {
-    integration::OrderItemArrowRow item1, item2;
+    fletcher_gen::integration::OrderItem item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
     item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
          .set_note("gift wrap");
 
-    integration::OrderArrowRow order;
+    fletcher_gen::integration::Order order;
     order.set_order_id("ORD-12345")
          .set_created_at(1'700'000'000'000'000'000LL)
          .set_items({item1, item2})
          .set_tags({{"priority", 1}, {"region", 3}})
          .set_customer_note("Leave at door");
 
-    integration::OrderArrowRow decoded(order.Encode());
+    fletcher_gen::integration::Order decoded(order.Encode());
     CHECK(decoded.order_id() == "ORD-12345");
     CHECK(decoded.created_at() == 1'700'000'000'000'000'000LL);
     REQUIRE(decoded.items().size() == 2);
@@ -779,13 +779,13 @@ TEST_CASE("Native roundtrip: complex - WKT + list<struct> + map + optional") {
 }
 
 TEST_CASE("Native roundtrip: temporal WKT") {
-    integration::TimedEventArrowRow ev;
+    fletcher_gen::integration::TimedEvent ev;
     ev.set_event_id("evt-001")
       .set_occurred_at(1'700'000'000'000'000'000LL)
       .set_elapsed(5'000'000'000LL)
       .set_score(9.5);
 
-    integration::TimedEventArrowRow decoded(ev.Encode());
+    fletcher_gen::integration::TimedEvent decoded(ev.Encode());
     CHECK(decoded.event_id() == "evt-001");
     CHECK(decoded.occurred_at() == 1'700'000'000'000'000'000LL);
     CHECK(decoded.elapsed() == 5'000'000'000LL);
@@ -799,7 +799,7 @@ TEST_CASE("Native roundtrip: temporal WKT") {
 // =============================================================================
 
 TEST_CASE("View: SensorReading from ArrowRow") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
      .set_temperature(23.5)
      .set_pressure(1013.25f)
@@ -811,8 +811,8 @@ TEST_CASE("View: SensorReading from ArrowRow") {
      .set_humidity(65.0)
      .set_label("test-label");
 
-    auto row = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
-    integration::SensorReadingArrowRowView view(std::move(row));
+    auto row = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
+    fletcher_gen::integration::SensorReadingView view(std::move(row));
 
     CHECK(view.sensor_id() == 42);
     CHECK(view.temperature() == 23.5);
@@ -829,7 +829,7 @@ TEST_CASE("View: SensorReading from ArrowRow") {
 }
 
 TEST_CASE("View: SensorReading with nulls") {
-    integration::SensorReadingArrowRow r;
+    fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1)
      .set_temperature(0.0)
      .set_pressure(0.0f)
@@ -840,8 +840,8 @@ TEST_CASE("View: SensorReading with nulls") {
      .set_timestamp_ns(0);
     // humidity and label left as nullopt
 
-    auto row = RoundTrip(r.Encode(), integration::SensorReadingArrowRowSchema());
-    integration::SensorReadingArrowRowView view(std::move(row));
+    auto row = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
+    fletcher_gen::integration::SensorReadingView view(std::move(row));
 
     CHECK(view.sensor_id() == 1);
     CHECK_FALSE(view.humidity().has_value());
@@ -849,17 +849,17 @@ TEST_CASE("View: SensorReading with nulls") {
 }
 
 TEST_CASE("View: nested Location from ArrowRow") {
-    integration::GeoPointArrowRow pt;
+    fletcher_gen::integration::GeoPoint pt;
     pt.set_latitude(55.6761).set_longitude(12.5683).set_elevation(10.0f);
 
-    integration::AddressArrowRow addr;
+    fletcher_gen::integration::Address addr;
     addr.set_street("Nyhavn 1").set_city("Copenhagen").set_country("Denmark");
 
-    integration::LocationArrowRow loc;
+    fletcher_gen::integration::Location loc;
     loc.set_name("Office").set_point(pt).set_address(addr);
 
-    auto row = RoundTrip(loc.Encode(), integration::LocationArrowRowSchema());
-    integration::LocationArrowRowView view(std::move(row));
+    auto row = RoundTrip(loc.Encode(), fletcher_gen::integration::LocationSchema());
+    fletcher_gen::integration::LocationView view(std::move(row));
 
     CHECK(view.name() == "Office");
     auto pv = view.point();

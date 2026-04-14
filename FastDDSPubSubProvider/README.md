@@ -38,15 +38,16 @@ auto provider = std::make_shared<FastDDSPubSubProvider>(
 The provider is then passed to generated `Publisher` and `Subscriber` classes:
 
 ```cpp
-// Generated from a proto service definition:
-TelemetryFeed_TelemetryStreamPublisher pub(provider);
-pub.Publish(TelemetryArrowRow().set_device_id(1).set_value(98.6));
+// Generated from a proto service definition (in fletcher_gen namespace):
+using namespace fletcher_gen::integration;
 
-TelemetryFeed_TelemetryStreamSubscriber sub(
-    provider,
-    [](int32_t device_id, double value, int64_t ts, std::string_view metric) {
-        // Called on a Fast DDS internal listener thread.
-    });
+TelemetryFeed_TelemetryStreamPublisher pub(provider);
+pub.Publish(Telemetry().set_device_id(1).set_value(98.6));
+
+TelemetryFeed_TelemetryStreamSubscriber sub(provider);
+sub.Subscribe([](Telemetry msg, fletcher::Attachments att) {
+    // Called on a Fast DDS internal listener thread.
+});
 ```
 
 Or used directly through the `PubSubProvider` interface:

@@ -1107,6 +1107,9 @@ std::string GenerateSchemaFunction(const std::string& cls,
     // TODO: GeoArrow CRS parameters will be restored in a later phase.
     (void)has_geo;
 
+    o << "/// Returns the nanoarrow schema describing this message's wire layout.\n"
+      << "/// Providers publish this schema on companion topics so that subscribers\n"
+      << "/// can decode rows without prior knowledge of the message definition.\n";
     o << "inline fletcher::OwnedSchema " << cls << "Schema() {\n"
       << "    fletcher::OwnedSchema schema;\n"
       << "    ArrowSchemaInit(schema.get());\n"
@@ -1609,12 +1612,17 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
     std::string fc = std::to_string(fields.size());
 
     // EncodeStructTo_ — positional format, writes fields into a parent-provided writer.
+    o << "    /// Internal: writes this message's fields into a parent writer\n"
+      << "    /// when the message is nested as a struct field inside another row.\n";
     o << "    void EncodeStructTo_(fletcher::PositionalWriter& w) const {\n";
     for (size_t i = 0; i < fields.size(); ++i)
         EmitFieldEncode(o, fields[i], i);
     o << "    }\n\n";
 
     // EncodeTo — creates a PositionalWriter and writes fields positionally.
+    o << "    /// Serialises the row into the given buffer in the positional wire\n"
+      << "    /// format. Used by Publisher to write directly into the provider's\n"
+      << "    /// transport buffer without an intermediate copy.\n";
     o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
       << "        fletcher::PositionalWriter w(buf, " << fc << ");\n";
     for (size_t i = 0; i < fields.size(); ++i)
@@ -1622,6 +1630,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
     o << "    }\n\n";
 
     // Encode() — convenience returning EncodedRow.
+    o << "    /// Convenience method that returns a self-contained EncodedRow.\n"
+      << "    /// Useful for testing, WAL storage, or any context where you need\n"
+      << "    /// the encoded bytes as a standalone value.\n";
     o << "    fletcher::EncodedRow Encode() const {\n"
       << "        fletcher::EncodedRow row;\n"
       << "        fletcher::VectorWriteBuffer buf(row);\n"
@@ -1830,9 +1841,13 @@ std::string GenerateMessageClass(const std::string& cls,
     o << "class " << cls << " {\n public:\n";
 
     // Default constructor
+    o << "    /// Constructs an empty row. Use the setters to populate fields\n"
+      << "    /// before calling Encode() to produce the wire-format buffer.\n";
     o << "    " << cls << "() = default;\n\n";
 
     // Constructor from raw bytes
+    o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
+      << "    /// received from a PubSubProvider callback or read from a WAL.\n";
     o << "    explicit " << cls
       << "(const uint8_t* data, size_t len) {\n"
       << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
@@ -1841,10 +1856,15 @@ std::string GenerateMessageClass(const std::string& cls,
     o << "    }\n\n";
 
     // Constructor from EncodedRow
+    o << "    /// Convenience overload that accepts an EncodedRow directly,\n"
+      << "    /// so callers do not need to extract the pointer and length.\n";
     o << "    explicit " << cls << "(const fletcher::EncodedRow& row)\n"
       << "        : " << cls << "(row.data(), row.size()) {}\n\n";
 
     // Constructor from PositionalReader& (for nested struct decoding)
+    o << "    /// Used internally when this message is embedded as a struct\n"
+      << "    /// field inside another message — the parent reader is passed\n"
+      << "    /// through so nested fields are decoded in position.\n";
     o << "    explicit " << cls
       << "(fletcher::PositionalReader& r) {\n";
     for (size_t i = 0; i < fields.size(); ++i)
@@ -1908,6 +1928,9 @@ bool ValidateServiceMethod(
 
 void EmitTopicSegments(std::ostringstream& o, const std::string& package,
                        const std::string& svc_name, const std::string& method_name) {
+    o << "    /// Returns the hierarchical topic path derived from the proto\n"
+      << "    /// service and method names. Used by the Driver to register,\n"
+      << "    /// look up, and route messages on the pub/sub layer.\n";
     o << "    static const std::vector<std::string>& TopicSegments() {\n"
       << "        static const std::vector<std::string> kSegments = {";
     if (!package.empty())
@@ -1920,6 +1943,8 @@ void EmitTopicSegments(std::ostringstream& o, const std::string& package,
 }
 
 void EmitSchema(std::ostringstream& o, const std::string& msg_class) {
+    o << "    /// Exposes the message schema on the publisher/subscriber class so\n"
+      << "    /// callers can inspect the wire layout without constructing a row.\n";
     o << "    static fletcher::OwnedSchema Schema() {\n"
       << "        return " << msg_class << "Schema();\n"
       << "    }\n\n";
@@ -1943,6 +1968,9 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     EmitSchema(o, msg_class);
 
     // Topic key (segments joined with '/')
+    o << "    /// Returns the flat string form of the topic path (segments joined\n"
+      << "    /// with '/'). Useful for logging, diagnostics, and WebGateway URLs\n"
+      << "    /// where a single string is expected instead of path segments.\n";
     o << "    static const std::string& TopicKey() {\n"
       << "        static const std::string kKey = \"";
     if (!package.empty())
@@ -1952,6 +1980,9 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    }\n\n";
 
     // Constructor
+    o << "    /// Creates the publisher and registers the topic with its schema\n"
+      << "    /// on the provider. After construction, subscribers can discover\n"
+      << "    /// the topic and receive the schema for decoding.\n";
     o << "    explicit " << cls << "(\n"
       << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
       << "        : provider_(std::move(provider))\n"
@@ -1960,12 +1991,17 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    }\n\n";
 
     // Publish (without attachments)
+    o << "    /// Encodes and publishes a single row. The encoding happens\n"
+      << "    /// directly into the provider's transport buffer to avoid copies.\n";
     o << "    void Publish(const " << msg_class << "& row) {\n"
       << "        provider_->Publish(TopicSegments(),\n"
       << "            [&](fletcher::WriteBuffer& buf) { row.EncodeTo(buf); });\n"
       << "    }\n\n";
 
     // Publish (with attachments)
+    o << "    /// Publishes a row together with keyed binary attachments (e.g.\n"
+      << "    /// images, point clouds) that travel alongside the row as part\n"
+      << "    /// of the same Envelope.\n";
     o << "    void Publish(const " << msg_class << "& row,\n"
       << "                 fletcher::Attachments attachments) {\n"
       << "        provider_->Publish(TopicSegments(),\n"
@@ -2000,12 +2036,18 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 
     // Constructor — subscriber does not call CreateTopic; the schema
     // is discovered from the provider when Subscribe() is called.
+    o << "    /// Binds to the provider without creating a topic — subscribers\n"
+      << "    /// discover the topic and its schema when Subscribe() is called.\n";
     o << "    explicit " << cls << "(\n"
       << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
       << "        : provider_(std::move(provider)) {}\n\n";
 
     // Subscribe — delivers decoded message + Attachments to the caller.
     // Returns the schema received from the publisher via the provider.
+    o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
+      << "    /// are decoded into a typed message before being delivered to the\n"
+      << "    /// callback, so subscribers never handle raw buffers directly.\n"
+      << "    /// Returns the schema advertised by the publisher for this topic.\n";
     o << "    fletcher::SubscriptionResult Subscribe(\n"
       << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
       << "    {\n"
@@ -2017,6 +2059,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    }\n\n";
 
     // Unsubscribe
+    o << "    /// Stops delivery and releases the subscription on the provider.\n";
     o << "    void Unsubscribe() {\n"
       << "        provider_->Unsubscribe(TopicSegments());\n"
       << "    }\n\n";
@@ -2077,9 +2120,11 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
     }
     o << "\n";
 
+    o << "namespace fletcher_gen {\n";
     const std::string ns = DotToColons(file->package());
     if (!ns.empty())
-        o << "namespace " << ns << " {\n\n";
+        o << "namespace " << ns << " {\n";
+    o << "\n";
 
     // Emit messages in dependency order.
     auto messages = OrderedMessages(file);
@@ -2139,6 +2184,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
 
     if (!ns.empty())
         o << "}  // namespace " << ns << "\n";
+    o << "}  // namespace fletcher_gen\n";
 
     return o.str();
 }
@@ -2503,9 +2549,11 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <string_view>\n"
       << "#include <vector>\n\n";
 
+    o << "namespace fletcher_gen {\n";
     const std::string ns = DotToColons(file->package());
     if (!ns.empty())
-        o << "namespace " << ns << " {\n\n";
+        o << "namespace " << ns << " {\n";
+    o << "\n";
 
     // Helper: convert OwnedSchema → shared_ptr<arrow::Schema> via C Data Interface.
     // Guard against redefinition when multiple view headers from the same package
@@ -2538,6 +2586,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 
     if (!ns.empty())
         o << "}  // namespace " << ns << "\n";
+    o << "}  // namespace fletcher_gen\n";
 
     return o.str();
 }

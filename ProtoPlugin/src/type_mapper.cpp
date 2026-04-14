@@ -25,8 +25,8 @@ static std::string DotToColonsTM(const std::string& s) {
     return out;
 }
 
-// Compute the bare (unqualified) ArrowRow class name for a message.
-// Handles nested messages: Outer.Inner → "Outer_InnerArrowRow".
+// Compute the bare (unqualified) generated class name for a message.
+// Handles nested messages: Outer.Inner → "Outer_Inner".
 // (Mirrors the public ClassName() function below; defined here so the
 // cross-file helpers can call it without a forward declaration.)
 static std::string ClassNameImpl(const google::protobuf::Descriptor* msg) {
@@ -36,7 +36,7 @@ static std::string ClassNameImpl(const google::protobuf::Descriptor* msg) {
         name = parent->name() + "_" + name;
         parent = parent->containing_type();
     }
-    return name + "ArrowRow";
+    return name;
 }
 
 // C++ globally-qualified class reference for msg, as seen from context_file.
@@ -53,8 +53,8 @@ static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
         return bare;
     const std::string& pkg = msg->file()->package();
     if (pkg.empty())
-        return "::" + bare;
-    return "::" + DotToColonsTM(pkg) + "::" + bare;
+        return "::fletcher_gen::" + bare;
+    return "::fletcher_gen::" + DotToColonsTM(pkg) + "::" + bare;
 }
 
 // Include path for the generated header of msg's file, relative to the proto root.
@@ -402,7 +402,7 @@ std::string GeoArrowExtensionName(const std::string& fqn) {
 }
 
 // Returns true for wrapper messages that are collapsed into list fields
-// (no ArrowRow class is generated for these).
+// (no class is generated for these).
 bool IsGeoArrowWrapper(const std::string& fqn) {
     return fqn == "geoarrow.LineString"       || fqn == "geoarrow.LineStringZ"
         || fqn == "geoarrow.MultiPoint"       || fqn == "geoarrow.MultiPointZ"
@@ -627,7 +627,7 @@ std::string ClassName(const google::protobuf::Descriptor* msg) {
         name = parent->name() + "_" + name;
         parent = parent->containing_type();
     }
-    return name + "ArrowRow";
+    return name;
 }
 
 std::string ViewClassName(const google::protobuf::Descriptor* msg) {

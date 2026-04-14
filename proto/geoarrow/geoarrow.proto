@@ -5,9 +5,8 @@
 // GeoArrow extension type metadata (ARROW:extension:name).
 //
 // Coordinate struct messages (Point, PointZ, Box, BoxZ) generate normal
-// ArrowRow classes.  Wrapper messages (LineString, MultiPoint, etc.) are
-// collapsed by the plugin into list fields — no ArrowRow class is generated
-// for them.
+// fletcher_gen classes.  Wrapper messages (LineString, MultiPoint, etc.) are
+// collapsed by the plugin into list fields — no class is generated for them.
 //
 // See https://geoarrow.org for the full GeoArrow specification.
 
@@ -34,41 +33,41 @@ message Box {
 
 // Ordered sequence of vertices — maps to geoarrow.linestring
 // (List<Struct<x: double, y: double>>).
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message LineString {
     repeated Point vertices = 1;
 }
 
 // Collection of points — maps to geoarrow.multipoint
 // (List<Struct<x: double, y: double>>).
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiPoint {
     repeated Point points = 1;
 }
 
 // Closed ring of vertices — structural building block for Polygon.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message LinearRing {
     repeated Point vertices = 1;
 }
 
 // Polygon — maps to geoarrow.polygon (List<List<Struct<x, y>>>).
 // First ring is the exterior boundary; subsequent rings are holes.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message Polygon {
     repeated LinearRing rings = 1;
 }
 
 // Collection of line strings — maps to geoarrow.multilinestring
 // (List<List<Struct<x, y>>>).
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiLineString {
     repeated LineString linestrings = 1;
 }
 
 // Collection of polygons — maps to geoarrow.multipolygon
 // (List<List<List<Struct<x, y>>>>).
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiPolygon {
     repeated Polygon polygons = 1;
 }
@@ -95,37 +94,37 @@ message BoxZ {
 }
 
 // 3D line string — maps to geoarrow.linestring.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message LineStringZ {
     repeated PointZ vertices = 1;
 }
 
 // 3D multi-point — maps to geoarrow.multipoint.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiPointZ {
     repeated PointZ points = 1;
 }
 
 // 3D closed ring — structural building block for PolygonZ.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message LinearRingZ {
     repeated PointZ vertices = 1;
 }
 
 // 3D polygon — maps to geoarrow.polygon.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message PolygonZ {
     repeated LinearRingZ rings = 1;
 }
 
 // 3D collection of line strings — maps to geoarrow.multilinestring.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiLineStringZ {
     repeated LineStringZ linestrings = 1;
 }
 
 // 3D collection of polygons — maps to geoarrow.multipolygon.
-// Collapsed by protoc-gen-fletcher: no ArrowRow class is generated.
+// Collapsed by protoc-gen-fletcher: no class is generated.
 message MultiPolygonZ {
     repeated PolygonZ polygons = 1;
 }

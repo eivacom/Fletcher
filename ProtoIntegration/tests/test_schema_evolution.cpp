@@ -31,15 +31,15 @@ static std::shared_ptr<arrow::Schema> ImportNano(OwnedSchema nano) {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("SensorV1 same-schema roundtrip") {
-    evolution::SensorV1ArrowRow original;
+    fletcher_gen::evolution::SensorV1 original;
     original.set_id(1);
     original.set_temperature(20.0f);
     original.set_location("trondheim");
 
     auto encoded = original.Encode();
-    evolution::SensorV1ArrowRow restored(encoded);
+    fletcher_gen::evolution::SensorV1 restored(encoded);
 
-    auto schema = ImportNano(evolution::SensorV1ArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV1Schema());
     PositionalCodec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 
@@ -50,7 +50,7 @@ TEST_CASE("SensorV1 same-schema roundtrip") {
 }
 
 TEST_CASE("SensorV2 same-schema roundtrip") {
-    evolution::SensorV2ArrowRow original;
+    fletcher_gen::evolution::SensorV2 original;
     original.set_id(2);
     original.set_temperature(18.5);
     original.set_location("stavanger");
@@ -58,7 +58,7 @@ TEST_CASE("SensorV2 same-schema roundtrip") {
 
     auto encoded = original.Encode();
 
-    auto schema = ImportNano(evolution::SensorV2ArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV2Schema());
     PositionalCodec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 
@@ -71,7 +71,7 @@ TEST_CASE("SensorV2 same-schema roundtrip") {
 }
 
 TEST_CASE("SensorV2 with null optional field") {
-    evolution::SensorV2ArrowRow original;
+    fletcher_gen::evolution::SensorV2 original;
     original.set_id(3);
     original.set_temperature(15.0);
     original.set_location("tromso");
@@ -79,7 +79,7 @@ TEST_CASE("SensorV2 with null optional field") {
 
     auto encoded = original.Encode();
 
-    auto schema = ImportNano(evolution::SensorV2ArrowRowSchema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV2Schema());
     PositionalCodec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 
@@ -92,25 +92,25 @@ TEST_CASE("SensorV2 with null optional field") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("SensorV1 native roundtrip") {
-    evolution::SensorV1ArrowRow original;
+    fletcher_gen::evolution::SensorV1 original;
     original.set_id(42);
     original.set_temperature(25.5f);
     original.set_location("oslo");
 
-    evolution::SensorV1ArrowRow decoded(original.Encode());
+    fletcher_gen::evolution::SensorV1 decoded(original.Encode());
     CHECK(decoded.id() == 42);
     CHECK(decoded.temperature() == Catch::Approx(25.5f));
     CHECK(decoded.location() == "oslo");
 }
 
 TEST_CASE("SensorV2 native roundtrip with optional") {
-    evolution::SensorV2ArrowRow original;
+    fletcher_gen::evolution::SensorV2 original;
     original.set_id(7);
     original.set_temperature(12.3);
     original.set_location("bergen");
     original.set_label("lbl-1");
 
-    evolution::SensorV2ArrowRow decoded(original.Encode());
+    fletcher_gen::evolution::SensorV2 decoded(original.Encode());
     CHECK(decoded.id() == 7);
     CHECK(decoded.temperature() == Catch::Approx(12.3));
     CHECK(decoded.location() == "bergen");
