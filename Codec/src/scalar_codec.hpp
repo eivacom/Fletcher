@@ -3,8 +3,7 @@
 
 // Internal header — not part of the public API.
 // Exposes scalar-level encode/decode so that translation units other than
-// row_codec.cpp (e.g. sqlite_wal.cpp) can serialise individual scalars to
-// and from raw byte buffers.
+// row_codec.cpp can serialise individual scalars to and from raw byte buffers.
 
 #include "row_reader.hpp"
 

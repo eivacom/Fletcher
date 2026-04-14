@@ -20,14 +20,6 @@ See [Codec/README.md](Codec/README.md).
 
 ---
 
-### Batcher
-
-Accumulates `EncodedRow` buffers and flushes them as an `arrow::Table` once a configured batch size is reached. Includes a write-ahead log (WAL) abstraction backed by SQLite so rows are durable during accumulation.
-
-Use this when you need to bridge a row-at-a-time source (sensor feed, event stream) with a batch-oriented sink (Parquet writer, columnar database). See [Batcher/README.md](Batcher/README.md).
-
----
-
 ### ProtoPlugin
 
 A `protoc` compiler plugin (`protoc-gen-fletcher`) that reads `.proto` files and generates C++ header files. Each supported proto message gets an ArrowRow wrapper class with typed setters, `ToScalars()` / `Encode()` methods, and the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate typed `Publisher` and `Subscriber` classes backed by `PubSubProvider`.
@@ -111,7 +103,7 @@ npm run build:wasm # WASM compilation (requires Emscripten)
 
 | Term | Meaning |
 |------|---------|
-| **EncodedRow** | `std::vector<uint8_t>` — the compact binary wire format produced by a codec. This is what travels over the network and is stored in the WAL. |
+| **EncodedRow** | `std::vector<uint8_t>` — the compact binary wire format produced by a codec. This is what travels over the network. |
 | **ArrowRow** | `std::vector<std::shared_ptr<arrow::Scalar>>` — one row represented as a vector of Arrow scalars, used as the intermediate form between user data and the encoded wire format. |
 | **\*ArrowRow class** | A generated C++ wrapper class (e.g. `SensorReadingArrowRow`) produced by the protoc plugin from a `.proto` message. Provides typed setters and `Encode()` / decode constructor. The "ArrowRow" suffix distinguishes it from the original protobuf message class. |
 | **\*ArrowRowView class** | An immutable zero-copy view over an `EncodedRow`, generated alongside the mutable ArrowRow class. |
@@ -139,9 +131,6 @@ ProtoIntegration  (tests only)
 ProtoPlugin
     └── protobuf::libprotoc
 
-Batcher
-    └── Codec
-
 Codec
     ├── PubSub (shared types, write buffer)
     └── Apache Arrow
@@ -149,6 +138,18 @@ Codec
 PubSub
     └── nanoarrow
 ```
+
+## Architecture Documentation
+
+Detailed architecture documentation is in the [`docs/`](docs/) directory, structured for Confluence publishing:
+
+| Document | Description |
+|---|---|
+| [Architecture Overview](docs/architecture-overview.md) | Vision, design principles, two-tier architecture, component overview, data flow |
+| [Component and Dependency Diagram](docs/component-diagram.md) | System context, component detail, and dependency graph |
+| [Data Flow Diagrams](docs/data-flow-diagrams.md) | Encode/decode, publish/subscribe, schema transport, and browser delivery flows |
+| [Wire Format Specification](docs/wire-format-specification.md) | Positional wire format, type mapping, nullability rules, envelope format |
+| [Technology Decision Log](docs/technology-decisions.md) | Rationale for key technology choices (TD-001 through TD-007) |
 
 ## Building
 

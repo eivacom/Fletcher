@@ -1,8 +1,7 @@
 #ifndef FLETCHER_SRC_ROW_READER_HPP_
 #define FLETCHER_SRC_ROW_READER_HPP_
 
-// Internal implementation detail shared between row_codec.cpp and
-// row_batcher.cpp.  Not part of the public API.
+// Internal implementation detail used by row_codec.cpp.  Not part of the public API.
 
 #include <cstddef>
 #include <cstdint>

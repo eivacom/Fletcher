@@ -10,7 +10,7 @@ enable_testing()
 #
 # Several Conan packages (protobuf, FastDDS, fastcdr, tinyxml2,
 # foonathan_memory) are available only as Release builds, compiled with /MD.
-# Other packages (Arrow, SQLite3, ZLIB, Catch2 …) have both Debug (/MDd) and
+# Other packages (Arrow, ZLIB, Catch2 …) have both Debug (/MDd) and
 # Release (/MD) Conan builds.
 #
 # Mixing /MD and /MDd static libs in the same binary is a hard MSVC error
@@ -49,7 +49,6 @@ set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
 
 find_package(Arrow         REQUIRED)
 find_package(Boost         REQUIRED)
-find_package(SQLite3       REQUIRED)
 find_package(Protobuf      REQUIRED)
 find_package(fastdds       REQUIRED)
 find_package(Catch2        REQUIRED)
@@ -202,7 +201,6 @@ unset(_fix_o)
 add_subdirectory(third_party/nanoarrow)
 add_subdirectory(PubSub)
 add_subdirectory(Codec)
-add_subdirectory(Batcher)
 add_subdirectory(ProtoPlugin)
 add_subdirectory(ProtoIntegration)
 add_subdirectory(FastDDSPubSubProvider)
