@@ -273,12 +273,11 @@ Unsupported proto features: `oneof`, recursive messages,
 
 ---
 
-## Binding strategy notes
+## Binding architecture
 
-The **C API** (`arrow_row_codec_capi.h`) can be bound directly via FFI in
-any language. For the C++ libraries, a C wrapper layer will be needed.
+### Two tiers
 
-The two tiers of the architecture suggest two tiers of bindings:
+The architecture has two tiers, and bindings preserve this separation:
 
 - **Edge tier** (nanoarrow only, ~100 KB): `PubSub` library — Driver,
   PositionalReader/Writer, OwnedSchema, WriteBuffer. No Arrow C++ dependency.
@@ -288,5 +287,159 @@ The two tiers of the architecture suggest two tiers of bindings:
   RowCodec, PositionalCodec, PubSubArrow, schema evolution. Requires Arrow
   C++ at link time.
 
-Bindings for the edge tier should avoid pulling in Arrow C++ as a
-dependency, preserving the small-footprint property of the nanoarrow path.
+Bindings for the edge tier must not pull in Arrow C++ as a dependency,
+preserving the small-footprint property of the nanoarrow path.
+
+### Shared C API layer
+
+Each C++ library that needs bindings gets a corresponding C API header
+with opaque handles and explicit ownership semantics.  All FFI languages
+(Rust, C#, Python) bind against the same C API — this avoids maintaining
+separate binding layers per language.
+
+| C++ library | C API header | Status |
+|-------------|-------------|--------|
+| Codec (RowCodec) | `arrow_row_codec_capi.h` | Exists |
+| PubSub (Driver) | `pubsub_capi.h` | New |
+| PubSubArrow | `pubsub_arrow_capi.h` | Future |
+
+### Native wire-format implementations (not FFI)
+
+PositionalReader, PositionalWriter, and WriteBuffer are **not** exposed
+through the C API.  Instead, each target language reimplements them
+natively.
+
+**Rationale:** These are called per-field — dozens of times per row
+encode/decode.  Per-field FFI round-trips would dominate the cost of
+encoding.  A native implementation in each language avoids FFI overhead
+entirely, keeps generated code free of `unsafe` / unmanaged calls, and
+preserves the edge-tier property (no C++ dependency required for the
+generated row classes).
+
+**Consequence:** The positional wire format becomes a cross-language
+specification (see below).  If the format evolves, all implementations
+must update — the same trade-off `protoc` makes with per-language
+protobuf runtimes.
+
+### Performance considerations
+
+**Subscribe (zero-copy):** The subscribe callback receives a pointer to
+C++ owned memory `(data, len)`.  The foreign-language callback reads
+directly from that pointer for the duration of the callback — no copy
+unless the caller needs the data after the callback returns.
+
+**Publish (single memcpy):** The foreign-language side encodes the row
+using its native PositionalWriter into a local buffer, then passes the
+pre-encoded bytes to the C API.  The C++ side copies those bytes once
+into the envelope/provider buffer.  This single `memcpy` of the encoded
+row (typically hundreds of bytes) is negligible compared to transport I/O.
+
+**Schema exchange:** Schemas cross the FFI boundary via the
+[Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
+(`ArrowSchema` struct), which is already a C-level type.  No
+serialization or IPC conversion needed.
+
+### Providers are always C++
+
+PubSub providers (FastDDS, XRCE-DDS, future transports) are always
+implemented in C++.  The C API exposes factory functions to create
+provider instances; foreign-language consumers interact with providers
+only through the Driver handle.
+
+### Code generation is separate from runtime bindings
+
+Runtime bindings (C API + language wrapper) must exist first.  The
+`protoc-gen-fletcher` code generator then gets a new back-end per
+language that emits accessor classes depending on the runtime crate /
+package.
+
+---
+
+## Positional wire format specification
+
+This section defines the binary encoding used by PositionalWriter /
+PositionalReader.  All integers are **little-endian**.  Each language
+binding must implement this format identically.
+
+### Row / struct layout
+
+```
+[NULL_BITFIELD : ceil(num_fields / 8) bytes]
+[payload for field 0   (only if field 0 is non-null)]
+[payload for field 1   (only if field 1 is non-null)]
+...
+[payload for field n-1 (only if field n-1 is non-null)]
+```
+
+Null bitfield uses LSB-first bit ordering: field `i` corresponds to bit
+`i % 8` in byte `i / 8`.  Bit **0** = non-null (payload present), bit
+**1** = null (no payload written).  Null fields occupy **zero** bytes in
+the payload section.  No alignment or padding between fields.
+
+### Scalar types
+
+| Type | Wire bytes | Encoding |
+|------|-----------|----------|
+| bool | 1 | `0x00` = false, `0x01` = true |
+| int8 / uint8 | 1 | Native byte |
+| int16 / uint16 | 2 | LE |
+| int32 / uint32 | 4 | LE |
+| int64 / uint64 | 8 | LE |
+| float32 | 4 | IEEE 754 LE |
+| float64 | 8 | IEEE 754 LE |
+| timestamp | 8 | int64 LE (units from schema) |
+| duration | 8 | int64 LE (units from schema) |
+| date32 | 4 | int32 LE (days since epoch) |
+| date64 | 8 | int64 LE (ms since epoch) |
+
+### Variable-length types (string, binary)
+
+```
+[LENGTH : 4 bytes LE, uint32]
+[DATA   : LENGTH bytes]
+```
+
+No null terminator.  Strings are UTF-8.
+
+### List
+
+```
+[COUNT               : 4 bytes LE, uint32]
+[ELEMENT_NULL_BITFIELD : ceil(count / 8) bytes]
+[element 0 payload   (if not null)]
+[element 1 payload   (if not null)]
+...
+```
+
+### Fixed-size list
+
+Same as list but **no COUNT prefix** — the fixed size comes from the
+schema.
+
+### Map
+
+```
+[COUNT              : 4 bytes LE, uint32]
+[key 0 payload]
+[key 1 payload]
+...
+[VALUE_NULL_BITFIELD : ceil(count / 8) bytes]
+[value 0 payload   (if not null)]
+[value 1 payload   (if not null)]
+...
+```
+
+Keys are never null (no key null bitfield).  All keys are written first,
+then the value null bitfield, then non-null value payloads.
+
+### Nested struct
+
+Each struct (including nested) has its own null bitfield.  Structs are
+encoded inline at the point where the field appears in the parent.
+
+### Union (sparse / dense)
+
+```
+[TYPE_CODE : 1 byte, int8]
+[payload for the active variant]
+```

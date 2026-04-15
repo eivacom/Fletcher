@@ -65,4 +65,10 @@ target_link_libraries(xrce_dds_pubsub_provider
     PUBLIC  pubsub
     PRIVATE microxrcedds_client)
 
+add_library(xrce_dds_capi STATIC
+    src/xrce_dds_capi.cpp)
+target_include_directories(xrce_dds_capi PUBLIC include)
+target_link_libraries(xrce_dds_capi
+    PRIVATE xrce_dds_pubsub_provider pubsub_capi)
+
 add_subdirectory(tests)

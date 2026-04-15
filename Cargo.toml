@@ -1,6 +1,7 @@
 [workspace]
 members = [
+    "PubSub/bindings/rust",
     "Codec/bindings/rust",
-    "Batcher/bindings/rust",
+    # "Batcher/bindings/rust",  # planned, not yet created
 ]
 resolver = "2"

@@ -1,0 +1,10 @@
+[package]
+name    = "fletcher-pubsub"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow-schema = { version = "52", features = ["ffi"] }
+
+[build-dependencies]
+cmake = "0.1"
