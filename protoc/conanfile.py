@@ -26,7 +26,7 @@ class FletcherProtocPluginConan(ConanFile):
     def requirements(self):
         self.requires("protobuf/3.21.12", visible=True)
         if self.options.run_tests:
-            self.requires("gtest/1.15.0")
+            self.requires("gtest/1.17.0")
 
     def package_id(self):
         del self.info.options.run_tests
