@@ -21,6 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
 
@@ -32,8 +41,9 @@ jobs:
         run: pip install conan
 
       - name: Install Conan profiles
+        shell: pwsh
         run: |
-          $auth_header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:${{ secrets.GITHUB_TOKEN }}"))
+          $auth_header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:${{ steps.generate-token.outputs.token }}"))
           git config --global http.extraHeader "Authorization: Basic $auth_header"
           conan config install https://github.com/eivacom/conan-configuration.git --type git
 
@@ -47,12 +57,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
       - name: Build devcontainer image
         run: docker build -t fletcher-protoc-build protoc/.devcontainer
 
       - name: Build and test
         run: |
-          auth_header=$(echo -n "x-access-token:${{ secrets.GITHUB_TOKEN }}" | base64)
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             fletcher-protoc-build \
