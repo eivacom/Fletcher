@@ -4,34 +4,11 @@ runs:
   using: "composite"
   steps:
     - name: Install VS2022 Build Tools (v143)
-      shell: pwsh
+      shell: cmd
       run: |
-        $vsInstallerUrl = "https://aka.ms/vs/17/release/vs_buildtools.exe"
-        $vsInstallerPath = "$env:TEMP\vs_buildtools.exe"
-        $installPath = "C:\Program Files\Microsoft Visual Studio\2022\Professional"
+        curl -SL --output %TEMP%\vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
 
-        $components = @(
-          "Microsoft.VisualStudio.Workload.VCTools",
-          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-          "Microsoft.VisualStudio.Component.VC.ATLMFC",
-          "Microsoft.VisualStudio.Component.Windows11SDK.22621"
-        )
+        (start /w %TEMP%\vs_buildtools.exe --quiet --wait --norestart --nocache --installPath "C:\Program Files\Microsoft Visual Studio\2022\Professional" --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.ATLMFC --add Microsoft.VisualStudio.Component.Windows11SDK.22621 || IF "%ERRORLEVEL%"=="3010" EXIT 0)
 
-        $arguments = @(
-          "--wait",
-          "--norestart",
-          "--nocache",
-          "--installPath `"$installPath`""
-        )
-
-        foreach ($component in $components) {
-          $arguments += "--add $component"
-        }
-
-        Write-Host "Downloading VS Build Tools..."
-        Invoke-WebRequest -Uri $vsInstallerUrl -OutFile $vsInstallerPath
-
-        Write-Host "Installing VS Build Tools to $installPath..."
-        Start-Process -FilePath $vsInstallerPath -ArgumentList $arguments -Wait
-
-        Write-Host "VS Build Tools installation complete."
+        dir "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC"
+        dir "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build"
