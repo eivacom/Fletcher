@@ -1,5 +1,5 @@
 {
-    "name": "fletcher-protoc (Ubuntu 22.04 / GCC 12)",
+    "name": "fletcher-protoc (Ubuntu 24.04 / GCC 12)",
     "build": {
         "dockerfile": "Dockerfile"
     },
