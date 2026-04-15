@@ -62,6 +62,7 @@ struct XrceDDSPubSubProvider::Impl {
         uxrObjectId schema_reader_id{};
 
         OwnedSchema schema;
+        SharedSchema shared_schema;  // for callback delivery
         bool is_publisher = false;
         bool has_reader = false;
         PubSub::SubscribeCallback callback;
@@ -134,7 +135,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(
     auto envelope = DeserializeEnvelope(payload.data(), payload.size());
     tit->second.callback(
         envelope.row.data(), envelope.row.size(),
-        tit->second.schema ? tit->second.schema.get() : nullptr,
+        tit->second.shared_schema,
         std::move(envelope.attachments));
 }
 
@@ -564,6 +565,8 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(
 
     ts.callback = std::move(callback);
     ts.has_reader = true;
+    if (ts.schema && !ts.shared_schema)
+        ts.shared_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
     impl_->reader_to_topic[ts.reader_id.id] = name;
 
     // Request continuous data delivery.

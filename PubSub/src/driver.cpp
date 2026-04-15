@@ -60,7 +60,7 @@ struct Driver::Impl {
 
         auto result = provider->Subscribe(
             ts.segments, [this, key](const uint8_t* data, size_t len,
-                                      const ArrowSchema* schema,
+                                      SharedSchema schema,
                                       Attachments att) {
                 std::vector<SubscribeCallback> cbs;
                 {

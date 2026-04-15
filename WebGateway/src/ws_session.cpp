@@ -272,7 +272,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
 
     auto result = driver_->Subscribe(segments,
         [weak, sub_id_ptr](const uint8_t* data, size_t len,
-                           const ArrowSchema* /*schema*/, Attachments att) {
+                           SharedSchema /*schema*/, Attachments att) {
             auto self = weak.lock();
             if (!self) return;
 

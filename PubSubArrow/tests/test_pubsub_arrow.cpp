@@ -36,9 +36,10 @@ class MockProvider : public PubSub {
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
-            const ArrowSchema* sp = nullptr;
+            SharedSchema sp;
             auto sit = schemas_.find(key);
-            if (sit != schemas_.end()) sp = sit->second.get();
+            if (sit != schemas_.end())
+                sp = MakeSharedSchema(OwnedSchema::DeepCopy(sit->second.get()));
             it->second(buf.data(), buf.size(), sp, attachments);
         }
     }

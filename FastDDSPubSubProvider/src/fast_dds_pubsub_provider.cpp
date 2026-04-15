@@ -241,8 +241,8 @@ class FletcherTopicType : public TopicDataType {
 
 class SubscriptionListener : public DataReaderListener {
  public:
-    SubscriptionListener(PubSub::SubscribeCallback cb, const ArrowSchema* schema)
-        : callback_(std::move(cb)), schema_(schema) {}
+    SubscriptionListener(PubSub::SubscribeCallback cb, SharedSchema schema)
+        : callback_(std::move(cb)), schema_(std::move(schema)) {}
 
     void on_data_available(DataReader* reader) override {
         TransportData data;
@@ -258,7 +258,7 @@ class SubscriptionListener : public DataReaderListener {
 
  private:
     PubSub::SubscribeCallback callback_;
-    const ArrowSchema* schema_;
+    SharedSchema schema_;
 };
 
 // -----------------------------------------------------------------------
@@ -537,7 +537,9 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(
         throw std::runtime_error("FastDDS: already subscribed to: " + name);
 
     ts.listener = std::make_unique<SubscriptionListener>(
-        std::move(callback), ts.schema ? ts.schema.get() : nullptr);
+        std::move(callback),
+        ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()))
+                  : nullptr);
 
     DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
     rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;

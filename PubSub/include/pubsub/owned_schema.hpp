@@ -4,6 +4,7 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -57,6 +58,22 @@ class OwnedSchema {
  private:
     ArrowSchema schema_;
 };
+
+/// Shared, immutable handle to an ArrowSchema.
+///
+/// The shared_ptr keeps an OwnedSchema alive internally and exposes
+/// a const pointer to its ArrowSchema.  Safe to pass into callbacks
+/// and store across threads — the schema lives as long as any copy
+/// of the shared_ptr exists.
+using SharedSchema = std::shared_ptr<const ArrowSchema>;
+
+/// Creates a SharedSchema from an OwnedSchema (move semantics).
+/// Returns nullptr if the source schema is empty.
+inline SharedSchema MakeSharedSchema(OwnedSchema schema) {
+    if (!schema) return nullptr;
+    auto owner = std::make_shared<OwnedSchema>(std::move(schema));
+    return SharedSchema(owner, owner->get());
+}
 
 }  // namespace fletcher
 

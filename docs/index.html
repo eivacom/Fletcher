@@ -788,10 +788,10 @@ fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">Deco
         <span class="ty">RowEncoder</span> encoder,
         <span class="kw">const</span> <span class="ty">Attachments</span>&amp; attachments = {}) = <span class="num">0</span>;
 
-    <span class="cmt">// Subscriber receives raw bytes, schema pointer, and attachments</span>
+    <span class="cmt">// Subscriber receives raw bytes, shared schema, and attachments</span>
     <span class="kw">using</span> <span class="ty">SubscribeCallback</span> = std::function&lt;<span class="ty">void</span>(
         <span class="kw">const</span> <span class="ty">uint8_t</span>* data, <span class="ty">size_t</span> len,
-        <span class="kw">const</span> <span class="ty">ArrowSchema</span>* schema,
+        <span class="ty">SharedSchema</span> schema,
         <span class="ty">Attachments</span> attachments)&gt;;
 
     <span class="kw">virtual</span> <span class="ty">SubscriptionResult</span> <span class="fn">Subscribe</span>(

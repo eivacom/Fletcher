@@ -2074,7 +2074,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    {\n"
       << "        return provider_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](const uint8_t* data, size_t len,\n"
-      << "                                 const ArrowSchema* /*schema*/,\n"
+      << "                                 fletcher::SharedSchema /*schema*/,\n"
       << "                                 fletcher::Attachments att) {\n"
       << "                cb(" << msg_class << "(data, len), std::move(att));\n"
       << "            }, std::move(config));\n"

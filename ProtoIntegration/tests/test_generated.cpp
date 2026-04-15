@@ -496,9 +496,13 @@ class MockPubSub : public fletcher::PubSub {
         encoder(wb);
         auto it = subscribers.find(segments);
         if (it != subscribers.end()) {
-            const ArrowSchema* sp = nullptr;
+            fletcher::SharedSchema sp;
             for (const auto& ct : created_topics) {
-                if (ct.segments == segments) { sp = ct.schema.get(); break; }
+                if (ct.segments == segments) {
+                    sp = fletcher::MakeSharedSchema(
+                        fletcher::OwnedSchema::DeepCopy(ct.schema.get()));
+                    break;
+                }
             }
             it->second(buf.data(), buf.size(), sp, attachments);
         }

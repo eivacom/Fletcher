@@ -38,9 +38,10 @@ class MockProvider : public PubSub {
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
-            const ArrowSchema* sp = nullptr;
+            SharedSchema sp;
             auto sit = schemas_.find(key);
-            if (sit != schemas_.end()) sp = sit->second.get();
+            if (sit != schemas_.end())
+                sp = MakeSharedSchema(OwnedSchema::DeepCopy(sit->second.get()));
             it->second(buf.data(), buf.size(), sp, attachments);
         }
     }
@@ -135,7 +136,7 @@ TEST_CASE("Driver: Publish delegates to provider") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int32_t received_value = 0;
-    driver.Subscribe(kTopic, [&](const uint8_t* data, size_t len, const ArrowSchema*, Attachments) {
+    driver.Subscribe(kTopic, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
         received_value = DecodeTestRow(data, len);
     });
 
@@ -149,8 +150,8 @@ TEST_CASE("Driver: Subscribe returns unique IDs") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r1 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
-    auto r2 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
+    auto r1 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    auto r2 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     CHECK(r1.subscription_id != r2.subscription_id);
 }
@@ -161,7 +162,7 @@ TEST_CASE("Driver: Subscribe to unknown topic auto-registers") {
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     auto result = driver.Subscribe({"no", "such"},
-                                   [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
+                                   [](const uint8_t*, size_t, SharedSchema, Attachments) {});
     CHECK(result.subscription_id > 0);
     CHECK(driver.HasTopic({"no", "such"}));
 }
@@ -173,7 +174,7 @@ TEST_CASE("Driver: Subscribe returns schema from provider") {
     driver.CreateTopic(kTopic, TestSchema());
 
     auto result = driver.Subscribe(kTopic,
-                                   [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
+                                   [](const uint8_t*, size_t, SharedSchema, Attachments) {});
     REQUIRE(result.schema.valid());
     // Verify structure: one child named "x" with int32 format.
     CHECK(result.schema->n_children == 1);
@@ -187,8 +188,8 @@ TEST_CASE("Driver: multi-subscriber fan-out") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, const ArrowSchema*, Attachments) { count_a++; });
-    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, const ArrowSchema*, Attachments) { count_b++; });
+    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
+    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     driver.Publish(kTopic, MakeTestEncoder(1));
 
@@ -206,8 +207,8 @@ TEST_CASE("Driver: Unsubscribe removes specific subscriber") {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    auto ra = driver.Subscribe(kTopic, [&](const uint8_t*, size_t, const ArrowSchema*, Attachments) { count_a++; });
-    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, const ArrowSchema*, Attachments) { count_b++; });
+    auto ra = driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
+    driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     driver.Publish(kTopic, MakeTestEncoder(1));
     CHECK(count_a == 1);
@@ -224,7 +225,7 @@ TEST_CASE("Driver: Unsubscribe last subscriber unsubscribes from provider") {
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r = driver.Subscribe(kTopic, [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
+    auto r = driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
     CHECK(mock->unsubscribe_count == 0);
 
     driver.Unsubscribe(r.subscription_id);
@@ -236,8 +237,8 @@ TEST_CASE("Driver: Unsubscribe with remaining subscribers keeps provider subscri
     Driver driver(mock);
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto r1 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
-    driver.Subscribe(kTopic, [](const uint8_t*, size_t, const ArrowSchema*, Attachments) {});
+    auto r1 = driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     driver.Unsubscribe(r1.subscription_id);
     CHECK(mock->unsubscribe_count == 0);  // still have one subscriber
@@ -290,7 +291,7 @@ TEST_CASE("Driver: publish with attachments fans out correctly") {
 
     int32_t received_value = 0;
     Attachments received_att;
-    driver.Subscribe(kTopic, [&](const uint8_t* data, size_t len, const ArrowSchema*, Attachments att) {
+    driver.Subscribe(kTopic, [&](const uint8_t* data, size_t len, SharedSchema, Attachments att) {
         received_value = DecodeTestRow(data, len);
         received_att = std::move(att);
     });

@@ -55,11 +55,12 @@ class PubSub {
                          const Attachments& attachments = {}) = 0;
 
     /// Callback signature for Subscribe — delivers raw encoded row bytes,
-    /// a pointer to the topic's schema, and any sidecar attachments.
-    /// The schema pointer is stable for the lifetime of the subscription.
+    /// the topic's schema, and any sidecar attachments.
+    /// The SharedSchema keeps the schema alive as long as any copy exists,
+    /// so callbacks may safely store it for later use.
     using SubscribeCallback = std::function<void(const uint8_t* data,
                                                  size_t len,
-                                                 const ArrowSchema* schema,
+                                                 SharedSchema schema,
                                                  Attachments attachments)>;
 
     /// Subscribe to a named topic.  Returns the schema that the
