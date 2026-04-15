@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include "xrce_dds_pubsub_provider.hpp"
 
@@ -17,18 +17,18 @@ using namespace fletcher;
 // JoinSegments — mirrors the internal helper; tested via public API behavior
 // ---------------------------------------------------------------------------
 
-TEST_CASE("XrceConfig: default values") {
+TEST(XrceProviderTest, DefaultValues) {
     XrceConfig cfg;
-    CHECK(cfg.transport == XrceTransport::kUdp);
-    CHECK(cfg.agent_ip == "127.0.0.1");
-    CHECK(cfg.agent_port == 2018);
-    CHECK(cfg.max_payload == 512);
-    CHECK(cfg.stream_history == 4);
-    CHECK(cfg.run_loop_ms == 10);
-    CHECK(cfg.session_key == 0xAABBCCDD);
+    EXPECT_EQ(cfg.transport, XrceTransport::kUdp);
+    EXPECT_EQ(cfg.agent_ip, "127.0.0.1");
+    EXPECT_EQ(cfg.agent_port, 2018);
+    EXPECT_EQ(cfg.max_payload, 512);
+    EXPECT_EQ(cfg.stream_history, 4);
+    EXPECT_EQ(cfg.run_loop_ms, 10);
+    EXPECT_EQ(cfg.session_key, 0xAABBCCDD);
 }
 
-TEST_CASE("XrceConfig: custom values") {
+TEST(XrceProviderTest, CustomValues) {
     XrceConfig cfg;
     cfg.transport = XrceTransport::kTcp;
     cfg.agent_ip = "192.168.1.100";
@@ -38,31 +38,31 @@ TEST_CASE("XrceConfig: custom values") {
     cfg.run_loop_ms = 50;
     cfg.session_key = 0x12345678;
 
-    CHECK(cfg.transport == XrceTransport::kTcp);
-    CHECK(cfg.agent_ip == "192.168.1.100");
-    CHECK(cfg.agent_port == 3000);
-    CHECK(cfg.max_payload == 1024);
-    CHECK(cfg.stream_history == 8);
-    CHECK(cfg.run_loop_ms == 50);
-    CHECK(cfg.session_key == 0x12345678);
+    EXPECT_EQ(cfg.transport, XrceTransport::kTcp);
+    EXPECT_EQ(cfg.agent_ip, "192.168.1.100");
+    EXPECT_EQ(cfg.agent_port, 3000);
+    EXPECT_EQ(cfg.max_payload, 1024);
+    EXPECT_EQ(cfg.stream_history, 8);
+    EXPECT_EQ(cfg.run_loop_ms, 50);
+    EXPECT_EQ(cfg.session_key, 0x12345678);
 }
 
 // ---------------------------------------------------------------------------
 // XRCE object ID allocation
 // ---------------------------------------------------------------------------
 
-TEST_CASE("XRCE object IDs: uxr_object_id type encoding") {
+TEST(XrceProviderTest, ObjectIdTypeEncoding) {
     // Verify the XRCE object ID packing works as expected.
     auto id = uxr_object_id(0x0010, UXR_PARTICIPANT_ID);
-    CHECK(id.id == 0x0010);
-    CHECK(id.type == UXR_PARTICIPANT_ID);
+    EXPECT_EQ(id.id, 0x0010);
+    EXPECT_EQ(id.type, UXR_PARTICIPANT_ID);
 
     auto id2 = uxr_object_id(0x0010, UXR_TOPIC_ID);
-    CHECK(id2.id == 0x0010);
-    CHECK(id2.type == UXR_TOPIC_ID);
+    EXPECT_EQ(id2.id, 0x0010);
+    EXPECT_EQ(id2.type, UXR_TOPIC_ID);
 }
 
-TEST_CASE("XRCE object IDs: different types with same base") {
+TEST(XrceProviderTest, DifferentTypesWithSameBase) {
     uint16_t base = 42;
     auto part  = uxr_object_id(base, UXR_PARTICIPANT_ID);
     auto topic = uxr_object_id(base, UXR_TOPIC_ID);
@@ -72,47 +72,47 @@ TEST_CASE("XRCE object IDs: different types with same base") {
     auto dr    = uxr_object_id(base, UXR_DATAREADER_ID);
 
     // All share the same numeric base.
-    CHECK(part.id == base);
-    CHECK(topic.id == base);
-    CHECK(pub.id == base);
-    CHECK(dw.id == base);
-    CHECK(sub.id == base);
-    CHECK(dr.id == base);
+    EXPECT_EQ(part.id, base);
+    EXPECT_EQ(topic.id, base);
+    EXPECT_EQ(pub.id, base);
+    EXPECT_EQ(dw.id, base);
+    EXPECT_EQ(sub.id, base);
+    EXPECT_EQ(dr.id, base);
 
     // All have distinct type tags.
-    CHECK(part.type == UXR_PARTICIPANT_ID);
-    CHECK(topic.type == UXR_TOPIC_ID);
-    CHECK(pub.type == UXR_PUBLISHER_ID);
-    CHECK(dw.type == UXR_DATAWRITER_ID);
-    CHECK(sub.type == UXR_SUBSCRIBER_ID);
-    CHECK(dr.type == UXR_DATAREADER_ID);
+    EXPECT_EQ(part.type, UXR_PARTICIPANT_ID);
+    EXPECT_EQ(topic.type, UXR_TOPIC_ID);
+    EXPECT_EQ(pub.type, UXR_PUBLISHER_ID);
+    EXPECT_EQ(dw.type, UXR_DATAWRITER_ID);
+    EXPECT_EQ(sub.type, UXR_SUBSCRIBER_ID);
+    EXPECT_EQ(dr.type, UXR_DATAREADER_ID);
 }
 
 // ---------------------------------------------------------------------------
 // Constructor without Agent — should throw
 // ---------------------------------------------------------------------------
 
-TEST_CASE("XrceDDSPubSubProvider: constructor throws without Agent") {
+TEST(XrceProviderTest, ConstructorThrowsWithoutAgent) {
     XrceConfig cfg;
     cfg.agent_ip = "127.0.0.1";
     cfg.agent_port = 19999;  // No agent expected on this port.
 
     // Construction should fail because uxr_create_session will time out.
-    CHECK_THROWS_AS(XrceDDSPubSubProvider(cfg), std::runtime_error);
+    EXPECT_THROW(XrceDDSPubSubProvider(cfg), std::runtime_error);
 }
 
-TEST_CASE("XrceDDSPubSubProvider: serial transport not implemented") {
+TEST(XrceProviderTest, SerialTransportNotImplemented) {
     XrceConfig cfg;
     cfg.transport = XrceTransport::kSerial;
 
-    CHECK_THROWS_AS(XrceDDSPubSubProvider(cfg), std::runtime_error);
+    EXPECT_THROW(XrceDDSPubSubProvider(cfg), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
 // Envelope format compatibility (unit test, no Agent needed)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Envelope: XRCE uses same wire format as FastDDS") {
+TEST(XrceProviderTest, EnvelopeXrceUsesSameWireFormatAsFastDds) {
     // Verify that the envelope serialization used by XRCE provider
     // produces the exact same bytes as the shared implementation.
     Envelope env;
@@ -125,12 +125,12 @@ TEST_CASE("Envelope: XRCE uses same wire format as FastDDS") {
     auto wire = SerializeEnvelope(env);
     auto restored = DeserializeEnvelope(wire);
 
-    CHECK(restored.row == env.row);
-    REQUIRE(restored.attachments.size() == 1);
-    CHECK(*restored.attachments.at("sensor") == *blob);
+    EXPECT_EQ(restored.row, env.row);
+    ASSERT_EQ(restored.attachments.size(), 1);
+    EXPECT_EQ(*restored.attachments.at("sensor"), *blob);
 }
 
-TEST_CASE("Envelope: wire format layout") {
+TEST(XrceProviderTest, EnvelopeWireFormatLayout) {
     Envelope env;
     env.row = {0xAA, 0xBB, 0xCC};
     // No attachments.
@@ -138,37 +138,37 @@ TEST_CASE("Envelope: wire format layout") {
     auto wire = SerializeEnvelope(env);
 
     // Expected layout: [ROW_LEN:4][ROW_DATA:3][ATTACH_COUNT:4]
-    REQUIRE(wire.size() == 4 + 3 + 4);
+    ASSERT_EQ(wire.size(), 4 + 3 + 4);
 
     // ROW_LEN = 3 (little-endian).
     uint32_t row_len;
     std::memcpy(&row_len, wire.data(), 4);
-    CHECK(row_len == 3);
+    EXPECT_EQ(row_len, 3);
 
     // Row data.
-    CHECK(wire[4] == 0xAA);
-    CHECK(wire[5] == 0xBB);
-    CHECK(wire[6] == 0xCC);
+    EXPECT_EQ(wire[4], 0xAA);
+    EXPECT_EQ(wire[5], 0xBB);
+    EXPECT_EQ(wire[6], 0xCC);
 
     // ATTACH_COUNT = 0.
     uint32_t attach_count;
     std::memcpy(&attach_count, wire.data() + 7, 4);
-    CHECK(attach_count == 0);
+    EXPECT_EQ(attach_count, 0);
 }
 
 // ---------------------------------------------------------------------------
 // QoS struct defaults
 // ---------------------------------------------------------------------------
 
-TEST_CASE("XRCE QoS: struct initialization") {
+TEST(XrceProviderTest, QosStructInitialization) {
     uxrQoS_t qos{};
     qos.reliability = UXR_RELIABILITY_RELIABLE;
     qos.durability  = UXR_DURABILITY_TRANSIENT_LOCAL;
     qos.history     = UXR_HISTORY_KEEP_LAST;
     qos.depth       = 1;
 
-    CHECK(qos.reliability == UXR_RELIABILITY_RELIABLE);
-    CHECK(qos.durability == UXR_DURABILITY_TRANSIENT_LOCAL);
-    CHECK(qos.history == UXR_HISTORY_KEEP_LAST);
-    CHECK(qos.depth == 1);
+    EXPECT_EQ(qos.reliability, UXR_RELIABILITY_RELIABLE);
+    EXPECT_EQ(qos.durability, UXR_DURABILITY_TRANSIENT_LOCAL);
+    EXPECT_EQ(qos.history, UXR_HISTORY_KEEP_LAST);
+    EXPECT_EQ(qos.depth, 1);
 }

@@ -40,6 +40,7 @@ export class FletcherClient {
   private opts: {
     url: string;
     backend: BackendType;
+    reconnectDelay: number;
     wasmFactory?: () => Promise<unknown>;
   };
   private pendingQueue: PendingRequest[] = [];

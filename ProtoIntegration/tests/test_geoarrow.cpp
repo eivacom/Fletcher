@@ -1,4 +1,4 @@
-#include <catch2/catch_test_macros.hpp>
+#include <gtest/gtest.h>
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <positional_codec.hpp>
@@ -10,7 +10,7 @@
 // Helper: import an OwnedSchema (nanoarrow) to shared_ptr<arrow::Schema>.
 static std::shared_ptr<arrow::Schema> ImportNano(fletcher::OwnedSchema nano) {
     auto result = arrow::ImportSchema(nano.get());
-    REQUIRE(result.ok());
+    if (!result.ok()) { ADD_FAILURE() << "ImportSchema failed"; return nullptr; }
     return *result;
 }
 
@@ -24,6 +24,7 @@ static fletcher::ArrowRow GeoRoundTrip(
     static fletcher::EncodedRow kept_alive;
     kept_alive = std::move(encoded);
     auto schema = ImportNano(std::move(nano_schema));
+    if (!schema) { ADD_FAILURE() << "GeoRoundTrip: ImportNano failed"; return {}; }
     fletcher::PositionalCodec codec(std::move(schema));
     return codec.DecodeRow(kept_alive);
 }
@@ -32,127 +33,127 @@ static fletcher::ArrowRow GeoRoundTrip(
 // Schema structure
 // =============================================================================
 
-TEST_CASE("GeoArrow: VehicleTrack schema structure") {
+TEST(GeoArrowTest, VehicleTrackSchemaStructure) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(schema->num_fields() == 6);
+    ASSERT_EQ(schema->num_fields(), 6);
 
     // vehicle_id — plain string
-    CHECK(schema->field(0)->name() == "vehicle_id");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
+    EXPECT_EQ(schema->field(0)->name(), "vehicle_id");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRING);
 
     // last_position — struct with extension metadata
-    CHECK(schema->field(1)->name() == "last_position");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::STRUCT);
-    CHECK_FALSE(schema->field(1)->nullable());
+    EXPECT_EQ(schema->field(1)->name(), "last_position");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::STRUCT);
+    EXPECT_FALSE(schema->field(1)->nullable());
 
     // route — list (collapsed from LineString)
-    CHECK(schema->field(2)->name() == "route");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(2)->name(), "route");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::LIST);
 
     // bounding_box — struct with extension metadata
-    CHECK(schema->field(3)->name() == "bounding_box");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::STRUCT);
+    EXPECT_EQ(schema->field(3)->name(), "bounding_box");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::STRUCT);
 
     // altitude_point — nullable struct (optional PointZ)
-    CHECK(schema->field(4)->name() == "altitude_point");
-    CHECK(schema->field(4)->type()->id() == arrow::Type::STRUCT);
-    CHECK(schema->field(4)->nullable());
+    EXPECT_EQ(schema->field(4)->name(), "altitude_point");
+    EXPECT_EQ(schema->field(4)->type()->id(), arrow::Type::STRUCT);
+    EXPECT_TRUE(schema->field(4)->nullable());
 
     // waypoints — list (collapsed from MultiPoint)
-    CHECK(schema->field(5)->name() == "waypoints");
-    CHECK(schema->field(5)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(5)->name(), "waypoints");
+    EXPECT_EQ(schema->field(5)->type()->id(), arrow::Type::LIST);
 }
 
 // =============================================================================
 // Extension metadata on schema fields
 // =============================================================================
 
-TEST_CASE("GeoArrow: extension metadata on Point field") {
+TEST(GeoArrowTest, ExtensionMetadataOnPointField) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto meta = schema->field(1)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.point");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.point");
 }
 
-TEST_CASE("GeoArrow: extension metadata on LineString field") {
+TEST(GeoArrowTest, ExtensionMetadataOnLineStringField) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto meta = schema->field(2)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.linestring");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.linestring");
 }
 
-TEST_CASE("GeoArrow: extension metadata on Box field") {
+TEST(GeoArrowTest, ExtensionMetadataOnBoxField) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto meta = schema->field(3)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.box");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.box");
 }
 
-TEST_CASE("GeoArrow: extension metadata on PointZ field") {
+TEST(GeoArrowTest, ExtensionMetadataOnPointZField) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto meta = schema->field(4)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.point");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.point");
 }
 
-TEST_CASE("GeoArrow: extension metadata on MultiPoint field") {
+TEST(GeoArrowTest, ExtensionMetadataOnMultiPointField) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto meta = schema->field(5)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.multipoint");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.multipoint");
 }
 
 // =============================================================================
 // Point struct children match GeoArrow spec
 // =============================================================================
 
-TEST_CASE("GeoArrow: Point struct has x, y children") {
+TEST(GeoArrowTest, PointStructHasXYChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto point_type = std::static_pointer_cast<arrow::StructType>(
         schema->field(1)->type());
-    REQUIRE(point_type->num_fields() == 2);
-    CHECK(point_type->field(0)->name() == "x");
-    CHECK(point_type->field(0)->type()->id() == arrow::Type::DOUBLE);
-    CHECK(point_type->field(1)->name() == "y");
-    CHECK(point_type->field(1)->type()->id() == arrow::Type::DOUBLE);
+    ASSERT_EQ(point_type->num_fields(), 2);
+    EXPECT_EQ(point_type->field(0)->name(), "x");
+    EXPECT_EQ(point_type->field(0)->type()->id(), arrow::Type::DOUBLE);
+    EXPECT_EQ(point_type->field(1)->name(), "y");
+    EXPECT_EQ(point_type->field(1)->type()->id(), arrow::Type::DOUBLE);
 }
 
-TEST_CASE("GeoArrow: PointZ struct has x, y, z children") {
+TEST(GeoArrowTest, PointZStructHasXYZChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto point_type = std::static_pointer_cast<arrow::StructType>(
         schema->field(4)->type());
-    REQUIRE(point_type->num_fields() == 3);
-    CHECK(point_type->field(0)->name() == "x");
-    CHECK(point_type->field(1)->name() == "y");
-    CHECK(point_type->field(2)->name() == "z");
+    ASSERT_EQ(point_type->num_fields(), 3);
+    EXPECT_EQ(point_type->field(0)->name(), "x");
+    EXPECT_EQ(point_type->field(1)->name(), "y");
+    EXPECT_EQ(point_type->field(2)->name(), "z");
 }
 
-TEST_CASE("GeoArrow: Box struct has xmin, ymin, xmax, ymax children") {
+TEST(GeoArrowTest, BoxStructHasXminYminXmaxYmaxChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
     auto box_type = std::static_pointer_cast<arrow::StructType>(
         schema->field(3)->type());
-    REQUIRE(box_type->num_fields() == 4);
-    CHECK(box_type->field(0)->name() == "xmin");
-    CHECK(box_type->field(1)->name() == "ymin");
-    CHECK(box_type->field(2)->name() == "xmax");
-    CHECK(box_type->field(3)->name() == "ymax");
+    ASSERT_EQ(box_type->num_fields(), 4);
+    EXPECT_EQ(box_type->field(0)->name(), "xmin");
+    EXPECT_EQ(box_type->field(1)->name(), "ymin");
+    EXPECT_EQ(box_type->field(2)->name(), "xmax");
+    EXPECT_EQ(box_type->field(3)->name(), "ymax");
 }
 
 // =============================================================================
 // Round-trip encode/decode
 // =============================================================================
 
-TEST_CASE("GeoArrow: Point round-trip") {
+TEST(GeoArrowTest, PointRoundTrip) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::Point pt;
     pt.set_x(37.7749).set_y(-122.4194);
@@ -161,15 +162,15 @@ TEST_CASE("GeoArrow: Point round-trip") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
+    ASSERT_EQ(scalars.size(), 6);
 
     // last_position is a struct scalar
     auto* pos = dynamic_cast<arrow::StructScalar*>(scalars[1].get());
-    REQUIRE(pos != nullptr);
-    CHECK(pos->is_valid);
+    ASSERT_NE(pos, nullptr);
+    EXPECT_TRUE(pos->is_valid);
 }
 
-TEST_CASE("GeoArrow: LineString round-trip (collapsed to list)") {
+TEST(GeoArrowTest, LineStringRoundTripCollapsedToList) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::Point p1, p2, p3;
     p1.set_x(0.0).set_y(0.0);
@@ -180,15 +181,15 @@ TEST_CASE("GeoArrow: LineString round-trip (collapsed to list)") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
+    ASSERT_EQ(scalars.size(), 6);
 
     // route is a list of structs
     auto* route = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
-    REQUIRE(route != nullptr);
-    CHECK(route->value->length() == 3);
+    ASSERT_NE(route, nullptr);
+    EXPECT_EQ(route->value->length(), 3);
 }
 
-TEST_CASE("GeoArrow: Box round-trip") {
+TEST(GeoArrowTest, BoxRoundTrip) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::Box box;
     box.set_xmin(-10.0).set_ymin(-20.0).set_xmax(10.0).set_ymax(20.0);
@@ -197,24 +198,24 @@ TEST_CASE("GeoArrow: Box round-trip") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
+    ASSERT_EQ(scalars.size(), 6);
 
     auto* bb = dynamic_cast<arrow::StructScalar*>(scalars[3].get());
-    REQUIRE(bb != nullptr);
-    CHECK(bb->is_valid);
+    ASSERT_NE(bb, nullptr);
+    EXPECT_TRUE(bb->is_valid);
 }
 
-TEST_CASE("GeoArrow: optional PointZ null when not set") {
+TEST(GeoArrowTest, OptionalPointZNullWhenNotSet) {
     fletcher_gen::integration::VehicleTrack row;
     row.set_vehicle_id("v-4");
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
-    CHECK_FALSE(scalars[4]->is_valid);  // altitude_point not set
+    ASSERT_EQ(scalars.size(), 6);
+    EXPECT_FALSE(scalars[4]->is_valid);  // altitude_point not set
 }
 
-TEST_CASE("GeoArrow: optional PointZ valid when set") {
+TEST(GeoArrowTest, OptionalPointZValidWhenSet) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::PointZ pz;
     pz.set_x(37.7749).set_y(-122.4194).set_z(100.0);
@@ -223,11 +224,11 @@ TEST_CASE("GeoArrow: optional PointZ valid when set") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
-    CHECK(scalars[4]->is_valid);
+    ASSERT_EQ(scalars.size(), 6);
+    EXPECT_TRUE(scalars[4]->is_valid);
 }
 
-TEST_CASE("GeoArrow: MultiPoint round-trip") {
+TEST(GeoArrowTest, MultiPointRoundTrip) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::Point w1, w2;
     w1.set_x(10.0).set_y(20.0);
@@ -237,18 +238,18 @@ TEST_CASE("GeoArrow: MultiPoint round-trip") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::VehicleTrackSchema());
-    REQUIRE(scalars.size() == 6);
+    ASSERT_EQ(scalars.size(), 6);
 
     auto* wp = dynamic_cast<arrow::ListScalar*>(scalars[5].get());
-    REQUIRE(wp != nullptr);
-    CHECK(wp->value->length() == 2);
+    ASSERT_NE(wp, nullptr);
+    EXPECT_EQ(wp->value->length(), 2);
 }
 
 // =============================================================================
 // Native roundtrip (no Arrow dependency needed)
 // =============================================================================
 
-TEST_CASE("GeoArrow: native roundtrip - VehicleTrack") {
+TEST(GeoArrowTest, NativeRoundtripVehicleTrack) {
     fletcher_gen::integration::VehicleTrack row;
     fletcher_gen::geoarrow::Point pt;
     pt.set_x(37.7749).set_y(-122.4194);
@@ -271,64 +272,64 @@ TEST_CASE("GeoArrow: native roundtrip - VehicleTrack") {
        .set_waypoints({p1, p2});
 
     fletcher_gen::integration::VehicleTrack decoded(row.Encode());
-    CHECK(decoded.vehicle_id() == "v-test");
-    CHECK(decoded.last_position().x() == 37.7749);
-    CHECK(decoded.last_position().y() == -122.4194);
-    REQUIRE(decoded.route().size() == 2);
-    CHECK(decoded.route()[0].x() == 0.0);
-    CHECK(decoded.bounding_box().xmin() == -10.0);
-    CHECK(decoded.bounding_box().ymax() == 20.0);
-    REQUIRE(decoded.altitude_point() != nullptr);
-    CHECK(decoded.altitude_point()->z() == 100.0);
-    REQUIRE(decoded.waypoints().size() == 2);
+    EXPECT_EQ(decoded.vehicle_id(), "v-test");
+    EXPECT_DOUBLE_EQ(decoded.last_position().x(), 37.7749);
+    EXPECT_DOUBLE_EQ(decoded.last_position().y(), -122.4194);
+    ASSERT_EQ(decoded.route().size(), 2);
+    EXPECT_DOUBLE_EQ(decoded.route()[0].x(), 0.0);
+    EXPECT_DOUBLE_EQ(decoded.bounding_box().xmin(), -10.0);
+    EXPECT_DOUBLE_EQ(decoded.bounding_box().ymax(), 20.0);
+    ASSERT_NE(decoded.altitude_point(), nullptr);
+    EXPECT_DOUBLE_EQ(decoded.altitude_point()->z(), 100.0);
+    ASSERT_EQ(decoded.waypoints().size(), 2);
 }
 
 // =============================================================================
 // CRS utilities
 // =============================================================================
 
-TEST_CASE("CRS: EpsgToProjJson returns PROJJSON for 4326") {
+TEST(GeoArrowCrsTest, EpsgToProjJsonReturnsProjectJsonFor4326) {
     auto pj = fletcher::EpsgToProjJson(4326);
-    REQUIRE_FALSE(pj.empty());
-    CHECK(pj.find("\"EPSG\"") != std::string::npos);
-    CHECK(pj.find("4326") != std::string::npos);
-    CHECK(pj.find("WGS 84") != std::string::npos);
+    ASSERT_FALSE(pj.empty());
+    EXPECT_NE(pj.find("\"EPSG\""), std::string::npos);
+    EXPECT_NE(pj.find("4326"), std::string::npos);
+    EXPECT_NE(pj.find("WGS 84"), std::string::npos);
 }
 
-TEST_CASE("CRS: EpsgToProjJson returns PROJJSON for 3857") {
+TEST(GeoArrowCrsTest, EpsgToProjJsonReturnsProjectJsonFor3857) {
     auto pj = fletcher::EpsgToProjJson(3857);
-    REQUIRE_FALSE(pj.empty());
-    CHECK(pj.find("3857") != std::string::npos);
-    CHECK(pj.find("Pseudo-Mercator") != std::string::npos);
+    ASSERT_FALSE(pj.empty());
+    EXPECT_NE(pj.find("3857"), std::string::npos);
+    EXPECT_NE(pj.find("Pseudo-Mercator"), std::string::npos);
 }
 
-TEST_CASE("CRS: EpsgToProjJson returns empty for unknown code") {
-    CHECK(fletcher::EpsgToProjJson(99999).empty());
+TEST(GeoArrowCrsTest, EpsgToProjJsonReturnsEmptyForUnknownCode) {
+    EXPECT_TRUE(fletcher::EpsgToProjJson(99999).empty());
 }
 
-TEST_CASE("CRS: ResolveCrs passes through raw PROJJSON") {
+TEST(GeoArrowCrsTest, ResolveCrsPassesThroughRawProjectJson) {
     std::string projjson = R"({"type":"GeographicCRS"})";
-    CHECK(fletcher::ResolveCrs(projjson) == projjson);
+    EXPECT_EQ(fletcher::ResolveCrs(projjson), projjson);
 }
 
-TEST_CASE("CRS: ResolveCrs resolves EPSG codes") {
+TEST(GeoArrowCrsTest, ResolveCrsResolvesEpsgCodes) {
     auto resolved = fletcher::ResolveCrs("EPSG:4326");
-    CHECK_FALSE(resolved.empty());
-    CHECK(resolved.find("WGS 84") != std::string::npos);
+    EXPECT_FALSE(resolved.empty());
+    EXPECT_NE(resolved.find("WGS 84"), std::string::npos);
 }
 
-TEST_CASE("CRS: ResolveCrs returns empty for unknown format") {
-    CHECK(fletcher::ResolveCrs("something").empty());
+TEST(GeoArrowCrsTest, ResolveCrsReturnsEmptyForUnknownFormat) {
+    EXPECT_TRUE(fletcher::ResolveCrs("something").empty());
 }
 
-TEST_CASE("CRS: BuildExtensionMetadata empty CRS") {
-    CHECK(fletcher::BuildExtensionMetadata("") == "{}");
+TEST(GeoArrowCrsTest, BuildExtensionMetadataEmptyCrs) {
+    EXPECT_EQ(fletcher::BuildExtensionMetadata(""), "{}");
 }
 
-TEST_CASE("CRS: BuildExtensionMetadata with PROJJSON") {
+TEST(GeoArrowCrsTest, BuildExtensionMetadataWithProjectJson) {
     std::string pj = R"({"type":"GeographicCRS"})";
     auto meta = fletcher::BuildExtensionMetadata(pj);
-    CHECK(meta == R"({"crs":{"type":"GeographicCRS"}})");
+    EXPECT_EQ(meta, R"({"crs":{"type":"GeographicCRS"}})");
 }
 
 // =============================================================================
@@ -337,81 +338,81 @@ TEST_CASE("CRS: BuildExtensionMetadata with PROJJSON") {
 
 // -- Schema structure ---------------------------------------------------------
 
-TEST_CASE("GeoArrow: LandParcel schema structure") {
+TEST(GeoArrowPhase2Test, LandParcelSchemaStructure) {
     auto schema = ImportNano(fletcher_gen::integration::LandParcelSchema());
-    REQUIRE(schema->num_fields() == 5);
+    ASSERT_EQ(schema->num_fields(), 5);
 
-    CHECK(schema->field(0)->name() == "parcel_id");
-    CHECK(schema->field(0)->type()->id() == arrow::Type::STRING);
+    EXPECT_EQ(schema->field(0)->name(), "parcel_id");
+    EXPECT_EQ(schema->field(0)->type()->id(), arrow::Type::STRING);
 
     // boundary — Polygon → List<List<Struct>>
-    CHECK(schema->field(1)->name() == "boundary");
-    CHECK(schema->field(1)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(1)->name(), "boundary");
+    EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::LIST);
     auto inner1 = std::static_pointer_cast<arrow::ListType>(schema->field(1)->type());
-    CHECK(inner1->value_type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(inner1->value_type()->id(), arrow::Type::LIST);
     auto inner2 = std::static_pointer_cast<arrow::ListType>(inner1->value_type());
-    CHECK(inner2->value_type()->id() == arrow::Type::STRUCT);
+    EXPECT_EQ(inner2->value_type()->id(), arrow::Type::STRUCT);
 
     // access_roads — MultiLineString → List<List<Struct>>
-    CHECK(schema->field(2)->name() == "access_roads");
-    CHECK(schema->field(2)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(2)->name(), "access_roads");
+    EXPECT_EQ(schema->field(2)->type()->id(), arrow::Type::LIST);
 
     // zones — MultiPolygon → List<List<List<Struct>>>
-    CHECK(schema->field(3)->name() == "zones");
-    CHECK(schema->field(3)->type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(schema->field(3)->name(), "zones");
+    EXPECT_EQ(schema->field(3)->type()->id(), arrow::Type::LIST);
     auto z1 = std::static_pointer_cast<arrow::ListType>(schema->field(3)->type());
-    CHECK(z1->value_type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(z1->value_type()->id(), arrow::Type::LIST);
     auto z2 = std::static_pointer_cast<arrow::ListType>(z1->value_type());
-    CHECK(z2->value_type()->id() == arrow::Type::LIST);
+    EXPECT_EQ(z2->value_type()->id(), arrow::Type::LIST);
     auto z3 = std::static_pointer_cast<arrow::ListType>(z2->value_type());
-    CHECK(z3->value_type()->id() == arrow::Type::STRUCT);
+    EXPECT_EQ(z3->value_type()->id(), arrow::Type::STRUCT);
 
     // boundary_3d — optional PolygonZ → nullable
-    CHECK(schema->field(4)->name() == "boundary_3d");
-    CHECK(schema->field(4)->nullable());
+    EXPECT_EQ(schema->field(4)->name(), "boundary_3d");
+    EXPECT_TRUE(schema->field(4)->nullable());
 }
 
 // -- Extension metadata -------------------------------------------------------
 
-TEST_CASE("GeoArrow: extension metadata on Polygon field") {
+TEST(GeoArrowPhase2Test, ExtensionMetadataOnPolygonField) {
     auto schema = ImportNano(fletcher_gen::integration::LandParcelSchema());
     auto meta = schema->field(1)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.polygon");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.polygon");
 }
 
-TEST_CASE("GeoArrow: extension metadata on MultiLineString field") {
+TEST(GeoArrowPhase2Test, ExtensionMetadataOnMultiLineStringField) {
     auto schema = ImportNano(fletcher_gen::integration::LandParcelSchema());
     auto meta = schema->field(2)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.multilinestring");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.multilinestring");
 }
 
-TEST_CASE("GeoArrow: extension metadata on MultiPolygon field") {
+TEST(GeoArrowPhase2Test, ExtensionMetadataOnMultiPolygonField) {
     auto schema = ImportNano(fletcher_gen::integration::LandParcelSchema());
     auto meta = schema->field(3)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.multipolygon");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.multipolygon");
 }
 
-TEST_CASE("GeoArrow: extension metadata on PolygonZ field") {
+TEST(GeoArrowPhase2Test, ExtensionMetadataOnPolygonZField) {
     auto schema = ImportNano(fletcher_gen::integration::LandParcelSchema());
     auto meta = schema->field(4)->metadata();
-    REQUIRE(meta != nullptr);
+    ASSERT_NE(meta, nullptr);
     auto result = meta->Get("ARROW:extension:name");
-    REQUIRE(result.ok());
-    CHECK(*result == "geoarrow.polygon");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(*result, "geoarrow.polygon");
 }
 
 // -- Round-trip encode/decode -------------------------------------------------
 
-TEST_CASE("GeoArrow: Polygon round-trip") {
+TEST(GeoArrowPhase2Test, PolygonRoundTrip) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::Point p1, p2, p3, p4;
@@ -424,21 +425,21 @@ TEST_CASE("GeoArrow: Polygon round-trip") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::LandParcelSchema());
-    REQUIRE(scalars.size() == 5);
+    ASSERT_EQ(scalars.size(), 5);
 
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
-    REQUIRE(outer != nullptr);
-    CHECK(outer->value->length() == 1);  // one ring
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->value->length(), 1);  // one ring
 
     // Decode back to a LandParcel and verify values.
     fletcher_gen::integration::LandParcel decoded(row.Encode());
-    REQUIRE(decoded.boundary().size() == 1);
-    REQUIRE(decoded.boundary()[0].size() == 4);
-    CHECK(decoded.boundary()[0][0].x() == 0.0);
-    CHECK(decoded.boundary()[0][0].y() == 0.0);
+    ASSERT_EQ(decoded.boundary().size(), 1);
+    ASSERT_EQ(decoded.boundary()[0].size(), 4);
+    EXPECT_DOUBLE_EQ(decoded.boundary()[0][0].x(), 0.0);
+    EXPECT_DOUBLE_EQ(decoded.boundary()[0][0].y(), 0.0);
 }
 
-TEST_CASE("GeoArrow: MultiLineString round-trip") {
+TEST(GeoArrowPhase2Test, MultiLineStringRoundTrip) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::Point a1, a2, b1, b2, b3;
@@ -450,16 +451,16 @@ TEST_CASE("GeoArrow: MultiLineString round-trip") {
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::LandParcelSchema());
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
-    REQUIRE(outer != nullptr);
-    CHECK(outer->value->length() == 2);
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->value->length(), 2);
 
     fletcher_gen::integration::LandParcel decoded(row.Encode());
-    REQUIRE(decoded.access_roads().size() == 2);
-    CHECK(decoded.access_roads()[0].size() == 2);
-    CHECK(decoded.access_roads()[1].size() == 3);
+    ASSERT_EQ(decoded.access_roads().size(), 2);
+    EXPECT_EQ(decoded.access_roads()[0].size(), 2);
+    EXPECT_EQ(decoded.access_roads()[1].size(), 3);
 }
 
-TEST_CASE("GeoArrow: MultiPolygon round-trip") {
+TEST(GeoArrowPhase2Test, MultiPolygonRoundTrip) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::Point p1, p2, p3, p4;
@@ -478,25 +479,25 @@ TEST_CASE("GeoArrow: MultiPolygon round-trip") {
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::LandParcelSchema());
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[3].get());
-    REQUIRE(outer != nullptr);
-    CHECK(outer->value->length() == 2);
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->value->length(), 2);
 
     fletcher_gen::integration::LandParcel decoded(row.Encode());
-    REQUIRE(decoded.zones().size() == 2);
-    REQUIRE(decoded.zones()[0].size() == 1);
-    REQUIRE(decoded.zones()[0][0].size() == 4);
+    ASSERT_EQ(decoded.zones().size(), 2);
+    ASSERT_EQ(decoded.zones()[0].size(), 1);
+    ASSERT_EQ(decoded.zones()[0][0].size(), 4);
 }
 
-TEST_CASE("GeoArrow: optional PolygonZ null when not set") {
+TEST(GeoArrowPhase2Test, OptionalPolygonZNullWhenNotSet) {
     fletcher_gen::integration::LandParcel row;
     row.set_parcel_id("p-4");
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::LandParcelSchema());
-    REQUIRE(scalars.size() == 5);
-    CHECK_FALSE(scalars[4]->is_valid);
+    ASSERT_EQ(scalars.size(), 5);
+    EXPECT_FALSE(scalars[4]->is_valid);
 }
 
-TEST_CASE("GeoArrow: optional PolygonZ valid when set") {
+TEST(GeoArrowPhase2Test, OptionalPolygonZValidWhenSet) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::PointZ p1, p2, p3, p4;
@@ -509,7 +510,7 @@ TEST_CASE("GeoArrow: optional PolygonZ valid when set") {
 
     auto scalars = GeoRoundTrip(row.Encode(),
         fletcher_gen::integration::LandParcelSchema());
-    CHECK(scalars[4]->is_valid);
+    EXPECT_TRUE(scalars[4]->is_valid);
 }
 
 // =============================================================================

@@ -59,10 +59,14 @@ class VectorWriteBuffer : public WriteBuffer {
     }
 
     void PatchU32(size_t offset, uint32_t value) override {
+        if (offset + sizeof(value) > buf_.size())
+            throw std::out_of_range("VectorWriteBuffer::PatchU32: offset out of range");
         std::memcpy(buf_.data() + offset, &value, sizeof(value));
     }
 
     void PatchByte(size_t offset, uint8_t bits) override {
+        if (offset >= buf_.size())
+            throw std::out_of_range("VectorWriteBuffer::PatchByte: offset out of range");
         buf_[offset] |= bits;
     }
 
@@ -92,10 +96,14 @@ class FixedWriteBuffer : public WriteBuffer {
     size_t Position() const override { return pos_; }
 
     void PatchU32(size_t offset, uint32_t value) override {
+        if (offset + sizeof(value) > capacity_)
+            throw std::out_of_range("FixedWriteBuffer::PatchU32: offset out of range");
         std::memcpy(data_ + offset, &value, sizeof(value));
     }
 
     void PatchByte(size_t offset, uint8_t bits) override {
+        if (offset >= capacity_)
+            throw std::out_of_range("FixedWriteBuffer::PatchByte: offset out of range");
         data_[offset] |= bits;
     }
 

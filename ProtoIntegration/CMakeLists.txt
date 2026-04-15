@@ -92,11 +92,11 @@ target_include_directories(fletcher_proto_integration_tests PRIVATE
     "${GENERATED_DIR}"
 )
 target_link_libraries(fletcher_proto_integration_tests PRIVATE
-    Catch2::Catch2WithMain
+    GTest::gtest_main
     row_codec
     pubsub
     arrow::arrow
 )
 
-include(Catch)
-catch_discover_tests(fletcher_proto_integration_tests)
+include(GoogleTest)
+gtest_discover_tests(fletcher_proto_integration_tests)

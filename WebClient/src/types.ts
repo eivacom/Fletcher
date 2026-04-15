@@ -9,7 +9,7 @@ export interface FletcherClientOptions {
   url: string;
   /** Which decode/encode backend to use. Default: 'object'. */
   backend?: BackendType;
-/** Reconnect delay in ms (0 to disable). Default: 0. */
+  /** Reconnect delay in ms (0 to disable). Default: 0. */
   reconnectDelay?: number;
 }
 

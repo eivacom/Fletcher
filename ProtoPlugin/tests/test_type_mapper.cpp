@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
@@ -158,85 +158,85 @@ const FileDescriptor* BuildOneofMsg(DescriptorPool& pool) {
 // Scalar type mappings (same as before, adapted to new struct)
 // ===========================================================================
 
-TEST_CASE("MapField: bool") {
+TEST(TypeMapperTest, MapFieldBool) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "bool", FieldDescriptorProto::TYPE_BOOL)));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::SCALAR);
-    CHECK(m->scalar.arrow_type_expr == "arrow::boolean()");
-    CHECK(m->scalar.storage_type    == "bool");
-    CHECK(m->scalar.builder_type    == "arrow::BooleanBuilder");
-    CHECK(m->scalar.default_value   == "false");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::SCALAR);
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::boolean()");
+    EXPECT_EQ(m->scalar.storage_type,    "bool");
+    EXPECT_EQ(m->scalar.builder_type,    "arrow::BooleanBuilder");
+    EXPECT_EQ(m->scalar.default_value,   "false");
 }
 
-TEST_CASE("MapField: int32") {
+TEST(TypeMapperTest, MapFieldInt32) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "int32", FieldDescriptorProto::TYPE_INT32)));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::SCALAR);
-    CHECK(m->scalar.arrow_type_expr == "arrow::int32()");
-    CHECK(m->scalar.storage_type    == "int32_t");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::SCALAR);
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int32()");
+    EXPECT_EQ(m->scalar.storage_type,    "int32_t");
 }
 
-TEST_CASE("MapField: sint32 maps to arrow::int32") {
+TEST(TypeMapperTest, MapFieldSint32MapsToArrowInt32) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "sint32", FieldDescriptorProto::TYPE_SINT32)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::int32()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int32()");
 }
 
-TEST_CASE("MapField: int64") {
+TEST(TypeMapperTest, MapFieldInt64) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "int64", FieldDescriptorProto::TYPE_INT64)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::int64()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int64()");
 }
 
-TEST_CASE("MapField: uint32") {
+TEST(TypeMapperTest, MapFieldUint32) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "uint32", FieldDescriptorProto::TYPE_UINT32)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::uint32()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::uint32()");
 }
 
-TEST_CASE("MapField: uint64") {
+TEST(TypeMapperTest, MapFieldUint64) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "uint64", FieldDescriptorProto::TYPE_UINT64)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::uint64()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::uint64()");
 }
 
-TEST_CASE("MapField: float") {
+TEST(TypeMapperTest, MapFieldFloat) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "float", FieldDescriptorProto::TYPE_FLOAT)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::float32()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::float32()");
 }
 
-TEST_CASE("MapField: double") {
+TEST(TypeMapperTest, MapFieldDouble) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "double", FieldDescriptorProto::TYPE_DOUBLE)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::float64()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::float64()");
 }
 
-TEST_CASE("MapField: string") {
+TEST(TypeMapperTest, MapFieldString) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "string", FieldDescriptorProto::TYPE_STRING)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::utf8()");
-    CHECK(m->scalar.storage_type    == "std::string");
-    CHECK(m->scalar.param_type      == "std::string_view");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::utf8()");
+    EXPECT_EQ(m->scalar.storage_type,    "std::string");
+    EXPECT_EQ(m->scalar.param_type,      "std::string_view");
 }
 
-TEST_CASE("MapField: bytes") {
+TEST(TypeMapperTest, MapFieldBytes) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "bytes", FieldDescriptorProto::TYPE_BYTES)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.arrow_type_expr == "arrow::binary()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::binary()");
 }
 
-TEST_CASE("MapField: enum maps to int32") {
+TEST(TypeMapperTest, MapFieldEnumMapsToInt32) {
     DescriptorPool pool;
     FileDescriptorProto fdp;
     fdp.set_name("test_enum.proto");
@@ -253,161 +253,161 @@ TEST_CASE("MapField: enum maps to int32") {
     f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
     f->set_type_name(".Color");
     auto* file = pool.BuildFile(fdp);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
 
     auto m = MapField(file->message_type(0)->field(0));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::SCALAR);
-    CHECK(m->scalar.arrow_type_expr == "arrow::int32()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::SCALAR);
+    EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int32()");
 }
 
-TEST_CASE("MapField: scalar_ctor contains {val} token") {
+TEST(TypeMapperTest, ScalarCtorContainsValToken) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "tok", FieldDescriptorProto::TYPE_INT32)));
-    REQUIRE(m.has_value());
-    CHECK(m->scalar.scalar_ctor.find("{val}") != std::string::npos);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_NE(m->scalar.scalar_ctor.find("{val}"), std::string::npos);
 }
 
-TEST_CASE("MapField: proto3 non-optional field is not nullable") {
+TEST(TypeMapperTest, Proto3NonOptionalFieldIsNotNullable) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(pool, "nopt", FieldDescriptorProto::TYPE_INT32)));
-    REQUIRE(m.has_value());
-    CHECK_FALSE(m->nullable);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_FALSE(m->nullable);
 }
 
 // ===========================================================================
 // Repeated scalar fields
 // ===========================================================================
 
-TEST_CASE("MapField: repeated int32 ->REPEATED_SCALAR") {
+TEST(TypeMapperTest, RepeatedInt32MapsToRepeatedScalar) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(
         pool, "rep_i32", FieldDescriptorProto::TYPE_INT32,
         FieldDescriptorProto::LABEL_REPEATED)));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::REPEATED_SCALAR);
-    CHECK_FALSE(m->nullable);  // repeated fields are never null
-    CHECK(m->element.arrow_type_expr == "arrow::int32()");
-    CHECK(m->element.storage_type    == "int32_t");
-    CHECK(m->element.builder_type    == "arrow::Int32Builder");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::REPEATED_SCALAR);
+    EXPECT_FALSE(m->nullable);  // repeated fields are never null
+    EXPECT_EQ(m->element.arrow_type_expr, "arrow::int32()");
+    EXPECT_EQ(m->element.storage_type,    "int32_t");
+    EXPECT_EQ(m->element.builder_type,    "arrow::Int32Builder");
 }
 
-TEST_CASE("MapField: repeated string ->REPEATED_SCALAR") {
+TEST(TypeMapperTest, RepeatedStringMapsToRepeatedScalar) {
     DescriptorPool pool;
     auto m = MapField(First(BuildSingleField(
         pool, "rep_str", FieldDescriptorProto::TYPE_STRING,
         FieldDescriptorProto::LABEL_REPEATED)));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::REPEATED_SCALAR);
-    CHECK(m->element.arrow_type_expr == "arrow::utf8()");
-    CHECK(m->element.builder_type    == "arrow::StringBuilder");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::REPEATED_SCALAR);
+    EXPECT_EQ(m->element.arrow_type_expr, "arrow::utf8()");
+    EXPECT_EQ(m->element.builder_type,    "arrow::StringBuilder");
 }
 
 // ===========================================================================
 // Nested message fields (struct)
 // ===========================================================================
 
-TEST_CASE("MapField: singular message ->STRUCT") {
+TEST(TypeMapperTest, SingularMessageMapsToStruct) {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "struct", FieldDescriptorProto::LABEL_OPTIONAL);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     // message_type(1) is Outer; field(0) is "inner"
     auto m = MapField(file->message_type(1)->field(0));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::STRUCT);
-    CHECK(m->nested_class == "Inner");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::STRUCT);
+    EXPECT_EQ(m->nested_class, "Inner");
 }
 
-TEST_CASE("MapField: non-optional struct is not nullable") {
+TEST(TypeMapperTest, NonOptionalStructIsNotNullable) {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "struct_nonnull", FieldDescriptorProto::LABEL_OPTIONAL);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     auto m = MapField(file->message_type(1)->field(0));
-    REQUIRE(m.has_value());
+    ASSERT_TRUE(m.has_value());
     // In proto3 without 'optional' keyword, has_optional_keyword() is false.
-    CHECK_FALSE(m->nullable);
+    EXPECT_FALSE(m->nullable);
 }
 
-TEST_CASE("MapField: repeated message ->REPEATED_STRUCT") {
+TEST(TypeMapperTest, RepeatedMessageMapsToRepeatedStruct) {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "rep_struct", FieldDescriptorProto::LABEL_REPEATED);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     auto m = MapField(file->message_type(1)->field(0));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::REPEATED_STRUCT);
-    CHECK_FALSE(m->nullable);
-    CHECK(m->nested_class == "Inner");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::REPEATED_STRUCT);
+    EXPECT_FALSE(m->nullable);
+    EXPECT_EQ(m->nested_class, "Inner");
 }
 
 // ===========================================================================
 // Map fields
 // ===========================================================================
 
-TEST_CASE("MapField: map<string, int32> ->MAP") {
+TEST(TypeMapperTest, MapStringInt32MapsToMap) {
     DescriptorPool pool;
     auto* file = BuildMapField(pool, "map_str_i32", FieldDescriptorProto::TYPE_INT32);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     auto m = MapField(file->message_type(0)->field(0));
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::MAP);
-    CHECK_FALSE(m->nullable);
-    CHECK(m->map_key.arrow_type_expr   == "arrow::utf8()");
-    CHECK(m->map_key.storage_type      == "std::string");
-    CHECK_FALSE(m->map_value_is_message);
-    CHECK(m->map_value.arrow_type_expr == "arrow::int32()");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::MAP);
+    EXPECT_FALSE(m->nullable);
+    EXPECT_EQ(m->map_key.arrow_type_expr,   "arrow::utf8()");
+    EXPECT_EQ(m->map_key.storage_type,      "std::string");
+    EXPECT_FALSE(m->map_value_is_message);
+    EXPECT_EQ(m->map_value.arrow_type_expr, "arrow::int32()");
 }
 
-TEST_CASE("MapField: map emits a warning about compute support") {
+TEST(TypeMapperTest, MapEmitsWarningAboutComputeSupport) {
     DescriptorPool pool;
     auto* file = BuildMapField(pool, "map_warn", FieldDescriptorProto::TYPE_INT32);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     auto m = MapField(file->message_type(0)->field(0));
-    REQUIRE(m.has_value());
-    CHECK_FALSE(m->warning.empty());
-    CHECK(m->warning.find("compute") != std::string::npos);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_FALSE(m->warning.empty());
+    EXPECT_NE(m->warning.find("compute"), std::string::npos);
 }
 
 // ===========================================================================
 // Oneof fields
 // ===========================================================================
 
-TEST_CASE("MapField: oneof field returns nullopt") {
+TEST(TypeMapperTest, OneofFieldReturnsNullopt) {
     DescriptorPool pool;
     auto* file = BuildOneofMsg(pool);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     // Both fields are in the oneof
-    CHECK_FALSE(MapField(file->message_type(0)->field(0)).has_value());
-    CHECK_FALSE(MapField(file->message_type(0)->field(1)).has_value());
+    EXPECT_FALSE(MapField(file->message_type(0)->field(0)).has_value());
+    EXPECT_FALSE(MapField(file->message_type(0)->field(1)).has_value());
 }
 
-TEST_CASE("UnsupportedReason: oneof mentions the oneof name") {
+TEST(TypeMapperTest, UnsupportedReasonOneofMentionsOneofName) {
     DescriptorPool pool;
     auto* file = BuildOneofMsg(pool);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     auto reason = UnsupportedReason(file->message_type(0)->field(0));
-    CHECK(reason.find("payload") != std::string::npos);
-    CHECK(reason.find("oneof") != std::string::npos);
+    EXPECT_NE(reason.find("payload"), std::string::npos);
+    EXPECT_NE(reason.find("oneof"), std::string::npos);
 }
 
 // ===========================================================================
 // Recursive messages
 // ===========================================================================
 
-TEST_CASE("IsRecursive: self-referencing message is recursive") {
+TEST(TypeMapperTest, SelfReferencingMessageIsRecursive) {
     DescriptorPool pool;
     auto* file = BuildRecursiveMsg(pool);
-    REQUIRE(file);
-    CHECK(IsRecursive(file->message_type(0)));
+    ASSERT_TRUE(file);
+    EXPECT_TRUE(IsRecursive(file->message_type(0)));
 }
 
-TEST_CASE("IsRecursive: flat message is not recursive") {
+TEST(TypeMapperTest, FlatMessageIsNotRecursive) {
     DescriptorPool pool;
     auto* file = BuildSingleField(pool, "flat", FieldDescriptorProto::TYPE_INT32);
-    REQUIRE(file);
-    CHECK_FALSE(IsRecursive(file->message_type(0)));
+    ASSERT_TRUE(file);
+    EXPECT_FALSE(IsRecursive(file->message_type(0)));
 }
 
-TEST_CASE("MapField: field referencing recursive message returns nullopt") {
+TEST(TypeMapperTest, FieldReferencingRecursiveMessageReturnsNullopt) {
     DescriptorPool pool;
 
     // Build two messages: TreeNode (recursive) and Wrapper (has a TreeNode field)
@@ -439,41 +439,41 @@ TEST_CASE("MapField: field referencing recursive message returns nullopt") {
     wf->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
 
     auto* file = pool.BuildFile(fdp);
-    REQUIRE(file);
-    CHECK_FALSE(MapField(file->message_type(1)->field(0)).has_value());
+    ASSERT_TRUE(file);
+    EXPECT_FALSE(MapField(file->message_type(1)->field(0)).has_value());
 }
 
 // ===========================================================================
 // Nesting depth
 // ===========================================================================
 
-TEST_CASE("NestingDepth: flat message has depth 0") {
+TEST(TypeMapperTest, FlatMessageHasDepthZero) {
     DescriptorPool pool;
     auto* file = BuildSingleField(pool, "flat_depth", FieldDescriptorProto::TYPE_INT32);
-    REQUIRE(file);
-    CHECK(NestingDepth(file->message_type(0)) == 0);
+    ASSERT_TRUE(file);
+    EXPECT_EQ(NestingDepth(file->message_type(0)), 0);
 }
 
-TEST_CASE("NestingDepth: one level of nesting has depth 1") {
+TEST(TypeMapperTest, OneLevelOfNestingHasDepthOne) {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "depth1", FieldDescriptorProto::LABEL_OPTIONAL);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
     // Outer ->Inner (depth 1)
-    CHECK(NestingDepth(file->message_type(1)) == 1);
+    EXPECT_EQ(NestingDepth(file->message_type(1)), 1);
 }
 
 // ===========================================================================
 // ClassName
 // ===========================================================================
 
-TEST_CASE("ClassName: top-level message") {
+TEST(TypeMapperTest, ClassNameTopLevelMessage) {
     DescriptorPool pool;
     auto* file = BuildSingleField(pool, "cls", FieldDescriptorProto::TYPE_INT32);
-    REQUIRE(file);
-    CHECK(ClassName(file->message_type(0)) == "Msg");
+    ASSERT_TRUE(file);
+    EXPECT_EQ(ClassName(file->message_type(0)), "Msg");
 }
 
-TEST_CASE("ClassName: nested message uses underscore separator") {
+TEST(TypeMapperTest, ClassNameNestedMessageUsesUnderscoreSeparator) {
     DescriptorPool pool;
     FileDescriptorProto fdp;
     fdp.set_name("test_nested_cls.proto");
@@ -489,8 +489,8 @@ TEST_CASE("ClassName: nested message uses underscore separator") {
     f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
 
     auto* file = pool.BuildFile(fdp);
-    REQUIRE(file);
-    CHECK(ClassName(file->message_type(0)->nested_type(0)) == "Outer_Inner");
+    ASSERT_TRUE(file);
+    EXPECT_EQ(ClassName(file->message_type(0)->nested_type(0)), "Outer_Inner");
 }
 
 // ===========================================================================
@@ -549,91 +549,91 @@ const FileDescriptor* BuildConsumerFile(DescriptorPool& pool,
 
 }  // namespace
 
-TEST_CASE("MapField: cross-file singular message succeeds (same package)") {
+TEST(TypeMapperTest, CrossFileSingularMessageSamePackage) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_same_pkg.proto", "mypkg"));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_same_pkg.proto", "mypkg"));
 
     auto* consumer = BuildConsumerFile(
         pool, "consumer_same_pkg.proto", "dep_same_pkg.proto",
         ".mypkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mypkg");
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::STRUCT);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::STRUCT);
     // Same package ->no global qualification needed; nested_header must be set.
-    CHECK(m->nested_class == "DepMsg");
-    CHECK(m->nested_header == "dep_same_pkg.fletcher.pb.h");
+    EXPECT_EQ(m->nested_class, "DepMsg");
+    EXPECT_EQ(m->nested_header, "dep_same_pkg.fletcher.pb.h");
 }
 
-TEST_CASE("MapField: cross-file singular message succeeds (different packages)") {
+TEST(TypeMapperTest, CrossFileSingularMessageDifferentPackages) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_other_pkg.proto", "other.pkg"));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_other_pkg.proto", "other.pkg"));
 
     auto* consumer = BuildConsumerFile(
         pool, "consumer_diff_pkg.proto", "dep_other_pkg.proto",
         ".other.pkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::STRUCT);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::STRUCT);
     // Different package ->globally qualified.
-    CHECK(m->nested_class == "::fletcher_gen::other::pkg::DepMsg");
-    CHECK(m->nested_header == "dep_other_pkg.fletcher.pb.h");
+    EXPECT_EQ(m->nested_class, "::fletcher_gen::other::pkg::DepMsg");
+    EXPECT_EQ(m->nested_header, "dep_other_pkg.fletcher.pb.h");
 }
 
-TEST_CASE("MapField: cross-file singular message - no-package dep") {
+TEST(TypeMapperTest, CrossFileSingularMessageNoPackageDep) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_no_pkg.proto", ""));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_no_pkg.proto", ""));
 
     auto* consumer = BuildConsumerFile(
         pool, "consumer_no_dep_pkg.proto", "dep_no_pkg.proto",
         ".DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->nested_class == "::fletcher_gen::DepMsg");
-    CHECK(m->nested_header == "dep_no_pkg.fletcher.pb.h");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->nested_class, "::fletcher_gen::DepMsg");
+    EXPECT_EQ(m->nested_header, "dep_no_pkg.fletcher.pb.h");
 }
 
-TEST_CASE("MapField: cross-file repeated message succeeds") {
+TEST(TypeMapperTest, CrossFileRepeatedMessageSucceeds) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_repeated.proto", "ext"));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_repeated.proto", "ext"));
 
     auto* consumer = BuildConsumerFile(
         pool, "consumer_repeated.proto", "dep_repeated.proto",
         ".ext.DepMsg", FieldDescriptorProto::LABEL_REPEATED, "mine");
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::REPEATED_STRUCT);
-    CHECK(m->nested_class == "::fletcher_gen::ext::DepMsg");
-    CHECK(m->nested_header == "dep_repeated.fletcher.pb.h");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::REPEATED_STRUCT);
+    EXPECT_EQ(m->nested_class, "::fletcher_gen::ext::DepMsg");
+    EXPECT_EQ(m->nested_header, "dep_repeated.fletcher.pb.h");
 }
 
-TEST_CASE("MapField: same-file message still has empty nested_header") {
+TEST(TypeMapperTest, SameFileMessageHasEmptyNestedHeader) {
     DescriptorPool pool;
     auto* file = BuildNestedMsg(pool, "same_file_header", FieldDescriptorProto::LABEL_OPTIONAL);
-    REQUIRE(file);
+    ASSERT_TRUE(file);
 
     // Outer's "inner" field references Inner from the same file.
     const auto* fd = file->message_type(1)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::STRUCT);
-    CHECK(m->nested_header.empty());
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::STRUCT);
+    EXPECT_TRUE(m->nested_header.empty());
 }
 
-TEST_CASE("MapField: cross-file map with message value succeeds") {
+TEST(TypeMapperTest, CrossFileMapWithMessageValueSucceeds) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_map_val.proto", "ext"));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_map_val.proto", "ext"));
 
     // Build a file with map<string, ext.DepMsg>
     FileDescriptorProto fdp;
@@ -669,27 +669,27 @@ TEST_CASE("MapField: cross-file map with message value succeeds") {
     map_field->set_label(FieldDescriptorProto::LABEL_REPEATED);
 
     auto* consumer = pool.BuildFile(fdp);
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
     auto m = MapField(fd);
-    REQUIRE(m.has_value());
-    CHECK(m->kind == FieldKind::MAP);
-    CHECK(m->map_value_is_message);
-    CHECK(m->map_value_class == "::fletcher_gen::ext::DepMsg");
-    CHECK(m->map_value_header == "dep_map_val.fletcher.pb.h");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->kind, FieldKind::MAP);
+    EXPECT_TRUE(m->map_value_is_message);
+    EXPECT_EQ(m->map_value_class, "::fletcher_gen::ext::DepMsg");
+    EXPECT_EQ(m->map_value_header, "dep_map_val.fletcher.pb.h");
 }
 
-TEST_CASE("UnsupportedReason: cross-file reference is no longer unsupported") {
+TEST(TypeMapperTest, CrossFileReferenceIsNoLongerUnsupported) {
     DescriptorPool pool;
-    REQUIRE(BuildDepFile(pool, "dep_reason.proto", "ext"));
+    ASSERT_TRUE(BuildDepFile(pool, "dep_reason.proto", "ext"));
 
     auto* consumer = BuildConsumerFile(
         pool, "consumer_reason.proto", "dep_reason.proto",
         ".ext.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mine");
-    REQUIRE(consumer);
+    ASSERT_TRUE(consumer);
 
     // MapField should now succeed for cross-file references.
     const auto* fd = consumer->message_type(0)->field(0);
-    CHECK(MapField(fd).has_value());
+    EXPECT_TRUE(MapField(fd).has_value());
 }

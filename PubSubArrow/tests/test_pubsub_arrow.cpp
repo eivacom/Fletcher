@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <pubsub_arrow/pubsub_arrow.hpp>
 #include <pubsub/write_buffer.hpp>
@@ -6,6 +6,7 @@
 #include <arrow/api.h>
 
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 using namespace fletcher;
@@ -89,31 +90,31 @@ static const std::vector<std::string> kTopic = {"test", "topic"};
 // Tests
 // ---------------------------------------------------------------------------
 
-TEST_CASE("PubSubArrow: CreateTopic converts Arrow schema to ArrowSchema") {
+TEST(PubSubArrowTest, CreateTopicConvertsArrowSchemaToArrowSchema) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
     pa.CreateTopic(kTopic, TestSchema());
-    REQUIRE(mock->topics_created.size() == 1);
-    CHECK(mock->topics_created[0] == "test/topic");
+    ASSERT_EQ(mock->topics_created.size(), 1);
+    EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST_CASE("PubSubArrow: Subscribe returns Arrow schema") {
+TEST(PubSubArrowTest, SubscribeReturnsArrowSchema) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
     pa.CreateTopic(kTopic, TestSchema());
     auto result = pa.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
-    REQUIRE(result.schema != nullptr);
-    CHECK(result.schema->num_fields() == 2);
-    CHECK(result.schema->field(0)->name() == "x");
-    CHECK(result.schema->field(0)->type()->Equals(*arrow::int32()));
-    CHECK(result.schema->field(1)->name() == "name");
-    CHECK(result.schema->field(1)->type()->Equals(*arrow::utf8()));
+    ASSERT_NE(result.schema, nullptr);
+    EXPECT_EQ(result.schema->num_fields(), 2);
+    EXPECT_EQ(result.schema->field(0)->name(), "x");
+    EXPECT_TRUE(result.schema->field(0)->type()->Equals(*arrow::int32()));
+    EXPECT_EQ(result.schema->field(1)->name(), "name");
+    EXPECT_TRUE(result.schema->field(1)->type()->Equals(*arrow::utf8()));
 }
 
-TEST_CASE("PubSubArrow: Publish/Subscribe roundtrip with ArrowRow") {
+TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
@@ -130,13 +131,13 @@ TEST_CASE("PubSubArrow: Publish/Subscribe roundtrip with ArrowRow") {
     };
     pa.Publish(kTopic, sent);
 
-    REQUIRE(received.size() == 2);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*received[0]).value == 42);
-    CHECK(static_cast<const arrow::StringScalar&>(*received[1]).value->ToString()
-          == "hello");
+    ASSERT_EQ(received.size(), 2);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*received[0]).value, 42);
+    EXPECT_EQ(static_cast<const arrow::StringScalar&>(*received[1]).value->ToString(),
+          "hello");
 }
 
-TEST_CASE("PubSubArrow: Publish with attachments") {
+TEST(PubSubArrowTest, PublishWithAttachments) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
@@ -156,11 +157,11 @@ TEST_CASE("PubSubArrow: Publish with attachments") {
     };
     pa.Publish(kTopic, row, {{"img", blob}});
 
-    REQUIRE(received_att.count("img") == 1);
-    CHECK(*received_att.at("img") == *blob);
+    ASSERT_EQ(received_att.count("img"), 1);
+    EXPECT_EQ(*received_att.at("img"), *blob);
 }
 
-TEST_CASE("PubSubArrow: PublishDirect passthrough") {
+TEST(PubSubArrowTest, PublishDirectPassthrough) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
@@ -179,11 +180,11 @@ TEST_CASE("PubSubArrow: PublishDirect passthrough") {
         buf.Append(reinterpret_cast<const uint8_t*>(&val), sizeof(val));
     });
 
-    REQUIRE(received.size() == 1);
-    CHECK(static_cast<const arrow::Int32Scalar&>(*received[0]).value == 99);
+    ASSERT_EQ(received.size(), 1);
+    EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*received[0]).value, 99);
 }
 
-TEST_CASE("PubSubArrow: Unsubscribe") {
+TEST(PubSubArrowTest, Unsubscribe) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
@@ -197,24 +198,24 @@ TEST_CASE("PubSubArrow: Unsubscribe") {
         std::make_shared<arrow::StringScalar>("a"),
     };
     pa.Publish(kTopic, row);
-    CHECK(count == 1);
+    EXPECT_EQ(count, 1);
 
     pa.Unsubscribe(result.subscription_id);
     pa.Publish(kTopic, row);
-    CHECK(count == 1);  // not incremented
+    EXPECT_EQ(count, 1);  // not incremented
 }
 
-TEST_CASE("PubSubArrow: ListTopics and HasTopic") {
+TEST(PubSubArrowTest, ListTopicsAndHasTopic) {
     auto mock = std::make_shared<MockProvider>();
     PubSubArrow pa(mock);
 
-    CHECK(pa.ListTopics().empty());
-    CHECK_FALSE(pa.HasTopic(kTopic));
+    EXPECT_TRUE(pa.ListTopics().empty());
+    EXPECT_FALSE(pa.HasTopic(kTopic));
 
     pa.CreateTopic(kTopic, TestSchema());
-    CHECK(pa.HasTopic(kTopic));
+    EXPECT_TRUE(pa.HasTopic(kTopic));
 
     auto topics = pa.ListTopics();
-    REQUIRE(topics.size() == 1);
-    CHECK(topics[0] == "test/topic");
+    ASSERT_EQ(topics.size(), 1);
+    EXPECT_EQ(topics[0], "test/topic");
 }

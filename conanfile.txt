@@ -1,6 +1,6 @@
 [requires]
 arrow/23.0.1
-catch2/3.7.1
+gtest/1.15.0
 protobuf/3.21.12
 fast-dds/2.14.3
 nlohmann_json/3.11.3

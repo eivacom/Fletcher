@@ -96,7 +96,8 @@ void WebGateway::Start() {
     if (impl_->ioc) return;  // already started
 
     auto& opts = impl_->options;
-    impl_->ioc = std::make_unique<net::io_context>(opts.io_threads);
+    int n = std::max(1, opts.io_threads);
+    impl_->ioc = std::make_unique<net::io_context>(n);
 
     auto ep = tcp::endpoint(
         net::ip::make_address(opts.address), opts.port);
@@ -106,7 +107,6 @@ void WebGateway::Start() {
     impl_->listener->Run();
 
     // Spin up IO threads.
-    int n = std::max(1, opts.io_threads);
     impl_->threads.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
         impl_->threads.emplace_back([ioc = impl_->ioc.get()] {

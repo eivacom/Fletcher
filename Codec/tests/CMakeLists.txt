@@ -1,5 +1,3 @@
-include(CTest)
-
 add_executable(arrow_row_codec_tests
     test_fingerprint.cpp
     test_scalars.cpp
@@ -9,14 +7,13 @@ add_executable(arrow_row_codec_tests
     test_schema_evolution.cpp
     test_positional.cpp)
 
-# Catch2::Catch2WithMain must come BEFORE row_codec on the link line.
+# GTest::gtest_main must come BEFORE row_codec on the link line.
 # row_codec -> arrow::arrow -> boost::boost pulls in libboost_test_exec_monitor,
 # which also provides main() and expects test_main().  MSVC resolves 'main'
-# from the first library that defines it, so Catch2WithMain must win.
+# from the first library that defines it, so gtest_main must win.
 target_link_libraries(arrow_row_codec_tests PRIVATE
-    Catch2::Catch2WithMain
+    GTest::gtest_main
     row_codec)
 
-# CTest discovers the Catch2 test cases via the standard --list-tests protocol.
-include(Catch)
-catch_discover_tests(arrow_row_codec_tests)
+include(GoogleTest)
+gtest_discover_tests(arrow_row_codec_tests)

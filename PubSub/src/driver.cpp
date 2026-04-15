@@ -49,8 +49,11 @@ struct Driver::Impl {
     std::unordered_map<uint64_t, Subscription>     subscriptions;
     std::atomic<uint64_t> next_id{1};
 
+    // Called with mu held.  Releases the lock while calling into the
+    // provider to avoid deadlock if the provider calls back synchronously.
     OwnedSchema EnsureProviderSubscription(
         const std::string& key, TopicState& ts,
+        std::unique_lock<std::mutex>& lock,
         std::any config = {}) {
         if (ts.provider_subscribed) {
             if (ts.schema)
@@ -58,13 +61,21 @@ struct Driver::Impl {
             return {};
         }
 
+        // Capture what we need before releasing the lock.
+        auto segments = ts.segments;
+        OwnedSchema cached_schema;
+        if (ts.schema)
+            cached_schema = OwnedSchema::DeepCopy(ts.schema.get());
+
+        lock.unlock();
+
         auto result = provider->Subscribe(
-            ts.segments, [this, key](const uint8_t* data, size_t len,
+            segments, [this, key](const uint8_t* data, size_t len,
                                       SharedSchema schema,
                                       Attachments att) {
                 std::vector<SubscribeCallback> cbs;
                 {
-                    std::lock_guard lock(mu);
+                    std::lock_guard lk(mu);
                     for (auto& [id, sub] : subscriptions) {
                         if (sub.topic_key == key)
                             cbs.push_back(sub.callback);
@@ -74,14 +85,25 @@ struct Driver::Impl {
                     cb(data, len, schema, att);
             }, std::move(config));
 
-        ts.provider_subscribed = true;
+        lock.lock();
+
+        // The topic may have been removed while we were unlocked.
+        auto topic_it = topics.find(key);
+        if (topic_it == topics.end()) {
+            if (result.schema)
+                return OwnedSchema::DeepCopy(result.schema.get());
+            return std::move(cached_schema);
+        }
+
+        TopicState& current = topic_it->second;
+        current.provider_subscribed = true;
         OwnedSchema ret;
         if (result.schema) {
-            if (!ts.schema)
-                ts.schema = OwnedSchema::DeepCopy(result.schema.get());
+            if (!current.schema)
+                current.schema = OwnedSchema::DeepCopy(result.schema.get());
             ret = OwnedSchema::DeepCopy(result.schema.get());
-        } else if (ts.schema) {
-            ret = OwnedSchema::DeepCopy(ts.schema.get());
+        } else if (current.schema) {
+            ret = OwnedSchema::DeepCopy(current.schema.get());
         }
         return ret;
     }
@@ -157,7 +179,7 @@ Driver::SubscribeResult Driver::Subscribe(
     const std::vector<std::string>& segments, SubscribeCallback cb,
     std::any config) {
     std::string key = JoinSegments(segments);
-    std::lock_guard lock(impl_->mu);
+    std::unique_lock lock(impl_->mu);
 
     auto it = impl_->topics.find(key);
     if (it == impl_->topics.end()) {
@@ -169,7 +191,7 @@ Driver::SubscribeResult Driver::Subscribe(
 
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
-    auto schema = impl_->EnsureProviderSubscription(key, it->second,
+    auto schema = impl_->EnsureProviderSubscription(key, it->second, lock,
                                                      std::move(config));
     return {id, std::move(schema)};
 }

@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <gtest/gtest.h>
 
 #include <arrow/api.h>
 
@@ -18,14 +18,15 @@ std::shared_ptr<arrow::Scalar> RoundtripNull(
     auto null    = arrow::MakeNullScalar(type);
     auto row     = codec.EncodeRow({null});
     auto decoded = codec.DecodeRow(row);
-    REQUIRE(decoded.size() == 1);
+    if (decoded.size() != 1) { ADD_FAILURE() << "Expected decoded.size() == 1"; return nullptr; }
     return decoded[0];
 }
 
 void CheckNull(const std::shared_ptr<arrow::DataType>& type) {
     auto d = RoundtripNull(type);
-    CHECK(!d->is_valid);
-    CHECK(d->type->Equals(*type));
+    ASSERT_NE(d, nullptr);
+    EXPECT_FALSE(d->is_valid);
+    EXPECT_TRUE(d->type->Equals(*type));
 }
 
 }  // namespace
@@ -34,7 +35,7 @@ void CheckNull(const std::shared_ptr<arrow::DataType>& type) {
 // Fixed-width nulls
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Null fixed-width scalars roundtrip") {
+TEST(NullTest, FixedWidthScalarsRoundtrip) {
     CheckNull(arrow::boolean());
     CheckNull(arrow::int8());
     CheckNull(arrow::int16());
@@ -54,21 +55,21 @@ TEST_CASE("Null fixed-width scalars roundtrip") {
     CheckNull(arrow::month_day_nano_interval());
 }
 
-TEST_CASE("Null timestamp roundtrip") {
+TEST(NullTest, TimestampRoundtrip) {
     CheckNull(arrow::timestamp(arrow::TimeUnit::MICRO, "UTC"));
 }
 
-TEST_CASE("Null time32 / time64 / duration roundtrip") {
+TEST(NullTest, Time32Time64DurationRoundtrip) {
     CheckNull(arrow::time32(arrow::TimeUnit::MILLI));
     CheckNull(arrow::time64(arrow::TimeUnit::NANO));
     CheckNull(arrow::duration(arrow::TimeUnit::SECOND));
 }
 
-TEST_CASE("Null fixed_size_binary roundtrip") {
+TEST(NullTest, FixedSizeBinaryRoundtrip) {
     CheckNull(arrow::fixed_size_binary(8));
 }
 
-TEST_CASE("Null decimal roundtrip") {
+TEST(NullTest, DecimalRoundtrip) {
     CheckNull(arrow::decimal128(10, 3));
     CheckNull(arrow::decimal256(38, 6));
 }
@@ -77,7 +78,7 @@ TEST_CASE("Null decimal roundtrip") {
 // Variable-width nulls
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Null string / binary scalars roundtrip") {
+TEST(NullTest, StringBinaryScalarsRoundtrip) {
     CheckNull(arrow::utf8());
     CheckNull(arrow::large_utf8());
     CheckNull(arrow::binary());
@@ -90,22 +91,22 @@ TEST_CASE("Null string / binary scalars roundtrip") {
 // Recursive nulls
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Null struct roundtrip") {
+TEST(NullTest, StructRoundtrip) {
     auto type = arrow::struct_({arrow::field("x", arrow::int32()),
                                  arrow::field("y", arrow::utf8())});
     CheckNull(type);
 }
 
-TEST_CASE("Null list / large_list roundtrip") {
+TEST(NullTest, ListLargeListRoundtrip) {
     CheckNull(arrow::list(arrow::int32()));
     CheckNull(arrow::large_list(arrow::utf8()));
 }
 
-TEST_CASE("Null fixed_size_list roundtrip") {
+TEST(NullTest, FixedSizeListRoundtrip) {
     CheckNull(arrow::fixed_size_list(arrow::float32(), 3));
 }
 
-TEST_CASE("Null map roundtrip") {
+TEST(NullTest, MapRoundtrip) {
     CheckNull(arrow::map(arrow::utf8(), arrow::int32()));
 }
 
@@ -113,7 +114,7 @@ TEST_CASE("Null map roundtrip") {
 // Multi-field schema: mix of null and non-null values
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Multi-field row with some null values") {
+TEST(NullTest, MultiFieldRowWithSomeNullValues) {
     auto schema = arrow::schema({
         arrow::field("id",    arrow::int32(),  false),
         arrow::field("name",  arrow::utf8(),   true),
@@ -129,8 +130,8 @@ TEST_CASE("Multi-field row with some null values") {
     auto row     = codec.EncodeRow(in);
     auto decoded = codec.DecodeRow(row);
 
-    REQUIRE(decoded.size() == 3);
-    CHECK(decoded[0]->Equals(*in[0]));
-    CHECK(!decoded[1]->is_valid);
-    CHECK(decoded[2]->Equals(*in[2]));
+    ASSERT_EQ(decoded.size(), 3u);
+    EXPECT_TRUE(decoded[0]->Equals(*in[0]));
+    EXPECT_FALSE(decoded[1]->is_valid);
+    EXPECT_TRUE(decoded[2]->Equals(*in[2]));
 }

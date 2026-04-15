@@ -50,6 +50,7 @@ std::vector<uint8_t> SerializeSchemaIpc(const ArrowSchema* schema) {
           &err, "SerializeSchemaIpc: write EOS");
 
     ArrowIpcWriterReset(&writer);
+    if (stream.release) stream.release(&stream);
 
     // Copy out.
     std::vector<uint8_t> result(buf.data, buf.data + buf.size_bytes);
