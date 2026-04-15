@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Generate GitHub App Token
+      - name: Generate token for conan-configuration
         id: generate-token
         uses: actions/create-github-app-token@v1
         with:
@@ -33,19 +33,25 @@ jobs:
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
 
-      - uses: actions/setup-python@v6.2.0
+      - name: Setup Conan
+        uses: eivacom/conan-actions/conan-setup@v1.0
         with:
           python-version: "3.14.4"
+          conan-version: "2.27.1"
 
-      - name: Install Conan
-        run: pip install conan
+      - name: Configure Conan
+        uses: eivacom/conan-actions/conan-configure@v1.0
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          config_urls: |
+            https://github.com/eivacom/conan-configuration
 
-      - name: Install Conan profiles
-        shell: pwsh
-        run: |
-          $auth_header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:${{ steps.generate-token.outputs.token }}"))
-          git config --global http.extraHeader "Authorization: Basic $auth_header"
-          conan config install https://github.com/eivacom/conan-configuration.git --type git
+      - name: Login Conan
+        uses: eivacom/conan-actions/conan-login@v1.0
+        with:
+          remote: conan-eiva
+          username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
       - name: Build and test
         working-directory: protoc
@@ -57,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Generate GitHub App Token
+      - name: Generate token for conan-configuration
         id: generate-token
         uses: actions/create-github-app-token@v1
         with:
@@ -74,7 +80,10 @@ jobs:
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
             fletcher-protoc-build \
             bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
                      conan create . -pr:a=Ubuntu22-gcc-12-Debug -o '&:run_tests=True'"
