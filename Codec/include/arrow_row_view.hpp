@@ -1,6 +1,10 @@
 #ifndef FLETCHER_INCLUDE_ARROW_ROW_VIEW_HPP_
 #define FLETCHER_INCLUDE_ARROW_ROW_VIEW_HPP_
 
+// Internal header — infrastructure for generated .fletcher.arrow.pb.h view
+// classes.  Not part of the public API; consumed only by protoc-gen-fletcher
+// output.
+
 #include <arrow/api.h>
 
 #include <cstdint>

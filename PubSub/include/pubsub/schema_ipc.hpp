@@ -1,6 +1,9 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_SCHEMA_IPC_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_SCHEMA_IPC_HPP_
 
+// Internal header — used by PubSub providers to serialize schemas over
+// companion topics.  Not part of the public API.
+
 #include "pubsub/owned_schema.hpp"
 
 #include <nanoarrow/nanoarrow.h>

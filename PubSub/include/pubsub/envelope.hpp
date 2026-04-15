@@ -1,6 +1,9 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_ENVELOPE_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_ENVELOPE_HPP_
 
+// Internal header — used by PubSub providers and the WebGateway to frame
+// messages on the wire.  Not part of the public API.
+
 #include "pubsub/types.hpp"
 
 #include <cstdint>

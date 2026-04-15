@@ -1,6 +1,9 @@
 #ifndef FLETCHER_INCLUDE_CRS_UTILS_HPP_
 #define FLETCHER_INCLUDE_CRS_UTILS_HPP_
 
+// Internal header — CRS resolution helpers used by protoc-gen-fletcher
+// generated code.  Not part of the public API.
+
 #include <string>
 #include <string_view>
 
