@@ -153,6 +153,126 @@ or generated code and must not be exposed in bindings.
 
 ---
 
+## Code generation — `protoc-gen-fletcher`
+
+The protoc plugin does not need runtime bindings (it is a build-time
+executable), but it **does** need to emit generated accessor classes for
+each supported language — analogous to how `protoc` itself emits C++,
+Python, C#, etc.
+
+### What the plugin generates today
+
+For each `.proto` file the plugin produces up to three output files:
+
+| Output file | Tier | Contents |
+|-------------|------|----------|
+| `.fletcher.pb.h` | Edge (nanoarrow) | Schema builder, mutable row class, Publisher/Subscriber classes |
+| `.fletcher.arrow.pb.h` | Server (Arrow C++) | Immutable view class, `ToArrowRow()` free functions |
+| `.fletcher.ts` | Web | TypeScript interfaces, schema descriptors, topic constants |
+
+#### `.fletcher.pb.h` — edge-tier row class (C++)
+
+Per message:
+
+| Generated symbol | Purpose |
+|------------------|---------|
+| `{Msg}Schema()` | Returns `OwnedSchema` with full nanoarrow field metadata |
+| `class {Msg}` | Mutable row: constructors (empty, from wire bytes, from `PositionalReader`), typed getters, chainable setters, `Encode()` / `EncodeTo(WriteBuffer&)` |
+
+Per service method (if `service` definitions exist in the `.proto`):
+
+| Generated symbol | Purpose |
+|------------------|---------|
+| `{Service}_{Method}Publisher` | `TopicSegments()`, `TopicKey()`, `Schema()`, `Publish()` |
+| `{Service}_{Method}Subscriber` | Schema discovery, typed subscribe callback |
+
+Dependencies: `nanoarrow`, PubSub library headers only — no Arrow C++.
+
+#### `.fletcher.arrow.pb.h` — server-tier view class (C++)
+
+Per message:
+
+| Generated symbol | Purpose |
+|------------------|---------|
+| `class {Msg}View` | Immutable view over Arrow scalars; constructors from `ArrowRow`, `StructScalar`, `RecordBatch` row, `Table` row |
+| `ToArrowRow({Msg} const&)` | Converts the nanoarrow row class to `fletcher::ArrowRow` (vector of `shared_ptr<arrow::Scalar>`) |
+
+Dependencies: Arrow C++ (`arrow/api.h`, `arrow/c/bridge.h`), `arrow_row_view.hpp`, `positional_codec.hpp`.
+
+#### `.fletcher.ts` — TypeScript web client
+
+Per message:
+
+| Generated symbol | Purpose |
+|------------------|---------|
+| `interface I{Msg}` | TypeScript interface with typed fields |
+| `const {Msg}Schema` | `SchemaDescriptor` for wire decoding |
+
+Per service method:
+
+| Generated symbol | Purpose |
+|------------------|---------|
+| `const {Service}_{Method}Topic` | Topic path string for PubSub routing |
+
+Dependencies: `@fletcher/web-client` package.
+
+### What each new language needs
+
+To add a language (e.g. Rust, C#, Python), the plugin needs a new code
+generator back-end that emits equivalent files.  The generated code in
+each language must cover:
+
+1. **Schema builder** — construct the language's Arrow schema
+   representation from the proto field metadata (types, nullability,
+   field numbers, extension metadata).
+
+2. **Row class** — mutable, with:
+   - Typed getters and setters for every field.
+   - Encode to / decode from the positional wire format.
+   - Support for all mapped types: scalars, nested messages, repeated
+     fields, maps, well-known types (Timestamp, Duration, wrapper
+     types), and GeoArrow extension types.
+
+3. **Publisher / Subscriber classes** (if the `.proto` has services) —
+   typed wrappers around the Driver / PubSub API for the target
+   language.
+
+4. **View class** (server tier only) — immutable, zero-copy accessor
+   over the language's native Arrow arrays.  Only needed for languages
+   that have a full Arrow implementation.
+
+### Type mapping reference
+
+The plugin maps proto types to Arrow and C++ types as follows.  New
+language back-ends must provide equivalent mappings for their type
+systems.
+
+| Proto type | Arrow type | C++ storage type |
+|------------|-----------|------------------|
+| `bool` | `boolean` | `bool` |
+| `int32`, `sint32`, `sfixed32` | `int32` | `int32_t` |
+| `int64`, `sint64`, `sfixed64` | `int64` | `int64_t` |
+| `uint32`, `fixed32` | `uint32` | `uint32_t` |
+| `uint64`, `fixed64` | `uint64` | `uint64_t` |
+| `float` | `float32` | `float` |
+| `double` | `float64` | `double` |
+| `string` | `utf8` | `std::string` |
+| `bytes` | `binary` | `std::string` |
+| `enum` | `int32` | `int32_t` |
+| `google.protobuf.Timestamp` | `timestamp(ns)` | `int64_t` |
+| `google.protobuf.Duration` | `duration(ns)` | `int64_t` |
+| `google.protobuf.*Value` | nullable scalar of inner type | `std::optional<T>` |
+| `repeated T` (scalar) | `list(T)` | `std::vector<T>` |
+| `repeated Message` | `list(struct<…>)` | `std::vector<Msg>` |
+| `map<K, V>` | `map(K, V)` | `std::vector<std::pair<K, V>>` |
+| Nested message | `struct<…>` | `Msg` (the generated class) |
+| GeoArrow types | struct with `ARROW:extension:name` metadata | nested struct |
+
+Unsupported proto features: `oneof`, recursive messages,
+`google.protobuf.Any`, `google.protobuf.Struct`, proto2 groups.
+
+---
+
 ## Binding strategy notes
 
 The **C API** (`arrow_row_codec_capi.h`) can be bound directly via FFI in
