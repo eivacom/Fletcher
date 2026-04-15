@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package test;
+
+message SensorReading {
+    double temperature = 1;
+    int64 timestamp_ns = 2;
+    optional string label = 3;
+}

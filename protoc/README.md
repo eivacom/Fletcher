@@ -7,29 +7,40 @@ A `protoc` compiler plugin that reads `.proto` files and generates C++ header fi
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 
 ```bash
-conan install . --build=missing --output-folder=build
-cmake --preset conan-default
-cmake --build build --config Release
+conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug
 ```
 
 ### Running tests
 
 ```bash
-conan install . --build=missing --output-folder=build -o "&:with_tests=True"
-cmake --preset conan-default -DFLETCHER_BUILD_TESTS=ON
-cmake --build build --config Release
-ctest --test-dir build --build-config Release
+conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+```
+
+### Creating the Conan package
+
+```bash
+conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug
+```
+
+Builds the package, exports it to the local cache, and runs `test_package` to verify end-to-end C++ and TypeScript generation.
+
+With unit tests:
+
+```bash
+conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 ```
 
 ## Using the plugin
 
 ```bash
 protoc \
-    --plugin=fletcher-protoc=/path/to/fletcher-protoc \
+    --plugin=protoc-gen-fletcher=/path/to/fletcher-protoc \  # protoc requires this prefix
     --fletcher_out=generated/ \
     -I proto/ \
     proto/my_service.proto
 ```
+
+> **Note:** protoc requires the `--plugin` name to follow the `protoc-gen-<NAME>` convention to map to `--<NAME>_out`. This is a protoc constraint.
 
 ### Options
 
@@ -45,11 +56,11 @@ find_package(fletcher-protoc REQUIRED)
 add_custom_command(
     OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=fletcher-protoc=$<TARGET_FILE:fletcher-protoc::fletcher-protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::fletcher-protoc
+    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 )
 ```
 

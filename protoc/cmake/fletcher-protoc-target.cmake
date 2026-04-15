@@ -1,18 +1,18 @@
-# Creates an imported executable target: fletcher-protoc::fletcher-protoc
+# Creates an imported executable target: fletcher-protoc::plugin
 #
-# Consumers can reference this target in add_custom_command() calls:
+# Usage example:
 #
 #   add_custom_command(
 #       OUTPUT  "${out}.fletcher.pb.h"
 #       COMMAND "$<TARGET_FILE:protobuf::protoc>"
-#               "--plugin=fletcher-protoc=$<TARGET_FILE:fletcher-protoc::fletcher-protoc>"
+#               "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
 #               "--fletcher_out=${GENERATED_DIR}"
 #               "-I" "${PROTO_DIR}"
 #               "${PROTO_DIR}/${stem}.proto"
-#       DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::fletcher-protoc
+#       DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 #   )
 
-if(TARGET fletcher-protoc::fletcher-protoc)
+if(TARGET fletcher-protoc::plugin)
     return()
 endif()
 
@@ -32,12 +32,12 @@ if(NOT _fletcher_protoc_plugin)
 endif()
 
 if(_fletcher_protoc_plugin)
-    add_executable(fletcher-protoc::fletcher-protoc IMPORTED GLOBAL)
-    set_target_properties(fletcher-protoc::fletcher-protoc PROPERTIES
+    add_executable(fletcher-protoc::plugin IMPORTED GLOBAL)
+    set_target_properties(fletcher-protoc::plugin PROPERTIES
         IMPORTED_LOCATION "${_fletcher_protoc_plugin}")
     message(STATUS "Found fletcher-protoc: ${_fletcher_protoc_plugin}")
 else()
-    message(WARNING "fletcher-protoc not found — fletcher-protoc::fletcher-protoc target not created")
+    message(WARNING "fletcher-protoc not found — fletcher-protoc::plugin target not created")
 endif()
 
 unset(_fletcher_protoc_pkg_root)

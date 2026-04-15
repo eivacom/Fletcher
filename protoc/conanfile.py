@@ -6,15 +6,14 @@ import os
 
 class FletcherProtocPluginConan(ConanFile):
     name = "fletcher-protoc"
+    version = "0.1.0"
     description = "A protoc plugin that generates C++ and TypeScript code for the Fletcher wire format"
     license = "Proprietary"
     package_type = "application"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"with_tests": [True, False]}
-    default_options = {"with_tests": False}
-
-    requires = ("protobuf/3.21.12",)
+    options = {"run_tests": [True, False]}
+    default_options = {"run_tests": False}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -25,8 +24,12 @@ class FletcherProtocPluginConan(ConanFile):
     )
 
     def requirements(self):
-        if self.options.with_tests:
+        self.requires("protobuf/3.21.12", visible=True)
+        if self.options.run_tests:
             self.requires("gtest/1.15.0")
+
+    def package_id(self):
+        del self.info.options.run_tests
 
     def layout(self):
         cmake_layout(self)
@@ -35,7 +38,7 @@ class FletcherProtocPluginConan(ConanFile):
         deps = CMakeDeps(self)
         deps.generate()
         tc = CMakeToolchain(self)
-        if self.options.with_tests:
+        if self.options.run_tests:
             tc.variables["FLETCHER_BUILD_TESTS"] = "ON"
         tc.generate()
 
@@ -43,6 +46,8 @@ class FletcherProtocPluginConan(ConanFile):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
+        if self.options.run_tests:
+            cmake.test()
 
     def package(self):
         # Package the executable.
@@ -67,9 +72,7 @@ class FletcherProtocPluginConan(ConanFile):
         # and a CMake module that creates the imported target.
         self.cpp_info.libdirs = []
         self.cpp_info.includedirs = []
-        self.cpp_info.set_property("cmake_find_mode", "none")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-protoc-target.cmake"),
         ])
-        # Also expose via builddirs so find_package() can locate the module.
         self.cpp_info.builddirs = ["cmake"]
