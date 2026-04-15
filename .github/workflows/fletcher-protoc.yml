@@ -6,9 +6,13 @@ on:
       - feature/fletcher-protoc
     paths:
       - "protoc/**"
+      - ".github/workflows/fletcher-protoc.yml"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "protoc/**"
+      - ".github/workflows/fletcher-protoc.yml"
+      - ".github/actions/**"
 
 jobs:
   windows:
