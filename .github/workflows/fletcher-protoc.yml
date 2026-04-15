@@ -7,12 +7,12 @@ on:
     paths:
       - "protoc/**"
       - ".github/workflows/fletcher-protoc.yml"
-      - ".github/actions/**"
+      - ".github/actions/install-msvc-tools/**"
   pull_request:
     paths:
       - "protoc/**"
       - ".github/workflows/fletcher-protoc.yml"
-      - ".github/actions/**"
+      - ".github/actions/install-msvc-tools/**"
 
 jobs:
   windows:
@@ -33,8 +33,9 @@ jobs:
 
       - name: Install Conan profiles
         run: |
-          git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
-          conan config install https://github.com/eivacom/conan-configuration.git
+          $auth_header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:${{ secrets.GITHUB_TOKEN }}"))
+          git config --global http.extraHeader "Authorization: Basic $auth_header"
+          conan config install https://github.com/eivacom/conan-configuration.git --type git
 
       - name: Build and test
         working-directory: protoc
@@ -51,10 +52,10 @@ jobs:
 
       - name: Build and test
         run: |
+          auth_header=$(echo -n "x-access-token:${{ secrets.GITHUB_TOKEN }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
-            -e GIT_CONFIG_COUNT=1 \
-            -e GIT_CONFIG_KEY_0=url.https://x-access-token:${{ github.token }}@github.com/.insteadOf \
-            -e GIT_CONFIG_VALUE_0=https://github.com/ \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             fletcher-protoc-build \
-            bash -c "conan config install https://github.com/eivacom/conan-configuration.git && \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan create . -pr:a=Ubuntu22-gcc-12-Debug -o '&:run_tests=True'"
