@@ -104,7 +104,8 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
 
     auto result = driver_->Subscribe(segments,
         [this, key, cb = std::move(callback)](
-            const uint8_t* data, size_t len, Attachments att) {
+            const uint8_t* data, size_t len,
+            const ArrowSchema* /*schema*/, Attachments att) {
             PositionalCodec* codec;
             {
                 std::lock_guard lock(mu_);

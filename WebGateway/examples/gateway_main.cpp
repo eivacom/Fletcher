@@ -57,7 +57,7 @@ class InProcessProvider : public fletcher::PubSub {
             if (it == topics_.end()) return;
             cb = it->second;
         }
-        if (cb) cb(buf.data(), buf.size(), attachments);
+        if (cb) cb(buf.data(), buf.size(), nullptr, attachments);
     }
 
     fletcher::SubscriptionResult Subscribe(

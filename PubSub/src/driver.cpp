@@ -60,6 +60,7 @@ struct Driver::Impl {
 
         auto result = provider->Subscribe(
             ts.segments, [this, key](const uint8_t* data, size_t len,
+                                      const ArrowSchema* schema,
                                       Attachments att) {
                 std::vector<SubscribeCallback> cbs;
                 {
@@ -70,7 +71,7 @@ struct Driver::Impl {
                     }
                 }
                 for (auto& cb : cbs)
-                    cb(data, len, att);
+                    cb(data, len, schema, att);
             }, std::move(config));
 
         ts.provider_subscribed = true;

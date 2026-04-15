@@ -134,6 +134,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(
     auto envelope = DeserializeEnvelope(payload.data(), payload.size());
     tit->second.callback(
         envelope.row.data(), envelope.row.size(),
+        tit->second.schema ? tit->second.schema.get() : nullptr,
         std::move(envelope.attachments));
 }
 

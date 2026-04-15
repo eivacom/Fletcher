@@ -495,8 +495,13 @@ class MockPubSub : public fletcher::PubSub {
         fletcher::VectorWriteBuffer wb(buf);
         encoder(wb);
         auto it = subscribers.find(segments);
-        if (it != subscribers.end())
-            it->second(buf.data(), buf.size(), attachments);
+        if (it != subscribers.end()) {
+            const ArrowSchema* sp = nullptr;
+            for (const auto& ct : created_topics) {
+                if (ct.segments == segments) { sp = ct.schema.get(); break; }
+            }
+            it->second(buf.data(), buf.size(), sp, attachments);
+        }
         published.push_back({segments, std::move(buf), attachments});
     }
 

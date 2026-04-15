@@ -48,6 +48,7 @@ class Driver {
     /// Subscribe to a topic.  Returns the subscription ID and the schema.
     using SubscribeCallback = std::function<void(const uint8_t* data,
                                                  size_t len,
+                                                 const ArrowSchema* schema,
                                                  Attachments attachments)>;
     SubscribeResult Subscribe(const std::vector<std::string>& segments,
                               SubscribeCallback cb,

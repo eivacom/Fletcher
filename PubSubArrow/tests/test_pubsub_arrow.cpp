@@ -35,8 +35,12 @@ class MockProvider : public PubSub {
         encoder(wb);
 
         auto it = callbacks_.find(key);
-        if (it != callbacks_.end())
-            it->second(buf.data(), buf.size(), attachments);
+        if (it != callbacks_.end()) {
+            const ArrowSchema* sp = nullptr;
+            auto sit = schemas_.find(key);
+            if (sit != schemas_.end()) sp = sit->second.get();
+            it->second(buf.data(), buf.size(), sp, attachments);
+        }
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
