@@ -33,6 +33,9 @@ jobs:
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
 
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+
       - name: Setup Conan
         uses: eivacom/conan-actions/conan-setup@v1.0
         with:
@@ -55,7 +58,7 @@ jobs:
 
       - name: Build and test
         working-directory: protoc
-        run: conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
   linux:
     runs-on:
@@ -86,4 +89,4 @@ jobs:
             bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     conan create . -pr:a=Ubuntu22-gcc-12-Debug -o '&:run_tests=True'"
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o '&:run_tests=True'"
