@@ -34,7 +34,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ```bash
 protoc \
-    --plugin=protoc-gen-fletcher=/path/to/fletcher-protoc \  # protoc requires this prefix
+    --plugin=protoc-gen-fletcher=/path/to/fletcher-protoc \
     --fletcher_out=generated/ \
     -I proto/ \
     proto/my_service.proto
