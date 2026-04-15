@@ -16,7 +16,7 @@ internal implementation details excluded from the binding surface.
 
 | Project | Why |
 |---------|-----|
-| **ProtoPlugin** | Executable (`protoc-gen-fletcher`), not a library |
+| **ProtoPlugin** | Executable (`protoc-gen-fletcher`), not a library - but see section on code generation |
 | **FastDDSPubSubProvider** | Provider (driver) implementation — no externally-facing API beyond the `PubSub` interface |
 | **XrceDDSPubSubProvider** | Provider (driver) implementation — same reasoning |
 | **WebGateway** | Server-side component, not a library |
