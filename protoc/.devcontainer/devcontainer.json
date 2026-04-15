@@ -1,0 +1,7 @@
+{
+    "name": "fletcher-protoc (Ubuntu 22.04 / GCC 12)",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "postCreateCommand": "conan config install https://github.com/eivacom/conan-configuration.git"
+}
