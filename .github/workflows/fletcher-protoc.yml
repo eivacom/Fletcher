@@ -25,7 +25,7 @@ jobs:
         id: generate-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.GH_EIVA_ROBOT_CLIENT_ID }}
+          client-id: ${{ secrets.GH_EIVA_ROBOT_CLIENT_ID }}
           private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
           owner: eivacom
           repositories: conan-configuration
@@ -70,7 +70,7 @@ jobs:
         id: generate-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.GH_EIVA_ROBOT_CLIENT_ID }}
+          client-id: ${{ secrets.GH_EIVA_ROBOT_CLIENT_ID }}
           private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
           owner: eivacom
           repositories: conan-configuration
