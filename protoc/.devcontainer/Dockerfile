@@ -2,6 +2,8 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+RUN cat /sys/class/net/eth0/mtu || echo "no eth0"
+
 RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \

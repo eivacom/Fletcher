@@ -79,7 +79,7 @@ jobs:
         run: docker network create --opt com.docker.network.driver.mtu=1450 build-net
 
       - name: Build devcontainer image
-        run: docker build --network host -t fletcher-protoc-build protoc/.devcontainer
+        run: docker build -t fletcher-protoc-build protoc/.devcontainer
 
       - name: Build and test
         run: |
