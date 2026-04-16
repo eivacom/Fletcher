@@ -75,16 +75,16 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Check MTU
-        run: docker run --rm ubuntu:24.04 cat /sys/class/net/eth0/mtu
+      - name: Create Docker network
+        run: docker network create --opt com.docker.network.driver.mtu=1450 build-net
 
       - name: Build devcontainer image
-        run: docker build --network host -t fletcher-protoc-build protoc/.devcontainer
+        run: docker build --network build-net -t fletcher-protoc-build protoc/.devcontainer
 
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
+          docker run --rm --network build-net -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
             -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
