@@ -75,6 +75,15 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
+      - name: Check MTU
+        run: |
+          echo "=== Host MTU ==="
+          ip link show
+          echo "=== Docker network ==="
+          docker network inspect bridge | grep -i mtu
+          echo "=== Container MTU ==="
+          docker run --rm ubuntu:24.04 cat /sys/class/net/eth0/mtu
+
       - name: Build devcontainer image
         run: docker build -t fletcher-protoc-build protoc/.devcontainer
 
