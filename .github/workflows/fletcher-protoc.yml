@@ -79,7 +79,7 @@ jobs:
         run: docker run --rm ubuntu:24.04 cat /sys/class/net/eth0/mtu
 
       - name: Build devcontainer image
-        run: docker build -t fletcher-protoc-build protoc/.devcontainer
+        run: docker build --network host -t fletcher-protoc-build protoc/.devcontainer
 
       - name: Build and test
         run: |
