@@ -39,7 +39,7 @@ class FletcherProtocPluginConan(ConanFile):
         deps.generate()
         tc = CMakeToolchain(self)
         if self.options.run_tests:
-            tc.variables["FLETCHER_BUILD_TESTS"] = "ON"
+            tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
         tc.generate()
 
     def build(self):
