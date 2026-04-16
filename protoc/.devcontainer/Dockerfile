@@ -18,4 +18,4 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
     && update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-12 100 \
     && update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-12 100
 
-RUN pip3 install --break-system-packages pip==26.0.1 conan==2.27.1
+RUN pip3 install --break-system-packages conan==2.27.1
