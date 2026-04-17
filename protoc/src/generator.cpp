@@ -1371,7 +1371,7 @@ std::string GenerateViewClass(const std::string& view_cls,
 
     // Constructor from ArrowRow (vector of scalars)
     o << "    /// Wraps a pre-existing vector of Arrow scalars (e.g. from ToArrowRow()\n"
-      << "    /// or PositionalCodec::Decode).\n"
+      << "    /// or Codec::DecodeRow).\n"
       << "    explicit " << view_cls << "(fletcher::ArrowRow scalars)\n"
       << "        : scalars_(std::move(scalars)) {}\n\n";
 
@@ -2106,11 +2106,12 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
       << "// Source: " << file->name() << "\n"
       << "#pragma once\n\n"
       << "#include <nanoarrow/nanoarrow.h>\n"
-      << "#include <pubsub/owned_schema.hpp>\n";
+      << "#include <pubsub/owned_schema.hpp>\n"
+      << "#include <core/types.hpp>\n";
 
     if (!schema_only) {
-        o << "#include <pubsub/positional_io.hpp>\n"
-          << "#include <pubsub/write_buffer.hpp>\n";
+        o << "#include <core/positional_io.hpp>\n"
+          << "#include <core/write_buffer.hpp>\n";
     }
 
     o << "\n"
@@ -2811,7 +2812,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <arrow/api.h>\n"
       << "#include <arrow/c/bridge.h>\n"
       << "#include <arrow_row_view.hpp>\n"
-      << "#include <positional_codec.hpp>\n\n"
+      << "#include <codec.hpp>\n\n"
       << "#include \"" << OutputFilename(file->name()) << "\"\n";
 
     // Cross-file view includes (for nested view types from other proto files).
