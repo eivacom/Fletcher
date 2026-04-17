@@ -84,6 +84,7 @@ jobs:
       - name: Build devcontainer image
         run: |
           docker buildx build \
+            --network host \
             --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/protoc-devcontainer:cache \
             --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/protoc-devcontainer:cache,mode=max \
             -t fletcher-protoc-build \
