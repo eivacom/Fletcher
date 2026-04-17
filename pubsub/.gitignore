@@ -1,5 +1,0 @@
-**/build/
-**/CMakeUserPresets.json
-.claude/
-.vs/
-.conan/
