@@ -2,8 +2,6 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources
-
 RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
