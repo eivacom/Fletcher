@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources
 
 RUN apt-get update && apt-get install -y \
     gcc-12 \
@@ -23,8 +24,6 @@ RUN pip3 install --break-system-packages conan==2.27.1
 # FROM ubuntu:22.04
 
 # ENV DEBIAN_FRONTEND=noninteractive
-
-# RUN sed -i 's|http://archive.ubuntu.com|http://dk.archive.ubuntu.com|g' /etc/apt/sources.list
 
 # RUN apt-get update && apt-get install -y \
 #     gcc-12 \
