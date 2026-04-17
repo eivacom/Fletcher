@@ -79,7 +79,9 @@ jobs:
         run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
 
       - name: Set up Docker Buildx
-        run: docker buildx create --name builder --use --driver-opt network=host
+        run: |
+          docker network create --driver bridge --opt com.docker.network.driver.mtu=1400 buildx-net || true
+          docker buildx create --name builder --use --driver-opt network=buildx-net
 
       - name: Build devcontainer image
         run: |
