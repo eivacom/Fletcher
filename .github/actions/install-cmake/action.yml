@@ -1,0 +1,30 @@
+name: "Install CMake"
+description: Installs CMake and adds it to PATH.
+
+inputs:
+  version:
+    description: CMake version to install
+    required: false
+    default: "4.3.1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install CMake
+      shell: pwsh
+      run: |
+        $version = "${{ inputs.version }}"
+        $url = "https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-windows-x86_64.zip"
+        $zipPath = "$env:TEMP\cmake.zip"
+        $installPath = "C:\cmake"
+
+        Write-Host "Downloading CMake ${version}..."
+        Invoke-WebRequest -Uri $url -OutFile $zipPath
+
+        Write-Host "Extracting CMake..."
+        Expand-Archive -Path $zipPath -DestinationPath $installPath -Force
+
+        $binPath = "$installPath\cmake-${version}-windows-x86_64\bin"
+        echo $binPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        Write-Host "CMake ${version} installed to ${binPath}"
