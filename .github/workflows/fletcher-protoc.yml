@@ -75,8 +75,17 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
+      - name: Log in to Harbor
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
+
       - name: Build devcontainer image
-        run: docker build -t fletcher-protoc-build protoc/.devcontainer
+        run: |
+          docker buildx build \
+            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/protoc-devcontainer:cache \
+            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/protoc-devcontainer:cache,mode=max \
+            -t fletcher-protoc-build \
+            --load \
+            protoc/.devcontainer
 
       - name: Build and test
         run: |
