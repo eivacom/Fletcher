@@ -5,9 +5,9 @@ import os
 
 
 class FletcherCoreConan(ConanFile):
-    name = "fletcher-core"
+    name = "eiva-fletcher-core"
     version = "0.1.0"
-    description = "Fletcher core library"
+    description = "EIVA Fletcher Core library"
     license = "Proprietary"
     package_type = "header-library"
     settings = "os", "compiler", "build_type", "arch"  # needed for test builds only
