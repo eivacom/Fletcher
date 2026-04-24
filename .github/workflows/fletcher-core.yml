@@ -19,6 +19,8 @@ jobs:
   build-windows:
     runs-on:
       group: windows-server-core-ltsc2025
+    outputs:
+      conan-ref: ${{ steps.conan-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
 
@@ -57,13 +59,20 @@ jobs:
           username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
           password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
+      - name: Get package reference
+        id: conan-ref
+        working-directory: core
+        run: |
+          $inspect = conan inspect . --format=json | ConvertFrom-Json
+          echo "ref=$($inspect.name)/$($inspect.version)" >> $env:GITHUB_OUTPUT
+
       - name: Build and test
         working-directory: core
         run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
       - name: Export package from Conan cache
         working-directory: core
-        run: conan cache save "eiva-fletcher-core/0.1.0" --file conan-pkg.tgz
+        run: conan cache save "${{ steps.conan-ref.outputs.ref }}" --file conan-pkg.tgz
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
@@ -171,5 +180,5 @@ jobs:
         uses: eivacom/conan-actions/conan-upload@v1.0
         with:
           remote: conan-eiva
-          package: '"eiva-fletcher-core"'
+          package: '"${{ needs.build-windows.outputs.conan-ref }}"'
           args: --confirm
