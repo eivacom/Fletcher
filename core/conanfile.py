@@ -59,8 +59,11 @@ class FletcherCoreConan(ConanFile):
              keep_path=False)
 
     def package_info(self):
-        self.cpp_info.bindirs = []
-        self.cpp_info.libdirs = []
+        self.cpp_info.includedirs = ["include"]
+        self.cpp_info.libdirs     = []
+        self.cpp_info.bindirs     = []
+        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-core")
+        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-core::eiva-fletcher-core")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-core-target.cmake"),
         ])
