@@ -61,6 +61,7 @@ jobs:
 
       - name: Get package reference
         id: conan-ref
+        shell: pwsh
         working-directory: core
         run: |
           $inspect = conan inspect . --format=json | ConvertFrom-Json
