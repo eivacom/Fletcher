@@ -125,7 +125,7 @@ jobs:
   upload:
     needs: [ build-windows, build-linux ]
     runs-on:
-      group: windows-server-core-ltsc2025
+      group: ubuntu_24.04_x64
     if: github.event_name != 'pull_request'
 
     steps:
