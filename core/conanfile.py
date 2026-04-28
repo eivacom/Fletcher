@@ -10,7 +10,10 @@ class FletcherCoreConan(ConanFile):
     description = "EIVA Fletcher Core library"
     license = "Proprietary"
     package_type = "header-library"
-    settings = "os", "compiler", "build_type", "arch"  # needed for test builds only
+    # settings are only needed to compile the unit tests — they play no part
+    # in the package itself (headers only) and are cleared in package_id()
+    # so that a single platform-independent package ID is produced.
+    settings = "os", "compiler", "build_type", "arch"
 
     options = {"run_tests": [True, False]}
     default_options = {"run_tests": False}
@@ -28,7 +31,9 @@ class FletcherCoreConan(ConanFile):
             self.requires("gtest/1.17.0")
 
     def package_id(self):
-        del self.info.options.run_tests
+        # Clear all settings and options so the package ID is identical
+        # regardless of OS, compiler or build_type — correct for a header-only library.
+        self.info.clear()
 
     def layout(self):
         cmake_layout(self)
