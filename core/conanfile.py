@@ -20,7 +20,6 @@ class FletcherCoreConan(ConanFile):
 
     exports_sources = (
         "CMakeLists.txt",
-        "src/*",
         "include/*",
         "cmake/*",
         "tests/*",
