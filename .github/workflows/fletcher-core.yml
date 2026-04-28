@@ -140,12 +140,6 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Install MSVC tools
-        uses: ./.github/actions/install-msvc-tools
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
-
       - name: Setup Conan
         uses: eivacom/conan-actions/conan-setup@v1.0
         with:
