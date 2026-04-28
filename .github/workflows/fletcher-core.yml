@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:                 # Trigger on pushes to branches matching "feature/fletcher-core/*" during development
     branches:
-      - "feature/fletcher-core"
+      - "feature/fletcher-core-uploadtest"
   pull_request:
     paths:
       - "core/**"
