@@ -73,6 +73,7 @@ jobs:
         run: conan cache save "${{ steps.conan-ref.outputs.ref }}" --file conan-pkg.tgz
 
       - name: Upload package artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: conan-pkg

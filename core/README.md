@@ -14,6 +14,8 @@ Headers are located under `include/core/`:
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 
+---
+
 ### Windows
 
 Build locally:
@@ -39,12 +41,12 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 > Note: `conan build` only runs the build step and does not produce the package output.
 > Use `conan create` to populate the Conan cache with the headers.
 
+---
+
 ### Linux (devcontainer)
 
 The container is built from `core/.devcontainer` and includes GCC 12, CMake and Conan 2
 pre-configured. There are three ways to work with it:
-
----
 
 #### Option A — VS Code devcontainer (interactive)
 
@@ -52,22 +54,28 @@ Open the repository in VS Code and select **Reopen in Container**. The `postCrea
 in `devcontainer.json` installs the Conan configuration automatically on first launch.
 Once inside, the following commands run directly in the integrated terminal:
 
+1. Install dependencies and configure the build tree:
 ```bash
-# 1. Install dependencies and configure the build tree
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+```
 
-# 2. Build the library and tests
+2. Build the library and tests
+```bash
 conan build . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+```
 
-# 3. Run the unit tests directly via CTest
-cd build/Debug
-ctest --output-on-failure
+3. Run the unit tests directly via CTest
+```bash
+ctest --test-dir build/Debug --output-on-failure
+```
 
-# 4. Create and publish to the local Conan cache (headers + cmake module)
-cd ../..
+4. Create and publish to the local Conan cache (headers + cmake module)
+```bash
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+```
 
-# 5. Verify the package is in the local cache
+5. Verify the package is in the local cache
+```bash
 conan list "eiva-fletcher-core:*"
 ```
 
@@ -80,24 +88,37 @@ conan list "eiva-fletcher-core:*"
 
 Equivalent to Option A but driven from a host terminal rather than VS Code.
 
-```bash
-# 1. Build the image from the devcontainer folder (only needed once or after Dockerfile changes)
-docker build -t fletcher-core-dev core/.devcontainer
 
-# 2. Start an interactive shell with the repo mounted
+1. Build the image from the devcontainer folder (only needed once or after Dockerfile changes)
+```bash
+docker build -t fletcher-core-dev core/.devcontainer
+```
+
+2. Start an interactive shell with the repo mounted
+```bash
 docker run --rm -it \
   -v $(pwd):/workspace \
   -w /workspace/core \
   fletcher-core-dev \
   bash
+```
 
-# 3. Inside the container — replicate the postCreateCommand from devcontainer.json
+3. Inside the container — replicate the postCreateCommand from devcontainer.json
+```bash
 conan config install https://github.com/eivacom/conan-configuration.git
+```  
 
-# 4. Build, test and package as normal
+4. Build, test and package as normal
+```bash
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+```
+```bash
 conan build . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
-cd build/Debug && ctest --output-on-failure && cd ../..
+````
+```bash
+ctest --test-dir build/Debug --output-on-failure
+```
+```bash
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 ```
 
