@@ -11,10 +11,6 @@ on:
       - "pubsub/**"
       - ".github/workflows/fletcher-pubsub.yml"
       - ".github/actions/install-msvc-tools/**"
-  # TODO: temporary — verify the workflow runs end-to-end on push. Remove before merging.
-  push:
-    branches:
-      - feature/pubsub-migration
 
 jobs:
   build-windows:
@@ -189,10 +185,7 @@ jobs:
       - name: Restore Linux package into Conan cache
         run: conan cache restore conan-pkg-linux.tgz
 
-      # TODO: temporarily disabled while the feature/pubsub-migration push
-      # trigger is active. Re-enable (drop the `if: false`) before merging.
       - name: Upload to Artifactory
-        if: false
         uses: eivacom/conan-actions/conan-upload@v1.0
         with:
           remote: conan-eiva
