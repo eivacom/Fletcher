@@ -11,6 +11,10 @@ on:
       - "pubsub/**"
       - ".github/workflows/fletcher-pubsub.yml"
       - ".github/actions/install-msvc-tools/**"
+  # TODO: temporary — verify the workflow runs end-to-end on push. Remove before merging.
+  push:
+    branches:
+      - feature/pubsub-migration
 
 jobs:
   build-windows:
@@ -135,7 +139,10 @@ jobs:
     needs: [ build-windows, build-linux ]
     runs-on:
       group: ubuntu_24.04_x64
-    if: github.event_name == 'push'
+    # TODO: while the temporary feature/pubsub-migration push trigger is active,
+    # exclude that branch from upload. Restore to `github.event_name == 'push'`
+    # once the trigger is removed.
+    if: github.event_name == 'push' && github.ref != 'refs/heads/feature/pubsub-migration'
 
     steps:
       - uses: actions/checkout@v6
