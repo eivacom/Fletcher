@@ -1,0 +1,26 @@
+name: "Verify tag version matches conan package version"
+description: "Fails if the release tag version differs from the version embedded in the conan package reference."
+
+inputs:
+  conan-ref:
+    description: "Conan package reference, e.g. eiva-fletcher-core/0.1.3-alpha"
+    required: true
+  tag-prefix:
+    description: "Tag prefix including the trailing v, e.g. core-v"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        CONAN_REF: ${{ inputs.conan-ref }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        conan_version="${CONAN_REF##*/}"
+        tag_version="${GITHUB_REF##refs/tags/${TAG_PREFIX}}"
+        if [ "$tag_version" != "$conan_version" ]; then
+          echo "::error::Tag version '$tag_version' does not match conanfile.py version '$conan_version' (conan-ref: $CONAN_REF, tag: $GITHUB_REF)"
+          exit 1
+        fi
+        echo "Tag and conanfile.py versions match: $conan_version"

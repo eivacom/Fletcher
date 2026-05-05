@@ -136,15 +136,10 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Verify tag version matches conanfile.py version
-        run: |
-          conan_ref="${{ needs.build-windows.outputs.conan-ref }}"
-          conan_version="${conan_ref##*/}"
-          tag_version="${GITHUB_REF##refs/tags/core-v}"
-          if [ "$tag_version" != "$conan_version" ]; then
-            echo "::error::Tag version '$tag_version' does not match conanfile.py version '$conan_version' (conan-ref: $conan_ref, tag: $GITHUB_REF)"
-            exit 1
-          fi
-          echo "Tag and conanfile.py versions match: $conan_version"
+        uses: ./.github/actions/verify-tag-version
+        with:
+          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
+          tag-prefix: core-v
 
       - name: Generate token for conan-configuration
         id: generate-token
