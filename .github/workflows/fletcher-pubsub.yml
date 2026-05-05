@@ -11,6 +11,9 @@ on:
       - "pubsub/**"
       - ".github/workflows/fletcher-pubsub.yml"
       - ".github/actions/install-msvc-tools/**"
+  push:
+    tags:
+      - 'pubsub-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
   build-windows:
@@ -73,6 +76,7 @@ jobs:
         run: conan cache save "${{ steps.conan-ref.outputs.ref }}" --file conan-pkg-windows.tgz
 
       - name: Upload package artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: conan-pkg-windows
@@ -124,6 +128,7 @@ jobs:
                      conan cache save \"\$ref\" --file conan-pkg-linux.tgz"
 
       - name: Upload package artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: conan-pkg-linux
@@ -135,7 +140,7 @@ jobs:
     needs: [ build-windows, build-linux ]
     runs-on:
       group: ubuntu_24.04_x64
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
 
     steps:
       - uses: actions/checkout@v6
