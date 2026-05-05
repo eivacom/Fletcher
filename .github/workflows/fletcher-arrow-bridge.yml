@@ -145,6 +145,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify tag version matches conanfile.py version
+        uses: ./.github/actions/verify-tag-version
+        with:
+          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
+          tag-prefix: arrow-bridge-v
+
       - name: Generate token for conan-configuration
         id: generate-token
         uses: actions/create-github-app-token@v3.1.1
