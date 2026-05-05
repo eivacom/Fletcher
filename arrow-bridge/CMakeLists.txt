@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(eiva-fletcher-core CONFIG REQUIRED)
-find_package(arrow CONFIG REQUIRED)
+find_package(Arrow CONFIG REQUIRED)
 
 add_library(fletcher-arrow-bridge STATIC
     src/codec.cpp
