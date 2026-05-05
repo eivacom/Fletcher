@@ -66,7 +66,7 @@ jobs:
 
       - name: Build and test
         working-directory: core
-        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-RelWithDebInfo -o "&:run_tests=True"
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
 
       - name: Export package from Conan cache
         working-directory: core
