@@ -69,7 +69,7 @@ jobs:
 
       - name: Build and test
         working-directory: protoc
-        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
 
       - name: Export package from Conan cache
         working-directory: protoc
@@ -123,7 +123,7 @@ jobs:
             bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o '&:run_tests=True' && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
                      ref=\$(conan inspect . --format=json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[\"name\"]+\"/\"+d[\"version\"])') && \
                      conan cache save \"\$ref\" --file conan-pkg-linux.tgz"
 
