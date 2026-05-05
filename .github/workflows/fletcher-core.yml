@@ -11,6 +11,7 @@ on:
       - "core/**"
       - ".github/workflows/fletcher-core.yml"
       - ".github/actions/install-msvc-tools/**"
+      - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
   push:
     tags:
@@ -24,6 +25,10 @@ jobs:
       conan-ref: ${{ steps.conan-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
 
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
@@ -68,6 +73,10 @@ jobs:
       group: ubuntu_24.04_x64
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
 
       - name: Generate token for conan-configuration
         id: generate-token
@@ -114,6 +123,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
+
+      - name: Verify tag version matches conanfile.py version
+        uses: ./.github/actions/verify-tag-version
+        with:
+          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
+          tag-prefix: core-v
 
       - name: Bootstrap Conan
         uses: ./.github/actions/conan-bootstrap
