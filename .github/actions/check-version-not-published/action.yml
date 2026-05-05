@@ -16,7 +16,12 @@ runs:
         CONAN_REF: ${{ inputs.conan-ref }}
       run: |
         output=$(conan list "$CONAN_REF" -r conan-eiva --format=json)
-        exists=$(printf '%s' "$output" | python3 -c "import json,sys;d=json.load(sys.stdin);print('yes' if d.get('conan-eiva') else 'no')")
+        # Conan 2 returns the structure:
+        #   recipe found:     {"conan-eiva": {"<ref>": {"revisions": {...}}}}
+        #   recipe not found: {"conan-eiva": {"<ref>": {"error": "Recipe ... not found"}}}
+        # We must distinguish the two — truthiness of the remote entry alone
+        # is not enough.
+        exists=$(printf '%s' "$output" | python3 -c "import json,sys;d=json.load(sys.stdin);entries=(d.get('conan-eiva') or {}).values();print('yes' if any(isinstance(v,dict) and 'revisions' in v for v in entries) else 'no')")
         if [ "$exists" = "yes" ]; then
           echo "::error::Version '$CONAN_REF' is already published on conan-eiva. Bump the version in conanfile.py to release a new version."
           echo "Existing entries on conan-eiva:"
