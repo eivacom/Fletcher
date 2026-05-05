@@ -6,7 +6,7 @@ import os
 
 class FletcherCoreConan(ConanFile):
     name = "eiva-fletcher-core"
-    version = "0.1.4-alpha"
+    version = "0.1.3-alpha"
     description = "EIVA Fletcher Core library"
     license = "Proprietary"
     package_type = "header-library"
