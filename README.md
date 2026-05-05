@@ -44,9 +44,21 @@ package's workflow — not all of them.
 
    ```bash
    git fetch origin
+   ```
+
+   ```bash
    git checkout main
+   ```
+
+   ```bash
    git pull
+   ```
+
+   ```bash
    git tag <component>-v<version>
+   ```
+
+   ```bash
    git push origin <component>-v<version>
    ```
 
@@ -54,6 +66,9 @@ package's workflow — not all of them.
 
    ```bash
    git tag core-v0.1.4-alpha
+   ```
+
+   ```bash
    git push origin core-v0.1.4-alpha
    ```
 
