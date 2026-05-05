@@ -23,6 +23,10 @@ jobs:
       conan-ref: ${{ steps.conan-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
 
       - name: Generate token for conan-configuration
         id: generate-token
@@ -88,6 +92,10 @@ jobs:
       group: ubuntu_24.04_x64
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
 
       - name: Generate token for conan-configuration
         id: generate-token
@@ -134,6 +142,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
 
       - name: Generate token for conan-configuration
         id: generate-token
