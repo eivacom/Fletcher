@@ -141,7 +141,7 @@ build-windows                            build-linux
 Windows Server Core LTSC 2025            Ubuntu 24.04 x64
 Native runner                            Docker container (core/.devcontainer)
 Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
-         v143-x64-RelWithDebInfo
+         v143-x64-Release
         │                                      │
         └──────────────────┬───────────────────┘
                            │ both must pass
@@ -155,7 +155,7 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 
 | Job | Runner | Profile | Build type |
 |---|---|---|---|
-| `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-RelWithDebInfo` | RelWithDebInfo |
+| `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-Release` | Release |
 | `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
 
 ### Linux Docker container
