@@ -28,6 +28,10 @@ class FletcherArrowBridgeConan(ConanFile):
         # core/types.hpp), so headers must be transitively visible.
         self.requires("eiva-fletcher-core/0.1.3-alpha", transitive_headers=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
+        # Resolve a transitive zlib conflict between arrow (pins 1.2.13) and
+        # openssl (range >=1.2.11 <2, resolves to 1.3.1). Pin to 1.3.1 to match
+        # what conan-eiva already publishes.
+        self.requires("zlib/1.3.1", override=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
