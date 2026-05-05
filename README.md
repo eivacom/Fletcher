@@ -9,6 +9,7 @@ Conan package with its own version, CI workflow, and release cycle:
 | `protoc/` | `fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `eiva-fletcher-pubsub` | static library |
 | `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
+| `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
 
 Each package has its own `README.md` covering how to build, test and consume it.
 
@@ -33,6 +34,7 @@ package to the `conan-eiva` Artifactory remote.
 | `protoc/` | `protoc-v` | `protoc-v0.1.0` |
 | `pubsub/` | `pubsub-v` | `pubsub-v0.1.0-alpha` |
 | `arrow-bridge/` | `arrow-bridge-v` | `arrow-bridge-v0.1.0-alpha` |
+| `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
 
 The component prefix is required so that pushing a tag triggers exactly one
 package's workflow — not all of them.
@@ -81,8 +83,11 @@ package's workflow — not all of them.
 
 ### Notes
 
-- Tag and `conanfile.py` version **must match**. The workflow does not
-  verify this, but a mismatch produces a confusing package reference.
+- Tag and `conanfile.py` version **must match**. The workflow verifies
+  this and the upload job fails fast if they differ.
+- The upload job also fails if the package version is already published
+  on `conan-eiva` — re-releasing an existing version requires bumping
+  `conanfile.py` first.
 - Releases are independent per component. Bumping `core` does not require
   re-releasing the others.
 - Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the
