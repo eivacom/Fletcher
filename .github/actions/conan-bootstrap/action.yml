@@ -1,0 +1,50 @@
+name: "Bootstrap Conan with conan-eiva access"
+description: >-
+  Generates a token for the eiva-conan-configuration repository, sets up Conan,
+  installs the eiva conan-configuration, and logs into the conan-eiva remote.
+
+inputs:
+  github-app-client-id:
+    description: "GitHub App client ID for accessing eivacom/conan-configuration"
+    required: true
+  github-app-private-key:
+    description: "GitHub App private key matching the client ID above"
+    required: true
+  conan-eiva-username:
+    description: "conan-eiva Artifactory username"
+    required: true
+  conan-eiva-password:
+    description: "conan-eiva Artifactory password"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate token for conan-configuration
+      id: generate-token
+      uses: actions/create-github-app-token@v3.1.1
+      with:
+        client-id: ${{ inputs.github-app-client-id }}
+        private-key: ${{ inputs.github-app-private-key }}
+        owner: eivacom
+        repositories: conan-configuration
+
+    - name: Setup Conan
+      uses: eivacom/conan-actions/conan-setup@v1.0
+      with:
+        python-version: "3.14.4"
+        conan-version: "2.27.1"
+
+    - name: Configure Conan
+      uses: eivacom/conan-actions/conan-configure@v1.0
+      with:
+        token: ${{ steps.generate-token.outputs.token }}
+        config_urls: |
+          https://github.com/eivacom/conan-configuration
+
+    - name: Login Conan
+      uses: eivacom/conan-actions/conan-login@v1.0
+      with:
+        remote: conan-eiva
+        username: ${{ inputs.conan-eiva-username }}
+        password: ${{ inputs.conan-eiva-password }}

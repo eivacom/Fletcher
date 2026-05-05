@@ -12,6 +12,7 @@ on:
       - ".github/workflows/fletcher-core.yml"
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
+      - ".github/actions/conan-bootstrap/**"
   push:
     tags:
       - 'core-v[0-9]*.[0-9]*.[0-9]*'
@@ -29,40 +30,19 @@ jobs:
             core
             .github
 
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
-
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
 
       - name: Install CMake
         uses: ./.github/actions/install-cmake
 
-      - name: Setup Conan
-        uses: eivacom/conan-actions/conan-setup@v1.0
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
         with:
-          python-version: "3.14.4"
-          conan-version: "2.27.1"
-
-      - name: Configure Conan
-        uses: eivacom/conan-actions/conan-configure@v1.0
-        with:
-          token: ${{ steps.generate-token.outputs.token }}
-          config_urls: |
-            https://github.com/eivacom/conan-configuration
-
-      - name: Login Conan
-        uses: eivacom/conan-actions/conan-login@v1.0
-        with:
-          remote: conan-eiva
-          username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
       - name: Get package reference
         id: conan-ref
@@ -154,34 +134,13 @@ jobs:
           conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
           tag-prefix: core-v
 
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
         with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
-
-      - name: Setup Conan
-        uses: eivacom/conan-actions/conan-setup@v1.0
-        with:
-          python-version: "3.14.4"
-          conan-version: "2.27.1"
-
-      - name: Configure Conan
-        uses: eivacom/conan-actions/conan-configure@v1.0
-        with:
-          token: ${{ steps.generate-token.outputs.token }}
-          config_urls: |
-            https://github.com/eivacom/conan-configuration
-
-      - name: Login Conan
-        uses: eivacom/conan-actions/conan-login@v1.0
-        with:
-          remote: conan-eiva
-          username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
       - name: Download package artifact
         uses: actions/download-artifact@v4
