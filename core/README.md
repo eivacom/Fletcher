@@ -197,7 +197,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("eiva-fletcher-core/0.1.2-alpha")
+        self.requires("eiva-fletcher-core/0.1.3-alpha")
 
     def layout(self):
         cmake_layout(self)

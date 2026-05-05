@@ -47,6 +47,8 @@ inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
         buf.insert(buf.end(), p, p + 4);
     };
     auto append_bytes = [&](const uint8_t* data, size_t len) {
+        if (len == 0)
+            return;
         buf.insert(buf.end(), data, data + len);
     };
 
