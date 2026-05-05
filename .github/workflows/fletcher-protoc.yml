@@ -145,6 +145,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify tag version matches conanfile.py version
+        run: |
+          conan_ref="${{ needs.build-windows.outputs.conan-ref }}"
+          conan_version="${conan_ref##*/}"
+          tag_version="${GITHUB_REF##refs/tags/protoc-v}"
+          if [ "$tag_version" != "$conan_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match conanfile.py version '$conan_version' (conan-ref: $conan_ref, tag: $GITHUB_REF)"
+            exit 1
+          fi
+          echo "Tag and conanfile.py versions match: $conan_version"
+
       - name: Generate token for conan-configuration
         id: generate-token
         uses: actions/create-github-app-token@v3.1.1
