@@ -206,6 +206,64 @@ target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 The `fast-dds::fast-dds` link dependency is private to this library;
 consumers do not need to depend on Fast DDS directly.
 
+## CI pipeline
+
+The workflow is defined in `.github/workflows/fletcher-fastdds-pubsub-provider.yml` and runs on every
+push to `feature/fletcher-fastdds-pubsub-provider`, on every pull request touching `fastdds-pubsub-provider/**`,
+and on release tags matching `fastdds-pubsub-provider-v*`.
+
+```
+push / pull_request
+        │
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+build-windows                            build-linux
+Windows Server Core LTSC 2025            Ubuntu 24.04 x64
+Native runner                            Docker container (fastdds-pubsub-provider/.devcontainer)
+Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
+         v143-x64-Release
+        │                                      │
+        └──────────────────┬───────────────────┘
+                           │ both must pass
+                           ▼
+                        upload
+                  (tag push only)
+                  Publishes to conan-eiva Artifactory
+```
+
+### Build profiles
+
+| Job | Runner | Profile | Build type |
+|---|---|---|---|
+| `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-Release` | Release |
+| `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
+
+Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as part of every CI build.
+
+### Linux Docker container
+
+The Linux job builds and tests entirely inside a Docker container derived from
+`fastdds-pubsub-provider/.devcontainer`. The container image is cached in Harbor
+to avoid rebuilding it on every run:
+
+```
+dockerrepo.eiva.com/fletcher/fastdds-pubsub-provider-devcontainer:cache
+```
+
+### Package handoff
+
+Both platforms produce a separate binary package. Each build job saves its
+package to a GitHub Actions artifact; the `upload` job downloads both, restores
+them into the Conan cache, and publishes to Artifactory:
+
+```
+conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  conan cache restore  →  conan upload
+```
+
+The `upload` job only runs on a tag push after both `build-windows` and
+`build-linux` pass, and verifies that the tag version matches the version in
+`conanfile.py` before uploading.
+
 ## Runtime requirements
 
 The Fast DDS runtime (discovery server or default multicast discovery) must be reachable at the configured domain ID. On a single machine with no network configuration, the default multicast discovery works out of the box. For multi-host deployments, configure Fast DDS via its XML profile mechanism or a discovery server — see the [Fast DDS documentation](https://fast-dds.docs.eprosima.com/).
