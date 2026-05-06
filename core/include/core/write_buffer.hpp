@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace fletcher {
@@ -30,6 +31,8 @@ class WriteBuffer {
 
     template <typename T>
     void AppendFixed(T value) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "AppendFixed requires a trivially copyable type");
         Append(reinterpret_cast<const uint8_t*>(&value), sizeof(T));
     }
 

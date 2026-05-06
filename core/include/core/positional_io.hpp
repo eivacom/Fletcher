@@ -13,6 +13,7 @@
 
 #include "write_buffer.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -21,6 +22,10 @@
 #include <utility>
 
 namespace fletcher {
+
+static_assert(std::endian::native == std::endian::little,
+              "Positional wire format assumes little-endian host");
+
 
 // ---------------------------------------------------------------------------
 // PositionalWriter — writes positional wire format into a WriteBuffer.
@@ -34,7 +39,8 @@ class PositionalWriter {
         : buf_(buf)
         , num_fields_(num_fields)
         , bitfield_offset_(buf.Position()) {
-        // Write placeholder null bitfield (all zeros = all non-null).
+        if (num_fields < 0)
+            throw std::invalid_argument("PositionalWriter: num_fields must be >= 0");
         size_t nbytes = BitfieldBytes(num_fields);
         for (size_t i = 0; i < nbytes; ++i)
             buf_.AppendByte(0);
@@ -42,7 +48,9 @@ class PositionalWriter {
 
     // Mark field at field_index as null.  Call before writing payloads.
     void SetNull(int field_index) {
-        size_t byte_offset = bitfield_offset_ + field_index / 8;
+        if (field_index < 0 || field_index >= num_fields_)
+            throw std::out_of_range("PositionalWriter::SetNull: field_index out of range");
+        size_t byte_offset = bitfield_offset_ + static_cast<size_t>(field_index / 8);
         uint8_t bit = static_cast<uint8_t>(1u << (field_index % 8));
         buf_.PatchByte(byte_offset, bit);
     }
@@ -159,6 +167,8 @@ class PositionalReader {
     }
 
     bool IsNull(int field_index) const {
+        if (field_index < 0 || field_index >= num_fields_)
+            throw std::out_of_range("PositionalReader::IsNull: field_index out of range");
         return (bitfield_[field_index / 8] >> (field_index % 8)) & 1u;
     }
 
