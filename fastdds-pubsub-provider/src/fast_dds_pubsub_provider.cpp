@@ -127,42 +127,46 @@ class FletcherTopicType : public TopicDataType {
         void* data,
         eprosima::fastrtps::rtps::SerializedPayload_t* payload) override {
         auto* d = static_cast<TransportData*>(data);
+        try {
+            FixedWriteBuffer buf(payload->data, payload->max_size);
 
-        FixedWriteBuffer buf(payload->data, payload->max_size);
+            // CDR little-endian encapsulation header.
+            payload->encapsulation = CDR_LE;
+            const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
+            buf.Append(cdr_header, 4);
 
-        // CDR little-endian encapsulation header.
-        payload->encapsulation = CDR_LE;
-        const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
-        buf.Append(cdr_header, 4);
+            // CDR octet-sequence: uint32 length placeholder.
+            size_t seq_len_pos = buf.WriteLengthPlaceholder();
+            size_t seq_start = buf.Position();
 
-        // CDR octet-sequence: uint32 length placeholder.
-        size_t seq_len_pos = buf.WriteLengthPlaceholder();
-        size_t seq_start = buf.Position();
+            // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
+            size_t row_len_pos = buf.WriteLengthPlaceholder();
+            size_t row_start = buf.Position();
 
-        // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
-        size_t row_len_pos = buf.WriteLengthPlaceholder();
-        size_t row_start = buf.Position();
+            // Row bytes written directly by the encoder.
+            d->encoder(buf);
+            buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
 
-        // Row bytes written directly by the encoder.
-        d->encoder(buf);
-        buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
+            // Attachments.
+            const auto& att = *d->attachments;
+            buf.AppendFixed(static_cast<uint32_t>(att.size()));
+            for (const auto& [key, blob] : att) {
+                buf.AppendFixed(static_cast<uint32_t>(key.size()));
+                buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
+                uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+                buf.AppendFixed(blob_len);
+                if (blob_len > 0) buf.Append(blob->data(), blob_len);
+            }
 
-        // Attachments.
-        const auto& att = *d->attachments;
-        buf.AppendFixed(static_cast<uint32_t>(att.size()));
-        for (const auto& [key, blob] : att) {
-            buf.AppendFixed(static_cast<uint32_t>(key.size()));
-            buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-            uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
-            buf.AppendFixed(blob_len);
-            if (blob_len > 0) buf.Append(blob->data(), blob_len);
+            // Patch CDR sequence length.
+            buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
+
+            payload->length = static_cast<uint32_t>(buf.Position());
+            return true;
+        } catch (...) {
+            payload->length = 0;
+            return false;
         }
-
-        // Patch CDR sequence length.
-        buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
-
-        payload->length = static_cast<uint32_t>(buf.Position());
-        return true;
     }
 
     bool deserialize(
@@ -194,18 +198,19 @@ class FletcherTopicType : public TopicDataType {
             uint32_t att_count;
             std::memcpy(&att_count, ptr + pos, 4);
             pos += 4;
-            for (uint32_t i = 0; i < att_count && pos + 4 <= total; ++i) {
+            for (uint32_t i = 0; i < att_count; ++i) {
+                if (pos + 4 > total) return false;
                 uint32_t key_len;
                 std::memcpy(&key_len, ptr + pos, 4);
                 pos += 4;
-                if (pos + key_len > total) break;
+                if (pos + key_len > total) return false;
                 std::string key(reinterpret_cast<const char*>(ptr + pos), key_len);
                 pos += key_len;
-                if (pos + 4 > total) break;
+                if (pos + 4 > total) return false;
                 uint32_t blob_len;
                 std::memcpy(&blob_len, ptr + pos, 4);
                 pos += 4;
-                if (pos + blob_len > total) break;
+                if (pos + blob_len > total) return false;
                 auto blob = std::make_shared<const std::vector<uint8_t>>(
                     ptr + pos, ptr + pos + blob_len);
                 pos += blob_len;

@@ -10,14 +10,19 @@ namespace fletcher {
 
 /// PubSub transport backed by eProsima Fast DDS.
 ///
-/// DataWriter / DataReader QoS is set to RELIABLE reliability,
-/// KEEP_ALL history, and TRANSIENT_LOCAL durability so that messages
-/// are not silently dropped and late-joining subscribers receive
-/// historical samples.
+/// Data topic DataWriter/DataReader QoS: RELIABLE reliability, KEEP_ALL
+/// history, and TRANSIENT_LOCAL durability so messages are not silently
+/// dropped and late-joining subscribers receive historical samples.
+///
+/// The companion schema channel (__schema topic) uses RELIABLE +
+/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL to retain only the latest schema.
 class FastDDSPubSubProvider : public PubSub {
  public:
     /// @param domain_id         DDS domain ID (default 0).
-    /// @param max_payload_bytes Maximum serialized envelope in bytes (default 1 MB).
+    /// @param max_payload_bytes Maximum DDS payload size in bytes (default 1 MB).
+    ///                          Bounds the full serialized envelope: CDR framing +
+    ///                          row bytes + all attachments. Also applied to the
+    ///                          companion schema channel.
     explicit FastDDSPubSubProvider(uint32_t domain_id = 0,
                                    uint32_t max_payload_bytes = 1024 * 1024);
     ~FastDDSPubSubProvider() override;
