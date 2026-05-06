@@ -5,7 +5,7 @@ import os
 
 
 class FletcherProtocPluginConan(ConanFile):
-    name = "fletcher-protoc"
+    name = "eiva-fletcher-protoc"
     version = "0.1.0-alpha"
     description = "A protoc plugin that generates C++ and TypeScript code for the Fletcher wire format"
     license = "Proprietary"

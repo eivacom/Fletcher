@@ -6,7 +6,7 @@ Conan package with its own version, CI workflow, and release cycle:
 | Directory | Conan package | Type |
 |---|---|---|
 | `core/` | `eiva-fletcher-core` | header-only |
-| `protoc/` | `fletcher-protoc` | application (protoc plugin) |
+| `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `eiva-fletcher-pubsub` | static library |
 | `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
 | `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
@@ -31,7 +31,7 @@ package to the `conan-eiva` Artifactory remote.
 | Component | Tag prefix | Example |
 |---|---|---|
 | `core/` | `core-v` | `core-v0.1.3-alpha` |
-| `protoc/` | `protoc-v` | `protoc-v0.1.0` |
+| `protoc/` | `protoc-v` | `protoc-v0.1.0-alpha` |
 | `pubsub/` | `pubsub-v` | `pubsub-v0.1.0-alpha` |
 | `arrow-bridge/` | `arrow-bridge-v` | `arrow-bridge-v0.1.0-alpha` |
 | `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
