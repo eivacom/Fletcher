@@ -4,8 +4,8 @@ project(fletcher_protoc_test LANGUAGES CXX)
 find_package(eiva-fletcher-protoc REQUIRED)
 find_package(protobuf REQUIRED)
 
-if(NOT TARGET eiva-eiva-fletcher-protoc::plugin)
-    message(FATAL_ERROR "eiva-eiva-fletcher-protoc::plugin target not found")
+if(NOT TARGET eiva-fletcher-protoc::plugin)
+    message(FATAL_ERROR "eiva-fletcher-protoc::plugin target not found")
 endif()
 
 set(PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
