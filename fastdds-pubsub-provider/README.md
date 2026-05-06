@@ -67,47 +67,144 @@ provider->Unsubscribe({"my", "topic"});
 - The subscription callback is invoked from a Fast DDS internal listener thread. Shared state accessed from the callback must be protected externally.
 - `FastDDSPubSubProvider` is non-copyable and non-movable (DDS entities cannot be transferred).
 
-## Building
+## Building the package locally
 
-This library is distributed as a Conan package: `eiva-fletcher-fastdds-pubsub-provider`.
+### Windows (MSVC)
 
-### Consuming via Conan
+**Prerequisites:** Visual Studio 2022 with C++ workload, CMake, Python, Conan 2.
 
-Add the package to your `conanfile.py`:
+Install the EIVA Conan configuration (remote + profiles) once:
+
+```bat
+conan config install https://github.com/eivacom/conan-configuration.git
+```
+
+Build and package (Release, no tests):
+
+```bat
+conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release
+```
+
+Build, run tests, and package:
+
+```bat
+conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+```
+
+The built package lands in the local Conan cache (`%USERPROFILE%\.conan2`).
+
+To iterate without the full `conan create` cycle use `conan build` against the source tree:
+
+```bat
+conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+```
+
+To run the tests separately with CTest after a `conan build` (Visual Studio is a multi-config generator so the config must be specified):
+
+```bat
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+Add `-V` for full GTest output:
+
+```bat
+ctest --test-dir build -C Debug --output-on-failure -V
+```
+
+### Linux (devcontainer / Docker)
+
+The `.devcontainer` folder provides a ready-made Ubuntu 24.04 + GCC 12 image.
+
+#### VS Code devcontainer (recommended)
+
+**Prerequisites:** VS Code with the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension and Docker Desktop (or Docker Engine on Linux).
+
+1. Open the monorepo root in VS Code.
+2. When prompted _"Reopen in Container"_ click it, or open the Command Palette (`Ctrl+Shift+P`) and run **Dev Containers: Reopen in Container**. VS Code builds the image from `.devcontainer/Dockerfile` and starts the container. The `postCreateCommand` in `devcontainer.json` automatically runs `conan config install` so the EIVA profiles and remote are available immediately.
+3. Open a terminal inside the container (`Terminal → New Terminal`) and log in to the EIVA Conan remote (required to resolve private packages such as `eiva-fletcher-pubsub`):
+
+```bash
+conan remote login conan-eiva <username> -p <password>
+```
+
+If the `build/` folder contains stale artifacts from a previous Windows build, remove it first — `DartConfiguration.tcl` bakes in absolute paths at configure time and will cause CTest to fail when those paths don't match the current platform:
+
+```bash
+rm -rf build/
+```
+
+Build and run tests:
+
+```bash
+conan build . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+```
+
+Build, package, and run tests (equivalent to CI):
+
+```bash
+conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+```
+
+Test output appears directly in the VS Code terminal. To run the tests separately with CTest after a `conan build`, note that `cmake_layout` places the Linux build under `build/<BuildType>`:
+
+```bash
+ctest --test-dir build/Debug --output-on-failure
+```
+
+Add `-V` for full GTest output:
+
+```bash
+ctest --test-dir build/Debug --output-on-failure -V
+```
+
+#### Manual Docker (no VS Code)
+
+Build the devcontainer image:
+
+```bash
+docker buildx build -t fletcher-fastdds-pubsub-provider-build fastdds-pubsub-provider/.devcontainer
+```
+
+Run build + tests inside the container:
+
+```bash
+docker run --rm \
+    -v $(pwd):/workspace \
+    -w /workspace/fastdds-pubsub-provider \
+    fletcher-fastdds-pubsub-provider-build \
+    bash -c "conan config install https://github.com/eivacom/conan-configuration.git --type git && conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+```
+
+## Consuming the package
+
+### 1. Add to your conanfile.py
 
 ```python
 def requirements(self):
     self.requires("eiva-fletcher-fastdds-pubsub-provider/0.1.0-alpha")
 ```
 
-Then install and generate:
+Install dependencies:
 
-```
-conan install . --build=missing
+```bash
+conan install . --build=missing -pr:a=<your-profile>
 ```
 
-### Linking in your own CMake target
+### 2. Wire up CMake
 
 ```cmake
 find_package(eiva-fletcher-fastdds-pubsub-provider REQUIRED)
 
-# Use the fully qualified target name:
-target_link_libraries(my_app PRIVATE eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider)
+# Fully qualified target name:
+target_link_libraries(my_app PRIVATE
+    eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider)
 
 # Or the convenience alias injected by the package's build module:
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 ```
 
-The `fast-dds::fast-dds` link dependency is private to this library; consumers do not need to depend on Fast DDS directly.
-
-### Building the package itself
-
-```
-conan create . --build=missing -pr:a=<your-profile>
-
-# With tests:
-conan create . --build=missing -pr:a=<your-profile> -o "&:run_tests=True"
-```
+The `fast-dds::fast-dds` link dependency is private to this library;
+consumers do not need to depend on Fast DDS directly.
 
 ## Runtime requirements
 
