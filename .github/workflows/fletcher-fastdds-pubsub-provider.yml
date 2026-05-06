@@ -16,8 +16,6 @@ on:
       - ".github/actions/check-version-not-published/**"
       - ".github/actions/verify-tag-version/**"
   push:
-    branches:
-      - 'feature/fletcher-fastdds-pubsub-provider'
     tags:
       - 'fastdds-pubsub-provider-v[0-9]*.[0-9]*.[0-9]*'
 
