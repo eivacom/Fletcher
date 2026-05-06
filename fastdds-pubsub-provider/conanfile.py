@@ -7,7 +7,7 @@ import os
 class FletcherPubsubConan(ConanFile):
     name = "eiva-fletcher-fastdds-pubsub-provider"
     version = "0.1.0-alpha"
-    description = "EIVA Fletcher PubSub library"
+    description = "EIVA Fletcher FastDDS PubSub Provider library"
     license = "Proprietary"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
