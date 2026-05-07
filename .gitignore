@@ -3,3 +3,7 @@
 **/CMakeUserPresets.json
 .claude/
 .vs/
+
+# Node / TypeScript
+**/node_modules/
+**/dist/
