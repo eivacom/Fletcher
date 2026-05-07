@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(eiva-fletcher-protoc CONFIG REQUIRED)
 find_package(eiva-fletcher-arrow-bridge CONFIG REQUIRED)
+find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
@@ -14,8 +15,12 @@ set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# Run protoc-gen-fletcher to produce <stem>.fletcher.pb.h next to .proto.
-set(PROTO_STEMS telemetry)
+# Each .proto here is run through protoc-gen-fletcher to produce a
+# <stem>.fletcher.pb.h header that the test sources include.
+set(PROTO_STEMS
+    telemetry
+    evolution_v1
+    evolution_v2)
 
 set(GENERATED_HEADERS)
 foreach(_stem IN LISTS PROTO_STEMS)
@@ -39,16 +44,18 @@ add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
 enable_testing()
 
-add_executable(byte_compat_tests
-    tests/test_byte_compat.cpp)
-add_dependencies(byte_compat_tests generate_headers)
+add_executable(integration_tests
+    tests/test_byte_compat.cpp
+    tests/test_schema_evolution.cpp)
+add_dependencies(integration_tests generate_headers)
 
-target_include_directories(byte_compat_tests PRIVATE
+target_include_directories(integration_tests PRIVATE
     "${GENERATED_DIR}")
 
-target_link_libraries(byte_compat_tests PRIVATE
+target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
-    eiva-fletcher-arrow-bridge::eiva-fletcher-arrow-bridge)
+    eiva-fletcher-arrow-bridge::eiva-fletcher-arrow-bridge
+    eiva-fletcher-pubsub::eiva-fletcher-pubsub)
 
 include(GoogleTest)
-gtest_discover_tests(byte_compat_tests)
+gtest_discover_tests(integration_tests)
