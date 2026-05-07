@@ -1,19 +1,15 @@
 {
   "name": "eiva-fletcher-gateway-client",
   "version": "0.1.0",
-  "description": "TypeScript client for the Fletcher gateway — WebSocket transport plus WASM-accelerated row decoding",
+  "description": "TypeScript client for the Fletcher gateway — WebSocket transport with positional row codec",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "wasm/build/fletcher_decoder.wasm",
-    "wasm/build/fletcher_decoder.js"
+    "dist"
   ],
   "scripts": {
-    "build:wasm": "cd wasm && emcmake cmake -S . -B build && cmake --build build",
-    "build:ts": "tsc",
-    "build": "npm run build:wasm && npm run build:ts",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
