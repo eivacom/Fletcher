@@ -28,6 +28,11 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
         self.requires("eiva-fletcher-protoc/[*, include_prerelease]")
         self.requires("eiva-fletcher-arrow-bridge/[*, include_prerelease]")
         self.requires("eiva-fletcher-pubsub/[*, include_prerelease]")
+        # protobuf is required directly because CMakeLists invokes
+        # `protobuf::protoc` to drive code generation. The protoc plugin
+        # package depends on protobuf too, but Conan does not propagate that
+        # as a CMake target to downstream consumers.
+        self.requires("protobuf/3.21.12")
         self.requires("gtest/1.17.0")
         # arrow pins zlib/1.2.13, openssl pulls 1.3.1 — same conflict
         # arrow-bridge handles in its own conanfile.
