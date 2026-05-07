@@ -35,9 +35,13 @@ namespace
                           const std::vector<int32_t> &readings)
     {
         arrow::Int32Builder list_builder;
-        ARROW_CHECK_OK(list_builder.AppendValues(readings));
+        if (auto s = list_builder.AppendValues(readings); !s.ok()) {
+            ADD_FAILURE() << s;
+        }
         std::shared_ptr<arrow::Array> list_array;
-        ARROW_CHECK_OK(list_builder.Finish(&list_array));
+        if (auto s = list_builder.Finish(&list_array); !s.ok()) {
+            ADD_FAILURE() << s;
+        }
 
         return ArrowRow{
             std::make_shared<arrow::Int32Scalar>(sensor_id),
@@ -53,13 +57,11 @@ namespace
 TEST(ProtocArrowBridgeByteCompat, GeneratedEncodeMatchesCodecEncode)
 {
     fletcher_gen::integration::Telemetry generated;
-    generated.set_sensor_id(42);
-    generated.set_temperature(23.5);
-    generated.set_label("intake");
-    generated.set_valid(true);
-    generated.add_readings(100);
-    generated.add_readings(200);
-    generated.add_readings(300);
+    generated.set_sensor_id(42)
+             .set_temperature(23.5)
+             .set_label("intake")
+             .set_valid(true)
+             .set_readings({100, 200, 300});
     EncodedRow generated_bytes = generated.Encode();
 
     Codec codec(TelemetrySchema());
@@ -74,11 +76,11 @@ TEST(ProtocArrowBridgeByteCompat, GeneratedEncodeMatchesCodecEncode)
 TEST(ProtocArrowBridgeByteCompat, GeneratedEncodingDecodesViaCodec)
 {
     fletcher_gen::integration::Telemetry generated;
-    generated.set_sensor_id(7);
-    generated.set_temperature(-12.75);
-    generated.set_label("");
-    generated.set_valid(false);
-    generated.add_readings(0);
+    generated.set_sensor_id(7)
+             .set_temperature(-12.75)
+             .set_label("")
+             .set_valid(false)
+             .set_readings({0});
 
     Codec codec(TelemetrySchema());
     ArrowRow decoded = codec.DecodeRow(generated.Encode());
