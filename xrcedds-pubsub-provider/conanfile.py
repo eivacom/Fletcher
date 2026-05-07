@@ -68,11 +68,6 @@ class FletcherPubsubConan(ConanFile):
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "lib"),
              keep_path=False)
-        # CMake target alias module.
-        copy(self, "*.cmake",
-             src=os.path.join(self.source_folder, "cmake"),
-             dst=os.path.join(self.package_folder, "cmake"),
-             keep_path=False)
 
     def package_info(self):
         self.cpp_info.libs = ["xrce_dds_pubsub_provider"]

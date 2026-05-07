@@ -6,7 +6,7 @@
 //
 // The envelope wire format is identical to the FastDDS provider:
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
-// using SerializeEnvelope/DeserializeEnvelope from pubsub/envelope.hpp.
+// using SerializeEnvelope/DeserializeEnvelope from core/envelope.hpp.
 
 #include "xrce_dds_pubsub_provider.hpp"
 
@@ -87,7 +87,7 @@ struct XrceDDSPubSubProvider::Impl {
     // Monotonic XRCE object ID counter (per type).
     uint16_t next_id = 1;
 
-    std::mutex mu;
+    std::recursive_mutex mu;
     std::map<std::string, TopicState> topics;
 
     // Demux: datareader object_id.id → topic name.
@@ -120,23 +120,27 @@ void XrceDDSPubSubProvider::Impl::OnTopic(
     void* args) {
 
     auto* impl = static_cast<Impl*>(args);
-    std::lock_guard lock(impl->mu);
 
-    auto rit = impl->reader_to_topic.find(object_id.id);
-    if (rit == impl->reader_to_topic.end()) return;
+    PubSub::SubscribeCallback cb;
+    SharedSchema schema;
+    {
+        std::lock_guard lock(impl->mu);
+        auto rit = impl->reader_to_topic.find(object_id.id);
+        if (rit == impl->reader_to_topic.end()) return;
+        auto tit = impl->topics.find(rit->second);
+        if (tit == impl->topics.end() || !tit->second.callback) return;
+        cb = tit->second.callback;
+        schema = tit->second.shared_schema;
+    }
 
-    auto tit = impl->topics.find(rit->second);
-    if (tit == impl->topics.end() || !tit->second.callback) return;
-
-    // Read the envelope payload from the ucdrBuffer.
-    std::vector<uint8_t> payload(length);
-    ucdr_deserialize_array_uint8_t(ub, payload.data(), length);
-
-    auto envelope = DeserializeEnvelope(payload.data(), payload.size());
-    tit->second.callback(
-        envelope.row.data(), envelope.row.size(),
-        tit->second.shared_schema,
-        std::move(envelope.attachments));
+    try {
+        std::vector<uint8_t> payload(length);
+        ucdr_deserialize_array_uint8_t(ub, payload.data(), length);
+        auto envelope = DeserializeEnvelope(payload.data(), payload.size());
+        cb(envelope.row.data(), envelope.row.size(),
+           schema, std::move(envelope.attachments));
+    } catch (...) {
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -150,6 +154,9 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
     // Size reliable stream buffers.
     // history must be power of 2; buffer size = MTU * history.
     uint16_t history = config.stream_history;
+    if (history == 0 || (history & (history - 1)) != 0)
+        throw std::runtime_error(
+            "XRCE: stream_history must be a non-zero power of 2");
     size_t mtu = UXR_CONFIG_UDP_TRANSPORT_MTU;
     impl_->output_buffer.resize(mtu * history);
     impl_->input_buffer.resize(mtu * history);
@@ -207,6 +214,7 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
     impl_->running = true;
     impl_->run_thread = std::thread([this]() {
         while (impl_->running.load(std::memory_order_relaxed)) {
+            std::lock_guard lock(impl_->mu);
             uxr_run_session_time(
                 &impl_->session,
                 static_cast<int>(impl_->config.run_loop_ms));
@@ -392,6 +400,8 @@ void XrceDDSPubSubProvider::Publish(
         throw std::runtime_error("XRCE: unknown topic: " + name);
 
     auto& ts = it->second;
+    if (!ts.is_publisher)
+        throw std::runtime_error("XRCE: topic is not a publisher: " + name);
 
     // Encode row bytes into a local buffer.
     std::vector<uint8_t> row_bytes;
@@ -601,9 +611,13 @@ void XrceDDSPubSubProvider::Unsubscribe(
             &impl_->session, impl_->reliable_out, ts.reader_id);
         uxr_buffer_delete_entity(
             &impl_->session, impl_->reliable_out, ts.reader_id);
+        uxr_buffer_delete_entity(
+            &impl_->session, impl_->reliable_out, ts.subscriber_id);
         impl_->reader_to_topic.erase(ts.reader_id.id);
         ts.has_reader = false;
         ts.callback = nullptr;
+        ts.subscriber_id = {};
+        ts.reader_id = {};
     }
 }
 
