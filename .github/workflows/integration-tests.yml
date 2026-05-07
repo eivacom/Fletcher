@@ -29,6 +29,7 @@ jobs:
             core
             protoc
             arrow-bridge
+            pubsub
             integration-tests
             .github
 
@@ -68,7 +69,7 @@ jobs:
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
                      PROFILE=Ubuntu22-gcc-12-Release && \
-                     for COMPONENT in core arrow-bridge protoc; do \
+                     for COMPONENT in core arrow-bridge pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \

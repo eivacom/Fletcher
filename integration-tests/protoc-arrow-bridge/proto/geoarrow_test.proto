@@ -1,0 +1,32 @@
+syntax = "proto3";
+package integration;
+
+import "geoarrow/geoarrow.proto";
+import "fletcher/options.proto";
+
+// Test message that exercises all Phase 1 GeoArrow types.
+message VehicleTrack {
+    string vehicle_id = 1;
+    geoarrow.Point last_position = 2;
+    geoarrow.LineString route = 3;
+    geoarrow.Box bounding_box = 4;
+    optional geoarrow.PointZ altitude_point = 5;
+    geoarrow.MultiPoint waypoints = 6;
+}
+
+// Test message that exercises Phase 2 GeoArrow types (nested lists).
+message LandParcel {
+    string parcel_id = 1;
+    geoarrow.Polygon boundary = 2;
+    geoarrow.MultiLineString access_roads = 3;
+    geoarrow.MultiPolygon zones = 4;
+    optional geoarrow.PolygonZ boundary_3d = 5;
+}
+
+// Test message with compile-time CRS options.
+message GeoWithCrs {
+    option (fletcher.default_crs) = "EPSG:4326";
+    string id = 1;
+    geoarrow.Point location = 2;
+    geoarrow.LineString path = 3 [(fletcher.crs) = "EPSG:3857"];
+}

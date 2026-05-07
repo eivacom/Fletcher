@@ -1,0 +1,24 @@
+syntax = "proto3";
+package integration;
+
+// Self-contained nested message hierarchy (all messages in one file).
+// GeoPoint and Address are flat; Location embeds both as struct fields.
+
+message GeoPoint {
+    double latitude  = 1;
+    double longitude = 2;
+    float  elevation = 3;
+}
+
+message Address {
+    string street  = 1;
+    string city    = 2;
+    string country = 3;
+}
+
+// Location references GeoPoint and Address from the same file → struct fields.
+message Location {
+    GeoPoint point   = 1;
+    Address  address = 2;
+    string   name    = 3;
+}

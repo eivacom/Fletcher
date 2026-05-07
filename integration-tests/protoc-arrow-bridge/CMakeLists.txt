@@ -11,42 +11,109 @@ find_package(protobuf CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
+# Locate protobuf well-known-types include dir (google/protobuf/*.proto) so
+# that messages importing Timestamp / Duration / Wrappers can be compiled.
+foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir  "${_protoc_loc}" DIRECTORY)
+        get_filename_component(_protoc_root "${_protoc_dir}/.." ABSOLUTE)
+        set(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_root}/include")
+        break()
+    endif()
+endforeach()
+if(NOT PROTOBUF_WKT_INCLUDE_DIR)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION)
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir  "${_protoc_loc}" DIRECTORY)
+        get_filename_component(_protoc_root "${_protoc_dir}/.." ABSOLUTE)
+        set(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_root}/include")
+    else()
+        message(FATAL_ERROR "Cannot determine protobuf WKT include dir")
+    endif()
+endif()
+message(STATUS "Protobuf WKT include dir: ${PROTOBUF_WKT_INCLUDE_DIR}")
+
 set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# Each .proto here is run through protoc-gen-fletcher to produce a
-# <stem>.fletcher.pb.h header that the test sources include.
+# Each .proto here is run through protoc-gen-fletcher to produce two headers:
+#   <stem>.fletcher.pb.h        — edge-tier (proto + nanoarrow only)
+#   <stem>.fletcher.arrow.pb.h  — server-tier (Arrow C++ ArrowRowView)
 set(PROTO_STEMS
     telemetry
+    simple
+    temporal
+    nested
+    collections
+    maps
+    complex
+    pubsub
     evolution_v1
-    evolution_v2)
+    evolution_v2
+    geoarrow_test)
 
 set(GENERATED_HEADERS)
 foreach(_stem IN LISTS PROTO_STEMS)
-    set(_src "${PROTO_DIR}/${_stem}.proto")
-    set(_hdr "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
+    set(_src  "${PROTO_DIR}/${_stem}.proto")
+    set(_hdr  "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
+    set(_vhdr "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h")
     add_custom_command(
-        OUTPUT  "${_hdr}"
+        OUTPUT  "${_hdr}" "${_vhdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
+                "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${_src}"
         DEPENDS "${_src}" eiva-fletcher-protoc::plugin
+                "${PROTO_DIR}/fletcher/options.proto"
+                "${PROTO_DIR}/geoarrow/geoarrow.proto"
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
-    list(APPEND GENERATED_HEADERS "${_hdr}")
+    list(APPEND GENERATED_HEADERS "${_hdr}" "${_vhdr}")
 endforeach()
+
+# geoarrow.proto lives under proto/geoarrow/ so its generated headers go into
+# a matching subdirectory — that keeps the include path "geoarrow/..." working
+# for code that references geoarrow types directly.
+file(MAKE_DIRECTORY "${GENERATED_DIR}/geoarrow")
+set(_geoarrow_src  "${PROTO_DIR}/geoarrow/geoarrow.proto")
+set(_geoarrow_hdr  "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.pb.h")
+set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.arrow.pb.h")
+add_custom_command(
+    OUTPUT  "${_geoarrow_hdr}" "${_geoarrow_vhdr}"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+            "--fletcher_out=${GENERATED_DIR}/geoarrow"
+            "-I" "${PROTO_DIR}/geoarrow"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_geoarrow_src}"
+    DEPENDS "${_geoarrow_src}" eiva-fletcher-protoc::plugin
+    COMMENT "protoc-gen-fletcher: geoarrow/geoarrow.proto"
+    VERBATIM
+)
+list(APPEND GENERATED_HEADERS "${_geoarrow_hdr}" "${_geoarrow_vhdr}")
 
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
 enable_testing()
 
 add_executable(integration_tests
-    tests/test_byte_compat.cpp
-    tests/test_schema_evolution.cpp)
+    tests/test_telemetry.cpp
+    tests/test_simple.cpp
+    tests/test_temporal.cpp
+    tests/test_nested.cpp
+    tests/test_collections.cpp
+    tests/test_maps.cpp
+    tests/test_complex.cpp
+    tests/test_pubsub.cpp
+    tests/test_schema_evolution.cpp
+    tests/test_geoarrow.cpp
+    tests/test_native_roundtrip.cpp
+    tests/test_arrow_view.cpp)
 add_dependencies(integration_tests generate_headers)
 
 target_include_directories(integration_tests PRIVATE
