@@ -19,6 +19,7 @@ class FletcherPubsubConan(ConanFile):
         "CMakeLists.txt",
         "src/*",
         "include/*",
+        "cmake/*",
         "tests/*",
         "third_party/*",
     )
@@ -79,3 +80,7 @@ class FletcherPubsubConan(ConanFile):
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.set_property("cmake_file_name", "xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_target_name", "xrcedds-pubsub-provider::xrcedds-pubsub-provider")
+        self.cpp_info.set_property("cmake_build_modules", [
+            os.path.join("cmake", "fletcher-xrcedds-pubsub-provider-target.cmake"),
+        ])
+        self.cpp_info.builddirs = ["cmake"]

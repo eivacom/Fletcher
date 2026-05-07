@@ -226,8 +226,12 @@ conan install . --build=missing -pr:a=<your-profile>
 ```cmake
 find_package(xrcedds-pubsub-provider REQUIRED)
 
+# Fully qualified target name:
 target_link_libraries(my_app PRIVATE
     xrcedds-pubsub-provider::xrcedds-pubsub-provider)
+
+# Or the convenience alias injected by the package's build module:
+target_link_libraries(my_app PRIVATE fletcher::xrcedds-pubsub-provider)
 ```
 
 Micro XRCE-DDS Client and Micro-CDR are built from source as part of this package via CMake `FetchContent`; consumers do not need to declare them separately.
