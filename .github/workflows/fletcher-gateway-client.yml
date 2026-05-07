@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v6.4.0
         with:
-          node-version: 24
+          node-version: 24.15.0
           cache: npm
           cache-dependency-path: gateway-client-ts/package-lock.json
 
@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npm run build:ts
+        run: npm run typecheck
 
       - name: Test
         run: npm test
