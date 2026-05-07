@@ -80,14 +80,45 @@ TEST(ProtocArrowBridgeByteCompat, GeneratedEncodingDecodesViaCodec)
              .set_temperature(-12.75)
              .set_label("")
              .set_valid(false)
-             .set_readings({0});
+             .set_readings({10, 20, 30});
 
     Codec codec(TelemetrySchema());
-    ArrowRow decoded = codec.DecodeRow(generated.Encode());
+    EncodedRow generated_bytes = generated.Encode();
+    ArrowRow decoded = codec.DecodeRow(generated_bytes);
 
     ASSERT_EQ(decoded.size(), 5u);
     EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(decoded[0])->value, 7);
     EXPECT_EQ(std::static_pointer_cast<arrow::DoubleScalar>(decoded[1])->value, -12.75);
     EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(decoded[2])->ToString(), "");
     EXPECT_EQ(std::static_pointer_cast<arrow::BooleanScalar>(decoded[3])->value, false);
+
+    auto* readings = dynamic_cast<arrow::ListScalar*>(decoded[4].get());
+    ASSERT_NE(readings, nullptr);
+    ASSERT_EQ(readings->value->length(), 3);
+    auto values = std::static_pointer_cast<arrow::Int32Array>(readings->value);
+    EXPECT_EQ(values->Value(0), 10);
+    EXPECT_EQ(values->Value(1), 20);
+    EXPECT_EQ(values->Value(2), 30);
+}
+
+// Reverse direction of GeneratedEncodingDecodesViaCodec: bytes produced by
+// arrow-bridge's Codec.EncodeRow() must be decodable by the protoc-generated
+// row class via its EncodedRow constructor. Together with the forward test
+// this proves bidirectional byte-compat.
+TEST(ProtocArrowBridgeByteCompat, CodecEncodingDecodesViaGenerated)
+{
+    Codec codec(TelemetrySchema());
+    EncodedRow codec_bytes = codec.EncodeRow(
+        MakeArrowRow(99, 6.25, "cabin", true, {1, 2, 3}));
+
+    fletcher_gen::integration::Telemetry decoded(codec_bytes);
+
+    EXPECT_EQ(decoded.sensor_id(), 99);
+    EXPECT_EQ(decoded.temperature(), 6.25);
+    EXPECT_EQ(decoded.label(), "cabin");
+    EXPECT_EQ(decoded.valid(), true);
+    ASSERT_EQ(decoded.readings().size(), 3u);
+    EXPECT_EQ(decoded.readings()[0], 1);
+    EXPECT_EQ(decoded.readings()[1], 2);
+    EXPECT_EQ(decoded.readings()[2], 3);
 }

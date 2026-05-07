@@ -11,6 +11,17 @@ find_package(protobuf CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
+# fletcher-protoc-target.cmake only WARNs (not FATALs) when the plugin
+# executable cannot be located — find_package above will succeed regardless.
+# Fail loudly here so the build doesn't continue into add_custom_command and
+# blow up there with a confusing $<TARGET_FILE:...> error.
+if(NOT TARGET eiva-fletcher-protoc::plugin)
+    message(FATAL_ERROR
+        "eiva-fletcher-protoc::plugin target was not created. The protoc "
+        "plugin executable is required for code generation; check the "
+        "eiva-fletcher-protoc package install for the binary.")
+endif()
+
 # Locate protobuf well-known-types include dir (google/protobuf/*.proto) so
 # that messages importing Timestamp / Duration / Wrappers can be compiled.
 foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)

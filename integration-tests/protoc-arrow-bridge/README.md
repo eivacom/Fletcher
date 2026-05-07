@@ -2,7 +2,7 @@
 
 End-to-end test that verifies **byte-format compatibility** between:
 
-- `eiva-fletcher-protoc`-generated row classes (their `Encode()` / `DecodeRow()`)
+- `eiva-fletcher-protoc`-generated row classes (their `Encode()` and `EncodedRow`-taking constructor)
 - `eiva-fletcher-arrow-bridge`'s `Codec` (its `EncodeRow()` / `DecodeRow()` over `arrow::Schema` + `ArrowRow`)
 
 Both implement the same positional wire format documented in `arrow-bridge/include/arrow_bridge/codec.hpp`. This test is the proof that they actually agree on every byte.
@@ -11,6 +11,7 @@ Both implement the same positional wire format documented in `arrow-bridge/inclu
 
 - Generated `Encode()` produces byte-identical output to `Codec.EncodeRow()` for the same row content + schema.
 - `Codec.DecodeRow()` correctly round-trips bytes produced by generated `Encode()`.
+- The generated row class's `EncodedRow` constructor correctly round-trips bytes produced by `Codec.EncodeRow()`.
 
 Why this matters: an edge device using the typed proto-row classes (no Apache Arrow C++) sends bytes that a server-side codec (with full Apache Arrow C++) must decode without any translation layer. Each component has its own unit tests, but only this integration test verifies their outputs agree.
 
