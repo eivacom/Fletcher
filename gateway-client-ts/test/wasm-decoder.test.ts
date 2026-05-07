@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { WasmDecoder } from '../src/wasm-decoder.js';
-import { WireTypeId } from 'eiva-fletcher-codec';
+import { WireTypeId } from '../src/wire-types.js';
 
 /**
  * Build a tagged row buffer by hand for testing the legacy WasmDecoder.

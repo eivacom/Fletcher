@@ -5,7 +5,7 @@
  * generates alongside TypeScript interfaces.
  */
 
-import { WireTypeId } from './wire-types.js';
+import { WireTypeId } from '../wire-types.js';
 
 export interface FieldDescriptor {
   /** Human-readable field name (from .proto). */

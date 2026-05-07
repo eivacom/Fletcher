@@ -10,7 +10,7 @@
  * Sub IDs are stringified in JSON to avoid JS Number precision loss.
  */
 
-import type { SchemaDescriptor, FieldDescriptor } from 'eiva-fletcher-codec';
+import type { SchemaDescriptor, FieldDescriptor } from './codec/schema-descriptor.js';
 
 const textEncoder = new TextEncoder();
 

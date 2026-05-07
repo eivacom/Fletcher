@@ -1,24 +1,21 @@
 /**
  * eiva-fletcher-gateway-client — public API.
- *
- * Re-exports the codec primitives from eiva-fletcher-codec for convenience
- * so callers can pull both client + codec from a single import.
  */
 
-// Re-export codec primitives
-export {
-  WireTypeId,
-  scalarByteSize,
-  ObjectBackend,
-  ArrowBackend,
-  encodePositional,
-  decodePositional,
-} from 'eiva-fletcher-codec';
-export type {
-  SchemaDescriptor,
-  FieldDescriptor,
-  DecoderBackend,
-} from 'eiva-fletcher-codec';
+// Wire format
+export { WireTypeId, scalarByteSize } from './wire-types.js';
+
+// Schema descriptors
+export type { SchemaDescriptor, FieldDescriptor } from './codec/schema-descriptor.js';
+
+// Codec
+export { encodePositional } from './codec/positional-encoder.js';
+export { decodePositional } from './codec/positional-decoder.js';
+
+// Backends
+export type { DecoderBackend } from './codec/object-backend.js';
+export { ObjectBackend } from './codec/object-backend.js';
+export { ArrowBackend } from './codec/arrow-backend.js';
 
 // Envelope
 export { serializeEnvelope, deserializeEnvelope } from './envelope.js';
