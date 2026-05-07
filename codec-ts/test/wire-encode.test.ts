@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { WireTypeId, ObjectBackend, encodePositional } from 'eiva-fletcher-codec';
-import type { SchemaDescriptor } from 'eiva-fletcher-codec';
+import { WireTypeId, ObjectBackend, encodePositional } from '../src/index.js';
+import type { SchemaDescriptor } from '../src/index.js';
 
 describe('Positional encoder + decoder roundtrip', () => {
   let backend: ObjectBackend;
