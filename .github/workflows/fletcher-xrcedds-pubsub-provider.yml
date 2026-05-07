@@ -1,4 +1,4 @@
-name: xrcedds-pubsub-provider
+name: fletcher-xrcedds-pubsub-provider
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,7 +9,7 @@ on:
   pull_request:
     paths:
       - "xrcedds-pubsub-provider/**"
-      - ".github/workflows/xrcedds-pubsub-provider.yml"
+      - ".github/workflows/fletcher-xrcedds-pubsub-provider.yml"
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"

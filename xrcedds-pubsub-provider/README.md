@@ -234,7 +234,7 @@ Micro XRCE-DDS Client and Micro-CDR are built from source as part of this packag
 
 ## CI pipeline
 
-The workflow is defined in `.github/workflows/xrcedds-pubsub-provider.yml` and runs on every push to `feature/xrcedds-pubsub-provider`, on every pull request touching `xrcedds-pubsub-provider/**`, and on release tags matching `xrcedds-pubsub-provider-v*`.
+The workflow is defined in `.github/workflows/fletcher-xrcedds-pubsub-provider.yml` and runs on every push to `feature/xrcedds-pubsub-provider`, on every pull request touching `xrcedds-pubsub-provider/**`, and on release tags matching `xrcedds-pubsub-provider-v*`.
 
 ```
 push / pull_request
