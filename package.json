@@ -1,0 +1,9 @@
+{
+  "name": "fletcher-monorepo",
+  "private": true,
+  "description": "Top-level workspace declaration so eiva-fletcher-* TypeScript packages can resolve each other locally during development.",
+  "workspaces": [
+    "codec-ts",
+    "gateway-client-ts"
+  ]
+}

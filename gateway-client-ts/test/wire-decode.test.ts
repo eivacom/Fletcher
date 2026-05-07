@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { WasmDecoder } from '../src/wasm-decoder.js';
-import { WireTypeId } from '../src/wire-types.js';
-import { ObjectBackend } from '../src/codec/object-backend.js';
-import { encodePositional } from '../src/codec/positional-encoder.js';
-import type { SchemaDescriptor } from '../src/codec/schema-descriptor.js';
+import { WireTypeId, ObjectBackend, encodePositional } from 'eiva-fletcher-codec';
+import type { SchemaDescriptor } from 'eiva-fletcher-codec';
 
 /**
  * Build a tagged row buffer by hand for testing the legacy WasmDecoder.

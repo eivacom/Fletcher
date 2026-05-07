@@ -5,9 +5,9 @@
  * to a DecoderBackend to produce the final value.
  */
 
-import { WireTypeId, scalarByteSize } from '../wire-types.js';
+import { WireTypeId, scalarByteSize } from 'eiva-fletcher-codec';
+import type { FieldDescriptor, SchemaDescriptor } from 'eiva-fletcher-codec';
 import type { FieldEntry, WasmDecoder } from '../wasm-decoder.js';
-import type { FieldDescriptor, SchemaDescriptor } from './schema-descriptor.js';
 
 const textDecoder = new TextDecoder();
 

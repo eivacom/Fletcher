@@ -5,8 +5,8 @@
  * wire format.  This is the inverse of row-decoder + object-backend.
  */
 
-import { WireTypeId, scalarByteSize } from '../wire-types.js';
-import type { FieldDescriptor, SchemaDescriptor } from './schema-descriptor.js';
+import { WireTypeId, scalarByteSize } from 'eiva-fletcher-codec';
+import type { FieldDescriptor, SchemaDescriptor } from 'eiva-fletcher-codec';
 
 const textEncoder = new TextEncoder();
 

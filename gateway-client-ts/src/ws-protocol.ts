@@ -10,7 +10,7 @@
  * Sub IDs are stringified in JSON to avoid JS Number precision loss.
  */
 
-import type { SchemaDescriptor, FieldDescriptor } from './codec/schema-descriptor.js';
+import type { SchemaDescriptor, FieldDescriptor } from 'eiva-fletcher-codec';
 
 const textEncoder = new TextEncoder();
 
@@ -27,7 +27,7 @@ export interface SubscribedResponse {
   subId: bigint;
   topic: string;
   /** Schema descriptor parsed from the server's JSON schema object. */
-  schema?: import('./codec/schema-descriptor.js').SchemaDescriptor;
+  schema?: SchemaDescriptor;
   /** Base64-encoded Arrow IPC schema bytes (full fidelity). */
   schemaIpc?: string;
 }

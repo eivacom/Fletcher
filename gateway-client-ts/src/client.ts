@@ -17,10 +17,8 @@ import {
   parseBinaryMessage,
 } from './ws-protocol.js';
 import type { ServerResponse, SubscribedResponse, TopicsListResponse, ErrorResponse } from './ws-protocol.js';
-import { ObjectBackend } from './codec/object-backend.js';
-import type { DecoderBackend } from './codec/object-backend.js';
-import { encodePositional } from './codec/positional-encoder.js';
-import type { SchemaDescriptor } from './codec/schema-descriptor.js';
+import { ObjectBackend, encodePositional } from 'eiva-fletcher-codec';
+import type { DecoderBackend, SchemaDescriptor } from 'eiva-fletcher-codec';
 import type { BackendType, FletcherClientOptions, MessageCallback } from './types.js';
 
 interface PendingRequest {

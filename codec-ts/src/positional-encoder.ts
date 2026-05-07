@@ -7,7 +7,7 @@
  *   For each non-null field in schema order: payload bytes
  */
 
-import { WireTypeId, scalarByteSize } from '../wire-types.js';
+import { WireTypeId, scalarByteSize } from './wire-types.js';
 import type { FieldDescriptor, SchemaDescriptor } from './schema-descriptor.js';
 
 const textEncoder = new TextEncoder();
