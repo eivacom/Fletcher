@@ -1,5 +1,5 @@
 {
-    "name": "xrcedds-pubsub-provider (Ubuntu 24.04 / GCC 12)",
+    "name": "fletcher-xrcedds-pubsub-provider (Ubuntu 24.04 / GCC 12)",
     "build": {
         "dockerfile": "Dockerfile"
     },
