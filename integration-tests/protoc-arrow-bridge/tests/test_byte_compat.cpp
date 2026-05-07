@@ -71,7 +71,7 @@ TEST(ProtocArrowBridgeByteCompat, GeneratedEncodeMatchesCodecEncode)
            "produced different bytes for the same row + schema";
 }
 
-TEST(ProtocArrowBridgeByteCompat, CodecDecodeRoundTripsGeneratedBytes)
+TEST(ProtocArrowBridgeByteCompat, GeneratedEncodingDecodesViaCodec)
 {
     fletcher_gen::integration::Telemetry generated;
     generated.set_sensor_id(7);
