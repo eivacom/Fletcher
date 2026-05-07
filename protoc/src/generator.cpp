@@ -2811,8 +2811,8 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#pragma once\n\n"
       << "#include <arrow/api.h>\n"
       << "#include <arrow/c/bridge.h>\n"
-      << "#include <arrow_row_view.hpp>\n"
-      << "#include <codec.hpp>\n\n"
+      << "#include <arrow_bridge/arrow_row_view.hpp>\n"
+      << "#include <arrow_bridge/codec.hpp>\n\n"
       << "#include \"" << OutputFilename(file->name()) << "\"\n";
 
     // Cross-file view includes (for nested view types from other proto files).

@@ -1,0 +1,9 @@
+syntax = "proto3";
+package evolution;
+
+message SensorV2 {
+    int32           id          = 1;
+    double          temperature = 2;  // widened: float → double
+    string          location    = 3;
+    optional string label       = 4;  // added column
+}

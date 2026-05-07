@@ -1,0 +1,16 @@
+syntax = "proto3";
+package integration;
+
+// Covers repeated scalar fields (→ list) and repeated message fields (→ list<struct>).
+
+message Player {
+    string name  = 1;
+    int32  level = 2;
+}
+
+message Team {
+    string          name    = 1;
+    repeated string members = 2;   // list(utf8)
+    repeated double scores  = 3;   // list(float64)
+    repeated Player roster  = 4;   // list(struct<name,level>)
+}
