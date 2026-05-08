@@ -12,6 +12,7 @@ on:
       - "protoc/**"
       - "arrow-bridge/**"
       - "pubsub/**"
+      - "gateway-client-ts/**"
       - "integration-tests/**"
       - ".github/workflows/integration-tests.yml"
       - ".github/actions/install-msvc-tools/**"
@@ -86,4 +87,74 @@ jobs:
                      echo '::endgroup::' && \
                      echo '::group::ctest' && \
                      ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
+
+  protoc-gateway-client-ts:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            pubsub
+            gateway-client-ts
+            integration-tests
+            .github
+
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
+      - name: Log in to Harbor
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
+
+      - name: Build devcontainer image
+        run: |
+          docker buildx create --name builder --use
+          docker buildx build \
+            --network host \
+            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/integration-tests-protoc-gateway-client-ts-devcontainer:cache \
+            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/integration-tests-protoc-gateway-client-ts-devcontainer:cache,mode=max \
+            -t fletcher-protoc-gw-client-build \
+            --load \
+            integration-tests/protoc-gateway-client-ts/.devcontainer
+
+      - name: Build components and run cross-language test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-protoc-gw-client-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/protoc-gateway-client-ts && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure + build' && \
+                     cmake --preset conan-release && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm ci' && \
+                     npm ci && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test' && \
+                     npm test && \
                      echo '::endgroup::'"
