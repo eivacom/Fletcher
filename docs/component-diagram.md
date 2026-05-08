@@ -109,31 +109,57 @@ graph TB
 
 ## Dependency Graph
 
+Every monorepo package and how it depends on every other one. Arrows point from a dependency to its consumer (X → Y means Y depends on X). External libraries are included where they cross a package boundary that matters for understanding deployment.
+
 ```mermaid
 graph TB
-    CORE["core<br/><i>header-only, wire primitives</i>"]
-    NANOARROW["nanoarrow<br/><i>vendored, ~100 KB</i>"]
+    NANOARROW["nanoarrow<br/><i>external, vendored, ~100 KB</i>"]
+    PROTOBUF["protobuf<br/><i>external, 3.21.12</i>"]
+    ARROW_CPP["Apache Arrow C++<br/><i>external, 23.0.1</i>"]
+    BEAST["Boost.Beast/Asio<br/><i>external, header-only</i>"]
+    FAST_DDS["Fast DDS<br/><i>external, 2.14.3</i>"]
+    XRCE_DDS["Micro XRCE-DDS<br/><i>external</i>"]
 
-    PUBSUB["pubsub<br/><i>core + nanoarrow, edge-ready</i>"]
-
-    FASTDDS_PROV["fastdds-pubsub-provider<br/><i>pubsub + Fast DDS</i>"]
-    XRCE_PROV["xrcedds-pubsub-provider<br/><i>pubsub + Micro XRCE-DDS<br/>&lt;75 KB Flash</i>"]
-    CODEC["arrow-bridge<br/><i>core + Arrow C++, server-side</i>"]
-
-    PUBSUB_ARROW["pubsub-arrow<br/><i>pubsub + arrow-bridge<br/>+ Arrow C++</i>"]
-
-    WEB_GW["gateway<br/><i>pubsub + Boost.Beast<br/>nanoarrow only</i>"]
-    PROTO_INT["integration-tests/protoc-arrow-bridge<br/><i>cross-component test suite</i>"]
+    CORE["core"]
+    PUBSUB["pubsub"]
+    CODEC["arrow-bridge"]
+    PUBSUB_ARROW["pubsub-arrow"]
+    FASTDDS_PROV["fastdds-pubsub-provider"]
+    XRCE_PROV["xrcedds-pubsub-provider"]
+    WEB_GW["gateway"]
+    PROTOC["protoc<br/><i>protoc-gen-fletcher plugin</i>"]
+    PROTO_INT["integration-tests/<br/>protoc-arrow-bridge"]
+    GW_CLIENT["gateway-client-ts<br/><i>npm: eiva-fletcher-gateway-client</i>"]
 
     CORE --> PUBSUB
     NANOARROW --> PUBSUB
+
     CORE --> CODEC
+    ARROW_CPP --> CODEC
+
     PUBSUB --> FASTDDS_PROV
+    CORE --> FASTDDS_PROV
+    FAST_DDS --> FASTDDS_PROV
+
     PUBSUB --> XRCE_PROV
-    PUBSUB --> WEB_GW
-    CODEC --> PUBSUB_ARROW
+    CORE --> XRCE_PROV
+    XRCE_DDS --> XRCE_PROV
+
     PUBSUB --> PUBSUB_ARROW
+    CODEC --> PUBSUB_ARROW
+    ARROW_CPP --> PUBSUB_ARROW
+
+    PUBSUB --> WEB_GW
+    BEAST --> WEB_GW
+
+    PROTOBUF --> PROTOC
+
+    PUBSUB --> PROTO_INT
     CODEC --> PROTO_INT
+    PROTOC --> PROTO_INT
+    PROTOBUF --> PROTO_INT
+
+    WEB_GW -.->|WebSocket runtime| GW_CLIENT
 
     style CORE fill:#e8f5e9,stroke:#2e7d32
     style NANOARROW fill:#e8f5e9,stroke:#2e7d32
@@ -141,15 +167,26 @@ graph TB
     style FASTDDS_PROV fill:#e8f5e9,stroke:#2e7d32
     style XRCE_PROV fill:#e8f5e9,stroke:#2e7d32
     style WEB_GW fill:#e8f5e9,stroke:#2e7d32
+    style FAST_DDS fill:#e8f5e9,stroke:#2e7d32
+    style XRCE_DDS fill:#e8f5e9,stroke:#2e7d32
+    style BEAST fill:#e8f5e9,stroke:#2e7d32
     style CODEC fill:#e3f2fd,stroke:#1565c0
     style PUBSUB_ARROW fill:#e3f2fd,stroke:#1565c0
+    style ARROW_CPP fill:#e3f2fd,stroke:#1565c0
+    style PROTOC fill:#f3e5f5,stroke:#6a1b9a
+    style PROTOBUF fill:#f3e5f5,stroke:#6a1b9a
     style PROTO_INT fill:#fff3e0,stroke:#e65100
+    style GW_CLIENT fill:#fce4ec,stroke:#ad1457
 ```
 
 Legend:
-- Green: edge tier (nanoarrow only)
-- Blue: server tier (Arrow C++)
-- Orange: test-only
+- **Green** — edge tier (nanoarrow + external transports). Builds and runs without Apache Arrow C++.
+- **Blue** — server tier. Adds Apache Arrow C++ on top of the edge tier.
+- **Purple** — build-time code generator. Produces source files consumed at compile time, not linked at runtime.
+- **Orange** — test-only artifact.
+- **Pink** — TypeScript / npm. No Conan dependency on the C++ packages; the dotted arrow indicates a runtime WebSocket-protocol relationship to the `gateway`.
+
+Note: a few C++ packages declare `core` as a *direct* requirement even though they would also pick it up transitively via `pubsub`. The direct edge is shown because it reflects the actual conanfile (set with `transitive_headers=True` for header visibility) and matters when copying a single package out of the monorepo.
 
 ## Two-Tier Deployment
 
