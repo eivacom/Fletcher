@@ -1,13 +1,18 @@
 // Vector emitter for the cross-language byte-compat test.
 //
 // For each scenario we encode a known telemetry row via the protoc-generated
-// row class and write a single JSON line to stdout. The vitest test then
-// spawns this binary, parses the lines, and asserts that:
-//   1. the TS codec decodes the bytes to the original input values, and
+// row class and write a single JSON line to stdout. The vitest test side
+// owns the expected input values for each scenario name and uses them to
+// check that:
+//   1. the TS codec decodes the bytes to those input values, and
 //   2. the TS codec re-encodes the same input to byte-identical bytes.
 //
+// Scenario names must agree with the `scenarios` map in byte-compat.test.ts.
+// Adding a new scenario is a two-file change: define the row + name here,
+// add the same name + expected input on the TS side.
+//
 // Output format (one scenario per line):
-//   {"name":"<scenario>","input":{<field>:<value>,...},"encoded":"<base64>"}
+//   {"name":"<scenario>","encoded":"<base64>"}
 
 #include "telemetry.fletcher.pb.h"
 
@@ -57,12 +62,11 @@ std::string Base64Encode(const std::vector<uint8_t>& data) {
 }
 
 template <class Row>
-void Emit(const char* name, const std::string& input_json, const Row& row) {
+void Emit(const char* name, const Row& row) {
     fletcher::EncodedRow encoded = row.Encode();
     std::vector<uint8_t> bytes(encoded.begin(), encoded.end());
     std::cout << R"({"name":")" << name
-              << R"(","input":)" << input_json
-              << R"(,"encoded":")" << Base64Encode(bytes) << "\"}\n";
+              << R"(","encoded":")" << Base64Encode(bytes) << "\"}\n";
 }
 
 }  // namespace
@@ -77,9 +81,7 @@ int main() {
            .set_label("intake")
            .set_valid(true)
            .set_readings({100, 200, 300});
-        Emit("basic",
-             R"({"sensor_id":42,"temperature":23.5,"label":"intake","valid":true,"readings":[100,200,300]})",
-             row);
+        Emit("basic", row);
     }
 
     {
@@ -89,9 +91,7 @@ int main() {
            .set_label("")
            .set_valid(false)
            .set_readings({});
-        Emit("zero",
-             R"({"sensor_id":0,"temperature":0,"label":"","valid":false,"readings":[]})",
-             row);
+        Emit("zero", row);
     }
 
     {
@@ -101,9 +101,7 @@ int main() {
            .set_label("alpha")
            .set_valid(true)
            .set_readings({-1, 0, 1});
-        Emit("negative",
-             R"({"sensor_id":-7,"temperature":-12.75,"label":"alpha","valid":true,"readings":[-1,0,1]})",
-             row);
+        Emit("negative", row);
     }
 
     return 0;

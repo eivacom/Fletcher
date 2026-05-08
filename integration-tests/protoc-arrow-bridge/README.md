@@ -27,17 +27,44 @@ That way a PR can change protoc and arrow-bridge in the same commit, and the int
 
 ## Running locally
 
-Open in the devcontainer (`integration-tests/protoc-arrow-bridge/.devcontainer`), then:
+Open the devcontainer at `integration-tests/protoc-arrow-bridge/.devcontainer`. The `postCreateCommand` runs `conan config install` automatically, but the conan-eiva remote needs credentials before you can pull the released Fletcher packages.
+
+### Log in to conan-eiva (one-time per container)
+
+Inside the devcontainer terminal, log in to the EIVA Artifactory. Replace `<user>` with your Artifactory username; conan will prompt for the password:
 
 ```bash
-# From the repo root:
-conan create core/.        --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create protoc/.      --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create arrow-bridge/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan remote login conan-eiva <user>
+```
 
-# In this directory:
+Verify the login resolved:
+
+```bash
+conan search 'eiva-fletcher-*' -r conan-eiva
+```
+
+You should see the published versions of `eiva-fletcher-core`, `eiva-fletcher-pubsub`, `eiva-fletcher-protoc`, `eiva-fletcher-arrow-bridge` etc. listed.
+
+### Build the C++ side
+
+The Conan recipe pulls the released `eiva-fletcher-*` packages from `conan-eiva` — no `conan create` of components needed locally. From this directory:
+
+```bash
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+```
+
+```bash
 cmake --preset conan-release
+```
+
+```bash
 cmake --build --preset conan-release
+```
+
+The last step produces the `integration_tests` gtest binary plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` and `<stem>.fletcher.arrow.pb.h`.
+
+### Run the tests
+
+```bash
 ctest --preset conan-release --output-on-failure
 ```

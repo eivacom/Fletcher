@@ -11,9 +11,37 @@ import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
 
 interface Vector {
   name: string;
-  input: Record<string, unknown>;
   encoded: string; // base64
 }
+
+// Expected input values per scenario name. Kept hardcoded here (rather than
+// emitted from C++ alongside the bytes) so the test is self-documenting:
+// the file makes it obvious what each scenario asserts without running the
+// emitter. Names must match the `Emit("<name>", ...)` calls in
+// src/emit_vectors.cpp — adding a new scenario is a two-file change.
+const scenarios: Record<string, Record<string, unknown>> = {
+  basic: {
+    sensor_id: 42,
+    temperature: 23.5,
+    label: 'intake',
+    valid: true,
+    readings: [100, 200, 300],
+  },
+  zero: {
+    sensor_id: 0,
+    temperature: 0,
+    label: '',
+    valid: false,
+    readings: [],
+  },
+  negative: {
+    sensor_id: -7,
+    temperature: -12.75,
+    label: 'alpha',
+    valid: true,
+    readings: [-1, 0, 1],
+  },
+};
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -37,6 +65,18 @@ function findEmitVectorsBinary(): string {
   );
 }
 
+function inputFor(name: string): Record<string, unknown> {
+  const input = scenarios[name];
+  if (!input) {
+    throw new Error(
+      `C++ emitted scenario "${name}" but no expected input is defined ` +
+      `in scenarios{}. Add it to byte-compat.test.ts or remove the Emit() ` +
+      `call in emit_vectors.cpp.`,
+    );
+  }
+  return input;
+}
+
 let vectors: Vector[];
 
 beforeAll(() => {
@@ -50,22 +90,24 @@ beforeAll(() => {
 });
 
 describe('protoc + gateway-client-ts byte-compat (telemetry)', () => {
-  it('emits at least one scenario', () => {
-    expect(vectors.length).toBeGreaterThan(0);
+  it('emits exactly the scenarios known to the test', () => {
+    const emitted = vectors.map(v => v.name).sort();
+    const expected = Object.keys(scenarios).sort();
+    expect(emitted).toEqual(expected);
   });
 
-  it('TS decoder reproduces the original values from C++-encoded bytes', () => {
+  it('TS decoder reproduces the expected values from C++-encoded bytes', () => {
     const backend = new ObjectBackend();
     for (const vec of vectors) {
       const bytes = Uint8Array.from(Buffer.from(vec.encoded, 'base64'));
       const decoded = backend.decode(TelemetrySchema, bytes);
-      expect(decoded, `scenario "${vec.name}"`).toEqual(vec.input);
+      expect(decoded, `scenario "${vec.name}"`).toEqual(inputFor(vec.name));
     }
   });
 
   it('TS encoder produces byte-identical output to C++ for the same input', () => {
     for (const vec of vectors) {
-      const tsBytes = encodePositional(TelemetrySchema, vec.input);
+      const tsBytes = encodePositional(TelemetrySchema, inputFor(vec.name));
       const cppBytes = new Uint8Array(Buffer.from(vec.encoded, 'base64'));
       expect(Array.from(tsBytes), `scenario "${vec.name}"`).toEqual(Array.from(cppBytes));
     }

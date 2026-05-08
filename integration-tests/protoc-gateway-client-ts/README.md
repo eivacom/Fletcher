@@ -26,20 +26,50 @@ The workflow `.github/workflows/integration-tests.yml` triggers when any of `cor
 
 ## Running locally
 
-Open in the devcontainer (`integration-tests/protoc-gateway-client-ts/.devcontainer`), then:
+Open the devcontainer at `integration-tests/protoc-gateway-client-ts/.devcontainer`. The `postCreateCommand` runs `conan config install` automatically, but the conan-eiva remote needs credentials before you can pull the released Fletcher packages.
+
+### Log in to conan-eiva (one-time per container)
+
+Inside the devcontainer terminal, log in to the EIVA Artifactory. Replace `<user>` with your Artifactory username; conan will prompt for the password:
 
 ```bash
-# From the repo root, build the C++ deps:
-conan create core/.   --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create pubsub/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create protoc/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan remote login conan-eiva <user>
+```
 
-# In this directory:
+Verify the login resolved:
+
+```bash
+conan search 'eiva-fletcher-*' -r conan-eiva
+```
+
+You should see the published versions of `eiva-fletcher-core`, `eiva-fletcher-pubsub`, `eiva-fletcher-protoc` etc. listed.
+
+### Build the C++ side
+
+The Conan recipe pulls the released `eiva-fletcher-*` packages from `conan-eiva` — no `conan create` of components needed. From this directory:
+
+```bash
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
-cmake --preset conan-release
-cmake --build --preset conan-release   # produces build/Release/emit_vectors
+```
 
-# Run the TS test:
+```bash
+cmake --preset conan-release
+```
+
+```bash
+cmake --build --preset conan-release
+```
+
+The last step produces `build/Release/emit_vectors` plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` (consumed by the C++ binary) and `generated-ts/<stem>.fletcher.ts` (consumed by vitest).
+
+### Run the TS test
+
+```bash
 npm ci
+```
+
+```bash
 npm test
 ```
+
+vitest spawns `emit_vectors`, parses the JSON-line output, and asserts both decode-correctness and byte-equality against the hardcoded scenario inputs in `test/byte-compat.test.ts`.
