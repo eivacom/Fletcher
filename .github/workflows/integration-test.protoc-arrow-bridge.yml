@@ -1,4 +1,4 @@
-name: integration-tests
+name: integration-test.protoc-arrow-bridge
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,8 +12,8 @@ on:
       - "protoc/**"
       - "arrow-bridge/**"
       - "pubsub/**"
-      - "integration-tests/**"
-      - ".github/workflows/integration-tests.yml"
+      - "integration-tests/protoc-arrow-bridge/**"
+      - ".github/workflows/integration-test.protoc-arrow-bridge.yml"
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
@@ -30,7 +30,7 @@ jobs:
             protoc
             arrow-bridge
             pubsub
-            integration-tests
+            integration-tests/protoc-arrow-bridge
             .github
 
       - name: Generate token for conan-configuration
