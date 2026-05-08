@@ -1,0 +1,89 @@
+name: integration-test.protoc-arrow-bridge
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "core/**"
+      - "protoc/**"
+      - "arrow-bridge/**"
+      - "pubsub/**"
+      - "integration-tests/protoc-arrow-bridge/**"
+      - ".github/workflows/integration-test.protoc-arrow-bridge.yml"
+      - ".github/actions/install-msvc-tools/**"
+      - ".github/actions/install-cmake/**"
+      - ".github/actions/conan-bootstrap/**"
+
+jobs:
+  protoc-arrow-bridge:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            arrow-bridge
+            pubsub
+            integration-tests/protoc-arrow-bridge
+            .github
+
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
+      - name: Log in to Harbor
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
+
+      - name: Build devcontainer image
+        run: |
+          docker buildx create --name builder --use
+          docker buildx build \
+            --network host \
+            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/integration-tests-protoc-arrow-bridge-devcontainer:cache \
+            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/integration-tests-protoc-arrow-bridge-devcontainer:cache,mode=max \
+            -t fletcher-integration-build \
+            --load \
+            integration-tests/protoc-arrow-bridge/.devcontainer
+
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-integration-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core arrow-bridge pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/protoc-arrow-bridge && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
