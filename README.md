@@ -24,7 +24,7 @@ Identified improvements across the codebase, ordered by priority.
 | # | File | Description |
 |---|---|---|
 | 1 ⚠️ | `arrow-bridge/src/scalar_codec.cpp:236` | `FixedSizeBinaryScalar` wraps a raw pointer without copying — the returned `Scalar` holds a dangling reference if the input buffer is destroyed. All other variable-length types copy via `Buffer::FromString`; this case must do the same. |
-| 2 ⚠️ | `arrow-bridge/src/codec.cpp` (8 sites) | `ValueOrDie()` on Arrow `Result<T>` aborts the process on error. The rest of the codebase throws `std::invalid_argument`. Replace each `.ValueOrDie()` call with a checked `.Value()` / `.ok()` guard that throws. |
+| 2 ⚠️ | `arrow-bridge/src/codec.cpp` (9 sites), `arrow-bridge/include/arrow_bridge/arrow_row_view.hpp` (4 sites) | `ValueOrDie()` on Arrow `Result<T>` aborts the process on error. The rest of the codebase throws `std::invalid_argument`. Replace each `.ValueOrDie()` call with a checked `.Value()` / `.ok()` guard that throws. (`protoc/src/generator.cpp` also emits `.ValueOrDie()` patterns into generated code — fix those once the runtime fix is in place.) |
 | 3 | `pubsub/include/pubsub/owned_schema.hpp:53` | `ArrowSchemaDeepCopy` returns an `int` error code that `DeepCopy` silently discards. A failed copy leaves the schema empty with no diagnostic. Check the return value and throw. |
 | 4 | `protoc/src/generator.cpp:953,997,1059,1089` | For unsupported proto→Arrow type mappings the generator writes `// TODO: unknown ... type` into the user's generated `.fletcher.pb.h` rather than failing. The generator should call `AddError()` on the plugin context so the user gets a protoc error at build time instead of silently broken generated code. |
 
