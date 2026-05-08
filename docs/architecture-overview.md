@@ -279,7 +279,7 @@ conan create fastdds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Rel
 conan create xrcedds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```
 
-Each component has its own devcontainer under `<component>/.devcontainer/` reproducible CI/local builds.
+Each Conan-packaged C++ component has its own devcontainer under `<component>/.devcontainer/` for reproducible CI/local builds. (`gateway/` does not have one yet — see follow-up issues for the missing Conan packaging and devcontainer.)
 
 ### 8.3 TypeScript gateway client
 
@@ -299,7 +299,7 @@ npm run typecheck   # tsc --noEmit (faster, no dist/ output)
 | Nanoarrow | 0.8.0 | Lightweight Arrow type system (vendored, edge + server) |
 | Protocol Buffers | 3.21.12 | Message definitions and compiler |
 | Boost | — | Beast/Asio for the `gateway` (header-only) |
-| Catch2 | 3.7.1 | C++ test framework |
+| GoogleTest | 1.17.0 | C++ test framework |
 | Fast DDS | 2.14.3 | DDS pub/sub transport |
 | nlohmann/json | 3.11.3 | JSON parsing for `gateway` control protocol |
 | Node.js | 24+ | TypeScript build and tests (`gateway-client-ts` only) |
