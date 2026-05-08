@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "baseUrl": ".",
     "paths": {
       "eiva-fletcher-gateway-client": ["../../gateway-client-ts/src/index.ts"]
     }

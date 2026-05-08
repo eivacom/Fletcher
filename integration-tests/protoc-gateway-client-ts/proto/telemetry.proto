@@ -1,4 +1,5 @@
-// Minimal proto used by the protoc + arrow-bridge integration tests.
+// Minimal proto used by the cross-language byte-compat integration test
+// (protoc-generated TypeScript decode/encode against the C++ codec).
 // Covers the basic combinations of the positional wire format:
 //   - fixed-size scalar (int32, double, bool)
 //   - variable-size scalar (string)

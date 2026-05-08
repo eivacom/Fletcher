@@ -22,20 +22,35 @@ std::string Base64Encode(const std::vector<uint8_t>& data) {
     static constexpr char alphabet[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
-    int val = 0;
-    int bits = -6;
-    for (uint8_t c : data) {
-        val = (val << 8) + c;
-        bits += 8;
-        while (bits >= 0) {
-            out.push_back(alphabet[(val >> bits) & 0x3F]);
-            bits -= 6;
-        }
+    out.reserve(((data.size() + 2) / 3) * 4);
+
+    // Process input in 3-byte chunks → 4 base64 characters. Bounded by
+    // chunk so no signed/unsigned width concerns even for arbitrarily
+    // long inputs.
+    size_t i = 0;
+    while (i + 3 <= data.size()) {
+        uint32_t v = (static_cast<uint32_t>(data[i])     << 16)
+                   | (static_cast<uint32_t>(data[i + 1]) <<  8)
+                   |  static_cast<uint32_t>(data[i + 2]);
+        out.push_back(alphabet[(v >> 18) & 0x3F]);
+        out.push_back(alphabet[(v >> 12) & 0x3F]);
+        out.push_back(alphabet[(v >>  6) & 0x3F]);
+        out.push_back(alphabet[ v        & 0x3F]);
+        i += 3;
     }
-    if (bits > -6) {
-        out.push_back(alphabet[((val << 8) >> (bits + 8)) & 0x3F]);
-    }
-    while (out.size() % 4 != 0) {
+    const size_t rem = data.size() - i;
+    if (rem == 1) {
+        uint32_t v = static_cast<uint32_t>(data[i]) << 16;
+        out.push_back(alphabet[(v >> 18) & 0x3F]);
+        out.push_back(alphabet[(v >> 12) & 0x3F]);
+        out.push_back('=');
+        out.push_back('=');
+    } else if (rem == 2) {
+        uint32_t v = (static_cast<uint32_t>(data[i])     << 16)
+                   | (static_cast<uint32_t>(data[i + 1]) <<  8);
+        out.push_back(alphabet[(v >> 18) & 0x3F]);
+        out.push_back(alphabet[(v >> 12) & 0x3F]);
+        out.push_back(alphabet[(v >>  6) & 0x3F]);
         out.push_back('=');
     }
     return out;
@@ -47,7 +62,7 @@ void Emit(const char* name, const std::string& input_json, const Row& row) {
     std::vector<uint8_t> bytes(encoded.begin(), encoded.end());
     std::cout << R"({"name":")" << name
               << R"(","input":)" << input_json
-              << R"(","encoded":")" << Base64Encode(bytes) << "\"}\n";
+              << R"(,"encoded":")" << Base64Encode(bytes) << "\"}\n";
 }
 
 }  // namespace
