@@ -40,9 +40,9 @@ Critical requirements: minimal binary footprint, no dynamic allocation on the ho
 
 ### Scenario 3 — Browser Visualization
 
-Live sensor data must reach browser-based clients for real-time visualization. The WebGateway exposes the pub/sub layer over WebSocket with a split text/binary protocol. The TypeScript WebClient library decodes the positional wire format in the browser using a pure-TypeScript codec, delivering typed objects to the visualization layer. Schema information is delivered automatically on subscription.
+Live sensor data must reach browser-based clients for real-time visualization. The gateway exposes the pub/sub layer over WebSocket with a split text/binary protocol. The TypeScript gateway-client-ts library decodes the positional wire format using a pure-TypeScript codec, delivering typed objects to the visualization layer. Schema information is delivered automatically on subscription.
 
-Critical requirements: low-latency WebSocket delivery, schema auto-discovery, no WASM requirement for basic decoding.
+Critical requirements: low-latency WebSocket delivery, schema auto-discovery, no WASM requirement for basic decoding (the original WASM-accelerated path was for the legacy tagged-row format and has been removed).
 
 ---
 
@@ -52,9 +52,9 @@ Critical requirements: low-latency WebSocket delivery, schema auto-discovery, no
 
 The system is organized into two deployment tiers that share the same wire format and pub/sub interface.
 
-The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSub` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the WebGateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
+The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSub` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the gateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
 
-The **server tier** adds the full Apache Arrow C++ library. It includes the `Codec` (Arrow scalar encode/decode), the `PubSubArrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated Arrow classes (`.fletcher.arrow.pb.h`) for zero-copy view access into `RecordBatch` and `Table`, and `ToArrowRow()` converters.
+The **server tier** adds the full Apache Arrow C++ library. It includes the `Codec` (Arrow scalar encode/decode), the `pubsub-arrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated Arrow classes (`.fletcher.arrow.pb.h`) for zero-copy view access into `RecordBatch` and `Table`, and `ToArrowRow()` converters.
 
 Both tiers produce byte-identical wire format. A row encoded via `PositionalWriter` on an edge device can be decoded by `Codec` on a server, and vice versa.
 
@@ -62,13 +62,13 @@ Both tiers produce byte-identical wire format. A row encoded via `PositionalWrit
 
 The system provides seven composable layers:
 
-1. **Core** — a header-only library with `PositionalWriter`/`PositionalReader` for direct serialization, `WriteBuffer`, `Envelope`, and `EncodedRow` type aliases. No dependencies beyond the standard library.
-1. **ArrowBridge** — the `Codec` class for server-side ArrowRow encode/decode (Arrow C++), plus `ArrowRowView` helpers and CRS utilities.
-2. **Protoc Plugin** — generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), and TypeScript interfaces with schema descriptors.
-3. **PubSub Provider** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
-4. **PubSubArrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
-5. **WebGateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol.
-6. **WebClient** — a TypeScript client library with a pure-TypeScript positional codec and two interchangeable backends (plain objects or Apache Arrow JS).
+1. **core** — a header-only library with `PositionalWriter`/`PositionalReader` for direct serialization, `WriteBuffer`, `Envelope`, and `EncodedRow` type aliases. No dependencies beyond the standard library.
+2. **arrow-bridge** — the `Codec` class for server-side ArrowRow encode/decode (Arrow C++), plus `ArrowRowView` helpers and CRS utilities.
+3. **protoc** — the `protoc-gen-fletcher` plugin. Generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), and TypeScript interfaces with schema descriptors.
+4. **pubsub** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
+5. **pubsub-arrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
+6. **gateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol. (Migrated from the prototype's `WebGateway`.)
+7. **gateway-client-ts** — a TypeScript client library (npm package `eiva-fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
 
 Each layer is independent. You can use the codec without pub/sub, the web gateway without DDS, or the full pipeline end-to-end.
 
@@ -80,8 +80,8 @@ The end-to-end data flow for a sensor measurement follows this path:
 2. The sensor driver populates an ArrowRow instance using typed setters.
 3. The generated publisher calls `EncodeTo()`, writing the positional wire format directly into the transport provider's buffer (zero-copy via `RowEncoder`).
 4. The transport provider (FastDDS, XRCE-DDS) delivers the encoded bytes to subscribers across the network.
-5. On the server side, the `PubSubArrow` adapter decodes received bytes into Arrow scalars via `Codec`.
-6. For browser delivery, the WebGateway forwards encoded bytes over WebSocket. The TypeScript WebClient decodes them using the positional codec.
+5. On the server side, the `pubsub-arrow` adapter decodes received bytes into Arrow scalars via `Codec`.
+6. For browser delivery, the gateway forwards encoded bytes over WebSocket. The TypeScript gateway-client-ts decodes them using the positional codec.
 
 For schema delivery, the flow is:
 
@@ -166,7 +166,7 @@ The positional wire format requires both publisher and subscriber to share the s
 2. **Subscriber calls `Subscribe(segments, callback)`** — the provider returns a `SubscriptionResult` containing the publisher's schema as an `OwnedSchema`.
 3. Both sides use the same schema for the positional wire format.
 
-The FastDDS and XRCE-DDS providers implement this via companion DDS topics (`topic/__schema`) with TRANSIENT_LOCAL durability and KEEP_LAST(1) QoS. The WebGateway delivers the schema in the `subscribed` JSON response in both JSON descriptor and base64 Arrow IPC forms.
+The FastDDS and XRCE-DDS providers implement this via companion DDS topics (`topic/__schema`) with TRANSIENT_LOCAL durability and KEEP_LAST(1) QoS. The gateway delivers the schema in the `subscribed` JSON response in both JSON descriptor and base64 Arrow IPC forms.
 
 ---
 
@@ -266,24 +266,29 @@ sub.Subscribe([](fletcher_gen::myapp::SensorReading msg, fletcher::Attachments a
 
 ### 8.2 C++ Build
 
+The monorepo is a polyrepo of Conan packages — each component is built independently into the local Conan cache, and downstream components resolve their dependencies from there. There is no top-level `conanfile.txt` / root build.
+
 ```bash
-# Install dependencies via Conan
-conan install . --build=missing --output-folder=build
-
-# Configure with CMake (uses the Conan-generated toolchain)
-cmake --preset conan-default
-
-# Build
-cmake --build build/build --config Release
+# Build each component into the local Conan cache (order matters for dependencies):
+conan create core/.                    --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create arrow-bridge/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/.                  --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub-arrow/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create protoc/.                  --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create fastdds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create xrcedds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```
 
-### 8.3 TypeScript WebClient
+Each component has its own devcontainer under `<component>/.devcontainer/` reproducible CI/local builds.
+
+### 8.3 TypeScript gateway client
 
 ```bash
-cd WebClient
+cd gateway-client-ts
 npm install
-npm test            # 37 Vitest tests
-npm run build:ts    # TypeScript compilation
+npm test            # vitest suite
+npm run build       # TypeScript compilation (tsc)
+npm run typecheck   # tsc --noEmit (faster, no dist/ output)
 ```
 
 ### 8.4 Dependencies
@@ -293,38 +298,27 @@ npm run build:ts    # TypeScript compilation
 | Apache Arrow | 23.0.1 | Columnar data types and schemas (server-side only) |
 | Nanoarrow | 0.8.0 | Lightweight Arrow type system (vendored, edge + server) |
 | Protocol Buffers | 3.21.12 | Message definitions and compiler |
-| Boost | — | Beast/Asio for WebGateway (header-only) |
+| Boost | — | Beast/Asio for the `gateway` (header-only) |
 | Catch2 | 3.7.1 | C++ test framework |
 | Fast DDS | 2.14.3 | DDS pub/sub transport |
-| nlohmann/json | 3.11.3 | JSON parsing for WebGateway control protocol |
-| Node.js | 18+ | TypeScript build and tests (WebClient only) |
+| nlohmann/json | 3.11.3 | JSON parsing for `gateway` control protocol |
+| Node.js | 24+ | TypeScript build and tests (`gateway-client-ts` only) |
 
 ---
 
 ## 9. Testing
 
-C++ tests use Catch2 v3 and are discovered via CTest. TypeScript tests use Vitest.
+C++ tests run through GTest in each component's `tests/` directory and are discovered via CTest. TypeScript tests use Vitest. Each Conan package builds and runs its own tests on `conan create`. A separate cross-component integration test under `integration-tests/protoc-arrow-bridge/` proves that protoc-generated row classes and arrow-bridge's `Codec` agree on every byte for every wire-format feature.
 
-```bash
-# Run all C++ tests
-ctest --test-dir build/build --config Release
-
-# Run specific test suites
-ctest --test-dir build/build -R codec          # 92 codec tests
-ctest --test-dir build/build -R integration    # 76 integration tests
-ctest --test-dir build/build -R pubsub         # 24 pubsub + 7 pubsub_arrow tests
-
-# Run TypeScript tests
-cd WebClient && npm test                       # 37 Vitest tests
-```
-
-| Suite | Cases | Covers |
+| Suite | Location | Covers |
 |---|---|---|
-| Codec (C++) | 92 | Positional codec (all types, nulls, composites), legacy tagged codec, schema evolution, envelope serialization |
-| Integration (C++) | 76 | Generated code roundtrips for all proto constructs, pub/sub with mock provider, view classes, GeoArrow |
-| PubSub (C++) | 24 | Topic creation, fan-out, subscription IDs, lifecycle, schema transport, schema IPC roundtrips |
-| PubSubArrow (C++) | 7 | Arrow C++ / nanoarrow schema conversion, ArrowRow encode/decode through adapter |
-| Plugin (C++) | 36 | Type mapping for all proto field kinds |
-| WebClient (TS) | 37 | Envelope roundtrips, WS protocol frames, positional codec roundtrips |
+| arrow-bridge | `arrow-bridge/tests/` | Positional codec (all types, nulls, composites), envelope serialization, ArrowRowView accessors, CRS utilities |
+| protoc | `protoc/tests/` | Type mapping for all proto field kinds; plugin-level golden output checks |
+| pubsub | `pubsub/tests/` | Topic creation, fan-out, subscription IDs, lifecycle, schema transport, schema IPC roundtrips |
+| pubsub-arrow | `pubsub-arrow/tests/` | Arrow C++ / nanoarrow schema conversion, ArrowRow encode/decode through adapter |
+| fastdds-pubsub-provider | `fastdds-pubsub-provider/tests/` | DDS topic discovery, schema companion topic, end-to-end publish/subscribe |
+| xrcedds-pubsub-provider | `xrcedds-pubsub-provider/tests/` | Same surface as the FastDDS provider, against an XRCE-DDS Agent |
+| protoc-arrow-bridge integration | `integration-tests/protoc-arrow-bridge/tests/` | Byte-compat invariants between protoc-generated row classes and `Codec` across every wire-format scenario (scalars, WKT, nested, collections, maps, complex, pubsub wrappers, GeoArrow, schema evolution). Also exercises native (no Arrow C++) and ArrowRowView paths. |
+| gateway-client-ts | `gateway-client-ts/test/` | Envelope roundtrips, WebSocket protocol frames, positional codec roundtrips, end-to-end client behaviour against a mock WebSocket. |
 
 See [Technology Decision Log](technology-decisions.md) for rationale behind each technology choice.

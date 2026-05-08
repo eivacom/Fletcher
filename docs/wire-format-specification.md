@@ -173,7 +173,7 @@ The codec is completely unaware of attachments — they remain a transport-layer
 
 ## WebSocket Protocol
 
-The WebGateway uses a split text/binary WebSocket protocol:
+The `gateway` component uses a split text/binary WebSocket protocol:
 
 ### Control Messages (JSON text frames)
 

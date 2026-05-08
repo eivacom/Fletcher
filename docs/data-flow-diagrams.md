@@ -13,8 +13,8 @@ sequenceDiagram
     participant PW as PositionalWriter
     participant PP as PubSub
     participant NET as DDS Network
-    participant PS as PubSubArrow (server)
-    participant PC as Codec
+    participant PS as pubsub-arrow (server)
+    participant PC as arrow-bridge::Codec
     participant APP as Application
 
     S->>AR: Populate typed setters
@@ -65,15 +65,15 @@ sequenceDiagram
     PP->>SUB: callback(data, len, attachments)
 ```
 
-## Browser Delivery Flow (WebGateway)
+## Browser Delivery Flow (gateway)
 
 ```mermaid
 sequenceDiagram
     participant PUB as C++ Publisher
     participant DRV as Driver
-    participant WG as WebGateway
+    participant WG as gateway
     participant WS as WebSocket
-    participant WC as WebClient (TS)
+    participant WC as gateway-client-ts
     participant APP as Browser App
 
     PUB->>DRV: Publish on topic
@@ -175,13 +175,13 @@ graph TB
     end
 
     subgraph vessel ["Vessel Workstation"]
-        DDS_SUB["FastDDS Subscriber<br/><i>nanoarrow</i>"]
-        ARROW_PS["PubSubArrow<br/><i>Arrow C++ adapter</i>"]
+        DDS_SUB["fastdds-pubsub-provider Subscriber<br/><i>nanoarrow</i>"]
+        ARROW_PS["pubsub-arrow<br/><i>Arrow C++ adapter</i>"]
     end
 
     subgraph browser ["Browser"]
-        WG["WebGateway<br/><i>WebSocket server</i>"]
-        WC["WebClient (TS)<br/><i>Positional codec</i>"]
+        WG["gateway<br/><i>WebSocket server</i>"]
+        WC["gateway-client-ts<br/><i>Positional codec</i>"]
     end
 
     XRCE_PUB -->|"XRCE-DDS<br/>(UDP/Serial)"| AGENT

@@ -62,7 +62,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** Sensor data must be transported reliably across vessel networks, from edge devices to workstations, with configurable QoS. The transport must handle both desktop/server environments and resource-constrained embedded devices.
 
-**Decision:** Two DDS implementations are used: [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) for desktop and server environments, and [eProsima Micro XRCE-DDS](https://github.com/eProsima/Micro-XRCE-DDS-Client) for MCU and embedded targets. Both implement the `PubSub` interface and interoperate through the DDS domain (XRCE-DDS via an Agent bridge).
+**Decision:** Two DDS implementations are used: [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (`fastdds-pubsub-provider`) for desktop and server environments, and [eProsima Micro XRCE-DDS](https://github.com/eProsima/Micro-XRCE-DDS-Client) (`xrcedds-pubsub-provider`) for MCU and embedded targets. Both implement the `PubSub` interface and interoperate through the DDS domain (XRCE-DDS via an Agent bridge).
 
 **Rationale:** DDS provides built-in QoS policies (RELIABLE, TRANSIENT_LOCAL, KEEP_ALL) that implement at-least-once delivery without application-level retry logic. The RTPS discovery protocol enables automatic peer discovery on a network segment. XRCE-DDS provides a client/agent split where the thin client runs on the MCU (<75 KB Flash) while the Agent bridges to the full DDS network. Both providers produce the same `Envelope` wire format, so data flows seamlessly between edge and server. DDS is widely used in robotics and maritime systems, aligning with the target deployment environment.
 
@@ -80,7 +80,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Decision:** For each data topic, the transport provider creates a companion topic (suffixed `/__schema`) with TRANSIENT_LOCAL durability and KEEP_LAST(1) QoS. The schema is serialized as Arrow IPC bytes via nanoarrow and published once. Late-joining subscribers read the retained schema automatically. The `Subscribe()` method returns the schema in the `SubscriptionResult`.
 
-**Rationale:** Companion topics leverage existing DDS infrastructure and QoS for schema delivery — no separate schema registry or out-of-band coordination needed. TRANSIENT_LOCAL durability means the schema survives publisher restarts (within the DDS domain lifetime). KEEP_LAST(1) ensures only the current schema is retained, not a history. The mechanism is transparent to generated code: publishers provide the schema at topic creation, subscribers receive it at subscription time. The same pattern works for both FastDDS and XRCE-DDS providers. For the WebGateway, the schema is delivered in the `subscribed` JSON response in both structured JSON and base64 Arrow IPC forms.
+**Rationale:** Companion topics leverage existing DDS infrastructure and QoS for schema delivery — no separate schema registry or out-of-band coordination needed. TRANSIENT_LOCAL durability means the schema survives publisher restarts (within the DDS domain lifetime). KEEP_LAST(1) ensures only the current schema is retained, not a history. The mechanism is transparent to generated code: publishers provide the schema at topic creation, subscribers receive it at subscription time. The same pattern works for both FastDDS and XRCE-DDS providers. For the gateway, the schema is delivered in the `subscribed` JSON response in both structured JSON and base64 Arrow IPC forms.
 
 **Alternatives considered:** Embed schema hash and lookup table (requires a schema registry service), self-describing wire format (per-row overhead, addressed in TD-002), shared configuration file (fragile, not suitable for dynamic environments), separate gRPC schema service (adds a dependency and failure mode).
 
@@ -94,13 +94,13 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** Browser clients need to receive live sensor data and interact with the pub/sub layer. Browsers cannot use DDS or Arrow Flight directly. The protocol must handle both control messages (subscribe, unsubscribe, list topics) and high-throughput binary data delivery.
 
-**Decision:** The WebGateway uses a split WebSocket protocol: JSON text frames for control messages (human-readable, debuggable) and binary frames for data delivery (no base64 overhead). The WebGateway depends only on nanoarrow — it walks the nanoarrow `ArrowSchema` directly to produce JSON schema responses and passes row data through as raw bytes.
+**Decision:** The `gateway` component (a Boost.Beast WebSocket server) uses a split WebSocket protocol: JSON text frames for control messages (human-readable, debuggable) and binary frames for data delivery (no base64 overhead). The gateway depends only on nanoarrow — it walks the nanoarrow `ArrowSchema` directly to produce JSON schema responses and passes row data through as raw bytes.
 
-**Rationale:** WebSocket is universally supported in browsers. The text/binary split provides the best of both worlds: control messages are human-readable for debugging (browser developer tools show JSON directly), while data messages avoid the ~33% overhead of base64 encoding binary data in JSON. Subscription IDs are stringified in JSON to avoid JavaScript Number precision loss for uint64 values. The nanoarrow-only dependency means the WebGateway can run alongside edge-tier components without requiring Arrow C++.
+**Rationale:** WebSocket is universally supported in browsers. The text/binary split provides the best of both worlds: control messages are human-readable for debugging (browser developer tools show JSON directly), while data messages avoid the ~33% overhead of base64 encoding binary data in JSON. Subscription IDs are stringified in JSON to avoid JavaScript Number precision loss for uint64 values. The nanoarrow-only dependency means the gateway can run alongside edge-tier components without requiring Arrow C++.
 
 **Alternatives considered:** gRPC-Web (requires a proxy, adds complexity, less natural for streaming), Server-Sent Events (unidirectional, no binary support), pure JSON protocol (simpler but ~33% overhead on binary data), pure binary protocol (harder to debug, requires custom tooling).
 
-**Risks:** WebSocket connections are stateful, complicating horizontal scaling behind a load balancer (sticky sessions needed). The custom binary frame format requires the TypeScript client library — standard WebSocket tools cannot decode data frames. Connection management (reconnect, session recovery) is the client's responsibility.
+**Risks:** WebSocket connections are stateful, complicating horizontal scaling behind a load balancer (sticky sessions needed). The custom binary frame format requires the `gateway-client-ts` library (`eiva-fletcher-gateway-client` on npm) — standard WebSocket tools cannot decode data frames. Connection management (reconnect, session recovery) is the client's responsibility.
 
 ---
 
@@ -110,7 +110,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Context:** The system must deploy across a wide range of targets: MCUs and embedded Linux gateways with <75 KB Flash, vessel workstations with full operating systems, and server infrastructure. A single dependency profile cannot serve all targets.
 
-**Decision:** The architecture is split into two tiers sharing the same wire format and `PubSub` interface. The edge tier depends only on nanoarrow (~100 KB) and includes generated message classes, positional I/O, transport providers, and the WebGateway. The server tier adds Apache Arrow C++ and includes the `Codec`, `PubSubArrow` adapter, and view classes.
+**Decision:** The architecture is split into two tiers sharing the same wire format and `PubSub` interface. The edge tier depends only on nanoarrow (~100 KB) and includes generated message classes, positional I/O, transport providers, and the `gateway`. The server tier adds Apache Arrow C++ and includes the `Codec` (in `arrow-bridge`), `pubsub-arrow` adapter, and view classes.
 
 **Rationale:** The split allows edge binaries to participate fully in the pub/sub network (publish, subscribe, schema transport) without the full Arrow C++ library. The nanoarrow/Arrow C++ boundary is bridged seamlessly via the Arrow C Data Interface — `OwnedSchema` converts to `shared_ptr<arrow::Schema>` with zero copy. Generated code produces two headers: `.fletcher.pb.h` (edge, nanoarrow only) and `.fletcher.arrow.pb.h` (server, Arrow C++), so the same `.proto` definition serves both tiers. The wire format is byte-identical between tiers, so a row encoded on an MCU decodes correctly on a server.
 

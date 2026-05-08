@@ -11,7 +11,7 @@ component-diagram.md           # Component detail and dependency graph
 data-flow-diagrams.md          # Encode/decode, pub/sub, browser flows
 wire-format-specification.md   # Positional wire format, type mapping, envelope
 technology-decisions.md        # Technology decision log (TD-001 through TD-007)
-index.html                     # Legacy standalone HTML documentation
+index.html                     # Legacy standalone HTML documentation (pre-monorepo, kept for reference)
 ```
 
 ## Viewing
