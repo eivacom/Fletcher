@@ -216,7 +216,7 @@ graph LR
 
 ## Project Structure
 
-The monorepo is a polyrepo of Conan packages — each top-level directory is its own `conanfile.py`, built independently into the local Conan cache. The TypeScript packages get a `-ts` suffix so the language is obvious from a directory listing.
+The monorepo is a polyrepo of mostly Conan-packaged C++ components — most top-level C++ component directories have their own `conanfile.py` and are built independently into the local Conan cache. Some top-level directories, such as `integration-tests/`, contain nested C++ components rather than a root-level `conanfile.py`. (`gateway/` is the current exception among component directories; its Conan packaging is a tracked follow-up.) TypeScript packages get a `-ts` suffix so the language is obvious from a directory listing, and they use npm rather than Conan.
 
 ```mermaid
 graph TB
