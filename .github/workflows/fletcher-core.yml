@@ -157,8 +157,4 @@ jobs:
         run: conan cache restore conan-pkg.tgz
 
       - name: Upload to Artifactory
-        uses: eivacom/conan-actions/conan-upload@v1.0
-        with:
-          remote: conan-eiva
-          package: '"${{ needs.build-windows.outputs.conan-ref }}"'
-          args: --confirm
+        run: conan upload "${{ needs.build-windows.outputs.conan-ref }}" -r conan-eiva --confirm

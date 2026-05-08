@@ -1,7 +1,9 @@
 name: "Bootstrap Conan with conan-eiva access"
 description: >-
-  Generates a token for the eiva-conan-configuration repository, sets up Conan,
-  installs the eiva conan-configuration, and logs into the conan-eiva remote.
+  Generates a token for the eiva conan-configuration repository, installs
+  Python + Conan, applies the eiva conan-configuration, and logs into the
+  conan-eiva remote. Self-contained — no dependency on third-party Conan
+  GitHub Actions.
 
 inputs:
   github-app-client-id:
@@ -16,6 +18,14 @@ inputs:
   conan-eiva-password:
     description: "conan-eiva Artifactory password"
     required: true
+  python-version:
+    description: "Python version to install"
+    required: false
+    default: "3.14.4"
+  conan-version:
+    description: "Conan version to install"
+    required: false
+    default: "2.27.1"
 
 runs:
   using: "composite"
@@ -29,22 +39,32 @@ runs:
         owner: eivacom
         repositories: conan-configuration
 
-    - name: Setup Conan
-      uses: eivacom/conan-actions/conan-setup@v1.0
+    - name: Set up Python
+      uses: actions/setup-python@v6.2.0
       with:
-        python-version: "3.14.4"
-        conan-version: "2.27.1"
+        python-version: ${{ inputs.python-version }}
 
-    - name: Configure Conan
-      uses: eivacom/conan-actions/conan-configure@v1.0
-      with:
-        token: ${{ steps.generate-token.outputs.token }}
-        config_urls: |
-          https://github.com/eivacom/conan-configuration
+    - name: Install Conan
+      shell: bash
+      run: |
+        python -m pip install --root-user-action=ignore --no-cache-dir "conan==${{ inputs.conan-version }}"
 
-    - name: Login Conan
-      uses: eivacom/conan-actions/conan-login@v1.0
-      with:
-        remote: conan-eiva
-        username: ${{ inputs.conan-eiva-username }}
-        password: ${{ inputs.conan-eiva-password }}
+    - name: Install conan-configuration
+      shell: bash
+      env:
+        GH_APP_TOKEN: ${{ steps.generate-token.outputs.token }}
+      run: |
+        auth_header=$(printf 'x-access-token:%s' "$GH_APP_TOKEN" | base64 -w0)
+        git config --global http.extraHeader "Authorization: Basic $auth_header"
+        conan config install https://github.com/eivacom/conan-configuration.git --type git
+        # Clear the auth header so subsequent git operations on this runner
+        # do not reuse the conan-configuration token.
+        git config --global --unset http.extraHeader
+
+    - name: Log in to conan-eiva
+      shell: bash
+      env:
+        CONAN_LOGIN_USERNAME: ${{ inputs.conan-eiva-username }}
+        CONAN_LOGIN_PASSWORD: ${{ inputs.conan-eiva-password }}
+      run: |
+        conan remote login conan-eiva "$CONAN_LOGIN_USERNAME" -p "$CONAN_LOGIN_PASSWORD"
