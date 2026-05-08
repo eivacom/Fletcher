@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fletcher &mdash; Arrow Row Serializer</title>
+<style>
+/* ── Reset & base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 16px; line-height: 1.65; color: #1a1a2e;
+  background: #f8f9fc;
+}
+a { color: #3a6cf4; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Layout ────────────────────────────────────────────────────────── */
+.page { display: flex; min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; width: 260px; flex-shrink: 0;
+  background: #1a1a2e; color: #c0c0d0; overflow-y: auto;
+  padding: 1.5rem 0; font-size: 0.85rem;
+}
+.sidebar h2 {
+  color: #fff; font-size: 1rem; padding: 0 1.2rem;
+  margin-bottom: 1.2rem; letter-spacing: 0.02em;
+}
+.sidebar ul { list-style: none; }
+.sidebar li a {
+  display: block; padding: 0.35rem 1.2rem; color: #a0a0c0;
+  transition: background .15s, color .15s;
+}
+.sidebar li a:hover { background: #2a2a4a; color: #fff; text-decoration: none; }
+.sidebar li.section { margin-top: 1rem; }
+.sidebar li.section > span {
+  display: block; padding: 0.35rem 1.2rem; font-weight: 600;
+  color: #7878a0; text-transform: uppercase; font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+.main {
+  flex: 1; max-width: 900px; padding: 2.5rem 3rem 4rem;
+  margin: 0 auto;
+}
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { padding: 1.5rem; }
+}
+
+/* ── Typography ────────────────────────────────────────────────────── */
+h1 { font-size: 2.2rem; margin-bottom: 0.3rem; color: #0d0d1a; }
+h2 {
+  font-size: 1.5rem; margin-top: 3rem; margin-bottom: 0.8rem;
+  padding-bottom: 0.4rem; border-bottom: 2px solid #e0e4ee; color: #0d0d1a;
+}
+h3 { font-size: 1.15rem; margin-top: 2rem; margin-bottom: 0.5rem; color: #1a1a2e; }
+p, ul, ol, table { margin-bottom: 1rem; }
+ul, ol { padding-left: 1.6rem; }
+li + li { margin-top: 0.25rem; }
+.subtitle { font-size: 1.1rem; color: #555; margin-bottom: 2rem; }
+
+/* ── Code ──────────────────────────────────────────────────────────── */
+code {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.88em; background: #eef0f7; padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+pre {
+  background: #1e1e2e; color: #cdd6f4; padding: 1.2rem 1.4rem;
+  border-radius: 8px; overflow-x: auto; font-size: 0.85rem;
+  line-height: 1.55; margin-bottom: 1.2rem;
+}
+pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+
+/* syntax highlights (minimal) */
+.kw  { color: #cba6f7; }  /* keyword */
+.ty  { color: #89b4fa; }  /* type */
+.str { color: #a6e3a1; }  /* string */
+.num { color: #fab387; }  /* number */
+.cmt { color: #6c7086; }  /* comment */
+.fn  { color: #89dceb; }  /* function */
+
+/* ── Tables ────────────────────────────────────────────────────────── */
+table {
+  width: 100%; border-collapse: collapse; font-size: 0.9rem;
+  margin-bottom: 1.2rem;
+}
+th, td { text-align: left; padding: 0.55rem 0.8rem; border-bottom: 1px solid #dde1ed; }
+th { background: #eef0f7; font-weight: 600; color: #333; }
+tr:hover td { background: #f4f5fb; }
+
+/* ── Info boxes ────────────────────────────────────────────────────── */
+.note, .warn {
+  padding: 0.9rem 1.2rem; border-radius: 6px; margin-bottom: 1.2rem;
+  font-size: 0.92rem; line-height: 1.5;
+}
+.note { background: #e8f0fe; border-left: 4px solid #3a6cf4; }
+.warn { background: #fff8e1; border-left: 4px solid #f9a825; }
+
+/* ── Diagram ───────────────────────────────────────────────────────── */
+.diagram {
+  background: #1e1e2e; color: #cdd6f4; padding: 1.2rem 1.4rem;
+  border-radius: 8px; overflow-x: auto; font-family: monospace;
+  font-size: 0.82rem; line-height: 1.5; margin-bottom: 1.2rem;
+  white-space: pre;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────── */
+.hero {
+  background: linear-gradient(135deg, #1a1a2e 0%, #2d2d5e 100%);
+  color: #fff; padding: 3rem 3rem 2.5rem; border-radius: 12px;
+  margin-bottom: 2.5rem;
+}
+.hero h1 { color: #fff; font-size: 2.4rem; margin-bottom: 0.4rem; }
+.hero .subtitle { color: #b0b8d8; margin-bottom: 1.2rem; }
+.hero .badges { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.hero .badge {
+  display: inline-block; background: rgba(255,255,255,0.12);
+  padding: 0.25rem 0.7rem; border-radius: 4px; font-size: 0.8rem;
+  color: #c8d0f0;
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SIDEBAR
+     ═══════════════════════════════════════════════════════════════════ -->
+<nav class="sidebar">
+  <h2>Fletcher</h2>
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#quickstart">Quick Start</a></li>
+
+    <li class="section"><span>Concepts</span></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#nanoarrow">Nanoarrow &amp; Edge</a></li>
+    <li><a href="#wire-format">Wire Format</a></li>
+    <li><a href="#type-mapping">Type Mapping</a></li>
+    <li><a href="#schema-transport">Schema Transport</a></li>
+    <li><a href="#attachments">Attachments</a></li>
+
+    <li class="section"><span>Components</span></li>
+    <li><a href="#protoc-plugin">Protoc Plugin</a></li>
+    <li><a href="#positional-codec">Codec &amp; Positional I/O</a></li>
+    <li><a href="#pubsub">PubSub Provider</a></li>
+    <li><a href="#pubsub-arrow">PubSubArrow</a></li>
+    <li><a href="#web-gateway">WebGateway</a></li>
+    <li><a href="#web-client">WebClient (TS)</a></li>
+    <li><a href="#batcher">Batcher &amp; WAL</a></li>
+    <li><a href="#fastdds">FastDDS Provider</a></li>
+    <li><a href="#xrce-dds">XRCE-DDS Provider</a></li>
+    <li><a href="#capi">C API &amp; Rust (removed)</a></li>
+
+    <li class="section"><span>Reference</span></li>
+    <li><a href="#project-structure">Project Structure</a></li>
+    <li><a href="#dependency-graph">Dependency Graph</a></li>
+    <li><a href="#building">Building</a></li>
+    <li><a href="#testing">Testing</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════════════════════════════ -->
+<main class="main">
+
+<!-- ── Hero ─────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <h1>Fletcher</h1>
+  <p class="subtitle">
+    Compact, positional row buffers for Apache Arrow &mdash;
+    generated from Protocol Buffers, with nanoarrow-based schema transport,
+    pub/sub delivery, and columnar batching built in.
+  </p>
+  <div class="badges">
+    <span class="badge">C++20</span>
+    <span class="badge">TypeScript</span>
+    <span class="badge">Nanoarrow</span>
+    <span class="badge">Apache Arrow</span>
+    <span class="badge">Protocol Buffers</span>
+    <span class="badge">Schema Transport</span>
+    <span class="badge">WebSocket</span>
+    <span class="badge">Edge-Ready</span>
+    <span class="badge">Pub/Sub</span>
+  </div>
+</div>
+
+<!-- ── Overview ─────────────────────────────────────────────────────── -->
+<h2 id="overview">Overview</h2>
+
+<p>
+  Fletcher bridges two worlds: <strong>Protocol Buffers</strong> for message
+  definition and <strong>Apache Arrow</strong> for in-memory analytics.
+  A <code>protoc</code> compiler plugin reads your <code>.proto</code> files
+  and generates C++ wrapper classes that serialize structured data into
+  compact, positional binary row buffers backed by Arrow schemas.
+</p>
+
+<p>These row buffers are designed for scenarios where data arrives one row
+  at a time &mdash; telemetry streams, event buses, sensor networks &mdash;
+  but is consumed in columnar batches for analytics, storage, or forwarding.</p>
+
+<p>The core pub/sub, codec, generated code, WebGateway, and transport
+  providers depend only on <strong>nanoarrow</strong> (~100 KB), making them
+  suitable for edge and embedded deployment. Server-side features (batching,
+  view classes) use the full Apache Arrow C++ library through a separate
+  <code>PubSubArrow</code> adapter.</p>
+
+<p>The system provides seven layers that compose cleanly:</p>
+
+<ol>
+  <li><strong>Core</strong> &mdash; a header-only library with <code>PositionalWriter</code>/<code>PositionalReader</code>
+    for direct serialization, <code>WriteBuffer</code>, <code>Envelope</code>, and
+    <code>EncodedRow</code> type aliases. No dependencies.</li>
+  <li><strong>ArrowBridge</strong> &mdash; the <code>Codec</code> class for server-side ArrowRow encode/decode
+    (Arrow C++), plus <code>ArrowRowView</code> helpers and CRS utilities.</li>
+  <li><strong>Protoc Plugin</strong> &mdash; generates typed C++ message classes
+    (<code>.fletcher.pb.h</code>, nanoarrow only) and optional Arrow C++ view
+    classes (<code>.fletcher.arrow.pb.h</code>), plus TypeScript interfaces.</li>
+  <li><strong>PubSub Provider</strong> &mdash; an abstract transport interface
+    operating on raw bytes and nanoarrow <code>OwnedSchema</code>, with
+    schema transport, zero-copy <code>RowEncoder</code> publishing, and
+    raw-bytes subscriber callbacks.</li>
+  <li><strong>PubSubArrow</strong> &mdash; a server-side wrapper that adds
+    Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of
+    the nanoarrow provider.</li>
+  <li><strong>WebGateway</strong> &mdash; a Boost.Beast WebSocket server that
+    exposes the Driver to browser clients over a split text/binary protocol.</li>
+  <li><strong>WebClient</strong> &mdash; a TypeScript client library with a
+    pure-TypeScript positional codec and two interchangeable backends (plain objects
+    or Apache Arrow JS).</li>
+  <li><strong>Batcher</strong> &mdash; accumulates individual rows into Arrow
+    Tables via a write-ahead log, flushing in configurable batches.</li>
+</ol>
+
+<!-- ── Quick Start ─────────────────────────────────────────────────── -->
+<h2 id="quickstart">Quick Start</h2>
+
+<h3>1. Define your message</h3>
+
+<pre><code><span class="cmt">// telemetry.proto</span>
+<span class="kw">syntax</span> = <span class="str">"proto3"</span>;
+<span class="kw">package</span> myapp;
+
+<span class="kw">import</span> <span class="str">"google/protobuf/empty.proto"</span>;
+
+<span class="kw">message</span> <span class="ty">SensorReading</span> {
+    <span class="ty">int32</span>  sensor_id    = <span class="num">1</span>;
+    <span class="ty">double</span> temperature  = <span class="num">2</span>;
+    <span class="ty">string</span> location     = <span class="num">3</span>;
+    <span class="kw">optional</span> <span class="ty">double</span> humidity = <span class="num">4</span>;  <span class="cmt">// nullable</span>
+}
+
+<span class="kw">service</span> <span class="ty">SensorFeed</span> {
+    <span class="kw">rpc</span> <span class="fn">Stream</span>(<span class="kw">stream</span> <span class="ty">SensorReading</span>) <span class="kw">returns</span> (<span class="ty">google.protobuf.Empty</span>);
+}</code></pre>
+
+<h3>2. Generate code</h3>
+
+<p>The <code>protoc-gen-fletcher</code> plugin runs during your CMake build.
+  For each <code>.proto</code> file it produces two headers:</p>
+<ul>
+  <li><strong><code>.fletcher.pb.h</code></strong> &mdash; edge-compatible message
+    class, schema function, publisher, subscriber. Depends only on nanoarrow.</li>
+  <li><strong><code>.fletcher.arrow.pb.h</code></strong> &mdash; server-side view class
+    wrapping <code>ArrowRow</code> with typed getters for <code>RecordBatch</code>,
+    <code>Table</code>, and scalar vectors. Depends on Arrow C++.</li>
+</ul>
+
+<h3>3. Encode and decode</h3>
+
+<pre><code><span class="cmt">#include</span> <span class="str">"telemetry.fletcher.pb.h"</span>
+
+<span class="cmt">// Build a row with typed setters</span>
+fletcher_gen::myapp::<span class="ty">SensorReading</span> row;
+row.<span class="fn">set_sensor_id</span>(<span class="num">42</span>)
+   .<span class="fn">set_temperature</span>(<span class="num">23.5</span>)
+   .<span class="fn">set_location</span>(<span class="str">"Room 101"</span>)
+   .<span class="fn">set_humidity</span>(<span class="num">55.3</span>);
+
+<span class="cmt">// Encode to a compact binary buffer (no Arrow C++ needed)</span>
+fletcher::<span class="ty">EncodedRow</span> encoded = row.<span class="fn">Encode</span>();
+
+<span class="cmt">// Decode back from raw bytes</span>
+fletcher_gen::myapp::<span class="ty">SensorReading</span> restored(encoded);</code></pre>
+
+<h3>4. Publish and subscribe</h3>
+
+<pre><code><span class="cmt">#include</span> <span class="str">&lt;fast_dds_pubsub_provider.hpp&gt;</span>
+
+<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();  <span class="cmt">// implements PubSub</span>
+
+<span class="cmt">// Publisher (creates topic with nanoarrow schema, zero-copy encode)</span>
+fletcher_gen::myapp::<span class="ty">SensorFeed_StreamPublisher</span> pub(provider);
+pub.<span class="fn">Publish</span>(row);
+
+<span class="cmt">// Subscriber (receives typed message, decoded from raw bytes)</span>
+fletcher_gen::myapp::<span class="ty">SensorFeed_StreamSubscriber</span> sub(provider);
+sub.<span class="fn">Subscribe</span>([](fletcher_gen::myapp::<span class="ty">SensorReading</span> msg, fletcher::<span class="ty">Attachments</span> att) {
+    std::cout &lt;&lt; <span class="str">"Temperature: "</span> &lt;&lt; msg.<span class="fn">temperature</span>() &lt;&lt; <span class="str">"\n"</span>;
+});</code></pre>
+
+<h3>5. Batch into Arrow Tables</h3>
+
+<pre><code>fletcher::<span class="ty">SQLiteWAL</span> wal(<span class="str">":memory:"</span>);
+fletcher::<span class="ty">GenericRowBatcher</span> batcher(
+    fletcher_gen::myapp::<span class="fn">SensorReadingSchema</span>(),
+    wal,
+    <span class="cmt">/*batch_size=*/</span><span class="num">1000</span>,
+    [](std::shared_ptr&lt;arrow::<span class="ty">Table</span>&gt; table) -&gt; <span class="ty">bool</span> {
+        <span class="cmt">// Write to Parquet, send to a data lake, etc.</span>
+        <span class="kw">return</span> <span class="num">true</span>;
+    });
+
+sub.<span class="fn">Subscribe</span>([&amp;](fletcher_gen::myapp::<span class="ty">SensorReading</span> msg, fletcher::<span class="ty">Attachments</span> att) {
+    batcher.<span class="fn">Append</span>(msg.<span class="fn">Encode</span>());  <span class="cmt">// triggers flush every 1000 rows</span>
+});</code></pre>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     CONCEPTS
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="architecture">Architecture</h2>
+
+<div class="diagram">  .proto files
+       |
+       v
+  protoc-gen-fletcher               (build-time code generation)
+       |
+       +---> .fletcher.pb.h         (C++ message classes, nanoarrow only)
+       +---> .fletcher.arrow.pb.h    (C++ view classes, Arrow C++)
+       +---> .fletcher.ts            (TypeScript interfaces + schema)
+       |
+       +--- Encode()/EncodeTo() --> EncodedRow (compact positional buffer)
+       |                                  |
+       |                 +----------------+----------------+
+       |                 |                |                |
+       |                 v                v                v
+       |          PubSub          PubSubArrow      WebGateway
+       |        (nanoarrow, edge)   (Arrow C++,     (nanoarrow,
+       |         raw bytes I/O      ArrowRow I/O)    WebSocket)
+       |                 |                |                |
+       |                 v                v                v
+       |          Fast DDS / ...   RowBatcher          Browser
+       |                 |        (accumulation)          |
+       |                 v              |                 v
+       +---- Decode() <--         arrow::Table      WebClient (TS)
+              (PositionalReader      (columnar)     positional codec +
+               or Codec)                           Object / Arrow JS
+</div>
+
+<p>Each layer is independent. You can use the codec without pub/sub,
+  the batcher without the protoc plugin, the web gateway without DDS,
+  or the full pipeline end-to-end. The core path (codec, pub/sub, generated
+  message code, DDS provider) requires only nanoarrow, enabling deployment
+  on edge and embedded devices.</p>
+
+
+<!-- ── Nanoarrow ──────────────────────────────────────────────────── -->
+<h2 id="nanoarrow">Nanoarrow &amp; Edge Deployment</h2>
+
+<p>The full Apache Arrow C++ library is ~100 MB &mdash; impractical for edge
+  devices, microcontrollers, or space-constrained embedded systems.
+  <a href="https://arrow.apache.org/nanoarrow/">Nanoarrow</a> is a lightweight
+  (~100 KB) C library that implements the Arrow type system, schema construction,
+  and IPC format without the full C++ runtime.</p>
+
+<p>Fletcher's core pub/sub path &mdash; generated message code, the
+  <code>PubSub</code> interface, schema IPC serialization, and transport
+  providers like FastDDS &mdash; depends <strong>only on nanoarrow</strong>.
+  This means an edge binary can publish and subscribe to Arrow-typed data
+  streams without linking the full Arrow C++ library.</p>
+
+<h3>Two-tier architecture</h3>
+<table>
+  <tr><th>Tier</th><th>Depends on</th><th>Use case</th></tr>
+  <tr>
+    <td><strong>Edge tier</strong></td>
+    <td>nanoarrow (~100 KB)</td>
+    <td>Generated message classes, <code>PubSub</code>, <code>PositionalWriter</code>/<code>PositionalReader</code>,
+      FastDDS provider, <code>WebGateway</code>, generated publishers/subscribers</td>
+  </tr>
+  <tr>
+    <td><strong>Server tier</strong></td>
+    <td>Arrow C++ (~100 MB)</td>
+    <td><code>PubSubArrow</code> adapter, view classes (<code>.fletcher.arrow.pb.h</code>),
+      <code>Codec</code>, <code>RowBatcher</code></td>
+  </tr>
+</table>
+
+<h3>OwnedSchema</h3>
+<p>Schemas are represented as <code>fletcher::OwnedSchema</code> &mdash; an
+  RAII wrapper around nanoarrow's C <code>ArrowSchema</code> struct. It is
+  zero-copy convertible to/from Arrow C++'s <code>shared_ptr&lt;arrow::Schema&gt;</code>
+  via the <a href="https://arrow.apache.org/docs/format/CDataInterface.html">Arrow C Data Interface</a>
+  (<code>arrow::ImportSchema</code> / <code>arrow::ExportSchema</code>).</p>
+
+
+<!-- ── Wire Format ─────────────────────────────────────────────────── -->
+<h2 id="wire-format">Wire Format (Positional)</h2>
+
+<p>Every <code>EncodedRow</code> is a compact, positional binary buffer
+  (little-endian throughout). Because the publisher&rsquo;s schema is
+  delivered to subscribers via schema transport, both sides are guaranteed
+  the same schema. This allows the wire format to omit field numbers, wire
+  type tags, and schema hashes &mdash; fields are written in schema order
+  with a compact null bitfield.</p>
+
+<pre><code>[NULL_BITFIELD : ceil(num_fields / 8) bytes, LSB-first bit order]
+
+For each field in schema order (skip if null bit set):
+  [PAYLOAD bytes]   &mdash; size determined by field type from schema</code></pre>
+
+<h3>Payload encoding by kind</h3>
+<table>
+  <tr><th>Kind</th><th>Encoding</th></tr>
+  <tr><td>Fixed-size scalars (int, float, bool, ...)</td><td>Raw little-endian bytes (size known from schema type)</td></tr>
+  <tr><td>String / Binary</td><td><code>[LEN:4][DATA:LEN]</code></td></tr>
+  <tr><td>Struct</td><td><code>[NULL_BITFIELD:ceil(n/8)]</code> + per-field payloads (recursive positional)</td></tr>
+  <tr><td>List / Large List</td><td><code>[COUNT:4][NULL_BITFIELD:ceil(count/8)]</code> + per-element payloads</td></tr>
+  <tr><td>Fixed-size List</td><td><code>[NULL_BITFIELD:ceil(fixed_size/8)]</code> + per-element payloads</td></tr>
+  <tr><td>Map</td><td><code>[COUNT:4]</code> + key payloads + <code>[NULL_BITFIELD:ceil(count/8)]</code> + value payloads</td></tr>
+  <tr><td>Union</td><td><code>[TYPE_CODE:1]</code> + active child payload</td></tr>
+</table>
+
+<h3>Wire size savings</h3>
+<p>For a typical 10-field row (6 fixed scalars, 2 strings, 1 struct, 1 list):</p>
+<table>
+  <tr><th>Format</th><th>Overhead</th></tr>
+  <tr><td>Old tagged format</td><td>~110 bytes (8 hash + 2 count + 10 &times; 10 per-field headers)</td></tr>
+  <tr><td>Positional format</td><td>~14 bytes (2 null bitfield + string/composite length prefixes)</td></tr>
+</table>
+
+
+<!-- ── Type Mapping ────────────────────────────────────────────────── -->
+<h2 id="type-mapping">Type Mapping</h2>
+
+<h3>Scalar types</h3>
+<table>
+  <tr><th>Proto Type</th><th>Arrow Type</th><th>C++ Storage</th></tr>
+  <tr><td><code>bool</code></td><td><code>boolean()</code></td><td><code>bool</code></td></tr>
+  <tr><td><code>int32</code>, <code>sint32</code>, <code>sfixed32</code></td><td><code>int32()</code></td><td><code>int32_t</code></td></tr>
+  <tr><td><code>int64</code>, <code>sint64</code>, <code>sfixed64</code></td><td><code>int64()</code></td><td><code>int64_t</code></td></tr>
+  <tr><td><code>uint32</code>, <code>fixed32</code></td><td><code>uint32()</code></td><td><code>uint32_t</code></td></tr>
+  <tr><td><code>uint64</code>, <code>fixed64</code></td><td><code>uint64()</code></td><td><code>uint64_t</code></td></tr>
+  <tr><td><code>float</code></td><td><code>float32()</code></td><td><code>float</code></td></tr>
+  <tr><td><code>double</code></td><td><code>float64()</code></td><td><code>double</code></td></tr>
+  <tr><td><code>string</code></td><td><code>utf8()</code></td><td><code>std::string</code></td></tr>
+  <tr><td><code>bytes</code></td><td><code>binary()</code></td><td><code>std::string</code></td></tr>
+  <tr><td><code>enum</code></td><td><code>int32()</code></td><td><code>int32_t</code></td></tr>
+</table>
+
+<h3>Composite types</h3>
+<table>
+  <tr><th>Proto Construct</th><th>Arrow Type</th></tr>
+  <tr><td>Nested message</td><td><code>struct_({child fields...})</code></td></tr>
+  <tr><td><code>repeated T</code></td><td><code>list(T)</code></td></tr>
+  <tr><td><code>repeated Message</code></td><td><code>list(struct_(...))</code></td></tr>
+  <tr><td><code>map&lt;K, V&gt;</code></td><td><code>map(K, V)</code></td></tr>
+</table>
+
+<h3>Well-known types</h3>
+<p>Google's well-known wrapper types are <em>flattened</em> to scalar Arrow
+  fields rather than nested structs:</p>
+<table>
+  <tr><th>Proto WKT</th><th>Arrow Type</th><th>Notes</th></tr>
+  <tr><td><code>google.protobuf.Timestamp</code></td><td><code>timestamp(NANO)</code></td><td><code>seconds * 10<sup>9</sup> + nanos</code></td></tr>
+  <tr><td><code>google.protobuf.Duration</code></td><td><code>duration(NANO)</code></td><td><code>seconds * 10<sup>9</sup> + nanos</code></td></tr>
+  <tr><td><code>DoubleValue</code>, <code>FloatValue</code>, ...</td><td>Corresponding scalar</td><td>Always nullable</td></tr>
+  <tr><td><code>StringValue</code>, <code>BytesValue</code></td><td><code>utf8()</code> / <code>binary()</code></td><td>Always nullable</td></tr>
+</table>
+
+<h3>Nullability rules</h3>
+<ul>
+  <li>Proto3 <code>optional</code> fields &rarr; <strong>nullable</strong> Arrow columns</li>
+  <li>All other singular fields &rarr; <strong>non-nullable</strong></li>
+  <li>Wrapper types (<code>DoubleValue</code>, etc.) &rarr; always nullable</li>
+  <li><code>repeated</code> and <code>map</code> fields &rarr; non-nullable (but may be empty)</li>
+</ul>
+
+
+<!-- ── Schema Transport ────────────────────────────────────────────── -->
+<h2 id="schema-transport">Schema Transport</h2>
+
+<p>The positional wire format requires both publisher and subscriber to share
+  the same schema. Fletcher solves this via <strong>provider-level schema
+  transport</strong>: when a publisher creates a topic, the nanoarrow
+  <code>OwnedSchema</code> is delivered alongside the topic. When a subscriber
+  joins, the provider returns the schema automatically.</p>
+
+<h3>How it works</h3>
+<ol>
+  <li><strong>Publisher calls <code>CreateTopic(segments, OwnedSchema)</code></strong>
+    &mdash; the provider stores the schema alongside the data topic.</li>
+  <li><strong>Subscriber calls <code>Subscribe(segments, callback)</code></strong>
+    &mdash; the provider returns a <code>SubscriptionResult</code> containing
+    the publisher&rsquo;s schema as an <code>OwnedSchema</code>. No need for
+    the subscriber to know the schema in advance.</li>
+  <li><strong>Both sides use the same schema</strong> for the
+    positional wire format, so the compact encoding works
+    without any per-field metadata.</li>
+</ol>
+
+<h3>FastDDS implementation</h3>
+<p>The FastDDS provider uses a <strong>companion DDS topic</strong> for schema
+  delivery. For each data topic <code>foo/bar</code>, a companion topic
+  <code>foo/bar/__schema</code> is created with TRANSIENT_LOCAL durability
+  and KEEP_LAST(1) QoS. The schema is serialized as Arrow IPC bytes via
+  nanoarrow and published once, retained for late-joining subscribers.</p>
+
+<h3>WebGateway</h3>
+<p>When a WebSocket client subscribes, the <code>subscribed</code> response
+  includes the schema in two forms:</p>
+<ul>
+  <li><code>schema</code> &mdash; a JSON object with field names, wire types,
+    nullability, and composite structure (for easy consumption in JS)</li>
+  <li><code>schemaIpc</code> &mdash; base64-encoded Arrow IPC bytes (for full
+    fidelity when needed)</li>
+</ul>
+
+<pre><code>{
+  <span class="str">"type"</span>: <span class="str">"subscribed"</span>,
+  <span class="str">"subId"</span>: <span class="str">"1"</span>,
+  <span class="str">"topic"</span>: <span class="str">"myapp/SensorFeed/Stream"</span>,
+  <span class="str">"schemaIpc"</span>: <span class="str">"QUFBQUFBP..."</span>,
+  <span class="str">"schema"</span>: {
+    <span class="str">"fields"</span>: [
+      {<span class="str">"name"</span>: <span class="str">"sensor_id"</span>, <span class="str">"fieldNumber"</span>: <span class="num">1</span>, <span class="str">"wireType"</span>: <span class="num">4</span>, <span class="str">"nullable"</span>: <span class="num">false</span>},
+      ...
+    ]
+  }
+}</code></pre>
+
+<div class="note">
+  <strong>Legacy tagged codec:</strong> The older self-describing tagged wire
+  format (<code>RowCodec</code>) and its schema evolution logic have been
+  removed from the codebase &mdash; fully superseded by the positional
+  codec and generated code.
+</div>
+
+
+<!-- ── Attachments ─────────────────────────────────────────────────── -->
+<h2 id="attachments">Attachments (Sidecar Blobs)</h2>
+
+<p>Large binary data &mdash; images, audio, firmware blobs &mdash;
+  should not be embedded in the Arrow row structure. Instead, the message
+  references a blob by key (a plain <code>string</code> field), while the
+  actual data travels alongside it as an <strong>attachment</strong>.</p>
+
+<pre><code><span class="cmt">// The Arrow row contains just a reference</span>
+row.<span class="fn">set_image_ref</span>(<span class="str">"frame_001"</span>);
+
+<span class="cmt">// The blob travels as a sidecar attachment</span>
+<span class="kw">auto</span> image = std::make_shared&lt;<span class="kw">const</span> std::vector&lt;<span class="ty">uint8_t</span>&gt;&gt;(<span class="fn">load_image</span>());
+pub.<span class="fn">Publish</span>(row, {{<span class="str">"frame_001"</span>, image}});</code></pre>
+
+<p>On the subscriber side, attachments arrive alongside the decoded message:</p>
+
+<pre><code>sub.<span class="fn">Subscribe</span>([&amp;](MyMessage msg, fletcher::<span class="ty">Attachments</span> att) {
+    <span class="kw">auto</span> it = att.<span class="fn">find</span>(msg.<span class="fn">image_ref</span>());
+    <span class="kw">if</span> (it != att.<span class="fn">end</span>())
+        <span class="fn">save_image</span>(*it-&gt;second);                       <span class="cmt">// blob data</span>
+});</code></pre>
+
+<h3>Types</h3>
+<table>
+  <tr><th>Type</th><th>Definition</th><th>Purpose</th></tr>
+  <tr><td><code>Blob</code></td><td><code>shared_ptr&lt;const vector&lt;uint8_t&gt;&gt;</code></td><td>Zero-copy binary data</td></tr>
+  <tr><td><code>Attachments</code></td><td><code>unordered_map&lt;string, Blob&gt;</code></td><td>Key/value blob pairs</td></tr>
+</table>
+
+<p><code>SerializeEnvelope()</code> and <code>DeserializeEnvelope()</code>
+  provide a wire format for transport providers that send everything as a
+  single byte stream. The codec and batcher are completely unaware of
+  attachments &mdash; they remain a transport-layer concern.</p>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     COMPONENTS
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="protoc-plugin">Protoc Plugin</h2>
+
+<p>The <code>protoc-gen-fletcher</code> plugin is a standard protobuf
+  compiler plugin. During a CMake build, <code>protoc</code> invokes it for
+  each <code>.proto</code> file and it emits two C++ headers. With the
+  <code>ts</code> option, it also emits a <code>.fletcher.ts</code> TypeScript file.</p>
+
+<h3>Generated files</h3>
+<table>
+  <tr><th>File</th><th>Depends on</th><th>Contents</th></tr>
+  <tr>
+    <td><code>.fletcher.pb.h</code></td>
+    <td>nanoarrow only</td>
+    <td>Schema function (<code>OwnedSchema</code>), typed row class with <code>Encode()</code>/<code>EncodeTo()</code>,
+      decoding constructor, publisher/subscriber classes</td>
+  </tr>
+  <tr>
+    <td><code>.fletcher.arrow.pb.h</code></td>
+    <td>Arrow C++</td>
+    <td>Immutable view class with typed getters, constructors from
+      <code>ArrowRow</code>, <code>RecordBatch</code>, and <code>Table</code></td>
+  </tr>
+  <tr>
+    <td><code>.fletcher.ts</code></td>
+    <td>&mdash;</td>
+    <td>TypeScript interface, <code>SchemaDescriptor</code>, topic constant</td>
+  </tr>
+</table>
+
+<h3>What gets generated (C++ &mdash; <code>.fletcher.pb.h</code>)</h3>
+
+<p><strong>For each message:</strong></p>
+<ul>
+  <li>A free function <code>{Message}Schema()</code> returning a
+    <code>fletcher::OwnedSchema</code> (nanoarrow <code>ArrowSchema</code>)
+    with <code>field_number</code> metadata on each field and
+    <code>proto_package</code>/<code>proto_message</code> on the schema.</li>
+  <li>A class <code>{Message}</code> (in the <code>fletcher_gen</code> namespace) with:
+    <ul>
+      <li>Chainable setters (<code>set_*()</code>, <code>clear_*()</code> for optionals)</li>
+      <li><code>Encode()</code> &rarr; <code>EncodedRow</code> (via <code>PositionalWriter</code>)</li>
+      <li><code>EncodeTo(WriteBuffer&amp;)</code> for zero-copy encoding into a caller-provided buffer</li>
+      <li>Constructor from <code>EncodedRow</code> (via <code>PositionalReader</code>)</li>
+      <li>Constructor from raw <code>(const uint8_t*, size_t)</code></li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>For each eligible service RPC</strong>
+  (client-streaming, returns <code>google.protobuf.Empty</code>):</p>
+<ul>
+  <li><code>{Service}_{Method}Publisher</code> &mdash; creates topic with
+    <code>OwnedSchema</code>, publishes via <code>RowEncoder</code> zero-copy path</li>
+  <li><code>{Service}_{Method}Subscriber</code> &mdash; subscribes to raw bytes,
+    delivers typed <code>{Message}</code> + <code>Attachments</code> to callback</li>
+</ul>
+
+<h3>What gets generated (C++ &mdash; <code>.fletcher.arrow.pb.h</code>)</h3>
+
+<p><strong>For each message:</strong></p>
+<ul>
+  <li>A class <code>{Message}View</code> with:
+    <ul>
+      <li>Constructor from <code>ArrowRow</code> (vector of Arrow scalars)</li>
+      <li>Constructor from <code>shared_ptr&lt;arrow::Scalar&gt;</code> (struct scalar)</li>
+      <li>Constructor from <code>arrow::RecordBatch</code> + row index</li>
+      <li>Constructor from <code>arrow::Table</code> + row index</li>
+      <li>Typed zero-copy getters (returns <code>string_view</code> for strings,
+        nested view classes for structs, <code>ArrowRowViewList</code> for lists)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>Unsupported constructs</h3>
+<ul>
+  <li><code>oneof</code> &mdash; use separate <code>optional</code> fields instead</li>
+  <li>Recursive messages &mdash; detected at generation time, skipped with a comment</li>
+  <li><code>google.protobuf.Any</code> and <code>google.protobuf.Struct</code> &mdash; dynamically typed</li>
+</ul>
+
+<h3>TypeScript generation (<code>--fletcher_opt=ts</code>)</h3>
+
+<p>When the <code>ts</code> option is passed, the plugin also emits a
+  <code>.fletcher.ts</code> file alongside the C++ headers:</p>
+
+<pre><code><span class="cmt">// Generated by protoc-gen-fletcher. DO NOT EDIT.</span>
+<span class="kw">import type</span> { <span class="ty">SchemaDescriptor</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+<span class="kw">import</span> { <span class="ty">WireTypeId</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+
+<span class="kw">export interface</span> <span class="ty">ISensorReading</span> {
+  sensor_id: <span class="ty">number</span>;
+  temperature: <span class="ty">number</span>;
+  location: <span class="ty">string</span>;
+  humidity: <span class="ty">number</span> | <span class="num">null</span>;
+}
+
+<span class="kw">export const</span> <span class="fn">SensorReadingSchema</span>: <span class="ty">SchemaDescriptor</span> = {
+  fields: [
+    { name: <span class="str">'sensor_id'</span>,   fieldNumber: <span class="num">1</span>, wireType: <span class="ty">WireTypeId</span>.INT32,   nullable: <span class="num">false</span> },
+    { name: <span class="str">'temperature'</span>, fieldNumber: <span class="num">2</span>, wireType: <span class="ty">WireTypeId</span>.FLOAT64, nullable: <span class="num">false</span> },
+    { name: <span class="str">'location'</span>,    fieldNumber: <span class="num">3</span>, wireType: <span class="ty">WireTypeId</span>.STRING,  nullable: <span class="num">false</span> },
+    { name: <span class="str">'humidity'</span>,    fieldNumber: <span class="num">4</span>, wireType: <span class="ty">WireTypeId</span>.FLOAT64, nullable: <span class="num">true</span>  },
+  ],
+  protoPackage: <span class="str">'myapp'</span>,
+  protoMessage: <span class="str">'SensorReading'</span>,
+};
+
+<span class="kw">export const</span> <span class="fn">SensorFeed_StreamTopic</span> = <span class="str">'myapp/SensorFeed/Stream'</span>;</code></pre>
+
+<p><strong>Type mapping (Proto &rarr; TypeScript):</strong></p>
+<table>
+  <tr><th>Proto Type</th><th>TypeScript</th></tr>
+  <tr><td><code>bool</code></td><td><code>boolean</code></td></tr>
+  <tr><td><code>int32</code>, <code>uint32</code>, <code>float</code>, <code>double</code>, <code>enum</code></td><td><code>number</code></td></tr>
+  <tr><td><code>int64</code>, <code>uint64</code>, Timestamp, Duration</td><td><code>bigint</code></td></tr>
+  <tr><td><code>string</code></td><td><code>string</code></td></tr>
+  <tr><td><code>bytes</code></td><td><code>Uint8Array</code></td></tr>
+  <tr><td><code>repeated T</code></td><td><code>T[]</code></td></tr>
+  <tr><td><code>map&lt;K, V&gt;</code></td><td><code>Map&lt;K, V&gt;</code></td></tr>
+  <tr><td>Nested message</td><td>Nested <code>I{Message}</code> interface</td></tr>
+</table>
+
+
+<!-- ── Codec & Positional I/O ──────────────────────────────────────── -->
+<h2 id="positional-codec">Codec &amp; Positional I/O</h2>
+
+<p>There are two levels of positional encode/decode, for different deployment targets:</p>
+
+<h3>PositionalWriter / PositionalReader (nanoarrow, edge-compatible)</h3>
+
+<p>Header-only utilities in <code>core/positional_io.hpp</code>. Used
+  by generated <code>EncodeTo()</code> and decoding constructors. No Arrow C++
+  dependency.</p>
+
+<pre><code><span class="cmt">// Zero-copy encoding into a caller-provided buffer</span>
+fletcher::<span class="ty">VectorWriteBuffer</span> buf(encoded_row);
+fletcher::<span class="ty">PositionalWriter</span> w(buf, <span class="cmt">/*num_fields=*/</span><span class="num">4</span>);
+w.<span class="fn">WriteInt32</span>(<span class="num">42</span>);
+w.<span class="fn">WriteDouble</span>(<span class="num">23.5</span>);
+w.<span class="fn">WriteString</span>(<span class="str">"Room 101"</span>);
+w.<span class="fn">SetNull</span>(<span class="num">3</span>);
+w.<span class="fn">Finish</span>();
+
+<span class="cmt">// Decoding</span>
+fletcher::<span class="ty">PositionalReader</span> r(encoded_row.data(), encoded_row.size(), <span class="num">4</span>);
+<span class="ty">int32_t</span> id   = r.<span class="fn">ReadInt32</span>();
+<span class="ty">double</span>  temp = r.<span class="fn">ReadDouble</span>();
+<span class="kw">auto</span>    loc  = r.<span class="fn">ReadString</span>();
+<span class="kw">bool</span>    has3 = !r.<span class="fn">IsNull</span>(<span class="num">3</span>);</code></pre>
+
+<h3>Codec (Arrow C++, server-side)</h3>
+
+<p>The <code>Codec</code> class (in <code>ArrowBridge/</code>) works with <code>ArrowRow</code>
+  (<code>vector&lt;shared_ptr&lt;arrow::Scalar&gt;&gt;</code>) and requires
+  an Arrow C++ schema. Used by <code>PubSubArrow</code> and the view classes
+  for decoding raw bytes into Arrow scalars.</p>
+
+<pre><code><span class="kw">auto</span> schema = arrow::<span class="fn">schema</span>({
+    arrow::<span class="fn">field</span>(<span class="str">"id"</span>,   arrow::<span class="fn">int32</span>(),   <span class="num">false</span>),
+    arrow::<span class="fn">field</span>(<span class="str">"name"</span>, arrow::<span class="fn">utf8</span>(),    <span class="num">true</span>),
+});
+
+fletcher::<span class="ty">Codec</span> codec(schema);
+
+<span class="cmt">// Encode from Arrow scalars</span>
+fletcher::<span class="ty">EncodedRow</span> row = codec.<span class="fn">EncodeRow</span>({
+    std::make_shared&lt;arrow::<span class="ty">Int32Scalar</span>&gt;(<span class="num">42</span>),
+    std::make_shared&lt;arrow::<span class="ty">StringScalar</span>&gt;(<span class="str">"Alice"</span>),
+});
+
+<span class="cmt">// Decode to Arrow scalars</span>
+fletcher::<span class="ty">ArrowRow</span> scalars = codec.<span class="fn">DecodeRow</span>(row);</code></pre>
+
+<div class="note">
+  <strong>Wire-compatible:</strong> Both levels produce byte-identical output.
+  A row encoded via <code>PositionalWriter</code> on an edge device can be
+  decoded by <code>Codec</code> on a server, and vice versa.
+</div>
+
+
+<!-- ── Pub/Sub Provider ───────────────────────────────────────────── -->
+<h2 id="pubsub">PubSub Interface</h2>
+
+<p>The <code>PubSub</code> class is an abstract interface that decouples
+  message transport from encoding. It operates on raw bytes and nanoarrow
+  schemas &mdash; no Arrow C++ dependency. Implement it to plug in any
+  message bus.</p>
+
+<pre><code><span class="kw">struct</span> <span class="ty">SubscriptionResult</span> {
+    fletcher::<span class="ty">OwnedSchema</span> schema;  <span class="cmt">// nanoarrow ArrowSchema (RAII)</span>
+};
+
+<span class="kw">class</span> <span class="ty">PubSub</span> {
+<span class="kw">public</span>:
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">CreateTopic</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        <span class="ty">OwnedSchema</span> schema) = <span class="num">0</span>;
+
+    <span class="cmt">// Zero-copy publish: encoder writes directly into provider's buffer</span>
+    <span class="kw">using</span> <span class="ty">RowEncoder</span> = std::function&lt;<span class="ty">void</span>(<span class="ty">WriteBuffer</span>&amp;)&gt;;
+
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Publish</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        <span class="ty">RowEncoder</span> encoder,
+        <span class="kw">const</span> <span class="ty">Attachments</span>&amp; attachments = {}) = <span class="num">0</span>;
+
+    <span class="cmt">// Subscriber receives raw bytes, shared schema, and attachments</span>
+    <span class="kw">using</span> <span class="ty">SubscribeCallback</span> = std::function&lt;<span class="ty">void</span>(
+        <span class="kw">const</span> <span class="ty">uint8_t</span>* data, <span class="ty">size_t</span> len,
+        <span class="ty">SharedSchema</span> schema,
+        <span class="ty">Attachments</span> attachments)&gt;;
+
+    <span class="kw">virtual</span> <span class="ty">SubscriptionResult</span> <span class="fn">Subscribe</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments,
+        <span class="ty">SubscribeCallback</span> callback) = <span class="num">0</span>;
+
+    <span class="kw">virtual</span> <span class="ty">void</span> <span class="fn">Unsubscribe</span>(
+        <span class="kw">const</span> std::vector&lt;std::string&gt;&amp; topic_segments) = <span class="num">0</span>;
+};</code></pre>
+
+<p>Topic names are a list of string segments so each provider can join them
+  with its preferred separator (e.g., <code>/</code> for DDS,
+  <code>.</code> for MQTT). The generated code uses
+  <code>{package, service, method}</code> as segments.</p>
+
+<h3>RowEncoder: zero-copy publish</h3>
+<p>Instead of passing a pre-encoded buffer, the provider calls the
+  <code>RowEncoder</code> lambda with a <code>WriteBuffer&amp;</code>. This
+  allows the provider to supply its own buffer (e.g., a
+  <code>FixedWriteBuffer</code> pointing directly at DDS shared memory),
+  eliminating intermediate copies.</p>
+
+<h3>Key types</h3>
+<table>
+  <tr><th>Type</th><th>Header</th><th>Purpose</th></tr>
+  <tr><td><code>OwnedSchema</code></td><td><code>pubsub/owned_schema.hpp</code></td><td>RAII wrapper for nanoarrow <code>ArrowSchema</code></td></tr>
+  <tr><td><code>WriteBuffer</code></td><td><code>core/write_buffer.hpp</code></td><td>Abstract buffer interface (<code>VectorWriteBuffer</code>, <code>FixedWriteBuffer</code>)</td></tr>
+  <tr><td><code>EncodedRow</code></td><td><code>core/types.hpp</code></td><td><code>vector&lt;uint8_t&gt;</code> alias</td></tr>
+  <tr><td><code>Blob</code>, <code>Attachments</code></td><td><code>core/types.hpp</code></td><td>Sidecar binary data</td></tr>
+  <tr><td><code>Envelope</code></td><td><code>core/envelope.hpp</code></td><td>Row + attachments bundle for wire transport</td></tr>
+</table>
+
+
+<!-- ── PubSubArrow ─────────────────────────────────────────────────── -->
+<h2 id="pubsub-arrow">PubSubArrow (Server-Side Adapter)</h2>
+
+<p>A thin adapter library that wraps the nanoarrow-based
+  <code>PubSub</code> interface with Arrow C++ convenience types for server-side
+  code. Schemas are converted between <code>OwnedSchema</code> and
+  <code>shared_ptr&lt;arrow::Schema&gt;</code> via the Arrow C Data Interface.</p>
+
+<pre><code><span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;();
+fletcher::<span class="ty">PubSubArrow</span> arrow_ps(provider);
+
+<span class="cmt">// Create topic with Arrow C++ schema</span>
+arrow_ps.<span class="fn">CreateTopic</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, arrow_schema);
+
+<span class="cmt">// Publish from ArrowRow</span>
+arrow_ps.<span class="fn">Publish</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>}, arrow_row);
+
+<span class="cmt">// Subscribe — delivers ArrowRow to callback</span>
+<span class="kw">auto</span> result = arrow_ps.<span class="fn">Subscribe</span>({<span class="str">"myapp"</span>, <span class="str">"sensors"</span>},
+    [](fletcher::<span class="ty">ArrowRow</span> row, fletcher::<span class="ty">Attachments</span> att) {
+        <span class="cmt">// row is vector&lt;shared_ptr&lt;arrow::Scalar&gt;&gt;</span>
+    });</code></pre>
+
+<h3>Features</h3>
+<ul>
+  <li><strong>Multi-subscriber fan-out</strong> &mdash; multiple subscribers per topic,
+    each receiving its own callback. The provider sees only one subscription per topic.</li>
+  <li><strong>Subscription IDs + schema</strong> &mdash; each <code>Subscribe()</code> call
+    returns a <code>SubscribeResult{subscription_id, arrow::Schema}</code> with the
+    publisher&rsquo;s Arrow schema and a unique ID for targeted unsubscribe.</li>
+  <li><strong>Auto-registration</strong> &mdash; subscribing to an unknown topic
+    auto-registers it with the schema received from the provider.</li>
+  <li><strong>Topic registry</strong> &mdash; <code>ListTopics()</code> and
+    <code>HasTopic()</code> for discovery.</li>
+  <li><strong>Lifecycle management</strong> &mdash; automatically unsubscribes from the
+    provider when the last subscriber for a topic is removed.</li>
+  <li><strong>ArrowRow encode/decode</strong> &mdash; uses <code>Codec</code>
+    internally to convert between Arrow scalars and raw bytes.</li>
+</ul>
+
+
+<!-- ── WebGateway ─────────────────────────────────────────────────── -->
+<h2 id="web-gateway">WebGateway</h2>
+
+<p>A Boost.Beast WebSocket server that exposes the <code>Driver</code> to
+  browser clients over a <strong>split text/binary WebSocket protocol</strong>.
+  The WebGateway depends only on nanoarrow (not Arrow C++) &mdash; it walks
+  the nanoarrow <code>ArrowSchema</code> directly to produce the JSON schema
+  response, and passes row data through as raw bytes.</p>
+
+<p>Control messages use JSON text frames for simplicity and debuggability;
+  data messages (publish and message delivery) use binary frames to avoid
+  base64 overhead.</p>
+
+<pre><code>fletcher::<span class="ty">WebGatewayOptions</span> opts;
+opts.port = <span class="num">9090</span>;
+opts.io_threads = <span class="num">2</span>;
+
+fletcher::<span class="ty">WebGateway</span> gw(driver, opts);
+gw.<span class="fn">Start</span>();   <span class="cmt">// non-blocking, spawns IO threads</span>
+<span class="cmt">// ... gateway serves until:</span>
+gw.<span class="fn">Stop</span>();</code></pre>
+
+<h3>Control messages (JSON text frames)</h3>
+
+<table>
+  <tr><th>Direction</th><th>Action / Type</th><th>Example</th></tr>
+  <tr><td>Client &rarr; Server</td><td><code>create_topic</code></td><td><code>{"action":"create_topic","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>subscribe</code></td><td><code>{"action":"subscribe","topic":"demo/telemetry"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>unsubscribe</code></td><td><code>{"action":"unsubscribe","subId":"123"}</code></td></tr>
+  <tr><td>Client &rarr; Server</td><td><code>list_topics</code></td><td><code>{"action":"list_topics"}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>subscribed</code></td><td><code>{"type":"subscribed","subId":"123","topic":"...","schema":{...},"schemaIpc":"..."}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>topics_list</code></td><td><code>{"type":"topics_list","topics":[...]}</code></td></tr>
+  <tr><td>Server &rarr; Client</td><td><code>error</code></td><td><code>{"type":"error","message":"unknown topic"}</code></td></tr>
+</table>
+
+<h3>Data messages (binary frames)</h3>
+
+<table>
+  <tr><th>Direction</th><th>Frame Layout</th></tr>
+  <tr><td>Client &rarr; Server (PUBLISH)</td><td><code>[TOPIC_LEN:2] [TOPIC:N] [ENVELOPE:rest]</code></td></tr>
+  <tr><td>Server &rarr; Client (MESSAGE)</td><td><code>[SUB_ID:8] [ENVELOPE:rest]</code></td></tr>
+</table>
+
+<p>Sub IDs are stringified in JSON to avoid JavaScript <code>Number</code>
+  precision loss. All multi-byte integers in binary frames are little-endian.
+  Each WebSocket connection gets its own session with independent subscriptions.
+  Subscriptions are automatically cleaned up when the connection closes.</p>
+
+
+<!-- ── WebClient ──────────────────────────────────────────────────── -->
+<h2 id="web-client">WebClient (TypeScript)</h2>
+
+<p>The <code>@fletcher/web-client</code> npm package connects to the
+  WebGateway and decodes/encodes the Fletcher positional wire format in the
+  browser. It uses a pure-TypeScript positional codec and offers two
+  interchangeable decoder backends:</p>
+
+<ul>
+  <li><strong>Object backend</strong> &mdash; zero dependencies, decodes rows into
+    plain <code>Record&lt;string, unknown&gt;</code> objects.</li>
+  <li><strong>Arrow backend</strong> &mdash; (planned) decodes into Apache Arrow JS
+    <code>RecordBatch</code> via the optional <code>apache-arrow</code> peer dependency.</li>
+</ul>
+
+<h3>Quick example</h3>
+
+<pre><code><span class="kw">import</span> { <span class="ty">FletcherClient</span> } <span class="kw">from</span> <span class="str">'@fletcher/web-client'</span>;
+<span class="kw">import</span> { <span class="ty">ISensorReading</span>,
+         <span class="fn">SensorFeed_StreamTopic</span> } <span class="kw">from</span> <span class="str">'./telemetry.fletcher.js'</span>;
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="ty">FletcherClient</span>({ url: <span class="str">'ws://localhost:9090'</span> });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
+
+<span class="cmt">// Schema is received automatically from the server on subscribe</span>
+<span class="kw">const</span> subId = <span class="kw">await</span> client.<span class="fn">subscribe</span>&lt;<span class="ty">ISensorReading</span>&gt;(
+  <span class="fn">SensorFeed_StreamTopic</span>,
+  (msg, attachments) =&gt; {
+    console.<span class="fn">log</span>(msg.sensor_id, msg.temperature);
+  }
+);
+
+<span class="cmt">// Later...</span>
+<span class="kw">await</span> client.<span class="fn">unsubscribe</span>(subId);
+client.<span class="fn">close</span>();</code></pre>
+
+<p>The <code>subscribe</code> method also accepts an explicit
+  <code>SchemaDescriptor</code> as the second argument if you want to
+  override the server-provided schema.</p>
+
+<h3>Key modules</h3>
+<table>
+  <tr><th>Module</th><th>Purpose</th></tr>
+  <tr><td><code>wire-types.ts</code></td><td><code>WireTypeId</code> enum mirroring C++ values</td></tr>
+  <tr><td><code>envelope.ts</code></td><td>Envelope serialize/deserialize (row + attachments)</td></tr>
+  <tr><td><code>ws-protocol.ts</code></td><td>JSON/binary frame builders &amp; parsers, schema JSON parser</td></tr>
+  <tr><td><code>codec/positional-encoder.ts</code></td><td>Encodes plain objects into positional wire format</td></tr>
+  <tr><td><code>codec/positional-decoder.ts</code></td><td>Decodes positional wire format into plain objects</td></tr>
+  <tr><td><code>codec/object-backend.ts</code></td><td><code>DecoderBackend</code> interface + <code>ObjectBackend</code> implementation</td></tr>
+  <tr><td><code>codec/schema-descriptor.ts</code></td><td><code>SchemaDescriptor</code>, <code>FieldDescriptor</code> types</td></tr>
+  <tr><td><code>client.ts</code></td><td><code>FletcherClient</code> WebSocket manager</td></tr>
+</table>
+
+
+<!-- ── Batcher ─────────────────────────────────────────────────────── -->
+<h2 id="batcher">Batcher &amp; Write-Ahead Log</h2>
+
+<p>The batcher accumulates individual <code>EncodedRow</code> buffers and
+  flushes them as columnar <code>arrow::Table</code> batches. A
+  <strong>write-ahead log</strong> (WAL) backed by SQLite provides durability
+  between flushes.</p>
+
+<pre><code>fletcher::<span class="ty">SQLiteWAL</span> wal(<span class="str">"wal.db"</span>);  <span class="cmt">// or ":memory:" for in-memory</span>
+fletcher::<span class="ty">GenericRowBatcher</span> batcher(
+    schema,
+    wal,
+    <span class="cmt">/*batch_size=*/</span><span class="num">1000</span>,
+    [](std::shared_ptr&lt;arrow::<span class="ty">Table</span>&gt; table) -&gt; <span class="ty">bool</span> {
+        <span class="fn">write_parquet</span>(table);
+        <span class="kw">return</span> <span class="num">true</span>;  <span class="cmt">// return false to signal failure</span>
+    });
+
+<span class="cmt">// Thread-safe: call from subscriber callbacks or any thread</span>
+batcher.<span class="fn">Append</span>(encoded_row);</code></pre>
+
+<h3>Flush behavior</h3>
+<ul>
+  <li><code>Append()</code> is <strong>thread-safe</strong> (mutex-protected)</li>
+  <li>When <code>row_count</code> reaches <code>batch_size</code>, the flush
+    callback is dispatched on a <strong>background thread</strong></li>
+  <li>The callback returns <code>bool</code>: <code>true</code> = success,
+    <code>false</code> = failure</li>
+  <li>The destructor <strong>joins</strong> all pending flush futures</li>
+</ul>
+
+<div class="note">
+  <strong>WAL column types:</strong> The SQLite WAL maps Arrow types to
+  SQLite types (INTEGER, REAL, TEXT, BLOB). Composite types (struct, list,
+  map) are not supported in the WAL and will throw at log creation time.
+</div>
+
+
+<!-- ── FastDDS ─────────────────────────────────────────────────────── -->
+<h2 id="fastdds">FastDDS Provider</h2>
+
+<p>A concrete <code>PubSub</code> implementation using
+  <a href="https://www.eprosima.com/index.php/products-all/eprosima-fast-dds">eProsima Fast DDS</a>
+  for reliable, real-time publish/subscribe over RTPS. The provider depends
+  only on nanoarrow (not Arrow C++), making it suitable for edge deployment.</p>
+
+<pre><code><span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">FastDDSPubSubProvider</span>&gt;(
+    <span class="cmt">/*domain_id=*/</span><span class="num">0</span>,
+    <span class="cmt">/*max_payload_bytes=*/</span><span class="num">1024</span> * <span class="num">1024</span>  <span class="cmt">// 1 MB</span>
+);</code></pre>
+
+<h3>QoS configuration</h3>
+<table>
+  <tr><th>Policy</th><th>Setting</th><th>Effect</th></tr>
+  <tr><td>Reliability</td><td>RELIABLE</td><td>Middleware retransmits lost samples</td></tr>
+  <tr><td>History</td><td>KEEP_ALL</td><td>All samples retained until acknowledged</td></tr>
+  <tr><td>Durability</td><td>TRANSIENT_LOCAL</td><td>Late-joining subscribers receive buffered history</td></tr>
+</table>
+
+<p>The provider serializes each row + attachments into a single DDS sample
+  using the envelope wire format. On the receiver side, it deserializes and
+  delivers raw bytes to the subscriber callback.</p>
+
+<h3>Zero-copy encoding</h3>
+<p>The FastDDS provider supplies a <code>FixedWriteBuffer</code> pointing
+  directly at the DDS payload memory. When a publisher calls
+  <code>Publish(RowEncoder)</code>, the <code>PositionalWriter</code> writes
+  the positional format directly into the transport buffer with no
+  intermediate copies.</p>
+
+<h3>Schema delivery</h3>
+<p>For each data topic, the provider creates a companion DDS topic with
+  the suffix <code>/__schema</code> using TRANSIENT_LOCAL durability and
+  KEEP_LAST(1) QoS. The schema is serialized as Arrow IPC bytes via
+  nanoarrow and retained for late-joining subscribers.</p>
+
+
+<!-- ── XRCE-DDS ──────────────────────────────────────────────────────── -->
+<h2 id="xrce-dds">XRCE-DDS Provider</h2>
+
+<p>A <code>PubSub</code> implementation using
+  <a href="https://github.com/eProsima/Micro-XRCE-DDS-Client">eProsima Micro XRCE-DDS Client</a>
+  for <strong>extremely resource-constrained environments</strong> (MCUs,
+  embedded Linux, &lt;75&thinsp;KB Flash). The XRCE-DDS standard uses a
+  client/agent split: the thin client runs on the device while a separate
+  Agent process bridges to the full DDS network.</p>
+
+<pre><code>fletcher::<span class="ty">XrceConfig</span> cfg;
+cfg.transport  = fletcher::<span class="ty">XrceTransport</span>::kUdp;
+cfg.agent_ip   = <span class="str">"192.168.1.10"</span>;
+cfg.agent_port = <span class="num">2018</span>;
+cfg.max_payload = <span class="num">512</span>;
+
+<span class="kw">auto</span> provider = std::make_shared&lt;fletcher::<span class="ty">XrceDDSPubSubProvider</span>&gt;(cfg);</code></pre>
+
+<h3>Architecture</h3>
+<table>
+  <tr><th>Aspect</th><th>FastDDS</th><th>XRCE-DDS</th></tr>
+  <tr><td>Deployment</td><td>Desktop / server</td><td>MCU / embedded Linux</td></tr>
+  <tr><td>Footprint</td><td>~10+ MB</td><td>&lt;75 KB Flash</td></tr>
+  <tr><td>Subscribe model</td><td>Per-topic listener</td><td>Single global callback, reader-ID demux</td></tr>
+  <tr><td>Zero-copy publish</td><td><code>FixedWriteBuffer</code> on DDS payload</td><td>Two-pass (encode &rarr; memcpy into stream)</td></tr>
+  <tr><td>Agent required</td><td>No</td><td>Yes (<code>MicroXRCEAgent</code>)</td></tr>
+</table>
+
+<h3>Configuration</h3>
+<table>
+  <tr><th>Field</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>transport</code></td><td><code>kUdp</code></td><td>UDP, TCP, or Serial</td></tr>
+  <tr><td><code>agent_ip</code></td><td><code>127.0.0.1</code></td><td>Agent IP address</td></tr>
+  <tr><td><code>agent_port</code></td><td><code>2018</code></td><td>Agent port</td></tr>
+  <tr><td><code>max_payload</code></td><td><code>512</code></td><td>Maximum envelope size (bytes)</td></tr>
+  <tr><td><code>stream_history</code></td><td><code>4</code></td><td>Reliable stream history depth (power of 2)</td></tr>
+  <tr><td><code>run_loop_ms</code></td><td><code>10</code></td><td>Background run-loop period (ms)</td></tr>
+  <tr><td><code>session_key</code></td><td><code>0xAABBCCDD</code></td><td>Unique client ID on the Agent</td></tr>
+</table>
+
+<h3>Schema delivery</h3>
+<p>Uses the same companion <code>/__schema</code> topic pattern as FastDDS
+  with RELIABLE + TRANSIENT_LOCAL + KEEP_LAST(1) QoS. The envelope wire
+  format is identical, so XRCE-DDS and FastDDS clients interoperate
+  through a shared Agent.</p>
+
+<h3>Dependencies</h3>
+<p>Fetched automatically via CMake FetchContent (Micro-CDR v2.0.1 +
+  Micro XRCE-DDS Client v2.4.3). No Conan package or system install
+  required. Links <code>PUBLIC pubsub</code> (nanoarrow) and
+  <code>PRIVATE microxrcedds_client</code> &mdash; no Arrow C++ dependency.</p>
+
+
+<!-- ── C API / Rust ────────────────────────────────────────────────── -->
+<h2 id="capi">C API &amp; Rust Bindings (Removed)</h2>
+
+<p>The codec C API (<code>arrow_row_codec_capi.h</code>) and its Rust bindings
+  (<code>Codec/bindings/rust/</code>) have been removed. They wrapped the legacy
+  <code>RowCodec</code> tagged format which has been superseded by the positional
+  codec and generated code. The Batcher Rust bindings
+  (<code>Batcher/bindings/rust/</code>) remain.</p>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     REFERENCE
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="project-structure">Project Structure</h2>
+
+<pre><code>ArrowRowSerializer/
+  CMakeLists.txt               Root build &mdash; Conan integration, all subdirectories
+  conanfile.txt                Dependencies: Arrow, protobuf, SQLite3, Catch2, Fast DDS, Boost
+
+  third_party/
+    nanoarrow/                 Vendored nanoarrow single-file amalgamation
+      nanoarrow.h / .c         Core type system, schema, array builders (~100 KB)
+      nanoarrow_ipc.h / .c     IPC stream reader/writer (schema serialization)
+      CMakeLists.txt           Static library target
+
+  Core/
+    include/core/
+      types.hpp                EncodedRow, Blob, Attachments type aliases
+      write_buffer.hpp         WriteBuffer abstraction (VectorWriteBuffer, FixedWriteBuffer)
+      positional_io.hpp        Header-only PositionalWriter / PositionalReader
+      envelope.hpp             Envelope, Serialize/Deserialize
+
+  PubSub/
+    include/pubsub/
+      pubsub.hpp               Abstract PubSub interface (nanoarrow, raw bytes I/O)
+      owned_schema.hpp         OwnedSchema RAII wrapper for ArrowSchema
+      driver.hpp               Driver class (fan-out, subscription IDs)
+      schema_ipc.hpp           SerializeSchemaIpc / DeserializeSchemaIpc (nanoarrow)
+    src/
+      driver.cpp               Driver implementation
+      schema_ipc.cpp           Nanoarrow IPC schema serialization
+    tests/                     GTest test cases
+
+  ArrowBridge/
+    include/
+      codec.hpp                Codec class (Arrow C++, server-side)
+      arrow_row_view.hpp       ArrowRowViewList, ArrowNestedList (view helpers)
+      crs_utils.hpp            CRS metadata utilities
+    src/
+      codec.cpp                Positional encode/decode (Arrow C++)
+      scalar_codec.cpp/.hpp    Scalar type encode/decode
+      row_reader.hpp           Positional reader helper
+      crs_utils.cpp            CRS implementation
+    tests/                     GTest test cases
+
+  PubSubArrow/
+    include/pubsub_arrow/
+      pubsub_arrow.hpp         PubSubArrow adapter (Arrow C++ &harr; nanoarrow bridge)
+    src/
+      pubsub_arrow.cpp         Schema conversion, ArrowRow encode/decode, fan-out
+    tests/                     7 Catch2 test cases
+
+  Batcher/
+    include/                   RowBatcher, GenericRowBatcher, SQLiteWAL
+    tests/                     23 Catch2 test cases
+    bindings/rust/             arrow-row-batcher Rust crate
+
+  ProtoPlugin/
+    src/
+      generator.cpp            C++ and TypeScript code generation
+      type_mapper.cpp          Proto &rarr; Arrow/TypeScript type mapping
+      main.cpp                 protoc plugin entry point
+    tests/                     36 Catch2 test cases
+
+  ProtoIntegration/
+    proto/                     Test .proto files (simple, temporal, nested, ...)
+    tests/                     76 integration test cases
+
+  FastDDSPubSubProvider/
+    include/                   FastDDSPubSubProvider class
+    src/                       DDS setup, companion __schema topic, zero-copy transport
+
+  XrceDDSPubSubProvider/
+    include/                   XrceDDSPubSubProvider class + XrceConfig
+    src/                       XRCE session, reader-ID demux, schema companion topic
+
+  WebGateway/
+    include/web_gateway/
+      web_gateway.hpp          WebGateway class (Boost.Beast WebSocket server)
+    src/
+      web_gateway.cpp          Listener, IO thread pool
+      ws_session.cpp/.hpp      Per-connection session, schema JSON + IPC in responses
+    examples/
+      gateway_main.cpp         Standalone example with in-process mock provider
+
+  WebClient/
+    package.json               @fletcher/web-client npm package
+    tsconfig.json              TypeScript configuration
+    src/
+      wire-types.ts            WireTypeId enum (mirrors C++)
+      envelope.ts              Envelope serialize/deserialize
+      ws-protocol.ts           WebSocket frame builders/parsers, schema JSON parser
+      client.ts                FletcherClient WebSocket manager
+      codec/
+        schema-descriptor.ts   SchemaDescriptor, FieldDescriptor types
+        positional-encoder.ts  Encodes objects to positional wire format
+        positional-decoder.ts  Decodes positional wire format to objects
+        object-backend.ts      DecoderBackend interface + ObjectBackend
+        arrow-backend.ts       Arrow JS backend (placeholder)
+    test/                      37 Vitest tests</code></pre>
+
+
+<!-- ── Dependency Graph ───────────────────────────────────────────── -->
+<h2 id="dependency-graph">Dependency Graph</h2>
+
+<div class="diagram">
+                  +------------------+
+                  |      core        |   (header-only, wire primitives)
+                  +--------+---------+
+                           |
+              +------------+------------+
+              |                         |
+     +--------v---------+    +---------v---------+
+     |      pubsub      |    |  codec            |
+     | (core + nanoarrow |    | (ArrowBridge,     |
+     |  edge-ready)      |    |  core + Arrow C++)|
+     +--------+---------+    +---------+---------+
+              |                         |
+    +---------+---------+    +----------+---------+
+    |         |         |    |                    |
++---v----+ +--v-----+ +-v---v--------+  +--------v--------+
+| fastdds| | xrce   | | pubsub_arrow |  | proto_integr.   |
+| pubsub | | pubsub | | (pubsub +    |  | (test suite)    |
++--------+ +--------+ |  codec)      |  +-----------------+
+                       +---------+---+
+                                 |
+              +------------------+--------+
+              |                           |
+     +--------v--------+       +----------v-------+
+     |   web_gateway   |       |   row_batcher    |
+     | (pubsub +       |       | (Arrow C++)      |
+     |  Boost.Beast,   |       +------------------+
+     |  nanoarrow only)|
+     +-----------------+
+</div>
+
+<p><strong>Edge binary</strong> (e.g., sensor gateway): links
+  <code>core</code> + <code>pubsub</code> + a transport provider
+  (<code>fast_dds_pubsub_provider</code> for full DDS networks, or
+  <code>xrce_dds_pubsub_provider</code> for resource-constrained
+  environments) + generated <code>.fletcher.pb.h</code> code. Total added
+  dependency: nanoarrow (~100 KB). No Arrow C++ required. The
+  <code>web_gateway</code> also falls on this side &mdash; it is
+  nanoarrow-only.</p>
+
+<p><strong>Server binary</strong> (e.g., data pipeline): additionally links
+  <code>pubsub_arrow</code> + <code>codec</code> (ArrowBridge) + <code>row_batcher</code>
+  and includes <code>.fletcher.arrow.pb.h</code> view classes.</p>
+
+
+<!-- ── Building ────────────────────────────────────────────────────── -->
+<h2 id="building">Building</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li><strong>CMake</strong> 3.15+</li>
+  <li><strong>Conan 2</strong> package manager</li>
+  <li>A C++20 compiler (MSVC 2022, GCC 12+, Clang 15+)</li>
+</ul>
+
+<h3>Steps</h3>
+
+<pre><code><span class="cmt"># 1. Install dependencies via Conan</span>
+conan install . --build=missing --output-folder=build
+
+<span class="cmt"># 2. Configure with CMake (uses the Conan-generated toolchain)</span>
+cmake --preset conan-default
+
+<span class="cmt"># 3. Build</span>
+cmake --build build --config Release</code></pre>
+
+<h3>WebClient (TypeScript)</h3>
+
+<pre><code><span class="cmt"># Install dependencies and run tests</span>
+<span class="kw">cd</span> WebClient
+npm install
+npm test            <span class="cmt"># 37 Vitest tests</span>
+
+<span class="cmt"># TypeScript compilation</span>
+npm run build:ts
+
+<span class="cmt"># Generate TypeScript from .proto files</span>
+protoc --plugin=protoc-gen-fletcher=build/ProtoPlugin/Release/protoc-gen-fletcher \
+       --fletcher_out=. --fletcher_opt=ts \
+       -I proto your_messages.proto</code></pre>
+
+<div class="note">
+  <strong>Windows / Visual Studio:</strong> The root CMakeLists.txt forces
+  <code>/MD</code> (MultiThreadedDLL) for all targets and patches Conan's
+  imported targets so that Release-only packages (protobuf, Fast DDS) work
+  correctly in Debug builds. Multi-config generators are fully supported.
+</div>
+
+<h3>Dependencies</h3>
+<table>
+  <tr><th>Package</th><th>Version</th><th>Purpose</th></tr>
+  <tr><td>Apache Arrow</td><td>23.0.1</td><td>Columnar data types and schemas (server-side only)</td></tr>
+  <tr><td>Nanoarrow</td><td>0.8.0</td><td>Lightweight Arrow type system (vendored, edge + server)</td></tr>
+  <tr><td>Protocol Buffers</td><td>3.21.12</td><td>Message definitions and compiler</td></tr>
+  <tr><td>Boost</td><td>&mdash;</td><td>Beast/Asio for WebGateway (header-only)</td></tr>
+  <tr><td>SQLite3</td><td>3.47.2</td><td>Write-ahead log for the batcher</td></tr>
+  <tr><td>Catch2</td><td>3.7.1</td><td>C++ test framework</td></tr>
+  <tr><td>Fast DDS</td><td>2.14.3</td><td>DDS pub/sub transport</td></tr>
+  <tr><td>nlohmann/json</td><td>3.11.3</td><td>JSON parsing for WebGateway control protocol</td></tr>
+  <tr><td>Node.js</td><td>18+</td><td>TypeScript build and tests (WebClient only)</td></tr>
+</table>
+
+
+<!-- ── Testing ─────────────────────────────────────────────────────── -->
+<h2 id="testing">Testing</h2>
+
+<p>C++ tests use <a href="https://github.com/catchorg/Catch2">Catch2 v3</a>
+  and are discovered via CTest. TypeScript tests use
+  <a href="https://vitest.dev/">Vitest</a>.</p>
+
+<pre><code><span class="cmt"># Run all C++ tests</span>
+ctest --test-dir build --config Release
+
+<span class="cmt"># Run specific C++ test suites</span>
+ctest --test-dir build -R codec        <span class="cmt"># 92 codec tests</span>
+ctest --test-dir build -R integration   <span class="cmt"># 76 integration tests</span>
+ctest --test-dir build -R batcher       <span class="cmt"># 23 batcher tests</span>
+ctest --test-dir build -R pubsub        <span class="cmt"># 24 pubsub + 7 pubsub_arrow tests</span>
+
+<span class="cmt"># Run TypeScript tests</span>
+<span class="kw">cd</span> WebClient &amp;&amp; npm test              <span class="cmt"># 37 Vitest tests</span></code></pre>
+
+<h3>Test coverage</h3>
+<table>
+  <tr><th>Suite</th><th>Cases</th><th>Covers</th></tr>
+  <tr><td>Codec (C++)</td><td>92</td><td>Positional codec (all types, nulls, composites, multi-byte bitfields, wire size), legacy tagged codec, scalar types, schema evolution, envelope serialization</td></tr>
+  <tr><td>Integration (C++)</td><td>76</td><td>Generated code roundtrips for all proto constructs (native + ArrowRow), pub/sub with mock provider, view classes, GeoArrow extension types</td></tr>
+  <tr><td>PubSub (C++)</td><td>24</td><td>Topic creation, fan-out, subscription IDs, lifecycle, schema transport, ListTopics/HasTopic, schema IPC roundtrips</td></tr>
+  <tr><td>PubSubArrow (C++)</td><td>7</td><td>Arrow C++ &harr; nanoarrow schema conversion, ArrowRow encode/decode through adapter, fan-out, subscription lifecycle</td></tr>
+  <tr><td>Batcher (C++)</td><td>23</td><td>Row accumulation, flush triggering, WAL log/read, key columns, thread safety</td></tr>
+  <tr><td>Plugin (C++)</td><td>36</td><td>Type mapping for all proto field kinds</td></tr>
+  <tr><td>WebClient (TS)</td><td>37</td><td>Envelope roundtrips, WS protocol frames (incl. schema parsing), positional codec roundtrips for scalars, bigints, strings, lists, maps, binary, nulls</td></tr>
+</table>
+
+
+</main>
+</div>
+</body>
+</html>
