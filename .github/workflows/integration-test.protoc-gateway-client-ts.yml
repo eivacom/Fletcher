@@ -56,7 +56,7 @@ jobs:
             --load \
             integration-tests/protoc-gateway-client-ts/.devcontainer
 
-      - name: Build components and run cross-language test
+      - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
