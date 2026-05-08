@@ -26,27 +26,37 @@ The workflow `.github/workflows/integration-tests.yml` triggers when any of `cor
 
 ## Running locally
 
-Open the devcontainer at `integration-tests/protoc-gateway-client-ts/.devcontainer`. The `postCreateCommand` runs `conan config install` automatically, but the conan-eiva remote needs credentials before you can pull the released Fletcher packages.
+Open the devcontainer at `integration-tests/protoc-gateway-client-ts/.devcontainer`. The whole monorepo is mounted at `/workspaces/Fletcher` inside the container — the devcontainer's `.devcontainer` lives deep in the tree, but VSCode mounts the repo root, so you can reach `core/`, `protoc/`, `pubsub/` etc. by going up two levels.
 
-### Log in to conan-eiva (one-time per container)
+The devcontainer's `postCreateCommand` runs `conan config install` automatically. No conan-eiva login is needed — integration tests build everything from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
-Inside the devcontainer terminal, log in to the EIVA Artifactory. Replace `<user>` with your Artifactory username; conan will prompt for the password:
+### Build the components from this branch into the local cache
 
-```bash
-conan remote login conan-eiva <user>
-```
-
-Verify the login resolved:
+The integration test should run against this branch's component code, not whatever happens to be on conan-eiva. From the repo root:
 
 ```bash
-conan search 'eiva-fletcher-*' -r conan-eiva
+cd /workspaces/Fletcher
 ```
 
-You should see the published versions of `eiva-fletcher-core`, `eiva-fletcher-pubsub`, `eiva-fletcher-protoc` etc. listed.
+```bash
+conan create core/.   --build=missing -pr:a=Ubuntu22-gcc-12-Release
+```
 
-### Build the C++ side
+```bash
+conan create pubsub/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+```
 
-The Conan recipe pulls the released `eiva-fletcher-*` packages from `conan-eiva` — no `conan create` of components needed. From this directory:
+```bash
+conan create protoc/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+```
+
+Each `conan create` builds the component and registers the branch's version in `~/.conan2/p/`. Subsequent `conan install` calls find them there.
+
+### Build the C++ side of the integration test
+
+```bash
+cd /workspaces/Fletcher/integration-tests/protoc-gateway-client-ts
+```
 
 ```bash
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
@@ -73,3 +83,7 @@ npm test
 ```
 
 vitest spawns `emit_vectors`, parses the JSON-line output, and asserts both decode-correctness and byte-equality against the hardcoded scenario inputs in `test/byte-compat.test.ts`.
+
+### Iterating after a component change
+
+Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.
