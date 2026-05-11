@@ -3,15 +3,68 @@
 Multi-package C++ workspace. Each top-level directory is an independent
 Conan package with its own version, CI workflow, and release cycle:
 
-| Directory | Conan package | Type |
+| Directory | Conan / npm package | Type |
 |---|---|---|
 | `core/` | `eiva-fletcher-core` | header-only |
 | `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `eiva-fletcher-pubsub` | static library |
 | `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
 | `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
+| `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
+| `xrcedds-pubsub-provider/` | `eiva-fletcher-xrcedds-pubsub-provider` | static library |
+| `gateway-client-ts/` | `eiva-fletcher-gateway-client` (npm) | TypeScript library |
 
 Each package has its own `README.md` covering how to build, test and consume it.
+
+---
+
+## Development environment
+
+A single devcontainer at `.devcontainer/` covers every Fletcher component. Component READMEs assume you are running inside it.
+
+### VS Code (recommended)
+
+Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The `postCreateCommand` runs `conan config install https://github.com/eivacom/conan-configuration.git` on first launch, installing the EIVA Conan profiles and remote.
+
+To pull the released Fletcher packages from `conan-eiva`, log in once per container:
+
+```bash
+conan remote login conan-eiva <username>
+```
+
+Then follow each component's README for the component-specific build, test, and consumption commands.
+
+### Manual Docker
+
+If you don't use VS Code, run an interactive shell directly. Build the image once:
+
+```bash
+docker build -t fletcher-build .devcontainer
+```
+
+Start a shell with the repo mounted:
+
+```bash
+docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
+```
+
+Inside the container, replicate what the `postCreateCommand` does in VS Code:
+
+```bash
+conan config install https://github.com/eivacom/conan-configuration.git
+```
+
+Then `cd <component>` and follow the same build / test commands the component README documents.
+
+### CI image cache
+
+Every component workflow's Linux job runs `docker buildx build` against a shared BuildKit cache in Harbor (via the `setup-devcontainer-image` composite action):
+
+```
+dockerrepo.eiva.com/fletcher/devcontainer:cache
+```
+
+The action uses both `--cache-from` and `--cache-to`, so unchanged layers are served from cache and any layer that does rebuild refreshes the cache for the next run. The image is tagged locally as `fletcher-build` and used by the rest of the Linux job.
 
 ---
 
@@ -104,6 +157,10 @@ package to the `conan-eiva` Artifactory remote.
 | `pubsub/` | `pubsub-v` | `pubsub-v0.1.0-alpha` |
 | `arrow-bridge/` | `arrow-bridge-v` | `arrow-bridge-v0.1.0-alpha` |
 | `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
+| `fastdds-pubsub-provider/` | `fastdds-pubsub-provider-v` | `fastdds-pubsub-provider-v0.1.0-alpha` |
+| `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider-v` | `xrcedds-pubsub-provider-v0.1.0-alpha` |
+
+`gateway-client-ts/` does not yet release through tag-push CI.
 
 The component prefix is required so that pushing a tag triggers exactly one
 package's workflow — not all of them.

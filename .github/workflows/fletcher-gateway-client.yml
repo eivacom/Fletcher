@@ -10,6 +10,7 @@ on:
     paths:
       - "gateway-client-ts/**"
       - ".github/workflows/fletcher-gateway-client.yml"
+      - "!**/*.md"
 
 jobs:
   build-and-test:

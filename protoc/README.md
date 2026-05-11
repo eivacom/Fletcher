@@ -2,7 +2,7 @@
 
 A `protoc` compiler plugin that reads `.proto` files and generates C++ header files containing row wrapper classes in the `fletcher_gen` namespace, along with TypeScript schema descriptors. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()`, including the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 
-## Building
+## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 
@@ -34,7 +34,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-Open the repo in the provided devcontainer (`.devcontainer/`). Profiles are installed automatically via `conan config install`.
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory:
 
 Build locally:
 

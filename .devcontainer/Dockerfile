@@ -2,8 +2,6 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN sed -i 's|http://archive.ubuntu.com|http://dk.archive.ubuntu.com|g' /etc/apt/sources.list.d/ubuntu.sources
-
 RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
@@ -20,9 +18,11 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
     && update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-12 100 \
     && update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-12 100
 
-RUN pip3 install --break-system-packages conan==2.27.1
+RUN pip3 install --break-system-packages --root-user-action=ignore conan==2.27.1
 
-# Node 24 (current Active LTS) for the vitest side of the integration test.
+# Pin Node to an explicit version so the image is reproducible. Bump
+# in lock-step with the gateway-client-ts workflow's setup-node.
+ARG NODE_VERSION=24.15.0
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y "nodejs=${NODE_VERSION}-1nodesource1" \
     && rm -rf /var/lib/apt/lists/*

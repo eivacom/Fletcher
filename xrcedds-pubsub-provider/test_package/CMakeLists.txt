@@ -4,7 +4,7 @@ project(PackageTest CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(xrcedds-pubsub-provider CONFIG REQUIRED)
+find_package(eiva-fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
 
 add_executable(example src/example.cpp)
-target_link_libraries(example xrcedds-pubsub-provider::xrcedds-pubsub-provider)
+target_link_libraries(example eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider)

@@ -27,9 +27,7 @@ That way a PR can change protoc and arrow-bridge in the same commit, and the int
 
 ## Running locally
 
-Open the devcontainer at `integration-tests/protoc-arrow-bridge/.devcontainer`. The whole monorepo is mounted at `/workspaces/Fletcher` inside the container — the devcontainer's `.devcontainer` lives deep in the tree, but VSCode mounts the repo root, so you can reach `core/`, `arrow-bridge/`, `protoc/`, `pubsub/` etc. by going up two levels.
-
-The devcontainer's `postCreateCommand` runs `conan config install` automatically. No conan-eiva login is needed — integration tests build everything from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 

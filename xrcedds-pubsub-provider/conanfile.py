@@ -5,7 +5,7 @@ import os
 
 
 class FletcherPubsubConan(ConanFile):
-    name = "xrcedds-pubsub-provider"
+    name = "eiva-fletcher-xrcedds-pubsub-provider"
     version = "0.1.0-alpha"
     description = "XRCE-DDS PubSub Provider library"
     license = "Proprietary"
@@ -78,8 +78,8 @@ class FletcherPubsubConan(ConanFile):
     def package_info(self):
         self.cpp_info.libs = ["xrce_dds_pubsub_provider"]
         self.cpp_info.includedirs = ["include"]
-        self.cpp_info.set_property("cmake_file_name", "xrcedds-pubsub-provider")
-        self.cpp_info.set_property("cmake_target_name", "xrcedds-pubsub-provider::xrcedds-pubsub-provider")
+        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-xrcedds-pubsub-provider")
+        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-xrcedds-pubsub-provider-target.cmake"),
         ])

@@ -14,7 +14,10 @@ on:
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
+      - ".github/actions/setup-devcontainer-image/**"
       - ".github/actions/verify-tag-version/**"
+      - ".devcontainer/**"
+      - "!**/*.md"
   push:
     tags:
       - 'xrcedds-pubsub-provider-v[0-9]*.[0-9]*.[0-9]*'
@@ -78,6 +81,7 @@ jobs:
         with:
           sparse-checkout: |
             xrcedds-pubsub-provider
+            .devcontainer
             .github
 
       - name: Generate token for conan-configuration
@@ -89,19 +93,11 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Log in to Harbor
-        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
-
-      - name: Build devcontainer image
-        run: |
-          docker buildx create --name builder --use
-          docker buildx build \
-            --network host \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/xrcedds-pubsub-provider-devcontainer:cache \
-            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/xrcedds-pubsub-provider-devcontainer:cache,mode=max \
-            -t xrcedds-pubsub-provider-build \
-            --load \
-            xrcedds-pubsub-provider/.devcontainer
+      - name: Set up devcontainer image
+        uses: ./.github/actions/setup-devcontainer-image
+        with:
+          harbor_username: ${{ secrets.HARBOR_USERNAME }}
+          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build, test and export package
         run: |
@@ -110,7 +106,7 @@ jobs:
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
             -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
-            xrcedds-pubsub-provider-build \
+            fletcher-build \
             bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
