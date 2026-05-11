@@ -1,5 +1,5 @@
 name: "Set up devcontainer image"
-description: "Builds the shared Fletcher devcontainer image on the runner and tags it as `fletcher-build`. Always runs `docker buildx build --cache-from`; BuildKit serves unchanged layers from the Harbor cache (populated by the `build-devcontainer` workflow on `main`), and rebuilds only what actually changed when a PR touches .devcontainer/."
+description: "Builds the shared Fletcher devcontainer image on the runner and tags it as `fletcher-build`. Always runs `docker buildx build` with `--cache-from`/`--cache-to` against the shared Harbor cache, so unchanged layers are served from cache and any layer that does rebuild updates the cache for subsequent runs."
 
 inputs:
   harbor_username:
@@ -26,6 +26,7 @@ runs:
         docker buildx build \
           --network host \
           --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
+          --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
           -t fletcher-build \
           --load \
           .devcontainer
