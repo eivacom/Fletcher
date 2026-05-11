@@ -17,11 +17,27 @@ on:
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
+      - ".github/actions/detect-pr-changes/**"
+      - ".github/actions/setup-devcontainer-image/**"
       - ".devcontainer/**"
       - "!**/*.md"
 
 jobs:
+  # ── Tell the integration-test job whether the devcontainer changed in this PR. ──
+  detect-changes:
+    runs-on:
+      group: ubuntu_24.04_x64
+    outputs:
+      devcontainer_changed: ${{ steps.detect.outputs.devcontainer_changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github
+      - uses: ./.github/actions/detect-pr-changes
+        id: detect
+
   protoc-arrow-bridge:
+    needs: detect-changes
     runs-on:
       group: ubuntu_24.04_x64
     steps:
@@ -33,6 +49,7 @@ jobs:
             arrow-bridge
             pubsub
             integration-tests/protoc-arrow-bridge
+            .devcontainer
             .github
 
       - name: Generate token for conan-configuration
@@ -44,19 +61,12 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Log in to Harbor
-        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
-
-      - name: Build devcontainer image
-        run: |
-          docker buildx create --name builder --use
-          docker buildx build \
-            --network host \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
-            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
-            -t fletcher-build \
-            --load \
-            .devcontainer
+      - name: Set up devcontainer image
+        uses: ./.github/actions/setup-devcontainer-image
+        with:
+          devcontainer_changed: ${{ needs.detect-changes.outputs.devcontainer_changed }}
+          harbor_username: ${{ secrets.HARBOR_USERNAME }}
+          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build components and run integration tests
         run: |

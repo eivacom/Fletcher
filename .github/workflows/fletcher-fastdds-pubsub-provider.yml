@@ -14,7 +14,8 @@ on:
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
-      - ".github/actions/detect-devcontainer-only-change/**"
+      - ".github/actions/detect-pr-changes/**"
+      - ".github/actions/setup-devcontainer-image/**"
       - ".github/actions/verify-tag-version/**"
       - ".devcontainer/**"
       - "!**/*.md"
@@ -23,17 +24,19 @@ on:
       - 'fastdds-pubsub-provider-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
-  # ── Skip the Windows build when a PR only changes .devcontainer/ files. ──
+  # ── Classify the PR so build-windows can be skipped on devcontainer-only changes
+  #    and build-linux knows whether to rebuild the devcontainer image inline. ──
   detect-changes:
     runs-on:
       group: ubuntu_24.04_x64
     outputs:
-      devcontainer_only: ${{ steps.detect.outputs.result }}
+      devcontainer_only:    ${{ steps.detect.outputs.devcontainer_only }}
+      devcontainer_changed: ${{ steps.detect.outputs.devcontainer_changed }}
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github
-      - uses: ./.github/actions/detect-devcontainer-only-change
+      - uses: ./.github/actions/detect-pr-changes
         id: detect
 
   build-windows:
@@ -89,6 +92,7 @@ jobs:
           retention-days: 1
 
   build-linux:
+    needs: detect-changes
     runs-on:
       group: ubuntu_24.04_x64
     steps:
@@ -96,6 +100,7 @@ jobs:
         with:
           sparse-checkout: |
             fastdds-pubsub-provider
+            .devcontainer
             .github
 
       - name: Generate token for conan-configuration
@@ -107,19 +112,12 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Log in to Harbor
-        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
-
-      - name: Build devcontainer image
-        run: |
-          docker buildx create --name builder --use
-          docker buildx build \
-            --network host \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
-            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
-            -t fletcher-build \
-            --load \
-            .devcontainer
+      - name: Set up devcontainer image
+        uses: ./.github/actions/setup-devcontainer-image
+        with:
+          devcontainer_changed: ${{ needs.detect-changes.outputs.devcontainer_changed }}
+          harbor_username: ${{ secrets.HARBOR_USERNAME }}
+          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build, test and export package
         run: |

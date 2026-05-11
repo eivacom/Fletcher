@@ -1,0 +1,45 @@
+name: "Detect PR changes"
+description: "Reports which areas of the repo a pull request touches. Both outputs are 'false' for non-pull_request events (push/tag/workflow_dispatch)."
+
+outputs:
+  devcontainer_only:
+    description: "'true' if every changed file in the PR is under .devcontainer/, 'false' otherwise"
+    value: ${{ steps.detect.outputs.devcontainer_only }}
+  devcontainer_changed:
+    description: "'true' if the PR changes at least one file under .devcontainer/, 'false' otherwise"
+    value: ${{ steps.detect.outputs.devcontainer_changed }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "devcontainer_only=false"    >> "$GITHUB_OUTPUT"
+          echo "devcontainer_changed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        files=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+
+        has_devcontainer=false
+        has_other=false
+        if echo "$files" | grep -q '^\.devcontainer/'; then
+          has_devcontainer=true
+        fi
+        if echo "$files" | grep -qv '^\.devcontainer/'; then
+          has_other=true
+        fi
+
+        if $has_devcontainer && ! $has_other; then
+          echo "devcontainer_only=true"  >> "$GITHUB_OUTPUT"
+        else
+          echo "devcontainer_only=false" >> "$GITHUB_OUTPUT"
+        fi
+        echo "devcontainer_changed=$has_devcontainer" >> "$GITHUB_OUTPUT"

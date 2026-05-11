@@ -1,0 +1,47 @@
+name: build-devcontainer
+
+# Pre-builds the shared Fletcher devcontainer image and publishes it to
+# Harbor as `dockerrepo.eiva.com/fletcher/devcontainer:latest`. Every
+# `fletcher-*` and `integration-test.*` Linux job pulls this image
+# instead of running its own buildx build, so the image is built exactly
+# once per .devcontainer/ change.
+#
+# PRs that touch .devcontainer/ rebuild the image locally inside the
+# component workflow (see .github/actions/setup-devcontainer-image),
+# because :latest still points at the pre-merge image.
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - ".github/workflows/build-devcontainer.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .devcontainer
+
+      - name: Log in to Harbor
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
+
+      - name: Build and push
+        run: |
+          docker buildx create --name builder --use
+          docker buildx build \
+            --network host \
+            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
+            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
+            -t dockerrepo.eiva.com/fletcher/devcontainer:latest \
+            --push \
+            .devcontainer
