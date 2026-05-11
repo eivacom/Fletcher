@@ -1,5 +1,5 @@
 {
-    "name": "fletcher (Ubuntu 24.04 / GCC 12 / Conan 2 / Node 24)",
+    "name": "fletcher monorepo",
     "build": {
         "dockerfile": "Dockerfile"
     },
