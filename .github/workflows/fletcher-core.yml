@@ -14,6 +14,7 @@ on:
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
+      - ".github/actions/detect-devcontainer-only-change/**"
       - ".devcontainer/**"
       - "!**/*.md"
   push:
@@ -21,7 +22,22 @@ on:
       - 'core-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
+  # ── Skip the Windows build when a PR only changes .devcontainer/ files. ──
+  detect-changes:
+    runs-on:
+      group: ubuntu_24.04_x64
+    outputs:
+      devcontainer_only: ${{ steps.detect.outputs.result }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github
+      - uses: ./.github/actions/detect-devcontainer-only-change
+        id: detect
+
   build-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.devcontainer_only != 'true'
     runs-on:
       group: windows-server-core-ltsc2025
     outputs:
