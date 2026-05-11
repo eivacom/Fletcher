@@ -1,14 +1,13 @@
 name: build-devcontainer
 
-# Pre-builds the shared Fletcher devcontainer image and publishes it to
-# Harbor as `dockerrepo.eiva.com/fletcher/devcontainer:latest`. Every
-# `fletcher-*` and `integration-test.*` Linux job pulls this image
-# instead of running its own buildx build, so the image is built exactly
-# once per .devcontainer/ change.
+# Pre-populates the Harbor BuildKit cache for the shared Fletcher devcontainer
+# image (dockerrepo.eiva.com/fletcher/devcontainer:cache). Component workflows
+# run `docker buildx build --cache-from=...:cache` which pulls only the layers
+# they need — when .devcontainer/ is unchanged every layer is a cache hit, and
+# when it has changed only the affected layers actually rebuild.
 #
-# PRs that touch .devcontainer/ rebuild the image locally inside the
-# component workflow (see .github/actions/setup-devcontainer-image),
-# because :latest still points at the pre-merge image.
+# This workflow runs on push to main (and via workflow_dispatch) so a single
+# canonical build keeps the cache fresh; PR builds do not push to :cache.
 
 concurrency:
   group: ${{ github.workflow }}
@@ -35,13 +34,11 @@ jobs:
       - name: Log in to Harbor
         run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login dockerrepo.eiva.com -u '${{ secrets.HARBOR_USERNAME }}' --password-stdin
 
-      - name: Build and push
+      - name: Build and push cache
         run: |
           docker buildx create --name builder --use
           docker buildx build \
             --network host \
             --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
             --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
-            -t dockerrepo.eiva.com/fletcher/devcontainer:latest \
-            --push \
             .devcontainer

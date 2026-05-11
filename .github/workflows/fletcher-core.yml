@@ -23,14 +23,13 @@ on:
       - 'core-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
-  # ── Classify the PR so build-windows can be skipped on devcontainer-only changes
-  #    and build-linux knows whether to rebuild the devcontainer image inline. ──
+  # ── Skip the Windows build when a PR only changes .devcontainer/ files
+  #    (Windows runs natively and doesn't consume the devcontainer image). ──
   detect-changes:
     runs-on:
       group: ubuntu_24.04_x64
     outputs:
-      devcontainer_only:    ${{ steps.detect.outputs.devcontainer_only }}
-      devcontainer_changed: ${{ steps.detect.outputs.devcontainer_changed }}
+      devcontainer_only: ${{ steps.detect.outputs.devcontainer_only }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,7 +113,6 @@ jobs:
       - name: Set up devcontainer image
         uses: ./.github/actions/setup-devcontainer-image
         with:
-          devcontainer_changed: ${{ needs.detect-changes.outputs.devcontainer_changed }}
           harbor_username: ${{ secrets.HARBOR_USERNAME }}
           harbor_password: ${{ secrets.HARBOR_PASSWORD }}
 

@@ -1,11 +1,7 @@
 name: "Set up devcontainer image"
-description: "Makes the shared Fletcher devcontainer image available on the runner as the local tag `fletcher-build`. By default pulls dockerrepo.eiva.com/fletcher/devcontainer:latest (built once by the build-devcontainer workflow). Rebuilds locally instead when the PR touches .devcontainer/ or when the prebuilt image is unavailable."
+description: "Builds the shared Fletcher devcontainer image on the runner and tags it as `fletcher-build`. Always runs `docker buildx build --cache-from`; BuildKit serves unchanged layers from the Harbor cache (populated by the `build-devcontainer` workflow on `main`), and rebuilds only what actually changed when a PR touches .devcontainer/."
 
 inputs:
-  devcontainer_changed:
-    description: "'true' if the PR changes .devcontainer/ files (force a local rebuild)."
-    required: false
-    default: "false"
   harbor_username:
     description: "Harbor robot username"
     required: true
@@ -16,32 +12,20 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Set up devcontainer image
+    - name: Log in to Harbor
       shell: bash
       env:
-        DC_CHANGED: ${{ inputs.devcontainer_changed }}
         HARBOR_USERNAME: ${{ inputs.harbor_username }}
         HARBOR_PASSWORD: ${{ inputs.harbor_password }}
+      run: echo "$HARBOR_PASSWORD" | docker login dockerrepo.eiva.com -u "$HARBOR_USERNAME" --password-stdin
+
+    - name: Build devcontainer image
+      shell: bash
       run: |
-        echo "$HARBOR_PASSWORD" | docker login dockerrepo.eiva.com -u "$HARBOR_USERNAME" --password-stdin
-
-        rebuild() {
-          docker buildx create --name builder --use
-          docker buildx build \
-            --network host \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
-            -t fletcher-build \
-            --load \
-            .devcontainer
-        }
-
-        if [ "$DC_CHANGED" = "true" ]; then
-          echo "::group::Rebuild image (devcontainer changed in this PR)"
-          rebuild
-          echo "::endgroup::"
-        elif docker pull dockerrepo.eiva.com/fletcher/devcontainer:latest; then
-          docker tag dockerrepo.eiva.com/fletcher/devcontainer:latest fletcher-build
-        else
-          echo "::warning::Pre-built devcontainer image not available; building locally"
-          rebuild
-        fi
+        docker buildx create --name builder --use
+        docker buildx build \
+          --network host \
+          --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
+          -t fletcher-build \
+          --load \
+          .devcontainer

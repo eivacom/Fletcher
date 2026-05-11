@@ -58,13 +58,13 @@ Then `cd <component>` and follow the same build / test commands the component RE
 
 ### CI image cache
 
-The CI workflows build this same image and cache it in Harbor under a single shared key, so every Fletcher workflow gets cache hits populated by any other:
+A dedicated [`build-devcontainer`](.github/workflows/build-devcontainer.yml) workflow runs on `main` whenever `.devcontainer/**` changes and pushes a BuildKit cache to Harbor under
 
 ```
 dockerrepo.eiva.com/fletcher/devcontainer:cache
 ```
 
-The image tag used by every workflow is `fletcher-build`.
+Every component workflow's Linux job runs `docker buildx build --cache-from=...:cache` (via the `setup-devcontainer-image` composite action) and tags the resulting image locally as `fletcher-build`. When `.devcontainer/` is unchanged every layer is a cache hit; when a PR touches `.devcontainer/` only the affected layers are rebuilt. PR builds do not push to `:cache`.
 
 ---
 
