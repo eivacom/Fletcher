@@ -29,6 +29,8 @@ jobs:
   detect-changes:
     runs-on:
       group: ubuntu_24.04_x64
+    permissions:
+      pull-requests: read
     outputs:
       devcontainer_only: ${{ steps.detect.outputs.devcontainer_only }}
     steps:
