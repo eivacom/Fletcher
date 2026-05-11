@@ -144,7 +144,7 @@ ctest --test-dir build -C Debug --output-on-failure -V
 
 ### Linux (devcontainer / Docker)
 
-The `.devcontainer` folder provides a ready-made Ubuntu 24.04 + GCC 12 image.
+The consolidated `.devcontainer` at the repo root provides a ready-made Ubuntu 24.04 + GCC 12 + Conan 2 + Node 24 image that covers every Fletcher component.
 
 #### VS Code devcontainer (recommended)
 
@@ -193,7 +193,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 Build the devcontainer image:
 
 ```bash
-docker buildx build -t xrcedds-pubsub-provider-build .devcontainer
+docker buildx build -t fletcher-build .devcontainer
 ```
 
 Run build + tests inside the container:
@@ -202,7 +202,7 @@ Run build + tests inside the container:
 docker run --rm \
     -v $(pwd):/workspace \
     -w /workspace \
-    xrcedds-pubsub-provider-build \
+    fletcher-build \
     bash -c "conan config install https://github.com/eivacom/conan-configuration.git --type git && conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
 ```
 
@@ -273,7 +273,7 @@ Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as par
 The Linux job builds and tests entirely inside a Docker container derived from `.devcontainer`. The container image is cached in Harbor to avoid rebuilding it on every run:
 
 ```
-dockerrepo.eiva.com/fletcher/xrcedds-pubsub-provider-devcontainer:cache
+dockerrepo.eiva.com/fletcher/devcontainer:cache
 ```
 
 ### Package handoff

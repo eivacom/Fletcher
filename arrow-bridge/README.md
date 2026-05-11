@@ -28,7 +28,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-Open the repository in VS Code and select **Reopen in Container** (`arrow-bridge/.devcontainer`).
+Open the repository in VS Code and select **Reopen in Container** — the consolidated devcontainer lives at `.devcontainer/` at the repo root and covers every Fletcher component.
 
 ```bash
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"

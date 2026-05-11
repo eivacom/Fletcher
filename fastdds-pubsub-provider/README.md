@@ -113,7 +113,7 @@ ctest --test-dir build -C Debug --output-on-failure -V
 
 ### Linux (devcontainer / Docker)
 
-The `.devcontainer` folder provides a ready-made Ubuntu 24.04 + GCC 12 image.
+The consolidated `.devcontainer` at the repo root provides a ready-made Ubuntu 24.04 + GCC 12 + Conan 2 + Node 24 image that covers every Fletcher component.
 
 #### VS Code devcontainer (recommended)
 
@@ -162,7 +162,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 Build the devcontainer image:
 
 ```bash
-docker buildx build -t fletcher-fastdds-pubsub-provider-build fastdds-pubsub-provider/.devcontainer
+docker buildx build -t fletcher-build .devcontainer
 ```
 
 Run build + tests inside the container:
@@ -171,7 +171,7 @@ Run build + tests inside the container:
 docker run --rm \
     -v $(pwd):/workspace \
     -w /workspace/fastdds-pubsub-provider \
-    fletcher-fastdds-pubsub-provider-build \
+    fletcher-build \
     bash -c "conan config install https://github.com/eivacom/conan-configuration.git --type git && conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
 ```
 
@@ -219,7 +219,7 @@ push / pull_request
         ▼                                      ▼
 build-windows                            build-linux
 Windows Server Core LTSC 2025            Ubuntu 24.04 x64
-Native runner                            Docker container (fastdds-pubsub-provider/.devcontainer)
+Native runner                            Docker container (.devcontainer)
 Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
          v143-x64-Release
         │                                      │
@@ -242,12 +242,12 @@ Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as par
 
 ### Linux Docker container
 
-The Linux job builds and tests entirely inside a Docker container derived from
-`fastdds-pubsub-provider/.devcontainer`. The container image is cached in Harbor
-to avoid rebuilding it on every run:
+The Linux job builds and tests entirely inside the consolidated Docker image
+built from `.devcontainer` at the repo root. The container image is cached in
+Harbor under a single shared key so every Fletcher workflow reuses it:
 
 ```
-dockerrepo.eiva.com/fletcher/fastdds-pubsub-provider-devcontainer:cache
+dockerrepo.eiva.com/fletcher/devcontainer:cache
 ```
 
 ### Package handoff

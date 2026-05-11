@@ -51,8 +51,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-The container is built from `pubsub/.devcontainer` and includes GCC 12, CMake
-and Conan 2 pre-configured.
+The container is built from `.devcontainer` at the repo root and includes GCC 12, CMake, Conan 2, and Node 24 pre-configured. The same image covers every Fletcher component.
 
 #### Option A — VS Code devcontainer (interactive)
 
@@ -91,7 +90,7 @@ conan list "eiva-fletcher-pubsub:*"
 
 1. Build the image (only needed once or after Dockerfile changes):
 ```bash
-docker build -t fletcher-pubsub-dev pubsub/.devcontainer
+docker build -t fletcher-build .devcontainer
 ```
 
 2. Start an interactive shell with the repo mounted:
@@ -99,7 +98,7 @@ docker build -t fletcher-pubsub-dev pubsub/.devcontainer
 docker run --rm -it \
   -v $(pwd):/workspace \
   -w /workspace/pubsub \
-  fletcher-pubsub-dev \
+  fletcher-build \
   bash
 ```
 
@@ -127,7 +126,7 @@ pull_request / workflow_dispatch
         ▼                                      ▼
 build-windows                            build-linux
 Windows Server Core LTSC 2025            Ubuntu 24.04 x64
-Native runner                            Docker container (pubsub/.devcontainer)
+Native runner                            Docker container (.devcontainer)
 Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
          v143-x64-RelWithDebInfo
         │                                      │
@@ -147,11 +146,12 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 
 ### Linux Docker container
 
-The Linux job builds and tests entirely inside a Docker container derived from
-`pubsub/.devcontainer`. The container image is cached in Harbor:
+The Linux job builds and tests entirely inside the consolidated Docker image
+built from `.devcontainer` at the repo root. The container image is cached in
+Harbor under a single shared key so every Fletcher workflow reuses it:
 
 ```
-dockerrepo.eiva.com/fletcher/pubsub-devcontainer:cache
+dockerrepo.eiva.com/fletcher/devcontainer:cache
 ```
 
 ### Package handoff

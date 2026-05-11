@@ -45,8 +45,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-The container is built from `core/.devcontainer` and includes GCC 12, CMake and Conan 2
-pre-configured. There are three ways to work with it:
+The container is built from `.devcontainer` at the repo root and includes GCC 12, CMake, Conan 2, and Node 24 pre-configured. The same image covers every Fletcher component. There are three ways to work with it:
 
 #### Option A — VS Code devcontainer (interactive)
 
@@ -91,7 +90,7 @@ Equivalent to Option A but driven from a host terminal rather than VS Code.
 
 1. Build the image from the devcontainer folder (only needed once or after Dockerfile changes)
 ```bash
-docker build -t fletcher-core-dev core/.devcontainer
+docker build -t fletcher-build .devcontainer
 ```
 
 2. Start an interactive shell with the repo mounted
@@ -99,7 +98,7 @@ docker build -t fletcher-core-dev core/.devcontainer
 docker run --rm -it \
   -v $(pwd):/workspace \
   -w /workspace/core \
-  fletcher-core-dev \
+  fletcher-build \
   bash
 ```
 
@@ -139,7 +138,7 @@ push / pull_request
         ▼                                      ▼
 build-windows                            build-linux
 Windows Server Core LTSC 2025            Ubuntu 24.04 x64
-Native runner                            Docker container (core/.devcontainer)
+Native runner                            Docker container (.devcontainer)
 Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
          v143-x64-Release
         │                                      │
@@ -160,12 +159,12 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 
 ### Linux Docker container
 
-The Linux job builds and tests entirely inside a Docker container derived from
-`core/.devcontainer`. The container image is cached in Harbor to avoid rebuilding
-it on every run:
+The Linux job builds and tests entirely inside the consolidated Docker image
+built from `.devcontainer` at the repo root. The container image is cached in
+Harbor under a single shared key so every Fletcher workflow reuses it:
 
 ```
-dockerrepo.eiva.com/fletcher/core-devcontainer:cache
+dockerrepo.eiva.com/fletcher/devcontainer:cache
 ```
 
 ### Package handoff

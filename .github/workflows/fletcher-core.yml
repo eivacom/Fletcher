@@ -96,11 +96,11 @@ jobs:
           docker buildx create --name builder --use
           docker buildx build \
             --network host \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/core-devcontainer:cache \
-            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/core-devcontainer:cache,mode=max \
-            -t fletcher-core-build \
+            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
+            --cache-to type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
+            -t fletcher-build \
             --load \
-            core/.devcontainer
+            .devcontainer
 
       - name: Build and test
         run: |
@@ -109,7 +109,7 @@ jobs:
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
             -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
-            fletcher-core-build \
+            fletcher-build \
             bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
