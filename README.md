@@ -11,7 +11,7 @@ Conan package with its own version, CI workflow, and release cycle:
 | `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
 | `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
 | `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
-| `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider` | static library |
+| `xrcedds-pubsub-provider/` | `eiva-fletcher-xrcedds-pubsub-provider` | static library |
 | `gateway-client-ts/` | `eiva-fletcher-gateway-client` (npm) | TypeScript library |
 
 Each package has its own `README.md` covering how to build, test and consume it.
