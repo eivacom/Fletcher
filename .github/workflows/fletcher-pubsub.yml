@@ -14,6 +14,8 @@ on:
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
+      - ".devcontainer/**"
+      - "!**/*.md"
   push:
     tags:
       - 'pubsub-v[0-9]*.[0-9]*.[0-9]*'

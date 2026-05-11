@@ -15,6 +15,56 @@ Each package has its own `README.md` covering how to build, test and consume it.
 
 ---
 
+## Development environment
+
+A single devcontainer at `.devcontainer/` covers every Fletcher component. Component READMEs assume you are running inside it.
+
+### VS Code (recommended)
+
+Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The `postCreateCommand` runs `conan config install https://github.com/eivacom/conan-configuration.git` on first launch, installing the EIVA Conan profiles and remote.
+
+To pull the released Fletcher packages from `conan-eiva`, log in once per container:
+
+```bash
+conan remote login conan-eiva <username>
+```
+
+Then follow each component's README for the component-specific build, test, and consumption commands.
+
+### Manual Docker
+
+If you don't use VS Code, run an interactive shell directly. Build the image once:
+
+```bash
+docker build -t fletcher-build .devcontainer
+```
+
+Start a shell with the repo mounted:
+
+```bash
+docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
+```
+
+Inside the container, replicate what the `postCreateCommand` does in VS Code:
+
+```bash
+conan config install https://github.com/eivacom/conan-configuration.git
+```
+
+Then `cd <component>` and follow the same build / test commands the component README documents.
+
+### CI image cache
+
+The CI workflows build this same image and cache it in Harbor under a single shared key, so every Fletcher workflow gets cache hits populated by any other:
+
+```
+dockerrepo.eiva.com/fletcher/devcontainer:cache
+```
+
+The image tag used by every workflow is `fletcher-build`.
+
+---
+
 ## TODO
 
 Identified improvements across the codebase, ordered by priority.

@@ -2,11 +2,6 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Base toolchain: gcc-12 + cmake + Python + curl/git, plus Node.js 24 for
-# the TypeScript packages (gateway-client-ts and the protoc + TS
-# integration test). One image covers every Fletcher component so the
-# conan cache, devcontainer setup, and CI image cache are shared across
-# the monorepo.
 RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
@@ -26,8 +21,7 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
 RUN pip3 install --break-system-packages --root-user-action=ignore conan==2.27.1
 
 # Pin Node to an explicit version so the image is reproducible. Bump
-# in lock-step with the gateway-client-ts workflow's setup-node
-# (currently 24.15.0).
+# in lock-step with the gateway-client-ts workflow's setup-node.
 ARG NODE_VERSION=24.15.0
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y "nodejs=${NODE_VERSION}-1nodesource1" \

@@ -111,21 +111,9 @@ Add `-V` for full GTest output:
 ctest --test-dir build -C Debug --output-on-failure -V
 ```
 
-### Linux (devcontainer / Docker)
+### Linux (devcontainer)
 
-The consolidated `.devcontainer` at the repo root provides a ready-made image that covers every Fletcher component.
-
-#### VS Code devcontainer (recommended)
-
-**Prerequisites:** VS Code with the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension and Docker Desktop (or Docker Engine on Linux).
-
-1. Open the monorepo root in VS Code.
-2. When prompted _"Reopen in Container"_ click it, or open the Command Palette (`Ctrl+Shift+P`) and run **Dev Containers: Reopen in Container**. VS Code builds the image from `.devcontainer/Dockerfile` and starts the container. The `postCreateCommand` in `devcontainer.json` automatically runs `conan config install` so the EIVA profiles and remote are available immediately.
-3. Open a terminal inside the container (`Terminal → New Terminal`) and log in to the EIVA Conan remote (required to resolve private packages such as `eiva-fletcher-pubsub`):
-
-```bash
-conan remote login conan-eiva <username> -p <password>
-```
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory.
 
 If the `build/` folder contains stale artifacts from a previous Windows build, remove it first — `DartConfiguration.tcl` bakes in absolute paths at configure time and will cause CTest to fail when those paths don't match the current platform:
 
@@ -145,7 +133,7 @@ Build, package, and run tests (equivalent to CI):
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
 ```
 
-Test output appears directly in the VS Code terminal. To run the tests separately with CTest after a `conan build`, note that `cmake_layout` places the Linux build under `build/<BuildType>`:
+Run tests separately with CTest after a `conan build` (the Linux build lives under `build/<BuildType>`):
 
 ```bash
 ctest --test-dir build/Debug --output-on-failure
@@ -155,24 +143,6 @@ Add `-V` for full GTest output:
 
 ```bash
 ctest --test-dir build/Debug --output-on-failure -V
-```
-
-#### Manual Docker (no VS Code)
-
-Build the devcontainer image:
-
-```bash
-docker buildx build -t fletcher-build .devcontainer
-```
-
-Run build + tests inside the container:
-
-```bash
-docker run --rm \
-    -v $(pwd):/workspace \
-    -w /workspace/fastdds-pubsub-provider \
-    fletcher-build \
-    bash -c "conan config install https://github.com/eivacom/conan-configuration.git --type git && conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
 ```
 
 ## Consuming the package
@@ -239,16 +209,6 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 | `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
 
 Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as part of every CI build.
-
-### Linux Docker container
-
-The Linux job builds and tests entirely inside the consolidated Docker image
-built from `.devcontainer` at the repo root. The container image is cached in
-Harbor under a single shared key so every Fletcher workflow reuses it:
-
-```
-dockerrepo.eiva.com/fletcher/devcontainer:cache
-```
 
 ### Package handoff
 

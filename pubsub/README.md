@@ -51,13 +51,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-The container is built from `.devcontainer` at the repo root and covers every Fletcher component.
-
-#### Option A — VS Code devcontainer (interactive)
-
-Open the repository in VS Code and select **Reopen in Container**. The
-`postCreateCommand` in `devcontainer.json` installs the Conan configuration
-automatically on first launch.
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory:
 
 1. Install dependencies and configure the build tree:
 ```bash
@@ -84,33 +78,7 @@ conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 conan list "eiva-fletcher-pubsub:*"
 ```
 
----
-
-#### Option B — Docker interactive shell from the host
-
-1. Build the image (only needed once or after Dockerfile changes):
-```bash
-docker build -t fletcher-build .devcontainer
-```
-
-2. Start an interactive shell with the repo mounted:
-```bash
-docker run --rm -it \
-  -v $(pwd):/workspace \
-  -w /workspace/pubsub \
-  fletcher-build \
-  bash
-```
-
-3. Inside the container:
-```bash
-conan config install https://github.com/eivacom/conan-configuration.git
-```
-
-4. Build, test and package as normal:
-```bash
-conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
-```
+Steps 1–3 iterate during development without writing to the Conan cache. Step 4 publishes the package locally so downstream Fletcher packages can pick it up.
 
 ---
 
@@ -143,16 +111,6 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 |---|---|---|---|
 | `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-RelWithDebInfo` | RelWithDebInfo |
 | `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
-
-### Linux Docker container
-
-The Linux job builds and tests entirely inside the consolidated Docker image
-built from `.devcontainer` at the repo root. The container image is cached in
-Harbor under a single shared key so every Fletcher workflow reuses it:
-
-```
-dockerrepo.eiva.com/fletcher/devcontainer:cache
-```
 
 ### Package handoff
 

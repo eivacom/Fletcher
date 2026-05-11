@@ -17,6 +17,8 @@ on:
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
+      - ".devcontainer/**"
+      - "!**/*.md"
 
 jobs:
   protoc-gateway-client-ts:
