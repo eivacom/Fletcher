@@ -26,9 +26,7 @@ The workflow `.github/workflows/integration-tests.yml` triggers when any of `cor
 
 ## Running locally
 
-Open the consolidated devcontainer at `.devcontainer` at the repo root (VSCode → **Reopen in Container**). It covers every Fletcher component.
-
-The devcontainer's `postCreateCommand` runs `conan config install` automatically. No conan-eiva login is needed — integration tests build everything from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 

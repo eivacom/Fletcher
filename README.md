@@ -3,13 +3,16 @@
 Multi-package C++ workspace. Each top-level directory is an independent
 Conan package with its own version, CI workflow, and release cycle:
 
-| Directory | Conan package | Type |
+| Directory | Conan / npm package | Type |
 |---|---|---|
 | `core/` | `eiva-fletcher-core` | header-only |
 | `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `eiva-fletcher-pubsub` | static library |
 | `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
 | `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
+| `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
+| `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider` | static library |
+| `gateway-client-ts/` | `eiva-fletcher-gateway-client` (npm) | TypeScript library |
 
 Each package has its own `README.md` covering how to build, test and consume it.
 
@@ -154,6 +157,10 @@ package to the `conan-eiva` Artifactory remote.
 | `pubsub/` | `pubsub-v` | `pubsub-v0.1.0-alpha` |
 | `arrow-bridge/` | `arrow-bridge-v` | `arrow-bridge-v0.1.0-alpha` |
 | `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
+| `fastdds-pubsub-provider/` | `fastdds-pubsub-provider-v` | `fastdds-pubsub-provider-v0.1.0-alpha` |
+| `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider-v` | `xrcedds-pubsub-provider-v0.1.0-alpha` |
+
+`gateway-client-ts/` does not yet release through tag-push CI.
 
 The component prefix is required so that pushing a tag triggers exactly one
 package's workflow — not all of them.
