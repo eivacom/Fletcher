@@ -4,29 +4,24 @@ description: "Outputs devcontainer_only=true if a pull request changes only file
 outputs:
   devcontainer_only:
     description: "'true' if every changed file in the PR is under .devcontainer/, 'false' otherwise"
-    value: ${{ steps.detect.outputs.devcontainer_only }}
+    value: ${{ steps.detect.outputs.result }}
 
 runs:
   using: "composite"
   steps:
     - id: detect
-      shell: bash
-      env:
-        EVENT_NAME: ${{ github.event_name }}
-        GH_TOKEN: ${{ github.token }}
-        REPO: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: |
-        if [ "$EVENT_NAME" != "pull_request" ]; then
-          echo "devcontainer_only=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        files=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
-
-        # grep -qv exits 0 if any line does NOT start with .devcontainer/ (i.e. the PR touched something else).
-        if echo "$files" | grep -qv '^\.devcontainer/'; then
-          echo "devcontainer_only=false" >> "$GITHUB_OUTPUT"
-        else
-          echo "devcontainer_only=true"  >> "$GITHUB_OUTPUT"
-        fi
+      uses: actions/github-script@v8
+      with:
+        result-encoding: string
+        script: |
+          if (context.eventName !== 'pull_request') {
+            return 'false';
+          }
+          const files = await github.paginate(github.rest.pulls.listFiles, {
+            owner: context.repo.owner,
+            repo:  context.repo.repo,
+            pull_number: context.payload.pull_request.number,
+            per_page: 100,
+          });
+          const allInDevcontainer = files.every(f => f.filename.startsWith('.devcontainer/'));
+          return allInDevcontainer ? 'true' : 'false';
