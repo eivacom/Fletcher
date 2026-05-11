@@ -52,6 +52,13 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     auto pub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
     auto sub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
 
+    // Capture state must outlive `sub`: a late DDS callback that fires while
+    // the subscriber is tearing down would otherwise touch destroyed locals.
+    std::mutex mu;
+    std::condition_variable cv;
+    bool received = false;
+    ArrowRow rx_row;
+
     PubSubArrow pub(pub_provider);
     PubSubArrow sub(sub_provider);
 
@@ -59,11 +66,6 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     const std::vector<std::string> topic{"sensor", "feed"};
 
     pub.CreateTopic(topic, schema);
-
-    std::mutex mu;
-    std::condition_variable cv;
-    bool received = false;
-    ArrowRow rx_row;
 
     auto result = sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
         std::lock_guard<std::mutex> lk(mu);
@@ -88,6 +90,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
         ASSERT_TRUE(cv.wait_for(lk, 5s, [&] { return received; }))
             << "subscriber callback never fired within 5 s";
     }
+    // Unsubscribe before reading rx_row: the test publishes one row, so once
+    // the subscription is torn down nothing can mutate rx_row from another
+    // thread.
+    sub.Unsubscribe(result.subscription_id);
 
     ASSERT_EQ(rx_row.size(), 3u);
     EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(rx_row[0])->value, 42);
@@ -95,13 +101,17 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     EXPECT_EQ(
         std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(),
         "alpha");
-
-    sub.Unsubscribe(result.subscription_id);
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
     auto pub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
     auto sub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
+
+    // Capture state must outlive `sub`: a late DDS callback that fires while
+    // the subscriber is tearing down would otherwise touch destroyed locals.
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<int32_t> received_ids;
 
     PubSubArrow pub(pub_provider);
     PubSubArrow sub(sub_provider);
@@ -110,10 +120,6 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
     const std::vector<std::string> topic{"sensor", "stream"};
 
     pub.CreateTopic(topic, schema);
-
-    std::mutex mu;
-    std::condition_variable cv;
-    std::vector<int32_t> received_ids;
 
     constexpr int kRowCount = 5;
 
@@ -137,10 +143,12 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return received_ids.size() == kRowCount; }))
             << "expected " << kRowCount << " rows, got " << received_ids.size();
     }
+    // Unsubscribe before reading received_ids: KEEP_ALL guarantees exactly
+    // kRowCount samples were delivered, so once the subscription is torn
+    // down nothing further can mutate the vector.
+    sub.Unsubscribe(result.subscription_id);
 
     for (int i = 0; i < kRowCount; ++i) {
         EXPECT_EQ(received_ids[i], i) << "row " << i << " out of order";
     }
-
-    sub.Unsubscribe(result.subscription_id);
 }

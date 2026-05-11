@@ -26,7 +26,7 @@ class FletcherPubsubConan(ConanFile):
 
     def requirements(self):
         self.requires("eiva-fletcher-pubsub/0.1.0-alpha", transitive_headers=True)
-        self.requires("eiva-fletcher-core/0.1.3-alpha", transitive_headers=True)
+        self.requires("eiva-fletcher-core/0.1.5-alpha", transitive_headers=True)
         self.requires("fast-dds/2.14.3")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")

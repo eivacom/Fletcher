@@ -54,7 +54,7 @@ jobs:
 
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
             -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
             -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
