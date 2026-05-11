@@ -31,7 +31,7 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      devcontainer_only: ${{ steps.filter.outputs.non_devcontainer == 'false' && 'true' || 'false' }}
+      non_devcontainer_changed: ${{ steps.filter.outputs.non_devcontainer }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -44,7 +44,7 @@ jobs:
 
   build-windows:
     needs: detect-changes
-    if: needs.detect-changes.outputs.devcontainer_only != 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.non_devcontainer_changed == 'true'
     runs-on:
       group: windows-server-core-ltsc2025
     outputs:
