@@ -14,13 +14,11 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 using namespace fletcher;
@@ -79,10 +77,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     ASSERT_NE(result.schema, nullptr);
     EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
 
-    // Give DDS time to complete writer/reader matching on the data topic
-    // before publishing — otherwise the row may be dropped despite RELIABLE.
-    std::this_thread::sleep_for(500ms);
-
+    // No sleep before publish. The data-topic DataWriter is RELIABLE +
+    // TRANSIENT_LOCAL + KEEP_ALL, so the sample is retained and delivered
+    // as soon as the DataReader matches. The condition variable below
+    // handles the actual wait.
     pub.Publish(topic, SensorRow(42, 23.5, "alpha"));
 
     {
@@ -128,8 +126,8 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 
     ASSERT_NE(result.schema, nullptr);
 
-    std::this_thread::sleep_for(500ms);
-
+    // No sleep before publish. KEEP_ALL durability retains every sample
+    // until the reader matches and consumes them in published order.
     for (int i = 0; i < kRowCount; ++i) {
         pub.Publish(topic, SensorRow(i, static_cast<double>(i), "row-" + std::to_string(i)));
     }
