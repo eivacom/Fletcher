@@ -51,7 +51,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-The container is built from `.devcontainer` at the repo root and includes GCC 12, CMake, Conan 2, and Node 24 pre-configured. The same image covers every Fletcher component.
+The container is built from `.devcontainer` at the repo root and covers every Fletcher component.
 
 #### Option A — VS Code devcontainer (interactive)
 

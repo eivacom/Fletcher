@@ -26,7 +26,7 @@ The workflow `.github/workflows/integration-tests.yml` triggers when any of `cor
 
 ## Running locally
 
-Open the consolidated devcontainer at `.devcontainer` at the repo root (VSCode → **Reopen in Container**). It covers every Fletcher component, including the Node 24 toolchain this test needs for vitest.
+Open the consolidated devcontainer at `.devcontainer` at the repo root (VSCode → **Reopen in Container**). It covers every Fletcher component.
 
 The devcontainer's `postCreateCommand` runs `conan config install` automatically. No conan-eiva login is needed — integration tests build everything from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 

@@ -144,7 +144,7 @@ ctest --test-dir build -C Debug --output-on-failure -V
 
 ### Linux (devcontainer / Docker)
 
-The consolidated `.devcontainer` at the repo root provides a ready-made Ubuntu 24.04 + GCC 12 + Conan 2 + Node 24 image that covers every Fletcher component.
+The consolidated `.devcontainer` at the repo root provides a ready-made image that covers every Fletcher component.
 
 #### VS Code devcontainer (recommended)
 
