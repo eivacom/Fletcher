@@ -14,7 +14,6 @@ on:
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
-      - ".github/actions/detect-pr-changes/**"
       - ".github/actions/setup-devcontainer-image/**"
       - ".devcontainer/**"
       - "!**/*.md"
@@ -31,13 +30,16 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      devcontainer_only: ${{ steps.detect.outputs.devcontainer_only }}
+      devcontainer_only: ${{ steps.filter.outputs.non_devcontainer == 'false' && 'true' || 'false' }}
     steps:
-      - uses: actions/checkout@v6
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
         with:
-          sparse-checkout: .github
-      - uses: ./.github/actions/detect-pr-changes
-        id: detect
+          filters: |
+            non_devcontainer:
+              - '!.devcontainer/**'
+              - '**'
 
   build-windows:
     needs: detect-changes
