@@ -142,21 +142,9 @@ Add `-V` for full GTest output:
 ctest --test-dir build -C Debug --output-on-failure -V
 ```
 
-### Linux (devcontainer / Docker)
+### Linux (devcontainer)
 
-The `.devcontainer` folder provides a ready-made Ubuntu 24.04 + GCC 12 image.
-
-#### VS Code devcontainer (recommended)
-
-**Prerequisites:** VS Code with the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension and Docker Desktop (or Docker Engine on Linux).
-
-1. Open the repo in VS Code.
-2. When prompted _"Reopen in Container"_ click it, or run **Dev Containers: Reopen in Container** from the Command Palette (`Ctrl+Shift+P`). VS Code builds the image from `.devcontainer/Dockerfile` and the `postCreateCommand` runs `conan config install` automatically.
-3. Log in to the EIVA Conan remote:
-
-```bash
-conan remote login conan-eiva <username> -p <password>
-```
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory.
 
 If the `build/` folder contains stale artifacts from a previous Windows build, remove it first — `DartConfiguration.tcl` bakes in absolute paths at configure time and will cause CTest to fail:
 
@@ -176,7 +164,7 @@ Build, package, and run tests (equivalent to CI):
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
 ```
 
-Run tests with CTest after a `conan build` (`cmake_layout` places the Linux build under `build/<BuildType>`):
+Run tests with CTest after a `conan build` (the Linux build lives under `build/<BuildType>`):
 
 ```bash
 ctest --test-dir build/Debug --output-on-failure
@@ -188,31 +176,13 @@ Add `-V` for full GTest output:
 ctest --test-dir build/Debug --output-on-failure -V
 ```
 
-#### Manual Docker (no VS Code)
-
-Build the devcontainer image:
-
-```bash
-docker buildx build -t xrcedds-pubsub-provider-build .devcontainer
-```
-
-Run build + tests inside the container:
-
-```bash
-docker run --rm \
-    -v $(pwd):/workspace \
-    -w /workspace \
-    xrcedds-pubsub-provider-build \
-    bash -c "conan config install https://github.com/eivacom/conan-configuration.git --type git && conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
-```
-
 ## Consuming the package
 
 ### 1. Add to your conanfile.py
 
 ```python
 def requirements(self):
-    self.requires("xrcedds-pubsub-provider/0.1.0-alpha")
+    self.requires("eiva-fletcher-xrcedds-pubsub-provider/0.1.0-alpha")
 ```
 
 Install dependencies:
@@ -224,11 +194,11 @@ conan install . --build=missing -pr:a=<your-profile>
 ### 2. Wire up CMake
 
 ```cmake
-find_package(xrcedds-pubsub-provider REQUIRED)
+find_package(eiva-fletcher-xrcedds-pubsub-provider REQUIRED)
 
 # Fully qualified target name:
 target_link_libraries(my_app PRIVATE
-    xrcedds-pubsub-provider::xrcedds-pubsub-provider)
+    eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider)
 
 # Or the convenience alias injected by the package's build module:
 target_link_libraries(my_app PRIVATE fletcher::xrcedds-pubsub-provider)
@@ -267,14 +237,6 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 | `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
 
 Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as part of every CI build.
-
-### Linux Docker container
-
-The Linux job builds and tests entirely inside a Docker container derived from `.devcontainer`. The container image is cached in Harbor to avoid rebuilding it on every run:
-
-```
-dockerrepo.eiva.com/fletcher/xrcedds-pubsub-provider-devcontainer:cache
-```
 
 ### Package handoff
 

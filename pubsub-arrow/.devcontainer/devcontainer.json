@@ -1,7 +1,0 @@
-{
-    "name": "fletcher-pubsub-arrow (Ubuntu 24.04 / GCC 12)",
-    "build": {
-        "dockerfile": "Dockerfile"
-    },
-    "postCreateCommand": "conan config install https://github.com/eivacom/conan-configuration.git"
-}

@@ -279,7 +279,7 @@ conan create fastdds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Rel
 conan create xrcedds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```
 
-Each Conan-packaged C++ component has its own devcontainer under `<component>/.devcontainer/` for reproducible CI/local builds. (`gateway/` does not have one yet — see follow-up issues for the missing Conan packaging and devcontainer.)
+A single consolidated devcontainer at `.devcontainer/` (repo root) covers every Fletcher component. CI builds and locally-opened "Reopen in Container" sessions both use it, sharing one image cache key in Harbor (`dockerrepo.eiva.com/fletcher/devcontainer:cache`).
 
 ### 8.3 TypeScript gateway client
 

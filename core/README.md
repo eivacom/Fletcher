@@ -45,85 +45,34 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-The container is built from `core/.devcontainer` and includes GCC 12, CMake and Conan 2
-pre-configured. There are three ways to work with it:
-
-#### Option A — VS Code devcontainer (interactive)
-
-Open the repository in VS Code and select **Reopen in Container**. The `postCreateCommand`
-in `devcontainer.json` installs the Conan configuration automatically on first launch.
-Once inside, the following commands run directly in the integrated terminal:
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory:
 
 1. Install dependencies and configure the build tree:
 ```bash
 conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 ```
 
-2. Build the library and tests
+2. Build the library and tests:
 ```bash
 conan build . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 ```
 
-3. Run the unit tests directly via CTest
+3. Run the unit tests directly via CTest:
 ```bash
 ctest --test-dir build/Debug --output-on-failure
 ```
 
-4. Create and publish to the local Conan cache (headers + cmake module)
+4. Create and publish to the local Conan cache (headers + cmake module):
 ```bash
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 ```
 
-5. Verify the package is in the local cache
+5. Verify the package is in the local cache:
 ```bash
 conan list "eiva-fletcher-core:*"
 ```
 
-> Steps 1–3 are for iterating during development — they do not write to the Conan cache.
-> Step 4 is required to make the package available to other packages on the same machine.
-
----
-
-#### Option B — Docker interactive shell from the host
-
-Equivalent to Option A but driven from a host terminal rather than VS Code.
-
-
-1. Build the image from the devcontainer folder (only needed once or after Dockerfile changes)
-```bash
-docker build -t fletcher-core-dev core/.devcontainer
-```
-
-2. Start an interactive shell with the repo mounted
-```bash
-docker run --rm -it \
-  -v $(pwd):/workspace \
-  -w /workspace/core \
-  fletcher-core-dev \
-  bash
-```
-
-3. Inside the container — replicate the postCreateCommand from devcontainer.json
-```bash
-conan config install https://github.com/eivacom/conan-configuration.git
-```  
-
-4. Build, test and package as normal
-```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
-```
-```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
-````
-```bash
-ctest --test-dir build/Debug --output-on-failure
-```
-```bash
-conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
-```
-
-> Build artefacts written inside the container (e.g. `core/build/`) are visible on the
-> host after the container exits because the workspace is mounted at `/workspace`.
+Steps 1–3 iterate during development without writing to the Conan cache. Step 4 publishes the package locally so downstream Fletcher packages can pick it up.
 
 ---
 
@@ -139,7 +88,7 @@ push / pull_request
         ▼                                      ▼
 build-windows                            build-linux
 Windows Server Core LTSC 2025            Ubuntu 24.04 x64
-Native runner                            Docker container (core/.devcontainer)
+Native runner                            Docker container (.devcontainer)
 Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
          v143-x64-Release
         │                                      │
@@ -157,16 +106,6 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 |---|---|---|---|
 | `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-Release` | Release |
 | `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
-
-### Linux Docker container
-
-The Linux job builds and tests entirely inside a Docker container derived from
-`core/.devcontainer`. The container image is cached in Harbor to avoid rebuilding
-it on every run:
-
-```
-dockerrepo.eiva.com/fletcher/core-devcontainer:cache
-```
 
 ### Package handoff
 

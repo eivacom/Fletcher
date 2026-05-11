@@ -1,5 +1,5 @@
 {
-    "name": "fletcher-core (Ubuntu 24.04 / GCC 12)",
+    "name": "fletcher devcontainer",
     "build": {
         "dockerfile": "Dockerfile"
     },

@@ -34,8 +34,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
 
 ### Linux (devcontainer)
 
-Open the repository in VS Code and select **Reopen in Container**
-(`pubsub-arrow/.devcontainer`).
+See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory:
 
 ```bash
 conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
