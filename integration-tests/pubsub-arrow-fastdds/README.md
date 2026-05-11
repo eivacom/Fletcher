@@ -33,7 +33,7 @@ The workflow `.github/workflows/integration-test.pubsub-arrow-fastdds.yml` trigg
 
 ## Running locally
 
-Open the devcontainer at `integration-tests/pubsub-arrow-fastdds/.devcontainer`. The whole monorepo is mounted at `/workspaces/Fletcher` inside the container.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
