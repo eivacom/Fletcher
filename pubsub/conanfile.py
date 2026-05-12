@@ -6,7 +6,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "eiva-fletcher-pubsub"
-    version = "0.1.0-alpha"
+    version = "0.1.1-alpha"
     description = "EIVA Fletcher PubSub library"
     license = "Proprietary"
     package_type = "static-library"
@@ -25,7 +25,7 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("eiva-fletcher-core/0.1.3-alpha", transitive_headers=True)
+        self.requires("eiva-fletcher-core/0.1.5-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 

@@ -6,7 +6,7 @@ import os
 
 class FletcherPubsubArrowConan(ConanFile):
     name = "eiva-fletcher-pubsub-arrow"
-    version = "0.1.0-alpha"
+    version = "0.1.1-alpha"
     description = "Arrow C++ wrapper around the eiva-fletcher-pubsub Driver"
     license = "Proprietary"
     package_type = "static-library"
@@ -27,8 +27,8 @@ class FletcherPubsubArrowConan(ConanFile):
         # pubsub types appear in the public PubSubArrow interface (Driver,
         # PubSub, Attachments) and arrow-bridge types (Codec, ArrowRow) appear
         # in encode/decode paths, so headers must be transitively visible.
-        self.requires("eiva-fletcher-pubsub/0.1.0-alpha", transitive_headers=True)
-        self.requires("eiva-fletcher-arrow-bridge/0.1.0-alpha", transitive_headers=True, transitive_libs=True)
+        self.requires("eiva-fletcher-pubsub/0.1.1-alpha", transitive_headers=True)
+        self.requires("eiva-fletcher-arrow-bridge/0.1.1-alpha", transitive_headers=True, transitive_libs=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
         # Resolve the same zlib conflict that arrow-bridge handles: arrow pins
         # 1.2.13, openssl pulls 1.3.1.
