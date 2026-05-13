@@ -15,14 +15,12 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
 using namespace fletcher;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -98,6 +96,11 @@ TEST(SchemaTransportTest, SubscribeWaitsUntilPublisherCreatesTopic) {
 
     // Subscribe runs in a background thread because it internally polls
     // /__schema for up to 5 s — we don't want it to block CreateTopic.
+    // We intentionally do NOT synchronise the two threads: whichever
+    // crosses its first line first, the final state must converge —
+    // Subscribe must resolve the schema either by finding it
+    // immediately (if CreateTopic ran first) or by picking it up
+    // mid-poll (if Subscribe started first).
     std::thread sub_thread([&] {
         try {
             sub_result = sub.Subscribe(topic, [](ArrowRow, Attachments) {});
@@ -105,10 +108,6 @@ TEST(SchemaTransportTest, SubscribeWaitsUntilPublisherCreatesTopic) {
             subscribe_error = e.what();
         }
     });
-
-    // Give Subscribe time to begin polling /__schema before the
-    // publisher writes anything to it.
-    std::this_thread::sleep_for(500ms);
 
     pub.CreateTopic(topic, schema);
 
@@ -139,14 +138,11 @@ TEST(SchemaTransportTest, SchemaSurvivesPublisherRestart) {
         pub1.CreateTopic(topic, schema);
     }
 
-    // Brief settle so DDS discovery can publish pub1's leave message
-    // and other participants can drop pub1's endpoints before pub2
-    // arrives. Without this, sub may match against pub1's stale
-    // discovery state and never receive from pub2.
-    std::this_thread::sleep_for(500ms);
-
     // Second publisher takes over on the same DDS domain with the same
-    // topic + schema.
+    // topic + schema. Pub1's participant has already been destroyed at
+    // the close of the scope above; FastDDS sends the participant leave
+    // synchronously, so pub2's /__schema writer will not collide with
+    // pub1's stale discovery state.
     auto pub2_provider = std::make_shared<FastDDSPubSubProvider>(kRestartDomain);
     PubSubArrow pub2(pub2_provider);
     pub2.CreateTopic(topic, schema);
