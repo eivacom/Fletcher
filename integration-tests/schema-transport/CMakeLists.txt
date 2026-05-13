@@ -12,7 +12,7 @@ find_package(GTest REQUIRED)
 enable_testing()
 
 add_executable(integration_tests
-    tests/test_schema_transport.cpp)
+    tests/test_schema_transport_fastdds.cpp)
 
 target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
