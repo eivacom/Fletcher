@@ -3,11 +3,9 @@
 // The custom TopicDataType serialises encoded row bytes + Attachments
 // directly into the DDS payload buffer via WriteBuffer on publish, and
 // delivers raw row bytes to the subscriber callback — no Arrow C++
-// dependency.  Wire format on the DDS bus:
-//   [CDR-LE encapsulation header :4]
+// dependency.  The envelope wire format is:
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
-// matching MicroXRCEAgent's TopicPubSubType so an XRCE-bridged peer
-// can publish/subscribe to the same DDS topic transparently.
+// wrapped in a CDR-LE octet sequence.
 
 #include "fast_dds_pubsub_provider.hpp"
 
@@ -60,15 +58,15 @@ class RawBytesTopicType : public TopicDataType {
         void* data,
         eprosima::fastrtps::rtps::SerializedPayload_t* payload) override {
         auto* d = static_cast<RawBytes*>(data);
-        // [CDR-header:4][raw bytes] — matches MicroXRCEAgent's
-        // TopicPubSubType so the schema topic stays interop-compatible.
+        // CDR LE encapsulation (4) + sequence header (4) + data.
         uint32_t len = static_cast<uint32_t>(d->data.size());
-        uint32_t total = 4 + len;
+        uint32_t total = 4 + 4 + len;
         if (total > payload->max_size) return false;
         payload->encapsulation = CDR_LE;
         uint8_t hdr[] = {0x00, 0x01, 0x00, 0x00};
         std::memcpy(payload->data, hdr, 4);
-        std::memcpy(payload->data + 4, d->data.data(), len);
+        std::memcpy(payload->data + 4, &len, 4);
+        std::memcpy(payload->data + 8, d->data.data(), len);
         payload->length = total;
         return true;
     }
@@ -77,8 +75,11 @@ class RawBytesTopicType : public TopicDataType {
         eprosima::fastrtps::rtps::SerializedPayload_t* payload,
         void* data) override {
         auto* d = static_cast<RawBytes*>(data);
-        if (payload->length < 4) return false;
-        d->data.assign(payload->data + 4, payload->data + payload->length);
+        if (payload->length < 8) return false;
+        uint32_t len = 0;
+        std::memcpy(&len, payload->data + 4, 4);
+        if (8 + len > payload->length) return false;
+        d->data.assign(payload->data + 8, payload->data + 8 + len);
         return true;
     }
 
@@ -129,13 +130,14 @@ class FletcherTopicType : public TopicDataType {
         try {
             FixedWriteBuffer buf(payload->data, payload->max_size);
 
-            // CDR little-endian encapsulation header. Matches the format
-            // produced by MicroXRCEAgent's TopicPubSubType so that an
-            // XRCE-bridged DataWriter and a FastDDS DataReader (or the
-            // reverse) speak the same wire bytes: no octet-sequence wrap.
+            // CDR little-endian encapsulation header.
             payload->encapsulation = CDR_LE;
             const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
             buf.Append(cdr_header, 4);
+
+            // CDR octet-sequence: uint32 length placeholder.
+            size_t seq_len_pos = buf.WriteLengthPlaceholder();
+            size_t seq_start = buf.Position();
 
             // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
             size_t row_len_pos = buf.WriteLengthPlaceholder();
@@ -156,6 +158,9 @@ class FletcherTopicType : public TopicDataType {
                 if (blob_len > 0) buf.Append(blob->data(), blob_len);
             }
 
+            // Patch CDR sequence length.
+            buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
+
             payload->length = static_cast<uint32_t>(buf.Position());
             return true;
         } catch (...) {
@@ -168,11 +173,15 @@ class FletcherTopicType : public TopicDataType {
         eprosima::fastrtps::rtps::SerializedPayload_t* payload,
         void* data) override {
         auto* d = static_cast<TransportData*>(data);
-        if (payload->length < 4) return false;
+        if (payload->length < 8) return false;
 
-        // Skip 4-byte CDR encapsulation; envelope follows immediately.
-        const uint8_t* ptr = payload->data + 4;
-        size_t total = payload->length - 4;
+        // Skip 4-byte CDR encapsulation, read 4-byte sequence length.
+        uint32_t data_size = 0;
+        std::memcpy(&data_size, payload->data + 4, sizeof(data_size));
+        if (8 + data_size > payload->length) return false;
+
+        const uint8_t* ptr = payload->data + 8;
+        size_t total = data_size;
         if (total < 4) return false;
 
         uint32_t row_len;
