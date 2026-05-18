@@ -24,6 +24,7 @@
 #include <uxr/client/client.h>
 
 #include <atomic>
+#include <bit>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -33,6 +34,18 @@
 #include <vector>
 
 namespace fletcher {
+
+// The CDR `sequence<octet>` length field we prepend before
+// `uxr_buffer_topic` (and strip on receive) is written via
+// `std::memcpy` of a host-order `uint32_t`. Agent's CDR-LE
+// encapsulation header pins the on-the-wire endianness to little.
+// Fail the build loudly on a hypothetical big-endian host rather
+// than producing silently corrupt wire bytes at runtime.
+static_assert(std::endian::native == std::endian::little,
+              "xrcedds-pubsub-provider requires a little-endian host: "
+              "the CDR sequence<octet> length prefix is encoded by "
+              "raw memcpy and the Agent's CDR-LE framing assumes LE.");
+
 namespace {
 
 std::string JoinSegments(const std::vector<std::string>& segs) {

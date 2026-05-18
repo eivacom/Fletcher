@@ -94,8 +94,6 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
     }
 
  private:
-    static constexpr const char* kAgentArgs[] = {"udp4", "-p", "2018"};
-
     void PrependAgentLibDirToLoaderPath() {
         // The Agent binary links dynamically against libmicroxrcedds_agent
         // (and friends) that are installed alongside it but not on the
@@ -118,9 +116,9 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 
     void SpawnAgent() {
         const std::string path = MICRO_XRCE_AGENT_PATH;
+        const std::string port_str = std::to_string(kAgentPort);
 #ifdef _WIN32
-        // Build the command line: "<path> udp4 -p 2018"
-        std::string cmd = "\"" + path + "\" udp4 -p 2018";
+        std::string cmd = "\"" + path + "\" udp4 -p " + port_str;
         STARTUPINFOA si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
@@ -138,7 +136,8 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         }
         if (pid_ == 0) {
             // Child: replace image with the Agent.
-            const char* argv[] = {path.c_str(), "udp4", "-p", "2018", nullptr};
+            const char* argv[] = {
+                path.c_str(), "udp4", "-p", port_str.c_str(), nullptr};
             execv(path.c_str(), const_cast<char**>(argv));
             // execv only returns on failure.
             std::_Exit(127);
