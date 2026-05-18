@@ -31,6 +31,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #ifdef _WIN32
@@ -50,12 +51,18 @@ constexpr uint32_t kDdsDomain = 145;
 constexpr const char* kAgentIp = "127.0.0.1";
 constexpr uint16_t   kAgentPort = 2018;
 
+// Schema carries both field-level and top-level Arrow KeyValueMetadata
+// so the /__schema companion-topic round-trip is verified with
+// check_metadata = true, not just the structural type comparison.
 std::shared_ptr<arrow::Schema> SensorSchema() {
+    auto temp_meta = arrow::key_value_metadata({"unit"}, {"celsius"});
+    auto schema_meta =
+        arrow::key_value_metadata({"source"}, {"fletcher-interop"});
     return arrow::schema({
         arrow::field("sensor_id",   arrow::int32(),   false),
-        arrow::field("temperature", arrow::float64(), false),
+        arrow::field("temperature", arrow::float64(), false, temp_meta),
         arrow::field("label",       arrow::utf8(),    false),
-    });
+    }, schema_meta);
 }
 
 ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
@@ -64,6 +71,25 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
         std::make_shared<arrow::DoubleScalar>(temp),
         std::make_shared<arrow::StringScalar>(label),
     };
+}
+
+// Per-sample assertion helper used by both directions: verifies all
+// three field types (int32, float64, utf8) so a wire-format bug that
+// silently mangles any single field would surface immediately.
+void ExpectRowEquals(const ArrowRow& row,
+                     int32_t expected_id,
+                     double expected_temp,
+                     const std::string& expected_label) {
+    ASSERT_EQ(row.size(), 3u);
+    EXPECT_EQ(
+        std::static_pointer_cast<arrow::Int32Scalar>(row[0])->value,
+        expected_id);
+    EXPECT_DOUBLE_EQ(
+        std::static_pointer_cast<arrow::DoubleScalar>(row[1])->value,
+        expected_temp);
+    EXPECT_EQ(
+        std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(),
+        expected_label);
 }
 
 XrceConfig XrceConfigFor(uint32_t session_key) {
@@ -253,8 +279,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // during teardown cannot touch destroyed locals.
     std::mutex mu;
     std::condition_variable cv;
-    bool got_row = false;
-    ArrowRow rx_row;
+    std::vector<ArrowRow> rx_rows;
 
     auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
     auto xrce    = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
@@ -269,29 +294,44 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
 
     auto result = fastdds_sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
         std::lock_guard<std::mutex> lk(mu);
-        rx_row = std::move(row);
-        got_row = true;
+        rx_rows.push_back(std::move(row));
         cv.notify_all();
     });
 
+    // /__schema must round-trip the full schema including Arrow
+    // KeyValueMetadata — anything weaker would let a CDR length-prefix
+    // off-by-N or schema-IPC bug slip past the test.
     ASSERT_NE(result.schema, nullptr)
         << "schema must propagate via /__schema across the Agent bridge";
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/true));
 
-    xrce_pub.Publish(topic, SensorRow(42, 23.5, "from-xrce"));
+    // Three back-to-back publishes with distinct values across all
+    // three field types. Reliable QoS + KEEP_ALL guarantees in-order
+    // delivery from a single writer, so order can be asserted.
+    const std::vector<std::tuple<int32_t, double, std::string>> samples = {
+        {  1,   23.5, "from-xrce-1"},
+        { 42, -7.125, "from-xrce-2"},
+        {999, 100.0,  "from-xrce-3"},
+    };
+    for (const auto& [id, temp, label] : samples) {
+        xrce_pub.Publish(topic, SensorRow(id, temp, label));
+    }
 
     {
         std::unique_lock<std::mutex> lk(mu);
-        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return got_row; }))
-            << "XRCE → Agent → FastDDS delivery must complete within 10 s";
+        ASSERT_TRUE(cv.wait_for(lk, 10s,
+                                [&] { return rx_rows.size() >= samples.size(); }))
+            << "XRCE → Agent → FastDDS delivery must complete within 10 s "
+               "(received " << rx_rows.size() << "/" << samples.size() << ")";
     }
     fastdds_sub.Unsubscribe(result.subscription_id);
 
-    ASSERT_EQ(rx_row.size(), 3u);
-    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(rx_row[0])->value, 42);
-    EXPECT_EQ(
-        std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(),
-        "from-xrce");
+    ASSERT_EQ(rx_rows.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& [id, temp, label] = samples[i];
+        SCOPED_TRACE("sample " + std::to_string(i));
+        ExpectRowEquals(rx_rows[i], id, temp, label);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -303,8 +343,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
 TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::mutex mu;
     std::condition_variable cv;
-    bool got_row = false;
-    ArrowRow rx_row;
+    std::vector<ArrowRow> rx_rows;
 
     auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
     auto xrce    = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
@@ -319,27 +358,36 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
 
     auto result = xrce_sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
         std::lock_guard<std::mutex> lk(mu);
-        rx_row = std::move(row);
-        got_row = true;
+        rx_rows.push_back(std::move(row));
         cv.notify_all();
     });
 
     ASSERT_NE(result.schema, nullptr)
         << "schema must propagate via /__schema across the Agent bridge";
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/true));
 
-    fastdds_pub.Publish(topic, SensorRow(99, 12.5, "from-fastdds"));
+    const std::vector<std::tuple<int32_t, double, std::string>> samples = {
+        { 99,  12.5,    "from-fastdds-1"},
+        {  0,  -0.001,  "from-fastdds-2"},
+        { -3,  1.0e9,   "from-fastdds-3"},
+    };
+    for (const auto& [id, temp, label] : samples) {
+        fastdds_pub.Publish(topic, SensorRow(id, temp, label));
+    }
 
     {
         std::unique_lock<std::mutex> lk(mu);
-        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return got_row; }))
-            << "FastDDS → Agent → XRCE delivery must complete within 10 s";
+        ASSERT_TRUE(cv.wait_for(lk, 10s,
+                                [&] { return rx_rows.size() >= samples.size(); }))
+            << "FastDDS → Agent → XRCE delivery must complete within 10 s "
+               "(received " << rx_rows.size() << "/" << samples.size() << ")";
     }
     xrce_sub.Unsubscribe(result.subscription_id);
 
-    ASSERT_EQ(rx_row.size(), 3u);
-    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(rx_row[0])->value, 99);
-    EXPECT_EQ(
-        std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(),
-        "from-fastdds");
+    ASSERT_EQ(rx_rows.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& [id, temp, label] = samples[i];
+        SCOPED_TRACE("sample " + std::to_string(i));
+        ExpectRowEquals(rx_rows[i], id, temp, label);
+    }
 }
