@@ -224,12 +224,16 @@ package's workflow — not all of them.
 ## License
 
 Fletcher is licensed under the GNU Lesser General Public License v3.0
-or later (LGPL-3.0-or-later). The LGPL-3.0 text is in
-[`LICENSE`](LICENSE); LGPL section 3(b) requires the GPL-3.0 text to
-accompany binary distributions, so the GPL-3.0 text is also included
-in [`COPYING`](COPYING). Every Fletcher source file carries an
+or later (LGPL-3.0-or-later). The full license text is in
+[`LICENSE`](LICENSE). Every Fletcher source file carries an
 `SPDX-License-Identifier: LGPL-3.0-or-later` header for
 machine-readable attribution.
+
+LGPL-3.0 incorporates GPL-3.0 by reference, so binary redistributors
+that fall under LGPL section 3(b) need a copy of the GPL-3.0 text in
+addition to `LICENSE`. The Fletcher source repo ships only `LICENSE`
+(LGPL); the GPL-3.0 text is available verbatim at
+<https://www.gnu.org/licenses/gpl-3.0.txt>.
 
 Copyright is held by "The Fletcher Authors" collectively — the people
 and organisations listed in [`AUTHORS`](AUTHORS). The project was
