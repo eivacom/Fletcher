@@ -1,0 +1,87 @@
+name: integration-test.fastdds-xrce-interop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "core/**"
+      - "arrow-bridge/**"
+      - "pubsub/**"
+      - "pubsub-arrow/**"
+      - "fastdds-pubsub-provider/**"
+      - "xrcedds-pubsub-provider/**"
+      - "integration-tests/fastdds-xrce-interop/**"
+      - ".github/workflows/integration-test.fastdds-xrce-interop.yml"
+      - ".github/actions/conan-bootstrap/**"
+      - ".github/actions/setup-devcontainer-image/**"
+      - ".devcontainer/**"
+      - "!**/*.md"
+
+jobs:
+  fastdds-xrce-interop:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            arrow-bridge
+            pubsub
+            pubsub-arrow
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            integration-tests/fastdds-xrce-interop
+            .devcontainer
+            .github
+
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
+      - name: Set up devcontainer image
+        uses: ./.github/actions/setup-devcontainer-image
+        with:
+          harbor_username: ${{ secrets.HARBOR_USERNAME }}
+          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
+          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/fastdds-xrce-interop && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build (includes MicroXRCEAgent from source)' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
