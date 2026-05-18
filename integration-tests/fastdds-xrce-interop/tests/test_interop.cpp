@@ -26,6 +26,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -84,7 +85,6 @@ XrceConfig XrceConfigFor(uint32_t session_key) {
 class MicroXRCEAgentEnv : public ::testing::Environment {
  public:
     void SetUp() override {
-        PrependAgentLibDirToLoaderPath();
         SpawnAgent();
         WaitUntilReachable();
     }
@@ -94,36 +94,27 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
     }
 
  private:
-    void PrependAgentLibDirToLoaderPath() {
-        // The Agent binary links dynamically against libmicroxrcedds_agent
-        // (and friends) that are installed alongside it but not on the
-        // system loader's default search path. Prepend the install lib
-        // directory to the right env var before spawning so the child
-        // can find them.
-        const std::string lib_dir = MICRO_XRCE_AGENT_LIB_DIR;
-#ifdef _WIN32
-        const char* current = std::getenv("PATH");
-        const std::string updated =
-            lib_dir + ";" + (current ? current : "");
-        _putenv_s("PATH", updated.c_str());
-#else
-        const char* current = std::getenv("LD_LIBRARY_PATH");
-        const std::string updated =
-            lib_dir + ":" + (current ? current : "");
-        setenv("LD_LIBRARY_PATH", updated.c_str(), 1);
-#endif
-    }
-
+    // The Agent binary links dynamically against libmicroxrcedds_agent
+    // (and friends) installed in MICRO_XRCE_AGENT_LIB_DIR but not on the
+    // system loader's default search path. We give *only the child* an
+    // augmented loader path: on POSIX via setenv inside the post-fork
+    // child (the parent's env is unaffected by copy-on-write), on
+    // Windows via an explicit lpEnvironment block to CreateProcessA.
+    // Mutating the test binary's own env would risk perturbing later
+    // dlopen()s in the same process (e.g. Arrow / FastDDS plugins that
+    // would otherwise resolve against the system libraries).
     void SpawnAgent() {
         const std::string path = MICRO_XRCE_AGENT_PATH;
         const std::string port_str = std::to_string(kAgentPort);
 #ifdef _WIN32
+        std::string env_block = BuildChildEnvBlockWithAugmentedPath();
         std::string cmd = "\"" + path + "\" udp4 -p " + port_str;
         STARTUPINFOA si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE,
-                            CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi)) {
+                            CREATE_NEW_PROCESS_GROUP, env_block.data(),
+                            nullptr, &si, &pi)) {
             FAIL() << "CreateProcess failed for " << path
                    << " (GetLastError=" << GetLastError() << ")";
         }
@@ -135,7 +126,14 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
             FAIL() << "fork() failed";
         }
         if (pid_ == 0) {
-            // Child: replace image with the Agent.
+            // Child: set the loader path *here* (parent's env untouched
+            // thanks to fork's copy-on-write), then exec.
+            const char* current = std::getenv("LD_LIBRARY_PATH");
+            const std::string updated =
+                std::string(MICRO_XRCE_AGENT_LIB_DIR) + ":" +
+                (current ? current : "");
+            setenv("LD_LIBRARY_PATH", updated.c_str(), 1);
+
             const char* argv[] = {
                 path.c_str(), "udp4", "-p", port_str.c_str(), nullptr};
             execv(path.c_str(), const_cast<char**>(argv));
@@ -144,6 +142,51 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         }
 #endif
     }
+
+#ifdef _WIN32
+    // Build an ANSI environment block (sequence of "K=V\0K=V\0...\0\0")
+    // that mirrors the parent's environment but with PATH augmented to
+    // include the Agent's install lib directory. The block is handed to
+    // CreateProcessA via lpEnvironment so the child sees the augmented
+    // PATH without us touching our own.
+    std::string BuildChildEnvBlockWithAugmentedPath() {
+        std::string new_path = MICRO_XRCE_AGENT_LIB_DIR;
+        if (const char* current = std::getenv("PATH")) {
+            new_path += ";";
+            new_path += current;
+        }
+
+        char* env_strings = GetEnvironmentStringsA();
+        if (!env_strings) {
+            FAIL() << "GetEnvironmentStringsA returned null";
+        }
+
+        std::string block;
+        bool path_written = false;
+        for (char* p = env_strings; *p != '\0'; ) {
+            const size_t len = std::strlen(p);
+            // PATH is case-insensitive on Windows.
+            if (len >= 5 && _strnicmp(p, "PATH=", 5) == 0) {
+                block.append("PATH=");
+                block.append(new_path);
+                path_written = true;
+            } else {
+                block.append(p, len);
+            }
+            block.push_back('\0');
+            p += len + 1;
+        }
+        FreeEnvironmentStringsA(env_strings);
+
+        if (!path_written) {
+            block.append("PATH=");
+            block.append(new_path);
+            block.push_back('\0');
+        }
+        block.push_back('\0');  // double-null terminator
+        return block;
+    }
+#endif
 
     void WaitUntilReachable() {
         // Probe by constructing an XRCE session. The Agent takes a few
