@@ -107,7 +107,14 @@ struct XrceDDSPubSubProvider::Impl {
     // Monotonic XRCE object ID counter (per type).
     uint16_t next_id = 1;
 
-    std::mutex mu;
+    // Recursive because OnTopic, invoked from inside uxr_run_session_*
+    // calls, also wants to lock — and the calling API methods already
+    // hold the lock when they pump the session for their own status
+    // replies. The same coarse lock serialises all uxr_* session access
+    // between API-method callers and the background run-loop below,
+    // closing the issue-#41 race where the run-loop swallowed status
+    // replies the API method was waiting for.
+    std::recursive_mutex mu;
     std::map<std::string, TopicState> topics;
 
     // Demux: datareader object_id.id → topic name.
@@ -233,13 +240,25 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
         impl_->input_buffer.size(),
         history);
 
-    // Start background run-loop.
+    // Start background run-loop. Holds impl_->mu only during the
+    // session pump itself and sleeps a fixed quantum between iterations
+    // so concurrent API methods are guaranteed a window to acquire the
+    // lock for their own create/wait sequences. std::this_thread::yield
+    // was insufficient — on a fully loaded scheduler the run-loop would
+    // immediately reacquire after release and starve API methods of the
+    // mutex for tens of seconds. A 5 ms sleep gives subscribers ~33%
+    // duty-cycle pump coverage (5 ms gap + 10 ms pump) while keeping the
+    // worst-case API-thread mutex-wait below the pump interval.
     impl_->running = true;
     impl_->run_thread = std::thread([this]() {
         while (impl_->running.load(std::memory_order_relaxed)) {
-            uxr_run_session_time(
-                &impl_->session,
-                static_cast<int>(impl_->config.run_loop_ms));
+            {
+                std::lock_guard lock(impl_->mu);
+                uxr_run_session_time(
+                    &impl_->session,
+                    static_cast<int>(impl_->config.run_loop_ms));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     });
 }
