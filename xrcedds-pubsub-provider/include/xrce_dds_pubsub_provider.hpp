@@ -38,6 +38,11 @@ struct XrceConfig {
 
     /// XRCE session key (must be unique per client on the same agent).
     uint32_t      session_key = 0xAABBCCDD;
+
+    /// DDS domain id on which the Agent creates this client's
+    /// participant. Must match the domain id used by any DDS peers
+    /// (e.g. a FastDDS subscriber) that this client wants to talk to.
+    uint16_t      domain_id = 0;
 };
 
 /// PubSub transport backed by eProsima Micro XRCE-DDS Client.

@@ -6,7 +6,7 @@ Implements `fletcher::PubSub` using [eProsima Fast DDS](https://fast-dds.docs.ep
 
 A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
 
-The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. A custom `TopicDataType` (`RawBytesTopicType`) handles the CDR serialisation without requiring IDL generation as a build step.
+The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), prefixed with a 4-byte CDR-LE encapsulation header. A custom `TopicDataType` (`FletcherTopicType`) handles the framing without requiring IDL generation as a build step. The same `[CDR-header][envelope]` framing is used by `MicroXRCEAgent`'s built-in `TopicPubSubType`, so an XRCE-bridged peer on the same DDS topic is wire-compatible.
 
 ### Topic name
 

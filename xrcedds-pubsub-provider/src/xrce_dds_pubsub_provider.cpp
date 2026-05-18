@@ -139,6 +139,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(
         std::move(envelope.attachments));
 }
 
+
 // -----------------------------------------------------------------------
 // Construction / destruction
 // -----------------------------------------------------------------------
@@ -298,17 +299,17 @@ void XrceDDSPubSubProvider::CreateTopic(
     ts.publisher_id   = uxr_object_id(base, UXR_PUBLISHER_ID);
     ts.writer_id      = uxr_object_id(base, UXR_DATAWRITER_ID);
 
-    // Create participant.
+    // Create participant on the configured DDS domain.
     uint16_t req_part = uxr_buffer_create_participant_bin(
         &impl_->session, impl_->reliable_out,
-        ts.participant_id, 0, name.c_str(), UXR_REPLACE);
+        ts.participant_id, impl_->config.domain_id, name.c_str(), UXR_REPLACE);
     WaitForStatus(&impl_->session, req_part, "participant");
 
     // Create topic.
     uint16_t req_topic = uxr_buffer_create_topic_bin(
         &impl_->session, impl_->reliable_out,
         ts.topic_id, ts.participant_id,
-        name.c_str(), "FletcherEnvelope", UXR_REPLACE);
+        name.c_str(), "fletcher", UXR_REPLACE);
     WaitForStatus(&impl_->session, req_topic, "topic");
 
     // Create publisher + data writer.
@@ -443,13 +444,14 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(
 
             uint16_t req_part = uxr_buffer_create_participant_bin(
                 &impl_->session, impl_->reliable_out,
-                ts.participant_id, 0, name.c_str(), UXR_REPLACE);
+                ts.participant_id, impl_->config.domain_id,
+                name.c_str(), UXR_REPLACE);
             WaitForStatus(&impl_->session, req_part, "subscriber participant");
 
             uint16_t req_topic = uxr_buffer_create_topic_bin(
                 &impl_->session, impl_->reliable_out,
                 ts.topic_id, ts.participant_id,
-                name.c_str(), "FletcherEnvelope", UXR_REPLACE);
+                name.c_str(), "fletcher", UXR_REPLACE);
             WaitForStatus(&impl_->session, req_topic, "subscriber topic");
         }
 
