@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 #include <arrow_bridge/codec.hpp>
 #include <arrow_bridge/crs_utils.hpp>
 

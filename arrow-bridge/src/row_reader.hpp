@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 #ifndef FLETCHER_SRC_ROW_READER_HPP_
 #define FLETCHER_SRC_ROW_READER_HPP_
 

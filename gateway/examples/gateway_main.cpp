@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Minimal smoke test for the WebGateway.
 //
 // Starts a WebSocket server on port 9090 with an in-process mock provider.

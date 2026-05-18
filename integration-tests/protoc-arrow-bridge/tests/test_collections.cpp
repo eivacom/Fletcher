@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // collections.proto — Player, Team. Verifies repeated proto fields map
 // to arrow::Type::LIST and round-trip with the right element counts,
 // for repeated scalars, repeated structs, and empty repeated fields.

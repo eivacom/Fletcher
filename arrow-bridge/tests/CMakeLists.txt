@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 find_package(GTest REQUIRED)
 
 add_executable(arrow_bridge_tests
