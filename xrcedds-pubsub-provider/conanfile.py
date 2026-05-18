@@ -11,7 +11,7 @@ class FletcherPubsubConan(ConanFile):
     name = "eiva-fletcher-xrcedds-pubsub-provider"
     version = "0.1.0-alpha"
     description = "XRCE-DDS PubSub Provider library"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 

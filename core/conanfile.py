@@ -11,7 +11,7 @@ class FletcherCoreConan(ConanFile):
     name = "eiva-fletcher-core"
     version = "0.1.5-alpha"
     description = "EIVA Fletcher Core library"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "header-library"
     # settings are only needed to compile the unit tests — they play no part
     # in the package itself (headers only) and are cleared in package_id()

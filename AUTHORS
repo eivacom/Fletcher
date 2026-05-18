@@ -1,14 +1,12 @@
-Fletcher is maintained by "The Fletcher Authors": the people and
-organisations who have contributed code, design, or documentation to
-the project. Copyright on each contribution is retained by its author
-(or their employer, where applicable); contributions are licensed
-under the GNU Lesser General Public License v3.0 or later (see
-LICENSE).
+# This is the list of Fletcher authors for copyright purposes.
+#
+# This does not necessarily list everyone who has contributed code,
+# since in some cases their employer may be the copyright holder.
+# To see the full list of contributors, see the revision history in
+# source control.
+#
+# Names should be added to this file as:
+#   Name or Organization <email address>
+# The email address is not required for organizations.
 
-This file lists current copyright holders. To add yourself or your
-organisation, open a pull request that appends to the list below.
-
-Initial author and copyright holder:
-* EIVA A/S <https://www.eiva.com/>, 2026—
-
-Individual contributors:
+EIVA A/S <https://www.eiva.com/>

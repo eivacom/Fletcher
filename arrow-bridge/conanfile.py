@@ -11,7 +11,7 @@ class FletcherArrowBridgeConan(ConanFile):
     name = "eiva-fletcher-arrow-bridge"
     version = "0.1.1-alpha"
     description = "EIVA Fletcher Arrow C++ bridge — Codec, ArrowRowView, CRS utilities"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 

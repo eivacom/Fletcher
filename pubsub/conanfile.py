@@ -11,7 +11,7 @@ class FletcherPubsubConan(ConanFile):
     name = "eiva-fletcher-pubsub"
     version = "0.1.1-alpha"
     description = "EIVA Fletcher PubSub library"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 

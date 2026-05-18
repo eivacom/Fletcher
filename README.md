@@ -224,16 +224,19 @@ package's workflow — not all of them.
 ## License
 
 Fletcher is licensed under the GNU Lesser General Public License v3.0
-or later (LGPL-3.0-or-later). The full license text is in
-[`LICENSE`](LICENSE). Every Fletcher source file carries an
-`SPDX-License-Identifier: LGPL-3.0-or-later` header for machine-readable
-attribution.
+or later (LGPL-3.0-or-later). The LGPL-3.0 text is in
+[`LICENSE`](LICENSE); LGPL section 3(b) requires the GPL-3.0 text to
+accompany binary distributions, so the GPL-3.0 text is also included
+in [`COPYING`](COPYING). Every Fletcher source file carries an
+`SPDX-License-Identifier: LGPL-3.0-or-later` header for
+machine-readable attribution.
 
 Copyright is held by "The Fletcher Authors" collectively — the people
 and organisations listed in [`AUTHORS`](AUTHORS). The project was
 started by EIVA A/S in 2026 and is open to outside contributions
 under the same license.
 
-Third-party code vendored under `pubsub/third_party/` (nanoarrow,
-flatcc) is distributed under its own upstream licenses and is not
-re-licensed by this header.
+Third-party code vendored under `pubsub/third_party/nanoarrow/`
+(nanoarrow, including the flatcc sources bundled inside its
+amalgamation) is distributed under its own upstream licenses and is
+not re-licensed by Fletcher's headers.

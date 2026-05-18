@@ -11,7 +11,7 @@ class FletcherPubsubArrowConan(ConanFile):
     name = "eiva-fletcher-pubsub-arrow"
     version = "0.1.1-alpha"
     description = "Arrow C++ wrapper around the eiva-fletcher-pubsub Driver"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
