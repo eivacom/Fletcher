@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // GeoArrow geometry types for use with protoc-gen-fletcher.
 //
 // When a .proto field references one of these message types, the Fletcher
