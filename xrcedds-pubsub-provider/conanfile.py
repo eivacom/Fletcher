@@ -79,7 +79,16 @@ class FletcherPubsubConan(ConanFile):
              keep_path=False)
 
     def package_info(self):
-        self.cpp_info.libs = ["xrce_dds_pubsub_provider"]
+        # The xrce_dds_pubsub_provider static library links privately
+        # against microxrcedds_client (which in turn depends on microcdr),
+        # both built from source via FetchContent and packaged alongside.
+        # External consumers must link all three in dependency order so
+        # the uxr_*/ucdr_* symbols resolve.
+        self.cpp_info.libs = [
+            "xrce_dds_pubsub_provider",
+            "microxrcedds_client",
+            "microcdr",
+        ]
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider")
