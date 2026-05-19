@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: license-headers
+
+on:
+  pull_request:
+    branches: [main]
+
+# Block-merge guard: every C++ / TypeScript / Python / CMake / YAML
+# source file added or modified on a PR must carry the Fletcher SPDX
+# header. We only check files that show up in the PR diff — existing
+# files were given headers in the initial sweep and any later drift
+# will surface here as soon as someone touches the file.
+#
+# Out of scope: pubsub/third_party/ (vendored, ships under its own
+# upstream license), build/, dist/, node_modules/ (generated, usually
+# gitignored but excluded explicitly as a belt-and-braces).
+#
+# File extensions we enforce: those we covered in the initial sweep.
+# A new file type (e.g. .proto) is silently skipped until we decide
+# to add it to the enforcement list — better than confusing
+# contributors with a failure on a type we never set a convention for.
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # need history so git diff against the base works
+
+      - name: Check SPDX + Copyright headers on added/modified files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Files added (A) or modified (M) in this PR, restricted to
+          # the extensions we set headers on.
+          mapfile -t files < <(
+            git diff --name-only --diff-filter=AM "$BASE_SHA" "$HEAD_SHA" \
+              | grep -E '(\.(hpp|cpp|h|cc|ts|py|cmake|yml|yaml)|/CMakeLists\.txt|^CMakeLists\.txt)$' \
+              | grep -v -E '^pubsub/third_party/' \
+              | grep -v -E '(^|/)(build|dist|node_modules|out)/' \
+              || true
+          )
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No source files added/modified on this PR — nothing to check."
+            exit 0
+          fi
+
+          echo "Checking ${#files[@]} file(s):"
+          printf '  %s\n' "${files[@]}"
+          echo
+
+          missing=()
+          for f in "${files[@]}"; do
+            # File might have been deleted then re-added in the same
+            # diff under a different commit; defensively skip if it
+            # doesn't exist on disk now.
+            [ -f "$f" ] || continue
+
+            head -n 10 "$f" > /tmp/header.txt
+
+            spdx_ok=0
+            copy_ok=0
+            grep -q 'SPDX-License-Identifier: LGPL-3.0-or-later' /tmp/header.txt && spdx_ok=1
+            grep -Eq 'Copyright \(C\) [0-9]{4} The Fletcher Authors' /tmp/header.txt && copy_ok=1
+
+            if [ "$spdx_ok" -eq 0 ] || [ "$copy_ok" -eq 0 ]; then
+              reason=""
+              [ "$spdx_ok" -eq 0 ] && reason="$reason missing 'SPDX-License-Identifier: LGPL-3.0-or-later';"
+              [ "$copy_ok" -eq 0 ] && reason="$reason missing 'Copyright (C) <year> The Fletcher Authors';"
+              missing+=("$f -$reason")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::License headers missing on ${#missing[@]} file(s):"
+            for line in "${missing[@]}"; do
+              echo "::error::  $line"
+            done
+            echo
+            echo "Add to the top of each affected file (substitute the right comment prefix"
+            echo "for the file's language — // for C++/TypeScript, # for Python/CMake/YAML):"
+            echo
+            echo "  // SPDX-License-Identifier: LGPL-3.0-or-later"
+            echo "  // Copyright (C) $(date +%Y) The Fletcher Authors"
+            echo "  //"
+            exit 1
+          fi
+
+          echo "All ${#files[@]} added/modified source file(s) have the required headers."
