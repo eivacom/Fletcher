@@ -22,9 +22,14 @@ on:
 # to add it to the enforcement list — better than confusing
 # contributors with a failure on a type we never set a convention for.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: ubuntu_24.04_x64
     steps:
       - uses: actions/checkout@v6
         with:
