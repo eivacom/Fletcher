@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // maps.proto — Metrics. Verifies proto map<K,V> fields map to
 // arrow::Type::MAP and round-trip preserves entries.
 

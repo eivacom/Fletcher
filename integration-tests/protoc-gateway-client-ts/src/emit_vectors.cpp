@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Vector emitter for the cross-language byte-compat test.
 //
 // For each scenario we encode a known telemetry row via the protoc-generated

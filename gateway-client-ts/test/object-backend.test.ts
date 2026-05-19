@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 import { describe, it, expect, beforeAll } from 'vitest';
 import { WireTypeId, ObjectBackend, encodePositional } from '../src/index.js';
 import type { SchemaDescriptor } from '../src/index.js';

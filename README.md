@@ -218,3 +218,29 @@ package's workflow — not all of them.
   re-releasing the others.
 - Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the
   version and go into the tag.
+
+---
+
+## License
+
+Fletcher is licensed under the GNU Lesser General Public License v3.0
+or later (LGPL-3.0-or-later). The full license text is in
+[`LICENSE`](LICENSE). Every Fletcher source file carries an
+`SPDX-License-Identifier: LGPL-3.0-or-later` header for
+machine-readable attribution.
+
+LGPL-3.0 incorporates GPL-3.0 by reference, so binary redistributors
+that fall under LGPL section 3(b) need a copy of the GPL-3.0 text in
+addition to `LICENSE`. The Fletcher source repo ships only `LICENSE`
+(LGPL); the GPL-3.0 text is available verbatim at
+<https://www.gnu.org/licenses/gpl-3.0.txt>.
+
+Copyright is held by "The Fletcher Authors" collectively — the people
+and organisations listed in [`AUTHORS`](AUTHORS). The project was
+started by EIVA A/S in 2026 and is open to outside contributions
+under the same license.
+
+Third-party code vendored under `pubsub/third_party/nanoarrow/`
+(nanoarrow, including the flatcc sources bundled inside its
+amalgamation) is distributed under its own upstream licenses and is
+not re-licensed by Fletcher's headers.

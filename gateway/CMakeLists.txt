@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 # Boost.Beast and Boost.Asio are header-only.  The Conan Boost recipe
 # does not populate per-component INCLUDE_DIRS, so we locate the headers
 # via find_path (the Conan cache is already on CMAKE_PREFIX_PATH).

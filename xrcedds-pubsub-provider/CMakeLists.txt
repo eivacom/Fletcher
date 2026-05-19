@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 cmake_minimum_required(VERSION 3.20)
 project(eiva-fletcher-xrcedds-pubsub-provider CXX)
 

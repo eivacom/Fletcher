@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 from conan.tools.files import copy
@@ -8,7 +11,7 @@ class FletcherProtocPluginConan(ConanFile):
     name = "eiva-fletcher-protoc"
     version = "0.2.0-alpha"
     description = "A protoc plugin that generates C++ and TypeScript code for the Fletcher wire format"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "application"
     settings = "os", "compiler", "build_type", "arch"
 

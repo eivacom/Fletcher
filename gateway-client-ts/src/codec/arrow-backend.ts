@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 /**
  * Arrow JS backend — decodes positional rows into Apache Arrow RecordBatch.
  *

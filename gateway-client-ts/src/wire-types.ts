@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 /**
  * Wire type identifiers — mirrors the C++ WireTypeId enum in
  * schema_evolution.hpp.  Values must stay in sync with the codec.

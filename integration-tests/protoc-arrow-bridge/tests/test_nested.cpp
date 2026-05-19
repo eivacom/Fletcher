@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // nested.proto — GeoPoint, Address, Location. Verifies that nested
 // proto messages map to arrow::Type::STRUCT and round-trip correctly
 // through the recursive positional format (struct: NULL_BITFIELD then

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

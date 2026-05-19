@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Verifies that protoc-generated Encode() and arrow-bridge Codec.EncodeRow()
 // produce byte-identical output for the same row content + schema. This is
 // THE invariant that lets edge code (typed proto rows, no Apache Arrow C++)

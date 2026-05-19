@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Native round-trip tests — encode via generated class, decode via the
 // generated class's decode constructor. No Apache Arrow C++ involved
 // here; this verifies the generated typed code's encode/decode pair is

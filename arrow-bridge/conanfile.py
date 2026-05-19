@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 from conan.tools.files import copy
@@ -8,7 +11,7 @@ class FletcherArrowBridgeConan(ConanFile):
     name = "eiva-fletcher-arrow-bridge"
     version = "0.1.1-alpha"
     description = "EIVA Fletcher Arrow C++ bridge — Codec, ArrowRowView, CRS utilities"
-    license = "Proprietary"
+    license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
