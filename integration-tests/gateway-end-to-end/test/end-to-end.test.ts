@@ -27,7 +27,9 @@ import type { SchemaDescriptor } from 'eiva-fletcher-gateway-client';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
-const TEST_PORT  = 19091;
+// Port can be overridden via env (e.g. when running two copies of the
+// suite in parallel or when 19091 is occupied locally).
+const TEST_PORT  = parseInt(process.env.TEST_PORT ?? '19091', 10);
 const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
 const TEST_TOPIC = 'protocol';
 
@@ -85,7 +87,11 @@ async function spawnGateway(port: number): Promise<ChildProcess> {
 
   return new Promise<ChildProcess>((resolveFn, rejectFn) => {
     const rl = createInterface({ input: child.stdout! });
+    // If the child spawns but never prints READY, kill it explicitly
+    // before rejecting so we don't leave a stray process around when
+    // afterAll has no `server` reference to clean up.
     const timeout = setTimeout(() => {
+      if (!child.killed) child.kill('SIGKILL');
       rejectFn(new Error('gateway did not print READY within 10 s'));
     }, 10_000);
 
@@ -97,6 +103,7 @@ async function spawnGateway(port: number): Promise<ChildProcess> {
     });
     child.on('error', (err) => {
       clearTimeout(timeout);
+      if (!child.killed) child.kill('SIGKILL');
       rejectFn(err);
     });
     child.on('exit', (code) => {
@@ -108,13 +115,21 @@ async function spawnGateway(port: number): Promise<ChildProcess> {
 
 async function stopGateway(child: ChildProcess): Promise<void> {
   return new Promise<void>((resolveFn) => {
-    child.on('exit', () => resolveFn());
-    child.stdin?.write('stop\n');
-    child.stdin?.end();
-    setTimeout(() => {
+    // Cooperative shutdown: write "stop" to stdin and wait for the
+    // process to exit. The fallback timer escalates to SIGTERM if
+    // the child doesn't honour "stop" within 5 s; we clear it on
+    // clean exit so Vitest can shut down immediately instead of
+    // sitting on a live timer for the full 5 s.
+    const fallback = setTimeout(() => {
       if (!child.killed) child.kill('SIGTERM');
       resolveFn();
     }, 5_000);
+    child.on('exit', () => {
+      clearTimeout(fallback);
+      resolveFn();
+    });
+    child.stdin?.write('stop\n');
+    child.stdin?.end();
   });
 }
 

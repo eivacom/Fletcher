@@ -4,16 +4,27 @@ End-to-end test that verifies the C++ `gateway/` (WebSocket server) and the Type
 
 ## What it covers
 
-The schema-agnostic happy path plus the binary frame layouts documented in `gateway/src/gateway.hpp`:
+Tests are split across two files by whether they need the proto-gen toolchain. Both spawn their own gateway on different TCP ports (19091 / 19092 — overridable via `TEST_PORT`) so vitest can run them in parallel.
+
+### `test/end-to-end.test.ts` — protocol coverage, no proto-gen
 
 | Test | What it verifies |
 |---|---|
-| `generated TelemetrySchema has the three expected fields` | Sanity-check on the proto-generated `SchemaDescriptor` before the end-to-end tests rely on it. |
-| `subscribed response — routing only` | The `subscribed` text frame contains `subId` + `topic` only — no schema, no schemaIpc. Locks in that the gateway stays schema-agnostic. |
-| `client publish ↔ subscription round-trip` | A single `FletcherClient` subscribes with `TelemetrySchema`, publishes three distinct rows with the same schema, and expects all three back via the subscription. Stress-tests the loopback path. |
-| `protoc-gen-fletcher TS class over WebSocket` | The canonical happy-path single-sample round-trip using the proto-generated `TelemetrySchema` for both subscribe and publish. The "look here first" test for understanding how the system is meant to be used. |
-| `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Subscribes on a raw `WebSocket`, then publishes on the same socket to trigger a loopback delivery; asserts the binary frame layout byte-for-byte. |
+| `subscribed response — routing only` | A `subscribed` text frame for a topic with no announced schema contains `subId` + `topic` only — no `schema`, no `schemaIpc`. Locks in that the gateway never invents schemas. |
+| `client publish ↔ subscription round-trip` | A single `FletcherClient` subscribes with a hand-built `SchemaDescriptor`, publishes three distinct rows, expects all three back. Stress-tests the loopback path without depending on proto-gen output. |
+| `gateway forwards publisher-announced schema in the subscribed response` | A publisher announces a schema via `createTopic`; a raw `WebSocket` subscriber inspects the `subscribed` JSON and asserts both the `schema` (SchemaDescriptor JSON) and `schemaIpc` (base64 Arrow IPC) fields are present and structurally match. Direct evidence of the schema-passthrough contract. |
+| `FletcherClient subscribe(topic, cb) uses the gateway-supplied schema` | Round-trip after the publisher announced the schema, with the subscriber calling `subscribe(topic, callback)` and no local schema — verifies the client's fallback decode path uses the server-supplied schema. |
+| `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Subscribes on a raw `WebSocket`, publishes on the same socket to trigger a loopback delivery; asserts the binary frame layout byte-for-byte. |
 | `client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]` | Built with `buildPublish` from the TS protocol module; raw bytes asserted against the documented format. |
+
+### `test/protoc-gen.test.ts` — proto-gen toolchain coverage
+
+| Test | What it verifies |
+|---|---|
+| `generated Telemetry has the three expected fields` | Sanity-check on the proto-generated `TypedSchema<ITelemetry>` before the end-to-end tests rely on it. |
+| `subscribe + publish using Telemetry are typed end-to-end` | Canonical typed happy path: `client.subscribe(topic, Telemetry, cb)` infers `row: ITelemetry` from the schema's phantom binding; `client.publish(topic, Telemetry, data)` infers `data: ITelemetry`. No `<T>` generic, no local `Row` interface at the call site. |
+| `client publish ↔ subscription round-trip` | Stress variant: three samples with distinct values across the three field types, still fully typed via `Telemetry`. |
+| `subscribe<ITelemetry> with gateway-supplied schema` | Gateway-supplied-schema flow: publisher announces `Telemetry` via `createTopic`, subscriber calls `subscribe<ITelemetry>(topic, cb)` without a local schema and gets typed delivery from the schema the gateway forwards. |
 
 ## Server binary
 
