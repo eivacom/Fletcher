@@ -212,21 +212,82 @@ describe('client publish ↔ subscription round-trip', () => {
 
 // ---------------------------------------------------------------------
 // Gateway-supplied schema path. A publisher announces a schema via
-// `createTopic`; the subscriber calls `subscribe(topic, cb)` with no
-// local schema and relies on the gateway to hand it back in the
-// `subscribed` response so the row payload can be decoded. Proves
-// the schema-passthrough end-to-end without depending on
-// protoc-gen-fletcher.
+// `createTopic`; later subscribers can either fetch that schema from
+// the gateway's `subscribed` response (raw WS, asserted explicitly
+// below) or let FletcherClient pick it up implicitly (second test).
+//
+// Why schema delivery matters at all: Fletcher's row wire format is
+// positional ([null_bitfield][f0_bytes][f1_bytes][...] with no field
+// tags), so a subscriber that wants to decode bytes into a structured
+// object has to know the field list and types. That information has
+// to reach the subscriber by some channel; the gateway-supplied
+// schema is one of two supported channels (the other being a
+// client-supplied SchemaDescriptor passed to `subscribe`).
 // ---------------------------------------------------------------------
 describe('subscriber gets schema from gateway', () => {
-  it('subscribes without a local schema after publisher announces one',
+  it('gateway forwards publisher-announced schema in the subscribed response',
      async () => {
-    const PUB_TOPIC = 'protocol/gateway-supplied';
+    const PUB_TOPIC = 'protocol/gateway-supplied-schema';
+
+    // Publisher: announce the schema. Gateway caches it per topic.
+    const pub = new FletcherClient({ url: TEST_URL });
+    await pub.connect();
+    await pub.createTopic(PUB_TOPIC, HAND_BUILT_SCHEMA);
+
+    // Subscriber: connect raw and inspect the subscribed response
+    // directly, so the assertion proves the schema came from the
+    // server rather than relying on FletcherClient's internal
+    // bookkeeping.
+    const ws = new WebSocket(TEST_URL);
+    ws.binaryType = 'arraybuffer';
+    const response = await new Promise<Record<string, unknown>>((res, rej) => {
+      ws.onopen = () => ws.send(buildSubscribe(PUB_TOPIC));
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          const j = JSON.parse(ev.data);
+          if (j.type === 'subscribed') res(j);
+          else if (j.type === 'error') rej(new Error(j.message));
+        }
+      };
+      ws.onerror = () => rej(new Error('ws error'));
+    });
+
+    // Routing fields.
+    expect(response.type).toBe('subscribed');
+    expect(response.topic).toBe(PUB_TOPIC);
+    expect(typeof response.subId).toBe('string');
+
+    // Schema fields — the whole point of this test. Both
+    // representations the gateway emits should be present and
+    // structurally aligned with what the publisher announced.
+    const schema = response.schema as { fields: Array<{ name: string; wireType: number; nullable: boolean }> };
+    expect(schema).toBeDefined();
+    expect(schema.fields).toHaveLength(3);
+    expect(schema.fields[0].name).toBe('sensor_id');
+    expect(schema.fields[0].wireType).toBe(WireTypeId.INT32);
+    expect(schema.fields[1].name).toBe('temperature');
+    expect(schema.fields[1].wireType).toBe(WireTypeId.FLOAT64);
+    expect(schema.fields[2].name).toBe('label');
+    expect(schema.fields[2].wireType).toBe(WireTypeId.STRING);
+
+    // Arrow IPC representation — present, base64, decodes to a
+    // non-empty buffer. Clients that prefer to work with Arrow JS
+    // would use this path; ObjectBackend uses the `schema` field
+    // above.
+    expect(response.schemaIpc).toBeTypeOf('string');
+    const ipcBytes = Buffer.from(response.schemaIpc as string, 'base64');
+    expect(ipcBytes.byteLength).toBeGreaterThan(0);
+
+    ws.close();
+    pub.close();
+  });
+
+  it('FletcherClient subscribe(topic, cb) uses the gateway-supplied schema',
+     async () => {
+    const PUB_TOPIC = 'protocol/gateway-supplied-roundtrip';
 
     const pub = new FletcherClient({ url: TEST_URL });
     await pub.connect();
-    // Publisher announces the schema. Gateway will forward it
-    // verbatim to future subscribers in their subscribed response.
     await pub.createTopic(PUB_TOPIC, HAND_BUILT_SCHEMA);
 
     const sub = new FletcherClient({ url: TEST_URL });
@@ -234,9 +295,11 @@ describe('subscriber gets schema from gateway', () => {
 
     interface Row { sensor_id: number; temperature: number; label: string }
     const received: Row[] = [];
+    // No schema argument — FletcherClient must fall back to the
+    // schema the gateway hands back in the subscribed response.
     const subId = await sub.subscribe<Row>(
       PUB_TOPIC,
-      (row) => { received.push(row); },  // no schema arg — gateway provides
+      (row) => { received.push(row); },
     );
 
     const sent: Row = { sensor_id: 17, temperature: 3.14, label: 'gateway-fwd' };
