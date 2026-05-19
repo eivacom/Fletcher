@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // pubsub.proto — generated Publisher / Subscriber classes.
 //
 // The plugin emits typed Publisher / Subscriber wrappers around the

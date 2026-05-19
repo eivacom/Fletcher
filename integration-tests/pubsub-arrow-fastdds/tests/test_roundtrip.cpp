@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // pubsub-arrow + fastdds-pubsub-provider integration test.
 //
 // Drives the PubSubArrow adapter on top of a real FastDDSPubSubProvider in

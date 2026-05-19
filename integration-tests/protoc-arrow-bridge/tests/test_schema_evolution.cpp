@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Schema evolution scenarios: SensorV1 (id, float temperature, location)
 // vs SensorV2 (same plus optional label, with temperature widened to double).
 //

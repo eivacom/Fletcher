@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // TimedEvent — proto well-known types: google.protobuf.Timestamp,
 // google.protobuf.Duration, plus the wrapper types DoubleValue and
 // StringValue (which become nullable scalars). Verifies:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // geoarrow_test.proto — VehicleTrack, LandParcel, GeoWithCrs.
 // Verifies GeoArrow geometry types (Point, LineString, Polygon, etc.)
 // produce structs/lists with the correct extension metadata, and that

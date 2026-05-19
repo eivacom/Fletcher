@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // Custom options for the Fletcher protoc plugin.
 // Proto2 syntax is required for 'extend'.
 syntax = "proto2";
