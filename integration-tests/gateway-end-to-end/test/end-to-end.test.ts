@@ -35,6 +35,7 @@ import {
   encodePositional,
 } from 'eiva-fletcher-gateway-client';
 import type { SchemaDescriptor, SubscribedResponse } from 'eiva-fletcher-gateway-client';
+import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -211,6 +212,62 @@ describe('client publish ↔ subscription round-trip', () => {
       expect(received[i].temperature).toBeCloseTo(sent[i].temperature);
       expect(received[i].label).toBe(sent[i].label);
     }
+
+    await client.unsubscribe(subId);
+    client.close();
+  });
+});
+
+// ---------------------------------------------------------------------
+// Proto-generated SchemaDescriptor end-to-end. Verifies that
+// protoc-gen-fletcher + the WebSocket transport agree across the
+// whole stack: same proto fields → same SchemaDescriptor on both
+// sides → same bytes on the wire → same decoded values back. The
+// `protoc-gateway-client-ts` integration test proves byte-compat for
+// the codec in isolation; this proves the proto-generated artefact
+// also works against the live gateway.
+// ---------------------------------------------------------------------
+describe('protoc-gen-fletcher TS class over WebSocket', () => {
+  it('publishes via TelemetrySchema and receives the same row back', async () => {
+    const client = new FletcherClient({ url: TEST_URL });
+    await client.connect();
+
+    interface Row { sensor_id: number; temperature: number; label: string }
+    const received: Row[] = [];
+
+    const subId = await client.subscribe<Row>(TEST_TOPIC, (row) => {
+      received.push(row);
+    });
+
+    // The server-supplied schema (from test-config.yml) and the
+    // protoc-generated TelemetrySchema must describe the same fields
+    // in the same order — otherwise the publish would land bytes the
+    // server cannot interpret.
+    const serverSchema = (client as unknown as {
+      subscriptions: Map<bigint, { schema: SchemaDescriptor }>
+    }).subscriptions.get(subId)!.schema;
+    expect(TelemetrySchema.fields.map((f) => f.name)).toEqual(
+      serverSchema.fields.map((f) => f.name),
+    );
+    expect(TelemetrySchema.fields.map((f) => f.wireType)).toEqual(
+      serverSchema.fields.map((f) => f.wireType),
+    );
+
+    // Publish using the *proto-generated* schema, not the
+    // server-supplied one. Proves the generated descriptor produces
+    // bytes the gateway accepts and routes.
+    const sent: Row = { sensor_id: 314, temperature: 42.0, label: 'from-protogen' };
+    await client.publish(TEST_TOPIC, TelemetrySchema, sent);
+
+    const deadline = Date.now() + 3_000;
+    while (received.length === 0 && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 20));
+    }
+
+    expect(received).toHaveLength(1);
+    expect(received[0].sensor_id).toBe(sent.sensor_id);
+    expect(received[0].temperature).toBeCloseTo(sent.temperature);
+    expect(received[0].label).toBe(sent.label);
 
     await client.unsubscribe(subId);
     client.close();

@@ -28,6 +28,10 @@ class GatewayEndToEndIntegrationConan(ConanFile):
         # `conan create` step has put in the local cache.
         self.requires("eiva-fletcher-pubsub/[*, include_prerelease]")
         self.requires("eiva-fletcher-core/[*, include_prerelease]")
+        # protoc-gen-fletcher plugin + protobuf for generating the TS
+        # row class used by the proto-gen test case.
+        self.requires("eiva-fletcher-protoc/[*, include_prerelease]")
+        self.requires("protobuf/3.21.12")
         # Boost.Beast / Boost.Asio for gateway's WebSocket transport.
         self.requires("boost/1.83.0")
         # nlohmann_json for the gateway's WS JSON control frames.

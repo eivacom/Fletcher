@@ -33,7 +33,7 @@ The exe is production-grade — no test-specific behaviour baked in. The client-
 
 The workflow `.github/workflows/integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
-1. Builds the required Fletcher components (`core`, `pubsub`) via `conan create <component>/.` into the local Conan cache.
+1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`) via `conan create <component>/.` into the local Conan cache.
 2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
 3. Runs `npm ci` + `npm test` to execute the vitest suite against the binary.
 
@@ -48,6 +48,12 @@ conan create core/.   --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```bash
 conan create pubsub/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```
+
+```bash
+conan create protoc/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+```
+
+`protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure.
 
 Then build and run the integration test itself:
 

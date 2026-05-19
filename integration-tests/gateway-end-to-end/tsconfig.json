@@ -15,5 +15,5 @@
       "eiva-fletcher-gateway-client": ["../../gateway-client-ts/src/index.ts"]
     }
   },
-  "include": ["test"]
+  "include": ["test", "generated-ts"]
 }
