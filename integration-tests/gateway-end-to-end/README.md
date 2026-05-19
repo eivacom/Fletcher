@@ -4,12 +4,14 @@ End-to-end test that verifies the C++ `gateway/` (WebSocket server) and the Type
 
 ## What it covers
 
-Both directions of the protocol plus the binary frame layouts documented in `gateway/src/gateway.hpp`:
+The schema-agnostic happy path plus the binary frame layouts documented in `gateway/src/gateway.hpp`:
 
 | Test | What it verifies |
 |---|---|
-| `subscribed response — schema delivery` | The `subscribed` text frame carries both `schema` (SchemaDescriptor JSON, populated from the YAML config's schema) and `schemaIpc` (base64-encoded Arrow IPC bytes). Field types are checked against the wire-type IDs. |
-| `client publish ↔ subscription round-trip` | A single `FletcherClient` subscribes to `telemetry`, publishes three distinct rows, and expects all three to come back via the subscription. Exercises both directions of the WebSocket protocol in one test through the gateway's in-process loopback provider. |
+| `generated TelemetrySchema has the three expected fields` | Sanity-check on the proto-generated `SchemaDescriptor` before the end-to-end tests rely on it. |
+| `subscribed response — routing only` | The `subscribed` text frame contains `subId` + `topic` only — no schema, no schemaIpc. Locks in that the gateway stays schema-agnostic. |
+| `client publish ↔ subscription round-trip` | A single `FletcherClient` subscribes with `TelemetrySchema`, publishes three distinct rows with the same schema, and expects all three back via the subscription. Stress-tests the loopback path. |
+| `protoc-gen-fletcher TS class over WebSocket` | The canonical happy-path single-sample round-trip using the proto-generated `TelemetrySchema` for both subscribe and publish. The "look here first" test for understanding how the system is meant to be used. |
 | `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Subscribes on a raw `WebSocket`, then publishes on the same socket to trigger a loopback delivery; asserts the binary frame layout byte-for-byte. |
 | `client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]` | Built with `buildPublish` from the TS protocol module; raw bytes asserted against the documented format. |
 
@@ -19,15 +21,14 @@ The test spawns the production `gateway` exe built from `gateway/src/` by `gatew
 
 The vitest test spawns the resulting exe with `child_process.spawn`, waits for it to print `READY <port>` on stdout, drives the WebSocket protocol against it, and shuts it down by writing `stop\n` to its stdin (deterministic cross-platform shutdown — Windows SIGTERM semantics differ from POSIX).
 
-The exe is configured via [`test-config.yml`](test-config.yml), which pre-creates a single `telemetry` topic with the three-field schema (`sensor_id : int32`, `temperature : float64`, `label : utf8`) — enough to exercise the null bitfield, fixed-width, and variable-length encodings in one shot. The CLI args used at spawn time:
+The CLI args used at spawn time are minimal:
 
 | Arg | Value | Purpose |
 |---|---|---|
 | `--port N` | `19091` | TCP port; high number to minimise collision with system services. |
 | `--bind-address ADDR` | `127.0.0.1` | Loopback only. |
-| `--config FILE.yml` | `test-config.yml` | Topics + schemas to pre-create. |
 
-The exe is production-grade — no test-specific behaviour baked in. The client-publish ⇄ self-subscription round-trip via the gateway's in-process loopback provider is what wires the "publishes from a client are delivered to subscribers (including the same client) over the WebSocket bus" assertion. A real DDS-backed provider for `gateway` is tracked separately; once it exists this same exe will gain a `--provider TYPE` switch.
+The gateway is schema-agnostic — there is no `--config` and no topic pre-declaration. Topics are established when the test client subscribes; schemas live entirely on the test side via the proto-generated `TelemetrySchema` (from [`proto/telemetry.proto`](proto/telemetry.proto)). A real DDS-backed provider for `gateway` is tracked separately; once it exists this same exe will gain a `--provider TYPE` switch.
 
 ## How it runs in CI
 

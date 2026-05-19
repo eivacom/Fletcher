@@ -36,8 +36,6 @@ class GatewayEndToEndIntegrationConan(ConanFile):
         self.requires("boost/1.83.0")
         # nlohmann_json for the gateway's WS JSON control frames.
         self.requires("nlohmann_json/3.11.3")
-        # yaml-cpp for parsing the gateway's --config FILE.yml.
-        self.requires("yaml-cpp/0.8.0")
 
     def layout(self):
         cmake_layout(self)

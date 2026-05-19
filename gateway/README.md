@@ -1,6 +1,6 @@
 # gateway
 
-Fletcher's WebSocket gateway server. Distributed as a single executable that exposes a Fletcher `Driver` over the network via WebSocket so non-C++ clients (TypeScript, browsers, anything else that can speak WS) can subscribe to topics and publish messages.
+Fletcher's WebSocket gateway server. A schema-agnostic byte router that exposes a Fletcher `Driver` over the network via WebSocket so non-C++ clients (TypeScript, browsers, anything else that can speak WS) can subscribe to topics and publish messages.
 
 ## What this directory ships
 
@@ -12,6 +12,15 @@ A single executable, `gateway`, built from the sources in `src/`. There is no pu
 
 If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/) for the reference implementation).
 
+## Schema-agnostic by design
+
+The gateway knows nothing about topic schemas, and nothing about which topics will exist before clients show up:
+
+- Topics are established implicitly. A client `subscribe` or `publish` creates the topic slot inside the in-process provider on the fly — there is no pre-declaration, no admin endpoint, no startup config that lists topics.
+- Schemas live entirely on the client side. The `subscribed` text response carries only routing (`subId`, `topic`); it does **not** include a schema. Clients are expected to know the schema for the topics they care about — typically by generating a `SchemaDescriptor` from a `.proto` via `protoc-gen-fletcher`.
+
+This keeps the gateway as a pure byte router: it forwards row bytes between publishers and subscribers without ever inspecting their structure.
+
 ## Provider note (current limitation)
 
 `gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
@@ -19,7 +28,7 @@ If you need to integrate with the gateway from another project, the only support
 ## Running
 
 ```bash
-gateway --port 9090 --bind-address 0.0.0.0 --config gateway.yml
+gateway --port 9090 --bind-address 0.0.0.0
 ```
 
 ### CLI arguments
@@ -28,52 +37,12 @@ gateway --port 9090 --bind-address 0.0.0.0 --config gateway.yml
 |---|---|---|
 | `--port N` | `9090` | TCP port to listen on. |
 | `--bind-address ADDR` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only deployments. |
-| `--config FILE.yml` | _(none)_ | YAML file pre-declaring topics and their schemas (see below). Without it, the gateway starts with no topics; clients are expected to create them via the WebSocket protocol once that capability exists. |
 | `--help`, `-h` | — | Print usage and exit. |
 
 ### Process lifecycle
 
 - Prints `READY <port>` on stdout once accepting connections. Launchers (tests, supervisors) can synchronise on that line without polling the socket.
 - Reads stdin and exits cleanly on the literal line `stop`. Gives deterministic cross-platform shutdown — POSIX `SIGTERM` semantics differ from Windows.
-
-## Config file format (`--config FILE.yml`)
-
-The YAML file pre-declares topics and their schemas at startup. Example:
-
-```yaml
-topics:
-  - name: telemetry
-    fields:
-      - name: sensor_id
-        type: int32
-      - name: temperature
-        type: float64
-      - name: label
-        type: utf8
-
-  - name: status/heartbeat
-    fields:
-      - name: tick
-        type: uint64
-      - name: alive
-        type: bool
-```
-
-Topic names may contain `/` to nest them — they're split internally into the segment vector that `Driver::CreateTopic` expects.
-
-### Supported field types
-
-| Config string | Maps to |
-|---|---|
-| `bool`, `boolean` | `NANOARROW_TYPE_BOOL` |
-| `int8`, `int16`, `int32`, `int64` | signed integer types |
-| `uint8`, `uint16`, `uint32`, `uint64` | unsigned integer types |
-| `float32`, `float` | `NANOARROW_TYPE_FLOAT` (32-bit) |
-| `float64`, `double` | `NANOARROW_TYPE_DOUBLE` (64-bit) |
-| `utf8`, `string` | `NANOARROW_TYPE_STRING` |
-| `binary` | `NANOARROW_TYPE_BINARY` |
-
-Nested structs and lists are not yet supported in the config format; once a use case lands, the parser will be extended.
 
 ## Building
 
@@ -83,7 +52,6 @@ Gateway depends on (resolved via Conan):
 - `eiva-fletcher-pubsub`
 - `boost` (Beast + Asio, header-only)
 - `nlohmann_json`
-- `yaml-cpp`
 
 ### Inside the devcontainer
 
@@ -131,7 +99,7 @@ text frames (client → server):
   {"action":"list_topics"}
 
 text frames (server → client):
-  {"type":"subscribed","subId":"...","topic":"...","schema":{...},"schemaIpc":"<base64>"}
+  {"type":"subscribed","subId":"...","topic":"..."}
   {"type":"topic_created"|"unsubscribed"|"published"|"topics_list"|"error", ...}
 
 binary frames:

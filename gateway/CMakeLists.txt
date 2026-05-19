@@ -15,7 +15,6 @@
 find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
 find_package(eiva-fletcher-core   CONFIG REQUIRED)
 find_package(nlohmann_json        CONFIG REQUIRED)
-find_package(yaml-cpp             CONFIG REQUIRED)
 find_path(BOOST_INCLUDE_DIR boost/beast.hpp REQUIRED)
 
 # ─────────────────────────────────────────────────────────────────────
@@ -32,8 +31,7 @@ target_include_directories(gateway PRIVATE src ${BOOST_INCLUDE_DIR})
 target_link_libraries(gateway PRIVATE
     eiva-fletcher-pubsub::eiva-fletcher-pubsub
     eiva-fletcher-core::eiva-fletcher-core
-    nlohmann_json::nlohmann_json
-    yaml-cpp::yaml-cpp)
+    nlohmann_json::nlohmann_json)
 if(WIN32)
     target_compile_definitions(gateway PRIVATE
         WIN32_LEAN_AND_MEAN

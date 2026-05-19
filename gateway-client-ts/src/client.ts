@@ -83,31 +83,16 @@ export class FletcherClient {
   /**
    * Subscribe to a topic.  Returns the subscription ID.
    *
-   * If `schema` is omitted, the schema is obtained from the server's
-   * subscribe response (requires a publisher to have created the topic
-   * with a schema).
+   * The caller must always supply the schema — the gateway is
+   * schema-agnostic and does not return schemas in its subscribed
+   * response. Schemas are the client's contract, typically generated
+   * from a `.proto` by `protoc-gen-fletcher`.
    */
   async subscribe<T = Record<string, unknown>>(
     topic: string,
-    callbackOrSchema: MessageCallback<T> | SchemaDescriptor,
-    maybeCallback?: MessageCallback<T>,
+    schema: SchemaDescriptor,
+    callback: MessageCallback<T>,
   ): Promise<bigint> {
-    // Support both (topic, schema, cb) and (topic, cb) signatures.
-    let schema: SchemaDescriptor | undefined;
-    let callback: MessageCallback<T>;
-    if (typeof callbackOrSchema === 'function') {
-      callback = callbackOrSchema;
-    } else {
-      schema = callbackOrSchema;
-      if (typeof maybeCallback !== 'function') {
-        throw new Error(
-          'subscribe: callback is required when providing a schema. ' +
-          'Use subscribe(topic, callback) or subscribe(topic, schema, callback).',
-        );
-      }
-      callback = maybeCallback;
-    }
-
     const resp = await this.sendAndWait(
       buildSubscribe(topic),
       'subscribed',
@@ -117,17 +102,8 @@ export class FletcherClient {
     }
     const sub = resp as SubscribedResponse;
 
-    // Use server-provided schema if caller didn't supply one.
-    const resolvedSchema = schema ?? sub.schema;
-    if (!resolvedSchema) {
-      throw new Error(
-        `subscribe: no schema available for topic "${topic}". ` +
-        'Either pass a SchemaDescriptor or ensure the publisher created the topic with a schema.',
-      );
-    }
-
     this.subscriptions.set(sub.subId, {
-      schema: resolvedSchema,
+      schema,
       callback: callback as MessageCallback,
     });
     return sub.subId;

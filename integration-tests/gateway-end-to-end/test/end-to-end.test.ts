@@ -5,18 +5,12 @@
 // server) against the real gateway-client-ts (TypeScript
 // FletcherClient).
 //
-// The gateway is built from gateway/src/ via add_subdirectory() in
-// this directory's CMakeLists.txt. It is configured via
-// test-config.yml, which pre-creates a single "telemetry" topic
-// with the three-field schema {sensor_id : int32, temperature :
-// float64, label : utf8} — enough to exercise the null bitfield,
-// fixed-width, and variable-length encodings in one shot.
-//
-// The gateway exe is production-grade: no test-specific behaviour
-// is baked in. The client-publish ⇄ self-subscription round-trip in
-// InProcessProvider is what wires the "publishes from one client are
-// delivered to subscribers (including the same client) over the
-// WebSocket bus" assertion below.
+// The gateway is schema-agnostic — it knows nothing about topic
+// schemas or which topics will exist. The test owns the schema via
+// `TelemetrySchema` generated from `proto/telemetry.proto` by
+// `protoc-gen-fletcher` and passes it explicitly to both subscribe
+// and publish. Topics are created implicitly on first subscribe; no
+// pre-declaration on the server side.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
@@ -34,7 +28,6 @@ import {
   serializeEnvelope,
   encodePositional,
 } from 'eiva-fletcher-gateway-client';
-import type { SchemaDescriptor, SubscribedResponse } from 'eiva-fletcher-gateway-client';
 import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -42,7 +35,6 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const TEST_PORT  = 19091;
 const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
 const TEST_TOPIC = 'telemetry';
-const CONFIG_PATH = resolve(here, '..', 'test-config.yml');
 
 function findGatewayBinary(): string {
   if (process.env.GATEWAY_BIN) {
@@ -62,13 +54,11 @@ function findGatewayBinary(): string {
   );
 }
 
-// Spawn the gateway exe and resolve once it prints "READY <port>".
 async function spawnGateway(): Promise<ChildProcess> {
   const bin = findGatewayBinary();
   const child = spawn(bin, [
     '--port', String(TEST_PORT),
     '--bind-address', '127.0.0.1',
-    '--config', CONFIG_PATH,
   ], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -123,56 +113,61 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------
-// AC: schema delivery — both SchemaDescriptor (schema) and Arrow IPC
-// (schemaIpc, base64) must be present in the subscribed response.
-// We bypass FletcherClient for this case and inspect the raw JSON.
+// Sanity check: the proto-generated TelemetrySchema is what the test
+// expects. Catches any drift between proto/telemetry.proto and the
+// hardcoded scenario values below before the more end-to-end tests
+// run.
 // ---------------------------------------------------------------------
-describe('subscribed response — schema delivery', () => {
-  it('carries both schema (SchemaDescriptor JSON) and schemaIpc (base64 Arrow IPC)',
+describe('generated TelemetrySchema', () => {
+  it('has the three expected fields with the right wire types', () => {
+    expect(TelemetrySchema.fields).toHaveLength(3);
+    expect(TelemetrySchema.fields[0].name).toBe('sensor_id');
+    expect(TelemetrySchema.fields[0].wireType).toBe(WireTypeId.INT32);
+    expect(TelemetrySchema.fields[1].name).toBe('temperature');
+    expect(TelemetrySchema.fields[1].wireType).toBe(WireTypeId.FLOAT64);
+    expect(TelemetrySchema.fields[2].name).toBe('label');
+    expect(TelemetrySchema.fields[2].wireType).toBe(WireTypeId.STRING);
+  });
+});
+
+// ---------------------------------------------------------------------
+// subscribed text response now carries routing only (subId + topic);
+// no schema, no schemaIpc. The gateway is schema-agnostic.
+// ---------------------------------------------------------------------
+describe('subscribed response — routing only', () => {
+  it('subscribed text frame contains subId + topic and nothing else',
      async () => {
     const ws = new WebSocket(TEST_URL);
     ws.binaryType = 'arraybuffer';
 
-    const response = await new Promise<SubscribedResponse>((res, rej) => {
+    const raw = await new Promise<Record<string, unknown>>((res, rej) => {
       ws.onopen = () => ws.send(buildSubscribe(TEST_TOPIC));
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
-          const parsed = parseTextResponse(ev.data);
-          if (parsed.type === 'subscribed') res(parsed);
-          else if (parsed.type === 'error') rej(new Error(parsed.message));
+          const j = JSON.parse(ev.data);
+          if (j.type === 'subscribed') res(j);
+          else if (j.type === 'error') rej(new Error(j.message));
         }
       };
       ws.onerror = () => rej(new Error('ws error'));
     });
 
-    expect(response.topic).toBe(TEST_TOPIC);
-    expect(response.subId).toBeTypeOf('bigint');
-
-    // SchemaDescriptor JSON path — matches test-config.yml.
-    expect(response.schema).toBeDefined();
-    expect(response.schema!.fields).toHaveLength(3);
-    expect(response.schema!.fields[0].name).toBe('sensor_id');
-    expect(response.schema!.fields[0].wireType).toBe(WireTypeId.INT32);
-    expect(response.schema!.fields[1].name).toBe('temperature');
-    expect(response.schema!.fields[1].wireType).toBe(WireTypeId.FLOAT64);
-    expect(response.schema!.fields[2].name).toBe('label');
-    expect(response.schema!.fields[2].wireType).toBe(WireTypeId.STRING);
-
-    // Arrow IPC bytes path.
-    expect(response.schemaIpc).toBeTypeOf('string');
-    expect(response.schemaIpc!.length).toBeGreaterThan(0);
-    const ipcBytes = Buffer.from(response.schemaIpc!, 'base64');
-    expect(ipcBytes.byteLength).toBeGreaterThan(0);
+    expect(raw.type).toBe('subscribed');
+    expect(raw.topic).toBe(TEST_TOPIC);
+    expect(typeof raw.subId).toBe('string');
+    // Absence assertions: schema-handling has moved fully to the
+    // client side.
+    expect(raw.schema).toBeUndefined();
+    expect(raw.schemaIpc).toBeUndefined();
 
     ws.close();
   });
 });
 
 // ---------------------------------------------------------------------
-// AC: client publish → server-side delivery → client receives. With
-// InProcessProvider's loopback routing, a single client subscribing
-// then publishing on the same topic is enough to prove the round-trip
-// across the WebSocket. Covers both directions of the protocol.
+// Client publish ↔ subscription round-trip using the generated
+// TelemetrySchema. Exercises both directions of the protocol with
+// the schema source-of-truth the client actually owns.
 // ---------------------------------------------------------------------
 describe('client publish ↔ subscription round-trip', () => {
   it('delivers multiple distinct published rows back via the subscription', async () => {
@@ -182,15 +177,12 @@ describe('client publish ↔ subscription round-trip', () => {
     interface Row { sensor_id: number; temperature: number; label: string }
     const received: Row[] = [];
 
-    const subId = await client.subscribe<Row>(TEST_TOPIC, (row) => {
-      received.push(row);
-    });
+    const subId = await client.subscribe<Row>(
+      TEST_TOPIC,
+      TelemetrySchema,
+      (row) => { received.push(row); },
+    );
     expect(subId).toBeTypeOf('bigint');
-
-    // Reuse the server-supplied schema for publishing.
-    const schema = (client as unknown as {
-      subscriptions: Map<bigint, { schema: SchemaDescriptor }>
-    }).subscriptions.get(subId)!.schema;
 
     const sent: Row[] = [
       { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
@@ -198,7 +190,7 @@ describe('client publish ↔ subscription round-trip', () => {
       { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
     ];
     for (const row of sent) {
-      await client.publish(TEST_TOPIC, schema, row);
+      await client.publish(TEST_TOPIC, TelemetrySchema, row);
     }
 
     const deadline = Date.now() + 5_000;
@@ -219,43 +211,29 @@ describe('client publish ↔ subscription round-trip', () => {
 });
 
 // ---------------------------------------------------------------------
-// Proto-generated SchemaDescriptor end-to-end. Verifies that
-// protoc-gen-fletcher + the WebSocket transport agree across the
-// whole stack: same proto fields → same SchemaDescriptor on both
-// sides → same bytes on the wire → same decoded values back. The
-// `protoc-gateway-client-ts` integration test proves byte-compat for
-// the codec in isolation; this proves the proto-generated artefact
-// also works against the live gateway.
+// The happy-path story end-to-end: a client builds its schema from
+// protoc-gen-fletcher → subscribes with that schema → publishes with
+// it → receives the row back through the gateway's loopback. Since
+// the gateway is schema-agnostic, this is the canonical way to use
+// the system. The "round-trip" test above stress-tests the path with
+// three samples; this one highlights the architecture in a single
+// minimal round-trip and is the place to look when reading the test
+// suite to understand how the pieces fit together.
 // ---------------------------------------------------------------------
 describe('protoc-gen-fletcher TS class over WebSocket', () => {
-  it('publishes via TelemetrySchema and receives the same row back', async () => {
+  it('subscribe + publish using TelemetrySchema work end-to-end', async () => {
     const client = new FletcherClient({ url: TEST_URL });
     await client.connect();
 
     interface Row { sensor_id: number; temperature: number; label: string }
     const received: Row[] = [];
 
-    const subId = await client.subscribe<Row>(TEST_TOPIC, (row) => {
-      received.push(row);
-    });
-
-    // The server-supplied schema (from test-config.yml) and the
-    // protoc-generated TelemetrySchema must describe the same fields
-    // in the same order — otherwise the publish would land bytes the
-    // server cannot interpret.
-    const serverSchema = (client as unknown as {
-      subscriptions: Map<bigint, { schema: SchemaDescriptor }>
-    }).subscriptions.get(subId)!.schema;
-    expect(TelemetrySchema.fields.map((f) => f.name)).toEqual(
-      serverSchema.fields.map((f) => f.name),
-    );
-    expect(TelemetrySchema.fields.map((f) => f.wireType)).toEqual(
-      serverSchema.fields.map((f) => f.wireType),
+    const subId = await client.subscribe<Row>(
+      TEST_TOPIC,
+      TelemetrySchema,
+      (row) => { received.push(row); },
     );
 
-    // Publish using the *proto-generated* schema, not the
-    // server-supplied one. Proves the generated descriptor produces
-    // bytes the gateway accepts and routes.
     const sent: Row = { sensor_id: 314, temperature: 42.0, label: 'from-protogen' };
     await client.publish(TEST_TOPIC, TelemetrySchema, sent);
 
@@ -278,8 +256,6 @@ describe('protoc-gen-fletcher TS class over WebSocket', () => {
 // AC: binary frame layouts are exactly what the protocol documents:
 //   server -> client:  [SUB_ID :8 LE][ENVELOPE :rest]
 //   client -> server:  [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE :rest]
-// We bypass the high-level client and inspect raw frame bytes on
-// both directions.
 // ---------------------------------------------------------------------
 describe('binary frame layouts', () => {
   it('server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]', async () => {
@@ -289,17 +265,16 @@ describe('binary frame layouts', () => {
     const { subId, rawBytes } = await new Promise<{ subId: bigint; rawBytes: Uint8Array }>(
       (res, rej) => {
         let capturedSubId: bigint | null = null;
-        let schemaForPublish: SchemaDescriptor | null = null;
         ws.onopen = () => ws.send(buildSubscribe(TEST_TOPIC));
         ws.onmessage = (ev) => {
           if (typeof ev.data === 'string') {
             const parsed = parseTextResponse(ev.data);
             if (parsed.type === 'subscribed') {
               capturedSubId = parsed.subId;
-              schemaForPublish = parsed.schema ?? null;
-              // Publish on the same socket to trigger a MESSAGE frame
-              // back to us via InProcessProvider's loopback.
-              const row = encodePositional(schemaForPublish!, {
+              // Publish on the same socket using TelemetrySchema —
+              // triggers the loopback delivery to our subscription
+              // and gives the test the MESSAGE frame to inspect.
+              const row = encodePositional(TelemetrySchema, {
                 sensor_id: 1, temperature: 1.0, label: 'frame-layout',
               });
               const env = serializeEnvelope({ row, attachments: new Map() });
@@ -316,7 +291,6 @@ describe('binary frame layouts', () => {
       },
     );
 
-    // Layout: first 8 bytes = sub_id LE.
     expect(rawBytes.byteLength).toBeGreaterThanOrEqual(8);
     const view = new DataView(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength);
     const wireSubId = view.getBigUint64(0, true);
@@ -342,16 +316,13 @@ describe('binary frame layouts', () => {
 
     const frame = buildPublish(topic, envelopeBytes);
 
-    // First two bytes: topic length in LE uint16.
     const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
     const topicLen = view.getUint16(0, true);
     expect(topicLen).toBe(topic.length);
 
-    // Bytes 2..2+topicLen: topic name as UTF-8.
     const decoded = new TextDecoder().decode(frame.slice(2, 2 + topicLen));
     expect(decoded).toBe(topic);
 
-    // Remaining bytes: envelope, byte-equal to the input.
     expect(frame.slice(2 + topicLen)).toEqual(envelopeBytes);
     expect(frame.byteLength).toBe(2 + topicLen + envelopeBytes.byteLength);
   });
