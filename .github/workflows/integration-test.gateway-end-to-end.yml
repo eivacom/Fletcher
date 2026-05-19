@@ -35,6 +35,7 @@ jobs:
           sparse-checkout: |
             core
             pubsub
+            protoc
             gateway
             gateway-client-ts
             integration-tests/gateway-end-to-end
