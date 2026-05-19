@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// End-to-end test that drives the real gateway (C++ WebSocket server)
-// against the real gateway-client-ts (TypeScript FletcherClient). The
-// server is the test_server binary built by CMake in this directory;
-// the test_server signals readiness on stdout, accepts "stop" on stdin,
-// and pre-creates two topics:
+// End-to-end test that drives the real `gateway` exe (C++ WebSocket
+// server) against the real gateway-client-ts (TypeScript
+// FletcherClient).
 //
-//   * "heartbeat" — the server publishes a synthetic row every
-//     `--heartbeat-ms` (default 100 ms). Subscribing exercises the
-//     publish-from-server path.
-//   * "echo"      — InProcessProvider routes Publish() back to the
-//     subscribed callback, so a single client that subscribes and
-//     then publishes verifies the client-publish path without a
-//     side channel.
+// The gateway is built from gateway/src/ via add_subdirectory() in
+// this directory's CMakeLists.txt. It is configured via
+// test-config.yml, which pre-creates a single "telemetry" topic
+// with the three-field schema {sensor_id : int32, temperature :
+// float64, label : utf8} — enough to exercise the null bitfield,
+// fixed-width, and variable-length encodings in one shot.
+//
+// The gateway exe is production-grade: no test-specific behaviour
+// is baked in. The client-publish ⇄ self-subscription round-trip in
+// InProcessProvider is what wires the "publishes from one client are
+// delivered to subscribers (including the same client) over the
+// WebSocket bus" assertion below.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
@@ -35,50 +38,48 @@ import type { SchemaDescriptor, SubscribedResponse } from 'eiva-fletcher-gateway
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
-// Fixed port — using a high number to minimise collision with system
-// services. If a developer runs two copies of this test in parallel
-// they'll need to override; CI runs one job per workflow so single-port
-// is fine.
-const TEST_PORT = 19091;
-const TEST_URL  = `ws://127.0.0.1:${TEST_PORT}`;
+const TEST_PORT  = 19091;
+const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
+const TEST_TOPIC = 'telemetry';
+const CONFIG_PATH = resolve(here, '..', 'test-config.yml');
 
-function findTestServerBinary(): string {
-  if (process.env.TEST_SERVER_BIN) {
-    return process.env.TEST_SERVER_BIN;
+function findGatewayBinary(): string {
+  if (process.env.GATEWAY_BIN) {
+    return process.env.GATEWAY_BIN;
   }
-  // The integration test's CMakeLists.txt pulls in gateway/ via
-  // add_subdirectory, so the `gateway-test-server` target ends up
-  // under build/Release/gateway_build/.
   const candidates = [
-    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway-test-server'),
-    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway-test-server.exe'),
-    resolve(here, '..', 'build', 'build', 'Release', 'gateway_build', 'gateway-test-server'),
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway'),
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway.exe'),
+    resolve(here, '..', 'build', 'build', 'Release', 'gateway_build', 'gateway'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
   throw new Error(
-    `gateway-test-server binary not found. Checked: ${candidates.join(', ')}. ` +
-    `Set TEST_SERVER_BIN to override.`,
+    `gateway binary not found. Checked: ${candidates.join(', ')}. ` +
+    `Set GATEWAY_BIN to override.`,
   );
 }
 
-// Spawn the C++ test_server and resolve once it prints "READY <port>".
-async function spawnServer(): Promise<ChildProcess> {
-  const bin = findTestServerBinary();
-  const child = spawn(bin, ['--port', String(TEST_PORT), '--heartbeat-ms', '50'], {
+// Spawn the gateway exe and resolve once it prints "READY <port>".
+async function spawnGateway(): Promise<ChildProcess> {
+  const bin = findGatewayBinary();
+  const child = spawn(bin, [
+    '--port', String(TEST_PORT),
+    '--bind-address', '127.0.0.1',
+    '--config', CONFIG_PATH,
+  ], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  // Forward stderr to the test console for visibility on failure.
   child.stderr?.on('data', (chunk) => {
-    process.stderr.write(`[test_server stderr] ${chunk.toString()}`);
+    process.stderr.write(`[gateway stderr] ${chunk.toString()}`);
   });
 
   return new Promise<ChildProcess>((resolveFn, rejectFn) => {
     const rl = createInterface({ input: child.stdout! });
     const timeout = setTimeout(() => {
-      rejectFn(new Error('test_server did not print READY within 10 s'));
+      rejectFn(new Error('gateway did not print READY within 10 s'));
     }, 10_000);
 
     rl.on('line', (line) => {
@@ -93,18 +94,17 @@ async function spawnServer(): Promise<ChildProcess> {
     });
     child.on('exit', (code) => {
       clearTimeout(timeout);
-      rejectFn(new Error(`test_server exited before READY (code=${code})`));
+      rejectFn(new Error(`gateway exited before READY (code=${code})`));
     });
   });
 }
 
-async function stopServer(child: ChildProcess): Promise<void> {
+async function stopGateway(child: ChildProcess): Promise<void> {
   return new Promise<void>((resolveFn) => {
     child.on('exit', () => resolveFn());
     child.stdin?.write('stop\n');
     child.stdin?.end();
     setTimeout(() => {
-      // Hard kill if the server hasn't honoured "stop" within 5 s.
       if (!child.killed) child.kill('SIGTERM');
       resolveFn();
     }, 5_000);
@@ -114,11 +114,11 @@ async function stopServer(child: ChildProcess): Promise<void> {
 let server: ChildProcess;
 
 beforeAll(async () => {
-  server = await spawnServer();
+  server = await spawnGateway();
 });
 
 afterAll(async () => {
-  if (server) await stopServer(server);
+  if (server) await stopGateway(server);
 });
 
 // ---------------------------------------------------------------------
@@ -133,7 +133,7 @@ describe('subscribed response — schema delivery', () => {
     ws.binaryType = 'arraybuffer';
 
     const response = await new Promise<SubscribedResponse>((res, rej) => {
-      ws.onopen = () => ws.send(buildSubscribe('heartbeat'));
+      ws.onopen = () => ws.send(buildSubscribe(TEST_TOPIC));
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
           const parsed = parseTextResponse(ev.data);
@@ -144,10 +144,10 @@ describe('subscribed response — schema delivery', () => {
       ws.onerror = () => rej(new Error('ws error'));
     });
 
-    expect(response.topic).toBe('heartbeat');
+    expect(response.topic).toBe(TEST_TOPIC);
     expect(response.subId).toBeTypeOf('bigint');
 
-    // SchemaDescriptor JSON path
+    // SchemaDescriptor JSON path — matches test-config.yml.
     expect(response.schema).toBeDefined();
     expect(response.schema!.fields).toHaveLength(3);
     expect(response.schema!.fields[0].name).toBe('sensor_id');
@@ -157,9 +157,7 @@ describe('subscribed response — schema delivery', () => {
     expect(response.schema!.fields[2].name).toBe('label');
     expect(response.schema!.fields[2].wireType).toBe(WireTypeId.STRING);
 
-    // Arrow IPC bytes path — base64 string, decodes to a non-empty
-    // byte buffer beginning with the Arrow IPC continuation marker
-    // (0xFFFFFFFF 0x.... for stream / 0x00000000 0x.... for legacy).
+    // Arrow IPC bytes path.
     expect(response.schemaIpc).toBeTypeOf('string');
     expect(response.schemaIpc!.length).toBeGreaterThan(0);
     const ipcBytes = Buffer.from(response.schemaIpc!, 'base64');
@@ -170,87 +168,49 @@ describe('subscribed response — schema delivery', () => {
 });
 
 // ---------------------------------------------------------------------
-// AC: full happy path — create_topic (server-side) -> subscribe ->
-// publish-from-server -> message delivery -> unsubscribe.
+// AC: client publish → server-side delivery → client receives. With
+// InProcessProvider's loopback routing, a single client subscribing
+// then publishing on the same topic is enough to prove the round-trip
+// across the WebSocket. Covers both directions of the protocol.
 // ---------------------------------------------------------------------
-describe('publish-from-server -> client delivery', () => {
-  it('subscribes via FletcherClient and receives at least one heartbeat row',
-     async () => {
+describe('client publish ↔ subscription round-trip', () => {
+  it('delivers multiple distinct published rows back via the subscription', async () => {
     const client = new FletcherClient({ url: TEST_URL });
     await client.connect();
 
     interface Row { sensor_id: number; temperature: number; label: string }
     const received: Row[] = [];
 
-    const subId = await client.subscribe<Row>('heartbeat', (row) => {
+    const subId = await client.subscribe<Row>(TEST_TOPIC, (row) => {
       received.push(row);
     });
     expect(subId).toBeTypeOf('bigint');
 
-    // Wait for at least three heartbeat rows. Heartbeat is 50 ms, so
-    // 1 s is generous; we cap the wait to keep the timeout honest.
+    // Reuse the server-supplied schema for publishing.
+    const schema = (client as unknown as {
+      subscriptions: Map<bigint, { schema: SchemaDescriptor }>
+    }).subscriptions.get(subId)!.schema;
+
+    const sent: Row[] = [
+      { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
+      { sensor_id: 42,  temperature: -7.125, label: 'second' },
+      { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
+    ];
+    for (const row of sent) {
+      await client.publish(TEST_TOPIC, schema, row);
+    }
+
     const deadline = Date.now() + 5_000;
-    while (received.length < 3 && Date.now() < deadline) {
-      await new Promise((res) => setTimeout(res, 50));
-    }
-
-    expect(received.length).toBeGreaterThanOrEqual(3);
-
-    // Verify each row matches the server's encoder rule
-    // (temperature = sensor_id * 1.5, label = "hb") so the assertion
-    // doesn't depend on which seq value the client happened to see
-    // first. seq monotonically increments per heartbeat — assert that
-    // too as a fan-out coherence check across the WebSocket.
-    for (let i = 0; i < received.length; ++i) {
-      expect(received[i].label).toBe('hb');
-      expect(received[i].temperature).toBeCloseTo(received[i].sensor_id * 1.5);
-      if (i > 0) {
-        expect(received[i].sensor_id).toBeGreaterThan(received[i - 1].sensor_id);
-      }
-    }
-
-    await client.unsubscribe(subId);
-    client.close();
-  });
-});
-
-// ---------------------------------------------------------------------
-// AC: reverse direction — client publish -> server-side delivery.
-// We subscribe to "echo" first, then publish to "echo", then assert
-// the same row comes back via the subscription callback (proves the
-// client publish reached the server's InProcessProvider, which routed
-// it to the registered callback that the gateway installed when we
-// subscribed).
-// ---------------------------------------------------------------------
-describe('client publish -> server delivery', () => {
-  it('round-trips a published row back via echo subscription', async () => {
-    const client = new FletcherClient({ url: TEST_URL });
-    await client.connect();
-
-    interface Row { sensor_id: number; temperature: number; label: string }
-    const received: Row[] = [];
-
-    const subId = await client.subscribe<Row>('echo', (row) => {
-      received.push(row);
-    });
-
-    // The subscribe call above returned with the schema embedded in
-    // the response. Reuse that schema to drive publish.
-    const schema = (client as unknown as { subscriptions: Map<bigint, { schema: SchemaDescriptor }> })
-      .subscriptions.get(subId)!.schema;
-
-    const sent = { sensor_id: 7, temperature: -1.25, label: 'from-ts' };
-    await client.publish('echo', schema, sent);
-
-    const deadline = Date.now() + 3_000;
-    while (received.length === 0 && Date.now() < deadline) {
+    while (received.length < sent.length && Date.now() < deadline) {
       await new Promise((res) => setTimeout(res, 20));
     }
 
-    expect(received).toHaveLength(1);
-    expect(received[0].sensor_id).toBe(sent.sensor_id);
-    expect(received[0].temperature).toBeCloseTo(sent.temperature);
-    expect(received[0].label).toBe(sent.label);
+    expect(received).toHaveLength(sent.length);
+    for (let i = 0; i < sent.length; ++i) {
+      expect(received[i].sensor_id).toBe(sent[i].sensor_id);
+      expect(received[i].temperature).toBeCloseTo(sent[i].temperature);
+      expect(received[i].label).toBe(sent[i].label);
+    }
 
     await client.unsubscribe(subId);
     client.close();
@@ -272,12 +232,21 @@ describe('binary frame layouts', () => {
     const { subId, rawBytes } = await new Promise<{ subId: bigint; rawBytes: Uint8Array }>(
       (res, rej) => {
         let capturedSubId: bigint | null = null;
-        ws.onopen = () => ws.send(buildSubscribe('heartbeat'));
+        let schemaForPublish: SchemaDescriptor | null = null;
+        ws.onopen = () => ws.send(buildSubscribe(TEST_TOPIC));
         ws.onmessage = (ev) => {
           if (typeof ev.data === 'string') {
             const parsed = parseTextResponse(ev.data);
             if (parsed.type === 'subscribed') {
               capturedSubId = parsed.subId;
+              schemaForPublish = parsed.schema ?? null;
+              // Publish on the same socket to trigger a MESSAGE frame
+              // back to us via InProcessProvider's loopback.
+              const row = encodePositional(schemaForPublish!, {
+                sensor_id: 1, temperature: 1.0, label: 'frame-layout',
+              });
+              const env = serializeEnvelope({ row, attachments: new Map() });
+              ws.send(buildPublish(TEST_TOPIC, env));
             } else if (parsed.type === 'error') {
               rej(new Error(parsed.message));
             }
@@ -290,14 +259,12 @@ describe('binary frame layouts', () => {
       },
     );
 
-    // Layout assertion: first 8 bytes are the sub_id, little-endian.
+    // Layout: first 8 bytes = sub_id LE.
     expect(rawBytes.byteLength).toBeGreaterThanOrEqual(8);
     const view = new DataView(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength);
     const wireSubId = view.getBigUint64(0, true);
     expect(wireSubId).toBe(subId);
 
-    // The envelope follows the 8-byte sub_id. parseBinaryMessage's
-    // slice should match a manual slice — proves no hidden padding.
     const parsed = parseBinaryMessage(rawBytes);
     expect(parsed.subId).toBe(subId);
     expect(parsed.envelope.byteLength).toBe(rawBytes.byteLength - 8);
@@ -307,10 +274,9 @@ describe('binary frame layouts', () => {
   });
 
   it('client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]', () => {
-    const topic = 'echo';
+    const topic = TEST_TOPIC;
     const envelopeBytes = serializeEnvelope({
       row: encodePositional(
-        // Mock minimal schema — INT32 field, no nulls.
         { fields: [{ name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false }] },
         { x: 42 },
       ),
@@ -328,7 +294,7 @@ describe('binary frame layouts', () => {
     const decoded = new TextDecoder().decode(frame.slice(2, 2 + topicLen));
     expect(decoded).toBe(topic);
 
-    // Remaining bytes: envelope, byte-equal to the input envelope.
+    // Remaining bytes: envelope, byte-equal to the input.
     expect(frame.slice(2 + topicLen)).toEqual(envelopeBytes);
     expect(frame.byteLength).toBe(2 + topicLen + envelopeBytes.byteLength);
   });

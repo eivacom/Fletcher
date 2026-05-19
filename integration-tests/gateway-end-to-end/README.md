@@ -4,40 +4,37 @@ End-to-end test that verifies the C++ `gateway/` (WebSocket server) and the Type
 
 ## What it covers
 
-Both directions of the protocol plus the binary frame layout that the wire-level documentation in `gateway/include/web_gateway/web_gateway.hpp` describes:
+Both directions of the protocol plus the binary frame layouts documented in `gateway/src/gateway.hpp`:
 
 | Test | What it verifies |
 |---|---|
-| `subscribed response — schema delivery` | The `subscribed` text frame carries both `schema` (SchemaDescriptor JSON, populated from the server-side Arrow schema) and `schemaIpc` (base64-encoded Arrow IPC bytes). Field types are checked against the wire-type IDs. |
-| `publish-from-server -> client delivery` | The server publishes a heartbeat row every 50 ms via its in-process provider. A `FletcherClient` subscribes and receives the rows. Decoded values match the server's encoder. |
-| `client publish -> server delivery` | The client subscribes to `"echo"` and then publishes a row to the same topic. Because the in-process provider routes `Publish()` to the registered callback, the row comes back over the WebSocket — proving the client→server path. |
-| `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Raw binary inspection at the WebSocket layer asserts the exact byte layout. |
+| `subscribed response — schema delivery` | The `subscribed` text frame carries both `schema` (SchemaDescriptor JSON, populated from the YAML config's schema) and `schemaIpc` (base64-encoded Arrow IPC bytes). Field types are checked against the wire-type IDs. |
+| `client publish ↔ subscription round-trip` | A single `FletcherClient` subscribes to `telemetry`, publishes three distinct rows, and expects all three to come back via the subscription. Exercises both directions of the WebSocket protocol in one test through the gateway's in-process loopback provider. |
+| `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Subscribes on a raw `WebSocket`, then publishes on the same socket to trigger a loopback delivery; asserts the binary frame layout byte-for-byte. |
 | `client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]` | Built with `buildPublish` from the TS protocol module; raw bytes asserted against the documented format. |
 
-## Server binary lives in `gateway/tests/`
+## Server binary
 
-The fixture exe is `gateway-test-server`, built from `gateway/tests/server_main.cpp` by `gateway/CMakeLists.txt`. This directory's `CMakeLists.txt` pulls the gateway build tree in via `add_subdirectory("../../gateway")`, so the same source produces the exe regardless of whether it is built via the integration test or directly from `gateway/`.
+The test spawns the production `gateway` exe built from `gateway/src/` by `gateway/CMakeLists.txt`. This directory's `CMakeLists.txt` pulls the gateway build tree in via `add_subdirectory("../../gateway")` so the same source compiles whether built via the integration test or directly from `gateway/`. The gateway has no public C++ API (no installed headers, no Conan recipe) — the only supported integration point is the WebSocket protocol.
 
 The vitest test spawns the resulting exe with `child_process.spawn`, waits for it to print `READY <port>` on stdout, drives the WebSocket protocol against it, and shuts it down by writing `stop\n` to its stdin (deterministic cross-platform shutdown — Windows SIGTERM semantics differ from POSIX).
 
-The exe takes three CLI args:
+The exe is configured via [`test-config.yml`](test-config.yml), which pre-creates a single `telemetry` topic with the three-field schema (`sensor_id : int32`, `temperature : float64`, `label : utf8`) — enough to exercise the null bitfield, fixed-width, and variable-length encodings in one shot. The CLI args used at spawn time:
 
-| Arg | Default | Purpose |
+| Arg | Value | Purpose |
 |---|---|---|
-| `--port N` | `9091` | TCP port on the bind address. |
-| `--heartbeat-ms N` | `100` | Milliseconds between heartbeat publishes (0 disables). |
-| `--bind-address ADDR` | `127.0.0.1` | Bind address; loopback by default. |
+| `--port N` | `19091` | TCP port; high number to minimise collision with system services. |
+| `--bind-address ADDR` | `127.0.0.1` | Loopback only. |
+| `--config FILE.yml` | `test-config.yml` | Topics + schemas to pre-create. |
 
-It pre-creates two topics (`heartbeat` for the server-publish path, `echo` for the client-publish path) with a three-field schema (`sensor_id : int32`, `temperature : float64`, `label : utf8`) — enough to exercise null bitfield, fixed-width, and variable-length encodings in one shot.
-
-`gateway-test-server` is **not** a production binary. `gateway/` has no real DDS-backed provider yet; once one exists this fixture should be replaced by a real `gateway` binary that takes a provider configuration. Tracked as gap.
+The exe is production-grade — no test-specific behaviour baked in. The client-publish ⇄ self-subscription round-trip via the gateway's in-process loopback provider is what wires the "publishes from a client are delivered to subscribers (including the same client) over the WebSocket bus" assertion. A real DDS-backed provider for `gateway` is tracked separately; once it exists this same exe will gain a `--provider TYPE` switch.
 
 ## How it runs in CI
 
 The workflow `.github/workflows/integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
 1. Builds the required Fletcher components (`core`, `pubsub`) via `conan create <component>/.` into the local Conan cache.
-2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/test_server`.
+2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
 3. Runs `npm ci` + `npm test` to execute the vitest suite against the binary.
 
 ## Running locally
@@ -78,12 +75,12 @@ npm ci
 npm test
 ```
 
-The vitest suite spawns `build/Release/test_server`, waits for `READY <port>`, runs the four scenarios, and tears the server down via `stop\n` on stdin.
+The vitest suite spawns `build/Release/gateway_build/gateway` with `--port`, `--bind-address`, and `--config test-config.yml`, waits for `READY <port>`, runs the four scenarios, and tears the gateway down via `stop\n` on stdin.
 
 ### Overriding the binary location
 
-The test resolves `test_server` from `build/Release/` by default. To point it at a different build, set:
+The test resolves the `gateway` binary from `build/Release/gateway_build/` by default. To point it at a different build, set:
 
 ```bash
-TEST_SERVER_BIN=/path/to/test_server npm test
+GATEWAY_BIN=/path/to/gateway npm test
 ```
