@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// End-to-end tests that exercise the protoc-gen-fletcher → schema
-// → WebSocket → gateway → loopback path. These tests intentionally
-// depend on a generated `TelemetrySchema` (produced from
-// `proto/telemetry.proto`) because they are the proof that the
-// proto-gen toolchain produces a SchemaDescriptor that actually
-// works against the live gateway.
+// End-to-end tests that exercise the protoc-gen-fletcher → schema →
+// WebSocket → gateway → loopback path. The proto generator emits two
+// artefacts per message:
+//
+//   * `ITelemetry` — the row interface (TypeScript type only).
+//   * `Telemetry`  — a `TypedSchema<ITelemetry>` runtime const that
+//                    bundles the SchemaDescriptor with a phantom
+//                    `ITelemetry` binding.
+//
+// Passing `Telemetry` to `FletcherClient.publish` / `subscribe` lets
+// TypeScript infer `ITelemetry` for the data argument / callback row
+// parameter — call sites never name the row type by hand.
 //
 // Protocol-level tests that do not touch protoc-gen live in
-// `end-to-end.test.ts` to keep that file's coupling to generated
-// artefacts to zero.
-//
-// The gateway is spawned on a different TCP port than
-// `end-to-end.test.ts` so both files can run in parallel without
+// `end-to-end.test.ts`. The gateway is spawned on a different TCP
+// port than that file so both files can run in parallel without
 // fighting for the socket.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -26,7 +29,8 @@ import {
   FletcherClient,
   WireTypeId,
 } from 'eiva-fletcher-gateway-client';
-import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
+import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
+import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -111,45 +115,47 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------
-// Sanity check: the generated TelemetrySchema is what the rest of the
-// file expects. Catches any drift between proto/telemetry.proto and
-// the assertions below before the end-to-end tests rely on it.
+// Sanity check on the generator output. Catches drift between
+// proto/telemetry.proto and the assertions below before the rest of
+// the suite leans on it.
 // ---------------------------------------------------------------------
-describe('generated TelemetrySchema', () => {
+describe('generated Telemetry', () => {
   it('has the three expected fields with the right wire types', () => {
-    expect(TelemetrySchema.fields).toHaveLength(3);
-    expect(TelemetrySchema.fields[0].name).toBe('sensor_id');
-    expect(TelemetrySchema.fields[0].wireType).toBe(WireTypeId.INT32);
-    expect(TelemetrySchema.fields[1].name).toBe('temperature');
-    expect(TelemetrySchema.fields[1].wireType).toBe(WireTypeId.FLOAT64);
-    expect(TelemetrySchema.fields[2].name).toBe('label');
-    expect(TelemetrySchema.fields[2].wireType).toBe(WireTypeId.STRING);
+    expect(Telemetry.fields).toHaveLength(3);
+    expect(Telemetry.fields[0].name).toBe('sensor_id');
+    expect(Telemetry.fields[0].wireType).toBe(WireTypeId.INT32);
+    expect(Telemetry.fields[1].name).toBe('temperature');
+    expect(Telemetry.fields[1].wireType).toBe(WireTypeId.FLOAT64);
+    expect(Telemetry.fields[2].name).toBe('label');
+    expect(Telemetry.fields[2].wireType).toBe(WireTypeId.STRING);
   });
 });
 
 // ---------------------------------------------------------------------
-// The canonical happy-path round-trip. A client builds its schema
-// from protoc-gen-fletcher → subscribes with that schema → publishes
-// with it → receives the row back through the gateway's loopback.
-// This is the "look here first" test for understanding how the
-// system is meant to be used.
+// Canonical typed happy-path. Pass `Telemetry` to subscribe and
+// publish; TypeScript infers `ITelemetry` for both the callback row
+// parameter and the data argument — no `<T>` generic, no `: Row`
+// interface declared at the call site. The data literal would fail
+// to type-check if it diverged from `ITelemetry`.
 // ---------------------------------------------------------------------
 describe('protoc-gen-fletcher TS class over WebSocket', () => {
-  it('subscribe + publish using TelemetrySchema work end-to-end', async () => {
+  it('subscribe + publish using Telemetry are typed end-to-end', async () => {
     const client = new FletcherClient({ url: TEST_URL });
     await client.connect();
 
-    interface Row { sensor_id: number; temperature: number; label: string }
-    const received: Row[] = [];
-
-    const subId = await client.subscribe<Row>(
+    const received: ITelemetry[] = [];
+    const subId = await client.subscribe(
       TEST_TOPIC,
-      TelemetrySchema,
-      (row) => { received.push(row); },
+      Telemetry,
+      (row) => { received.push(row); },  // row: ITelemetry inferred
     );
 
-    const sent: Row = { sensor_id: 314, temperature: 42.0, label: 'from-protogen' };
-    await client.publish(TEST_TOPIC, TelemetrySchema, sent);
+    const sent: ITelemetry = {
+      sensor_id: 314,
+      temperature: 42.0,
+      label: 'from-protogen',
+    };
+    await client.publish(TEST_TOPIC, Telemetry, sent);
 
     const deadline = Date.now() + 3_000;
     while (received.length === 0 && Date.now() < deadline) {
@@ -168,31 +174,29 @@ describe('protoc-gen-fletcher TS class over WebSocket', () => {
 
 // ---------------------------------------------------------------------
 // Stress-variant of the happy path: three samples with distinct
-// values across the three field types in TelemetrySchema. Verifies
-// that ordering and value-fidelity hold across multiple publishes
-// on the same subscription.
+// values across the three field types. Verifies ordering and value
+// fidelity across multiple publishes on the same subscription, still
+// fully typed via `Telemetry`.
 // ---------------------------------------------------------------------
 describe('client publish ↔ subscription round-trip', () => {
   it('delivers multiple distinct published rows back via the subscription', async () => {
     const client = new FletcherClient({ url: TEST_URL });
     await client.connect();
 
-    interface Row { sensor_id: number; temperature: number; label: string }
-    const received: Row[] = [];
-
-    const subId = await client.subscribe<Row>(
+    const received: ITelemetry[] = [];
+    const subId = await client.subscribe(
       TEST_TOPIC,
-      TelemetrySchema,
+      Telemetry,
       (row) => { received.push(row); },
     );
 
-    const sent: Row[] = [
+    const sent: ITelemetry[] = [
       { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
       { sensor_id: 42,  temperature: -7.125, label: 'second' },
       { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
     ];
     for (const row of sent) {
-      await client.publish(TEST_TOPIC, TelemetrySchema, row);
+      await client.publish(TEST_TOPIC, Telemetry, row);
     }
 
     const deadline = Date.now() + 5_000;
@@ -209,5 +213,59 @@ describe('client publish ↔ subscription round-trip', () => {
 
     await client.unsubscribe(subId);
     client.close();
+  });
+});
+
+// ---------------------------------------------------------------------
+// Gateway-supplied schema path: a publisher announces `Telemetry` via
+// createTopic, then a second connection subscribes WITHOUT supplying
+// a schema and still gets typed delivery — the gateway forwards the
+// schema to the subscriber in the subscribed response, and the
+// caller asserts the row type via the generic parameter on subscribe.
+//
+// Demonstrates the other half of the "schema is the client's
+// contract" story: clients can either bring their own schema (above)
+// or rely on a publisher to have announced one.
+// ---------------------------------------------------------------------
+describe('subscribe<ITelemetry> with gateway-supplied schema', () => {
+  it('subscriber gets typed delivery without passing a local schema',
+     async () => {
+    const PUB_TOPIC = 'telemetry/gateway-supplied';
+
+    const pub = new FletcherClient({ url: TEST_URL });
+    await pub.connect();
+    // Announce the schema once; gateway will forward it to future
+    // subscribers in their subscribed response.
+    await pub.createTopic(PUB_TOPIC, Telemetry);
+
+    const sub = new FletcherClient({ url: TEST_URL });
+    await sub.connect();
+
+    const received: ITelemetry[] = [];
+    const subId = await sub.subscribe<ITelemetry>(
+      PUB_TOPIC,
+      (row) => { received.push(row); },
+    );
+
+    const sent: ITelemetry = {
+      sensor_id: 1,
+      temperature: 99.9,
+      label: 'gateway-forwarded',
+    };
+    await pub.publish(PUB_TOPIC, Telemetry, sent);
+
+    const deadline = Date.now() + 3_000;
+    while (received.length === 0 && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 20));
+    }
+
+    expect(received).toHaveLength(1);
+    expect(received[0].sensor_id).toBe(sent.sensor_id);
+    expect(received[0].temperature).toBeCloseTo(sent.temperature);
+    expect(received[0].label).toBe(sent.label);
+
+    await sub.unsubscribe(subId);
+    sub.close();
+    pub.close();
   });
 });

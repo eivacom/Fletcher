@@ -23,7 +23,7 @@ import type { ServerResponse, SubscribedResponse, TopicsListResponse, ErrorRespo
 import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/object-backend.js';
 import { encodePositional } from './codec/positional-encoder.js';
-import type { SchemaDescriptor } from './codec/schema-descriptor.js';
+import type { SchemaDescriptor, TypedSchema } from './codec/schema-descriptor.js';
 import type { BackendType, FletcherClientOptions, MessageCallback } from './types.js';
 
 interface PendingRequest {
@@ -91,8 +91,8 @@ export class FletcherClient {
    *
    * Schema sources, in order of preference:
    *   1. Caller-supplied (`subscribe(topic, schema, callback)`).
-   *      Typed clients with a proto-gen `SchemaDescriptor` should use
-   *      this so the decoding contract is local and explicit.
+   *      Typed clients with a proto-gen `TypedSchema<T>` should use
+   *      this — the callback parameter is inferred as `T`.
    *   2. Gateway-supplied — falls back to the schema in the
    *      `subscribed` response when a publisher announced one via
    *      `createTopic(topic, schema)`. Useful for dynamic/debug
@@ -100,14 +100,33 @@ export class FletcherClient {
    *
    * Throws if no schema is available from either source.
    */
-  async subscribe<T = Record<string, unknown>>(
+  // Overload 1 — typed schema, callback inferred from phantom type.
+  subscribe<T>(
     topic: string,
-    callbackOrSchema: MessageCallback<T> | SchemaDescriptor,
-    maybeCallback?: MessageCallback<T>,
+    schema: TypedSchema<T>,
+    callback: (row: T, attachments: Map<string, Uint8Array>) => void,
+  ): Promise<bigint>;
+  // Overload 2 — untyped schema, callback gets Record<string, unknown>.
+  subscribe(
+    topic: string,
+    schema: SchemaDescriptor,
+    callback: MessageCallback,
+  ): Promise<bigint>;
+  // Overload 3 — schema from gateway, caller asserts row type via generic.
+  subscribe<T = Record<string, unknown>>(
+    topic: string,
+    callback: (row: T, attachments: Map<string, Uint8Array>) => void,
+  ): Promise<bigint>;
+  async subscribe<T>(
+    topic: string,
+    callbackOrSchema:
+      | ((row: T, attachments: Map<string, Uint8Array>) => void)
+      | SchemaDescriptor
+      | TypedSchema<T>,
+    maybeCallback?: (row: T, attachments: Map<string, Uint8Array>) => void,
   ): Promise<bigint> {
-    // Support both (topic, schema, cb) and (topic, cb) signatures.
     let schema: SchemaDescriptor | undefined;
-    let callback: MessageCallback<T>;
+    let callback: (row: T, attachments: Map<string, Uint8Array>) => void;
     if (typeof callbackOrSchema === 'function') {
       callback = callbackOrSchema;
     } else {
@@ -134,7 +153,7 @@ export class FletcherClient {
     if (!resolvedSchema) {
       throw new Error(
         `subscribe: no schema available for topic "${topic}". ` +
-        'Either pass a SchemaDescriptor or ensure the publisher created the topic with a schema.',
+        'Either pass a SchemaDescriptor / TypedSchema or ensure the publisher created the topic with a schema.',
       );
     }
 
@@ -157,7 +176,25 @@ export class FletcherClient {
     this.subscriptions.delete(subId);
   }
 
-  /** Publish a message to a topic. */
+  /**
+   * Publish a message to a topic.
+   *
+   * Pass a `TypedSchema<T>` (the proto-gen output) for full type
+   * inference on `data`, or a plain `SchemaDescriptor` if you've
+   * constructed the schema by hand.
+   */
+  publish<T>(
+    topic: string,
+    schema: TypedSchema<T>,
+    data: T,
+    attachments?: Map<string, Uint8Array>,
+  ): Promise<void>;
+  publish(
+    topic: string,
+    schema: SchemaDescriptor,
+    data: Record<string, unknown>,
+    attachments?: Map<string, Uint8Array>,
+  ): Promise<void>;
   async publish(
     topic: string,
     schema: SchemaDescriptor,

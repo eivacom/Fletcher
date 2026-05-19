@@ -9,7 +9,7 @@
 export { WireTypeId, scalarByteSize } from './wire-types.js';
 
 // Schema descriptors
-export type { SchemaDescriptor, FieldDescriptor } from './codec/schema-descriptor.js';
+export type { SchemaDescriptor, FieldDescriptor, TypedSchema } from './codec/schema-descriptor.js';
 
 // Codec
 export { encodePositional } from './codec/positional-encoder.js';
