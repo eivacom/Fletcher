@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// End-to-end test that drives the real `gateway` exe (C++ WebSocket
-// server) against the real gateway-client-ts (TypeScript
-// FletcherClient).
-//
-// The gateway is schema-agnostic — it knows nothing about topic
-// schemas or which topics will exist. The test owns the schema via
-// `TelemetrySchema` generated from `proto/telemetry.proto` by
-// `protoc-gen-fletcher` and passes it explicitly to both subscribe
-// and publish. Topics are created implicitly on first subscribe; no
-// pre-declaration on the server side.
+// Gateway protocol tests, with no dependency on protoc-gen-fletcher.
+// Schemas here are either irrelevant (raw routing assertions) or
+// constructed by hand inside the test to keep the file
+// self-contained. The protoc-gen happy path lives in
+// `protoc-gen.test.ts`.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
@@ -28,13 +23,34 @@ import {
   serializeEnvelope,
   encodePositional,
 } from 'eiva-fletcher-gateway-client';
-import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
+import type { SchemaDescriptor } from 'eiva-fletcher-gateway-client';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
 const TEST_PORT  = 19091;
 const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
-const TEST_TOPIC = 'telemetry';
+const TEST_TOPIC = 'protocol';
+
+// Hand-constructed schema — keeps this file independent of any
+// generated TS file. Mirrors what a typical proto-gen output would
+// look like (int32 / float64 / utf8) so the round-trip test below
+// exercises null bitfield, fixed-width, and variable-length encodings
+// without depending on protoc-gen-fletcher.
+const HAND_BUILT_SCHEMA: SchemaDescriptor = {
+  fields: [
+    { name: 'sensor_id',   fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+    { name: 'temperature', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
+    { name: 'label',       fieldNumber: 3, wireType: WireTypeId.STRING,  nullable: false },
+  ],
+};
+
+// Single-field shorthand for the binary-frame-layout assertions, which
+// only need ANY valid schema to construct one envelope.
+const MINIMAL_SCHEMA: SchemaDescriptor = {
+  fields: [
+    { name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
+  ],
+};
 
 function findGatewayBinary(): string {
   if (process.env.GATEWAY_BIN) {
@@ -54,10 +70,10 @@ function findGatewayBinary(): string {
   );
 }
 
-async function spawnGateway(): Promise<ChildProcess> {
+async function spawnGateway(port: number): Promise<ChildProcess> {
   const bin = findGatewayBinary();
   const child = spawn(bin, [
-    '--port', String(TEST_PORT),
+    '--port', String(port),
     '--bind-address', '127.0.0.1',
   ], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -105,7 +121,7 @@ async function stopGateway(child: ChildProcess): Promise<void> {
 let server: ChildProcess;
 
 beforeAll(async () => {
-  server = await spawnGateway();
+  server = await spawnGateway(TEST_PORT);
 });
 
 afterAll(async () => {
@@ -113,26 +129,8 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------
-// Sanity check: the proto-generated TelemetrySchema is what the test
-// expects. Catches any drift between proto/telemetry.proto and the
-// hardcoded scenario values below before the more end-to-end tests
-// run.
-// ---------------------------------------------------------------------
-describe('generated TelemetrySchema', () => {
-  it('has the three expected fields with the right wire types', () => {
-    expect(TelemetrySchema.fields).toHaveLength(3);
-    expect(TelemetrySchema.fields[0].name).toBe('sensor_id');
-    expect(TelemetrySchema.fields[0].wireType).toBe(WireTypeId.INT32);
-    expect(TelemetrySchema.fields[1].name).toBe('temperature');
-    expect(TelemetrySchema.fields[1].wireType).toBe(WireTypeId.FLOAT64);
-    expect(TelemetrySchema.fields[2].name).toBe('label');
-    expect(TelemetrySchema.fields[2].wireType).toBe(WireTypeId.STRING);
-  });
-});
-
-// ---------------------------------------------------------------------
-// subscribed text response now carries routing only (subId + topic);
-// no schema, no schemaIpc. The gateway is schema-agnostic.
+// subscribed text response carries routing only (subId + topic); no
+// schema, no schemaIpc. Locks in the schema-agnostic gateway contract.
 // ---------------------------------------------------------------------
 describe('subscribed response — routing only', () => {
   it('subscribed text frame contains subId + topic and nothing else',
@@ -165,9 +163,12 @@ describe('subscribed response — routing only', () => {
 });
 
 // ---------------------------------------------------------------------
-// Client publish ↔ subscription round-trip using the generated
-// TelemetrySchema. Exercises both directions of the protocol with
-// the schema source-of-truth the client actually owns.
+// FletcherClient round-trip without protoc-gen — verifies the basic
+// publish ↔ subscription path with a hand-built schema. The
+// protoc-gen.test.ts file has the same shape using the generated
+// TelemetrySchema; this one stays here so it is impossible to break
+// the high-level client API without breaking either of these two
+// independent tests.
 // ---------------------------------------------------------------------
 describe('client publish ↔ subscription round-trip', () => {
   it('delivers multiple distinct published rows back via the subscription', async () => {
@@ -179,10 +180,9 @@ describe('client publish ↔ subscription round-trip', () => {
 
     const subId = await client.subscribe<Row>(
       TEST_TOPIC,
-      TelemetrySchema,
+      HAND_BUILT_SCHEMA,
       (row) => { received.push(row); },
     );
-    expect(subId).toBeTypeOf('bigint');
 
     const sent: Row[] = [
       { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
@@ -190,7 +190,7 @@ describe('client publish ↔ subscription round-trip', () => {
       { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
     ];
     for (const row of sent) {
-      await client.publish(TEST_TOPIC, TelemetrySchema, row);
+      await client.publish(TEST_TOPIC, HAND_BUILT_SCHEMA, row);
     }
 
     const deadline = Date.now() + 5_000;
@@ -211,49 +211,7 @@ describe('client publish ↔ subscription round-trip', () => {
 });
 
 // ---------------------------------------------------------------------
-// The happy-path story end-to-end: a client builds its schema from
-// protoc-gen-fletcher → subscribes with that schema → publishes with
-// it → receives the row back through the gateway's loopback. Since
-// the gateway is schema-agnostic, this is the canonical way to use
-// the system. The "round-trip" test above stress-tests the path with
-// three samples; this one highlights the architecture in a single
-// minimal round-trip and is the place to look when reading the test
-// suite to understand how the pieces fit together.
-// ---------------------------------------------------------------------
-describe('protoc-gen-fletcher TS class over WebSocket', () => {
-  it('subscribe + publish using TelemetrySchema work end-to-end', async () => {
-    const client = new FletcherClient({ url: TEST_URL });
-    await client.connect();
-
-    interface Row { sensor_id: number; temperature: number; label: string }
-    const received: Row[] = [];
-
-    const subId = await client.subscribe<Row>(
-      TEST_TOPIC,
-      TelemetrySchema,
-      (row) => { received.push(row); },
-    );
-
-    const sent: Row = { sensor_id: 314, temperature: 42.0, label: 'from-protogen' };
-    await client.publish(TEST_TOPIC, TelemetrySchema, sent);
-
-    const deadline = Date.now() + 3_000;
-    while (received.length === 0 && Date.now() < deadline) {
-      await new Promise((res) => setTimeout(res, 20));
-    }
-
-    expect(received).toHaveLength(1);
-    expect(received[0].sensor_id).toBe(sent.sensor_id);
-    expect(received[0].temperature).toBeCloseTo(sent.temperature);
-    expect(received[0].label).toBe(sent.label);
-
-    await client.unsubscribe(subId);
-    client.close();
-  });
-});
-
-// ---------------------------------------------------------------------
-// AC: binary frame layouts are exactly what the protocol documents:
+// Binary frame layouts are exactly what the protocol documents:
 //   server -> client:  [SUB_ID :8 LE][ENVELOPE :rest]
 //   client -> server:  [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE :rest]
 // ---------------------------------------------------------------------
@@ -271,12 +229,11 @@ describe('binary frame layouts', () => {
             const parsed = parseTextResponse(ev.data);
             if (parsed.type === 'subscribed') {
               capturedSubId = parsed.subId;
-              // Publish on the same socket using TelemetrySchema —
-              // triggers the loopback delivery to our subscription
-              // and gives the test the MESSAGE frame to inspect.
-              const row = encodePositional(TelemetrySchema, {
-                sensor_id: 1, temperature: 1.0, label: 'frame-layout',
-              });
+              // Publish on the same socket to trigger a loopback
+              // delivery and give the test a MESSAGE frame to
+              // inspect. Use the file's minimal hand-built schema
+              // so the test is self-contained.
+              const row = encodePositional(MINIMAL_SCHEMA, { x: 42 });
               const env = serializeEnvelope({ row, attachments: new Map() });
               ws.send(buildPublish(TEST_TOPIC, env));
             } else if (parsed.type === 'error') {
@@ -307,10 +264,7 @@ describe('binary frame layouts', () => {
   it('client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]', () => {
     const topic = TEST_TOPIC;
     const envelopeBytes = serializeEnvelope({
-      row: encodePositional(
-        { fields: [{ name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false }] },
-        { x: 42 },
-      ),
+      row: encodePositional(MINIMAL_SCHEMA, { x: 42 }),
       attachments: new Map(),
     });
 

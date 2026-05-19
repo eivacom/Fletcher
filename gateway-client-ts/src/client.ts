@@ -69,10 +69,16 @@ export class FletcherClient {
     await this.connectWs();
   }
 
-  /** Create a topic on the server. */
-  async createTopic(topic: string): Promise<void> {
+  /**
+   * Create a topic on the server. Optionally announce a schema for
+   * the topic — gateway will forward it to future subscribers in
+   * their `subscribed` response. Pure byte-router publishers can
+   * omit the schema and let subscribers bring their own (e.g. from
+   * protoc-gen-fletcher).
+   */
+  async createTopic(topic: string, schema?: SchemaDescriptor): Promise<void> {
     const resp = await this.sendAndWait(
-      buildCreateTopic(topic),
+      buildCreateTopic(topic, schema),
       'topic_created',
     );
     if (resp.type === 'error') {
@@ -83,16 +89,38 @@ export class FletcherClient {
   /**
    * Subscribe to a topic.  Returns the subscription ID.
    *
-   * The caller must always supply the schema — the gateway is
-   * schema-agnostic and does not return schemas in its subscribed
-   * response. Schemas are the client's contract, typically generated
-   * from a `.proto` by `protoc-gen-fletcher`.
+   * Schema sources, in order of preference:
+   *   1. Caller-supplied (`subscribe(topic, schema, callback)`).
+   *      Typed clients with a proto-gen `SchemaDescriptor` should use
+   *      this so the decoding contract is local and explicit.
+   *   2. Gateway-supplied — falls back to the schema in the
+   *      `subscribed` response when a publisher announced one via
+   *      `createTopic(topic, schema)`. Useful for dynamic/debug
+   *      clients that don't have proto-gen output.
+   *
+   * Throws if no schema is available from either source.
    */
   async subscribe<T = Record<string, unknown>>(
     topic: string,
-    schema: SchemaDescriptor,
-    callback: MessageCallback<T>,
+    callbackOrSchema: MessageCallback<T> | SchemaDescriptor,
+    maybeCallback?: MessageCallback<T>,
   ): Promise<bigint> {
+    // Support both (topic, schema, cb) and (topic, cb) signatures.
+    let schema: SchemaDescriptor | undefined;
+    let callback: MessageCallback<T>;
+    if (typeof callbackOrSchema === 'function') {
+      callback = callbackOrSchema;
+    } else {
+      schema = callbackOrSchema;
+      if (typeof maybeCallback !== 'function') {
+        throw new Error(
+          'subscribe: callback is required when providing a schema. ' +
+          'Use subscribe(topic, callback) or subscribe(topic, schema, callback).',
+        );
+      }
+      callback = maybeCallback;
+    }
+
     const resp = await this.sendAndWait(
       buildSubscribe(topic),
       'subscribed',
@@ -102,8 +130,16 @@ export class FletcherClient {
     }
     const sub = resp as SubscribedResponse;
 
+    const resolvedSchema = schema ?? sub.schema;
+    if (!resolvedSchema) {
+      throw new Error(
+        `subscribe: no schema available for topic "${topic}". ` +
+        'Either pass a SchemaDescriptor or ensure the publisher created the topic with a schema.',
+      );
+    }
+
     this.subscriptions.set(sub.subId, {
-      schema,
+      schema: resolvedSchema,
       callback: callback as MessageCallback,
     });
     return sub.subId;

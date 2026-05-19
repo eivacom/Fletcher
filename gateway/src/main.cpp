@@ -53,15 +53,23 @@ namespace {
 // ─────────────────────────────────────────────────────────────────────
 // InProcessProvider — the only provider implementation gateway ships
 // with right now. Topics are created on first subscribe or publish so
-// no pre-registration is needed; the gateway never sees schema state.
+// no pre-registration is needed.
+//
+// The provider caches the schema a publisher announced via
+// CreateTopic and hands it back to subscribers via SubscriptionResult.
+// Gateway forwards that schema to its WebSocket clients on subscribe,
+// but never inspects or validates it — pure passthrough.
 // ─────────────────────────────────────────────────────────────────────
 class InProcessProvider : public fletcher::PubSub {
  public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema /*schema*/,
+                     fletcher::OwnedSchema schema,
                      std::any /*config*/) override {
         std::lock_guard lock(mu_);
-        topics_.try_emplace(Join(segments));
+        auto& slot = topics_[Join(segments)];
+        if (schema) {
+            slot.schema = fletcher::OwnedSchema::DeepCopy(schema.get());
+        }
     }
 
     void Publish(const std::vector<std::string>& segments,
@@ -74,11 +82,8 @@ class InProcessProvider : public fletcher::PubSub {
         SubscribeCallback cb;
         {
             std::lock_guard lock(mu_);
-            // Auto-create the topic slot if it does not exist yet —
-            // the gateway is supposed to route bytes regardless of
-            // whether a prior CreateTopic call ran.
             auto [it, _] = topics_.try_emplace(Join(segments));
-            cb = it->second;
+            cb = it->second.callback;
         }
         if (cb) {
             cb(buf.data(), buf.size(), nullptr, attachments);
@@ -90,21 +95,30 @@ class InProcessProvider : public fletcher::PubSub {
         SubscribeCallback callback,
         std::any /*config*/) override {
         std::lock_guard lock(mu_);
-        topics_[Join(segments)] = std::move(callback);
-        return {};
+        auto& slot = topics_[Join(segments)];
+        slot.callback = std::move(callback);
+        fletcher::SubscriptionResult result;
+        if (slot.schema) {
+            result.schema = fletcher::OwnedSchema::DeepCopy(slot.schema.get());
+        }
+        return result;
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
         std::lock_guard lock(mu_);
         auto it = topics_.find(Join(segments));
         if (it != topics_.end()) {
-            it->second = nullptr;
+            it->second.callback = nullptr;
         }
     }
 
  private:
+    struct TopicState {
+        SubscribeCallback callback;
+        fletcher::OwnedSchema schema;
+    };
     std::mutex mu_;
-    std::unordered_map<std::string, SubscribeCallback> topics_;
+    std::unordered_map<std::string, TopicState> topics_;
 
     static std::string Join(const std::vector<std::string>& segs) {
         std::string out;

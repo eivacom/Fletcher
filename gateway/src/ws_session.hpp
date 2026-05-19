@@ -6,6 +6,8 @@
 
 #include <pubsub/driver.hpp>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
@@ -30,10 +32,16 @@ namespace ws    = beast::websocket;
 // Text frames (JSON) — control messages:
 //
 // Client → Server:
-//   { "action": "create_topic", "topic": "<topic>" }
+//   { "action": "create_topic", "topic": "<topic>",
+//                               "schema"?: { "fields": [...] } }
 //   { "action": "subscribe",    "topic": "<topic>" }
 //   { "action": "unsubscribe",  "subId": "<uint64>" }
 //   { "action": "list_topics" }
+//
+// `create_topic`'s schema is optional. Publishers may attach a
+// SchemaDescriptor for the gateway to forward to subscribers in
+// their `subscribed` response; gateway never generates schemas
+// itself, only passes through what a publisher announced.
 //
 // Server → Client:
 //   { "type": "topic_created" }
@@ -81,7 +89,7 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     void HandleBinaryFrame(const uint8_t* data, size_t len);
 
     // Action handlers.
-    void OnCreateTopic(const std::string& topic);
+    void OnCreateTopic(const nlohmann::json& msg);
     void OnSubscribe(const std::string& topic);
     void OnUnsubscribe(uint64_t sub_id);
     void OnPublish(const uint8_t* data, size_t len);
