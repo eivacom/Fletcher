@@ -27,12 +27,16 @@ on:
 # Exclusions follow a strict denylist — everything tracked is checked
 # unless it matches one of:
 #
-#   * Vendored / build paths — code we don't own or generated artifacts.
+#   * Vendored code we don't own (pubsub/third_party/).
 #   * License / author docs (LICENSE, AUTHORS) — they ARE the headers.
 #   * File types with no comment syntax (.json) — physically cannot
 #     embed a header line.
 #   * .md (project docs) and .gitignore/.gitattributes (small config
 #     files) — we deliberately don't put headers on these.
+#
+# Build / generated paths (build/, dist/, node_modules/, out/) are not
+# listed: they are gitignored, so `git ls-files` never sees them. A
+# committed build artifact will (correctly) fail the check.
 
 jobs:
   check:
@@ -49,7 +53,6 @@ jobs:
           mapfile -t files < <(
             git ls-files \
               | grep -v -E '^pubsub/third_party/' \
-              | grep -v -E '(^|/)(build|dist|node_modules|out)/' \
               | grep -v -E '^(LICENSE|AUTHORS)$' \
               | grep -v -E '^\.gitignore$|^\.gitattributes$' \
               | grep -v -E '\.(md|json)$' \
