@@ -211,6 +211,54 @@ describe('client publish ↔ subscription round-trip', () => {
 });
 
 // ---------------------------------------------------------------------
+// Gateway-supplied schema path. A publisher announces a schema via
+// `createTopic`; the subscriber calls `subscribe(topic, cb)` with no
+// local schema and relies on the gateway to hand it back in the
+// `subscribed` response so the row payload can be decoded. Proves
+// the schema-passthrough end-to-end without depending on
+// protoc-gen-fletcher.
+// ---------------------------------------------------------------------
+describe('subscriber gets schema from gateway', () => {
+  it('subscribes without a local schema after publisher announces one',
+     async () => {
+    const PUB_TOPIC = 'protocol/gateway-supplied';
+
+    const pub = new FletcherClient({ url: TEST_URL });
+    await pub.connect();
+    // Publisher announces the schema. Gateway will forward it
+    // verbatim to future subscribers in their subscribed response.
+    await pub.createTopic(PUB_TOPIC, HAND_BUILT_SCHEMA);
+
+    const sub = new FletcherClient({ url: TEST_URL });
+    await sub.connect();
+
+    interface Row { sensor_id: number; temperature: number; label: string }
+    const received: Row[] = [];
+    const subId = await sub.subscribe<Row>(
+      PUB_TOPIC,
+      (row) => { received.push(row); },  // no schema arg — gateway provides
+    );
+
+    const sent: Row = { sensor_id: 17, temperature: 3.14, label: 'gateway-fwd' };
+    await pub.publish(PUB_TOPIC, HAND_BUILT_SCHEMA, sent);
+
+    const deadline = Date.now() + 3_000;
+    while (received.length === 0 && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 20));
+    }
+
+    expect(received).toHaveLength(1);
+    expect(received[0].sensor_id).toBe(sent.sensor_id);
+    expect(received[0].temperature).toBeCloseTo(sent.temperature);
+    expect(received[0].label).toBe(sent.label);
+
+    await sub.unsubscribe(subId);
+    sub.close();
+    pub.close();
+  });
+});
+
+// ---------------------------------------------------------------------
 // Binary frame layouts are exactly what the protocol documents:
 //   server -> client:  [SUB_ID :8 LE][ENVELOPE :rest]
 //   client -> server:  [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE :rest]
