@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Test fixture for the gateway end-to-end integration test.
+// gateway-test-server — a runnable exe that wraps WebGateway with an
+// InProcessProvider, used for end-to-end and ad-hoc testing of the
+// Fletcher WebSocket protocol. Not a production binary: gateway does
+// not have a real DDS-backed provider yet; once one exists this fixture
+// should be replaced by a real `gateway` binary that accepts a
+// provider configuration.
 //
-// Brings up a WebGateway on a CLI-given port, backed by an
-// InProcessProvider that mirrors the pattern in gateway/examples/
-// gateway_main.cpp. Pre-creates two topics:
+// CLI:
+//   --port N              TCP port to bind on 127.0.0.1 (default 9091)
+//   --heartbeat-ms N      milliseconds between heartbeat publishes
+//                         (default 100; set to 0 to disable)
+//   --bind-address ADDR   bind address (default 127.0.0.1; tests run
+//                         on loopback, but accepting an override keeps
+//                         the door open for container runs)
 //
-//   * "heartbeat" — the server periodically publishes a synthetic row
-//     to this topic so the vitest test can verify the
-//     publish-from-server -> client-delivery path.
-//   * "echo"      — the test client publishes to this topic. Because
-//     the InProcessProvider routes Publish() to the registered
-//     subscriber callback, any sample the client publishes is
-//     delivered back to the same client on a subscription it took
-//     out beforehand. That gives us the client-publish ->
-//     server-delivery path without needing a side channel.
-//
-// Once the gateway is accepting connections the server prints
-//   READY <port>
-// on stdout so the test can synchronise without polling the port.
-// It then reads stdin and exits cleanly on "stop" — gives the
-// test deterministic shutdown without relying on SIGTERM ordering
-// (important on Windows where SIGTERM semantics differ).
+// Runtime behaviour:
+//   * Pre-creates two topics with a three-field schema
+//     {sensor_id : int32, temperature : float64, label : utf8}:
+//       - "heartbeat" — server publishes a synthetic row every
+//         --heartbeat-ms; lets a subscribed client verify the
+//         publish-from-server path.
+//       - "echo" — InProcessProvider routes Publish() back to the
+//         registered subscriber callback, so a client that subscribes
+//         and then publishes proves the client-publish path without a
+//         side channel.
+//   * Prints "READY <port>" on stdout once the gateway is accepting
+//     connections; test runners synchronise on that line rather than
+//     polling the port.
+//   * Reads stdin and exits cleanly on the literal line "stop". Gives
+//     test runners deterministic shutdown across platforms (Windows
+//     SIGTERM semantics differ from POSIX).
 
 #include <web_gateway/web_gateway.hpp>
 #include <pubsub/driver.hpp>
@@ -34,8 +43,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -48,8 +57,9 @@
 namespace {
 
 // ─────────────────────────────────────────────────────────────────────
-// InProcessProvider — same pattern as gateway/examples/gateway_main.cpp.
-// Single callback per topic; Publish() invokes it synchronously.
+// InProcessProvider — single callback per topic, Publish() invokes
+// it synchronously. Mirrors the contract documented in
+// pubsub/include/pubsub/pubsub.hpp.
 // ─────────────────────────────────────────────────────────────────────
 class InProcessProvider : public fletcher::PubSub {
  public:
@@ -114,10 +124,6 @@ class InProcessProvider : public fletcher::PubSub {
     }
 };
 
-// ─────────────────────────────────────────────────────────────────────
-// Build the {sensor_id:int32, temperature:float64, label:utf8} schema
-// that both heartbeat and echo topics share.
-// ─────────────────────────────────────────────────────────────────────
 fletcher::OwnedSchema BuildSensorSchema() {
     fletcher::OwnedSchema schema;
     ArrowSchemaInit(schema.get());
@@ -131,9 +137,6 @@ fletcher::OwnedSchema BuildSensorSchema() {
     return schema;
 }
 
-// Encode a single sensor row into the positional wire format used by
-// the codec on both sides: [null_bitfield :1][int32 :4][float64 :8]
-// [utf8_len :4][utf8 :N].
 void EncodeSensorRow(fletcher::WriteBuffer& buf,
                      int32_t sensor_id,
                      double temperature,
@@ -146,8 +149,9 @@ void EncodeSensorRow(fletcher::WriteBuffer& buf,
 }
 
 struct Args {
-    uint16_t port = 9091;
-    int heartbeat_ms = 100;
+    std::string bind_address = "127.0.0.1";
+    uint16_t    port = 9091;
+    int         heartbeat_ms = 100;
 };
 
 Args ParseArgs(int argc, char* argv[]) {
@@ -158,6 +162,8 @@ Args ParseArgs(int argc, char* argv[]) {
             a.port = static_cast<uint16_t>(std::stoi(argv[++i]));
         } else if (arg == "--heartbeat-ms" && i + 1 < argc) {
             a.heartbeat_ms = std::stoi(argv[++i]);
+        } else if (arg == "--bind-address" && i + 1 < argc) {
+            a.bind_address = argv[++i];
         }
     }
     return a;
@@ -171,42 +177,39 @@ int main(int argc, char* argv[]) {
     auto provider = std::make_shared<InProcessProvider>();
     auto driver = std::make_shared<fletcher::Driver>(provider);
 
-    // Pre-create both topics with the same schema so the client can
-    // subscribe to either without supplying its own SchemaDescriptor.
     driver->CreateTopic({"heartbeat"}, BuildSensorSchema());
     driver->CreateTopic({"echo"},      BuildSensorSchema());
 
     fletcher::WebGatewayOptions opts;
-    opts.address = "127.0.0.1";
+    opts.address = args.bind_address;
     opts.port    = args.port;
 
     fletcher::WebGateway gw(driver, opts);
     gw.Start();
 
-    // Synchronisation signal to the test runner.
     std::printf("READY %u\n", args.port);
     std::fflush(stdout);
 
     std::atomic<bool> running{true};
-    std::thread heartbeat([&] {
-        int32_t seq = 0;
-        while (running.load(std::memory_order_relaxed)) {
-            driver->Publish({"heartbeat"},
-                [seq](fletcher::WriteBuffer& buf) {
-                    EncodeSensorRow(buf,
-                                    seq,
-                                    static_cast<double>(seq) * 1.5,
-                                    "hb");
-                });
-            seq++;
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(args.heartbeat_ms));
-        }
-    });
+    std::thread heartbeat;
+    if (args.heartbeat_ms > 0) {
+        heartbeat = std::thread([&] {
+            int32_t seq = 0;
+            while (running.load(std::memory_order_relaxed)) {
+                driver->Publish({"heartbeat"},
+                    [seq](fletcher::WriteBuffer& buf) {
+                        EncodeSensorRow(buf,
+                                        seq,
+                                        static_cast<double>(seq) * 1.5,
+                                        "hb");
+                    });
+                seq++;
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(args.heartbeat_ms));
+            }
+        });
+    }
 
-    // Wait for the test runner to ask us to stop. Reading stdin gives
-    // deterministic shutdown across platforms (Windows SIGTERM is not
-    // a clean cooperative-cancel mechanism).
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line == "stop") {
@@ -215,7 +218,9 @@ int main(int argc, char* argv[]) {
     }
 
     running.store(false, std::memory_order_relaxed);
-    heartbeat.join();
+    if (heartbeat.joinable()) {
+        heartbeat.join();
+    }
     gw.Stop();
     return 0;
 }

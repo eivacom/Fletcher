@@ -14,14 +14,23 @@ Both directions of the protocol plus the binary frame layout that the wire-level
 | `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Raw binary inspection at the WebSocket layer asserts the exact byte layout. |
 | `client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]` | Built with `buildPublish` from the TS protocol module; raw bytes asserted against the documented format. |
 
-## Self-contained: server is built and managed by the test
+## Server binary lives in `gateway/tests/`
 
-The C++ test fixture lives in `src/test_server.cpp`. CMake compiles it together with the `gateway/` sources (inline, since `gateway/` has no Conan package) into a single `test_server` binary. The vitest test spawns this binary with `child_process.spawn`, waits for it to print `READY <port>` on stdout, then drives the WebSocket protocol against it. Shutdown is cooperative: the test writes `stop\n` to the server's stdin and joins on exit.
+The fixture exe is `gateway-test-server`, built from `gateway/tests/server_main.cpp` by `gateway/CMakeLists.txt`. This directory's `CMakeLists.txt` pulls the gateway build tree in via `add_subdirectory("../../gateway")`, so the same source produces the exe regardless of whether it is built via the integration test or directly from `gateway/`.
 
-Why a custom fixture rather than `gateway_example`:
-- The fixture takes `--port` and `--heartbeat-ms` on the command line so the test can choose a free port and a fast heartbeat cadence.
-- It pre-creates two topics (`heartbeat` for the server-publish path, `echo` for the client-publish path) with a three-field schema (`sensor_id : int32`, `temperature : float64`, `label : utf8`) — enough to exercise null bitfield, fixed-width, and variable-length encodings in one shot.
-- It accepts `stop` on stdin for deterministic shutdown on every platform (Windows SIGTERM semantics differ from POSIX).
+The vitest test spawns the resulting exe with `child_process.spawn`, waits for it to print `READY <port>` on stdout, drives the WebSocket protocol against it, and shuts it down by writing `stop\n` to its stdin (deterministic cross-platform shutdown — Windows SIGTERM semantics differ from POSIX).
+
+The exe takes three CLI args:
+
+| Arg | Default | Purpose |
+|---|---|---|
+| `--port N` | `9091` | TCP port on the bind address. |
+| `--heartbeat-ms N` | `100` | Milliseconds between heartbeat publishes (0 disables). |
+| `--bind-address ADDR` | `127.0.0.1` | Bind address; loopback by default. |
+
+It pre-creates two topics (`heartbeat` for the server-publish path, `echo` for the client-publish path) with a three-field schema (`sensor_id : int32`, `temperature : float64`, `label : utf8`) — enough to exercise null bitfield, fixed-width, and variable-length encodings in one shot.
+
+`gateway-test-server` is **not** a production binary. `gateway/` has no real DDS-backed provider yet; once one exists this fixture should be replaced by a real `gateway` binary that takes a provider configuration. Tracked as gap.
 
 ## How it runs in CI
 

@@ -46,16 +46,19 @@ function findTestServerBinary(): string {
   if (process.env.TEST_SERVER_BIN) {
     return process.env.TEST_SERVER_BIN;
   }
+  // The integration test's CMakeLists.txt pulls in gateway/ via
+  // add_subdirectory, so the `gateway-test-server` target ends up
+  // under build/Release/gateway_build/.
   const candidates = [
-    resolve(here, '..', 'build', 'Release', 'test_server'),
-    resolve(here, '..', 'build', 'Release', 'test_server.exe'),
-    resolve(here, '..', 'build', 'build', 'Release', 'test_server'),
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway-test-server'),
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway-test-server.exe'),
+    resolve(here, '..', 'build', 'build', 'Release', 'gateway_build', 'gateway-test-server'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
   throw new Error(
-    `test_server binary not found. Checked: ${candidates.join(', ')}. ` +
+    `gateway-test-server binary not found. Checked: ${candidates.join(', ')}. ` +
     `Set TEST_SERVER_BIN to override.`,
   );
 }
