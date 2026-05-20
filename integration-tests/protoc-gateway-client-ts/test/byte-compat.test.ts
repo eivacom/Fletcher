@@ -10,7 +10,7 @@ import {
   ObjectBackend,
   encodePositional,
 } from 'eiva-fletcher-gateway-client';
-import { TelemetrySchema } from '../generated-ts/telemetry.fletcher.js';
+import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 
 interface Vector {
   name: string;
@@ -103,14 +103,14 @@ describe('protoc + gateway-client-ts byte-compat (telemetry)', () => {
     const backend = new ObjectBackend();
     for (const vec of vectors) {
       const bytes = Uint8Array.from(Buffer.from(vec.encoded, 'base64'));
-      const decoded = backend.decode(TelemetrySchema, bytes);
+      const decoded = backend.decode(Telemetry, bytes);
       expect(decoded, `scenario "${vec.name}"`).toEqual(inputFor(vec.name));
     }
   });
 
   it('TS encoder produces byte-identical output to C++ for the same input', () => {
     for (const vec of vectors) {
-      const tsBytes = encodePositional(TelemetrySchema, inputFor(vec.name));
+      const tsBytes = encodePositional(Telemetry, inputFor(vec.name));
       const cppBytes = new Uint8Array(Buffer.from(vec.encoded, 'base64'));
       expect(Array.from(tsBytes), `scenario "${vec.name}"`).toEqual(Array.from(cppBytes));
     }

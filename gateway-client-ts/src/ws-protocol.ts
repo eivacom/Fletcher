@@ -29,7 +29,12 @@ export interface SubscribedResponse {
   type: 'subscribed';
   subId: bigint;
   topic: string;
-  /** Schema descriptor parsed from the server's JSON schema object. */
+  /**
+   * Schema descriptor parsed from the server's JSON schema, if the
+   * topic was created with one. Gateway forwards whatever schema a
+   * publisher announced via `buildCreateTopic(topic, schema)` — it
+   * does not validate or generate schemas itself.
+   */
   schema?: SchemaDescriptor;
   /** Base64-encoded Arrow IPC schema bytes (full fidelity). */
   schemaIpc?: string;
@@ -71,8 +76,19 @@ export interface MessageData {
 // Text frame builders (client → server) — return JSON strings
 // -----------------------------------------------------------------------
 
-export function buildCreateTopic(topic: string): string {
-  return JSON.stringify({ action: 'create_topic', topic });
+export function buildCreateTopic(
+  topic: string,
+  schema?: SchemaDescriptor,
+): string {
+  // Schema is optional. Publishers that want subscribers to receive
+  // the schema in their `subscribed` response announce it here; pure
+  // byte-routers can omit it. Gateway forwards what it gets and does
+  // not validate.
+  return JSON.stringify(
+    schema
+      ? { action: 'create_topic', topic, schema }
+      : { action: 'create_topic', topic }
+  );
 }
 
 export function buildSubscribe(topic: string): string {
@@ -105,7 +121,9 @@ export function buildPublish(topic: string, envelopeBytes: Uint8Array): Uint8Arr
 }
 
 // -----------------------------------------------------------------------
-// JSON schema → SchemaDescriptor conversion
+// JSON schema → SchemaDescriptor conversion (used by parseTextResponse
+// when the gateway forwards a publisher-supplied schema in a
+// subscribed response).
 // -----------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -117,10 +135,10 @@ function parseFieldDescriptor(j: any): FieldDescriptor {
     wireType: j.wireType as number,
     nullable: j.nullable as boolean,
   };
-  if (j.element) fd.element = parseFieldDescriptor(j.element);
-  if (j.mapKey)  fd.mapKey  = parseFieldDescriptor(j.mapKey);
-  if (j.mapValue) fd.mapValue = parseFieldDescriptor(j.mapValue);
-  if (j.fields) fd.fields = (j.fields as any[]).map(parseFieldDescriptor);
+  if (j.element)        fd.element = parseFieldDescriptor(j.element);
+  if (j.mapKey)         fd.mapKey  = parseFieldDescriptor(j.mapKey);
+  if (j.mapValue)       fd.mapValue = parseFieldDescriptor(j.mapValue);
+  if (j.fields)         fd.fields = (j.fields as any[]).map(parseFieldDescriptor);
   if (j.fixedSize != null) fd.fixedSize = j.fixedSize as number;
   return fd;
 }
@@ -150,7 +168,7 @@ export function parseTextResponse(text: string): ServerResponse {
         topic: j.topic,
       };
       if (j.schemaIpc) resp.schemaIpc = j.schemaIpc as string;
-      if (j.schema) resp.schema = parseSchemaFromJson(j.schema);
+      if (j.schema)    resp.schema = parseSchemaFromJson(j.schema);
       return resp;
     }
     case 'unsubscribed':

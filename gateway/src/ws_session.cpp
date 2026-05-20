@@ -103,6 +103,34 @@ int NanoarrowTypeToWireType(enum ArrowType type) {
     }
 }
 
+// Inverse mapping for parsing the client-supplied schema in
+// `create_topic`. Scalar-only for now; nested types are rejected
+// with a clear error rather than silently corrupted.
+enum ArrowType WireTypeToNanoarrowType(int wt) {
+    switch (wt) {
+        case 0x01: return NANOARROW_TYPE_BOOL;
+        case 0x02: return NANOARROW_TYPE_INT8;
+        case 0x03: return NANOARROW_TYPE_INT16;
+        case 0x04: return NANOARROW_TYPE_INT32;
+        case 0x05: return NANOARROW_TYPE_INT64;
+        case 0x06: return NANOARROW_TYPE_UINT8;
+        case 0x07: return NANOARROW_TYPE_UINT16;
+        case 0x08: return NANOARROW_TYPE_UINT32;
+        case 0x09: return NANOARROW_TYPE_UINT64;
+        case 0x0A: return NANOARROW_TYPE_FLOAT;
+        case 0x0B: return NANOARROW_TYPE_DOUBLE;
+        case 0x0C: return NANOARROW_TYPE_STRING;
+        case 0x0D: return NANOARROW_TYPE_BINARY;
+        case 0x18: return NANOARROW_TYPE_LARGE_STRING;
+        case 0x19: return NANOARROW_TYPE_LARGE_BINARY;
+        default:
+            throw std::invalid_argument(
+                "create_topic: wireType 0x" + std::to_string(wt) +
+                " not yet supported in publisher-supplied schemas "
+                "(only scalar types are accepted today)");
+    }
+}
+
 json FieldToJson(const ArrowSchema* field) {
     json j;
     j["name"] = field->name ? field->name : "";
@@ -150,6 +178,30 @@ json SchemaToJson(const ArrowSchema* schema) {
     for (int64_t i = 0; i < schema->n_children; ++i)
         fields_arr.push_back(FieldToJson(schema->children[i]));
     return json{{"fields", std::move(fields_arr)}};
+}
+
+// Build a struct-of-scalars ArrowSchema from a JSON SchemaDescriptor.
+// Supports the subset that protoc-gen-fletcher actually emits today
+// (flat struct of scalar fields). Nested types throw via
+// WireTypeToNanoarrowType so any silent loss-of-fidelity is impossible.
+OwnedSchema BuildSchemaFromJson(const json& j) {
+    if (!j.contains("fields") || !j["fields"].is_array()) {
+        throw std::invalid_argument(
+            "create_topic: schema must contain a 'fields' array");
+    }
+    const auto& fields = j["fields"];
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(),
+                             static_cast<int64_t>(fields.size()));
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const auto& f = fields[i];
+        const auto name = f.at("name").get<std::string>();
+        const int wt = f.at("wireType").get<int>();
+        ArrowSchemaSetName(schema->children[i], name.c_str());
+        ArrowSchemaSetType(schema->children[i], WireTypeToNanoarrowType(wt));
+    }
+    return schema;
 }
 
 }  // anonymous namespace
@@ -219,7 +271,7 @@ void WsSession::HandleTextFrame(const std::string& text) {
         auto action = j.at("action").get<std::string>();
 
         if (action == "create_topic") {
-            OnCreateTopic(j.at("topic").get<std::string>());
+            OnCreateTopic(j);
         } else if (action == "subscribe") {
             OnSubscribe(j.at("topic").get<std::string>());
         } else if (action == "unsubscribe") {
@@ -262,8 +314,17 @@ std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
     return segments;
 }
 
-void WsSession::OnCreateTopic(const std::string& topic) {
-    driver_->CreateTopic(SplitTopic(topic), OwnedSchema{});
+void WsSession::OnCreateTopic(const nlohmann::json& msg) {
+    const auto topic = msg.at("topic").get<std::string>();
+    OwnedSchema schema{};
+    if (msg.contains("schema")) {
+        // Publisher-announced schema. Gateway forwards it verbatim
+        // to subscribers via the subscribed response — it does not
+        // validate semantic meaning, only the wire-type bookkeeping
+        // needed to round-trip JSON ↔ ArrowSchema.
+        schema = BuildSchemaFromJson(msg["schema"]);
+    }
+    driver_->CreateTopic(SplitTopic(topic), std::move(schema));
     SendText(json{{"type", "topic_created"}}.dump());
 }
 
@@ -280,7 +341,6 @@ void WsSession::OnSubscribe(const std::string& topic) {
             if (!self) return;
 
             try {
-                // Build envelope directly from raw row bytes.
                 Envelope env;
                 env.row.assign(data, data + len);
                 env.attachments = std::move(att);
@@ -306,18 +366,19 @@ void WsSession::OnSubscribe(const std::string& topic) {
     *sub_id_ptr = sub_id;
     subscriptions_[sub_id] = topic;
 
+    // Routing always; schema only when a publisher announced one. The
+    // gateway is schema-agnostic — it forwards whatever schema was
+    // attached on create_topic but never generates one itself.
     json response = {
-        {"type", "subscribed"},
+        {"type",  "subscribed"},
         {"subId", std::to_string(sub_id)},
         {"topic", topic},
     };
-
     if (result.schema) {
         auto ipc_bytes = SerializeSchemaIpc(result.schema.get());
         response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
         response["schema"] = SchemaToJson(result.schema.get());
     }
-
     SendText(response.dump());
 }
 
@@ -339,7 +400,6 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     auto segments = SplitTopic(topic);
     auto envelope = DeserializeEnvelope(data + env_offset, len - env_offset);
 
-    // Pass raw row bytes through to the driver.
     driver_->Publish(segments,
         [row_data = std::move(envelope.row)](WriteBuffer& buf) {
             buf.Append(row_data.data(), row_data.size());

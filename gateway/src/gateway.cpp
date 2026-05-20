@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "web_gateway/web_gateway.hpp"
+#include "gateway.hpp"
 #include "ws_session.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
@@ -63,11 +63,11 @@ class Listener : public std::enable_shared_from_this<Listener> {
 };
 
 // -----------------------------------------------------------------------
-// WebGateway::Impl
+// Gateway::Impl
 // -----------------------------------------------------------------------
 
-struct WebGateway::Impl {
-    WebGatewayOptions            options;
+struct Gateway::Impl {
+    GatewayOptions            options;
     std::shared_ptr<Driver>      driver;
     std::unique_ptr<net::io_context> ioc;
     std::shared_ptr<Listener>    listener;
@@ -78,16 +78,16 @@ struct WebGateway::Impl {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-WebGateway::WebGateway(std::shared_ptr<Driver> driver,
-                       WebGatewayOptions options)
+Gateway::Gateway(std::shared_ptr<Driver> driver,
+                       GatewayOptions options)
     : impl_(std::make_unique<Impl>()) {
     if (!driver)
-        throw std::invalid_argument("WebGateway: driver must not be null");
+        throw std::invalid_argument("Gateway: driver must not be null");
     impl_->driver  = std::move(driver);
     impl_->options = std::move(options);
 }
 
-WebGateway::~WebGateway() {
+Gateway::~Gateway() {
     Stop();
 }
 
@@ -95,7 +95,7 @@ WebGateway::~WebGateway() {
 // Start / Stop
 // -----------------------------------------------------------------------
 
-void WebGateway::Start() {
+void Gateway::Start() {
     if (impl_->ioc) return;  // already started
 
     auto& opts = impl_->options;
@@ -118,7 +118,7 @@ void WebGateway::Start() {
     }
 }
 
-void WebGateway::Stop() {
+void Gateway::Stop() {
     if (!impl_->ioc) return;
 
     impl_->ioc->stop();

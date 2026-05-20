@@ -41,3 +41,27 @@ export interface SchemaDescriptor {
   /** Originating proto message name. */
   protoMessage?: string;
 }
+
+/**
+ * A `SchemaDescriptor` bound to a TypeScript row type `T` via a
+ * phantom property. Runtime-identical to `SchemaDescriptor`; the
+ * `__row` slot is never accessed and exists only so the type system
+ * can carry the row-shape from generated proto bindings to
+ * `FletcherClient.subscribe` / `publish` overloads.
+ *
+ * `protoc-gen-fletcher` emits one of these per message:
+ *
+ *   export interface ITelemetry { ... }
+ *   export const Telemetry: TypedSchema<ITelemetry> = { fields: [...] };
+ *
+ * which lets the call site say
+ *
+ *   client.subscribe(topic, Telemetry, (row) => ...);  // row: ITelemetry
+ *   client.publish(topic, Telemetry, { sensor_id: 1, ... });
+ *
+ * without having to name the row type at the call site.
+ */
+export interface TypedSchema<T> extends SchemaDescriptor {
+  /** Phantom — TypeScript-only. Never present at runtime. */
+  readonly __row?: T;
+}

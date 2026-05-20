@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// Proto schema used by the gateway end-to-end integration test to
+// exercise the protoc-gen-fletcher TypeScript generator over a real
+// WebSocket connection. The field set deliberately mirrors what
+// test-config.yml declares on the gateway side so the server-supplied
+// schema and the protoc-generated SchemaDescriptor describe the same
+// row layout.
+//
+// Keep this proto and test-config.yml in lock-step. A future
+// enhancement could derive one from the other, but for now they are
+// hand-maintained.
+syntax = "proto3";
+
+package integration.gateway;
+
+message Telemetry {
+    int32  sensor_id = 1;
+    double temperature = 2;
+    string label = 3;
+}
