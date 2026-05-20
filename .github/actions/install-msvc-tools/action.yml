@@ -6,12 +6,19 @@ description: Installs Visual Studio 2022 Build Tools (v143) and Windows 11 SDK.
 runs:
   using: "composite"
   steps:
+    # The latest VC.Tools.x86.x64 component currently installs a 14.4x
+    # toolset, but our Conan profile pins compiler.version=193 which
+    # tells vcvars to request vcvars_ver=14.3 — that only matches
+    # toolset directories whose name starts with "14.3". We therefore
+    # also pull in the last 14.3 toolset (14.39 / VS 17.9) explicitly
+    # so any downstream b2 / vcvars invocation that asks for 14.3 finds
+    # a matching directory.
     - name: Install VS2022 Build Tools (v143)
       shell: cmd
       run: |
         curl -SL --output %TEMP%\vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
 
-        (start /w %TEMP%\vs_buildtools.exe --quiet --wait --norestart --nocache --installPath "C:\Program Files\Microsoft Visual Studio\2022\Professional" --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.ATLMFC --add Microsoft.VisualStudio.Component.Windows11SDK.22621 || IF "%ERRORLEVEL%"=="3010" EXIT 0)
+        (start /w %TEMP%\vs_buildtools.exe --quiet --wait --norestart --nocache --installPath "C:\Program Files\Microsoft Visual Studio\2022\Professional" --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.14.39.17.9.x86.x64 --add Microsoft.VisualStudio.Component.VC.ATLMFC --add Microsoft.VisualStudio.Component.Windows11SDK.22621 || IF "%ERRORLEVEL%"=="3010" EXIT 0)
 
         dir "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC"
         dir "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build"

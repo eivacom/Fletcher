@@ -18,6 +18,7 @@ on:
       - ".github/actions/conan-bootstrap/**"
       - ".github/actions/check-version-not-published/**"
       - ".github/actions/setup-devcontainer-image/**"
+      - ".github/actions/verify-tag-version/**"
       - ".devcontainer/**"
       - "!**/*.md"
   push:

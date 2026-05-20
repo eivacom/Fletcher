@@ -19,7 +19,6 @@ on:
       - "xrcedds-pubsub-provider/**"
       - "integration-tests/fastdds-xrce-interop/**"
       - ".github/workflows/integration-test.fastdds-xrce-interop.yml"
-      - ".github/actions/conan-bootstrap/**"
       - ".github/actions/setup-devcontainer-image/**"
       - ".devcontainer/**"
       - "!**/*.md"

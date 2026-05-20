@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: fletcher-gateway
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "gateway/**"
+      - ".github/workflows/fletcher-gateway.yml"
+      - ".github/actions/install-msvc-tools/**"
+      - ".github/actions/install-cmake/**"
+      - ".github/actions/conan-bootstrap/**"
+      - ".github/actions/setup-devcontainer-image/**"
+      - ".devcontainer/**"
+      - "!**/*.md"
+
+# Gateway is never published as a Conan package, so there is no
+# tag-triggered release path and no upload job — the workflow only
+# verifies that the exe builds and the unit-test suite passes on both
+# Linux and Windows. End-to-end coverage of the gateway against
+# gateway-client-ts lives in the gateway-end-to-end integration-test
+# workflow.
+
+jobs:
+  build-windows:
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway
+            .github
+
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+
+      # `conan build .` dispatches cmake configure / build / test via the
+      # conanfile's build() method, picking the right preset for the
+      # generator in use. Calling cmake --preset conan-release directly
+      # breaks on Windows (multi-config VS generator only creates the
+      # conan-default configure preset, with conan-release reserved for
+      # the build step), while on Linux single-config generators the
+      # opposite is true. Letting Conan dispatch sidesteps the asymmetry.
+      - name: Build and test
+        working-directory: gateway
+        run: |
+          conan install . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+          conan build . -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-linux:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway
+            .devcontainer
+            .github
+
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+
+      - name: Set up devcontainer image
+        uses: ./.github/actions/setup-devcontainer-image
+        with:
+          harbor_username: ${{ secrets.HARBOR_USERNAME }}
+          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gateway \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
+                     conan build . -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
