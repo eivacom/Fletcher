@@ -24,13 +24,7 @@ inputs:
   python-version:
     description: "Python version to install"
     required: false
-    # Pinned to 3.13 because 3.14.4 (released Oct 2025) is not yet
-    # pre-installed in the GitHub Windows runner tool cache. When a
-    # runner misses the cache, `actions/setup-python` installs fresh
-    # but the PATH update doesn't always reach the next git-bash step,
-    # surfacing as `python: command not found`. 3.13 is pre-cached on
-    # every runner image we hit, so setup-python reuses it.
-    default: "3.13"
+    default: "3.14.4"
   conan-version:
     description: "Conan version to install"
     required: false
@@ -49,14 +43,25 @@ runs:
         repositories: conan-configuration
 
     - name: Set up Python
+      id: setup-python
       uses: actions/setup-python@v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
 
+    # The runners are self-hosted and ephemeral with no pre-installed
+    # Python, so `setup-python` always downloads and installs fresh.
+    # The action writes the install dir to GITHUB_PATH, but on Windows
+    # the next git-bash shell sometimes starts before that PATH update
+    # propagates, surfacing as `python: command not found`. Invoking
+    # Python via the absolute `python-path` output bypasses PATH and
+    # makes the install step deterministic regardless of which Python
+    # version we pin.
     - name: Install Conan
       shell: bash
+      env:
+        PYTHON_PATH: ${{ steps.setup-python.outputs.python-path }}
       run: |
-        python -m pip install --root-user-action=ignore --no-cache-dir "conan==${{ inputs.conan-version }}"
+        "$PYTHON_PATH" -m pip install --root-user-action=ignore --no-cache-dir "conan==${{ inputs.conan-version }}"
 
     - name: Install conan-configuration
       shell: bash
