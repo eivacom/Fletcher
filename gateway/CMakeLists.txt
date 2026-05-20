@@ -12,6 +12,9 @@
 # does not populate per-component INCLUDE_DIRS, so we locate the
 # headers via find_path (the Conan cache is already on
 # CMAKE_PREFIX_PATH for any consumer that ran conan install).
+cmake_minimum_required(VERSION 3.15)
+project(gateway LANGUAGES CXX)
+
 find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
 find_package(eiva-fletcher-core   CONFIG REQUIRED)
 find_package(nlohmann_json        CONFIG REQUIRED)
