@@ -52,21 +52,18 @@ jobs:
           conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
           conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
-      - name: Install dependencies and toolchain
+      # `conan build .` dispatches cmake configure / build / test via the
+      # conanfile's build() method, picking the right preset for the
+      # generator in use. Calling cmake --preset conan-release directly
+      # breaks on Windows (multi-config VS generator only creates the
+      # conan-default configure preset, with conan-release reserved for
+      # the build step), while on Linux single-config generators the
+      # opposite is true. Letting Conan dispatch sidesteps the asymmetry.
+      - name: Build and test
         working-directory: gateway
-        run: conan install . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
-
-      - name: Configure
-        working-directory: gateway
-        run: cmake --preset conan-release
-
-      - name: Build (includes unit tests)
-        working-directory: gateway
-        run: cmake --build --preset conan-release
-
-      - name: Run unit tests
-        working-directory: gateway
-        run: ctest --test-dir build/Release --output-on-failure
+        run: |
+          conan install . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+          conan build . -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
 
   build-linux:
     runs-on:
@@ -106,6 +103,4 @@ jobs:
                      conan config install https://github.com/eivacom/conan-configuration.git --type git && \
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
                      conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
-                     cmake --preset conan-release && \
-                     cmake --build --preset conan-release && \
-                     ctest --test-dir build/Release --output-on-failure"
+                     conan build . -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
