@@ -24,7 +24,13 @@ inputs:
   python-version:
     description: "Python version to install"
     required: false
-    default: "3.14.4"
+    # Pinned to 3.13 because 3.14.4 (released Oct 2025) is not yet
+    # pre-installed in the GitHub Windows runner tool cache. When a
+    # runner misses the cache, `actions/setup-python` installs fresh
+    # but the PATH update doesn't always reach the next git-bash step,
+    # surfacing as `python: command not found`. 3.13 is pre-cached on
+    # every runner image we hit, so setup-python reuses it.
+    default: "3.13"
   conan-version:
     description: "Conan version to install"
     required: false
