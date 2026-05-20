@@ -65,12 +65,10 @@ conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
 ```
 
 ```bash
-cmake --preset conan-release
+conan build . -pr:a=Ubuntu22-gcc-12-Release
 ```
 
-```bash
-cmake --build --preset conan-release
-```
+`conan build .` runs the recipe's `build()` method, which dispatches the right cmake configure / build invocations for the generator in use. On Linux (single-config Ninja/Make) it resolves to `cmake --preset conan-release && cmake --build --preset conan-release`; on Windows (multi-config Visual Studio) it picks `conan-default` for configure and `conan-release` for build. Letting Conan dispatch avoids the platform-specific preset asymmetry.
 
 The resulting binary is at `build/Release/gateway` (`gateway.exe` on Windows).
 
@@ -97,18 +95,12 @@ conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=Tr
 ```
 
 ```bash
-cmake --preset conan-release
+conan build . -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
 ```
 
-```bash
-cmake --build --preset conan-release
-```
+The `-o "&:run_tests=True"` switch pulls `gtest` into the dependency graph, sets `FLETCHER_BUILD_TESTS=ON` for CMake, and makes the recipe's `build()` invoke `cmake.test()` after the build — so a successful `conan build` means the gtest suite already ran. Omit the switch for a tests-off plain build.
 
-```bash
-ctest --test-dir build/Release --output-on-failure
-```
-
-The `-o "&:run_tests=True"` switch is what pulls `gtest` into the dependency graph and sets `FLETCHER_BUILD_TESTS=ON` for CMake. Omit it for a tests-off plain build.
+This is the same path CI takes (`.github/workflows/fletcher-gateway.yml`) on both Linux and Windows, so the local run matches what gates the pull request.
 
 ## WebSocket protocol
 
