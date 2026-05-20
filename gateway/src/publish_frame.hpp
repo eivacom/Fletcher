@@ -29,9 +29,11 @@ struct PublishFrameParts {
 };
 
 /// Parse a PUBLISH binary frame. Throws `std::invalid_argument` when
-/// the frame is too short to contain a topic length, when the
-/// declared topic length runs off the end of the frame, or when no
-/// envelope bytes follow the topic.
+/// the frame is too short to contain a topic length or when the
+/// declared topic length runs off the end of the frame. An empty
+/// envelope (`envelope_size == 0`) is *accepted*: validating envelope
+/// content is the responsibility of the deserialiser downstream, not
+/// the wire-frame parser.
 PublishFrameParts ParsePublishFrame(const uint8_t* data, std::size_t len);
 
 }  // namespace fletcher::gateway

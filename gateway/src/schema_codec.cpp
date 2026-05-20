@@ -3,6 +3,8 @@
 //
 #include "schema_codec.hpp"
 
+#include <ios>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -70,11 +72,14 @@ enum ArrowType WireTypeToNanoarrowType(int wt) {
         case 0x0D: return NANOARROW_TYPE_BINARY;
         case 0x18: return NANOARROW_TYPE_LARGE_STRING;
         case 0x19: return NANOARROW_TYPE_LARGE_BINARY;
-        default:
+        default: {
+            std::ostringstream hex;
+            hex << "0x" << std::hex << wt;
             throw std::invalid_argument(
-                "create_topic: wireType 0x" + std::to_string(wt) +
+                "create_topic: wireType " + hex.str() +
                 " not yet supported in publisher-supplied schemas "
                 "(only scalar types are accepted today)");
+        }
     }
 }
 

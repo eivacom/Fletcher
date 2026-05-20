@@ -18,7 +18,6 @@ on:
       - "fastdds-pubsub-provider/**"
       - "integration-tests/pubsub-arrow-fastdds/**"
       - ".github/workflows/integration-test.pubsub-arrow-fastdds.yml"
-      - ".github/actions/conan-bootstrap/**"
       - ".github/actions/setup-devcontainer-image/**"
       - ".devcontainer/**"
       - "!**/*.md"

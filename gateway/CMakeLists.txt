@@ -28,9 +28,9 @@ add_library(gateway_codec STATIC
     src/schema_codec.cpp
     src/publish_frame.cpp)
 target_include_directories(gateway_codec PUBLIC src)
-target_link_libraries(gateway_codec
-    PUBLIC  eiva-fletcher-pubsub::eiva-fletcher-pubsub
-    PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(gateway_codec PUBLIC
+    eiva-fletcher-pubsub::eiva-fletcher-pubsub
+    nlohmann_json::nlohmann_json)
 
 # ─────────────────────────────────────────────────────────────────────
 # gateway — the only artifact this directory produces. Links against
