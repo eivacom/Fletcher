@@ -69,7 +69,7 @@ conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 
 5. Verify the package is in the local cache:
 ```bash
-conan list "eiva-fletcher-core:*"
+conan list "fletcher-core:*"
 ```
 
 Steps 1–3 iterate during development without writing to the Conan cache. Step 4 publishes the package locally so downstream Fletcher packages can pick it up.
@@ -109,7 +109,7 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 
 ### Package handoff
 
-Because `eiva-fletcher-core` is a header-only library it produces a single
+Because `fletcher-core` is a header-only library it produces a single
 platform-independent package ID. The Windows build saves the package to a
 GitHub Actions artifact which the `upload` job restores and publishes:
 
@@ -136,7 +136,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("eiva-fletcher-core/0.1.3-alpha")
+        self.requires("fletcher-core/0.1.0-alpha")
 
     def layout(self):
         cmake_layout(self)
@@ -157,12 +157,12 @@ class MyProjectConan(ConanFile):
 cmake_minimum_required(VERSION 3.15)
 project(my-project CXX)
 
-find_package(eiva-fletcher-core CONFIG REQUIRED)
+find_package(fletcher-core CONFIG REQUIRED)
 
 add_executable(my-project src/main.cpp)
 
 # Either the full target name:
-target_link_libraries(my-project PRIVATE eiva-fletcher-core::eiva-fletcher-core)
+target_link_libraries(my-project PRIVATE fletcher-core::fletcher-core)
 
 # Or the convenience alias provided by fletcher-core-target.cmake:
 target_link_libraries(my-project PRIVATE fletcher::core)
@@ -171,19 +171,19 @@ target_link_libraries(my-project PRIVATE fletcher::core)
 ### 3. Include the headers
 
 ```cpp
-#include "core/envelope.hpp"
-#include "core/positional_io.hpp"
-#include "core/types.hpp"
-#include "core/write_buffer.hpp"
+#include "fletcher/core/envelope.hpp"
+#include "fletcher/core/positional_io.hpp"
+#include "fletcher/core/types.hpp"
+#include "fletcher/core/write_buffer.hpp"
 ```
 
 ### 4. Minimal usage example
 
 ```cpp
-#include "core/envelope.hpp"
-#include "core/positional_io.hpp"
-#include "core/types.hpp"
-#include "core/write_buffer.hpp"
+#include "fletcher/core/envelope.hpp"
+#include "fletcher/core/positional_io.hpp"
+#include "fletcher/core/types.hpp"
+#include "fletcher/core/write_buffer.hpp"
 
 #include <vector>
 

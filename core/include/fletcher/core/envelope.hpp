@@ -4,7 +4,7 @@
 #ifndef FLETCHER_INCLUDE_CORE_ENVELOPE_HPP_
 #define FLETCHER_INCLUDE_CORE_ENVELOPE_HPP_
 
-#include "core/types.hpp"
+#include "fletcher/core/types.hpp"
 
 #include <bit>
 #include <cstdint>

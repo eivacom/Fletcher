@@ -3,7 +3,7 @@
 //
 #include <gtest/gtest.h>
 
-#include <core/envelope.hpp>
+#include <fletcher/core/envelope.hpp>
 
 using namespace fletcher;
 

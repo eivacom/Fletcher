@@ -8,9 +8,9 @@ import os
 
 
 class FletcherCoreConan(ConanFile):
-    name = "eiva-fletcher-core"
-    version = "0.1.5-alpha"
-    description = "EIVA Fletcher Core library"
+    name = "fletcher-core"
+    version = "0.1.0-alpha"
+    description = "Fletcher Core library"
     license = "LGPL-3.0-or-later"
     package_type = "header-library"
     # settings are only needed to compile the unit tests — they play no part
@@ -69,8 +69,8 @@ class FletcherCoreConan(ConanFile):
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.libdirs     = []
         self.cpp_info.bindirs     = []
-        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-core")
-        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-core::eiva-fletcher-core")
+        self.cpp_info.set_property("cmake_file_name", "fletcher-core")
+        self.cpp_info.set_property("cmake_target_name", "fletcher-core::fletcher-core")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-core-target.cmake"),
         ])
