@@ -7,19 +7,20 @@ Fletcher's WebSocket gateway server. A schema-agnostic byte router that exposes 
 A single executable, `gateway`, built from the sources in `src/`. There is no public C++ API:
 
 - **No installed headers.** All headers live under `src/` and are not part of any export interface.
-- **No Conan package.** The directory has no `conanfile.py`. You either build the exe standalone or pull `gateway/CMakeLists.txt` into a parent project via `add_subdirectory()`.
-- **No library target.** Sources compile straight into the executable.
+- **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation, and nothing is ever uploaded to Artifactory. The only artifact this directory ships is the exe.
+- **No library target exposed externally.** Sources compile into a tiny internal helper static library (`gateway_codec`, for unit-test linkage only) plus the exe. Neither is installed or consumed from outside this directory.
 
 If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/) for the reference implementation).
 
-## Schema-agnostic by design
+## Schema-agnostic by design (with optional schema passthrough)
 
-The gateway knows nothing about topic schemas, and nothing about which topics will exist before clients show up:
+The gateway knows nothing semantically about topic schemas, and nothing about which topics will exist before clients show up:
 
 - Topics are established implicitly. A client `subscribe` or `publish` creates the topic slot inside the in-process provider on the fly — there is no pre-declaration, no admin endpoint, no startup config that lists topics.
-- Schemas live entirely on the client side. The `subscribed` text response carries only routing (`subId`, `topic`); it does **not** include a schema. Clients are expected to know the schema for the topics they care about — typically by generating a `SchemaDescriptor` from a `.proto` via `protoc-gen-fletcher`.
+- The gateway never generates a schema itself. It does not inspect row bytes and does not understand their structure.
+- **Passthrough only:** when a publisher attaches a `schema` to `create_topic`, the gateway caches it and forwards it to later subscribers via the `subscribed` response (`schema` + base64-encoded `schemaIpc` fields). When no publisher has announced a schema, those fields are simply absent and clients must know the schema another way — typically by generating a `SchemaDescriptor` from a `.proto` via `protoc-gen-fletcher`.
 
-This keeps the gateway as a pure byte router: it forwards row bytes between publishers and subscribers without ever inspecting their structure.
+This keeps the gateway as a pure byte router: it forwards row bytes between publishers and subscribers without ever inspecting their structure, while still letting clients that need a schema discover one over the wire.
 
 ## Provider note (current limitation)
 
@@ -81,6 +82,34 @@ add_subdirectory(path/to/gateway path/to/build/gateway_build)
 
 This brings the `gateway` exe target into your build tree without exposing any of gateway's internal headers or library code. The integration test ([integration-tests/gateway-end-to-end/](../integration-tests/gateway-end-to-end/)) uses this pattern.
 
+## Unit tests
+
+`gateway/tests/` holds gtest cases for the pure helpers that handle untrusted input from WebSocket clients — `ParsePublishFrame` (binary frame bounds-checking) and `BuildArrowSchemaFromJson` (JSON schema validation). Everything else in the gateway is covered by the end-to-end integration test against a real `FletcherClient`.
+
+To build and run them in the devcontainer:
+
+```bash
+cd gateway
+```
+
+```bash
+conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+```
+
+```bash
+cmake --preset conan-release
+```
+
+```bash
+cmake --build --preset conan-release
+```
+
+```bash
+ctest --test-dir build/Release --output-on-failure
+```
+
+The `-o "&:run_tests=True"` switch is what pulls `gtest` into the dependency graph and sets `FLETCHER_BUILD_TESTS=ON` for CMake. Omit it for a tests-off plain build.
+
 ## WebSocket protocol
 
 The gateway exposes Fletcher's WebSocket protocol — text JSON control frames + binary data frames. See:
@@ -111,5 +140,4 @@ binary frames:
 
 ## Tracked gaps
 
-- Gateway has no `tests/` (unit tests in the gtest sense). Tracked separately as **DevOps US 17240 / GitHub #45**.
 - No DDS-backed provider yet — the in-process loopback is the only option. Will gain a `--provider TYPE` selector when a real provider lands.

@@ -8,11 +8,13 @@ from conan.tools.cmake import cmake_layout
 class GatewayEndToEndIntegrationConan(ConanFile):
     """Integration-test consumer for gateway + gateway-client-ts.
 
-    Builds the production `gateway` exe (gateway has no Conan recipe;
-    its CMakeLists.txt is pulled in via add_subdirectory by this
-    directory). The accompanying vitest suite spawns that exe and
-    exercises the WebSocket protocol via the real FletcherClient from
-    gateway-client-ts.
+    Builds the production `gateway` exe. Gateway has its own
+    conanfile.py but is never uploaded as a Conan package (it has no
+    name/version); for the integration test, we pull
+    `gateway/CMakeLists.txt` in via add_subdirectory rather than going
+    through Conan. The accompanying vitest suite spawns the resulting
+    exe and exercises the WebSocket protocol via the real
+    FletcherClient from gateway-client-ts.
 
     Boost, nlohmann_json, and yaml-cpp are required by gateway's
     sources. pubsub + core are expected to be present in the local
