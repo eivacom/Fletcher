@@ -85,7 +85,7 @@ class FletcherPubsubConan(ConanFile):
         # External consumers must link all three in dependency order so
         # the uxr_*/ucdr_* symbols resolve.
         self.cpp_info.libs = [
-            "xrce_dds_pubsub_provider",
+            "fletcher-xrcedds-pubsub-provider",
             "microxrcedds_client",
             "microcdr",
         ]

@@ -8,7 +8,7 @@ add_executable(xrce_provider_tests
 
 target_link_libraries(xrce_provider_tests PRIVATE
     GTest::gtest_main
-    xrce_dds_pubsub_provider
+    fletcher-xrcedds-pubsub-provider
     microxrcedds_client)
 
 include(GoogleTest)

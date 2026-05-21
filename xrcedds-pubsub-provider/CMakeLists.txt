@@ -71,12 +71,13 @@ find_package(fletcher-pubsub REQUIRED)
 find_package(fletcher-core REQUIRED)
 
 # ── Provider library ─────────────────────────────────────────────────────
-add_library(xrce_dds_pubsub_provider
+add_library(fletcher-xrcedds-pubsub-provider
     src/xrce_dds_pubsub_provider.cpp)
-target_include_directories(xrce_dds_pubsub_provider PUBLIC include)
-target_link_libraries(xrce_dds_pubsub_provider
+target_include_directories(fletcher-xrcedds-pubsub-provider PUBLIC include)
+target_link_libraries(fletcher-xrcedds-pubsub-provider
     PUBLIC  fletcher-pubsub::fletcher-pubsub
-    PRIVATE microxrcedds_client)
+    PRIVATE fletcher-core::fletcher-core
+            microxrcedds_client)
 
 if(FLETCHER_BUILD_TESTS)
     enable_testing()
