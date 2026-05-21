@@ -25,10 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Self-hosted runner ships without `sudo`; runs as root already, so
+      # the apt-get calls work without elevation. `-y` to skip the prompt.
       - name: Install clang-format
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format
+          apt-get update
+          apt-get install -y clang-format
           clang-format --version
 
       # Build the file list at runtime so the workflow stays in sync with
