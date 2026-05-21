@@ -3,8 +3,8 @@
 //
 #include <gtest/gtest.h>
 
-#include <fast_dds_pubsub_provider.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <atomic>
 #include <chrono>

@@ -8,9 +8,9 @@ import os
 
 
 class FletcherPubsubConan(ConanFile):
-    name = "eiva-fletcher-fastdds-pubsub-provider"
+    name = "fletcher-fastdds-pubsub-provider"
     version = "0.1.0-alpha"
-    description = "EIVA Fletcher FastDDS PubSub Provider library"
+    description = "Fletcher FastDDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
@@ -28,8 +28,8 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("eiva-fletcher-pubsub/0.1.1-alpha", transitive_headers=True)
-        self.requires("eiva-fletcher-core/0.1.5-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.1.0-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.1.0-alpha", transitive_headers=True)
         self.requires("fast-dds/2.14.3")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
@@ -77,10 +77,10 @@ class FletcherPubsubConan(ConanFile):
              keep_path=False)
 
     def package_info(self):
-        self.cpp_info.libs = ["fast_dds_pubsub_provider"]
+        self.cpp_info.libs = ["fletcher-fastdds-pubsub-provider"]
         self.cpp_info.includedirs = ["include"]
-        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-fastdds-pubsub-provider")
-        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider")
+        self.cpp_info.set_property("cmake_file_name", "fletcher-fastdds-pubsub-provider")
+        self.cpp_info.set_property("cmake_target_name", "fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-fastdds-pubsub-provider-target.cmake"),
         ])

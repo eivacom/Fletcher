@@ -14,7 +14,7 @@
 #ifndef FLETCHER_GATEWAY_SCHEMA_CODEC_HPP_
 #define FLETCHER_GATEWAY_SCHEMA_CODEC_HPP_
 
-#include <pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 
 #include <nanoarrow/nanoarrow.h>
 

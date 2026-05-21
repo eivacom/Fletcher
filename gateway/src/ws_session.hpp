@@ -4,7 +4,7 @@
 #ifndef FLETCHER_WEB_GATEWAY_WS_SESSION_HPP_
 #define FLETCHER_WEB_GATEWAY_WS_SESSION_HPP_
 
-#include <pubsub/driver.hpp>
+#include <fletcher/pubsub/driver.hpp>
 
 #include <nlohmann/json_fwd.hpp>
 

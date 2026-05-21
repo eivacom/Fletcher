@@ -3,8 +3,8 @@
 //
 #include <gtest/gtest.h>
 
-#include <pubsub_arrow/pubsub_arrow.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <arrow/api.h>
 

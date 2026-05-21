@@ -5,10 +5,10 @@
 #include "publish_frame.hpp"
 #include "schema_codec.hpp"
 
-#include <pubsub/schema_ipc.hpp>
-#include <core/envelope.hpp>
-#include <pubsub/owned_schema.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <nlohmann/json.hpp>
 

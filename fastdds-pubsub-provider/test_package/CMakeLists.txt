@@ -7,7 +7,7 @@ project(PackageTest CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 
 add_executable(example src/example.cpp)
-target_link_libraries(example eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider)
+target_link_libraries(example fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)

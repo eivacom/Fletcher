@@ -15,8 +15,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(gateway LANGUAGES CXX)
 
-find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
-find_package(eiva-fletcher-core   CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-core   CONFIG REQUIRED)
 find_package(nlohmann_json        CONFIG REQUIRED)
 find_path(BOOST_INCLUDE_DIR boost/beast.hpp REQUIRED)
 
@@ -32,7 +32,7 @@ add_library(gateway_codec STATIC
     src/publish_frame.cpp)
 target_include_directories(gateway_codec PUBLIC src)
 target_link_libraries(gateway_codec PUBLIC
-    eiva-fletcher-pubsub::eiva-fletcher-pubsub
+    fletcher-pubsub::fletcher-pubsub
     nlohmann_json::nlohmann_json)
 
 # ─────────────────────────────────────────────────────────────────────
@@ -47,8 +47,8 @@ add_executable(gateway
 target_include_directories(gateway PRIVATE src ${BOOST_INCLUDE_DIR})
 target_link_libraries(gateway PRIVATE
     gateway_codec
-    eiva-fletcher-pubsub::eiva-fletcher-pubsub
-    eiva-fletcher-core::eiva-fletcher-core
+    fletcher-pubsub::fletcher-pubsub
+    fletcher-core::fletcher-core
     nlohmann_json::nlohmann_json)
 if(WIN32)
     target_compile_definitions(gateway PRIVATE

@@ -15,11 +15,11 @@
 
 #include "pubsub.fletcher.pb.h"
 
-#include <pubsub/pubsub.hpp>
-#include <pubsub/owned_schema.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
-#include <arrow_bridge/codec.hpp>
+#include <fletcher/arrow_bridge/codec.hpp>
 
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>

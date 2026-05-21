@@ -36,7 +36,7 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 ## Usage
 
 ```cpp
-#include <xrce_dds_pubsub_provider.hpp>
+#include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
 // Connect to an XRCE-DDS Agent on localhost:2018 (defaults).
@@ -182,7 +182,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("eiva-fletcher-xrcedds-pubsub-provider/0.1.0-alpha")
+    self.requires("fletcher-xrcedds-pubsub-provider/0.1.0-alpha")
 ```
 
 Install dependencies:
@@ -194,11 +194,11 @@ conan install . --build=missing -pr:a=<your-profile>
 ### 2. Wire up CMake
 
 ```cmake
-find_package(eiva-fletcher-xrcedds-pubsub-provider REQUIRED)
+find_package(fletcher-xrcedds-pubsub-provider REQUIRED)
 
 # Fully qualified target name:
 target_link_libraries(my_app PRIVATE
-    eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider)
+    fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
 # Or the convenience alias injected by the package's build module:
 target_link_libraries(my_app PRIVATE fletcher::xrcedds-pubsub-provider)

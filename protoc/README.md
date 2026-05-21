@@ -78,19 +78,19 @@ protoc \
 
 ## Conan package
 
-When consumed as a Conan package, `eiva-fletcher-protoc` provides an imported CMake target:
+When consumed as a Conan package, `fletcher-protoc` provides an imported CMake target:
 
 ```cmake
-find_package(eiva-fletcher-protoc REQUIRED)
+find_package(fletcher-protoc REQUIRED)
 
 add_custom_command(
     OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" eiva-fletcher-protoc::plugin
+    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 )
 ```
 

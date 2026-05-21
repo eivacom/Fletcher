@@ -49,8 +49,8 @@ gateway --port 9090 --bind-address 0.0.0.0
 
 Gateway depends on (resolved via Conan):
 
-- `eiva-fletcher-core`
-- `eiva-fletcher-pubsub`
+- `fletcher-core`
+- `fletcher-pubsub`
 - `boost` (Beast + Asio, header-only)
 - `nlohmann_json`
 

@@ -8,8 +8,8 @@ from conan.tools.cmake import cmake_layout
 class PubSubArrowFastDdsIntegrationConan(ConanFile):
     """Cross-component integration test consumer.
 
-    Drives a real eiva-fletcher-pubsub-arrow adapter on top of a real
-    eiva-fletcher-fastdds-pubsub-provider and verifies that ArrowRow
+    Drives a real fletcher-pubsub-arrow adapter on top of a real
+    fletcher-fastdds-pubsub-provider and verifies that ArrowRow
     instances round-trip correctly across the adapter + DDS path —
     something the unit tests of each component only validate against
     mocks.
@@ -27,8 +27,8 @@ class PubSubArrowFastDdsIntegrationConan(ConanFile):
         # Version ranges resolve to whatever the workflow's `conan create`
         # just put in the local cache. include_prerelease is needed
         # because component versions are alpha-suffixed.
-        self.requires("eiva-fletcher-pubsub-arrow/[*, include_prerelease]")
-        self.requires("eiva-fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
+        self.requires("fletcher-pubsub-arrow/[*, include_prerelease]")
+        self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
         self.requires("gtest/1.17.0")
         # arrow pins zlib/1.2.13, openssl pulls 1.3.1 — same conflict
         # arrow-bridge handles in its own conanfile.

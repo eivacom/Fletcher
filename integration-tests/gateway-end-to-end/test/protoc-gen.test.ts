@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import {
   FletcherClient,
   WireTypeId,
-} from 'eiva-fletcher-gateway-client';
+} from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
 

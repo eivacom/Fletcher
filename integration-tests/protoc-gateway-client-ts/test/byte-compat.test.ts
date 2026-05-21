@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ObjectBackend,
   encodePositional,
-} from 'eiva-fletcher-gateway-client';
+} from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 
 interface Vector {

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 cmake_minimum_required(VERSION 3.20)
-project(eiva-fletcher-xrcedds-pubsub-provider CXX)
+project(fletcher-xrcedds-pubsub-provider CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,15 +67,15 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(microxrcedds_client)
 
 # ── Fletcher dependencies ────────────────────────────────────────────────
-find_package(eiva-fletcher-pubsub REQUIRED)
-find_package(eiva-fletcher-core REQUIRED)
+find_package(fletcher-pubsub REQUIRED)
+find_package(fletcher-core REQUIRED)
 
 # ── Provider library ─────────────────────────────────────────────────────
 add_library(xrce_dds_pubsub_provider
     src/xrce_dds_pubsub_provider.cpp)
 target_include_directories(xrce_dds_pubsub_provider PUBLIC include)
 target_link_libraries(xrce_dds_pubsub_provider
-    PUBLIC  eiva-fletcher-pubsub::eiva-fletcher-pubsub
+    PUBLIC  fletcher-pubsub::fletcher-pubsub
     PRIVATE microxrcedds_client)
 
 if(FLETCHER_BUILD_TESTS)

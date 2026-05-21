@@ -23,12 +23,12 @@ add_subdirectory(
 # test-config.yml, not from the proto. The .proto and the YAML must
 # describe the same row layout (kept in sync manually for now).
 # ─────────────────────────────────────────────────────────────────────
-find_package(eiva-fletcher-protoc CONFIG REQUIRED)
+find_package(fletcher-protoc CONFIG REQUIRED)
 find_package(protobuf             CONFIG REQUIRED)
 
-if(NOT TARGET eiva-fletcher-protoc::plugin)
+if(NOT TARGET fletcher-protoc::plugin)
     message(FATAL_ERROR
-        "eiva-fletcher-protoc::plugin target was not created — the protoc "
+        "fletcher-protoc::plugin target was not created — the protoc "
         "plugin executable is required for code generation.")
 endif()
 
@@ -45,11 +45,11 @@ foreach(_stem IN LISTS PROTO_STEMS)
     add_custom_command(
         OUTPUT  "${_ts_out}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
-                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=ts:${GENERATED_TS_DIR}"
                 "-I" "${PROTO_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" eiva-fletcher-protoc::plugin
+        DEPENDS "${_src}" fletcher-protoc::plugin
         COMMENT "protoc-gen-fletcher (TS): ${_stem}.proto"
         VERBATIM
     )

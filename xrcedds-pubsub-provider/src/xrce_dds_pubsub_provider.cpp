@@ -18,11 +18,11 @@
 // spec-correct framing `[CDR-header :4][seq_len :4][envelope]` that
 // FastDDS peers expect for an IDL `struct { sequence<octet> data; }`.
 
-#include "xrce_dds_pubsub_provider.hpp"
+#include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
 
-#include <pubsub/schema_ipc.hpp>
-#include <core/envelope.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <uxr/client/client.h>
 

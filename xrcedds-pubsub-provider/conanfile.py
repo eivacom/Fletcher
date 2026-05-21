@@ -8,9 +8,9 @@ import os
 
 
 class FletcherPubsubConan(ConanFile):
-    name = "eiva-fletcher-xrcedds-pubsub-provider"
+    name = "fletcher-xrcedds-pubsub-provider"
     version = "0.1.0-alpha"
-    description = "XRCE-DDS PubSub Provider library"
+    description = "Fletcher XRCE-DDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
@@ -28,8 +28,8 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("eiva-fletcher-pubsub/0.1.1-alpha", transitive_headers=True)
-        self.requires("eiva-fletcher-core/0.1.5-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.1.0-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.1.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
@@ -90,8 +90,8 @@ class FletcherPubsubConan(ConanFile):
             "microcdr",
         ]
         self.cpp_info.includedirs = ["include"]
-        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-xrcedds-pubsub-provider")
-        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider")
+        self.cpp_info.set_property("cmake_file_name", "fletcher-xrcedds-pubsub-provider")
+        self.cpp_info.set_property("cmake_target_name", "fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-xrcedds-pubsub-provider-target.cmake"),
         ])

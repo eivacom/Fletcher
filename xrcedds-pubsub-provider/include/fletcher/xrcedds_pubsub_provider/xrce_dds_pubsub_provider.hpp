@@ -4,7 +4,7 @@
 #ifndef FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <pubsub/pubsub.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
 
 #include <cstdint>
 #include <memory>

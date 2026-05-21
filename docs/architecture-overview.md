@@ -68,7 +68,7 @@ The system provides seven composable layers:
 4. **pubsub** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
 5. **pubsub-arrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
 6. **gateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol. (Migrated from the prototype's `WebGateway`.)
-7. **gateway-client-ts** — a TypeScript client library (npm package `eiva-fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
+7. **gateway-client-ts** — a TypeScript client library (npm package `fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
 
 Each layer is independent. You can use the codec without pub/sub, the web gateway without DDS, or the full pipeline end-to-end.
 
