@@ -6,7 +6,7 @@ a `Driver` wrapper that adds multi-subscriber fan-out and a topic registry on
 top of any concrete provider. Wire-compatible Arrow IPC schema
 serialization helpers are included.
 
-Headers are located under `include/pubsub/`:
+Headers are located under `include/fletcher/pubsub/` and consumed as `#include <fletcher/pubsub/<header>.hpp>`:
 - `pubsub.hpp` — `PubSub` interface and supporting types.
 - `driver.hpp` — `Driver` (multi-subscriber fan-out, topic registry).
 - `owned_schema.hpp` — RAII wrapper around `ArrowSchema`.
@@ -75,7 +75,7 @@ conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 
 5. Verify the package is in the local cache:
 ```bash
-conan list "eiva-fletcher-pubsub:*"
+conan list "fletcher-pubsub:*"
 ```
 
 Steps 1–3 iterate during development without writing to the Conan cache. Step 4 publishes the package locally so downstream Fletcher packages can pick it up.
@@ -114,8 +114,8 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
 
 ### Package handoff
 
-Unlike `eiva-fletcher-core` (header-only, single platform-independent ID),
-`eiva-fletcher-pubsub` is a real compiled static library: the Windows and Linux
+Unlike `fletcher-core` (header-only, single platform-independent ID),
+`fletcher-pubsub` is a real compiled static library: the Windows and Linux
 jobs each produce their own platform-specific package, and the `upload` job
 restores both before publishing.
 
@@ -136,7 +136,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("eiva-fletcher-pubsub/0.1.0-alpha")
+        self.requires("fletcher-pubsub/0.1.0-alpha")
 
     def layout(self):
         cmake_layout(self)
@@ -157,12 +157,12 @@ class MyProjectConan(ConanFile):
 cmake_minimum_required(VERSION 3.15)
 project(my-project CXX)
 
-find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
 
 add_executable(my-project src/main.cpp)
 
 # Either the full target name:
-target_link_libraries(my-project PRIVATE eiva-fletcher-pubsub::eiva-fletcher-pubsub)
+target_link_libraries(my-project PRIVATE fletcher-pubsub::fletcher-pubsub)
 
 # Or the convenience alias provided by fletcher-pubsub-target.cmake:
 target_link_libraries(my-project PRIVATE fletcher::pubsub)
@@ -171,8 +171,8 @@ target_link_libraries(my-project PRIVATE fletcher::pubsub)
 ### 3. Include the headers
 
 ```cpp
-#include "pubsub/driver.hpp"
-#include "pubsub/pubsub.hpp"
-#include "pubsub/owned_schema.hpp"
-#include "pubsub/schema_ipc.hpp"
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
 ```

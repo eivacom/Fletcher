@@ -4,7 +4,7 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 
-#include "pubsub/pubsub.hpp"
+#include "fletcher/pubsub/pubsub.hpp"
 
 #include <cstdint>
 #include <functional>
