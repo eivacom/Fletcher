@@ -171,8 +171,8 @@ target_link_libraries(my-project PRIVATE fletcher::pubsub)
 ### 3. Include the headers
 
 ```cpp
-#include "fletcher/pubsub/driver.hpp"
-#include "fletcher/pubsub/pubsub.hpp"
-#include "fletcher/pubsub/owned_schema.hpp"
-#include "fletcher/pubsub/schema_ipc.hpp"
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
 ```
