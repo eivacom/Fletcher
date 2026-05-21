@@ -15,10 +15,10 @@ describe('Positional encoder + decoder roundtrip', () => {
   it('round-trips scalar fields', () => {
     const schema: SchemaDescriptor = {
       fields: [
-        { name: 'a', fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+        { name: 'a', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
         { name: 'b', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
-        { name: 'c', fieldNumber: 3, wireType: WireTypeId.BOOL,    nullable: false },
-        { name: 'd', fieldNumber: 4, wireType: WireTypeId.UINT32,  nullable: false },
+        { name: 'c', fieldNumber: 3, wireType: WireTypeId.BOOL, nullable: false },
+        { name: 'd', fieldNumber: 4, wireType: WireTypeId.UINT32, nullable: false },
       ],
     };
 
@@ -50,9 +50,7 @@ describe('Positional encoder + decoder roundtrip', () => {
 
   it('round-trips strings', () => {
     const schema: SchemaDescriptor = {
-      fields: [
-        { name: 'name', fieldNumber: 1, wireType: WireTypeId.STRING, nullable: false },
-      ],
+      fields: [{ name: 'name', fieldNumber: 1, wireType: WireTypeId.STRING, nullable: false }],
     };
 
     const original = { name: 'hello, world!' };
@@ -64,7 +62,7 @@ describe('Positional encoder + decoder roundtrip', () => {
   it('round-trips null fields', () => {
     const schema: SchemaDescriptor = {
       fields: [
-        { name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32,  nullable: true },
+        { name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: true },
         { name: 'y', fieldNumber: 2, wireType: WireTypeId.STRING, nullable: true },
       ],
     };
@@ -78,12 +76,10 @@ describe('Positional encoder + decoder roundtrip', () => {
 
   it('round-trips binary data', () => {
     const schema: SchemaDescriptor = {
-      fields: [
-        { name: 'data', fieldNumber: 1, wireType: WireTypeId.BINARY, nullable: false },
-      ],
+      fields: [{ name: 'data', fieldNumber: 1, wireType: WireTypeId.BINARY, nullable: false }],
     };
 
-    const blob = new Uint8Array([0xFF, 0x00, 0xAB, 0xCD]);
+    const blob = new Uint8Array([0xff, 0x00, 0xab, 0xcd]);
     const encoded = encodePositional(schema, { data: blob });
     const decoded = backend.decode(schema, encoded);
     expect(decoded.data).toEqual(blob);
@@ -122,7 +118,12 @@ describe('Positional encoder + decoder roundtrip', () => {
       ],
     };
 
-    const original = { tags: new Map([['a', 1], ['b', 2]]) };
+    const original = {
+      tags: new Map([
+        ['a', 1],
+        ['b', 2],
+      ]),
+    };
     const encoded = encodePositional(schema, original);
     const decoded = backend.decode(schema, encoded) as { tags: Map<string, number> };
     expect(decoded.tags.get('a')).toBe(1);

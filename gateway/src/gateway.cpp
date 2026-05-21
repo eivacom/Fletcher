@@ -2,31 +2,27 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include "gateway.hpp"
-#include "ws_session.hpp"
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
-
+#include <boost/asio/ip/tcp.hpp>
 #include <thread>
 #include <vector>
+
+#include "ws_session.hpp"
 
 namespace fletcher {
 
 namespace net = boost::asio;
-using tcp     = net::ip::tcp;
+using tcp = net::ip::tcp;
 
 // -----------------------------------------------------------------------
 // Listener — accepts TCP connections and spawns WsSessions.
 // -----------------------------------------------------------------------
 
 class Listener : public std::enable_shared_from_this<Listener> {
- public:
-    Listener(net::io_context& ioc,
-             tcp::endpoint endpoint,
-             std::shared_ptr<Driver> driver)
-        : ioc_(ioc)
-        , acceptor_(net::make_strand(ioc))
-        , driver_(std::move(driver)) {
+   public:
+    Listener(net::io_context& ioc, tcp::endpoint endpoint, std::shared_ptr<Driver> driver)
+        : ioc_(ioc), acceptor_(net::make_strand(ioc)), driver_(std::move(driver)) {
         beast::error_code ec;
 
         acceptor_.open(endpoint.protocol(), ec);
@@ -44,21 +40,19 @@ class Listener : public std::enable_shared_from_this<Listener> {
 
     void Run() { DoAccept(); }
 
- private:
+   private:
     void DoAccept() {
         auto self = shared_from_this();
         acceptor_.async_accept(
-            net::make_strand(ioc_),
-            [self](beast::error_code ec, tcp::socket socket) {
+            net::make_strand(ioc_), [self](beast::error_code ec, tcp::socket socket) {
                 if (ec) return;  // acceptor was closed (Stop)
-                std::make_shared<WsSession>(
-                    std::move(socket), self->driver_)->Run();
+                std::make_shared<WsSession>(std::move(socket), self->driver_)->Run();
                 self->DoAccept();
             });
     }
 
-    net::io_context&        ioc_;
-    tcp::acceptor           acceptor_;
+    net::io_context& ioc_;
+    tcp::acceptor acceptor_;
     std::shared_ptr<Driver> driver_;
 };
 
@@ -67,29 +61,25 @@ class Listener : public std::enable_shared_from_this<Listener> {
 // -----------------------------------------------------------------------
 
 struct Gateway::Impl {
-    GatewayOptions            options;
-    std::shared_ptr<Driver>      driver;
+    GatewayOptions options;
+    std::shared_ptr<Driver> driver;
     std::unique_ptr<net::io_context> ioc;
-    std::shared_ptr<Listener>    listener;
-    std::vector<std::thread>     threads;
+    std::shared_ptr<Listener> listener;
+    std::vector<std::thread> threads;
 };
 
 // -----------------------------------------------------------------------
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-Gateway::Gateway(std::shared_ptr<Driver> driver,
-                       GatewayOptions options)
+Gateway::Gateway(std::shared_ptr<Driver> driver, GatewayOptions options)
     : impl_(std::make_unique<Impl>()) {
-    if (!driver)
-        throw std::invalid_argument("Gateway: driver must not be null");
-    impl_->driver  = std::move(driver);
+    if (!driver) throw std::invalid_argument("Gateway: driver must not be null");
+    impl_->driver = std::move(driver);
     impl_->options = std::move(options);
 }
 
-Gateway::~Gateway() {
-    Stop();
-}
+Gateway::~Gateway() { Stop(); }
 
 // -----------------------------------------------------------------------
 // Start / Stop
@@ -102,19 +92,15 @@ void Gateway::Start() {
     int n = std::max(1, opts.io_threads);
     impl_->ioc = std::make_unique<net::io_context>(n);
 
-    auto ep = tcp::endpoint(
-        net::ip::make_address(opts.address), opts.port);
+    auto ep = tcp::endpoint(net::ip::make_address(opts.address), opts.port);
 
-    impl_->listener = std::make_shared<Listener>(
-        *impl_->ioc, ep, impl_->driver);
+    impl_->listener = std::make_shared<Listener>(*impl_->ioc, ep, impl_->driver);
     impl_->listener->Run();
 
     // Spin up IO threads.
     impl_->threads.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
-        impl_->threads.emplace_back([ioc = impl_->ioc.get()] {
-            ioc->run();
-        });
+        impl_->threads.emplace_back([ioc = impl_->ioc.get()] { ioc->run(); });
     }
 }
 

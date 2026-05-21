@@ -5,16 +5,15 @@
 // to arrow::Type::LIST and round-trip with the right element counts,
 // for repeated scalars, repeated structs, and empty repeated fields.
 
-#include "collections.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "collections.fletcher.pb.h"
 
 using namespace fletcher;
 

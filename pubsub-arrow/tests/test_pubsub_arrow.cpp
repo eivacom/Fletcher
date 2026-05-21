@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
+#include <arrow/api.h>
 #include <gtest/gtest.h>
 
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
-#include <arrow/api.h>
-
 #include <cstring>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -19,18 +17,15 @@ using namespace fletcher;
 // ---------------------------------------------------------------------------
 
 class MockProvider : public PubSub {
- public:
-    void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema,
+   public:
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                      std::any /*config*/) override {
         std::string key = Join(segments);
         topics_created.push_back(key);
-        if (schema)
-            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        if (schema) schemas_[key] = OwnedSchema::DeepCopy(schema.get());
     }
 
-    void Publish(const std::vector<std::string>& segments,
-                 RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
         std::string key = Join(segments);
 
@@ -49,14 +44,12 @@ class MockProvider : public PubSub {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback,
-                                 std::any /*config*/) override {
+                                 SubscribeCallback callback, std::any /*config*/) override {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         OwnedSchema schema;
-        if (it != schemas_.end())
-            schema = OwnedSchema::DeepCopy(it->second.get());
+        if (it != schemas_.end()) schema = OwnedSchema::DeepCopy(it->second.get());
         return {std::move(schema)};
     }
 
@@ -66,7 +59,7 @@ class MockProvider : public PubSub {
 
     std::vector<std::string> topics_created;
 
- private:
+   private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
 
@@ -124,9 +117,7 @@ TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
     pa.CreateTopic(kTopic, TestSchema());
 
     ArrowRow received;
-    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) {
-        received = std::move(row);
-    });
+    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
 
     ArrowRow sent = {
         std::make_shared<arrow::Int32Scalar>(42),
@@ -136,8 +127,7 @@ TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
 
     ASSERT_EQ(received.size(), 2);
     EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*received[0]).value, 42);
-    EXPECT_EQ(static_cast<const arrow::StringScalar&>(*received[1]).value->ToString(),
-          "hello");
+    EXPECT_EQ(static_cast<const arrow::StringScalar&>(*received[1]).value->ToString(), "hello");
 }
 
 TEST(PubSubArrowTest, PublishWithAttachments) {
@@ -147,12 +137,9 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     pa.CreateTopic(kTopic, TestSchema());
 
     Attachments received_att;
-    pa.Subscribe(kTopic, [&](ArrowRow, Attachments att) {
-        received_att = std::move(att);
-    });
+    pa.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0xDE, 0xAD});
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
     ArrowRow row = {
         std::make_shared<arrow::Int32Scalar>(1),
@@ -172,13 +159,11 @@ TEST(PubSubArrowTest, PublishDirectPassthrough) {
     pa.CreateTopic(kTopic, schema);
 
     ArrowRow received;
-    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) {
-        received = std::move(row);
-    });
+    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
 
     // Publish using direct encoder (positional format: 1 field).
     pa.PublishDirect(kTopic, [](WriteBuffer& buf) {
-        buf.AppendByte(0x00);          // null bitfield: 1 field, not null
+        buf.AppendByte(0x00);  // null bitfield: 1 field, not null
         int32_t val = 99;
         buf.Append(reinterpret_cast<const uint8_t*>(&val), sizeof(val));
     });

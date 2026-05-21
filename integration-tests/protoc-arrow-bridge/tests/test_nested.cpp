@@ -6,16 +6,15 @@
 // through the recursive positional format (struct: NULL_BITFIELD then
 // nested payloads).
 
-#include "nested.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "nested.fletcher.pb.h"
 
 using namespace fletcher;
 

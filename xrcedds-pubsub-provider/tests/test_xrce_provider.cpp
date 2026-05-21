@@ -2,17 +2,15 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include <gtest/gtest.h>
-
-#include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
-
-#include <fletcher/core/envelope.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
 #include <uxr/client/client.h>
 
 #include <cstring>
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/core/write_buffer.hpp>
 #include <string>
 #include <vector>
+
+#include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
 
 using namespace fletcher;
 
@@ -67,12 +65,12 @@ TEST(XrceProviderTest, ObjectIdTypeEncoding) {
 
 TEST(XrceProviderTest, DifferentTypesWithSameBase) {
     uint16_t base = 42;
-    auto part  = uxr_object_id(base, UXR_PARTICIPANT_ID);
+    auto part = uxr_object_id(base, UXR_PARTICIPANT_ID);
     auto topic = uxr_object_id(base, UXR_TOPIC_ID);
-    auto pub   = uxr_object_id(base, UXR_PUBLISHER_ID);
-    auto dw    = uxr_object_id(base, UXR_DATAWRITER_ID);
-    auto sub   = uxr_object_id(base, UXR_SUBSCRIBER_ID);
-    auto dr    = uxr_object_id(base, UXR_DATAREADER_ID);
+    auto pub = uxr_object_id(base, UXR_PUBLISHER_ID);
+    auto dw = uxr_object_id(base, UXR_DATAWRITER_ID);
+    auto sub = uxr_object_id(base, UXR_SUBSCRIBER_ID);
+    auto dr = uxr_object_id(base, UXR_DATAREADER_ID);
 
     // All share the same numeric base.
     EXPECT_EQ(part.id, base);
@@ -122,8 +120,7 @@ TEST(XrceProviderTest, EnvelopeXrceUsesSameWireFormatAsFastDds) {
     Envelope env;
     env.row = {0x01, 0x02, 0x03};
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0xDE, 0xAD});
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
     env.attachments["sensor"] = blob;
 
     auto wire = SerializeEnvelope(env);
@@ -167,9 +164,9 @@ TEST(XrceProviderTest, EnvelopeWireFormatLayout) {
 TEST(XrceProviderTest, QosStructInitialization) {
     uxrQoS_t qos{};
     qos.reliability = UXR_RELIABILITY_RELIABLE;
-    qos.durability  = UXR_DURABILITY_TRANSIENT_LOCAL;
-    qos.history     = UXR_HISTORY_KEEP_LAST;
-    qos.depth       = 1;
+    qos.durability = UXR_DURABILITY_TRANSIENT_LOCAL;
+    qos.history = UXR_HISTORY_KEEP_LAST;
+    qos.depth = 1;
 
     EXPECT_EQ(qos.reliability, UXR_RELIABILITY_RELIABLE);
     EXPECT_EQ(qos.durability, UXR_DURABILITY_TRANSIENT_LOCAL);

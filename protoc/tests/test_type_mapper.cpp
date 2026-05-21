@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <gtest/gtest.h>
-
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <gtest/gtest.h>
 
 #include "type_mapper.hpp"
 
@@ -18,11 +17,8 @@ using namespace google::protobuf;
 namespace {
 
 const FileDescriptor* BuildSingleField(
-    DescriptorPool& pool,
-    const std::string& tag,
-    FieldDescriptorProto::Type type,
-    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL)
-{
+    DescriptorPool& pool, const std::string& tag, FieldDescriptorProto::Type type,
+    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
     FileDescriptorProto fdp;
     fdp.set_name("test_" + tag + ".proto");
     fdp.set_syntax("proto3");
@@ -36,9 +32,7 @@ const FileDescriptor* BuildSingleField(
     return pool.BuildFile(fdp);
 }
 
-const FieldDescriptor* First(const FileDescriptor* file) {
-    return file->message_type(0)->field(0);
-}
+const FieldDescriptor* First(const FileDescriptor* file) { return file->message_type(0)->field(0); }
 
 // Build a file with two messages: Inner (one string field) and Outer (one
 // message field referencing Inner).
@@ -167,9 +161,9 @@ TEST(TypeMapperTest, MapFieldBool) {
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->kind, FieldKind::SCALAR);
     EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::boolean()");
-    EXPECT_EQ(m->scalar.storage_type,    "bool");
-    EXPECT_EQ(m->scalar.builder_type,    "arrow::BooleanBuilder");
-    EXPECT_EQ(m->scalar.default_value,   "false");
+    EXPECT_EQ(m->scalar.storage_type, "bool");
+    EXPECT_EQ(m->scalar.builder_type, "arrow::BooleanBuilder");
+    EXPECT_EQ(m->scalar.default_value, "false");
 }
 
 TEST(TypeMapperTest, MapFieldInt32) {
@@ -178,7 +172,7 @@ TEST(TypeMapperTest, MapFieldInt32) {
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->kind, FieldKind::SCALAR);
     EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int32()");
-    EXPECT_EQ(m->scalar.storage_type,    "int32_t");
+    EXPECT_EQ(m->scalar.storage_type, "int32_t");
 }
 
 TEST(TypeMapperTest, MapFieldSint32MapsToArrowInt32) {
@@ -228,8 +222,8 @@ TEST(TypeMapperTest, MapFieldString) {
     auto m = MapField(First(BuildSingleField(pool, "string", FieldDescriptorProto::TYPE_STRING)));
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::utf8()");
-    EXPECT_EQ(m->scalar.storage_type,    "std::string");
-    EXPECT_EQ(m->scalar.param_type,      "std::string_view");
+    EXPECT_EQ(m->scalar.storage_type, "std::string");
+    EXPECT_EQ(m->scalar.param_type, "std::string_view");
 }
 
 TEST(TypeMapperTest, MapFieldBytes) {
@@ -284,26 +278,24 @@ TEST(TypeMapperTest, Proto3NonOptionalFieldIsNotNullable) {
 
 TEST(TypeMapperTest, RepeatedInt32MapsToRepeatedScalar) {
     DescriptorPool pool;
-    auto m = MapField(First(BuildSingleField(
-        pool, "rep_i32", FieldDescriptorProto::TYPE_INT32,
-        FieldDescriptorProto::LABEL_REPEATED)));
+    auto m = MapField(First(BuildSingleField(pool, "rep_i32", FieldDescriptorProto::TYPE_INT32,
+                                             FieldDescriptorProto::LABEL_REPEATED)));
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->kind, FieldKind::REPEATED_SCALAR);
     EXPECT_FALSE(m->nullable);  // repeated fields are never null
     EXPECT_EQ(m->element.arrow_type_expr, "arrow::int32()");
-    EXPECT_EQ(m->element.storage_type,    "int32_t");
-    EXPECT_EQ(m->element.builder_type,    "arrow::Int32Builder");
+    EXPECT_EQ(m->element.storage_type, "int32_t");
+    EXPECT_EQ(m->element.builder_type, "arrow::Int32Builder");
 }
 
 TEST(TypeMapperTest, RepeatedStringMapsToRepeatedScalar) {
     DescriptorPool pool;
-    auto m = MapField(First(BuildSingleField(
-        pool, "rep_str", FieldDescriptorProto::TYPE_STRING,
-        FieldDescriptorProto::LABEL_REPEATED)));
+    auto m = MapField(First(BuildSingleField(pool, "rep_str", FieldDescriptorProto::TYPE_STRING,
+                                             FieldDescriptorProto::LABEL_REPEATED)));
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->kind, FieldKind::REPEATED_SCALAR);
     EXPECT_EQ(m->element.arrow_type_expr, "arrow::utf8()");
-    EXPECT_EQ(m->element.builder_type,    "arrow::StringBuilder");
+    EXPECT_EQ(m->element.builder_type, "arrow::StringBuilder");
 }
 
 // ===========================================================================
@@ -354,8 +346,8 @@ TEST(TypeMapperTest, MapStringInt32MapsToMap) {
     ASSERT_TRUE(m.has_value());
     EXPECT_EQ(m->kind, FieldKind::MAP);
     EXPECT_FALSE(m->nullable);
-    EXPECT_EQ(m->map_key.arrow_type_expr,   "arrow::utf8()");
-    EXPECT_EQ(m->map_key.storage_type,      "std::string");
+    EXPECT_EQ(m->map_key.arrow_type_expr, "arrow::utf8()");
+    EXPECT_EQ(m->map_key.storage_type, "std::string");
     EXPECT_FALSE(m->map_value_is_message);
     EXPECT_EQ(m->map_value.arrow_type_expr, "arrow::int32()");
 }
@@ -504,14 +496,12 @@ namespace {
 
 // Builds a "dep" file (dependency) containing a single message named DepMsg
 // with one int32 field, optionally under the given proto package.
-const FileDescriptor* BuildDepFile(DescriptorPool& pool,
-                                   const std::string& filename,
+const FileDescriptor* BuildDepFile(DescriptorPool& pool, const std::string& filename,
                                    const std::string& package = "") {
     FileDescriptorProto dep;
     dep.set_name(filename);
     dep.set_syntax("proto3");
-    if (!package.empty())
-        dep.set_package(package);
+    if (!package.empty()) dep.set_package(package);
     auto* msg = dep.add_message_type();
     msg->set_name("DepMsg");
     auto* f = msg->add_field();
@@ -525,8 +515,7 @@ const FileDescriptor* BuildDepFile(DescriptorPool& pool,
 // Builds a "consumer" file that has one field referencing DepMsg from dep_filename.
 // field_label selects singular (LABEL_OPTIONAL) or repeated (LABEL_REPEATED).
 // Returns the consumer FileDescriptor; the field is on message ConsumerMsg.
-const FileDescriptor* BuildConsumerFile(DescriptorPool& pool,
-                                        const std::string& consumer_filename,
+const FileDescriptor* BuildConsumerFile(DescriptorPool& pool, const std::string& consumer_filename,
                                         const std::string& dep_filename,
                                         const std::string& dep_full_type,
                                         FieldDescriptorProto::Label label,
@@ -534,8 +523,7 @@ const FileDescriptor* BuildConsumerFile(DescriptorPool& pool,
     FileDescriptorProto fdp;
     fdp.set_name(consumer_filename);
     fdp.set_syntax("proto3");
-    if (!package.empty())
-        fdp.set_package(package);
+    if (!package.empty()) fdp.set_package(package);
     fdp.add_dependency(dep_filename);
 
     auto* msg = fdp.add_message_type();
@@ -556,9 +544,9 @@ TEST(TypeMapperTest, CrossFileSingularMessageSamePackage) {
     DescriptorPool pool;
     ASSERT_TRUE(BuildDepFile(pool, "dep_same_pkg.proto", "mypkg"));
 
-    auto* consumer = BuildConsumerFile(
-        pool, "consumer_same_pkg.proto", "dep_same_pkg.proto",
-        ".mypkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mypkg");
+    auto* consumer =
+        BuildConsumerFile(pool, "consumer_same_pkg.proto", "dep_same_pkg.proto", ".mypkg.DepMsg",
+                          FieldDescriptorProto::LABEL_OPTIONAL, "mypkg");
     ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
@@ -574,9 +562,9 @@ TEST(TypeMapperTest, CrossFileSingularMessageDifferentPackages) {
     DescriptorPool pool;
     ASSERT_TRUE(BuildDepFile(pool, "dep_other_pkg.proto", "other.pkg"));
 
-    auto* consumer = BuildConsumerFile(
-        pool, "consumer_diff_pkg.proto", "dep_other_pkg.proto",
-        ".other.pkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
+    auto* consumer =
+        BuildConsumerFile(pool, "consumer_diff_pkg.proto", "dep_other_pkg.proto",
+                          ".other.pkg.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
     ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
@@ -592,9 +580,8 @@ TEST(TypeMapperTest, CrossFileSingularMessageNoPackageDep) {
     DescriptorPool pool;
     ASSERT_TRUE(BuildDepFile(pool, "dep_no_pkg.proto", ""));
 
-    auto* consumer = BuildConsumerFile(
-        pool, "consumer_no_dep_pkg.proto", "dep_no_pkg.proto",
-        ".DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
+    auto* consumer = BuildConsumerFile(pool, "consumer_no_dep_pkg.proto", "dep_no_pkg.proto",
+                                       ".DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "my.pkg");
     ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
@@ -608,9 +595,8 @@ TEST(TypeMapperTest, CrossFileRepeatedMessageSucceeds) {
     DescriptorPool pool;
     ASSERT_TRUE(BuildDepFile(pool, "dep_repeated.proto", "ext"));
 
-    auto* consumer = BuildConsumerFile(
-        pool, "consumer_repeated.proto", "dep_repeated.proto",
-        ".ext.DepMsg", FieldDescriptorProto::LABEL_REPEATED, "mine");
+    auto* consumer = BuildConsumerFile(pool, "consumer_repeated.proto", "dep_repeated.proto",
+                                       ".ext.DepMsg", FieldDescriptorProto::LABEL_REPEATED, "mine");
     ASSERT_TRUE(consumer);
 
     const auto* fd = consumer->message_type(0)->field(0);
@@ -687,9 +673,8 @@ TEST(TypeMapperTest, CrossFileReferenceIsNoLongerUnsupported) {
     DescriptorPool pool;
     ASSERT_TRUE(BuildDepFile(pool, "dep_reason.proto", "ext"));
 
-    auto* consumer = BuildConsumerFile(
-        pool, "consumer_reason.proto", "dep_reason.proto",
-        ".ext.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mine");
+    auto* consumer = BuildConsumerFile(pool, "consumer_reason.proto", "dep_reason.proto",
+                                       ".ext.DepMsg", FieldDescriptorProto::LABEL_OPTIONAL, "mine");
     ASSERT_TRUE(consumer);
 
     // MapField should now succeed for cross-file references.

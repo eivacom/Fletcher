@@ -4,16 +4,15 @@
 // maps.proto — Metrics. Verifies proto map<K,V> fields map to
 // arrow::Type::MAP and round-trip preserves entries.
 
-#include "maps.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "maps.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -59,8 +58,8 @@ TEST(MapProtoTest, MetricsSchemaHasMapFields) {
 TEST(MapProtoTest, MetricsRoundtripMapFields) {
     fletcher_gen::integration::Metrics m;
     m.set_resource_id("srv-1")
-     .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
-     .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
+        .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
+        .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
     auto scalars = RoundTrip(m.Encode(), fletcher_gen::integration::MetricsSchema());
     ASSERT_EQ(scalars.size(), 3u);

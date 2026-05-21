@@ -81,9 +81,12 @@ static const char kEpsg3857ProjJson[] = R"({
 
 std::string EpsgToProjJson(int code) {
     switch (code) {
-        case 4326: return kEpsg4326ProjJson;
-        case 3857: return kEpsg3857ProjJson;
-        default:   return {};
+        case 4326:
+            return kEpsg4326ProjJson;
+        case 3857:
+            return kEpsg3857ProjJson;
+        default:
+            return {};
     }
 }
 
@@ -93,15 +96,10 @@ std::string ResolveCrs(std::string_view crs) {
 
     // Try "EPSG:<code>"
     constexpr std::string_view prefix = "EPSG:";
-    if (crs.size() > prefix.size() &&
-        crs.substr(0, prefix.size()) == prefix) {
+    if (crs.size() > prefix.size() && crs.substr(0, prefix.size()) == prefix) {
         int code = 0;
-        auto [ptr, ec] = std::from_chars(
-            crs.data() + prefix.size(),
-            crs.data() + crs.size(),
-            code);
-        if (ec == std::errc{} && ptr == crs.data() + crs.size())
-            return EpsgToProjJson(code);
+        auto [ptr, ec] = std::from_chars(crs.data() + prefix.size(), crs.data() + crs.size(), code);
+        if (ec == std::errc{} && ptr == crs.data() + crs.size()) return EpsgToProjJson(code);
     }
     return {};
 }

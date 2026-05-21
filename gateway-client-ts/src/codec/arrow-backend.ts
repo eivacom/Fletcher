@@ -16,13 +16,10 @@ import type { DecoderBackend } from './object-backend.js';
 // apache-arrow is not installed (it's an optional peer dep).
 
 export class ArrowBackend implements DecoderBackend<unknown> {
-  decode(
-    _schema: SchemaDescriptor,
-    _row: Uint8Array,
-  ): unknown {
+  decode(_schema: SchemaDescriptor, _row: Uint8Array): unknown {
     throw new Error(
       'ArrowBackend.decode: not yet implemented. ' +
-      'Install apache-arrow and check back after Phase 3.',
+        'Install apache-arrow and check back after Phase 3.',
     );
   }
 }

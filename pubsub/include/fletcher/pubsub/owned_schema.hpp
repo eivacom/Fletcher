@@ -15,12 +15,11 @@ namespace fletcher {
 
 /// RAII wrapper for ArrowSchema (calls ArrowSchemaRelease on destruction).
 class OwnedSchema {
- public:
+   public:
     OwnedSchema() noexcept { std::memset(&schema_, 0, sizeof(schema_)); }
 
     ~OwnedSchema() {
-        if (schema_.release)
-            schema_.release(&schema_);
+        if (schema_.release) schema_.release(&schema_);
     }
 
     OwnedSchema(OwnedSchema&& other) noexcept : schema_(other.schema_) {
@@ -29,8 +28,7 @@ class OwnedSchema {
 
     OwnedSchema& operator=(OwnedSchema&& other) noexcept {
         if (this != &other) {
-            if (schema_.release)
-                schema_.release(&schema_);
+            if (schema_.release) schema_.release(&schema_);
             schema_ = other.schema_;
             std::memset(&other.schema_, 0, sizeof(other.schema_));
         }
@@ -58,7 +56,7 @@ class OwnedSchema {
         return copy;
     }
 
- private:
+   private:
     ArrowSchema schema_;
 };
 

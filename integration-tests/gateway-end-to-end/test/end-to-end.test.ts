@@ -29,8 +29,8 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 
 // Port can be overridden via env (e.g. when running two copies of the
 // suite in parallel or when 19091 is occupied locally).
-const TEST_PORT  = parseInt(process.env.TEST_PORT ?? '19091', 10);
-const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
+const TEST_PORT = parseInt(process.env.TEST_PORT ?? '19091', 10);
+const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 const TEST_TOPIC = 'protocol';
 
 // Hand-constructed schema — keeps this file independent of any
@@ -40,18 +40,16 @@ const TEST_TOPIC = 'protocol';
 // without depending on protoc-gen-fletcher.
 const HAND_BUILT_SCHEMA: SchemaDescriptor = {
   fields: [
-    { name: 'sensor_id',   fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+    { name: 'sensor_id', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
     { name: 'temperature', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
-    { name: 'label',       fieldNumber: 3, wireType: WireTypeId.STRING,  nullable: false },
+    { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING, nullable: false },
   ],
 };
 
 // Single-field shorthand for the binary-frame-layout assertions, which
 // only need ANY valid schema to construct one envelope.
 const MINIMAL_SCHEMA: SchemaDescriptor = {
-  fields: [
-    { name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
-  ],
+  fields: [{ name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false }],
 };
 
 function findGatewayBinary(): string {
@@ -68,16 +66,13 @@ function findGatewayBinary(): string {
   }
   throw new Error(
     `gateway binary not found. Checked: ${candidates.join(', ')}. ` +
-    `Set GATEWAY_BIN to override.`,
+      `Set GATEWAY_BIN to override.`,
   );
 }
 
 async function spawnGateway(port: number): Promise<ChildProcess> {
   const bin = findGatewayBinary();
-  const child = spawn(bin, [
-    '--port', String(port),
-    '--bind-address', '127.0.0.1',
-  ], {
+  const child = spawn(bin, ['--port', String(port), '--bind-address', '127.0.0.1'], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -148,8 +143,7 @@ afterAll(async () => {
 // schema, no schemaIpc. Locks in the schema-agnostic gateway contract.
 // ---------------------------------------------------------------------
 describe('subscribed response — routing only', () => {
-  it('subscribed text frame contains subId + topic and nothing else',
-     async () => {
+  it('subscribed text frame contains subId + topic and nothing else', async () => {
     const ws = new WebSocket(TEST_URL);
     ws.binaryType = 'arraybuffer';
 
@@ -190,19 +184,21 @@ describe('client publish ↔ subscription round-trip', () => {
     const client = new FletcherClient({ url: TEST_URL });
     await client.connect();
 
-    interface Row { sensor_id: number; temperature: number; label: string }
+    interface Row {
+      sensor_id: number;
+      temperature: number;
+      label: string;
+    }
     const received: Row[] = [];
 
-    const subId = await client.subscribe<Row>(
-      TEST_TOPIC,
-      HAND_BUILT_SCHEMA,
-      (row) => { received.push(row); },
-    );
+    const subId = await client.subscribe<Row>(TEST_TOPIC, HAND_BUILT_SCHEMA, (row) => {
+      received.push(row);
+    });
 
     const sent: Row[] = [
-      { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
-      { sensor_id: 42,  temperature: -7.125, label: 'second' },
-      { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
+      { sensor_id: 1, temperature: 23.5, label: 'first' },
+      { sensor_id: 42, temperature: -7.125, label: 'second' },
+      { sensor_id: 999, temperature: 1.0e9, label: 'third' },
     ];
     for (const row of sent) {
       await client.publish(TEST_TOPIC, HAND_BUILT_SCHEMA, row);
@@ -240,8 +236,7 @@ describe('client publish ↔ subscription round-trip', () => {
 // client-supplied SchemaDescriptor passed to `subscribe`).
 // ---------------------------------------------------------------------
 describe('subscriber gets schema from gateway', () => {
-  it('gateway forwards publisher-announced schema in the subscribed response',
-     async () => {
+  it('gateway forwards publisher-announced schema in the subscribed response', async () => {
     const PUB_TOPIC = 'protocol/gateway-supplied-schema';
 
     // Publisher: announce the schema. Gateway caches it per topic.
@@ -275,7 +270,9 @@ describe('subscriber gets schema from gateway', () => {
     // Schema fields — the whole point of this test. Both
     // representations the gateway emits should be present and
     // structurally aligned with what the publisher announced.
-    const schema = response.schema as { fields: Array<{ name: string; wireType: number; nullable: boolean }> };
+    const schema = response.schema as {
+      fields: Array<{ name: string; wireType: number; nullable: boolean }>;
+    };
     expect(schema).toBeDefined();
     expect(schema.fields).toHaveLength(3);
     expect(schema.fields[0].name).toBe('sensor_id');
@@ -297,8 +294,7 @@ describe('subscriber gets schema from gateway', () => {
     pub.close();
   });
 
-  it('FletcherClient subscribe(topic, cb) uses the gateway-supplied schema',
-     async () => {
+  it('FletcherClient subscribe(topic, cb) uses the gateway-supplied schema', async () => {
     const PUB_TOPIC = 'protocol/gateway-supplied-roundtrip';
 
     const pub = new FletcherClient({ url: TEST_URL });
@@ -308,14 +304,17 @@ describe('subscriber gets schema from gateway', () => {
     const sub = new FletcherClient({ url: TEST_URL });
     await sub.connect();
 
-    interface Row { sensor_id: number; temperature: number; label: string }
+    interface Row {
+      sensor_id: number;
+      temperature: number;
+      label: string;
+    }
     const received: Row[] = [];
     // No schema argument — FletcherClient must fall back to the
     // schema the gateway hands back in the subscribed response.
-    const subId = await sub.subscribe<Row>(
-      PUB_TOPIC,
-      (row) => { received.push(row); },
-    );
+    const subId = await sub.subscribe<Row>(PUB_TOPIC, (row) => {
+      received.push(row);
+    });
 
     const sent: Row = { sensor_id: 17, temperature: 3.14, label: 'gateway-fwd' };
     await pub.publish(PUB_TOPIC, HAND_BUILT_SCHEMA, sent);

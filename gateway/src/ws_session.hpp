@@ -4,27 +4,24 @@
 #ifndef FLETCHER_WEB_GATEWAY_WS_SESSION_HPP_
 #define FLETCHER_WEB_GATEWAY_WS_SESSION_HPP_
 
-#include <fletcher/pubsub/driver.hpp>
-
-#include <nlohmann/json_fwd.hpp>
-
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
-
 #include <cstdint>
 #include <deque>
+#include <fletcher/pubsub/driver.hpp>
 #include <memory>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace fletcher {
 
-namespace net   = boost::asio;
+namespace net = boost::asio;
 namespace beast = boost::beast;
-namespace ws    = beast::websocket;
+namespace ws = beast::websocket;
 
 // ---------------------------------------------------------------------------
 // Split text/binary WebSocket protocol
@@ -71,15 +68,14 @@ namespace ws    = beast::websocket;
 /// Asio strand so that provider callbacks (arriving on arbitrary
 /// threads) never race with control-frame responses.
 class WsSession : public std::enable_shared_from_this<WsSession> {
- public:
-    WsSession(net::ip::tcp::socket socket,
-              std::shared_ptr<Driver> driver);
+   public:
+    WsSession(net::ip::tcp::socket socket, std::shared_ptr<Driver> driver);
     ~WsSession();
 
     /// Start the WebSocket handshake and begin reading frames.
     void Run();
 
- private:
+   private:
     // Async read loop.
     void DoRead();
     void OnRead(beast::error_code ec, std::size_t bytes_transferred);
@@ -112,12 +108,12 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     static std::vector<std::string> SplitTopic(const std::string& topic);
 
     ws::stream<beast::tcp_stream> ws_;
-    std::shared_ptr<Driver>       driver_;
-    beast::flat_buffer             read_buf_;
+    std::shared_ptr<Driver> driver_;
+    beast::flat_buffer read_buf_;
 
     // Outgoing write queue (strand-serialised).
     std::deque<OutgoingFrame> write_queue_;
-    bool                      writing_ = false;
+    bool writing_ = false;
 
     // Active Driver subscriptions owned by this session.
     std::unordered_map<uint64_t, std::string> subscriptions_;  // sub_id → topic

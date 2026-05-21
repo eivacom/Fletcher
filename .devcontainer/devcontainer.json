@@ -2,9 +2,29 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 {
-    "name": "fletcher devcontainer",
-    "build": {
-        "dockerfile": "Dockerfile"
-    },
-    "postCreateCommand": "conan config install https://github.com/eivacom/conan-configuration.git"
+  "name": "fletcher devcontainer",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "postCreateCommand": "conan config install https://github.com/eivacom/conan-configuration.git",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "xaver.clang-format",
+        "esbenp.prettier-vscode",
+        "ms-vscode.cmake-tools"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "[cpp]": { "editor.defaultFormatter": "xaver.clang-format" },
+        "[c]": { "editor.defaultFormatter": "xaver.clang-format" },
+        "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[javascript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" }
+      }
+    }
+  }
 }

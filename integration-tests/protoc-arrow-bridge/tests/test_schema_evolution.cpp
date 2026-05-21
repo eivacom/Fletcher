@@ -10,17 +10,16 @@
 // verify that each version round-trips cleanly through both its generated
 // class and arrow-bridge's Codec.
 
-#include "evolution_v1.fletcher.pb.h"
-#include "evolution_v2.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "evolution_v1.fletcher.pb.h"
+#include "evolution_v2.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -48,7 +47,7 @@ TEST(ProtoEvolutionTest, SensorV1SameSchemaRoundtrip) {
     original.set_location("trondheim");
 
     auto encoded = original.Encode();
-    auto schema  = ImportNano(fletcher_gen::evolution::SensorV1Schema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV1Schema());
     Codec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 
@@ -66,7 +65,7 @@ TEST(ProtoEvolutionTest, SensorV2SameSchemaRoundtrip) {
     original.set_label("sensor-a");
 
     auto encoded = original.Encode();
-    auto schema  = ImportNano(fletcher_gen::evolution::SensorV2Schema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV2Schema());
     Codec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 
@@ -86,7 +85,7 @@ TEST(ProtoEvolutionTest, SensorV2WithNullOptionalField) {
     // label not set → expect null
 
     auto encoded = original.Encode();
-    auto schema  = ImportNano(fletcher_gen::evolution::SensorV2Schema());
+    auto schema = ImportNano(fletcher_gen::evolution::SensorV2Schema());
     Codec codec(std::move(schema));
     auto decoded = codec.DecodeRow(encoded);
 

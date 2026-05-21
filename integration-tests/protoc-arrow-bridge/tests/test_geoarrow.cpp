@@ -6,18 +6,17 @@
 // produce structs/lists with the correct extension metadata, and that
 // CRS utilities resolve EPSG codes to PROJJSON.
 
-#include "geoarrow_test.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/arrow_bridge/crs_utils.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/arrow_bridge/crs_utils.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
 #include <string>
+
+#include "geoarrow_test.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -130,8 +129,7 @@ TEST(GeoArrowTest, ExtensionMetadataOnMultiPointField) {
 
 TEST(GeoArrowTest, PointStructHasXYChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
-    auto point_type = std::static_pointer_cast<arrow::StructType>(
-        schema->field(1)->type());
+    auto point_type = std::static_pointer_cast<arrow::StructType>(schema->field(1)->type());
     ASSERT_EQ(point_type->num_fields(), 2);
     EXPECT_EQ(point_type->field(0)->name(), "x");
     EXPECT_EQ(point_type->field(0)->type()->id(), arrow::Type::DOUBLE);
@@ -141,8 +139,7 @@ TEST(GeoArrowTest, PointStructHasXYChildren) {
 
 TEST(GeoArrowTest, PointZStructHasXYZChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
-    auto point_type = std::static_pointer_cast<arrow::StructType>(
-        schema->field(4)->type());
+    auto point_type = std::static_pointer_cast<arrow::StructType>(schema->field(4)->type());
     ASSERT_EQ(point_type->num_fields(), 3);
     EXPECT_EQ(point_type->field(0)->name(), "x");
     EXPECT_EQ(point_type->field(1)->name(), "y");
@@ -151,8 +148,7 @@ TEST(GeoArrowTest, PointZStructHasXYZChildren) {
 
 TEST(GeoArrowTest, BoxStructHasXminYminXmaxYmaxChildren) {
     auto schema = ImportNano(fletcher_gen::integration::VehicleTrackSchema());
-    auto box_type = std::static_pointer_cast<arrow::StructType>(
-        schema->field(3)->type());
+    auto box_type = std::static_pointer_cast<arrow::StructType>(schema->field(3)->type());
     ASSERT_EQ(box_type->num_fields(), 4);
     EXPECT_EQ(box_type->field(0)->name(), "xmin");
     EXPECT_EQ(box_type->field(1)->name(), "ymin");
@@ -171,8 +167,7 @@ TEST(GeoArrowTest, PointRoundTrip) {
 
     row.set_vehicle_id("v-1").set_last_position(pt);
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
 
     auto* pos = dynamic_cast<arrow::StructScalar*>(scalars[1].get());
@@ -189,8 +184,7 @@ TEST(GeoArrowTest, LineStringRoundTripCollapsedToList) {
 
     row.set_vehicle_id("v-2").set_route({p1, p2, p3});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
 
     auto* route = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
@@ -205,8 +199,7 @@ TEST(GeoArrowTest, BoxRoundTrip) {
 
     row.set_vehicle_id("v-3").set_bounding_box(box);
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
 
     auto* bb = dynamic_cast<arrow::StructScalar*>(scalars[3].get());
@@ -218,8 +211,7 @@ TEST(GeoArrowTest, OptionalPointZNullWhenNotSet) {
     fletcher_gen::integration::VehicleTrack row;
     row.set_vehicle_id("v-4");
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
     EXPECT_FALSE(scalars[4]->is_valid);
 }
@@ -231,8 +223,7 @@ TEST(GeoArrowTest, OptionalPointZValidWhenSet) {
 
     row.set_vehicle_id("v-5").set_altitude_point(pz);
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
     EXPECT_TRUE(scalars[4]->is_valid);
 }
@@ -245,8 +236,7 @@ TEST(GeoArrowTest, MultiPointRoundTrip) {
 
     row.set_vehicle_id("v-6").set_waypoints({w1, w2});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::VehicleTrackSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::VehicleTrackSchema());
     ASSERT_EQ(scalars.size(), 6u);
 
     auto* wp = dynamic_cast<arrow::ListScalar*>(scalars[5].get());
@@ -274,11 +264,11 @@ TEST(GeoArrowTest, NativeRoundtripVehicleTrack) {
     pz.set_x(37.7749).set_y(-122.4194).set_z(100.0);
 
     row.set_vehicle_id("v-test")
-       .set_last_position(pt)
-       .set_route({p1, p2})
-       .set_bounding_box(box)
-       .set_altitude_point(pz)
-       .set_waypoints({p1, p2});
+        .set_last_position(pt)
+        .set_route({p1, p2})
+        .set_bounding_box(box)
+        .set_altitude_point(pz)
+        .set_waypoints({p1, p2});
 
     fletcher_gen::integration::VehicleTrack decoded(row.Encode());
     EXPECT_EQ(decoded.vehicle_id(), "v-test");
@@ -422,8 +412,7 @@ TEST(GeoArrowPhase2Test, PolygonRoundTrip) {
 
     row.set_parcel_id("p-1").set_boundary({{p1, p2, p3, p4}});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::LandParcelSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::LandParcelSchema());
     ASSERT_EQ(scalars.size(), 5u);
 
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[1].get());
@@ -441,13 +430,15 @@ TEST(GeoArrowPhase2Test, MultiLineStringRoundTrip) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::Point a1, a2, b1, b2, b3;
-    a1.set_x(0).set_y(0); a2.set_x(1).set_y(1);
-    b1.set_x(2).set_y(2); b2.set_x(3).set_y(3); b3.set_x(4).set_y(4);
+    a1.set_x(0).set_y(0);
+    a2.set_x(1).set_y(1);
+    b1.set_x(2).set_y(2);
+    b2.set_x(3).set_y(3);
+    b3.set_x(4).set_y(4);
 
     row.set_parcel_id("p-2").set_access_roads({{a1, a2}, {b1, b2, b3}});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::LandParcelSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::LandParcelSchema());
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
     ASSERT_NE(outer, nullptr);
     EXPECT_EQ(outer->value->length(), 2);
@@ -462,20 +453,20 @@ TEST(GeoArrowPhase2Test, MultiPolygonRoundTrip) {
     fletcher_gen::integration::LandParcel row;
 
     fletcher_gen::geoarrow::Point p1, p2, p3, p4;
-    p1.set_x(0).set_y(0); p2.set_x(1).set_y(0);
-    p3.set_x(0).set_y(1); p4.set_x(0).set_y(0);
+    p1.set_x(0).set_y(0);
+    p2.set_x(1).set_y(0);
+    p3.set_x(0).set_y(1);
+    p4.set_x(0).set_y(0);
 
     fletcher_gen::geoarrow::Point q1, q2, q3, q4;
-    q1.set_x(10).set_y(10); q2.set_x(11).set_y(10);
-    q3.set_x(10).set_y(11); q4.set_x(10).set_y(10);
+    q1.set_x(10).set_y(10);
+    q2.set_x(11).set_y(10);
+    q3.set_x(10).set_y(11);
+    q4.set_x(10).set_y(10);
 
-    row.set_parcel_id("p-3").set_zones({
-        {{p1, p2, p3, p4}},
-        {{q1, q2, q3, q4}}
-    });
+    row.set_parcel_id("p-3").set_zones({{{p1, p2, p3, p4}}, {{q1, q2, q3, q4}}});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::LandParcelSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::LandParcelSchema());
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[3].get());
     ASSERT_NE(outer, nullptr);
     EXPECT_EQ(outer->value->length(), 2);
@@ -489,8 +480,7 @@ TEST(GeoArrowPhase2Test, MultiPolygonRoundTrip) {
 TEST(GeoArrowPhase2Test, OptionalPolygonZNullWhenNotSet) {
     fletcher_gen::integration::LandParcel row;
     row.set_parcel_id("p-4");
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::LandParcelSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::LandParcelSchema());
     ASSERT_EQ(scalars.size(), 5u);
     EXPECT_FALSE(scalars[4]->is_valid);
 }
@@ -506,7 +496,6 @@ TEST(GeoArrowPhase2Test, OptionalPolygonZValidWhenSet) {
 
     row.set_parcel_id("p-5").set_boundary_3d({{p1, p2, p3, p4}});
 
-    auto scalars = GeoRoundTrip(row.Encode(),
-        fletcher_gen::integration::LandParcelSchema());
+    auto scalars = GeoRoundTrip(row.Encode(), fletcher_gen::integration::LandParcelSchema());
     EXPECT_TRUE(scalars[4]->is_valid);
 }

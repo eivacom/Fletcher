@@ -3,12 +3,11 @@
 //
 #include <gtest/gtest.h>
 
-#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <thread>
 
 using namespace fletcher;
@@ -28,7 +27,7 @@ static OwnedSchema MakeSchema() {
 
 static PubSub::RowEncoder MakeEncoder(int32_t x) {
     return [x](WriteBuffer& buf) {
-        buf.AppendByte(0x00);          // null bitfield: no nulls
+        buf.AppendByte(0x00);  // null bitfield: no nulls
         buf.AppendFixed<int32_t>(x);
     };
 }
@@ -72,10 +71,8 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 
     std::atomic<int32_t> received{-1};
     auto result = sub_provider.Subscribe(
-        {"roundtrip", "x"},
-        [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-            if (len >= 5)
-                received.store(DecodeRow(data));
+        {"roundtrip", "x"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received.store(DecodeRow(data));
         });
 
     // Subscribe internally polls until the schema arrives, so once it returns

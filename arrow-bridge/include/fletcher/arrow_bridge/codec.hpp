@@ -6,9 +6,8 @@
 
 #include <arrow/api.h>
 
-#include <fletcher/core/types.hpp>
-
 #include <cstdint>
+#include <fletcher/core/types.hpp>
 #include <memory>
 #include <vector>
 
@@ -38,7 +37,7 @@ using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
 
 // Binds a schema to EncodeRow / DecodeRow for the positional format.
 class Codec {
- public:
+   public:
     explicit Codec(std::shared_ptr<arrow::Schema> schema);
 
     EncodedRow EncodeRow(const ArrowRow& values) const;
@@ -48,7 +47,7 @@ class Codec {
 
     const arrow::Schema& schema() const noexcept { return *schema_; }
 
- private:
+   private:
     std::shared_ptr<arrow::Schema> schema_;
 };
 

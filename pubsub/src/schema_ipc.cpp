@@ -17,8 +17,7 @@ namespace {
 void Check(ArrowErrorCode code, const ArrowError* err, const char* context) {
     if (code == NANOARROW_OK) return;
     std::string msg = context;
-    if (err && err->message[0])
-        msg += std::string(": ") + err->message;
+    if (err && err->message[0]) msg += std::string(": ") + err->message;
     throw std::runtime_error(msg);
 }
 
@@ -35,22 +34,21 @@ std::vector<uint8_t> SerializeSchemaIpc(const ArrowSchema* schema) {
     // Output stream backed by the buffer.
     ArrowIpcOutputStream stream;
     std::memset(&stream, 0, sizeof(stream));
-    Check(ArrowIpcOutputStreamInitBuffer(&stream, &buf),
-          &err, "SerializeSchemaIpc: init output stream");
+    Check(ArrowIpcOutputStreamInitBuffer(&stream, &buf), &err,
+          "SerializeSchemaIpc: init output stream");
 
     // Writer.
     ArrowIpcWriter writer;
     std::memset(&writer, 0, sizeof(writer));
-    Check(ArrowIpcWriterInit(&writer, &stream),
-          &err, "SerializeSchemaIpc: init writer");
+    Check(ArrowIpcWriterInit(&writer, &stream), &err, "SerializeSchemaIpc: init writer");
 
     // Write schema message.
-    Check(ArrowIpcWriterWriteSchema(&writer, schema, &err),
-          &err, "SerializeSchemaIpc: write schema");
+    Check(ArrowIpcWriterWriteSchema(&writer, schema, &err), &err,
+          "SerializeSchemaIpc: write schema");
 
     // Write EOS (null array view signals end of stream).
-    Check(ArrowIpcWriterWriteArrayView(&writer, nullptr, &err),
-          &err, "SerializeSchemaIpc: write EOS");
+    Check(ArrowIpcWriterWriteArrayView(&writer, nullptr, &err), &err,
+          "SerializeSchemaIpc: write EOS");
 
     ArrowIpcWriterReset(&writer);
     if (stream.release) stream.release(&stream);
@@ -96,8 +94,7 @@ OwnedSchema DeserializeSchemaIpc(const uint8_t* data, size_t len) {
     OwnedSchema result;
     ec = array_stream.get_schema(&array_stream, result.get());
     array_stream.release(&array_stream);
-    if (ec != NANOARROW_OK)
-        throw std::runtime_error("DeserializeSchemaIpc: get_schema failed");
+    if (ec != NANOARROW_OK) throw std::runtime_error("DeserializeSchemaIpc: get_schema failed");
 
     return result;
 }

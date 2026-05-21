@@ -10,27 +10,27 @@
 //   - generated.Encode → generated.decode(bytes)  ← here (no Arrow)
 //   - generated.Encode → Codec.DecodeRow(bytes)   ← in test_simple.cpp etc.
 
+#include <gtest/gtest.h>
+
+#include "collections.fletcher.pb.h"
+#include "complex.fletcher.pb.h"
+#include "maps.fletcher.pb.h"
+#include "nested.fletcher.pb.h"
 #include "simple.fletcher.pb.h"
 #include "temporal.fletcher.pb.h"
-#include "nested.fletcher.pb.h"
-#include "collections.fletcher.pb.h"
-#include "maps.fletcher.pb.h"
-#include "complex.fletcher.pb.h"
-
-#include <gtest/gtest.h>
 
 TEST(NativeRoundtripTest, SimpleScalars) {
     fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
-     .set_temperature(23.5)
-     .set_pressure(1013.25f)
-     .set_active(true)
-     .set_location("Room 101")
-     .set_payload("\xDE\xAD\xBE\xEF")
-     .set_sequence(7u)
-     .set_timestamp_ns(1'000'000'000LL)
-     .set_humidity(55.3)
-     .set_label("humid");
+        .set_temperature(23.5)
+        .set_pressure(1013.25f)
+        .set_active(true)
+        .set_location("Room 101")
+        .set_payload("\xDE\xAD\xBE\xEF")
+        .set_sequence(7u)
+        .set_timestamp_ns(1'000'000'000LL)
+        .set_humidity(55.3)
+        .set_label("humid");
 
     fletcher_gen::integration::SensorReading decoded(r.Encode());
 
@@ -50,9 +50,14 @@ TEST(NativeRoundtripTest, SimpleScalars) {
 
 TEST(NativeRoundtripTest, OptionalNulls) {
     fletcher_gen::integration::SensorReading r;
-    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
-     .set_active(false).set_location("").set_payload("").set_sequence(0u)
-     .set_timestamp_ns(0LL);
+    r.set_sensor_id(1)
+        .set_temperature(0.0)
+        .set_pressure(0.0f)
+        .set_active(false)
+        .set_location("")
+        .set_payload("")
+        .set_sequence(0u)
+        .set_timestamp_ns(0LL);
     // humidity and label intentionally left null
 
     fletcher_gen::integration::SensorReading decoded(r.Encode());
@@ -107,8 +112,8 @@ TEST(NativeRoundtripTest, RepeatedScalarsAndStructs) {
 TEST(NativeRoundtripTest, MapFields) {
     fletcher_gen::integration::Metrics m;
     m.set_resource_id("srv-1")
-     .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
-     .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
+        .set_gauges({{"cpu_pct", 45.2}, {"mem_pct", 72.1}})
+        .set_counters({{"requests", INT64_C(10000)}, {"errors", INT64_C(3)}});
 
     fletcher_gen::integration::Metrics decoded(m.Encode());
     EXPECT_EQ(decoded.resource_id(), "srv-1");
@@ -119,15 +124,14 @@ TEST(NativeRoundtripTest, MapFields) {
 TEST(NativeRoundtripTest, ComplexWktListStructMapAndOptional) {
     fletcher_gen::integration::OrderItem item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
-    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
-         .set_note("gift wrap");
+    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99).set_note("gift wrap");
 
     fletcher_gen::integration::Order order;
     order.set_order_id("ORD-12345")
-         .set_created_at(1'700'000'000'000'000'000LL)
-         .set_items({item1, item2})
-         .set_tags({{"priority", 1}, {"region", 3}})
-         .set_customer_note("Leave at door");
+        .set_created_at(1'700'000'000'000'000'000LL)
+        .set_items({item1, item2})
+        .set_tags({{"priority", 1}, {"region", 3}})
+        .set_customer_note("Leave at door");
 
     fletcher_gen::integration::Order decoded(order.Encode());
     EXPECT_EQ(decoded.order_id(), "ORD-12345");
@@ -145,9 +149,9 @@ TEST(NativeRoundtripTest, ComplexWktListStructMapAndOptional) {
 TEST(NativeRoundtripTest, TemporalWkt) {
     fletcher_gen::integration::TimedEvent ev;
     ev.set_event_id("evt-001")
-      .set_occurred_at(1'700'000'000'000'000'000LL)
-      .set_elapsed(5'000'000'000LL)
-      .set_score(9.5);
+        .set_occurred_at(1'700'000'000'000'000'000LL)
+        .set_elapsed(5'000'000'000LL)
+        .set_score(9.5);
 
     fletcher_gen::integration::TimedEvent decoded(ev.Encode());
     EXPECT_EQ(decoded.event_id(), "evt-001");

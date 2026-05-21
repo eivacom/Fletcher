@@ -8,8 +8,6 @@
 // Exposes scalar-level encode/decode so that translation units other than
 // codec.cpp can serialise individual scalars to and from raw byte buffers.
 
-#include "row_reader.hpp"
-
 #include <arrow/scalar.h>
 #include <arrow/type.h>
 
@@ -17,6 +15,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+#include "row_reader.hpp"
 
 namespace fletcher {
 namespace detail {
@@ -29,9 +29,8 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar);
 // Handles scalar types only.  Composite types (list, map, struct, union) are
 // handled by the Codec itself.
 // Throws std::invalid_argument on type mismatch or truncated input.
-std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
-    Reader& r,
-    const std::shared_ptr<arrow::DataType>& type);
+std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(Reader& r,
+                                                      const std::shared_ptr<arrow::DataType>& type);
 
 }  // namespace detail
 }  // namespace fletcher

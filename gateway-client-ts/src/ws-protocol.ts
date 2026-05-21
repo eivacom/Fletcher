@@ -76,18 +76,13 @@ export interface MessageData {
 // Text frame builders (client → server) — return JSON strings
 // -----------------------------------------------------------------------
 
-export function buildCreateTopic(
-  topic: string,
-  schema?: SchemaDescriptor,
-): string {
+export function buildCreateTopic(topic: string, schema?: SchemaDescriptor): string {
   // Schema is optional. Publishers that want subscribers to receive
   // the schema in their `subscribed` response announce it here; pure
   // byte-routers can omit it. Gateway forwards what it gets and does
   // not validate.
   return JSON.stringify(
-    schema
-      ? { action: 'create_topic', topic, schema }
-      : { action: 'create_topic', topic }
+    schema ? { action: 'create_topic', topic, schema } : { action: 'create_topic', topic },
   );
 }
 
@@ -109,7 +104,7 @@ export function buildListTopics(): string {
 
 export function buildPublish(topic: string, envelopeBytes: Uint8Array): Uint8Array {
   const topicBytes = textEncoder.encode(topic);
-  if (topicBytes.byteLength > 0xFFFF) {
+  if (topicBytes.byteLength > 0xffff) {
     throw new Error(`Topic name too long: ${topicBytes.byteLength} bytes (max 65535)`);
   }
   const buf = new Uint8Array(2 + topicBytes.byteLength + envelopeBytes.byteLength);
@@ -135,10 +130,10 @@ function parseFieldDescriptor(j: any): FieldDescriptor {
     wireType: j.wireType as number,
     nullable: j.nullable as boolean,
   };
-  if (j.element)        fd.element = parseFieldDescriptor(j.element);
-  if (j.mapKey)         fd.mapKey  = parseFieldDescriptor(j.mapKey);
-  if (j.mapValue)       fd.mapValue = parseFieldDescriptor(j.mapValue);
-  if (j.fields)         fd.fields = (j.fields as any[]).map(parseFieldDescriptor);
+  if (j.element) fd.element = parseFieldDescriptor(j.element);
+  if (j.mapKey) fd.mapKey = parseFieldDescriptor(j.mapKey);
+  if (j.mapValue) fd.mapValue = parseFieldDescriptor(j.mapValue);
+  if (j.fields) fd.fields = (j.fields as any[]).map(parseFieldDescriptor);
   if (j.fixedSize != null) fd.fixedSize = j.fixedSize as number;
   return fd;
 }
@@ -168,7 +163,7 @@ export function parseTextResponse(text: string): ServerResponse {
         topic: j.topic,
       };
       if (j.schemaIpc) resp.schemaIpc = j.schemaIpc as string;
-      if (j.schema)    resp.schema = parseSchemaFromJson(j.schema);
+      if (j.schema) resp.schema = parseSchemaFromJson(j.schema);
       return resp;
     }
     case 'unsubscribed':

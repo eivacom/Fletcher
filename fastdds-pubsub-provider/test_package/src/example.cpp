@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <thread>
 
 using namespace fletcher;
@@ -36,8 +35,7 @@ int main() {
 
     std::atomic<int32_t> received{-1};
     auto result = sub_provider.Subscribe(
-        {"example", "topic"},
-        [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+        {"example", "topic"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));

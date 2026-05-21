@@ -9,19 +9,18 @@
 // <stem>.fletcher.arrow.pb.h headers and use ArrowRowView templates
 // from arrow-bridge to give typed accessors over arrow::Scalar values.
 
-#include "simple.fletcher.pb.h"
-#include "simple.fletcher.arrow.pb.h"
-#include "nested.fletcher.pb.h"
-#include "nested.fletcher.arrow.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "nested.fletcher.arrow.pb.h"
+#include "nested.fletcher.pb.h"
+#include "simple.fletcher.arrow.pb.h"
+#include "simple.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -53,15 +52,15 @@ ArrowRow RoundTrip(EncodedRow encoded, OwnedSchema nano_schema) {
 TEST(ViewTest, SensorReadingFromArrowRow) {
     fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
-     .set_temperature(23.5)
-     .set_pressure(1013.25f)
-     .set_active(true)
-     .set_location("roof")
-     .set_payload("\x01\x02\x03")
-     .set_sequence(100)
-     .set_timestamp_ns(1'700'000'000'000'000'000LL)
-     .set_humidity(65.0)
-     .set_label("test-label");
+        .set_temperature(23.5)
+        .set_pressure(1013.25f)
+        .set_active(true)
+        .set_location("roof")
+        .set_payload("\x01\x02\x03")
+        .set_sequence(100)
+        .set_timestamp_ns(1'700'000'000'000'000'000LL)
+        .set_humidity(65.0)
+        .set_label("test-label");
 
     auto row = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     fletcher_gen::integration::SensorReadingView view(std::move(row));
@@ -83,13 +82,13 @@ TEST(ViewTest, SensorReadingFromArrowRow) {
 TEST(ViewTest, SensorReadingWithNulls) {
     fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(1)
-     .set_temperature(0.0)
-     .set_pressure(0.0f)
-     .set_active(false)
-     .set_location("")
-     .set_payload("")
-     .set_sequence(0)
-     .set_timestamp_ns(0);
+        .set_temperature(0.0)
+        .set_pressure(0.0f)
+        .set_active(false)
+        .set_location("")
+        .set_payload("")
+        .set_sequence(0)
+        .set_timestamp_ns(0);
     // humidity and label left as nullopt
 
     auto row = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());

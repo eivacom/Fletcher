@@ -2,14 +2,13 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include <gtest/gtest.h>
-
-#include "schema_codec.hpp"
-
 #include <nanoarrow/nanoarrow.h>
-#include <nlohmann/json.hpp>
 
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
+
+#include "schema_codec.hpp"
 
 using fletcher::gateway::BuildArrowSchemaFromJson;
 using fletcher::gateway::NanoarrowTypeToWireType;
@@ -23,10 +22,10 @@ using json = nlohmann::json;
 TEST(BuildArrowSchemaFromJsonTest, BuildsStructWithScalarFields) {
     json schema = {
         {"fields", json::array({
-            {{"name", "id"},    {"wireType", 0x05}},  // INT64
-            {{"name", "value"}, {"wireType", 0x0B}},  // DOUBLE
-            {{"name", "label"}, {"wireType", 0x0C}},  // STRING
-        })},
+                       {{"name", "id"}, {"wireType", 0x05}},     // INT64
+                       {{"name", "value"}, {"wireType", 0x0B}},  // DOUBLE
+                       {{"name", "label"}, {"wireType", 0x0C}},  // STRING
+                   })},
     };
 
     auto owned = BuildArrowSchemaFromJson(schema);
@@ -66,8 +65,8 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldsIsNotArray) {
 TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldHasNoName) {
     json schema = {
         {"fields", json::array({
-            {{"wireType", 0x05}},
-        })},
+                       {{"wireType", 0x05}},
+                   })},
     };
     try {
         BuildArrowSchemaFromJson(schema);
@@ -76,15 +75,15 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldHasNoName) {
         // The error must name the index so the client can locate the bad field.
         const std::string what = e.what();
         EXPECT_NE(what.find("index 0"), std::string::npos) << what;
-        EXPECT_NE(what.find("name"),    std::string::npos) << what;
+        EXPECT_NE(what.find("name"), std::string::npos) << what;
     }
 }
 
 TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldNameIsNotString) {
     json schema = {
         {"fields", json::array({
-            {{"name", 42}, {"wireType", 0x05}},
-        })},
+                       {{"name", 42}, {"wireType", 0x05}},
+                   })},
     };
     EXPECT_THROW(BuildArrowSchemaFromJson(schema), std::invalid_argument);
 }
@@ -92,16 +91,16 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldNameIsNotString) {
 TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldHasNoWireType) {
     json schema = {
         {"fields", json::array({
-            {{"name", "id"}, {"wireType", 0x05}},
-            {{"name", "broken"}},
-        })},
+                       {{"name", "id"}, {"wireType", 0x05}},
+                       {{"name", "broken"}},
+                   })},
     };
     try {
         BuildArrowSchemaFromJson(schema);
         FAIL() << "expected std::invalid_argument";
     } catch (const std::invalid_argument& e) {
         const std::string what = e.what();
-        EXPECT_NE(what.find("index 1"),  std::string::npos) << what;
+        EXPECT_NE(what.find("index 1"), std::string::npos) << what;
         EXPECT_NE(what.find("wireType"), std::string::npos) << what;
     }
 }
@@ -109,8 +108,8 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldHasNoWireType) {
 TEST(BuildArrowSchemaFromJsonTest, ThrowsWhenFieldWireTypeIsNotInteger) {
     json schema = {
         {"fields", json::array({
-            {{"name", "id"}, {"wireType", "INT64"}},
-        })},
+                       {{"name", "id"}, {"wireType", "INT64"}},
+                   })},
     };
     EXPECT_THROW(BuildArrowSchemaFromJson(schema), std::invalid_argument);
 }
@@ -121,8 +120,8 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsOnUnsupportedWireType) {
     // silently producing a broken nanoarrow setup.
     json schema = {
         {"fields", json::array({
-            {{"name", "nested"}, {"wireType", 0x20}},
-        })},
+                       {{"name", "nested"}, {"wireType", 0x20}},
+                   })},
     };
     EXPECT_THROW(BuildArrowSchemaFromJson(schema), std::invalid_argument);
 }
@@ -130,8 +129,8 @@ TEST(BuildArrowSchemaFromJsonTest, ThrowsOnUnsupportedWireType) {
 TEST(BuildArrowSchemaFromJsonTest, ThrowsOnUnknownWireType) {
     json schema = {
         {"fields", json::array({
-            {{"name", "mystery"}, {"wireType", 0xFE}},
-        })},
+                       {{"name", "mystery"}, {"wireType", 0xFE}},
+                   })},
     };
     EXPECT_THROW(BuildArrowSchemaFromJson(schema), std::invalid_argument);
 }
@@ -165,7 +164,6 @@ TEST(WireTypeRoundTripTest, ScalarWireTypesRoundTripThroughNanoarrowType) {
         enum ArrowType t = WireTypeToNanoarrowType(wt);
         int round_tripped = NanoarrowTypeToWireType(t);
         EXPECT_EQ(round_tripped, wt)
-            << "wireType 0x" << std::hex << wt
-            << " did not round-trip through NanoarrowType";
+            << "wireType 0x" << std::hex << wt << " did not round-trip through NanoarrowType";
     }
 }

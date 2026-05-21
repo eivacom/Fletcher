@@ -13,21 +13,19 @@
 // - Unsubscribe stops delivery
 // - Attachments flow through
 
-#include "pubsub.fletcher.pb.h"
-
-#include <fletcher/pubsub/pubsub.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
-#include <fletcher/arrow_bridge/codec.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
 #include <map>
 #include <memory>
 #include <vector>
+
+#include "pubsub.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -45,7 +43,7 @@ std::shared_ptr<arrow::Schema> ImportNano(OwnedSchema nano) {
 // Minimal in-process provider that records calls and delivers published
 // rows back to subscribers synchronously. No DDS, no transport.
 class MockPubSubProvider : public PubSub {
- public:
+   public:
     struct CreatedTopic {
         std::vector<std::string> segments;
         OwnedSchema schema;
@@ -61,14 +59,12 @@ class MockPubSubProvider : public PubSub {
     std::vector<PublishedMsg> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
-    void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema,
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                      std::any /*config*/) override {
         created_topics.push_back({segments, std::move(schema)});
     }
 
-    void Publish(const std::vector<std::string>& segments,
-                 RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
         std::vector<uint8_t> buf;
         VectorWriteBuffer wb(buf);
@@ -88,8 +84,7 @@ class MockPubSubProvider : public PubSub {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback,
-                                 std::any /*config*/) override {
+                                 SubscribeCallback callback, std::any /*config*/) override {
         subscribers[segments] = std::move(callback);
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
@@ -115,8 +110,7 @@ TEST(PubSubProtoTest, PublisherConstructionCreatesTopicWithCorrectSchema) {
     ASSERT_EQ(mock->created_topics.size(), 1u);
     EXPECT_EQ(mock->created_topics[0].segments,
               (std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"}));
-    auto schema = ImportNano(
-        OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
+    auto schema = ImportNano(OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
     EXPECT_EQ(schema->num_fields(), 4);
 }
 
@@ -167,9 +161,8 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     fletcher_gen::integration::Telemetry received;
-    sub.Subscribe([&](fletcher_gen::integration::Telemetry msg, Attachments) {
-        received = std::move(msg);
-    });
+    sub.Subscribe(
+        [&](fletcher_gen::integration::Telemetry msg, Attachments) { received = std::move(msg); });
 
     fletcher_gen::integration::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
@@ -215,8 +208,8 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     fletcher_gen::integration::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+    auto blob =
+        std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
     pub.Publish(row, {{"image", blob}});
 
     EXPECT_EQ(received.device_id(), 42);

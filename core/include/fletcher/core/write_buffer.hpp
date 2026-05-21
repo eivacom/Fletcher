@@ -19,7 +19,7 @@ namespace fletcher {
 //   - VectorWriteBuffer wraps a growable std::vector<uint8_t>.
 //   - FixedWriteBuffer wraps a pre-allocated byte array (e.g. DDS payload).
 class WriteBuffer {
- public:
+   public:
     virtual ~WriteBuffer() = default;
 
     virtual void Append(const uint8_t* data, size_t len) = 0;
@@ -49,20 +49,16 @@ class WriteBuffer {
 
 // WriteBuffer backed by a growable std::vector<uint8_t>.
 class VectorWriteBuffer : public WriteBuffer {
- public:
+   public:
     explicit VectorWriteBuffer(std::vector<uint8_t>& buf) : buf_(buf) {}
 
     void Append(const uint8_t* data, size_t len) override {
         buf_.insert(buf_.end(), data, data + len);
     }
 
-    void AppendByte(uint8_t byte) override {
-        buf_.push_back(byte);
-    }
+    void AppendByte(uint8_t byte) override { buf_.push_back(byte); }
 
-    size_t Position() const override {
-        return buf_.size();
-    }
+    size_t Position() const override { return buf_.size(); }
 
     void PatchU32(size_t offset, uint32_t value) override {
         if (offset + sizeof(value) > buf_.size())
@@ -76,26 +72,23 @@ class VectorWriteBuffer : public WriteBuffer {
         buf_[offset] |= bits;
     }
 
- private:
+   private:
     std::vector<uint8_t>& buf_;
 };
 
 // WriteBuffer backed by a fixed-size pre-allocated byte array.
 class FixedWriteBuffer : public WriteBuffer {
- public:
-    FixedWriteBuffer(uint8_t* data, size_t capacity)
-        : data_(data), capacity_(capacity) {}
+   public:
+    FixedWriteBuffer(uint8_t* data, size_t capacity) : data_(data), capacity_(capacity) {}
 
     void Append(const uint8_t* data, size_t len) override {
-        if (pos_ + len > capacity_)
-            throw std::overflow_error("FixedWriteBuffer: overflow");
+        if (pos_ + len > capacity_) throw std::overflow_error("FixedWriteBuffer: overflow");
         std::memcpy(data_ + pos_, data, len);
         pos_ += len;
     }
 
     void AppendByte(uint8_t byte) override {
-        if (pos_ >= capacity_)
-            throw std::overflow_error("FixedWriteBuffer: overflow");
+        if (pos_ >= capacity_) throw std::overflow_error("FixedWriteBuffer: overflow");
         data_[pos_++] = byte;
     }
 
@@ -113,10 +106,10 @@ class FixedWriteBuffer : public WriteBuffer {
         data_[offset] |= bits;
     }
 
- private:
+   private:
     uint8_t* data_;
-    size_t   capacity_;
-    size_t   pos_ = 0;
+    size_t capacity_;
+    size_t pos_ = 0;
 };
 
 }  // namespace fletcher

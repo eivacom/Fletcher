@@ -26,23 +26,23 @@ template <typename ValueT, typename ArrayT>
 class ArrowScalarList {
     std::shared_ptr<arrow::Array> array_;
 
- public:
+   public:
     ArrowScalarList() = default;
-    explicit ArrowScalarList(std::shared_ptr<arrow::Array> array)
-        : array_(std::move(array)) {}
+    explicit ArrowScalarList(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
 
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }
 
-    ValueT operator[](int64_t i) const {
-        return static_cast<const ArrayT&>(*array_).Value(i);
-    }
+    ValueT operator[](int64_t i) const { return static_cast<const ArrayT&>(*array_).Value(i); }
 
     struct Iterator {
         const ArrowScalarList* list;
         int64_t i;
         ValueT operator*() const { return (*list)[i]; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }
@@ -64,23 +64,23 @@ template <typename ViewT>
 class ArrowRowViewList {
     std::shared_ptr<arrow::Array> array_;
 
- public:
+   public:
     ArrowRowViewList() = default;
-    explicit ArrowRowViewList(std::shared_ptr<arrow::Array> array)
-        : array_(std::move(array)) {}
+    explicit ArrowRowViewList(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
 
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }
 
-    ViewT operator[](int64_t i) const {
-        return ViewT(array_->GetScalar(i).ValueOrDie());
-    }
+    ViewT operator[](int64_t i) const { return ViewT(array_->GetScalar(i).ValueOrDie()); }
 
     struct Iterator {
         const ArrowRowViewList* list;
         int64_t i;
         ViewT operator*() const { return (*list)[i]; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }
@@ -97,10 +97,9 @@ template <typename ViewT>
 class ArrowNestedList {
     std::shared_ptr<arrow::Array> array_;
 
- public:
+   public:
     ArrowNestedList() = default;
-    explicit ArrowNestedList(std::shared_ptr<arrow::Array> array)
-        : array_(std::move(array)) {}
+    explicit ArrowNestedList(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
 
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }
@@ -115,7 +114,10 @@ class ArrowNestedList {
         const ArrowNestedList* list;
         int64_t i;
         ArrowRowViewList<ViewT> operator*() const { return (*list)[i]; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }
@@ -132,10 +134,9 @@ template <typename ViewT>
 class ArrowNestedList2 {
     std::shared_ptr<arrow::Array> array_;
 
- public:
+   public:
     ArrowNestedList2() = default;
-    explicit ArrowNestedList2(std::shared_ptr<arrow::Array> array)
-        : array_(std::move(array)) {}
+    explicit ArrowNestedList2(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
 
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }
@@ -150,7 +151,10 @@ class ArrowNestedList2 {
         const ArrowNestedList2* list;
         int64_t i;
         ArrowNestedList<ViewT> operator*() const { return (*list)[i]; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }
@@ -170,12 +174,11 @@ class ArrowScalarMap {
     std::shared_ptr<arrow::Array> keys_;
     std::shared_ptr<arrow::Array> vals_;
 
- public:
+   public:
     ArrowScalarMap() = default;
     explicit ArrowScalarMap(const std::shared_ptr<arrow::Array>& struct_array) {
         if (struct_array) {
-            const auto& sa =
-                static_cast<const arrow::StructArray&>(*struct_array);
+            const auto& sa = static_cast<const arrow::StructArray&>(*struct_array);
             keys_ = sa.field(0);
             vals_ = sa.field(1);
         }
@@ -184,12 +187,8 @@ class ArrowScalarMap {
     int64_t size() const { return keys_ ? keys_->length() : 0; }
     bool empty() const { return size() == 0; }
 
-    KV key(int64_t i) const {
-        return static_cast<const KA&>(*keys_).Value(i);
-    }
-    VV value(int64_t i) const {
-        return static_cast<const VA&>(*vals_).Value(i);
-    }
+    KV key(int64_t i) const { return static_cast<const KA&>(*keys_).Value(i); }
+    VV value(int64_t i) const { return static_cast<const VA&>(*vals_).Value(i); }
 
     struct Entry {
         KV key;
@@ -199,7 +198,10 @@ class ArrowScalarMap {
         const ArrowScalarMap* map;
         int64_t i;
         Entry operator*() const { return {map->key(i), map->value(i)}; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }
@@ -219,12 +221,11 @@ class ArrowRowViewMap {
     std::shared_ptr<arrow::Array> keys_;
     std::shared_ptr<arrow::Array> vals_;
 
- public:
+   public:
     ArrowRowViewMap() = default;
     explicit ArrowRowViewMap(const std::shared_ptr<arrow::Array>& struct_array) {
         if (struct_array) {
-            const auto& sa =
-                static_cast<const arrow::StructArray&>(*struct_array);
+            const auto& sa = static_cast<const arrow::StructArray&>(*struct_array);
             keys_ = sa.field(0);
             vals_ = sa.field(1);
         }
@@ -233,12 +234,8 @@ class ArrowRowViewMap {
     int64_t size() const { return keys_ ? keys_->length() : 0; }
     bool empty() const { return size() == 0; }
 
-    KV key(int64_t i) const {
-        return static_cast<const KA&>(*keys_).Value(i);
-    }
-    ViewT value(int64_t i) const {
-        return ViewT(vals_->GetScalar(i).ValueOrDie());
-    }
+    KV key(int64_t i) const { return static_cast<const KA&>(*keys_).Value(i); }
+    ViewT value(int64_t i) const { return ViewT(vals_->GetScalar(i).ValueOrDie()); }
 
     struct Entry {
         KV key;
@@ -248,7 +245,10 @@ class ArrowRowViewMap {
         const ArrowRowViewMap* map;
         int64_t i;
         Entry operator*() const { return {map->key(i), map->value(i)}; }
-        Iterator& operator++() { ++i; return *this; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
         bool operator!=(const Iterator& o) const { return i != o.i; }
     };
     Iterator begin() const { return {this, 0}; }

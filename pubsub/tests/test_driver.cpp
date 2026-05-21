@@ -2,14 +2,12 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include <gtest/gtest.h>
-
-#include <fletcher/pubsub/driver.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
 #include <nanoarrow/nanoarrow.h>
 
 #include <algorithm>
 #include <cstring>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/driver.hpp>
 #include <vector>
 
 using namespace fletcher;
@@ -19,18 +17,15 @@ using namespace fletcher;
 // ---------------------------------------------------------------------------
 
 class MockProvider : public PubSub {
- public:
-    void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema,
+   public:
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                      std::any /*config*/) override {
         std::string key = Join(segments);
         topics_created.push_back(key);
-        if (schema)
-            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        if (schema) schemas_[key] = OwnedSchema::DeepCopy(schema.get());
     }
 
-    void Publish(const std::vector<std::string>& segments,
-                 RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
         std::string key = Join(segments);
 
@@ -50,14 +45,12 @@ class MockProvider : public PubSub {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback,
-                                 std::any /*config*/) override {
+                                 SubscribeCallback callback, std::any /*config*/) override {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         OwnedSchema schema;
-        if (it != schemas_.end())
-            schema = OwnedSchema::DeepCopy(it->second.get());
+        if (it != schemas_.end()) schema = OwnedSchema::DeepCopy(it->second.get());
         return {std::move(schema)};
     }
 
@@ -69,7 +62,7 @@ class MockProvider : public PubSub {
     std::vector<std::string> topics_created;
     int unsubscribe_count = 0;
 
- private:
+   private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
 
@@ -98,7 +91,7 @@ static const std::vector<std::string> kTopic = {"test", "topic"};
 /// Encode a test row as positional format: [null_bitfield(1 byte)] [int32 LE].
 static PubSub::RowEncoder MakeTestEncoder(int32_t x) {
     return [x](WriteBuffer& buf) {
-        buf.AppendByte(0x00);          // null bitfield: 1 field, not null
+        buf.AppendByte(0x00);  // null bitfield: 1 field, not null
         buf.AppendFixed<int32_t>(x);
     };
 }
@@ -164,8 +157,8 @@ TEST(DriverTest, SubscribeToUnknownTopicAutoRegisters) {
     Driver driver(mock);
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
-    auto result = driver.Subscribe({"no", "such"},
-                                   [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    auto result =
+        driver.Subscribe({"no", "such"}, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
     EXPECT_GT(result.subscription_id, 0u);
     EXPECT_TRUE(driver.HasTopic({"no", "such"}));
 }
@@ -176,8 +169,8 @@ TEST(DriverTest, SubscribeReturnsSchemaFromProvider) {
 
     driver.CreateTopic(kTopic, TestSchema());
 
-    auto result = driver.Subscribe(kTopic,
-                                   [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    auto result =
+        driver.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
     ASSERT_TRUE(result.schema.valid());
     // Verify structure: one child named "x" with int32 format.
     EXPECT_EQ(result.schema->n_children, 1);
@@ -210,7 +203,8 @@ TEST(DriverTest, UnsubscribeRemovesSpecificSubscriber) {
     driver.CreateTopic(kTopic, TestSchema());
 
     int count_a = 0, count_b = 0;
-    auto ra = driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
+    auto ra = driver.Subscribe(
+        kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
     driver.Subscribe(kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     driver.Publish(kTopic, MakeTestEncoder(1));
@@ -283,9 +277,7 @@ TEST(DriverTest, HasTopic) {
     EXPECT_FALSE(driver.HasTopic({"other"}));
 }
 
-TEST(DriverTest, NullProviderThrows) {
-    EXPECT_THROW(Driver(nullptr), std::invalid_argument);
-}
+TEST(DriverTest, NullProviderThrows) { EXPECT_THROW(Driver(nullptr), std::invalid_argument); }
 
 TEST(DriverTest, PublishWithAttachmentsFansOutCorrectly) {
     auto mock = std::make_shared<MockProvider>();
@@ -299,8 +291,7 @@ TEST(DriverTest, PublishWithAttachmentsFansOutCorrectly) {
         received_att = std::move(att);
     });
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0xDE, 0xAD});
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
     driver.Publish(kTopic, MakeTestEncoder(99), {{"img", blob}});
 

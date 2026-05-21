@@ -2,7 +2,6 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include "generator.hpp"
-#include "type_mapper.hpp"
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
@@ -14,6 +13,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include "type_mapper.hpp"
 
 namespace fletcher {
 
@@ -36,8 +37,10 @@ std::string DotToColons(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
     for (char c : s) {
-        if (c == '.') out += "::";
-        else          out += c;
+        if (c == '.')
+            out += "::";
+        else
+            out += c;
     }
     return out;
 }
@@ -45,8 +48,7 @@ std::string DotToColons(const std::string& s) {
 std::string StripProtoSuffix(const std::string& proto_name) {
     constexpr std::string_view kSuffix = ".proto";
     std::string base = proto_name;
-    if (base.size() > kSuffix.size()
-        && base.substr(base.size() - kSuffix.size()) == kSuffix)
+    if (base.size() > kSuffix.size() && base.substr(base.size() - kSuffix.size()) == kSuffix)
         base.resize(base.size() - kSuffix.size());
     return base;
 }
@@ -55,8 +57,8 @@ std::string OutputFilename(const std::string& proto_name) {
     return StripProtoSuffix(proto_name) + ".fletcher.pb.h";
 }
 
-bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
-                   const std::string& s, std::string* error) {
+bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out, const std::string& s,
+                   std::string* error) {
     const char* data = s.data();
     size_t remaining = s.size();
     while (remaining > 0) {
@@ -68,9 +70,8 @@ bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
         }
         const size_t n = std::min(static_cast<size_t>(size), remaining);
         std::memcpy(buf, data, n);
-        if (static_cast<size_t>(size) > n)
-            out->BackUp(static_cast<int>(size - n));
-        data      += n;
+        if (static_cast<size_t>(size) > n) out->BackUp(static_cast<int>(size - n));
+        data += n;
         remaining -= n;
     }
     return true;
@@ -82,26 +83,20 @@ bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out,
 
 // Scan all supported field mappings in a message (and its nested types) and
 // accumulate the include paths of any cross-file generated headers needed.
-void CollectCrossFileIncludesFromMessage(
-    const google::protobuf::Descriptor* msg,
-    std::set<std::string>& headers)
-{
+void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg,
+                                         std::set<std::string>& headers) {
     for (int fi = 0; fi < msg->field_count(); ++fi) {
         const auto* fd = msg->field(fi);
         if (auto m = MapField(fd)) {
-            if (!m->nested_header.empty())
-                headers.insert(m->nested_header);
-            if (!m->map_value_header.empty())
-                headers.insert(m->map_value_header);
+            if (!m->nested_header.empty()) headers.insert(m->nested_header);
+            if (!m->map_value_header.empty()) headers.insert(m->map_value_header);
         }
     }
     for (int ni = 0; ni < msg->nested_type_count(); ++ni)
         CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
 }
 
-std::set<std::string> CollectCrossFileIncludes(
-    const google::protobuf::FileDescriptor* file)
-{
+std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
     std::set<std::string> headers;
     for (int mi = 0; mi < file->message_type_count(); ++mi)
         CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
@@ -116,14 +111,11 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
                       const google::protobuf::FileDescriptor* file,
                       std::set<const google::protobuf::Descriptor*>& emitted,
                       std::vector<const google::protobuf::Descriptor*>& order) {
-    if (emitted.count(msg))
-        return;
+    if (emitted.count(msg)) return;
     // Skip synthetic map-entry messages.
-    if (msg->options().map_entry())
-        return;
+    if (msg->options().map_entry()) return;
     // Only generate classes for messages in this file.
-    if (msg->file() != file)
-        return;
+    if (msg->file() != file) return;
     // Skip recursive messages entirely.
     if (IsRecursive(msg)) {
         emitted.insert(msg);
@@ -137,8 +129,7 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
     // Visit message-type dependencies.
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* f = msg->field(i);
-        if (f->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE)
-            continue;
+        if (f->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) continue;
         if (f->is_map()) {
             const auto* val = f->message_type()->field(1);
             if (val->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE)
@@ -152,8 +143,8 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
     order.push_back(msg);
 }
 
-std::vector<const google::protobuf::Descriptor*>
-OrderedMessages(const google::protobuf::FileDescriptor* file) {
+std::vector<const google::protobuf::Descriptor*> OrderedMessages(
+    const google::protobuf::FileDescriptor* file) {
     std::set<const google::protobuf::Descriptor*> emitted;
     std::vector<const google::protobuf::Descriptor*> order;
     for (int i = 0; i < file->message_type_count(); ++i)
@@ -166,10 +157,10 @@ OrderedMessages(const google::protobuf::FileDescriptor* file) {
 // -----------------------------------------------------------------------
 
 struct FieldInfo {
-    std::string  name;
+    std::string name;
     FieldMapping mapping;
-    int          field_number = 0;  // proto field number — stable across renames
-    std::string  field_id;          // string form of field_number for metadata
+    int field_number = 0;  // proto field number — stable across renames
+    std::string field_id;  // string form of field_number for metadata
 };
 
 // -----------------------------------------------------------------------
@@ -179,24 +170,28 @@ struct FieldInfo {
 // Returns the WireTypeId hex byte for a field's Arrow type.
 std::string WireTypeHex(const FieldInfo& fi) {
     switch (fi.mapping.kind) {
-        case FieldKind::STRUCT:          return "0x20";
+        case FieldKind::STRUCT:
+            return "0x20";
         case FieldKind::REPEATED_SCALAR:
-        case FieldKind::REPEATED_STRUCT: return "0x21";
-        case FieldKind::MAP:             return "0x24";
-        case FieldKind::NESTED_LIST:     return "0x21";
+        case FieldKind::REPEATED_STRUCT:
+            return "0x21";
+        case FieldKind::MAP:
+            return "0x24";
+        case FieldKind::NESTED_LIST:
+            return "0x21";
         case FieldKind::SCALAR: {
             const auto& expr = fi.mapping.scalar.arrow_type_expr;
-            if (expr == "arrow::boolean()")  return "0x01";
-            if (expr == "arrow::int32()")    return "0x04";
-            if (expr == "arrow::int64()")    return "0x05";
-            if (expr == "arrow::uint32()")   return "0x08";
-            if (expr == "arrow::uint64()")   return "0x09";
-            if (expr == "arrow::float32()")  return "0x0A";
-            if (expr == "arrow::float64()")  return "0x0B";
-            if (expr == "arrow::utf8()")     return "0x0C";
-            if (expr == "arrow::binary()")   return "0x0D";
+            if (expr == "arrow::boolean()") return "0x01";
+            if (expr == "arrow::int32()") return "0x04";
+            if (expr == "arrow::int64()") return "0x05";
+            if (expr == "arrow::uint32()") return "0x08";
+            if (expr == "arrow::uint64()") return "0x09";
+            if (expr == "arrow::float32()") return "0x0A";
+            if (expr == "arrow::float64()") return "0x0B";
+            if (expr == "arrow::utf8()") return "0x0C";
+            if (expr == "arrow::binary()") return "0x0D";
             if (expr.find("timestamp") != std::string::npos) return "0x10";
-            if (expr.find("duration")  != std::string::npos) return "0x13";
+            if (expr.find("duration") != std::string::npos) return "0x13";
             return "";
         }
     }
@@ -207,25 +202,25 @@ std::string WireTypeHex(const FieldInfo& fi) {
 int PayloadSize(const FieldInfo& fi) {
     if (fi.mapping.kind != FieldKind::SCALAR) return -1;
     const auto& st = fi.mapping.scalar.storage_type;
-    if (st == "bool")     return 1;
-    if (st == "int32_t")  return 4;
+    if (st == "bool") return 1;
+    if (st == "int32_t") return 4;
     if (st == "uint32_t") return 4;
-    if (st == "float")    return 4;
-    if (st == "int64_t")  return 8;
+    if (st == "float") return 4;
+    if (st == "int64_t") return 8;
     if (st == "uint64_t") return 8;
-    if (st == "double")   return 8;
+    if (st == "double") return 8;
     return -1;  // std::string → variable
 }
 
 // Returns the fixed payload byte size for a scalar type (keys or values).
 int ScalarPayloadSize(const ScalarTypeInfo& info) {
-    if (info.storage_type == "bool")     return 1;
-    if (info.storage_type == "int32_t")  return 4;
+    if (info.storage_type == "bool") return 1;
+    if (info.storage_type == "int32_t") return 4;
     if (info.storage_type == "uint32_t") return 4;
-    if (info.storage_type == "float")    return 4;
-    if (info.storage_type == "int64_t")  return 8;
+    if (info.storage_type == "float") return 4;
+    if (info.storage_type == "int64_t") return 8;
     if (info.storage_type == "uint64_t") return 8;
-    if (info.storage_type == "double")   return 8;
+    if (info.storage_type == "double") return 8;
     return -1;  // string → variable
 }
 
@@ -239,34 +234,31 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
             return fi.mapping.scalar.arrow_type_expr;
 
         case FieldKind::REPEATED_SCALAR:
-            return "arrow::list(arrow::field(\"item\", "
-                 + fi.mapping.element.arrow_type_expr + ", false))";
+            return "arrow::list(arrow::field(\"item\", " + fi.mapping.element.arrow_type_expr +
+                   ", false))";
 
         case FieldKind::STRUCT:
-            return "arrow::struct_(" + fi.mapping.nested_class
-                 + "Schema()->fields())";
+            return "arrow::struct_(" + fi.mapping.nested_class + "Schema()->fields())";
 
         case FieldKind::REPEATED_STRUCT:
-            return "arrow::list(arrow::field(\"item\", arrow::struct_("
-                 + fi.mapping.nested_class
-                 + "Schema()->fields()), false))";
+            return "arrow::list(arrow::field(\"item\", arrow::struct_(" + fi.mapping.nested_class +
+                   "Schema()->fields()), false))";
 
         case FieldKind::NESTED_LIST: {
             // Build nested arrow::list() from inside out.
-            std::string expr = "arrow::struct_("
-                             + fi.mapping.nested_class + "Schema()->fields())";
+            std::string expr = "arrow::struct_(" + fi.mapping.nested_class + "Schema()->fields())";
             for (int d = 0; d < fi.mapping.list_depth; ++d)
                 expr = "arrow::list(arrow::field(\"item\", " + expr + ", false))";
             return expr;
         }
 
         case FieldKind::MAP: {
-            std::string val_type = fi.mapping.map_value_is_message
-                ? "arrow::struct_(" + fi.mapping.map_value_class
-                  + "Schema()->fields())"
-                : fi.mapping.map_value.arrow_type_expr;
-            return "arrow::map(" + fi.mapping.map_key.arrow_type_expr
-                 + ", arrow::field(\"value\", " + val_type + ", false))";
+            std::string val_type =
+                fi.mapping.map_value_is_message
+                    ? "arrow::struct_(" + fi.mapping.map_value_class + "Schema()->fields())"
+                    : fi.mapping.map_value.arrow_type_expr;
+            return "arrow::map(" + fi.mapping.map_key.arrow_type_expr +
+                   ", arrow::field(\"value\", " + val_type + ", false))";
         }
     }
     return "/* unknown */";
@@ -279,36 +271,30 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
 std::string StorageDecl(const FieldInfo& fi) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR:
-            return "std::optional<" + fi.mapping.scalar.storage_type + "> "
-                 + fi.name + "_";
+            return "std::optional<" + fi.mapping.scalar.storage_type + "> " + fi.name + "_";
 
         case FieldKind::REPEATED_SCALAR:
-            return "std::vector<" + fi.mapping.element.storage_type + "> "
-                 + fi.name + "_";
+            return "std::vector<" + fi.mapping.element.storage_type + "> " + fi.name + "_";
 
         case FieldKind::STRUCT:
-            return "std::optional<" + fi.mapping.nested_class + "> "
-                 + fi.name + "_";
+            return "std::optional<" + fi.mapping.nested_class + "> " + fi.name + "_";
 
         case FieldKind::REPEATED_STRUCT:
-            return "std::vector<" + fi.mapping.nested_class + "> "
-                 + fi.name + "_";
+            return "std::vector<" + fi.mapping.nested_class + "> " + fi.name + "_";
 
         case FieldKind::NESTED_LIST: {
             std::string type = fi.mapping.nested_class;
-            for (int d = 0; d < fi.mapping.list_depth; ++d)
-                type = "std::vector<" + type + ">";
-            if (fi.mapping.nullable)
-                return "std::optional<" + type + "> " + fi.name + "_";
+            for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
+            if (fi.mapping.nullable) return "std::optional<" + type + "> " + fi.name + "_";
             return type + " " + fi.name + "_";
         }
 
         case FieldKind::MAP: {
             std::string val_type = fi.mapping.map_value_is_message
-                ? fi.mapping.map_value_class
-                : fi.mapping.map_value.storage_type;
-            return "std::vector<std::pair<" + fi.mapping.map_key.storage_type
-                 + ", " + val_type + ">> " + fi.name + "_";
+                                       ? fi.mapping.map_value_class
+                                       : fi.mapping.map_value.storage_type;
+            return "std::vector<std::pair<" + fi.mapping.map_key.storage_type + ", " + val_type +
+                   ">> " + fi.name + "_";
         }
     }
     return "/* unknown */ " + fi.name + "_";
@@ -323,10 +309,9 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
     for (const auto& fi : fields) {
         switch (fi.mapping.kind) {
             case FieldKind::SCALAR: {
-                bool coerce = (fi.mapping.scalar.param_type
-                            != fi.mapping.scalar.storage_type);
-                o << "    " << cls << "& set_" << fi.name
-                  << "(" << fi.mapping.scalar.param_type << " v) {\n";
+                bool coerce = (fi.mapping.scalar.param_type != fi.mapping.scalar.storage_type);
+                o << "    " << cls << "& set_" << fi.name << "(" << fi.mapping.scalar.param_type
+                  << " v) {\n";
                 if (coerce)
                     o << "        " << fi.name << "_ = std::string(v);\n";
                 else
@@ -341,15 +326,15 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
             }
 
             case FieldKind::REPEATED_SCALAR:
-                o << "    " << cls << "& set_" << fi.name
-                  << "(std::vector<" << fi.mapping.element.storage_type << "> v) {\n"
+                o << "    " << cls << "& set_" << fi.name << "(std::vector<"
+                  << fi.mapping.element.storage_type << "> v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 break;
 
             case FieldKind::STRUCT:
-                o << "    " << cls << "& set_" << fi.name
-                  << "(" << fi.mapping.nested_class << " v) {\n"
+                o << "    " << cls << "& set_" << fi.name << "(" << fi.mapping.nested_class
+                  << " v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 if (fi.mapping.nullable) {
@@ -360,18 +345,16 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
                 break;
 
             case FieldKind::REPEATED_STRUCT:
-                o << "    " << cls << "& set_" << fi.name
-                  << "(std::vector<" << fi.mapping.nested_class << "> v) {\n"
+                o << "    " << cls << "& set_" << fi.name << "(std::vector<"
+                  << fi.mapping.nested_class << "> v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 break;
 
             case FieldKind::NESTED_LIST: {
                 std::string type = fi.mapping.nested_class;
-                for (int d = 0; d < fi.mapping.list_depth; ++d)
-                    type = "std::vector<" + type + ">";
-                o << "    " << cls << "& set_" << fi.name
-                  << "(" << type << " v) {\n"
+                for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
+                o << "    " << cls << "& set_" << fi.name << "(" << type << " v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 if (fi.mapping.nullable) {
@@ -384,11 +367,10 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
 
             case FieldKind::MAP: {
                 std::string val_type = fi.mapping.map_value_is_message
-                    ? fi.mapping.map_value_class
-                    : fi.mapping.map_value.storage_type;
-                o << "    " << cls << "& set_" << fi.name
-                  << "(std::vector<std::pair<" << fi.mapping.map_key.storage_type
-                  << ", " << val_type << ">> v) {\n"
+                                           ? fi.mapping.map_value_class
+                                           : fi.mapping.map_value.storage_type;
+                o << "    " << cls << "& set_" << fi.name << "(std::vector<std::pair<"
+                  << fi.mapping.map_key.storage_type << ", " << val_type << ">> v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
                   << "        return *this;\n    }\n";
                 break;
@@ -409,31 +391,24 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
 
                 if (fi.mapping.nullable) {
                     if (sc.value_is_buffer) {
-                        o << "    std::optional<std::string_view> " << fi.name
-                          << "() const {\n"
-                          << "        if (!" << fi.name
-                          << "_.has_value()) return std::nullopt;\n"
-                          << "        return std::string_view{*" << fi.name
-                          << "_};\n"
+                        o << "    std::optional<std::string_view> " << fi.name << "() const {\n"
+                          << "        if (!" << fi.name << "_.has_value()) return std::nullopt;\n"
+                          << "        return std::string_view{*" << fi.name << "_};\n"
                           << "    }\n";
                     } else {
-                        o << "    std::optional<" << sc.storage_type << "> "
-                          << fi.name << "() const { return " << fi.name
-                          << "_; }\n";
+                        o << "    std::optional<" << sc.storage_type << "> " << fi.name
+                          << "() const { return " << fi.name << "_; }\n";
                     }
                 } else {
                     if (sc.value_is_buffer) {
                         // Can't use value_or("") — temporary would dangle.
-                        o << "    std::string_view " << fi.name
-                          << "() const {\n"
-                          << "        if (!" << fi.name
-                          << "_.has_value()) return {};\n"
+                        o << "    std::string_view " << fi.name << "() const {\n"
+                          << "        if (!" << fi.name << "_.has_value()) return {};\n"
                           << "        return *" << fi.name << "_;\n"
                           << "    }\n";
                     } else {
-                        o << "    " << sc.storage_type << " " << fi.name
-                          << "() const { return " << fi.name
-                          << "_.value_or(" << sc.default_value << "); }\n";
+                        o << "    " << sc.storage_type << " " << fi.name << "() const { return "
+                          << fi.name << "_.value_or(" << sc.default_value << "); }\n";
                     }
                 }
                 break;
@@ -441,62 +416,52 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
 
             case FieldKind::STRUCT:
                 if (fi.mapping.nullable) {
-                    o << "    const " << fi.mapping.nested_class << "* "
-                      << fi.name << "() const {\n"
-                      << "        return " << fi.name
-                      << "_.has_value() ? &*" << fi.name
+                    o << "    const " << fi.mapping.nested_class << "* " << fi.name
+                      << "() const {\n"
+                      << "        return " << fi.name << "_.has_value() ? &*" << fi.name
                       << "_ : nullptr;\n"
                       << "    }\n";
                 } else {
-                    o << "    const " << fi.mapping.nested_class << "& "
-                      << fi.name << "() const {\n"
-                      << "        static const " << fi.mapping.nested_class
-                      << " kDefault{};\n"
-                      << "        return " << fi.name
-                      << "_.has_value() ? *" << fi.name
+                    o << "    const " << fi.mapping.nested_class << "& " << fi.name
+                      << "() const {\n"
+                      << "        static const " << fi.mapping.nested_class << " kDefault{};\n"
+                      << "        return " << fi.name << "_.has_value() ? *" << fi.name
                       << "_ : kDefault;\n"
                       << "    }\n";
                 }
                 break;
 
             case FieldKind::REPEATED_SCALAR:
-                o << "    const std::vector<" << fi.mapping.element.storage_type
-                  << ">& " << fi.name << "() const { return " << fi.name
-                  << "_; }\n";
+                o << "    const std::vector<" << fi.mapping.element.storage_type << ">& " << fi.name
+                  << "() const { return " << fi.name << "_; }\n";
                 break;
 
             case FieldKind::REPEATED_STRUCT:
-                o << "    const std::vector<" << fi.mapping.nested_class
-                  << ">& " << fi.name << "() const { return " << fi.name
-                  << "_; }\n";
+                o << "    const std::vector<" << fi.mapping.nested_class << ">& " << fi.name
+                  << "() const { return " << fi.name << "_; }\n";
                 break;
 
             case FieldKind::NESTED_LIST: {
                 std::string type = fi.mapping.nested_class;
-                for (int d = 0; d < fi.mapping.list_depth; ++d)
-                    type = "std::vector<" + type + ">";
+                for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
                 if (fi.mapping.nullable) {
-                    o << "    const " << type << "* " << fi.name
-                      << "() const {\n"
-                      << "        return " << fi.name
-                      << "_.has_value() ? &*" << fi.name
+                    o << "    const " << type << "* " << fi.name << "() const {\n"
+                      << "        return " << fi.name << "_.has_value() ? &*" << fi.name
                       << "_ : nullptr;\n"
                       << "    }\n";
                 } else {
-                    o << "    const " << type << "& " << fi.name
-                      << "() const { return " << fi.name << "_; }\n";
+                    o << "    const " << type << "& " << fi.name << "() const { return " << fi.name
+                      << "_; }\n";
                 }
                 break;
             }
 
             case FieldKind::MAP: {
                 std::string val_type = fi.mapping.map_value_is_message
-                    ? fi.mapping.map_value_class
-                    : fi.mapping.map_value.storage_type;
-                o << "    const std::vector<std::pair<"
-                  << fi.mapping.map_key.storage_type << ", " << val_type
-                  << ">>& " << fi.name << "() const { return " << fi.name
-                  << "_; }\n";
+                                           ? fi.mapping.map_value_class
+                                           : fi.mapping.map_value.storage_type;
+                o << "    const std::vector<std::pair<" << fi.mapping.map_key.storage_type << ", "
+                  << val_type << ">>& " << fi.name << "() const { return " << fi.name << "_; }\n";
                 break;
             }
         }
@@ -525,8 +490,8 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
 
         case FieldKind::STRUCT:
             o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        auto type = arrow::struct_("
-              << fi.mapping.nested_class << "Schema()->fields());\n";
+              << "        auto type = arrow::struct_(" << fi.mapping.nested_class
+              << "Schema()->fields());\n";
             if (fi.mapping.nullable) {
                 o << "        if (!" << fi.name << "_.has_value())\n"
                   << "            return arrow::MakeNullScalar(type);\n"
@@ -535,8 +500,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             } else {
                 o << "        auto values = " << fi.name << "_.has_value()\n"
                   << "            ? " << fi.name << "_->ToScalars()\n"
-                  << "            : " << fi.mapping.nested_class
-                  << "().ToScalars();\n"
+                  << "            : " << fi.mapping.nested_class << "().ToScalars();\n"
                   << "        return std::make_shared<arrow::StructScalar>(\n"
                   << "            std::move(values), type);\n";
             }
@@ -545,8 +509,8 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
 
         case FieldKind::REPEATED_STRUCT:
             o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        auto type = arrow::struct_("
-              << fi.mapping.nested_class << "Schema()->fields());\n"
+              << "        auto type = arrow::struct_(" << fi.mapping.nested_class
+              << "Schema()->fields());\n"
               << "        auto builder = arrow::MakeBuilder(type).ValueOrDie();\n"
               << "        for (const auto& v : " << fi.name << "_) {\n"
               << "            auto s = std::make_shared<arrow::StructScalar>(\n"
@@ -565,32 +529,32 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             // Nullable: return null scalar if not set.
             if (fi.mapping.nullable) {
                 o << "        if (!" << fi.name << "_.has_value())\n"
-                  << "            return arrow::MakeNullScalar("
-                  << ArrowTypeExpr(fi) << ");\n";
+                  << "            return arrow::MakeNullScalar(" << ArrowTypeExpr(fi) << ");\n";
             }
 
             // Reference to the data — either *optional or the bare member.
-            std::string data_ref = fi.mapping.nullable
-                ? ("(*" + fi.name + "_)")
-                : (fi.name + "_");
+            std::string data_ref = fi.mapping.nullable ? ("(*" + fi.name + "_)") : (fi.name + "_");
 
-            o << "        auto coord_type = arrow::struct_("
-              << fi.mapping.nested_class << "Schema()->fields());\n";
+            o << "        auto coord_type = arrow::struct_(" << fi.mapping.nested_class
+              << "Schema()->fields());\n";
 
             if (fi.mapping.list_depth == 2) {
                 // List<List<Struct>>
                 o << "        auto inner_list_type = arrow::list(\n"
                   << "            arrow::field(\"item\", coord_type, false));\n"
-                  << "        auto outer_builder = arrow::MakeBuilder(inner_list_type).ValueOrDie();\n"
+                  << "        auto outer_builder = "
+                     "arrow::MakeBuilder(inner_list_type).ValueOrDie();\n"
                   << "        for (const auto& ring : " << data_ref << ") {\n"
-                  << "            auto inner_builder = arrow::MakeBuilder(coord_type).ValueOrDie();\n"
+                  << "            auto inner_builder = "
+                     "arrow::MakeBuilder(coord_type).ValueOrDie();\n"
                   << "            for (const auto& v : ring) {\n"
                   << "                auto s = std::make_shared<arrow::StructScalar>(\n"
                   << "                    v.ToScalars(), coord_type);\n"
                   << "                (void)inner_builder->AppendScalar(*s);\n"
                   << "            }\n"
                   << "            (void)outer_builder->AppendScalar(\n"
-                  << "                arrow::ListScalar(*inner_builder->Finish(), inner_list_type));\n"
+                  << "                arrow::ListScalar(*inner_builder->Finish(), "
+                     "inner_list_type));\n"
                   << "        }\n"
                   << "        return std::make_shared<arrow::ListScalar>(\n"
                   << "            *outer_builder->Finish());\n";
@@ -600,18 +564,22 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << "            arrow::field(\"item\", coord_type, false));\n"
                   << "        auto poly_list_type = arrow::list(\n"
                   << "            arrow::field(\"item\", ring_list_type, false));\n"
-                  << "        auto outer_builder = arrow::MakeBuilder(poly_list_type).ValueOrDie();\n"
+                  << "        auto outer_builder = "
+                     "arrow::MakeBuilder(poly_list_type).ValueOrDie();\n"
                   << "        for (const auto& poly : " << data_ref << ") {\n"
-                  << "            auto mid_builder = arrow::MakeBuilder(ring_list_type).ValueOrDie();\n"
+                  << "            auto mid_builder = "
+                     "arrow::MakeBuilder(ring_list_type).ValueOrDie();\n"
                   << "            for (const auto& ring : poly) {\n"
-                  << "                auto inner_builder = arrow::MakeBuilder(coord_type).ValueOrDie();\n"
+                  << "                auto inner_builder = "
+                     "arrow::MakeBuilder(coord_type).ValueOrDie();\n"
                   << "                for (const auto& v : ring) {\n"
                   << "                    auto s = std::make_shared<arrow::StructScalar>(\n"
                   << "                        v.ToScalars(), coord_type);\n"
                   << "                    (void)inner_builder->AppendScalar(*s);\n"
                   << "                }\n"
                   << "                (void)mid_builder->AppendScalar(\n"
-                  << "                    arrow::ListScalar(*inner_builder->Finish(), ring_list_type));\n"
+                  << "                    arrow::ListScalar(*inner_builder->Finish(), "
+                     "ring_list_type));\n"
                   << "            }\n"
                   << "            (void)outer_builder->AppendScalar(\n"
                   << "                arrow::ListScalar(*mid_builder->Finish(), poly_list_type));\n"
@@ -629,8 +597,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "        " << fi.mapping.map_key.builder_type << " key_builder;\n";
 
             if (fi.mapping.map_value_is_message) {
-                o << "        auto val_type = arrow::struct_("
-                  << fi.mapping.map_value_class
+                o << "        auto val_type = arrow::struct_(" << fi.mapping.map_value_class
                   << "Schema()->fields());\n"
                   << "        auto val_builder = arrow::MakeBuilder(val_type).ValueOrDie();\n"
                   << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
@@ -642,8 +609,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << "        auto keys = *key_builder.Finish();\n"
                   << "        auto vals = *val_builder->Finish();\n";
             } else {
-                o << "        " << fi.mapping.map_value.builder_type
-                  << " val_builder;\n"
+                o << "        " << fi.mapping.map_value.builder_type << " val_builder;\n"
                   << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
                   << "            (void)key_builder.Append(k);\n"
                   << "            (void)val_builder.Append(v);\n"
@@ -656,8 +622,8 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                 o << "        auto val_field = arrow::field(\"value\", val_type, false);\n"
                   << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", "
-                  << fi.mapping.map_key.arrow_type_expr << ", false),\n"
+                  << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
+                  << ", false),\n"
                   << "             val_field});\n"
                   << "        return std::make_shared<arrow::MapScalar>(kv,\n"
                   << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
@@ -667,8 +633,8 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << fi.mapping.map_value.arrow_type_expr << ", false);\n"
                   << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", "
-                  << fi.mapping.map_key.arrow_type_expr << ", false),\n"
+                  << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
+                  << ", false),\n"
                   << "             val_field});\n"
                   << "        return std::make_shared<arrow::MapScalar>(kv,\n"
                   << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
@@ -697,14 +663,12 @@ std::string ScalarEntry(const FieldInfo& fi) {
     if (fi.mapping.nullable) {
         const std::string ctor =
             ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", "*" + fi.name + "_");
-        return fi.name + "_.has_value()\n"
-             + "                ? std::shared_ptr<arrow::Scalar>(" + ctor + ")\n"
-             + "                : arrow::MakeNullScalar("
-             + fi.mapping.scalar.arrow_type_expr + ")";
+        return fi.name + "_.has_value()\n" + "                ? std::shared_ptr<arrow::Scalar>(" +
+               ctor + ")\n" + "                : arrow::MakeNullScalar(" +
+               fi.mapping.scalar.arrow_type_expr + ")";
     }
 
-    const std::string val =
-        fi.name + "_.value_or(" + fi.mapping.scalar.default_value + ")";
+    const std::string val = fi.name + "_.value_or(" + fi.mapping.scalar.default_value + ")";
     return ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", val);
 }
 
@@ -718,9 +682,11 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR: {
             const auto& sc = fi.mapping.scalar;
-            std::string extract = sc.value_is_buffer
-                ? "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value->ToString()"
-                : "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value";
+            std::string extract =
+                sc.value_is_buffer
+                    ? "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si +
+                          "]).value->ToString()"
+                    : "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value";
             if (fi.mapping.nullable) {
                 o << "        if (scalars[" << si << "]->is_valid)\n"
                   << "            " << fi.name << "_ = " << extract << ";\n"
@@ -752,9 +718,10 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
 
         case FieldKind::REPEATED_SCALAR: {
             const auto& el = fi.mapping.element;
-            std::string extract = el.value_is_buffer
-                ? "static_cast<const " + el.scalar_type + "&>(*s).value->ToString()"
-                : "static_cast<const " + el.scalar_type + "&>(*s).value";
+            std::string extract =
+                el.value_is_buffer
+                    ? "static_cast<const " + el.scalar_type + "&>(*s).value->ToString()"
+                    : "static_cast<const " + el.scalar_type + "&>(*s).value";
             o << "        {\n"
               << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
               << "                *scalars[" << si << "]);\n"
@@ -791,52 +758,69 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
             }
 
             // Target reference — either the optional's emplaced value or the bare member.
-            std::string target = fi.mapping.nullable
-                ? (fi.name + "_.emplace()")
-                : (fi.name + "_");
+            std::string target = fi.mapping.nullable ? (fi.name + "_.emplace()") : (fi.name + "_");
             // For nullable, .emplace() returns the reference, but subsequent access uses *optional.
-            std::string ref = fi.mapping.nullable
-                ? ("(*" + fi.name + "_)")
-                : (fi.name + "_");
+            std::string ref = fi.mapping.nullable ? ("(*" + fi.name + "_)") : (fi.name + "_");
             std::string indent = fi.mapping.nullable ? "    " : "";
 
             if (fi.mapping.list_depth == 2) {
                 o << indent << "        {\n"
-                  << indent << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+                  << indent
+                  << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
                   << indent << "                *scalars[" << si << "]);\n"
                   << indent << "            " << target << ";\n"
                   << indent << "            " << ref << ".clear();\n"
                   << indent << "            " << ref << ".resize(ls.value->length());\n"
                   << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
-                  << indent << "                auto inner_s = ls.value->GetScalar(i).ValueOrDie();\n"
-                  << indent << "                const auto& inner_ls = static_cast<const arrow::ListScalar&>(*inner_s);\n"
-                  << indent << "                " << ref << "[i].resize(inner_ls.value->length());\n"
-                  << indent << "                for (int64_t j = 0; j < inner_ls.value->length(); ++j) {\n"
-                  << indent << "                    auto s = inner_ls.value->GetScalar(j).ValueOrDie();\n"
+                  << indent
+                  << "                auto inner_s = ls.value->GetScalar(i).ValueOrDie();\n"
+                  << indent
+                  << "                const auto& inner_ls = static_cast<const "
+                     "arrow::ListScalar&>(*inner_s);\n"
+                  << indent << "                " << ref
+                  << "[i].resize(inner_ls.value->length());\n"
+                  << indent
+                  << "                for (int64_t j = 0; j < inner_ls.value->length(); ++j) {\n"
+                  << indent
+                  << "                    auto s = inner_ls.value->GetScalar(j).ValueOrDie();\n"
                   << indent << "                    " << ref << "[i][j].SetFromScalars_(\n"
-                  << indent << "                        static_cast<const arrow::StructScalar&>(*s).value);\n"
+                  << indent
+                  << "                        static_cast<const arrow::StructScalar&>(*s).value);\n"
                   << indent << "                }\n"
                   << indent << "            }\n"
                   << indent << "        }\n";
             } else if (fi.mapping.list_depth == 3) {
                 o << indent << "        {\n"
-                  << indent << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
+                  << indent
+                  << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
                   << indent << "                *scalars[" << si << "]);\n"
                   << indent << "            " << target << ";\n"
                   << indent << "            " << ref << ".clear();\n"
                   << indent << "            " << ref << ".resize(ls.value->length());\n"
                   << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
                   << indent << "                auto mid_s = ls.value->GetScalar(i).ValueOrDie();\n"
-                  << indent << "                const auto& mid_ls = static_cast<const arrow::ListScalar&>(*mid_s);\n"
+                  << indent
+                  << "                const auto& mid_ls = static_cast<const "
+                     "arrow::ListScalar&>(*mid_s);\n"
                   << indent << "                " << ref << "[i].resize(mid_ls.value->length());\n"
-                  << indent << "                for (int64_t j = 0; j < mid_ls.value->length(); ++j) {\n"
-                  << indent << "                    auto inner_s = mid_ls.value->GetScalar(j).ValueOrDie();\n"
-                  << indent << "                    const auto& inner_ls = static_cast<const arrow::ListScalar&>(*inner_s);\n"
-                  << indent << "                    " << ref << "[i][j].resize(inner_ls.value->length());\n"
-                  << indent << "                    for (int64_t k = 0; k < inner_ls.value->length(); ++k) {\n"
-                  << indent << "                        auto s = inner_ls.value->GetScalar(k).ValueOrDie();\n"
+                  << indent
+                  << "                for (int64_t j = 0; j < mid_ls.value->length(); ++j) {\n"
+                  << indent
+                  << "                    auto inner_s = mid_ls.value->GetScalar(j).ValueOrDie();\n"
+                  << indent
+                  << "                    const auto& inner_ls = static_cast<const "
+                     "arrow::ListScalar&>(*inner_s);\n"
+                  << indent << "                    " << ref
+                  << "[i][j].resize(inner_ls.value->length());\n"
+                  << indent
+                  << "                    for (int64_t k = 0; k < inner_ls.value->length(); ++k) "
+                     "{\n"
+                  << indent
+                  << "                        auto s = inner_ls.value->GetScalar(k).ValueOrDie();\n"
                   << indent << "                        " << ref << "[i][j][k].SetFromScalars_(\n"
-                  << indent << "                            static_cast<const arrow::StructScalar&>(*s).value);\n"
+                  << indent
+                  << "                            static_cast<const "
+                     "arrow::StructScalar&>(*s).value);\n"
                   << indent << "                    }\n"
                   << indent << "                }\n"
                   << indent << "            }\n"
@@ -850,9 +834,11 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
         }
 
         case FieldKind::MAP: {
-            std::string key_extract = fi.mapping.map_key.value_is_buffer
-                ? "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value->ToString()"
-                : "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value";
+            std::string key_extract =
+                fi.mapping.map_key.value_is_buffer
+                    ? "static_cast<const " + fi.mapping.map_key.scalar_type +
+                          "&>(*ks).value->ToString()"
+                    : "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value";
 
             o << "        {\n"
               << "            const auto& ms = static_cast<const arrow::MapScalar&>(\n"
@@ -872,9 +858,11 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
                   << "                " << fi.name << "_.back().second.SetFromScalars_(\n"
                   << "                    static_cast<const arrow::StructScalar&>(*vs).value);\n";
             } else {
-                std::string val_extract = fi.mapping.map_value.value_is_buffer
-                    ? "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value->ToString()"
-                    : "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value";
+                std::string val_extract =
+                    fi.mapping.map_value.value_is_buffer
+                        ? "static_cast<const " + fi.mapping.map_value.scalar_type +
+                              "&>(*vs).value->ToString()"
+                        : "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value";
                 o << "                " << fi.name << "_.emplace_back(\n"
                   << "                    " << key_extract << ", " << val_extract << ");\n";
             }
@@ -896,11 +884,10 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
         if (auto m = MapField(fd)) {
-            fields.push_back({fd->name(), std::move(*m), fd->number(),
-                              std::to_string(fd->number())});
+            fields.push_back(
+                {fd->name(), std::move(*m), fd->number(), std::to_string(fd->number())});
         } else {
-            *skipped_comment += "//   " + fd->name() + ": "
-                             + UnsupportedReason(fd) + "\n";
+            *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
     }
     return fields;
@@ -912,198 +899,187 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
 
 // Helper: emit nanoarrow type setup code for a single child schema.
 // `child_expr` is the C expression for the ArrowSchema* child pointer.
-void EmitNanoarrowTypeSetup(std::ostringstream& o,
-                            const std::string& child_expr,
-                            const FieldInfo& fi,
-                            const std::string& indent) {
+void EmitNanoarrowTypeSetup(std::ostringstream& o, const std::string& child_expr,
+                            const FieldInfo& fi, const std::string& indent) {
     switch (fi.mapping.kind) {
-    case FieldKind::SCALAR: {
-        const auto& expr = fi.mapping.scalar.arrow_type_expr;
-        if (expr.find("timestamp") != std::string::npos) {
-            o << indent << "ArrowSchemaSetTypeDateTime("
-              << child_expr << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-        } else if (expr.find("duration") != std::string::npos) {
-            o << indent << "ArrowSchemaSetTypeDateTime("
-              << child_expr << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-        } else if (expr == "arrow::boolean()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_BOOL);\n";
-        } else if (expr == "arrow::int32()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_INT32);\n";
-        } else if (expr == "arrow::int64()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_INT64);\n";
-        } else if (expr == "arrow::uint32()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_UINT32);\n";
-        } else if (expr == "arrow::uint64()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_UINT64);\n";
-        } else if (expr == "arrow::float32()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_FLOAT);\n";
-        } else if (expr == "arrow::float64()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_DOUBLE);\n";
-        } else if (expr == "arrow::utf8()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_STRING);\n";
-        } else if (expr == "arrow::binary()") {
-            o << indent << "ArrowSchemaSetType("
-              << child_expr << ", NANOARROW_TYPE_BINARY);\n";
-        } else {
-            o << indent << "// TODO: unknown scalar type: " << expr << "\n";
-        }
-        break;
-    }
-
-    case FieldKind::STRUCT:
-        o << indent << "ArrowSchemaDeepCopy("
-          << fi.mapping.nested_class << "Schema().get(), "
-          << child_expr << ");\n";
-        break;
-
-    case FieldKind::REPEATED_SCALAR: {
-        // list(element_type)
-        o << indent << "ArrowSchemaSetType("
-          << child_expr << ", NANOARROW_TYPE_LIST);\n";
-        // The list child ("item") is allocated by ArrowSchemaSetType.
-        // Set item type.
-        const auto& elem_expr = fi.mapping.element.arrow_type_expr;
-        std::string item = child_expr + "->children[0]";
-        if (elem_expr.find("timestamp") != std::string::npos) {
-            o << indent << "ArrowSchemaSetTypeDateTime("
-              << item << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-        } else if (elem_expr.find("duration") != std::string::npos) {
-            o << indent << "ArrowSchemaSetTypeDateTime("
-              << item << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-        } else if (elem_expr == "arrow::boolean()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BOOL);\n";
-        } else if (elem_expr == "arrow::int32()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT32);\n";
-        } else if (elem_expr == "arrow::int64()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT64);\n";
-        } else if (elem_expr == "arrow::uint32()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT32);\n";
-        } else if (elem_expr == "arrow::uint64()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT64);\n";
-        } else if (elem_expr == "arrow::float32()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_FLOAT);\n";
-        } else if (elem_expr == "arrow::float64()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_DOUBLE);\n";
-        } else if (elem_expr == "arrow::utf8()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_STRING);\n";
-        } else if (elem_expr == "arrow::binary()") {
-            o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BINARY);\n";
-        } else {
-            o << indent << "// TODO: unknown element type: " << elem_expr << "\n";
-        }
-        o << indent << "ArrowSchemaSetName(" << item << ", \"item\");\n";
-        break;
-    }
-
-    case FieldKind::REPEATED_STRUCT:
-        // list(struct(...))
-        o << indent << "ArrowSchemaSetType("
-          << child_expr << ", NANOARROW_TYPE_LIST);\n";
-        o << indent << "ArrowSchemaDeepCopy("
-          << fi.mapping.nested_class << "Schema().get(), "
-          << child_expr << "->children[0]);\n";
-        o << indent << "ArrowSchemaSetName("
-          << child_expr << "->children[0], \"item\");\n";
-        break;
-
-    case FieldKind::NESTED_LIST: {
-        // List<List<...<Struct>>>
-        // Build from outside in: list -> list -> ... -> struct
-        std::string cur = child_expr;
-        for (int d = 0; d < fi.mapping.list_depth; ++d) {
-            o << indent << "ArrowSchemaSetType("
-              << cur << ", NANOARROW_TYPE_LIST);\n";
-            std::string item = cur + "->children[0]";
-            o << indent << "ArrowSchemaSetName("
-              << item << ", \"item\");\n";
-            cur = item;
-        }
-        // Innermost: struct (deep copy overwrites the name, restore "item")
-        o << indent << "ArrowSchemaDeepCopy("
-          << fi.mapping.nested_class << "Schema().get(), "
-          << cur << ");\n";
-        o << indent << "ArrowSchemaSetName("
-          << cur << ", \"item\");\n";
-        break;
-    }
-
-    case FieldKind::MAP: {
-        // map(key_type, value_type)
-        o << indent << "ArrowSchemaSetType("
-          << child_expr << ", NANOARROW_TYPE_MAP);\n";
-        // MAP creates a child "entries" struct with two children: "key" and "value".
-        std::string entries = child_expr + "->children[0]";
-        std::string key_child = entries + "->children[0]";
-        std::string val_child = entries + "->children[1]";
-
-        // Key type
-        const auto& key_expr = fi.mapping.map_key.arrow_type_expr;
-        if (key_expr == "arrow::utf8()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_STRING);\n";
-        } else if (key_expr == "arrow::int32()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT32);\n";
-        } else if (key_expr == "arrow::int64()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT64);\n";
-        } else if (key_expr == "arrow::uint32()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT32);\n";
-        } else if (key_expr == "arrow::uint64()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT64);\n";
-        } else if (key_expr == "arrow::boolean()") {
-            o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_BOOL);\n";
-        } else {
-            o << indent << "// TODO: unknown map key type: " << key_expr << "\n";
-        }
-
-        // Value type
-        if (fi.mapping.map_value_is_message) {
-            o << indent << "ArrowSchemaDeepCopy("
-              << fi.mapping.map_value_class << "Schema().get(), "
-              << val_child << ");\n";
-            o << indent << "ArrowSchemaSetName(" << val_child << ", \"value\");\n";
-        } else {
-            const auto& val_expr = fi.mapping.map_value.arrow_type_expr;
-            if (val_expr == "arrow::utf8()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_STRING);\n";
-            } else if (val_expr == "arrow::int32()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_INT32);\n";
-            } else if (val_expr == "arrow::int64()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_INT64);\n";
-            } else if (val_expr == "arrow::uint32()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_UINT32);\n";
-            } else if (val_expr == "arrow::uint64()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_UINT64);\n";
-            } else if (val_expr == "arrow::boolean()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_BOOL);\n";
-            } else if (val_expr == "arrow::float32()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_FLOAT);\n";
-            } else if (val_expr == "arrow::float64()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_DOUBLE);\n";
-            } else if (val_expr == "arrow::binary()") {
-                o << indent << "ArrowSchemaSetType(" << val_child << ", NANOARROW_TYPE_BINARY);\n";
+        case FieldKind::SCALAR: {
+            const auto& expr = fi.mapping.scalar.arrow_type_expr;
+            if (expr.find("timestamp") != std::string::npos) {
+                o << indent << "ArrowSchemaSetTypeDateTime(" << child_expr
+                  << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
+            } else if (expr.find("duration") != std::string::npos) {
+                o << indent << "ArrowSchemaSetTypeDateTime(" << child_expr
+                  << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
+            } else if (expr == "arrow::boolean()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_BOOL);\n";
+            } else if (expr == "arrow::int32()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_INT32);\n";
+            } else if (expr == "arrow::int64()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_INT64);\n";
+            } else if (expr == "arrow::uint32()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_UINT32);\n";
+            } else if (expr == "arrow::uint64()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_UINT64);\n";
+            } else if (expr == "arrow::float32()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_FLOAT);\n";
+            } else if (expr == "arrow::float64()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_DOUBLE);\n";
+            } else if (expr == "arrow::utf8()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_STRING);\n";
+            } else if (expr == "arrow::binary()") {
+                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_BINARY);\n";
             } else {
-                o << indent << "// TODO: unknown map value type: " << val_expr << "\n";
+                o << indent << "// TODO: unknown scalar type: " << expr << "\n";
             }
+            break;
         }
-        break;
-    }
+
+        case FieldKind::STRUCT:
+            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
+              << child_expr << ");\n";
+            break;
+
+        case FieldKind::REPEATED_SCALAR: {
+            // list(element_type)
+            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_LIST);\n";
+            // The list child ("item") is allocated by ArrowSchemaSetType.
+            // Set item type.
+            const auto& elem_expr = fi.mapping.element.arrow_type_expr;
+            std::string item = child_expr + "->children[0]";
+            if (elem_expr.find("timestamp") != std::string::npos) {
+                o << indent << "ArrowSchemaSetTypeDateTime(" << item
+                  << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
+            } else if (elem_expr.find("duration") != std::string::npos) {
+                o << indent << "ArrowSchemaSetTypeDateTime(" << item
+                  << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
+            } else if (elem_expr == "arrow::boolean()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BOOL);\n";
+            } else if (elem_expr == "arrow::int32()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT32);\n";
+            } else if (elem_expr == "arrow::int64()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT64);\n";
+            } else if (elem_expr == "arrow::uint32()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT32);\n";
+            } else if (elem_expr == "arrow::uint64()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT64);\n";
+            } else if (elem_expr == "arrow::float32()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_FLOAT);\n";
+            } else if (elem_expr == "arrow::float64()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_DOUBLE);\n";
+            } else if (elem_expr == "arrow::utf8()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_STRING);\n";
+            } else if (elem_expr == "arrow::binary()") {
+                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BINARY);\n";
+            } else {
+                o << indent << "// TODO: unknown element type: " << elem_expr << "\n";
+            }
+            o << indent << "ArrowSchemaSetName(" << item << ", \"item\");\n";
+            break;
+        }
+
+        case FieldKind::REPEATED_STRUCT:
+            // list(struct(...))
+            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_LIST);\n";
+            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
+              << child_expr << "->children[0]);\n";
+            o << indent << "ArrowSchemaSetName(" << child_expr << "->children[0], \"item\");\n";
+            break;
+
+        case FieldKind::NESTED_LIST: {
+            // List<List<...<Struct>>>
+            // Build from outside in: list -> list -> ... -> struct
+            std::string cur = child_expr;
+            for (int d = 0; d < fi.mapping.list_depth; ++d) {
+                o << indent << "ArrowSchemaSetType(" << cur << ", NANOARROW_TYPE_LIST);\n";
+                std::string item = cur + "->children[0]";
+                o << indent << "ArrowSchemaSetName(" << item << ", \"item\");\n";
+                cur = item;
+            }
+            // Innermost: struct (deep copy overwrites the name, restore "item")
+            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
+              << cur << ");\n";
+            o << indent << "ArrowSchemaSetName(" << cur << ", \"item\");\n";
+            break;
+        }
+
+        case FieldKind::MAP: {
+            // map(key_type, value_type)
+            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_MAP);\n";
+            // MAP creates a child "entries" struct with two children: "key" and "value".
+            std::string entries = child_expr + "->children[0]";
+            std::string key_child = entries + "->children[0]";
+            std::string val_child = entries + "->children[1]";
+
+            // Key type
+            const auto& key_expr = fi.mapping.map_key.arrow_type_expr;
+            if (key_expr == "arrow::utf8()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_STRING);\n";
+            } else if (key_expr == "arrow::int32()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT32);\n";
+            } else if (key_expr == "arrow::int64()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT64);\n";
+            } else if (key_expr == "arrow::uint32()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT32);\n";
+            } else if (key_expr == "arrow::uint64()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT64);\n";
+            } else if (key_expr == "arrow::boolean()") {
+                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_BOOL);\n";
+            } else {
+                o << indent << "// TODO: unknown map key type: " << key_expr << "\n";
+            }
+
+            // Value type
+            if (fi.mapping.map_value_is_message) {
+                o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.map_value_class
+                  << "Schema().get(), " << val_child << ");\n";
+                o << indent << "ArrowSchemaSetName(" << val_child << ", \"value\");\n";
+            } else {
+                const auto& val_expr = fi.mapping.map_value.arrow_type_expr;
+                if (val_expr == "arrow::utf8()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_STRING);\n";
+                } else if (val_expr == "arrow::int32()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_INT32);\n";
+                } else if (val_expr == "arrow::int64()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_INT64);\n";
+                } else if (val_expr == "arrow::uint32()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_UINT32);\n";
+                } else if (val_expr == "arrow::uint64()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_UINT64);\n";
+                } else if (val_expr == "arrow::boolean()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_BOOL);\n";
+                } else if (val_expr == "arrow::float32()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_FLOAT);\n";
+                } else if (val_expr == "arrow::float64()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_DOUBLE);\n";
+                } else if (val_expr == "arrow::binary()") {
+                    o << indent << "ArrowSchemaSetType(" << val_child
+                      << ", NANOARROW_TYPE_BINARY);\n";
+                } else {
+                    o << indent << "// TODO: unknown map value type: " << val_expr << "\n";
+                }
+            }
+            break;
+        }
     }  // switch
 }
 
-std::string GenerateSchemaFunction(const std::string& cls,
-                                   const std::vector<FieldInfo>& fields,
+std::string GenerateSchemaFunction(const std::string& cls, const std::vector<FieldInfo>& fields,
                                    const google::protobuf::Descriptor* msg) {
     // Detect whether any field carries GeoArrow extension metadata.
     bool has_geo = false;
     for (const auto& fi : fields)
-        if (!fi.mapping.extension_name.empty()) { has_geo = true; break; }
+        if (!fi.mapping.extension_name.empty()) {
+            has_geo = true;
+            break;
+        }
 
     std::ostringstream o;
 
@@ -1116,8 +1092,7 @@ std::string GenerateSchemaFunction(const std::string& cls,
     o << "inline fletcher::OwnedSchema " << cls << "Schema() {\n"
       << "    fletcher::OwnedSchema schema;\n"
       << "    ArrowSchemaInit(schema.get());\n"
-      << "    ArrowSchemaSetTypeStruct(schema.get(), "
-      << fields.size() << ");\n\n";
+      << "    ArrowSchemaSetTypeStruct(schema.get(), " << fields.size() << ");\n\n";
 
     // Schema-level metadata: proto_package + proto_message
     o << "    {\n"
@@ -1139,8 +1114,7 @@ std::string GenerateSchemaFunction(const std::string& cls,
         const auto& fi = fields[i];
         std::string ci = "schema->children[" + std::to_string(i) + "]";
 
-        if (!fi.mapping.warning.empty())
-            o << "    // Warning: " << fi.mapping.warning << "\n";
+        if (!fi.mapping.warning.empty()) o << "    // Warning: " << fi.mapping.warning << "\n";
 
         // Set field type
         EmitNanoarrowTypeSetup(o, ci, fi, "    ");
@@ -1195,11 +1169,9 @@ std::string GenerateSchemaFunction(const std::string& cls,
 
 std::string ArrayTypeFromScalar(const std::string& scalar_type) {
     constexpr std::string_view suffix = "Scalar";
-    if (scalar_type.size() > suffix.size()
-        && scalar_type.compare(scalar_type.size() - suffix.size(),
-                               suffix.size(), suffix) == 0) {
-        return scalar_type.substr(0, scalar_type.size() - suffix.size())
-             + "Array";
+    if (scalar_type.size() > suffix.size() &&
+        scalar_type.compare(scalar_type.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return scalar_type.substr(0, scalar_type.size() - suffix.size()) + "Array";
     }
     return scalar_type;
 }
@@ -1212,8 +1184,7 @@ std::string GetterType(const ScalarTypeInfo& sc) {
 // View getter generation
 // -----------------------------------------------------------------------
 
-void EmitViewGetters(std::ostringstream& o,
-                     const std::vector<FieldInfo>& fields) {
+void EmitViewGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
     for (size_t idx = 0; idx < fields.size(); ++idx) {
         const auto& fi = fields[idx];
         const std::string si = std::to_string(idx);
@@ -1224,37 +1195,33 @@ void EmitViewGetters(std::ostringstream& o,
                 std::string ret = GetterType(sc);
 
                 if (fi.mapping.nullable) {
-                    o << "    std::optional<" << ret << "> " << fi.name
-                      << "() const {\n"
-                      << "        if (!scalars_[" << si
-                      << "]->is_valid) return std::nullopt;\n";
+                    o << "    std::optional<" << ret << "> " << fi.name << "() const {\n"
+                      << "        if (!scalars_[" << si << "]->is_valid) return std::nullopt;\n";
                     if (sc.value_is_buffer) {
-                        o << "        const auto& s = static_cast<const "
-                          << sc.scalar_type << "&>(*scalars_[" << si << "]);\n"
+                        o << "        const auto& s = static_cast<const " << sc.scalar_type
+                          << "&>(*scalars_[" << si << "]);\n"
                           << "        return std::string_view{\n"
                           << "            reinterpret_cast<const char*>"
                              "(s.value->data()),\n"
                           << "            static_cast<size_t>"
                              "(s.value->size())};\n";
                     } else {
-                        o << "        return static_cast<const "
-                          << sc.scalar_type << "&>(*scalars_[" << si
-                          << "]).value;\n";
+                        o << "        return static_cast<const " << sc.scalar_type
+                          << "&>(*scalars_[" << si << "]).value;\n";
                     }
                     o << "    }\n";
                 } else {
                     o << "    " << ret << " " << fi.name << "() const {\n";
                     if (sc.value_is_buffer) {
-                        o << "        const auto& s = static_cast<const "
-                          << sc.scalar_type << "&>(*scalars_[" << si << "]);\n"
+                        o << "        const auto& s = static_cast<const " << sc.scalar_type
+                          << "&>(*scalars_[" << si << "]);\n"
                           << "        return {reinterpret_cast<const char*>"
                              "(s.value->data()),\n"
                           << "                static_cast<size_t>"
                              "(s.value->size())};\n";
                     } else {
-                        o << "        return static_cast<const "
-                          << sc.scalar_type << "&>(*scalars_[" << si
-                          << "]).value;\n";
+                        o << "        return static_cast<const " << sc.scalar_type
+                          << "&>(*scalars_[" << si << "]).value;\n";
                     }
                     o << "    }\n";
                 }
@@ -1264,17 +1231,13 @@ void EmitViewGetters(std::ostringstream& o,
             case FieldKind::STRUCT: {
                 std::string vt = fi.mapping.nested_class + "View";
                 if (fi.mapping.nullable) {
-                    o << "    std::optional<" << vt << "> " << fi.name
-                      << "() const {\n"
-                      << "        if (!scalars_[" << si
-                      << "]->is_valid) return std::nullopt;\n"
-                      << "        return " << vt << "(scalars_[" << si
-                      << "]);\n"
+                    o << "    std::optional<" << vt << "> " << fi.name << "() const {\n"
+                      << "        if (!scalars_[" << si << "]->is_valid) return std::nullopt;\n"
+                      << "        return " << vt << "(scalars_[" << si << "]);\n"
                       << "    }\n";
                 } else {
                     o << "    " << vt << " " << fi.name << "() const {\n"
-                      << "        return " << vt << "(scalars_[" << si
-                      << "]);\n"
+                      << "        return " << vt << "(scalars_[" << si << "]);\n"
                       << "    }\n";
                 }
                 break;
@@ -1284,26 +1247,24 @@ void EmitViewGetters(std::ostringstream& o,
                 const auto& el = fi.mapping.element;
                 std::string vt = GetterType(el);
                 std::string at = ArrayTypeFromScalar(el.scalar_type);
-                o << "    fletcher::ArrowScalarList<" << vt << ", " << at
-                  << "> " << fi.name << "() const {\n"
+                o << "    fletcher::ArrowScalarList<" << vt << ", " << at << "> " << fi.name
+                  << "() const {\n"
                   << "        const auto& ls = static_cast"
                      "<const arrow::ListScalar&>(\n"
                   << "            *scalars_[" << si << "]);\n"
-                  << "        return fletcher::ArrowScalarList<" << vt << ", "
-                  << at << ">(ls.value);\n"
+                  << "        return fletcher::ArrowScalarList<" << vt << ", " << at
+                  << ">(ls.value);\n"
                   << "    }\n";
                 break;
             }
 
             case FieldKind::REPEATED_STRUCT: {
                 std::string vt = fi.mapping.nested_class + "View";
-                o << "    fletcher::ArrowRowViewList<" << vt << "> "
-                  << fi.name << "() const {\n"
+                o << "    fletcher::ArrowRowViewList<" << vt << "> " << fi.name << "() const {\n"
                   << "        const auto& ls = static_cast"
                      "<const arrow::ListScalar&>(\n"
                   << "            *scalars_[" << si << "]);\n"
-                  << "        return fletcher::ArrowRowViewList<" << vt
-                  << ">(ls.value);\n"
+                  << "        return fletcher::ArrowRowViewList<" << vt << ">(ls.value);\n"
                   << "    }\n";
                 break;
             }
@@ -1311,8 +1272,8 @@ void EmitViewGetters(std::ostringstream& o,
             case FieldKind::NESTED_LIST: {
                 std::string vt = fi.mapping.nested_class + "View";
                 std::string tmpl = (fi.mapping.list_depth == 3)
-                    ? "fletcher::ArrowNestedList2<" + vt + ">"
-                    : "fletcher::ArrowNestedList<" + vt + ">";
+                                       ? "fletcher::ArrowNestedList2<" + vt + ">"
+                                       : "fletcher::ArrowNestedList<" + vt + ">";
                 o << "    " << tmpl << " " << fi.name << "() const {\n"
                   << "        const auto& ls = static_cast"
                      "<const arrow::ListScalar&>(\n"
@@ -1324,32 +1285,28 @@ void EmitViewGetters(std::ostringstream& o,
 
             case FieldKind::MAP: {
                 std::string kv = GetterType(fi.mapping.map_key);
-                std::string ka =
-                    ArrayTypeFromScalar(fi.mapping.map_key.scalar_type);
+                std::string ka = ArrayTypeFromScalar(fi.mapping.map_key.scalar_type);
 
                 if (fi.mapping.map_value_is_message) {
                     std::string vt = fi.mapping.map_value_class + "View";
-                    o << "    fletcher::ArrowRowViewMap<" << kv << ", " << ka
-                      << ", " << vt << "> " << fi.name << "() const {\n"
+                    o << "    fletcher::ArrowRowViewMap<" << kv << ", " << ka << ", " << vt << "> "
+                      << fi.name << "() const {\n"
                       << "        const auto& ms = static_cast"
                          "<const arrow::MapScalar&>(\n"
                       << "            *scalars_[" << si << "]);\n"
-                      << "        return fletcher::ArrowRowViewMap<" << kv
-                      << ", " << ka << ", " << vt << ">(ms.value);\n"
+                      << "        return fletcher::ArrowRowViewMap<" << kv << ", " << ka << ", "
+                      << vt << ">(ms.value);\n"
                       << "    }\n";
                 } else {
                     std::string vv = GetterType(fi.mapping.map_value);
-                    std::string va =
-                        ArrayTypeFromScalar(fi.mapping.map_value.scalar_type);
-                    o << "    fletcher::ArrowScalarMap<" << kv << ", " << ka
-                      << ", " << vv << ", " << va << "> " << fi.name
-                      << "() const {\n"
+                    std::string va = ArrayTypeFromScalar(fi.mapping.map_value.scalar_type);
+                    o << "    fletcher::ArrowScalarMap<" << kv << ", " << ka << ", " << vv << ", "
+                      << va << "> " << fi.name << "() const {\n"
                       << "        const auto& ms = static_cast"
                          "<const arrow::MapScalar&>(\n"
                       << "            *scalars_[" << si << "]);\n"
-                      << "        return fletcher::ArrowScalarMap<" << kv
-                      << ", " << ka << ", " << vv << ", " << va
-                      << ">(ms.value);\n"
+                      << "        return fletcher::ArrowScalarMap<" << kv << ", " << ka << ", "
+                      << vv << ", " << va << ">(ms.value);\n"
                       << "    }\n";
                 }
                 break;
@@ -1362,8 +1319,7 @@ void EmitViewGetters(std::ostringstream& o,
 // Full immutable view class generation for one message
 // -----------------------------------------------------------------------
 
-std::string GenerateViewClass(const std::string& view_cls,
-                              const std::vector<FieldInfo>& fields) {
+std::string GenerateViewClass(const std::string& view_cls, const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
 
     o << "/// Immutable, typed view over a row of Arrow scalars.\n"
@@ -1381,16 +1337,14 @@ std::string GenerateViewClass(const std::string& view_cls,
     // Constructor from shared_ptr<Scalar> (for nested struct views)
     o << "    /// Wraps a StructScalar — used when this message is a nested struct\n"
       << "    /// field inside a parent view.\n"
-      << "    explicit " << view_cls
-      << "(std::shared_ptr<arrow::Scalar> scalar)\n"
+      << "    explicit " << view_cls << "(std::shared_ptr<arrow::Scalar> scalar)\n"
       << "        : scalars_(static_cast<const arrow::StructScalar&>"
          "(*scalar).value) {}\n\n";
 
     // Constructor from RecordBatch + row index
     o << "    /// Extracts one row from a RecordBatch by index, materialising each\n"
       << "    /// column value as a scalar.\n"
-      << "    " << view_cls
-      << "(const arrow::RecordBatch& batch, int64_t row) {\n"
+      << "    " << view_cls << "(const arrow::RecordBatch& batch, int64_t row) {\n"
       << "        scalars_.reserve(batch.num_columns());\n"
       << "        for (int i = 0; i < batch.num_columns(); ++i)\n"
       << "            scalars_.push_back(\n"
@@ -1400,8 +1354,7 @@ std::string GenerateViewClass(const std::string& view_cls,
     // Constructor from Table + row index
     o << "    /// Extracts one row from a Table by index, resolving the correct chunk\n"
       << "    /// in each ChunkedArray.\n"
-      << "    " << view_cls
-      << "(const arrow::Table& table, int64_t row) {\n"
+      << "    " << view_cls << "(const arrow::Table& table, int64_t row) {\n"
       << "        scalars_.reserve(table.num_columns());\n"
       << "        for (int i = 0; i < table.num_columns(); ++i) {\n"
       << "            const auto& chunked = *table.column(i);\n"
@@ -1438,13 +1391,13 @@ std::string PositionalWriteCall(const ScalarTypeInfo& info) {
     const auto& expr = info.arrow_type_expr;
     if (expr.find("timestamp") != std::string::npos) return "WriteTimestamp";
     if (expr.find("duration") != std::string::npos) return "WriteDuration";
-    if (st == "bool")     return "WriteBool";
-    if (st == "int32_t")  return "WriteInt32";
-    if (st == "int64_t")  return "WriteInt64";
+    if (st == "bool") return "WriteBool";
+    if (st == "int32_t") return "WriteInt32";
+    if (st == "int64_t") return "WriteInt64";
     if (st == "uint32_t") return "WriteUint32";
     if (st == "uint64_t") return "WriteUint64";
-    if (st == "float")    return "WriteFloat";
-    if (st == "double")   return "WriteDouble";
+    if (st == "float") return "WriteFloat";
+    if (st == "double") return "WriteDouble";
     if (st == "std::string") {
         if (expr == "arrow::binary()") return "WriteBinary";
         return "WriteString";
@@ -1458,13 +1411,13 @@ std::string PositionalReadCall(const ScalarTypeInfo& info) {
     const auto& expr = info.arrow_type_expr;
     if (expr.find("timestamp") != std::string::npos) return "ReadTimestamp";
     if (expr.find("duration") != std::string::npos) return "ReadDuration";
-    if (st == "bool")     return "ReadBool";
-    if (st == "int32_t")  return "ReadInt32";
-    if (st == "int64_t")  return "ReadInt64";
+    if (st == "bool") return "ReadBool";
+    if (st == "int32_t") return "ReadInt32";
+    if (st == "int64_t") return "ReadInt64";
     if (st == "uint32_t") return "ReadUint32";
     if (st == "uint64_t") return "ReadUint64";
-    if (st == "float")    return "ReadFloat";
-    if (st == "double")   return "ReadDouble";
+    if (st == "float") return "ReadFloat";
+    if (st == "double") return "ReadDouble";
     if (st == "std::string") {
         if (expr == "arrow::binary()") return "ReadBinary";
         return "ReadString";
@@ -1473,12 +1426,12 @@ std::string PositionalReadCall(const ScalarTypeInfo& info) {
 }
 
 // Emit the scalar write expression for a value through a PositionalWriter.
-void EmitScalarWrite(std::ostringstream& o, const ScalarTypeInfo& info,
-                     const std::string& val_expr, const std::string& indent) {
+void EmitScalarWrite(std::ostringstream& o, const ScalarTypeInfo& info, const std::string& val_expr,
+                     const std::string& indent) {
     std::string method = PositionalWriteCall(info);
     if (method == "WriteBinary") {
-        o << indent << "w.WriteBinary(reinterpret_cast<const uint8_t*>("
-          << val_expr << ".data()), " << val_expr << ".size());\n";
+        o << indent << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << val_expr << ".data()), "
+          << val_expr << ".size());\n";
     } else {
         o << indent << "w." << method << "(" << val_expr << ");\n";
     }
@@ -1490,134 +1443,124 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
     const std::string si = std::to_string(idx);
 
     switch (fi.mapping.kind) {
-    case FieldKind::SCALAR: {
-        const auto& s = fi.mapping.scalar;
-        if (fi.mapping.nullable) {
-            o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-              << "        else ";
-            std::string method = PositionalWriteCall(s);
-            if (method == "WriteBinary") {
-                o << "w.WriteBinary(reinterpret_cast<const uint8_t*>("
-                  << "*" << n << "->data()), " << n << "->size());\n";
+        case FieldKind::SCALAR: {
+            const auto& s = fi.mapping.scalar;
+            if (fi.mapping.nullable) {
+                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
+                  << "        else ";
+                std::string method = PositionalWriteCall(s);
+                if (method == "WriteBinary") {
+                    o << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << "*" << n
+                      << "->data()), " << n << "->size());\n";
+                } else {
+                    o << "w." << method << "(*" << n << ");\n";
+                }
             } else {
-                o << "w." << method << "(*" << n << ");\n";
+                // Non-nullable: write default if not set
+                std::string method = PositionalWriteCall(s);
+                if (method == "WriteBinary") {
+                    o << "        { const auto& val = " << n << ".value_or(" << s.default_value
+                      << ");\n"
+                      << "          w.WriteBinary(reinterpret_cast<const uint8_t*>(val.data()), "
+                         "val.size()); }\n";
+                } else {
+                    o << "        w." << method << "(" << n << ".value_or(" << s.default_value
+                      << "));\n";
+                }
             }
-        } else {
-            // Non-nullable: write default if not set
-            std::string method = PositionalWriteCall(s);
-            if (method == "WriteBinary") {
-                o << "        { const auto& val = " << n << ".value_or("
-                  << s.default_value << ");\n"
-                  << "          w.WriteBinary(reinterpret_cast<const uint8_t*>(val.data()), val.size()); }\n";
+            break;
+        }
+
+        case FieldKind::STRUCT: {
+            const auto& nc = fi.mapping.nested_class;
+            if (fi.mapping.nullable) {
+                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
+                  << "        else { auto sw = w.BeginStruct(" << nc << "Schema()->n_children); "
+                  << n << "->EncodeStructTo_(sw); }\n";
             } else {
-                o << "        w." << method << "(" << n << ".value_or("
-                  << s.default_value << "));\n";
+                o << "        { auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+                  << "          if (" << n << ".has_value()) " << n << "->EncodeStructTo_(sw);\n"
+                  << "          else " << nc << "().EncodeStructTo_(sw); }\n";
             }
-        }
-        break;
-    }
-
-    case FieldKind::STRUCT: {
-        const auto& nc = fi.mapping.nested_class;
-        if (fi.mapping.nullable) {
-            o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-              << "        else { auto sw = w.BeginStruct("
-              << nc << "Schema()->n_children); " << n << "->EncodeStructTo_(sw); }\n";
-        } else {
-            o << "        { auto sw = w.BeginStruct("
-              << nc << "Schema()->n_children);\n"
-              << "          if (" << n << ".has_value()) "
-              << n << "->EncodeStructTo_(sw);\n"
-              << "          else " << nc << "().EncodeStructTo_(sw); }\n";
-        }
-        break;
-    }
-
-    case FieldKind::REPEATED_SCALAR: {
-        const auto& e = fi.mapping.element;
-        o << "        { auto lc = w.BeginList(static_cast<uint32_t>("
-          << n << ".size()));\n"
-          << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-          << "            ";
-        EmitScalarWrite(o, e, n + "[li_]", "");
-        o << "          } }\n";
-        break;
-    }
-
-    case FieldKind::REPEATED_STRUCT: {
-        const auto& nc = fi.mapping.nested_class;
-        o << "        { auto lc = w.BeginList(static_cast<uint32_t>("
-          << n << ".size()));\n"
-          << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-          << "            auto sw = w.BeginStruct("
-          << nc << "Schema()->n_children);\n"
-          << "            " << n << "[li_].EncodeStructTo_(sw);\n"
-          << "          } }\n";
-        break;
-    }
-
-    case FieldKind::NESTED_LIST: {
-        int depth = fi.mapping.list_depth;
-        const auto& nc = fi.mapping.nested_class;
-
-        // For nullable, check the optional
-        if (fi.mapping.nullable) {
-            o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-              << "        else {\n";
-        } else {
-            o << "        {\n";
+            break;
         }
 
-        std::string src = fi.mapping.nullable
-            ? ("(*" + n + ")")
-            : n;
-
-        // Nested loops for each list depth
-        for (int d = 0; d < depth; ++d) {
-            std::string var = "nl_" + std::to_string(d);
-            o << "            auto lc_" << d << " = w.BeginList(static_cast<uint32_t>("
-              << src << ".size()));\n";
-            o << "            for (const auto& " << var << " : " << src << ") {\n";
-            src = var;
-        }
-        // Innermost: encode struct
-        o << "                auto sw = w.BeginStruct("
-          << nc << "Schema()->n_children);\n"
-          << "                " << src << ".EncodeStructTo_(sw);\n";
-        // Close loops
-        for (int d = 0; d < depth; ++d)
-            o << "            }\n";
-
-        o << "        }\n";
-        break;
-    }
-
-    case FieldKind::MAP: {
-        const auto& mk = fi.mapping.map_key;
-        bool val_is_msg = fi.mapping.map_value_is_message;
-
-        o << "        { auto mc = w.BeginMap(static_cast<uint32_t>("
-          << n << ".size()));\n"
-          << "          for (const auto& [k, v] : " << n << ") {\n"
-          << "            ";
-        EmitScalarWrite(o, mk, "k", "");
-        o << "          }\n"
-          << "          auto vc = mc.BeginValues();\n"
-          << "          for (const auto& [k, v] : " << n << ") {\n";
-
-        if (val_is_msg) {
-            const auto& mvc = fi.mapping.map_value_class;
-            o << "            auto sw = w.BeginStruct("
-              << mvc << "Schema()->n_children);\n"
-              << "            v.EncodeStructTo_(sw);\n";
-        } else {
-            o << "            ";
-            EmitScalarWrite(o, fi.mapping.map_value, "v", "");
+        case FieldKind::REPEATED_SCALAR: {
+            const auto& e = fi.mapping.element;
+            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
+              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
+              << "            ";
+            EmitScalarWrite(o, e, n + "[li_]", "");
+            o << "          } }\n";
+            break;
         }
 
-        o << "          } }\n";
-        break;
-    }
+        case FieldKind::REPEATED_STRUCT: {
+            const auto& nc = fi.mapping.nested_class;
+            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
+              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
+              << "            auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+              << "            " << n << "[li_].EncodeStructTo_(sw);\n"
+              << "          } }\n";
+            break;
+        }
+
+        case FieldKind::NESTED_LIST: {
+            int depth = fi.mapping.list_depth;
+            const auto& nc = fi.mapping.nested_class;
+
+            // For nullable, check the optional
+            if (fi.mapping.nullable) {
+                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
+                  << "        else {\n";
+            } else {
+                o << "        {\n";
+            }
+
+            std::string src = fi.mapping.nullable ? ("(*" + n + ")") : n;
+
+            // Nested loops for each list depth
+            for (int d = 0; d < depth; ++d) {
+                std::string var = "nl_" + std::to_string(d);
+                o << "            auto lc_" << d << " = w.BeginList(static_cast<uint32_t>(" << src
+                  << ".size()));\n";
+                o << "            for (const auto& " << var << " : " << src << ") {\n";
+                src = var;
+            }
+            // Innermost: encode struct
+            o << "                auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+              << "                " << src << ".EncodeStructTo_(sw);\n";
+            // Close loops
+            for (int d = 0; d < depth; ++d) o << "            }\n";
+
+            o << "        }\n";
+            break;
+        }
+
+        case FieldKind::MAP: {
+            const auto& mk = fi.mapping.map_key;
+            bool val_is_msg = fi.mapping.map_value_is_message;
+
+            o << "        { auto mc = w.BeginMap(static_cast<uint32_t>(" << n << ".size()));\n"
+              << "          for (const auto& [k, v] : " << n << ") {\n"
+              << "            ";
+            EmitScalarWrite(o, mk, "k", "");
+            o << "          }\n"
+              << "          auto vc = mc.BeginValues();\n"
+              << "          for (const auto& [k, v] : " << n << ") {\n";
+
+            if (val_is_msg) {
+                const auto& mvc = fi.mapping.map_value_class;
+                o << "            auto sw = w.BeginStruct(" << mvc << "Schema()->n_children);\n"
+                  << "            v.EncodeStructTo_(sw);\n";
+            } else {
+                o << "            ";
+                EmitScalarWrite(o, fi.mapping.map_value, "v", "");
+            }
+
+            o << "          } }\n";
+            break;
+        }
     }  // switch
 }
 
@@ -1630,8 +1573,7 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
     o << "    /// Internal: writes this message's fields into a parent writer\n"
       << "    /// when the message is nested as a struct field inside another row.\n";
     o << "    void EncodeStructTo_(fletcher::PositionalWriter& w) const {\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
     o << "    }\n\n";
 
     // EncodeTo — creates a PositionalWriter and writes fields positionally.
@@ -1640,8 +1582,7 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// transport buffer without an intermediate copy.\n";
     o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
       << "        fletcher::PositionalWriter w(buf, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
     o << "    }\n\n";
 
     // Encode() — convenience returning EncodedRow.
@@ -1666,189 +1607,178 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
     const std::string si = std::to_string(idx);
 
     switch (fi.mapping.kind) {
-    case FieldKind::SCALAR: {
-        const auto& s = fi.mapping.scalar;
-        std::string method = PositionalReadCall(s);
-        if (method == "ReadBinary") {
-            // Binary: returns pair<const uint8_t*, size_t>
+        case FieldKind::SCALAR: {
+            const auto& s = fi.mapping.scalar;
+            std::string method = PositionalReadCall(s);
+            if (method == "ReadBinary") {
+                // Binary: returns pair<const uint8_t*, size_t>
+                if (fi.mapping.nullable) {
+                    o << "        if (!r.IsNull(" << si << ")) {\n"
+                      << "            auto [p, n] = r.ReadBinary();\n"
+                      << "            " << n << ".emplace(reinterpret_cast<const char*>(p), n);\n"
+                      << "        }\n";
+                } else {
+                    o << "        { auto [p, n] = r.ReadBinary();\n"
+                      << "          " << n << ".emplace(reinterpret_cast<const char*>(p), n); }\n";
+                }
+            } else if (method == "ReadString") {
+                if (fi.mapping.nullable) {
+                    o << "        if (!r.IsNull(" << si << ")) " << n << " = std::string(r."
+                      << method << "());\n";
+                } else {
+                    o << "        " << n << " = std::string(r." << method << "());\n";
+                }
+            } else {
+                if (fi.mapping.nullable) {
+                    o << "        if (!r.IsNull(" << si << ")) " << n << " = r." << method
+                      << "();\n";
+                } else {
+                    o << "        " << n << " = r." << method << "();\n";
+                }
+            }
+            break;
+        }
+
+        case FieldKind::STRUCT: {
+            const auto& nc = fi.mapping.nested_class;
             if (fi.mapping.nullable) {
                 o << "        if (!r.IsNull(" << si << ")) {\n"
-                  << "            auto [p, n] = r.ReadBinary();\n"
-                  << "            " << n << ".emplace(reinterpret_cast<const char*>(p), n);\n"
+                  << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+                  << "            " << n << ".emplace(sr);\n"
                   << "        }\n";
             } else {
-                o << "        { auto [p, n] = r.ReadBinary();\n"
-                  << "          " << n << ".emplace(reinterpret_cast<const char*>(p), n); }\n";
+                o << "        { auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+                  << "          " << n << ".emplace(sr); }\n";
             }
-        } else if (method == "ReadString") {
-            if (fi.mapping.nullable) {
-                o << "        if (!r.IsNull(" << si << ")) "
-                  << n << " = std::string(r." << method << "());\n";
-            } else {
-                o << "        " << n << " = std::string(r." << method << "());\n";
-            }
-        } else {
-            if (fi.mapping.nullable) {
-                o << "        if (!r.IsNull(" << si << ")) "
-                  << n << " = r." << method << "();\n";
-            } else {
-                o << "        " << n << " = r." << method << "();\n";
-            }
-        }
-        break;
-    }
-
-    case FieldKind::STRUCT: {
-        const auto& nc = fi.mapping.nested_class;
-        if (fi.mapping.nullable) {
-            o << "        if (!r.IsNull(" << si << ")) {\n"
-              << "            auto sr = r.ReadStruct("
-              << nc << "Schema()->n_children);\n"
-              << "            " << n << ".emplace(sr);\n"
-              << "        }\n";
-        } else {
-            o << "        { auto sr = r.ReadStruct("
-              << nc << "Schema()->n_children);\n"
-              << "          " << n << ".emplace(sr); }\n";
-        }
-        break;
-    }
-
-    case FieldKind::REPEATED_SCALAR: {
-        const auto& e = fi.mapping.element;
-        std::string method = PositionalReadCall(e);
-        o << "        { auto lh = r.ReadListHeader();\n"
-          << "          " << n << ".clear();\n"
-          << "          " << n << ".reserve(lh.count);\n"
-          << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n";
-        if (method == "ReadBinary") {
-            o << "            auto [p, n] = r.ReadBinary();\n"
-              << "            " << n << ".emplace_back(reinterpret_cast<const char*>(p), n);\n";
-        } else if (method == "ReadString") {
-            o << "            " << n << ".emplace_back(r." << method << "());\n";
-        } else {
-            o << "            " << n << ".push_back(r." << method << "());\n";
-        }
-        o << "          } }\n";
-        break;
-    }
-
-    case FieldKind::REPEATED_STRUCT: {
-        const auto& nc = fi.mapping.nested_class;
-        o << "        { auto lh = r.ReadListHeader();\n"
-          << "          " << n << ".clear();\n"
-          << "          " << n << ".reserve(lh.count);\n"
-          << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
-          << "            auto sr = r.ReadStruct("
-          << nc << "Schema()->n_children);\n"
-          << "            " << n << ".emplace_back(sr);\n"
-          << "          } }\n";
-        break;
-    }
-
-    case FieldKind::NESTED_LIST: {
-        int depth = fi.mapping.list_depth;
-        const auto& nc = fi.mapping.nested_class;
-
-        if (fi.mapping.nullable) {
-            o << "        if (!r.IsNull(" << si << ")) {\n";
-        } else {
-            o << "        {\n";
+            break;
         }
 
-        std::string target = fi.mapping.nullable
-            ? (n + ".emplace()")
-            : n;
-        std::string ref = fi.mapping.nullable
-            ? ("(*" + n + ")")
-            : n;
-        std::string indent = "            ";
-
-        if (fi.mapping.nullable) {
-            o << indent << target << ";\n";
-        }
-
-        // Generate nested loops
-        // depth 2: List<List<Struct>>
-        // depth 3: List<List<List<Struct>>>
-        std::string cur_ref = ref;
-        for (int d = 0; d < depth; ++d) {
-            std::string var = "lh_" + std::to_string(d);
-            std::string idx_var = "i_" + std::to_string(d);
-            o << indent << "auto " << var << " = r.ReadListHeader();\n"
-              << indent << cur_ref << ".resize(" << var << ".count);\n"
-              << indent << "for (uint32_t " << idx_var << " = 0; "
-              << idx_var << " < " << var << ".count; ++" << idx_var << ") {\n";
-            cur_ref = cur_ref + "[" + idx_var + "]";
-            indent += "    ";
-        }
-        // Innermost: decode struct
-        o << indent << "auto sr = r.ReadStruct("
-          << nc << "Schema()->n_children);\n"
-          << indent << cur_ref << " = " << nc << "(sr);\n";
-        // Close loops
-        for (int d = 0; d < depth; ++d) {
-            indent = indent.substr(4);
-            o << indent << "}\n";
-        }
-
-        o << "        }\n";
-        break;
-    }
-
-    case FieldKind::MAP: {
-        const auto& mk = fi.mapping.map_key;
-        bool val_is_msg = fi.mapping.map_value_is_message;
-        std::string key_read = PositionalReadCall(mk);
-        std::string key_type = mk.storage_type;
-        std::string val_type = val_is_msg
-            ? fi.mapping.map_value_class
-            : fi.mapping.map_value.storage_type;
-
-        o << "        { auto count = r.ReadMapCount();\n"
-          << "          std::vector<" << key_type << "> keys_;\n"
-          << "          keys_.reserve(count);\n"
-          << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
-        if (key_read == "ReadString") {
-            o << "            keys_.emplace_back(r." << key_read << "());\n";
-        } else {
-            o << "            keys_.push_back(r." << key_read << "());\n";
-        }
-        o << "          }\n"
-          << "          auto vbf = r.ReadMapValueBitfield(count);\n"
-          << "          " << n << ".clear();\n"
-          << "          " << n << ".reserve(count);\n"
-          << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
-
-        if (val_is_msg) {
-            const auto& mvc = fi.mapping.map_value_class;
-            o << "            auto sr = r.ReadStruct("
-              << mvc << "Schema()->n_children);\n"
-              << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-              << mvc << "(sr));\n";
-        } else {
-            std::string val_read = PositionalReadCall(fi.mapping.map_value);
-            if (val_read == "ReadString") {
-                o << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-                  << "std::string(r." << val_read << "()));\n";
-            } else if (val_read == "ReadBinary") {
+        case FieldKind::REPEATED_SCALAR: {
+            const auto& e = fi.mapping.element;
+            std::string method = PositionalReadCall(e);
+            o << "        { auto lh = r.ReadListHeader();\n"
+              << "          " << n << ".clear();\n"
+              << "          " << n << ".reserve(lh.count);\n"
+              << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n";
+            if (method == "ReadBinary") {
                 o << "            auto [p, n] = r.ReadBinary();\n"
-                  << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-                  << "std::string(reinterpret_cast<const char*>(p), n));\n";
+                  << "            " << n << ".emplace_back(reinterpret_cast<const char*>(p), n);\n";
+            } else if (method == "ReadString") {
+                o << "            " << n << ".emplace_back(r." << method << "());\n";
             } else {
-                o << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-                  << "r." << val_read << "());\n";
+                o << "            " << n << ".push_back(r." << method << "());\n";
             }
+            o << "          } }\n";
+            break;
         }
 
-        o << "          } }\n";
-        break;
-    }
+        case FieldKind::REPEATED_STRUCT: {
+            const auto& nc = fi.mapping.nested_class;
+            o << "        { auto lh = r.ReadListHeader();\n"
+              << "          " << n << ".clear();\n"
+              << "          " << n << ".reserve(lh.count);\n"
+              << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
+              << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+              << "            " << n << ".emplace_back(sr);\n"
+              << "          } }\n";
+            break;
+        }
+
+        case FieldKind::NESTED_LIST: {
+            int depth = fi.mapping.list_depth;
+            const auto& nc = fi.mapping.nested_class;
+
+            if (fi.mapping.nullable) {
+                o << "        if (!r.IsNull(" << si << ")) {\n";
+            } else {
+                o << "        {\n";
+            }
+
+            std::string target = fi.mapping.nullable ? (n + ".emplace()") : n;
+            std::string ref = fi.mapping.nullable ? ("(*" + n + ")") : n;
+            std::string indent = "            ";
+
+            if (fi.mapping.nullable) {
+                o << indent << target << ";\n";
+            }
+
+            // Generate nested loops
+            // depth 2: List<List<Struct>>
+            // depth 3: List<List<List<Struct>>>
+            std::string cur_ref = ref;
+            for (int d = 0; d < depth; ++d) {
+                std::string var = "lh_" + std::to_string(d);
+                std::string idx_var = "i_" + std::to_string(d);
+                o << indent << "auto " << var << " = r.ReadListHeader();\n"
+                  << indent << cur_ref << ".resize(" << var << ".count);\n"
+                  << indent << "for (uint32_t " << idx_var << " = 0; " << idx_var << " < " << var
+                  << ".count; ++" << idx_var << ") {\n";
+                cur_ref = cur_ref + "[" + idx_var + "]";
+                indent += "    ";
+            }
+            // Innermost: decode struct
+            o << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+              << indent << cur_ref << " = " << nc << "(sr);\n";
+            // Close loops
+            for (int d = 0; d < depth; ++d) {
+                indent = indent.substr(4);
+                o << indent << "}\n";
+            }
+
+            o << "        }\n";
+            break;
+        }
+
+        case FieldKind::MAP: {
+            const auto& mk = fi.mapping.map_key;
+            bool val_is_msg = fi.mapping.map_value_is_message;
+            std::string key_read = PositionalReadCall(mk);
+            std::string key_type = mk.storage_type;
+            std::string val_type =
+                val_is_msg ? fi.mapping.map_value_class : fi.mapping.map_value.storage_type;
+
+            o << "        { auto count = r.ReadMapCount();\n"
+              << "          std::vector<" << key_type << "> keys_;\n"
+              << "          keys_.reserve(count);\n"
+              << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
+            if (key_read == "ReadString") {
+                o << "            keys_.emplace_back(r." << key_read << "());\n";
+            } else {
+                o << "            keys_.push_back(r." << key_read << "());\n";
+            }
+            o << "          }\n"
+              << "          auto vbf = r.ReadMapValueBitfield(count);\n"
+              << "          " << n << ".clear();\n"
+              << "          " << n << ".reserve(count);\n"
+              << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
+
+            if (val_is_msg) {
+                const auto& mvc = fi.mapping.map_value_class;
+                o << "            auto sr = r.ReadStruct(" << mvc << "Schema()->n_children);\n"
+                  << "            " << n << ".emplace_back(std::move(keys_[mi_]), " << mvc
+                  << "(sr));\n";
+            } else {
+                std::string val_read = PositionalReadCall(fi.mapping.map_value);
+                if (val_read == "ReadString") {
+                    o << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
+                      << "std::string(r." << val_read << "()));\n";
+                } else if (val_read == "ReadBinary") {
+                    o << "            auto [p, n] = r.ReadBinary();\n"
+                      << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
+                      << "std::string(reinterpret_cast<const char*>(p), n));\n";
+                } else {
+                    o << "            " << n << ".emplace_back(std::move(keys_[mi_]), " << "r."
+                      << val_read << "());\n";
+                }
+            }
+
+            o << "          } }\n";
+            break;
+        }
     }  // switch
 }
 
-std::string GenerateMessageClass(const std::string& cls,
-                                 const std::vector<FieldInfo>& fields) {
+std::string GenerateMessageClass(const std::string& cls, const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
     std::string fc = std::to_string(fields.size());
 
@@ -1863,11 +1793,9 @@ std::string GenerateMessageClass(const std::string& cls,
     // Constructor from raw bytes
     o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
       << "    /// received from a PubSub callback or read from a WAL.\n";
-    o << "    explicit " << cls
-      << "(const uint8_t* data, size_t len) {\n"
+    o << "    explicit " << cls << "(const uint8_t* data, size_t len) {\n"
       << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        EmitFieldDecode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
     o << "    }\n\n";
 
     // Constructor from EncodedRow
@@ -1880,10 +1808,8 @@ std::string GenerateMessageClass(const std::string& cls,
     o << "    /// Used internally when this message is embedded as a struct\n"
       << "    /// field inside another message — the parent reader is passed\n"
       << "    /// through so nested fields are decoded in position.\n";
-    o << "    explicit " << cls
-      << "(fletcher::PositionalReader& r) {\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        EmitFieldDecode(o, fields[i], i);
+    o << "    explicit " << cls << "(fletcher::PositionalReader& r) {\n";
+    for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
     o << "    }\n\n";
 
     // Setters
@@ -1901,8 +1827,7 @@ std::string GenerateMessageClass(const std::string& cls,
     o << " private:\n";
 
     // Storage members
-    for (const auto& fi : fields)
-        o << "    " << StorageDecl(fi) << ";\n";
+    for (const auto& fi : fields) o << "    " << StorageDecl(fi) << ";\n";
 
     o << "};\n";
     return o.str();
@@ -1912,11 +1837,9 @@ std::string GenerateMessageClass(const std::string& cls,
 // Service method validation
 // -----------------------------------------------------------------------
 
-bool ValidateServiceMethod(
-    const google::protobuf::MethodDescriptor* method,
-    const std::set<const google::protobuf::Descriptor*>& generated_msgs,
-    std::string* reason)
-{
+bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
+                           const std::set<const google::protobuf::Descriptor*>& generated_msgs,
+                           std::string* reason) {
     if (!method->client_streaming()) {
         *reason = "request is not streaming (pub/sub requires 'stream' on request)";
         return false;
@@ -1930,8 +1853,8 @@ bool ValidateServiceMethod(
         return false;
     }
     if (!generated_msgs.count(method->input_type())) {
-        *reason = "input message '" + method->input_type()->name()
-                + "' has no generated Arrow mapping in this file";
+        *reason = "input message '" + method->input_type()->name() +
+                  "' has no generated Arrow mapping in this file";
         return false;
     }
     return true;
@@ -1948,10 +1871,8 @@ void EmitTopicSegments(std::ostringstream& o, const std::string& package,
       << "    /// look up, and route messages on the pub/sub layer.\n";
     o << "    static const std::vector<std::string>& TopicSegments() {\n"
       << "        static const std::vector<std::string> kSegments = {";
-    if (!package.empty())
-        o << "\n            \"" << package << "\",";
-    o << "\n            \"" << svc_name << "\","
-      << "\n            \"" << method_name << "\"\n"
+    if (!package.empty()) o << "\n            \"" << package << "\",";
+    o << "\n            \"" << svc_name << "\"," << "\n            \"" << method_name << "\"\n"
       << "        };\n"
       << "        return kSegments;\n"
       << "    }\n\n";
@@ -1971,10 +1892,10 @@ void EmitSchema(std::ostringstream& o, const std::string& msg_class) {
 
 std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* method,
                                    const std::string& package) {
-    const std::string svc_name    = method->service()->name();
+    const std::string svc_name = method->service()->name();
     const std::string method_name = method->name();
-    const std::string cls         = svc_name + "_" + method_name + "Publisher";
-    const std::string msg_class   = ClassName(method->input_type());
+    const std::string cls = svc_name + "_" + method_name + "Publisher";
+    const std::string msg_class = ClassName(method->input_type());
 
     std::ostringstream o;
     o << "class " << cls << " {\n public:\n";
@@ -1988,8 +1909,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    /// where a single string is expected instead of path segments.\n";
     o << "    static const std::string& TopicKey() {\n"
       << "        static const std::string kKey = \"";
-    if (!package.empty())
-        o << package << "/";
+    if (!package.empty()) o << package << "/";
     o << svc_name << "/" << method_name << "\";\n"
       << "        return kKey;\n"
       << "    }\n\n";
@@ -2043,10 +1963,10 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
 
 std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* method,
                                     const std::string& package) {
-    const std::string svc_name    = method->service()->name();
+    const std::string svc_name = method->service()->name();
     const std::string method_name = method->name();
-    const std::string cls         = svc_name + "_" + method_name + "Subscriber";
-    const std::string msg_class   = ClassName(method->input_type());
+    const std::string cls = svc_name + "_" + method_name + "Subscriber";
+    const std::string msg_class = ClassName(method->input_type());
 
     std::ostringstream o;
     o << "class " << cls << " {\n public:\n";
@@ -2101,8 +2021,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 // File generation
 // -----------------------------------------------------------------------
 
-std::string GenerateFile(const google::protobuf::FileDescriptor* file,
-                         bool schema_only) {
+std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool schema_only) {
     std::ostringstream o;
 
     o << "// Generated by fletcher-protoc. DO NOT EDIT.\n"
@@ -2142,15 +2061,13 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
     const auto cross_includes = CollectCrossFileIncludes(file);
     if (!cross_includes.empty()) {
         o << "\n";
-        for (const auto& h : cross_includes)
-            o << "#include \"" << h << "\"\n";
+        for (const auto& h : cross_includes) o << "#include \"" << h << "\"\n";
     }
     o << "\n";
 
     o << "namespace fletcher_gen {\n";
     const std::string ns = DotToColons(file->package());
-    if (!ns.empty())
-        o << "namespace " << ns << " {\n";
+    if (!ns.empty()) o << "namespace " << ns << " {\n";
     o << "\n";
 
     // Emit messages in dependency order.
@@ -2166,8 +2083,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
 
         // GeoArrow wrapper messages (LineString, MultiPoint, etc.) are
         // collapsed into list fields by the type mapper — skip class generation.
-        if (IsGeoArrowWrapper(msg))
-            continue;
+        if (IsGeoArrowWrapper(msg)) continue;
 
         std::string skipped;
         auto fields = GatherFields(msg, &skipped);
@@ -2199,8 +2115,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
                 const auto* method = svc->method(mi);
                 std::string reason;
                 if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
-                    o << "// Skipped: " << svc->name() << "." << method->name()
-                      << " — " << reason << "\n";
+                    o << "// Skipped: " << svc->name() << "." << method->name() << " — " << reason
+                      << "\n";
                     continue;
                 }
                 o << GeneratePublisherClass(method, file->package()) << "\n"
@@ -2209,8 +2125,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file,
         }
     }
 
-    if (!ns.empty())
-        o << "}  // namespace " << ns << "\n";
+    if (!ns.empty()) o << "}  // namespace " << ns << "\n";
     o << "}  // namespace fletcher_gen\n";
 
     return o.str();
@@ -2228,17 +2143,17 @@ std::string TsOutputFilename(const std::string& proto_name) {
 std::string DotToSlash(const std::string& s) {
     std::string out;
     for (char c : s) {
-        if (c == '.') out += '/';
-        else          out += c;
+        if (c == '.')
+            out += '/';
+        else
+            out += c;
     }
     return out;
 }
 
 // Walk GeoArrow wrapper chain to the innermost coordinate struct.
-const google::protobuf::Descriptor* GeoArrowInnerCoord(
-    const google::protobuf::Descriptor* msg) {
-    while (IsGeoArrowWrapper(msg))
-        msg = msg->field(0)->message_type();
+const google::protobuf::Descriptor* GeoArrowInnerCoord(const google::protobuf::Descriptor* msg) {
+    while (IsGeoArrowWrapper(msg)) msg = msg->field(0)->message_type();
     return msg;
 }
 
@@ -2260,15 +2175,13 @@ std::string TsSchemaConstName(const google::protobuf::Descriptor* msg) {
 }
 
 // TypeScript type for a FieldInfo, handling scalars, composites, and well-known types.
-std::string TsFieldType(const FieldInfo& fi,
-                        const google::protobuf::FieldDescriptor* fd) {
+std::string TsFieldType(const FieldInfo& fi, const google::protobuf::FieldDescriptor* fd) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR: {
             // Check well-known types first.
             if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
                 const auto& fqn = fd->message_type()->full_name();
-                if (fqn == "google.protobuf.Timestamp" ||
-                    fqn == "google.protobuf.Duration")
+                if (fqn == "google.protobuf.Timestamp" || fqn == "google.protobuf.Duration")
                     return "bigint";
                 // Wrapper types: the scalar info tells us the underlying type.
                 return TsScalarType(fd->message_type()->field(0)->type());
@@ -2293,8 +2206,7 @@ std::string TsFieldType(const FieldInfo& fi,
         }
 
         case FieldKind::MAP: {
-            std::string key_type = TsScalarType(
-                fd->message_type()->field(0)->type());
+            std::string key_type = TsScalarType(fd->message_type()->field(0)->type());
             const auto* val_fd = fd->message_type()->field(1);
             std::string val_type;
             if (fi.mapping.map_value_is_message) {
@@ -2309,16 +2221,13 @@ std::string TsFieldType(const FieldInfo& fi,
 }
 
 // WireTypeId name for a FieldInfo.
-std::string TsWireTypeId(const FieldInfo& fi,
-                         const google::protobuf::FieldDescriptor* fd) {
+std::string TsWireTypeId(const FieldInfo& fi, const google::protobuf::FieldDescriptor* fd) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR: {
             if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
                 const auto& fqn = fd->message_type()->full_name();
-                if (fqn == "google.protobuf.Timestamp")
-                    return "WireTypeId.TIMESTAMP_NANO";
-                if (fqn == "google.protobuf.Duration")
-                    return "WireTypeId.DURATION_NANO";
+                if (fqn == "google.protobuf.Timestamp") return "WireTypeId.TIMESTAMP_NANO";
+                if (fqn == "google.protobuf.Duration") return "WireTypeId.DURATION_NANO";
                 // Wrapper types: use the underlying scalar's wire type.
                 return WireTypeIdName(fd->message_type()->field(0)->type());
             }
@@ -2340,42 +2249,39 @@ std::string TsWireTypeId(const FieldInfo& fi,
 
 // Emit the FieldDescriptor literal for a field, with nested descriptors
 // for composite types.
-void EmitTsFieldDescriptor(std::ostringstream& o,
-                           const FieldInfo& fi,
-                           const google::protobuf::FieldDescriptor* fd,
-                           const std::string& indent) {
-    o << indent << "{ "
-      << "name: '" << fi.name << "', "
-      << "fieldNumber: " << fi.field_number << ", "
-      << "wireType: " << TsWireTypeId(fi, fd) << ", "
+void EmitTsFieldDescriptor(std::ostringstream& o, const FieldInfo& fi,
+                           const google::protobuf::FieldDescriptor* fd, const std::string& indent) {
+    o << indent << "{ " << "name: '" << fi.name << "', " << "fieldNumber: " << fi.field_number
+      << ", " << "wireType: " << TsWireTypeId(fi, fd) << ", "
       << "nullable: " << (fi.mapping.nullable ? "true" : "false");
 
     // Nested descriptors for composite types.
     if (fi.mapping.kind == FieldKind::REPEATED_SCALAR) {
-        o << ", element: { name: '', fieldNumber: 0, wireType: "
-          << WireTypeIdName(fd->type())
+        o << ", element: { name: '', fieldNumber: 0, wireType: " << WireTypeIdName(fd->type())
           << ", nullable: false }";
     } else if (fi.mapping.kind == FieldKind::STRUCT) {
         o << ", fields: " << TsSchemaConstName(fd->message_type()) << ".fields";
     } else if (fi.mapping.kind == FieldKind::REPEATED_STRUCT) {
         o << ", element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
-          << ", nullable: false, fields: "
-          << TsSchemaConstName(fd->message_type()) << ".fields }";
+          << ", nullable: false, fields: " << TsSchemaConstName(fd->message_type()) << ".fields }";
     } else if (fi.mapping.kind == FieldKind::NESTED_LIST) {
         // Build nested element descriptors from inside out.
         const auto* coord = GeoArrowInnerCoord(fd->message_type());
-        std::string inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
-                            ", nullable: false, fields: "
-                          + TsSchemaConstName(coord) + ".fields }";
+        std::string inner =
+            "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
+            ", nullable: false, fields: " +
+            TsSchemaConstName(coord) + ".fields }";
         for (int d = 1; d < fi.mapping.list_depth; ++d)
-            inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.LIST"
-                    ", nullable: false, element: " + inner + " }";
+            inner =
+                "{ name: '', fieldNumber: 0, wireType: WireTypeId.LIST"
+                ", nullable: false, element: " +
+                inner + " }";
         o << ", element: " << inner;
     } else if (fi.mapping.kind == FieldKind::MAP) {
         const auto* key_fd = fd->message_type()->field(0);
         const auto* val_fd = fd->message_type()->field(1);
-        o << ", mapKey: { name: '', fieldNumber: 0, wireType: "
-          << WireTypeIdName(key_fd->type()) << ", nullable: false }";
+        o << ", mapKey: { name: '', fieldNumber: 0, wireType: " << WireTypeIdName(key_fd->type())
+          << ", nullable: false }";
         o << ", mapValue: { name: '', fieldNumber: 0, wireType: ";
         if (fi.mapping.map_value_is_message) {
             o << "WireTypeId.STRUCT, nullable: false, fields: "
@@ -2416,8 +2322,7 @@ std::string GenerateTsMessage(const google::protobuf::Descriptor* msg,
             }
         }
         std::string ts_type = TsFieldType(fields[i], fd);
-        if (fields[i].mapping.nullable)
-            ts_type += " | null";
+        if (fields[i].mapping.nullable) ts_type += " | null";
         o << "  " << fields[i].name << ": " << ts_type << ";\n";
     }
     o << "}\n\n";
@@ -2425,8 +2330,7 @@ std::string GenerateTsMessage(const google::protobuf::Descriptor* msg,
     // TypedSchema<IFoo> — runtime SchemaDescriptor + phantom TS type
     // so call sites can write `client.publish(topic, Foo, data)` and
     // have `data`'s type inferred from the proto-generated interface.
-    o << "export const " << schema_name << ": TypedSchema<"
-      << iface << "> = {\n"
+    o << "export const " << schema_name << ": TypedSchema<" << iface << "> = {\n"
       << "  fields: [\n";
     for (size_t i = 0; i < fields.size(); ++i) {
         const google::protobuf::FieldDescriptor* fd = nullptr;
@@ -2456,7 +2360,7 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
       << "import { WireTypeId } from 'fletcher-gateway-client';\n\n";
 
     // Collect cross-file TypeScript imports.
-    std::set<std::string> ts_imports; // set of .proto filenames we depend on
+    std::set<std::string> ts_imports;  // set of .proto filenames we depend on
     auto messages = OrderedMessages(file);
     for (const auto* msg : messages) {
         if (IsRecursive(msg)) continue;
@@ -2469,8 +2373,7 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
                 }
                 if (m->kind == FieldKind::NESTED_LIST) {
                     const auto* coord = GeoArrowInnerCoord(fd->message_type());
-                    if (coord->file() != file)
-                        ts_imports.insert(coord->file()->name());
+                    if (coord->file() != file) ts_imports.insert(coord->file()->name());
                 }
                 if (m->kind == FieldKind::MAP && m->map_value_is_message) {
                     const auto* val_fd = fd->message_type()->field(1);
@@ -2481,25 +2384,22 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
         }
     }
     for (const auto& proto_file : ts_imports) {
-        o << "import { "
-          << "/* cross-file types */ "
-          << "} from './" << StripProtoSuffix(proto_file) << ".fletcher.js';\n";
+        o << "import { " << "/* cross-file types */ " << "} from './"
+          << StripProtoSuffix(proto_file) << ".fletcher.js';\n";
     }
     if (!ts_imports.empty()) o << "\n";
 
     // Emit messages in dependency order.
     for (const auto* msg : messages) {
         if (IsRecursive(msg)) {
-            o << "// Skipped: " << msg->name()
-              << " is recursive and cannot be represented.\n\n";
+            o << "// Skipped: " << msg->name() << " is recursive and cannot be represented.\n\n";
             continue;
         }
         o << GenerateTsMessage(msg, file);
     }
 
     // Topic constants for service methods.
-    std::set<const google::protobuf::Descriptor*> generated_msgs(
-        messages.begin(), messages.end());
+    std::set<const google::protobuf::Descriptor*> generated_msgs(messages.begin(), messages.end());
 
     for (int si = 0; si < file->service_count(); ++si) {
         const auto* svc = file->service(si);
@@ -2507,8 +2407,8 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
             const auto* method = svc->method(mi);
             std::string reason;
             if (!ValidateServiceMethod(method, generated_msgs, &reason)) {
-                o << "// Skipped: " << svc->name() << "." << method->name()
-                  << " — " << reason << "\n";
+                o << "// Skipped: " << svc->name() << "." << method->name() << " — " << reason
+                  << "\n";
                 continue;
             }
 
@@ -2517,8 +2417,8 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
             if (!pkg.empty()) topic_path += DotToSlash(pkg) + "/";
             topic_path += svc->name() + "/" + method->name();
 
-            o << "export const " << svc->name() << "_" << method->name()
-              << "Topic = '" << topic_path << "';\n\n";
+            o << "export const " << svc->name() << "_" << method->name() << "Topic = '"
+              << topic_path << "';\n\n";
         }
     }
 
@@ -2533,8 +2433,7 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 // using only the public getter API.  Found via ADL.
 // -----------------------------------------------------------------------
 
-std::string GenerateToArrowRow(const std::string& cls,
-                               const std::vector<FieldInfo>& fields) {
+std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
     o << "/// Converts a nanoarrow-only " << cls << " instance to an ArrowRow\n"
       << "/// (vector of Arrow scalars).  Uses only public getters, so the\n"
@@ -2553,21 +2452,18 @@ std::string GenerateToArrowRow(const std::string& cls,
                 if (fi.mapping.nullable) {
                     std::string val_expr;
                     if (sc.value_is_buffer)
-                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
-                                              "std::string(*" + getter + ")");
+                        val_expr =
+                            ReplaceAll(sc.scalar_ctor, "{val}", "std::string(*" + getter + ")");
                     else
-                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
-                                              "*" + getter);
+                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}", "*" + getter);
                     o << "    row.push_back(" << getter << ".has_value()\n"
-                      << "        ? std::shared_ptr<arrow::Scalar>("
-                      << val_expr << ")\n"
-                      << "        : arrow::MakeNullScalar("
-                      << sc.arrow_type_expr << "));\n";
+                      << "        ? std::shared_ptr<arrow::Scalar>(" << val_expr << ")\n"
+                      << "        : arrow::MakeNullScalar(" << sc.arrow_type_expr << "));\n";
                 } else {
                     std::string val_expr;
                     if (sc.value_is_buffer)
-                        val_expr = ReplaceAll(sc.scalar_ctor, "{val}",
-                                              "std::string(" + getter + ")");
+                        val_expr =
+                            ReplaceAll(sc.scalar_ctor, "{val}", "std::string(" + getter + ")");
                     else
                         val_expr = ReplaceAll(sc.scalar_ctor, "{val}", getter);
                     o << "    row.push_back(" << val_expr << ");\n";
@@ -2579,22 +2475,19 @@ std::string GenerateToArrowRow(const std::string& cls,
                 const auto& nc = fi.mapping.nested_class;
                 o << "    {\n"
                   << "        auto type = arrow::struct_(\n"
-                  << "            detail::ImportSchema(" << nc
-                  << "Schema())->fields());\n";
+                  << "            detail::ImportSchema(" << nc << "Schema())->fields());\n";
                 if (fi.mapping.nullable) {
                     o << "        if (" << getter << " != nullptr)\n"
                       << "            row.push_back(std::make_shared"
                          "<arrow::StructScalar>(\n"
-                      << "                ToArrowRow(*" << getter
-                      << "), type));\n"
+                      << "                ToArrowRow(*" << getter << "), type));\n"
                       << "        else\n"
                       << "            row.push_back(arrow::MakeNullScalar"
                          "(type));\n";
                 } else {
                     o << "        row.push_back(std::make_shared"
                          "<arrow::StructScalar>(\n"
-                      << "            ToArrowRow(" << getter
-                      << "), type));\n";
+                      << "            ToArrowRow(" << getter << "), type));\n";
                 }
                 o << "    }\n";
                 break;
@@ -2608,8 +2501,8 @@ std::string GenerateToArrowRow(const std::string& cls,
                   << "            (void)builder.Append(v);\n"
                   << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
                   << "            *builder.Finish(),\n"
-                  << "            arrow::list(arrow::field(\"item\", "
-                  << el.arrow_type_expr << ", false))));\n"
+                  << "            arrow::list(arrow::field(\"item\", " << el.arrow_type_expr
+                  << ", false))));\n"
                   << "    }\n";
                 break;
             }
@@ -2618,8 +2511,7 @@ std::string GenerateToArrowRow(const std::string& cls,
                 const auto& nc = fi.mapping.nested_class;
                 o << "    {\n"
                   << "        auto type = arrow::struct_(\n"
-                  << "            detail::ImportSchema(" << nc
-                  << "Schema())->fields());\n"
+                  << "            detail::ImportSchema(" << nc << "Schema())->fields());\n"
                   << "        auto builder = arrow::MakeBuilder(type)"
                      ".ValueOrDie();\n"
                   << "        for (const auto& v : " << getter << ") {\n"
@@ -2640,13 +2532,10 @@ std::string GenerateToArrowRow(const std::string& cls,
                 const auto& nc = fi.mapping.nested_class;
                 o << "    {\n"
                   << "        auto coord_type = arrow::struct_(\n"
-                  << "            detail::ImportSchema(" << nc
-                  << "Schema())->fields());\n";
+                  << "            detail::ImportSchema(" << nc << "Schema())->fields());\n";
 
                 // Reference to the data.
-                std::string data_ref = fi.mapping.nullable
-                    ? ("(*" + getter + ")")
-                    : getter;
+                std::string data_ref = fi.mapping.nullable ? ("(*" + getter + ")") : getter;
 
                 if (fi.mapping.list_depth == 2) {
                     o << "        auto inner_list_type = arrow::list(\n"
@@ -2661,8 +2550,7 @@ std::string GenerateToArrowRow(const std::string& cls,
                     }
                     o << "        auto outer_builder = arrow::MakeBuilder"
                          "(inner_list_type).ValueOrDie();\n"
-                      << "        for (const auto& ring : " << data_ref
-                      << ") {\n"
+                      << "        for (const auto& ring : " << data_ref << ") {\n"
                       << "            auto inner_builder = arrow::MakeBuilder"
                          "(coord_type).ValueOrDie();\n"
                       << "            for (const auto& v : ring) {\n"
@@ -2695,8 +2583,7 @@ std::string GenerateToArrowRow(const std::string& cls,
                     }
                     o << "        auto outer_builder = arrow::MakeBuilder"
                          "(poly_list_type).ValueOrDie();\n"
-                      << "        for (const auto& poly : " << data_ref
-                      << ") {\n"
+                      << "        for (const auto& poly : " << data_ref << ") {\n"
                       << "            auto mid_builder = arrow::MakeBuilder"
                          "(ring_list_type).ValueOrDie();\n"
                       << "            for (const auto& ring : poly) {\n"
@@ -2737,12 +2624,10 @@ std::string GenerateToArrowRow(const std::string& cls,
                 if (fi.mapping.map_value_is_message) {
                     const auto& mvc = fi.mapping.map_value_class;
                     o << "        auto val_type = arrow::struct_(\n"
-                      << "            detail::ImportSchema(" << mvc
-                      << "Schema())->fields());\n"
+                      << "            detail::ImportSchema(" << mvc << "Schema())->fields());\n"
                       << "        auto val_builder = arrow::MakeBuilder"
                          "(val_type).ValueOrDie();\n"
-                      << "        for (const auto& [k, v] : " << getter
-                      << ") {\n"
+                      << "        for (const auto& [k, v] : " << getter << ") {\n"
                       << "            (void)key_builder.Append(k);\n"
                       << "            auto s = std::make_shared"
                          "<arrow::StructScalar>(\n"
@@ -2754,8 +2639,7 @@ std::string GenerateToArrowRow(const std::string& cls,
                 } else {
                     const auto& mv = fi.mapping.map_value;
                     o << "        " << mv.builder_type << " val_builder;\n"
-                      << "        for (const auto& [k, v] : " << getter
-                      << ") {\n"
+                      << "        for (const auto& [k, v] : " << getter << ") {\n"
                       << "            (void)key_builder.Append(k);\n"
                       << "            (void)val_builder.Append(v);\n"
                       << "        }\n"
@@ -2768,17 +2652,15 @@ std::string GenerateToArrowRow(const std::string& cls,
                          " val_type, false);\n";
                 } else {
                     o << "        auto val_field = arrow::field(\"value\", "
-                      << fi.mapping.map_value.arrow_type_expr
-                      << ", false);\n";
+                      << fi.mapping.map_value.arrow_type_expr << ", false);\n";
                 }
                 o << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", "
-                  << mk.arrow_type_expr << ", false), val_field});\n"
+                  << "            {arrow::field(\"key\", " << mk.arrow_type_expr
+                  << ", false), val_field});\n"
                   << "        row.push_back(std::make_shared"
                      "<arrow::MapScalar>(kv,\n"
-                  << "            arrow::map(" << mk.arrow_type_expr
-                  << ", val_field)));\n"
+                  << "            arrow::map(" << mk.arrow_type_expr << ", val_field)));\n"
                   << "    }\n";
                 break;
             }
@@ -2834,8 +2716,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
             // Replace .fletcher.pb.h → .fletcher.arrow.pb.h
             std::string vh = h;
             const std::string suffix = ".fletcher.pb.h";
-            if (vh.size() > suffix.size()
-                && vh.substr(vh.size() - suffix.size()) == suffix) {
+            if (vh.size() > suffix.size() && vh.substr(vh.size() - suffix.size()) == suffix) {
                 vh = vh.substr(0, vh.size() - suffix.size()) + ".fletcher.arrow.pb.h";
             }
             o << "#include \"" << vh << "\"\n";
@@ -2852,8 +2733,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 
     o << "namespace fletcher_gen {\n";
     const std::string ns = DotToColons(file->package());
-    if (!ns.empty())
-        o << "namespace " << ns << " {\n";
+    if (!ns.empty()) o << "namespace " << ns << " {\n";
     o << "\n";
 
     // Helper: convert OwnedSchema → shared_ptr<arrow::Schema> via C Data Interface.
@@ -2889,8 +2769,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         o << GenerateToArrowRow(cls, fields) << "\n";
     }
 
-    if (!ns.empty())
-        o << "}  // namespace " << ns << "\n";
+    if (!ns.empty()) o << "}  // namespace " << ns << "\n";
     o << "}  // namespace fletcher_gen\n";
 
     return o.str();
@@ -2902,15 +2781,13 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 // CodeGenerator interface
 // -----------------------------------------------------------------------
 
-bool ArrowRowGenerator::Generate(
-    const google::protobuf::FileDescriptor* file,
-    const std::string& parameter,
-    google::protobuf::compiler::GeneratorContext* context,
-    std::string* error) const
-{
+bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
+                                 const std::string& parameter,
+                                 google::protobuf::compiler::GeneratorContext* context,
+                                 std::string* error) const {
     // Parse comma-separated options from --fletcher_opt=...
     bool schema_only = false;
-    bool emit_ts     = false;
+    bool emit_ts = false;
     {
         std::istringstream ss(parameter);
         std::string token;
@@ -2924,12 +2801,10 @@ bool ArrowRowGenerator::Generate(
 
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
-        const std::string content  = GenerateFile(file, schema_only);
+        const std::string content = GenerateFile(file, schema_only);
         const std::string out_name = OutputFilename(file->name());
-        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
-            context->Open(out_name));
-        if (!WriteToStream(stream.get(), content, error))
-            return false;
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error)) return false;
     }
 
     // Emit the view header (Arrow C++ dependent, server-side).
@@ -2939,19 +2814,17 @@ bool ArrowRowGenerator::Generate(
             const std::string view_name = ViewOutputFilename(file->name());
             std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
                 context->Open(view_name));
-            if (!WriteToStream(stream.get(), view_content, error))
-                return false;
+            if (!WriteToStream(stream.get(), view_content, error)) return false;
         }
     }
 
     // Optionally emit the TypeScript file.
     if (emit_ts) {
-        const std::string ts_content  = GenerateTypeScriptFile(file);
+        const std::string ts_content = GenerateTypeScriptFile(file);
         const std::string ts_out_name = TsOutputFilename(file->name());
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));
-        if (!WriteToStream(stream.get(), ts_content, error))
-            return false;
+        if (!WriteToStream(stream.get(), ts_content, error)) return false;
     }
 
     return true;

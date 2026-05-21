@@ -14,8 +14,6 @@
 //
 // Depends only on WriteBuffer (no Arrow C++ dependency).
 
-#include "write_buffer.hpp"
-
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -24,29 +22,27 @@
 #include <string_view>
 #include <utility>
 
+#include "write_buffer.hpp"
+
 namespace fletcher {
 
 static_assert(std::endian::native == std::endian::little,
               "Positional wire format assumes little-endian host");
-
 
 // ---------------------------------------------------------------------------
 // PositionalWriter — writes positional wire format into a WriteBuffer.
 // ---------------------------------------------------------------------------
 
 class PositionalWriter {
- public:
+   public:
     // Start a struct/row with num_fields fields.
     // Writes a zeroed null bitfield placeholder.
     PositionalWriter(WriteBuffer& buf, int num_fields)
-        : buf_(buf)
-        , num_fields_(num_fields)
-        , bitfield_offset_(buf.Position()) {
+        : buf_(buf), num_fields_(num_fields), bitfield_offset_(buf.Position()) {
         if (num_fields < 0)
             throw std::invalid_argument("PositionalWriter: num_fields must be >= 0");
         size_t nbytes = BitfieldBytes(num_fields);
-        for (size_t i = 0; i < nbytes; ++i)
-            buf_.AppendByte(0);
+        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
     }
 
     // Mark field at field_index as null.  Call before writing payloads.
@@ -60,21 +56,21 @@ class PositionalWriter {
 
     // --- Scalar writers (fixed-width) ---
 
-    void WriteInt8(int8_t v)        { buf_.AppendFixed(v); }
-    void WriteInt16(int16_t v)      { buf_.AppendFixed(v); }
-    void WriteInt32(int32_t v)      { buf_.AppendFixed(v); }
-    void WriteInt64(int64_t v)      { buf_.AppendFixed(v); }
-    void WriteUint8(uint8_t v)      { buf_.AppendByte(v); }
-    void WriteUint16(uint16_t v)    { buf_.AppendFixed(v); }
-    void WriteUint32(uint32_t v)    { buf_.AppendFixed(v); }
-    void WriteUint64(uint64_t v)    { buf_.AppendFixed(v); }
-    void WriteFloat(float v)        { buf_.AppendFixed(v); }
-    void WriteDouble(double v)      { buf_.AppendFixed(v); }
-    void WriteBool(bool v)          { buf_.AppendByte(v ? 1u : 0u); }
+    void WriteInt8(int8_t v) { buf_.AppendFixed(v); }
+    void WriteInt16(int16_t v) { buf_.AppendFixed(v); }
+    void WriteInt32(int32_t v) { buf_.AppendFixed(v); }
+    void WriteInt64(int64_t v) { buf_.AppendFixed(v); }
+    void WriteUint8(uint8_t v) { buf_.AppendByte(v); }
+    void WriteUint16(uint16_t v) { buf_.AppendFixed(v); }
+    void WriteUint32(uint32_t v) { buf_.AppendFixed(v); }
+    void WriteUint64(uint64_t v) { buf_.AppendFixed(v); }
+    void WriteFloat(float v) { buf_.AppendFixed(v); }
+    void WriteDouble(double v) { buf_.AppendFixed(v); }
+    void WriteBool(bool v) { buf_.AppendByte(v ? 1u : 0u); }
 
     // Timestamp/Duration are int64 on the wire.
-    void WriteTimestamp(int64_t v)  { buf_.AppendFixed(v); }
-    void WriteDuration(int64_t v)   { buf_.AppendFixed(v); }
+    void WriteTimestamp(int64_t v) { buf_.AppendFixed(v); }
+    void WriteDuration(int64_t v) { buf_.AppendFixed(v); }
 
     // --- Variable-length writers ---
 
@@ -93,9 +89,7 @@ class PositionalWriter {
 
     // Begin a nested struct with num_fields child fields.
     // Returns a sub-writer; caller writes child payloads through it.
-    PositionalWriter BeginStruct(int num_fields) {
-        return PositionalWriter(buf_, num_fields);
-    }
+    PositionalWriter BeginStruct(int num_fields) { return PositionalWriter(buf_, num_fields); }
 
     // Begin a list.  Writes COUNT, then a null bitfield placeholder for
     // `count` elements.  Returns a ListContext for writing elements.
@@ -115,8 +109,7 @@ class PositionalWriter {
         buf_.AppendFixed(count);
         size_t bf_offset = buf_.Position();
         size_t nbytes = BitfieldBytes(static_cast<int>(count));
-        for (size_t i = 0; i < nbytes; ++i)
-            buf_.AppendByte(0);
+        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
         return ListContext{buf_, bf_offset, count};
     }
 
@@ -130,8 +123,7 @@ class PositionalWriter {
         ListContext BeginValues() {
             size_t bf_offset = buf.Position();
             size_t nbytes = (count + 7) / 8;
-            for (size_t i = 0; i < nbytes; ++i)
-                buf.AppendByte(0);
+            for (size_t i = 0; i < nbytes; ++i) buf.AppendByte(0);
             return ListContext{buf, bf_offset, count};
         }
     };
@@ -143,10 +135,8 @@ class PositionalWriter {
 
     WriteBuffer& buf() { return buf_; }
 
- private:
-    static size_t BitfieldBytes(int n) {
-        return static_cast<size_t>((n + 7) / 8);
-    }
+   private:
+    static size_t BitfieldBytes(int n) { return static_cast<size_t>((n + 7) / 8); }
 
     WriteBuffer& buf_;
     int num_fields_;
@@ -158,7 +148,7 @@ class PositionalWriter {
 // ---------------------------------------------------------------------------
 
 class PositionalReader {
- public:
+   public:
     PositionalReader(const uint8_t* data, size_t len, int num_fields)
         : data_(data), len_(len), pos_(0), num_fields_(num_fields) {
         // Read the null bitfield.
@@ -177,17 +167,17 @@ class PositionalReader {
 
     // --- Scalar readers (fixed-width) ---
 
-    int8_t   ReadInt8()    { return Read<int8_t>(); }
-    int16_t  ReadInt16()   { return Read<int16_t>(); }
-    int32_t  ReadInt32()   { return Read<int32_t>(); }
-    int64_t  ReadInt64()   { return Read<int64_t>(); }
-    uint8_t  ReadUint8()   { return Read<uint8_t>(); }
-    uint16_t ReadUint16()  { return Read<uint16_t>(); }
-    uint32_t ReadUint32()  { return Read<uint32_t>(); }
-    uint64_t ReadUint64()  { return Read<uint64_t>(); }
-    float    ReadFloat()   { return Read<float>(); }
-    double   ReadDouble()  { return Read<double>(); }
-    bool     ReadBool()    { return Read<uint8_t>() != 0; }
+    int8_t ReadInt8() { return Read<int8_t>(); }
+    int16_t ReadInt16() { return Read<int16_t>(); }
+    int32_t ReadInt32() { return Read<int32_t>(); }
+    int64_t ReadInt64() { return Read<int64_t>(); }
+    uint8_t ReadUint8() { return Read<uint8_t>(); }
+    uint16_t ReadUint16() { return Read<uint16_t>(); }
+    uint32_t ReadUint32() { return Read<uint32_t>(); }
+    uint64_t ReadUint64() { return Read<uint64_t>(); }
+    float ReadFloat() { return Read<float>(); }
+    double ReadDouble() { return Read<double>(); }
+    bool ReadBool() { return Read<uint8_t>() != 0; }
 
     int64_t ReadTimestamp() { return Read<int64_t>(); }
     int64_t ReadDuration() { return Read<int64_t>(); }
@@ -251,14 +241,16 @@ class PositionalReader {
     // Called when a sub-reader (from ReadStruct) is done, to advance
     // the parent's position.
     ~PositionalReader() {
-        if (parent_)
-            parent_->pos_ += pos_;
+        if (parent_) parent_->pos_ += pos_;
     }
 
     // Move only (parent pointer).
     PositionalReader(PositionalReader&& o) noexcept
-        : data_(o.data_), len_(o.len_), pos_(o.pos_),
-          num_fields_(o.num_fields_), bitfield_(o.bitfield_),
+        : data_(o.data_),
+          len_(o.len_),
+          pos_(o.pos_),
+          num_fields_(o.num_fields_),
+          bitfield_(o.bitfield_),
           parent_(o.parent_) {
         o.parent_ = nullptr;  // prevent double-advance
     }
@@ -266,12 +258,10 @@ class PositionalReader {
     PositionalReader(const PositionalReader&) = delete;
     PositionalReader& operator=(const PositionalReader&) = delete;
 
- private:
+   private:
     // Sub-reader constructor (tracks parent for position advance).
-    PositionalReader(const uint8_t* data, size_t len, int num_fields,
-                     PositionalReader* parent)
-        : data_(data), len_(len), pos_(0), num_fields_(num_fields),
-          parent_(parent) {
+    PositionalReader(const uint8_t* data, size_t len, int num_fields, PositionalReader* parent)
+        : data_(data), len_(len), pos_(0), num_fields_(num_fields), parent_(parent) {
         size_t nbytes = BitfieldBytes(num_fields);
         if (pos_ + nbytes > len_)
             throw std::invalid_argument("PositionalReader: buffer underrun (struct bitfield)");
@@ -290,16 +280,13 @@ class PositionalReader {
     }
 
     const uint8_t* ReadBytes(size_t n) {
-        if (pos_ + n > len_)
-            throw std::invalid_argument("PositionalReader: buffer underrun");
+        if (pos_ + n > len_) throw std::invalid_argument("PositionalReader: buffer underrun");
         const uint8_t* ptr = data_ + pos_;
         pos_ += n;
         return ptr;
     }
 
-    static size_t BitfieldBytes(int n) {
-        return static_cast<size_t>((n + 7) / 8);
-    }
+    static size_t BitfieldBytes(int n) { return static_cast<size_t>((n + 7) / 8); }
 
     const uint8_t* data_;
     size_t len_;

@@ -4,12 +4,11 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
 
-#include <fletcher/pubsub/driver.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
-#include <fletcher/arrow_bridge/codec.hpp>
-
 #include <arrow/type_fwd.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -28,23 +27,20 @@ namespace fletcher {
 /// Edge-deployed code uses the Driver directly; server-side code uses
 /// PubSubArrow for convenience.
 class PubSubArrow {
- public:
+   public:
     explicit PubSubArrow(std::shared_ptr<PubSub> provider);
 
     /// Create a topic with an Arrow C++ schema.
     /// Passing nullptr is allowed (topic created without schema).
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> schema,
-                     std::any config = {});
+                     std::shared_ptr<arrow::Schema> schema, std::any config = {});
 
     /// Publish an ArrowRow (encoded via Codec).
-    void Publish(const std::vector<std::string>& segments,
-                 const ArrowRow& row,
+    void Publish(const std::vector<std::string>& segments, const ArrowRow& row,
                  const Attachments& attachments = {});
 
     /// Publish using a direct encoder (passthrough to Driver).
-    void PublishDirect(const std::vector<std::string>& segments,
-                       PubSub::RowEncoder encoder,
+    void PublishDirect(const std::vector<std::string>& segments, PubSub::RowEncoder encoder,
                        const Attachments& attachments = {});
 
     struct SubscribeResult {
@@ -54,8 +50,7 @@ class PubSubArrow {
 
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, Attachments attachments)>;
-    SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              SubscribeCallback callback,
+    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback callback,
                               std::any config = {});
 
     void Unsubscribe(uint64_t subscription_id);
@@ -63,7 +58,7 @@ class PubSubArrow {
     std::vector<std::string> ListTopics() const;
     bool HasTopic(const std::vector<std::string>& segments) const;
 
- private:
+   private:
     std::unique_ptr<Driver> driver_;
 
     mutable std::mutex mu_;
