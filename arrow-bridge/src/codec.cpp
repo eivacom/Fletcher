@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "arrow_bridge/codec.hpp"
+#include "fletcher/arrow_bridge/codec.hpp"
 
 #include "row_reader.hpp"
 #include "scalar_codec.hpp"

@@ -1,6 +1,6 @@
 # fletcher-arrow-bridge
 
-Server-side bridge between `eiva-fletcher-core`'s wire format and Apache Arrow C++.
+Server-side bridge between `fletcher-core`'s wire format and Apache Arrow C++.
 Provides three components in one static library:
 
 - **`Codec`** (`arrow_bridge/codec.hpp`) — binds an `arrow::Schema` to
@@ -40,20 +40,20 @@ conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
 
 ```python
 def requirements(self):
-    self.requires("eiva-fletcher-arrow-bridge/0.1.0-alpha")
+    self.requires("fletcher-arrow-bridge/0.1.0-alpha")
 ```
 
 ```cmake
-find_package(eiva-fletcher-arrow-bridge CONFIG REQUIRED)
+find_package(fletcher-arrow-bridge CONFIG REQUIRED)
 target_link_libraries(my-target PRIVATE fletcher::arrow-bridge)
 ```
 
 ```cpp
-#include <arrow_bridge/codec.hpp>
-#include <arrow_bridge/crs_utils.hpp>
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/arrow_bridge/crs_utils.hpp>
 ```
 
-`arrow-bridge` re-exports its dependencies (`eiva-fletcher-core`,
+`arrow-bridge` re-exports its dependencies (`fletcher-core`,
 `arrow::arrow`) transitively, so consumers don't need to declare them
 separately.
 

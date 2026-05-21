@@ -5,7 +5,7 @@
 
 #include <arrow/api.h>
 
-#include <arrow_bridge/codec.hpp>
+#include <fletcher/arrow_bridge/codec.hpp>
 
 // ---------------------------------------------------------------------------
 // Helper
