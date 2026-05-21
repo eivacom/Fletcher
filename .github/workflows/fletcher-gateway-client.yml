@@ -43,3 +43,14 @@ jobs:
 
       - name: Test
         run: npm test
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ build-and-test ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.build-and-test.result }}"

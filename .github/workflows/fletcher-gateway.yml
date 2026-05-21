@@ -111,3 +111,14 @@ jobs:
                      conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
                      conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
                      conan build . -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ build-windows, build-linux ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.build-windows.result }},${{ needs.build-linux.result }}"

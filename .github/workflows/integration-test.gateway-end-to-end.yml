@@ -93,3 +93,14 @@ jobs:
                      echo '::group::npm test' && \
                      npm test && \
                      echo '::endgroup::'"
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ gateway-end-to-end ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.gateway-end-to-end.result }}"

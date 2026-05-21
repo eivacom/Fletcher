@@ -183,3 +183,14 @@ jobs:
 
       - name: Upload to Artifactory
         run: conan upload "${{ needs.build-windows.outputs.conan-ref }}" -r conan-eiva --confirm
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ build-windows, build-linux, upload ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.build-windows.result }},${{ needs.build-linux.result }},${{ needs.upload.result }}"

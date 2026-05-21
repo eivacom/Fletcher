@@ -92,3 +92,14 @@ jobs:
                      echo '::group::ctest' && \
                      ctest --preset conan-release --output-on-failure && \
                      echo '::endgroup::'"
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ pubsub-arrow-fastdds ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.pubsub-arrow-fastdds.result }}"
