@@ -6,7 +6,7 @@ a `Driver` wrapper that adds multi-subscriber fan-out and a topic registry on
 top of any concrete provider. Wire-compatible Arrow IPC schema
 serialization helpers are included.
 
-Headers are located under `include/pubsub/`:
+Headers are located under `include/fletcher/pubsub/` and consumed as `#include <fletcher/pubsub/<header>.hpp>`:
 - `pubsub.hpp` — `PubSub` interface and supporting types.
 - `driver.hpp` — `Driver` (multi-subscriber fan-out, topic registry).
 - `owned_schema.hpp` — RAII wrapper around `ArrowSchema`.
