@@ -19,12 +19,18 @@ on:
       - "xrcedds-pubsub-provider/**"
       - "integration-tests/fastdds-xrce-interop/**"
       - ".github/workflows/integration-test.fastdds-xrce-interop.yml"
-      - ".github/actions/setup-devcontainer-image/**"
+      - ".github/actions/pull-devcontainer-image/**"
+      - ".github/workflows/setup-devcontainer-image.yml"
       - ".devcontainer/**"
       - "!**/*.md"
 
 jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/setup-devcontainer-image.yml
+    secrets: inherit
+
   fastdds-xrce-interop:
+    needs: setup-devcontainer
     runs-on:
       group: ubuntu_24.04_x64
     steps:
@@ -50,11 +56,12 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Set up devcontainer image
-        uses: ./.github/actions/setup-devcontainer-image
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          harbor_username: ${{ secrets.HARBOR_USERNAME }}
-          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build components and run integration tests
         run: |

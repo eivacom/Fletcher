@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Pull the pre-built Fletcher devcontainer image"
+description: >-
+  Logs in to Harbor with the repository bot credentials, pulls the
+  devcontainer image just built by the setup-devcontainer-image workflow, and
+  tags it locally as `fletcher-build` so the rest of the workflow can
+  `docker run --rm ... fletcher-build` exactly the way it used to under
+  the previous setup-devcontainer-image action.
+  Replaces setup-devcontainer-image, which ran buildx on every
+  consumer-workflow job and pulled docker.io/library/ubuntu:24.04
+  anonymously — eventually tripping Docker Hub's free-tier
+  unauthenticated rate limit when many component workflows triggered
+  simultaneously on the same commit.
+
+inputs:
+  image:
+    description: "Full image reference (output of the devcontainer-image reusable workflow)"
+    required: true
+  harbor-username:
+    description: "Harbor robot username with read access to the prebuilt image"
+    required: true
+  harbor-password:
+    description: "Harbor robot password matching the username"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in to Harbor
+      shell: bash
+      env:
+        HARBOR_USERNAME: ${{ inputs.harbor-username }}
+        HARBOR_PASSWORD: ${{ inputs.harbor-password }}
+      run: echo "$HARBOR_PASSWORD" | docker login dockerrepo.eiva.com -u "$HARBOR_USERNAME" --password-stdin
+
+    - name: Pull and retag as fletcher-build
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        docker pull "$IMAGE"
+        docker tag "$IMAGE" fletcher-build

@@ -16,7 +16,8 @@ on:
       - ".github/actions/install-msvc-tools/**"
       - ".github/actions/install-cmake/**"
       - ".github/actions/conan-bootstrap/**"
-      - ".github/actions/setup-devcontainer-image/**"
+      - ".github/actions/pull-devcontainer-image/**"
+      - ".github/workflows/setup-devcontainer-image.yml"
       - ".devcontainer/**"
       - "!**/*.md"
 
@@ -28,6 +29,10 @@ on:
 # workflow.
 
 jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/setup-devcontainer-image.yml
+    secrets: inherit
+
   build-windows:
     runs-on:
       group: windows-server-core-ltsc2025
@@ -66,6 +71,7 @@ jobs:
           conan build . -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
 
   build-linux:
+    needs: setup-devcontainer
     runs-on:
       group: ubuntu_24.04_x64
     steps:
@@ -85,11 +91,12 @@ jobs:
           owner: eivacom
           repositories: conan-configuration
 
-      - name: Set up devcontainer image
-        uses: ./.github/actions/setup-devcontainer-image
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          harbor_username: ${{ secrets.HARBOR_USERNAME }}
-          harbor_password: ${{ secrets.HARBOR_PASSWORD }}
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
 
       - name: Build and test
         run: |

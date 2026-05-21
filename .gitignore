@@ -8,3 +8,7 @@
 **/node_modules/
 **/dist/
 **/generated-ts/
+
+# Log files
+*.log
+debug.log
