@@ -50,6 +50,57 @@ graph TD
 
 ---
 
+## Conventions
+
+One rule per topic, applied across every component. Pick these up when adding a new component or reviewing a PR.
+
+### Package names
+
+| Ecosystem | Pattern | Example |
+|---|---|---|
+| Conan | `fletcher-<component>` | `fletcher-core`, `fletcher-arrow-bridge` |
+| npm | `fletcher-<component>` | `fletcher-gateway-client` |
+
+No `eiva-` prefix. The Fletcher project is independent and LGPL-3.0; package metadata stays neutral. EIVA's role as the project's origin is captured in [`AUTHORS`](AUTHORS), not in package names or descriptions.
+
+### CMake targets
+
+Every Conan recipe exposes its CMake target as `<conan-name>::<conan-name>` via `cmake_file_name` / `cmake_target_name`. The underlying `add_library` / `add_executable` target uses the same string, so the file written to disk (`libfletcher-pubsub.a` etc.) matches the name CMake consumers link against:
+
+```cmake
+find_package(fletcher-core CONFIG REQUIRED)
+target_link_libraries(my-target PRIVATE fletcher-core::fletcher-core)
+```
+
+Pick the Conan name once; reuse it for the recipe `name`, the CMake config file, the imported-target alias, and the underlying built artifact.
+
+### Include paths
+
+Every first-party header lives under `include/fletcher/<component_snake>/` and is consumed as:
+
+```cpp
+#include <fletcher/<component_snake>/<header>.hpp>
+```
+
+`<component_snake>` is the directory name with hyphens replaced by underscores:
+
+| Directory | Header prefix |
+|---|---|
+| `core/` | `fletcher/core/` |
+| `pubsub/` | `fletcher/pubsub/` |
+| `arrow-bridge/` | `fletcher/arrow_bridge/` |
+| `pubsub-arrow/` | `fletcher/pubsub_arrow/` |
+| `fastdds-pubsub-provider/` | `fletcher/fastdds_pubsub_provider/` |
+| `xrcedds-pubsub-provider/` | `fletcher/xrcedds_pubsub_provider/` |
+
+A single prefix removes any chance of collision with third-party headers, and a reader seeing `#include <fletcher/...>` knows immediately the header is internal to Fletcher. `protoc-gen-fletcher` emits the same prefix in its generated `.fletcher.pb.h` files. Components that do not install public headers (e.g. `protoc/`, whose `include/` is internal to the plugin build) are not required to follow this layout.
+
+### C++ namespace
+
+All first-party code lives under `namespace fletcher { ... }`. No `eiva::` parent, no per-component nesting unless the component genuinely wants one — `fletcher::gateway` is the only nested namespace in use today, scoped to gateway-internal helpers.
+
+---
+
 ## Development environment
 
 A single devcontainer at `.devcontainer/` covers every Fletcher component. Component READMEs assume you are running inside it.
