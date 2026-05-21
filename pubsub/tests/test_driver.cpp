@@ -3,8 +3,8 @@
 //
 #include <gtest/gtest.h>
 
-#include <pubsub/driver.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <nanoarrow/nanoarrow.h>
 

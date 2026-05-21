@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <pubsub/driver.hpp>
-#include <pubsub/owned_schema.hpp>
-#include <pubsub/pubsub.hpp>
-#include <pubsub/schema_ipc.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
 
-#include <core/write_buffer.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <nanoarrow/nanoarrow.h>
 

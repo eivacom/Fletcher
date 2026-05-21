@@ -7,7 +7,7 @@ project(fletcher-pubsub LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-core CONFIG REQUIRED)
+find_package(fletcher-core CONFIG REQUIRED)
 
 add_subdirectory(third_party/nanoarrow)
 
@@ -20,7 +20,7 @@ target_include_directories(fletcher-pubsub PUBLIC
     $<INSTALL_INTERFACE:include>)
 
 target_link_libraries(fletcher-pubsub PUBLIC
-    eiva-fletcher-core::eiva-fletcher-core
+    fletcher-core::fletcher-core
     nanoarrow)
 
 option(FLETCHER_BUILD_TESTS "Build unit tests" OFF)

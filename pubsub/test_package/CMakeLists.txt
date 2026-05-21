@@ -7,7 +7,7 @@ project(PackageTest CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
 
 add_executable(example src/example.cpp)
-target_link_libraries(example eiva-fletcher-pubsub::eiva-fletcher-pubsub)
+target_link_libraries(example fletcher-pubsub::fletcher-pubsub)

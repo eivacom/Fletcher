@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "pubsub/driver.hpp"
+#include "fletcher/pubsub/driver.hpp"
 
 #include <algorithm>
 #include <atomic>
