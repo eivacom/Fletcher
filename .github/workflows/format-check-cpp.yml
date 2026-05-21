@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: format-check-cpp
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/*.cpp"
+      - "**/*.hpp"
+      - "**/*.h"
+      - "**/*.cc"
+      - ".clang-format"
+      - ".github/workflows/format-check-cpp.yml"
+
+jobs:
+  check:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          clang-format --version
+
+      # Build the file list at runtime so the workflow stays in sync with
+      # `.prettierignore`-style exclusions without manual maintenance. We
+      # skip vendored third-party code (pubsub/third_party/), generated
+      # protoc output (*.fletcher.pb.h / *.fletcher.arrow.pb.h), and any
+      # /build/ directories that may exist locally.
+      - name: Run clang-format --dry-run --Werror
+        run: |
+          files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
+            | grep -v -E '^pubsub/third_party/' \
+            | grep -v -E '\.fletcher\.(arrow\.)?pb\.h$' \
+            | grep -v -E '/build/' \
+            | grep -v -E '^integration-tests/.*/generated-ts/')
+          if [ -z "$files" ]; then
+            echo "No first-party C++ files to check."
+            exit 0
+          fi
+          echo "Checking $(echo "$files" | wc -l) files..."
+          echo "$files" | xargs clang-format --dry-run --Werror

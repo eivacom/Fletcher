@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
     cmake \
+    clang-format \
     python3 \
     python3-pip \
     git \
@@ -29,3 +30,10 @@ ARG NODE_VERSION=24.15.0
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y "nodejs=${NODE_VERSION}-1nodesource1" \
     && rm -rf /var/lib/apt/lists/*
+
+# Pre-install prettier globally so format-on-save in VS Code works out
+# of the box (no per-package npm install required). Pin the version
+# to match the format-check-ts.yml workflow so devcontainer and CI
+# agree on what "formatted" means.
+ARG PRETTIER_VERSION=3.3.3
+RUN npm install -g "prettier@${PRETTIER_VERSION}"
