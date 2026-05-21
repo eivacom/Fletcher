@@ -4,10 +4,10 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
 
-#include "pubsub/owned_schema.hpp"
+#include "fletcher/pubsub/owned_schema.hpp"
 
-#include <core/types.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/core/types.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <any>
 #include <cstdint>

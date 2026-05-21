@@ -8,9 +8,9 @@ import os
 
 
 class FletcherPubsubConan(ConanFile):
-    name = "eiva-fletcher-pubsub"
-    version = "0.1.1-alpha"
-    description = "EIVA Fletcher PubSub library"
+    name = "fletcher-pubsub"
+    version = "0.1.0-alpha"
+    description = "Fletcher PubSub library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
@@ -28,7 +28,7 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("eiva-fletcher-core/0.1.5-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.1.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
@@ -89,8 +89,8 @@ class FletcherPubsubConan(ConanFile):
         # Link order: pubsub first, then nanoarrow (pubsub depends on nanoarrow).
         self.cpp_info.libs = ["fletcher-pubsub", "nanoarrow"]
         self.cpp_info.includedirs = ["include"]
-        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-pubsub")
-        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-pubsub::eiva-fletcher-pubsub")
+        self.cpp_info.set_property("cmake_file_name", "fletcher-pubsub")
+        self.cpp_info.set_property("cmake_target_name", "fletcher-pubsub::fletcher-pubsub")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-pubsub-target.cmake"),
         ])

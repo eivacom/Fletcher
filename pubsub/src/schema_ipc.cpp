@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "pubsub/schema_ipc.hpp"
+#include "fletcher/pubsub/schema_ipc.hpp"
 
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow_ipc.h>
