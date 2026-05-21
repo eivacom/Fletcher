@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "core/envelope.hpp"
-#include "core/positional_io.hpp"
-#include "core/types.hpp"
-#include "core/write_buffer.hpp"
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/core/positional_io.hpp>
+#include <fletcher/core/types.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <cassert>
 #include <vector>
