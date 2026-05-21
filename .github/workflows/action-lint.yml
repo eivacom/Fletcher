@@ -24,4 +24,7 @@ jobs:
       - name: Check workflow files
         uses: docker://rhysd/actionlint:1.7.12
         with:
-          args: -color
+          # `concurrency.queue` was added to GitHub Actions in April 2026 but
+          # actionlint 1.7.12 still rejects it as unknown. The key is valid;
+          # we ignore the specific complaint until actionlint catches up.
+          args: -color -ignore "unexpected key .queue. for .concurrency."

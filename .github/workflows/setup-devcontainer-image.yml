@@ -99,13 +99,16 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         env:
           IMAGE: ${{ steps.tag.outputs.image }}
-          MAIN_TAG_FLAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && '--tag dockerrepo.eiva.com/fletcher/devcontainer:main' || '' }}
+          MAIN_TAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'dockerrepo.eiva.com/fletcher/devcontainer:main' || '' }}
         run: |
           docker buildx create --name fletcher-builder --use --bootstrap 2>/dev/null || docker buildx use fletcher-builder
+          tags=(--tag "$IMAGE")
+          if [[ -n "$MAIN_TAG" ]]; then
+            tags+=(--tag "$MAIN_TAG")
+          fi
           docker buildx build \
             --push \
-            --tag "$IMAGE" \
-            $MAIN_TAG_FLAG \
+            "${tags[@]}" \
             --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
             --cache-to   type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
             .devcontainer
