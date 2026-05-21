@@ -66,6 +66,9 @@ jobs:
       image: ${{ steps.tag.outputs.image }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .devcontainer
+          sparse-checkout-cone-mode: false
 
       - name: Log in to Harbor
         env:

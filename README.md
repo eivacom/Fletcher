@@ -147,11 +147,13 @@ Every component workflow that needs the Linux toolchain begins with a `setup-dev
 dockerrepo.eiva.com/fletcher/devcontainer:<git-sha>
 ```
 
-`dockerrepo.eiva.com/fletcher/devcontainer:cache` keeps a BuildKit layer cache between runs. On every push to `main` the image also gets re-tagged as `:main` so subsequent PRs that do not touch `.devcontainer/**` prime their build from a known-good baseline.
+`dockerrepo.eiva.com/fletcher/devcontainer:cache` keeps a BuildKit layer cache between runs. When a push to `main` actually rebuilds the image — the workflow only triggers on pushes touching `.devcontainer/**` or `setup-devcontainer-image.yml` itself — the new image also gets tagged `:main` so subsequent PRs that do not touch those paths prime their build from a known-good baseline.
+
+Every `setup-devcontainer` invocation shares the concurrency group `setup-devcontainer-image-<sha>` with `queue: max`, so when many component workflows trigger on the same commit the build jobs run one-at-a-time in FIFO order. Only the first one actually runs `buildx`; the rest see the SHA-tagged image already in Harbor (a cheap `docker manifest inspect`) and skip the build entirely. One `ubuntu:24.04` pull per commit, not one per component workflow.
 
 The Linux jobs that consume the toolchain pull the image via the `pull-devcontainer-image` composite action (`.github/actions/pull-devcontainer-image`) and retag it locally as `fletcher-build`. No `buildx` runs on the consumer jobs, so they never pull `ubuntu:24.04` themselves and never compete for the Docker Hub free-tier rate limit.
 
-Harbor is the destination today because the secrets are already in place and the registry is reachable from the runner pool. The path is set up so a follow-up move to a public OCI registry (ghcr.io is the obvious candidate — tracked as US 17146) only needs the registry URL changed in two files.
+Harbor is the destination today because the secrets are already in place and the registry is reachable from the runner pool. Switching to a public OCI registry (e.g. ghcr.io) only requires changing the registry URL in `setup-devcontainer-image.yml` and `pull-devcontainer-image/action.yml`.
 
 ---
 
