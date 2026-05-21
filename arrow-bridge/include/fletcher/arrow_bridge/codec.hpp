@@ -6,7 +6,7 @@
 
 #include <arrow/api.h>
 
-#include <core/types.hpp>
+#include <fletcher/core/types.hpp>
 
 #include <cstdint>
 #include <memory>

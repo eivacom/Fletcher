@@ -8,7 +8,7 @@ Conan package with its own version, CI workflow, and release cycle:
 | `core/` | `fletcher-core` | header-only |
 | `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `fletcher-pubsub` | static library |
-| `arrow-bridge/` | `eiva-fletcher-arrow-bridge` | static library |
+| `arrow-bridge/` | `fletcher-arrow-bridge` | static library |
 | `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
 | `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
 | `xrcedds-pubsub-provider/` | `eiva-fletcher-xrcedds-pubsub-provider` | static library |

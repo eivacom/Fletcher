@@ -7,7 +7,7 @@ project(fletcher-arrow-bridge LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-core CONFIG REQUIRED)
+find_package(fletcher-core CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 
 add_library(fletcher-arrow-bridge STATIC
@@ -22,7 +22,7 @@ target_include_directories(fletcher-arrow-bridge
     PRIVATE src)
 
 target_link_libraries(fletcher-arrow-bridge PUBLIC
-    eiva-fletcher-core::eiva-fletcher-core
+    fletcher-core::fletcher-core
     arrow::arrow)
 
 option(FLETCHER_BUILD_TESTS "Build unit tests" OFF)
