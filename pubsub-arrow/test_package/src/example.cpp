@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 
-#include <pubsub/pubsub.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
 #include <arrow/api.h>
 
 #include <cassert>

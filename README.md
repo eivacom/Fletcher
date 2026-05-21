@@ -9,12 +9,44 @@ Conan package with its own version, CI workflow, and release cycle:
 | `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
 | `pubsub/` | `fletcher-pubsub` | static library |
 | `arrow-bridge/` | `fletcher-arrow-bridge` | static library |
-| `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
+| `pubsub-arrow/` | `fletcher-pubsub-arrow` | static library |
 | `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
 | `xrcedds-pubsub-provider/` | `eiva-fletcher-xrcedds-pubsub-provider` | static library |
 | `gateway-client-ts/` | `eiva-fletcher-gateway-client` (npm) | TypeScript library |
 
 Each package has its own `README.md` covering how to build, test and consume it.
+
+### Dependency graph
+
+Build-time (Conan / npm) edges are solid; runtime edges (WebSocket, code-gen) are dashed. External deps (protobuf, Arrow, Boost, FastDDS, Micro XRCE-DDS, nlohmann_json, nanoarrow) are omitted — see each component's `README.md` for the exact set. Names reflect the current state on `main`; nodes still using `eiva-fletcher-*` are migrating to `fletcher-*` in the in-flight rename cascade and update on each component's PR.
+
+```mermaid
+graph TD
+    core["fletcher-core<br/>header-only"]
+    pubsub["fletcher-pubsub<br/>static lib"]
+    arrow_bridge["fletcher-arrow-bridge<br/>static lib"]
+    pubsub_arrow["fletcher-pubsub-arrow<br/>static lib"]
+    fastdds["eiva-fletcher-fastdds-pubsub-provider<br/>static lib"]
+    xrcedds["eiva-fletcher-xrcedds-pubsub-provider<br/>static lib"]
+    protoc(["eiva-fletcher-protoc<br/>plugin exe"])
+    gateway(["gateway<br/>standalone exe"])
+    client[("eiva-fletcher-gateway-client<br/>npm package")]
+
+    pubsub --> core
+    arrow_bridge --> core
+    pubsub_arrow --> pubsub
+    pubsub_arrow --> arrow_bridge
+    fastdds --> pubsub
+    fastdds --> core
+    xrcedds --> pubsub
+    xrcedds --> core
+    gateway --> pubsub
+    gateway --> core
+
+    client -. WebSocket .-> gateway
+    protoc -. generates code for .-> client
+    protoc -. generates code for .-> core
+```
 
 ---
 
