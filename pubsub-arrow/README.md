@@ -1,12 +1,12 @@
 # fletcher-pubsub-arrow
 
-Server-side Arrow C++ wrapper around the `eiva-fletcher-pubsub` `Driver`.
+Server-side Arrow C++ wrapper around the `fletcher-pubsub` `Driver`.
 Bridges the gap between the nanoarrow-based pub/sub core (raw bytes +
 `ArrowSchema` C structs) and Apache Arrow C++ types (`arrow::Schema`,
 `ArrowRow`).
 
 ```cpp
-#include <pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 
 fletcher::PubSubArrow ps(provider);
 ps.CreateTopic({"orders", "v1"}, arrow_schema);
@@ -16,7 +16,7 @@ ps.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow row,
 ```
 
 Internally owns a `Driver` and a per-topic `Codec` (from
-`eiva-fletcher-arrow-bridge`) so callers can publish and subscribe with
+`fletcher-arrow-bridge`) so callers can publish and subscribe with
 Arrow scalars; the wire format remains byte-identical to what edge code
 produces via the raw `Driver`.
 
@@ -46,20 +46,20 @@ conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=Tru
 
 ```python
 def requirements(self):
-    self.requires("eiva-fletcher-pubsub-arrow/0.1.0-alpha")
+    self.requires("fletcher-pubsub-arrow/0.1.0-alpha")
 ```
 
 ```cmake
-find_package(eiva-fletcher-pubsub-arrow CONFIG REQUIRED)
+find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
 target_link_libraries(my-target PRIVATE fletcher::pubsub-arrow)
 ```
 
 ```cpp
-#include <pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 ```
 
-`pubsub-arrow` re-exports its dependencies (`eiva-fletcher-pubsub`,
-`eiva-fletcher-arrow-bridge`, `arrow::arrow`) transitively, so
+`pubsub-arrow` re-exports its dependencies (`fletcher-pubsub`,
+`fletcher-arrow-bridge`, `arrow::arrow`) transitively, so
 consumers don't need to declare them separately.
 
 ---

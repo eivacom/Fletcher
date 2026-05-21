@@ -8,7 +8,7 @@ description: >-
 
 inputs:
   conan-ref:
-    description: "Conan package reference, e.g. eiva-fletcher-core/0.1.3-alpha"
+    description: "Conan package reference, e.g. fletcher-core/0.1.3-alpha"
     required: true
 
 runs:

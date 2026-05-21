@@ -2,8 +2,8 @@
 
 End-to-end test that verifies the `PubSubArrow` Arrow C++ adapter actually works when driven on top of a real `FastDDSPubSubProvider`:
 
-- `eiva-fletcher-pubsub-arrow`'s `PubSubArrow` wraps a `PubSub` provider, accepting `ArrowRow` values + `arrow::Schema` and translating to/from the nanoarrow wire format.
-- `eiva-fletcher-fastdds-pubsub-provider`'s `FastDDSPubSubProvider` is the production DDS transport.
+- `fletcher-pubsub-arrow`'s `PubSubArrow` wraps a `PubSub` provider, accepting `ArrowRow` values + `arrow::Schema` and translating to/from the nanoarrow wire format.
+- `fletcher-fastdds-pubsub-provider`'s `FastDDSPubSubProvider` is the production DDS transport.
 
 Each component has unit tests against a mock counterpart. This test is the proof that the seam between them holds — that `PubSubArrow.Publish(row)` on one side actually causes `PubSubArrow.Subscribe(callback)` on the other side to fire with a matching `ArrowRow`, including correct schema delivery via the companion `__schema` DDS topic.
 

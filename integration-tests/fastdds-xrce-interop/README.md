@@ -1,6 +1,6 @@
 # Integration test — fastdds-pubsub-provider <-> xrcedds-pubsub-provider interop
 
-End-to-end test that verifies an `eiva-fletcher-xrcedds-pubsub-provider` instance and an `eiva-fletcher-fastdds-pubsub-provider` instance can exchange data via a `MicroXRCEAgent`. This is the deployment scenario from Fletcher's architecture: an MCU speaks XRCE-DDS over UDP to an Agent, which bridges into the full DDS network where a vessel workstation runs FastDDS.
+End-to-end test that verifies an `fletcher-xrcedds-pubsub-provider` instance and an `fletcher-fastdds-pubsub-provider` instance can exchange data via a `MicroXRCEAgent`. This is the deployment scenario from Fletcher's architecture: an MCU speaks XRCE-DDS over UDP to an Agent, which bridges into the full DDS network where a vessel workstation runs FastDDS.
 
 ## Why this test exists
 

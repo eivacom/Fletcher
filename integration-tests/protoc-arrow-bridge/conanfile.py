@@ -28,9 +28,9 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
         # `include_prerelease` is needed because our component versions
         # are alpha-suffixed (e.g. 0.1.0-alpha) and Conan excludes
         # pre-releases from `[*]` by default.
-        self.requires("eiva-fletcher-protoc/[*, include_prerelease]")
-        self.requires("eiva-fletcher-arrow-bridge/[*, include_prerelease]")
-        self.requires("eiva-fletcher-pubsub/[*, include_prerelease]")
+        self.requires("fletcher-protoc/[*, include_prerelease]")
+        self.requires("fletcher-arrow-bridge/[*, include_prerelease]")
+        self.requires("fletcher-pubsub/[*, include_prerelease]")
         # protobuf is required directly because CMakeLists invokes
         # `protobuf::protoc` to drive code generation. The protoc plugin
         # package depends on protobuf too, but Conan does not propagate that

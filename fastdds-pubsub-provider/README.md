@@ -25,7 +25,7 @@ These three policies together implement "at-least-once" delivery within a single
 ## Usage
 
 ```cpp
-#include <fast_dds_pubsub_provider.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
 // Create a provider on DDS domain 0 (default).
@@ -151,7 +151,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("eiva-fletcher-fastdds-pubsub-provider/0.1.0-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.1.0-alpha")
 ```
 
 Install dependencies:
@@ -163,11 +163,11 @@ conan install . --build=missing -pr:a=<your-profile>
 ### 2. Wire up CMake
 
 ```cmake
-find_package(eiva-fletcher-fastdds-pubsub-provider REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider REQUIRED)
 
 # Fully qualified target name:
 target_link_libraries(my_app PRIVATE
-    eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider)
+    fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)
 
 # Or the convenience alias injected by the package's build module:
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)

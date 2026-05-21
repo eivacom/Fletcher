@@ -2,7 +2,7 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 /**
- * eiva-fletcher-gateway-client — public API.
+ * fletcher-gateway-client — public API.
  */
 
 // Wire format

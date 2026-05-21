@@ -3,10 +3,10 @@
 //
 #include <gtest/gtest.h>
 
-#include "xrce_dds_pubsub_provider.hpp"
+#include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
 
-#include <core/envelope.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <uxr/client/client.h>
 

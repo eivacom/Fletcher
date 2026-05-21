@@ -2,8 +2,8 @@
 
 End-to-end test that verifies **byte-format compatibility** between:
 
-- `eiva-fletcher-protoc`-generated row classes (their `Encode()` and `EncodedRow`-taking constructor)
-- `eiva-fletcher-arrow-bridge`'s `Codec` (its `EncodeRow()` / `DecodeRow()` over `arrow::Schema` + `ArrowRow`)
+- `fletcher-protoc`-generated row classes (their `Encode()` and `EncodedRow`-taking constructor)
+- `fletcher-arrow-bridge`'s `Codec` (its `EncodeRow()` / `DecodeRow()` over `arrow::Schema` + `ArrowRow`)
 
 Both implement the same positional wire format documented in `arrow-bridge/include/arrow_bridge/codec.hpp`. This test is the proof that they actually agree on every byte.
 

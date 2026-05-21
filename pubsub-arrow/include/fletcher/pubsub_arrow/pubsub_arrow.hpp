@@ -4,9 +4,9 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
 
-#include <pubsub/driver.hpp>
-#include <pubsub/pubsub.hpp>
-#include <arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/arrow_bridge/codec.hpp>
 
 #include <arrow/type_fwd.h>
 

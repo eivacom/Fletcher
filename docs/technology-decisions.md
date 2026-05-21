@@ -100,7 +100,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Alternatives considered:** gRPC-Web (requires a proxy, adds complexity, less natural for streaming), Server-Sent Events (unidirectional, no binary support), pure JSON protocol (simpler but ~33% overhead on binary data), pure binary protocol (harder to debug, requires custom tooling).
 
-**Risks:** WebSocket connections are stateful, complicating horizontal scaling behind a load balancer (sticky sessions needed). The custom binary frame format requires the `gateway-client-ts` library (`eiva-fletcher-gateway-client` on npm) — standard WebSocket tools cannot decode data frames. Connection management (reconnect, session recovery) is the client's responsibility.
+**Risks:** WebSocket connections are stateful, complicating horizontal scaling behind a load balancer (sticky sessions needed). The custom binary frame format requires the `gateway-client-ts` library (`fletcher-gateway-client` on npm) — standard WebSocket tools cannot decode data frames. Connection management (reconnect, session recovery) is the client's responsibility.
 
 ---
 

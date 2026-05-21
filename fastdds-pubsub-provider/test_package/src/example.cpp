@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <fast_dds_pubsub_provider.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <atomic>
 #include <chrono>

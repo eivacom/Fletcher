@@ -27,8 +27,8 @@ class GatewayBuildConan(ConanFile):
     def requirements(self):
         # Version ranges resolve against whatever the workflow's
         # `conan create` step put into the local cache earlier.
-        self.requires("eiva-fletcher-pubsub/[*, include_prerelease]")
-        self.requires("eiva-fletcher-core/[*, include_prerelease]")
+        self.requires("fletcher-pubsub/[*, include_prerelease]")
+        self.requires("fletcher-core/[*, include_prerelease]")
         # Boost.Beast / Boost.Asio for WebSocket transport.
         self.requires("boost/1.83.0")
         # nlohmann_json for WS JSON control frames.

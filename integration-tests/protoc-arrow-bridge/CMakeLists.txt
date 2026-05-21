@@ -7,9 +7,9 @@ project(protoc-arrow-bridge-integration CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-protoc CONFIG REQUIRED)
-find_package(eiva-fletcher-arrow-bridge CONFIG REQUIRED)
-find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-protoc CONFIG REQUIRED)
+find_package(fletcher-arrow-bridge CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
@@ -18,11 +18,11 @@ find_package(GTest REQUIRED)
 # executable cannot be located — find_package above will succeed regardless.
 # Fail loudly here so the build doesn't continue into add_custom_command and
 # blow up there with a confusing $<TARGET_FILE:...> error.
-if(NOT TARGET eiva-fletcher-protoc::plugin)
+if(NOT TARGET fletcher-protoc::plugin)
     message(FATAL_ERROR
-        "eiva-fletcher-protoc::plugin target was not created. The protoc "
+        "fletcher-protoc::plugin target was not created. The protoc "
         "plugin executable is required for code generation; check the "
-        "eiva-fletcher-protoc package install for the binary.")
+        "fletcher-protoc package install for the binary.")
 endif()
 
 # Locate protobuf well-known-types include dir (google/protobuf/*.proto) so
@@ -76,12 +76,12 @@ foreach(_stem IN LISTS PROTO_STEMS)
     add_custom_command(
         OUTPUT  "${_hdr}" "${_vhdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
-                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" eiva-fletcher-protoc::plugin
+        DEPENDS "${_src}" fletcher-protoc::plugin
                 "${PROTO_DIR}/fletcher/options.proto"
                 "${PROTO_DIR}/geoarrow/geoarrow.proto"
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
@@ -100,12 +100,12 @@ set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.arrow.pb.h")
 add_custom_command(
     OUTPUT  "${_geoarrow_hdr}" "${_geoarrow_vhdr}"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}/geoarrow"
             "-I" "${PROTO_DIR}/geoarrow"
             "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
             "${_geoarrow_src}"
-    DEPENDS "${_geoarrow_src}" eiva-fletcher-protoc::plugin
+    DEPENDS "${_geoarrow_src}" fletcher-protoc::plugin
     COMMENT "protoc-gen-fletcher: geoarrow/geoarrow.proto"
     VERBATIM
 )
@@ -135,8 +135,8 @@ target_include_directories(integration_tests PRIVATE
 
 target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
-    eiva-fletcher-arrow-bridge::eiva-fletcher-arrow-bridge
-    eiva-fletcher-pubsub::eiva-fletcher-pubsub)
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
 
 include(GoogleTest)
 gtest_discover_tests(integration_tests)

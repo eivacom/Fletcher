@@ -8,9 +8,9 @@ import os
 
 
 class FletcherPubsubArrowConan(ConanFile):
-    name = "eiva-fletcher-pubsub-arrow"
-    version = "0.1.1-alpha"
-    description = "Arrow C++ wrapper around the eiva-fletcher-pubsub Driver"
+    name = "fletcher-pubsub-arrow"
+    version = "0.1.0-alpha"
+    description = "Arrow C++ wrapper around the fletcher-pubsub Driver"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
@@ -30,8 +30,8 @@ class FletcherPubsubArrowConan(ConanFile):
         # pubsub types appear in the public PubSubArrow interface (Driver,
         # PubSub, Attachments) and arrow-bridge types (Codec, ArrowRow) appear
         # in encode/decode paths, so headers must be transitively visible.
-        self.requires("eiva-fletcher-pubsub/0.1.1-alpha", transitive_headers=True)
-        self.requires("eiva-fletcher-arrow-bridge/0.1.1-alpha", transitive_headers=True, transitive_libs=True)
+        self.requires("fletcher-pubsub/0.1.0-alpha", transitive_headers=True)
+        self.requires("fletcher-arrow-bridge/0.1.0-alpha", transitive_headers=True, transitive_libs=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
         # Resolve the same zlib conflict that arrow-bridge handles: arrow pins
         # 1.2.13, openssl pulls 1.3.1.
@@ -81,8 +81,8 @@ class FletcherPubsubArrowConan(ConanFile):
     def package_info(self):
         self.cpp_info.libs = ["fletcher-pubsub-arrow"]
         self.cpp_info.includedirs = ["include"]
-        self.cpp_info.set_property("cmake_file_name", "eiva-fletcher-pubsub-arrow")
-        self.cpp_info.set_property("cmake_target_name", "eiva-fletcher-pubsub-arrow::eiva-fletcher-pubsub-arrow")
+        self.cpp_info.set_property("cmake_file_name", "fletcher-pubsub-arrow")
+        self.cpp_info.set_property("cmake_target_name", "fletcher-pubsub-arrow::fletcher-pubsub-arrow")
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-pubsub-arrow-target.cmake"),
         ])

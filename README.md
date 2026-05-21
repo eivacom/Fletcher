@@ -1,20 +1,103 @@
 # fletcher
 
-Multi-package C++ workspace. Each top-level directory is an independent
-Conan package with its own version, CI workflow, and release cycle:
+Multi-component C++ workspace. Each top-level directory is an independent component with its own version, CI workflow, and release cycle. Most components are Conan packages; a few are standalone executables or TypeScript libraries that do not publish a Conan recipe.
 
-| Directory | Conan / npm package | Type |
+| Directory | Artifact | Type |
 |---|---|---|
-| `core/` | `fletcher-core` | header-only |
-| `protoc/` | `eiva-fletcher-protoc` | application (protoc plugin) |
-| `pubsub/` | `fletcher-pubsub` | static library |
-| `arrow-bridge/` | `fletcher-arrow-bridge` | static library |
-| `pubsub-arrow/` | `eiva-fletcher-pubsub-arrow` | static library |
-| `fastdds-pubsub-provider/` | `eiva-fletcher-fastdds-pubsub-provider` | static library |
-| `xrcedds-pubsub-provider/` | `eiva-fletcher-xrcedds-pubsub-provider` | static library |
-| `gateway-client-ts/` | `eiva-fletcher-gateway-client` (npm) | TypeScript library |
+| `core/` | `fletcher-core` (Conan) | header-only library |
+| `pubsub/` | `fletcher-pubsub` (Conan) | static library |
+| `arrow-bridge/` | `fletcher-arrow-bridge` (Conan) | static library |
+| `pubsub-arrow/` | `fletcher-pubsub-arrow` (Conan) | static library |
+| `fastdds-pubsub-provider/` | `fletcher-fastdds-pubsub-provider` (Conan) | static library |
+| `xrcedds-pubsub-provider/` | `fletcher-xrcedds-pubsub-provider` (Conan) | static library |
+| `protoc/` | `fletcher-protoc` (Conan) | application (protoc plugin) |
+| `gateway/` | `gateway` exe | standalone executable (no Conan package) |
+| `gateway-client-ts/` | `fletcher-gateway-client` (npm) | TypeScript library |
 
-Each package has its own `README.md` covering how to build, test and consume it.
+Each component has its own `README.md` covering how to build, test and consume it. The `gateway/` directory ships only an exe — its `conanfile.py` is a local build driver and is never uploaded; consumers integrate through the WebSocket protocol, not a linkable artifact.
+
+### Dependency graph
+
+Build-time (Conan / npm) edges are solid; runtime edges (WebSocket, code-gen) are dashed. External deps (protobuf, Arrow, Boost, FastDDS, Micro XRCE-DDS, nlohmann_json, nanoarrow) are omitted — see each component's `README.md` for the exact set.
+
+```mermaid
+graph TD
+    core["fletcher-core<br/>header-only"]
+    pubsub["fletcher-pubsub<br/>static lib"]
+    arrow_bridge["fletcher-arrow-bridge<br/>static lib"]
+    pubsub_arrow["fletcher-pubsub-arrow<br/>static lib"]
+    fastdds["fletcher-fastdds-pubsub-provider<br/>static lib"]
+    xrcedds["fletcher-xrcedds-pubsub-provider<br/>static lib"]
+    protoc(["fletcher-protoc<br/>plugin exe"])
+    gateway(["gateway<br/>standalone exe"])
+    client[("fletcher-gateway-client<br/>npm package")]
+
+    pubsub --> core
+    arrow_bridge --> core
+    pubsub_arrow --> pubsub
+    pubsub_arrow --> arrow_bridge
+    fastdds --> pubsub
+    fastdds --> core
+    xrcedds --> pubsub
+    xrcedds --> core
+    gateway --> pubsub
+    gateway --> core
+
+    client -. WebSocket .-> gateway
+    protoc -. generates code for .-> client
+    protoc -. generates code for .-> core
+```
+
+---
+
+## Conventions
+
+One rule per topic, applied across every component. Pick these up when adding a new component or reviewing a PR.
+
+### Package names
+
+| Ecosystem | Pattern | Example |
+|---|---|---|
+| Conan | `fletcher-<component>` | `fletcher-core`, `fletcher-arrow-bridge` |
+| npm | `fletcher-<component>` | `fletcher-gateway-client` |
+
+No `eiva-` prefix. The Fletcher project is independent and LGPL-3.0; package metadata stays neutral. EIVA's role as the project's origin is captured in [`AUTHORS`](AUTHORS), not in package names or descriptions.
+
+### CMake targets
+
+Every Conan recipe exposes its CMake target as `<conan-name>::<conan-name>` via `cmake_file_name` / `cmake_target_name`. The underlying `add_library` / `add_executable` target uses the same string, so the file written to disk (`libfletcher-pubsub.a` etc.) matches the name CMake consumers link against:
+
+```cmake
+find_package(fletcher-core CONFIG REQUIRED)
+target_link_libraries(my-target PRIVATE fletcher-core::fletcher-core)
+```
+
+Pick the Conan name once; reuse it for the recipe `name`, the CMake config file, the imported-target alias, and the underlying built artifact.
+
+### Include paths
+
+Every first-party header lives under `include/fletcher/<component_snake>/` and is consumed as:
+
+```cpp
+#include <fletcher/<component_snake>/<header>.hpp>
+```
+
+`<component_snake>` is the directory name with hyphens replaced by underscores:
+
+| Directory | Header prefix |
+|---|---|
+| `core/` | `fletcher/core/` |
+| `pubsub/` | `fletcher/pubsub/` |
+| `arrow-bridge/` | `fletcher/arrow_bridge/` |
+| `pubsub-arrow/` | `fletcher/pubsub_arrow/` |
+| `fastdds-pubsub-provider/` | `fletcher/fastdds_pubsub_provider/` |
+| `xrcedds-pubsub-provider/` | `fletcher/xrcedds_pubsub_provider/` |
+
+A single prefix removes any chance of collision with third-party headers, and a reader seeing `#include <fletcher/...>` knows immediately the header is internal to Fletcher. `protoc-gen-fletcher` emits the same prefix in its generated `.fletcher.pb.h` files. Components that do not install public headers (e.g. `protoc/`, whose `include/` is internal to the plugin build) are not required to follow this layout.
+
+### C++ namespace
+
+All first-party code lives under `namespace fletcher { ... }`. No `eiva::` parent, no per-component nesting unless the component genuinely wants one — `fletcher::gateway` is the only nested namespace in use today, scoped to gateway-internal helpers.
 
 ---
 
@@ -68,75 +151,6 @@ The action uses both `--cache-from` and `--cache-to`, so unchanged layers are se
 
 ---
 
-## TODO
-
-Identified improvements across the codebase, ordered by priority.
-
-### P1 — Bugs
-
-| # | File | Description |
-|---|---|---|
-| 1 ⚠️ | `arrow-bridge/src/scalar_codec.cpp:236` | `FixedSizeBinaryScalar` wraps a raw pointer without copying — the returned `Scalar` holds a dangling reference if the input buffer is destroyed. All other variable-length types copy via `Buffer::FromString`; this case must do the same. |
-| 2 ⚠️ | `arrow-bridge/src/codec.cpp` (9 sites), `arrow-bridge/include/arrow_bridge/arrow_row_view.hpp` (4 sites) | `ValueOrDie()` on Arrow `Result<T>` aborts the process on error. The rest of the codebase throws `std::invalid_argument`. Replace each `.ValueOrDie()` call with a checked `.Value()` / `.ok()` guard that throws. (`protoc/src/generator.cpp` also emits `.ValueOrDie()` patterns into generated code — fix those once the runtime fix is in place.) |
-| 3 | `pubsub/include/pubsub/owned_schema.hpp:53` | `ArrowSchemaDeepCopy` returns an `int` error code that `DeepCopy` silently discards. A failed copy leaves the schema empty with no diagnostic. Check the return value and throw. |
-| 4 | `protoc/src/generator.cpp:953,997,1059,1089` | For unsupported proto→Arrow type mappings the generator writes `// TODO: unknown ... type` into the user's generated `.fletcher.pb.h` rather than failing. The generator should call `AddError()` on the plugin context so the user gets a protoc error at build time instead of silently broken generated code. |
-
-### P2 — Missing `[[nodiscard]]`
-
-Zero `[[nodiscard]]` annotations exist in the codebase. Silently discarding the return value of the functions below is always a bug:
-
-| Function | File | Risk if ignored |
-|---|---|---|
-| `IsNull(int)` | `core/include/core/positional_io.hpp` | Reads wrong field value without warning |
-| `PubSub::Subscribe(...)` | `pubsub/include/pubsub/pubsub.hpp` | Subscription ID lost; can never unsubscribe |
-| `Driver::Subscribe(...)` | `pubsub/include/pubsub/driver.hpp` | Same |
-| `Codec::EncodeRow(...)` | `arrow-bridge/include/arrow_bridge/codec.hpp` | Encoded bytes silently discarded |
-| `Codec::DecodeRow(...)` | `arrow-bridge/include/arrow_bridge/codec.hpp` | Decoded row silently discarded |
-| `SerializeEnvelope(...)` | `core/include/core/envelope.hpp` | Serialized bytes lost |
-| `DeserializeEnvelope(...)` | `core/include/core/envelope.hpp` | Deserialized envelope lost |
-| `OwnedSchema::DeepCopy(...)` | `pubsub/include/pubsub/owned_schema.hpp` | Schema copy silently dropped |
-| `Driver::HasTopic(...)` | `pubsub/include/pubsub/driver.hpp` | Query result ignored |
-| `Driver::ListTopics()` | `pubsub/include/pubsub/driver.hpp` | List silently discarded |
-
-### P3 — Code duplication
-
-| # | Files | Description |
-|---|---|---|
-| 5 | `pubsub/src/driver.cpp:17`, `xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp:31` | `JoinSegments` is byte-identical in both files. The xrce provider already depends on `pubsub`; expose the helper from a `pubsub/detail/` internal header and remove the copy. |
-| 6 | `arrow-bridge/src/codec.cpp:23`, `arrow-bridge/src/scalar_codec.cpp:16` | `AppendFixed<T>` is defined identically in both files (different anonymous namespaces). Move it into `scalar_codec.hpp` as a `detail` helper. |
-| 7 | `arrow-bridge/src/codec.cpp:29`, `core/include/core/positional_io.hpp:144` | `BitfieldBytes` is defined separately in `codec.cpp` and `positional_io.hpp`. The `arrow-bridge` copy can delegate to a shared `detail` function in `scalar_codec.hpp`. |
-| 8 | `pubsub/tests/test_driver.cpp:73` | `MockProvider::Join` duplicates the production `JoinSegments` logic. If the join separator ever changed the mock would silently diverge. Expose `JoinSegments` from a `pubsub/detail/` header so both production code and the mock use the same implementation. |
-
-### P4 — Dead code
-
-| # | File | Description |
-|---|---|---|
-| 9 | `arrow-bridge/src/scalar_codec.cpp:276` | `DecodeScalarFromReader`'s string/binary case uses `break` (not `return`) and falls through to an unreachable `throw` at line 276. Change each inner string-case `break` to `return` and remove the unreachable throw. |
-
-### P5 — GeoArrow CRS deferred work
-
-| # | File | Description |
-|---|---|---|
-| 10 | `protoc/src/generator.cpp:1107,1168,2135` | Three `// TODO: GeoArrow CRS ... will be restored in a later phase` comments mark intentionally deferred work. Convert to tracked issues and remove from source. |
-
-### P6 — Diagnostics
-
-| # | File | Description |
-|---|---|---|
-| 11 | `fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp:166` | `catch (...)` in `FletcherTopicType::serialize` swallows all exceptions silently and returns `false`. The DDS middleware receives a serialization failure with no trace of the cause. Catch `std::exception` first, log or store the message, then fall through to the silent `false` return. |
-
-### P7 — Thread safety
-
-| # | Files | Description |
-|---|---|---|
-| 12 ⚠️ | `xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp` | **Data race on the XRCE session.** The background `run_thread` calls `uxr_run_session_time` continuously without holding any lock. `CreateTopic`, `Publish`, and `Subscribe` hold `mu` and call session functions (`uxr_buffer_create_*`, `uxr_buffer_topic`, `uxr_run_session_until_all_status`) on the same session object. The Micro XRCE-DDS client is not thread-safe — all session operations must be serialized. Fix: protect all session access with a dedicated session mutex that the run thread also acquires, or stop/pause the run thread before every API call. |
-| 13 ⚠️ | `xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp:123` | **Deadlock: user callback invoked while `mu` is held.** `OnTopic` acquires `mu` before calling `tit->second.callback(...)`. Any call to `CreateTopic`, `Publish`, `Subscribe`, or `Unsubscribe` from within the callback deadlocks. The FastDDS provider correctly calls the user callback outside its lock. Fix: copy the callback pointer and schema under the lock, release the lock, then invoke the callback. |
-| 14 | `fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp:346` | **Destructor accesses `impl_->topics` without `mu`.** The destructor iterates the topics map and deletes DDS entities with no lock held. A concurrent `Publish` call (which holds `mu` and calls `ts.writer->write()`) racing with the destructor deleting `ts.writer` is undefined behaviour. Fix: acquire `mu` before iterating, or document that callers must ensure no concurrent calls are in flight during destruction. |
-| 15 | `pubsub/src/driver.cpp:142` | **TOCTOU race in `CreateTopic`.** The lock is released between the duplicate-check and the call to `provider->CreateTopic()`, then re-acquired to insert the topic state. Two concurrent `CreateTopic` calls for the same topic both pass the initial check, both call the provider, and produce a double-insert. Fix: hold the lock for the entire operation, or insert a sentinel `TopicState` before releasing it so a second caller sees the duplicate. |
-| 16 | `pubsub/include/pubsub/driver.hpp` | **Undocumented "last callback after Unsubscribe" behaviour.** The fan-out copies subscriber callbacks under `mu`, releases the lock, then calls them. A subscriber that unsubscribes between the copy and the call receives one final message. This is intentional but should be noted in the `Unsubscribe` doc comment. |
-
----
-
 ## Releasing
 
 Releases are cut by pushing a **component-prefixed git tag** that matches the
@@ -152,7 +166,7 @@ package to the `conan-eiva` Artifactory remote.
 
 | Component | Tag prefix | Example |
 |---|---|---|
-| `core/` | `core-v` | `core-v0.1.3-alpha` |
+| `core/` | `core-v` | `core-v0.1.0-alpha` |
 | `protoc/` | `protoc-v` | `protoc-v0.1.0-alpha` |
 | `pubsub/` | `pubsub-v` | `pubsub-v0.1.0-alpha` |
 | `arrow-bridge/` | `arrow-bridge-v` | `arrow-bridge-v0.1.0-alpha` |
@@ -190,14 +204,14 @@ package's workflow — not all of them.
    git push origin <component>-v<version>
    ```
 
-   Example for `core` 0.1.4-alpha:
+   Example for `core` 0.1.1-alpha (next bump after the current 0.1.0-alpha):
 
    ```bash
-   git tag core-v0.1.4-alpha
+   git tag core-v0.1.1-alpha
    ```
 
    ```bash
-   git push origin core-v0.1.4-alpha
+   git push origin core-v0.1.1-alpha
    ```
 
 3. Watch the workflow run for that component complete on

@@ -15,7 +15,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "eiva-fletcher-gateway-client": ["../../gateway-client-ts/src/index.ts"]
+      "fletcher-gateway-client": ["../../gateway-client-ts/src/index.ts"]
     }
   },
   "include": ["test", "generated-ts"]

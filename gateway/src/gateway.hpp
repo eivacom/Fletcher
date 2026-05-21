@@ -7,7 +7,7 @@
 #ifndef FLETCHER_GATEWAY_GATEWAY_HPP_
 #define FLETCHER_GATEWAY_GATEWAY_HPP_
 
-#include <pubsub/driver.hpp>
+#include <fletcher/pubsub/driver.hpp>
 
 #include <cstdint>
 #include <memory>

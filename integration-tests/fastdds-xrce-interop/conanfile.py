@@ -8,9 +8,9 @@ from conan.tools.cmake import cmake_layout
 class FastDdsXrceInteropIntegrationConan(ConanFile):
     """Cross-provider integration test consumer.
 
-    Verifies that the eiva-fletcher-xrcedds-pubsub-provider (MCU-tier,
+    Verifies that the fletcher-xrcedds-pubsub-provider (MCU-tier,
     XRCE-DDS protocol over UDP to an Agent) and the
-    eiva-fletcher-fastdds-pubsub-provider (vessel-tier, full DDS) can
+    fletcher-fastdds-pubsub-provider (vessel-tier, full DDS) can
     exchange data end-to-end via a running MicroXRCEAgent. Neither
     provider's unit tests exercise the bridged path; this suite is the
     only test that proves topic naming, envelope serialisation, and the
@@ -29,9 +29,9 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
         # Version ranges resolve to whatever the workflow's `conan create`
         # just put in the local cache. include_prerelease is needed
         # because component versions are alpha-suffixed.
-        self.requires("eiva-fletcher-pubsub-arrow/[*, include_prerelease]")
-        self.requires("eiva-fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
-        self.requires("eiva-fletcher-xrcedds-pubsub-provider/[*, include_prerelease]")
+        self.requires("fletcher-pubsub-arrow/[*, include_prerelease]")
+        self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
+        self.requires("fletcher-xrcedds-pubsub-provider/[*, include_prerelease]")
         self.requires("gtest/1.17.0")
         # arrow pins zlib/1.2.13, openssl pulls 1.3.1 — same conflict
         # arrow-bridge handles in its own conanfile.

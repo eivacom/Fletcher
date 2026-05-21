@@ -33,10 +33,10 @@
 
 #include "gateway.hpp"
 
-#include <pubsub/driver.hpp>
-#include <pubsub/pubsub.hpp>
-#include <pubsub/owned_schema.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <cstdio>
 #include <cstdlib>

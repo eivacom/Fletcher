@@ -7,9 +7,9 @@ project(fastdds-xrce-interop-integration CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-pubsub-arrow CONFIG REQUIRED)
-find_package(eiva-fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
-find_package(eiva-fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
+find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
+find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
@@ -56,9 +56,9 @@ add_dependencies(integration_tests microxrcedds_agent_proj)
 
 target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
-    eiva-fletcher-pubsub-arrow::eiva-fletcher-pubsub-arrow
-    eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider
-    eiva-fletcher-xrcedds-pubsub-provider::eiva-fletcher-xrcedds-pubsub-provider)
+    fletcher-pubsub-arrow::fletcher-pubsub-arrow
+    fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+    fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
 # A single ctest entry that runs all gtest cases inside one process.
 # This is intentional: the MicroXRCEAgent fixture binds UDP port 2018,

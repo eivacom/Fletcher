@@ -7,8 +7,8 @@ project(pubsub-arrow-fastdds-integration CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-pubsub-arrow CONFIG REQUIRED)
-find_package(eiva-fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
+find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
@@ -19,8 +19,8 @@ add_executable(integration_tests
 
 target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
-    eiva-fletcher-pubsub-arrow::eiva-fletcher-pubsub-arrow
-    eiva-fletcher-fastdds-pubsub-provider::eiva-fletcher-fastdds-pubsub-provider)
+    fletcher-pubsub-arrow::fletcher-pubsub-arrow
+    fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)
 
 include(GoogleTest)
 gtest_discover_tests(integration_tests)

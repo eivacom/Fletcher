@@ -7,14 +7,14 @@ project(protoc-gateway-client-ts-integration CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(eiva-fletcher-protoc CONFIG REQUIRED)
-find_package(eiva-fletcher-pubsub CONFIG REQUIRED)
-find_package(eiva-fletcher-core CONFIG REQUIRED)
+find_package(fletcher-protoc CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-core CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 
-if(NOT TARGET eiva-fletcher-protoc::plugin)
+if(NOT TARGET fletcher-protoc::plugin)
     message(FATAL_ERROR
-        "eiva-fletcher-protoc::plugin target was not created — the protoc "
+        "fletcher-protoc::plugin target was not created — the protoc "
         "plugin executable is required for code generation.")
 endif()
 
@@ -39,11 +39,11 @@ foreach(_stem IN LISTS PROTO_STEMS)
     add_custom_command(
         OUTPUT  "${_cpp_hdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
-                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" eiva-fletcher-protoc::plugin
+        DEPENDS "${_src}" fletcher-protoc::plugin
         COMMENT "protoc-gen-fletcher (C++): ${_stem}.proto"
         VERBATIM
     )
@@ -51,11 +51,11 @@ foreach(_stem IN LISTS PROTO_STEMS)
     add_custom_command(
         OUTPUT  "${_ts_out}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
-                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:eiva-fletcher-protoc::plugin>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=ts:${GENERATED_TS_DIR}"
                 "-I" "${PROTO_DIR}"
                 "${_src}"
-        DEPENDS "${_src}" eiva-fletcher-protoc::plugin
+        DEPENDS "${_src}" fletcher-protoc::plugin
         COMMENT "protoc-gen-fletcher (TS): ${_stem}.proto"
         VERBATIM
     )
@@ -70,5 +70,5 @@ add_dependencies(emit_vectors generate_headers)
 
 target_include_directories(emit_vectors PRIVATE "${GENERATED_DIR}")
 target_link_libraries(emit_vectors PRIVATE
-    eiva-fletcher-pubsub::eiva-fletcher-pubsub
-    eiva-fletcher-core::eiva-fletcher-core)
+    fletcher-pubsub::fletcher-pubsub
+    fletcher-core::fletcher-core)

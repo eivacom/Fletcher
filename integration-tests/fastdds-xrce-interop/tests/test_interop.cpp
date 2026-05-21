@@ -19,9 +19,9 @@
 // Each test uses its own XRCE session_key so the two tests can run
 // concurrently against the same Agent.
 
-#include <pubsub_arrow/pubsub_arrow.hpp>
-#include <fast_dds_pubsub_provider.hpp>
-#include <xrce_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 
 #include <arrow/api.h>
 #include <gtest/gtest.h>

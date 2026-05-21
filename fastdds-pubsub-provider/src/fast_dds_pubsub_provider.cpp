@@ -10,11 +10,11 @@
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // wrapped in a CDR-LE octet sequence.
 
-#include "fast_dds_pubsub_provider.hpp"
+#include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 
-#include <pubsub/schema_ipc.hpp>
-#include <core/envelope.hpp>
-#include <core/write_buffer.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
+#include <fletcher/core/envelope.hpp>
+#include <fletcher/core/write_buffer.hpp>
 
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>

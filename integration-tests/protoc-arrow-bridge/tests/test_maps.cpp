@@ -6,8 +6,8 @@
 
 #include "maps.fletcher.pb.h"
 
-#include <arrow_bridge/codec.hpp>
-#include <pubsub/owned_schema.hpp>
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>

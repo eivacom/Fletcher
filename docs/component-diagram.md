@@ -129,7 +129,7 @@ graph TB
     WEB_GW["gateway"]
     PROTOC["protoc<br/><i>protoc-gen-fletcher plugin</i>"]
     PROTO_INT["integration-tests/<br/>protoc-arrow-bridge"]
-    GW_CLIENT["gateway-client-ts<br/><i>npm: eiva-fletcher-gateway-client</i>"]
+    GW_CLIENT["gateway-client-ts<br/><i>npm: fletcher-gateway-client</i>"]
 
     CORE --> PUBSUB
     NANOARROW --> PUBSUB
@@ -271,7 +271,7 @@ graph TB
         end
 
         subgraph webcl_dir ["gateway-client-ts/"]
-            WC_ALL["<i>TypeScript client<br/>(npm: eiva-fletcher-gateway-client)</i>"]
+            WC_ALL["<i>TypeScript client<br/>(npm: fletcher-gateway-client)</i>"]
         end
     end
 ```

@@ -25,9 +25,9 @@ class ProtocGatewayClientTsIntegrationConan(ConanFile):
         # Version ranges resolve to whatever the workflow's `conan create`
         # just put in the local cache. include_prerelease is needed
         # because component versions are alpha-suffixed.
-        self.requires("eiva-fletcher-protoc/[*, include_prerelease]")
-        self.requires("eiva-fletcher-pubsub/[*, include_prerelease]")
-        self.requires("eiva-fletcher-core/[*, include_prerelease]")
+        self.requires("fletcher-protoc/[*, include_prerelease]")
+        self.requires("fletcher-pubsub/[*, include_prerelease]")
+        self.requires("fletcher-core/[*, include_prerelease]")
         self.requires("protobuf/3.21.12")
 
     def layout(self):

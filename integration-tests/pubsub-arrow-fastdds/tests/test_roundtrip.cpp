@@ -11,8 +11,8 @@
 // Each component has unit tests against a mock provider; only this test
 // covers the seam between them.
 
-#include <pubsub_arrow/pubsub_arrow.hpp>
-#include <fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 
 #include <arrow/api.h>
 #include <gtest/gtest.h>
