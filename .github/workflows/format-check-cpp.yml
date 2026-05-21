@@ -27,11 +27,15 @@ jobs:
 
       # Self-hosted runner ships without `sudo`; runs as root already, so
       # the apt-get calls work without elevation. `-y` to skip the prompt.
-      - name: Install clang-format
+      # Pin to clang-format-18 (the version Ubuntu 24.04 currently provides
+      # and the devcontainer installs) so CI and editor agree on what
+      # "formatted" means; future Ubuntu LTS bumps will not silently change
+      # the formatter behaviour underneath us.
+      - name: Install clang-format-18
         run: |
           apt-get update
-          apt-get install -y clang-format
-          clang-format --version
+          apt-get install -y clang-format-18
+          clang-format-18 --version
 
       # Build the file list at runtime so the workflow stays in sync with
       # `.prettierignore`-style exclusions without manual maintenance. We
@@ -50,4 +54,4 @@ jobs:
             exit 0
           fi
           echo "Checking $(echo "$files" | wc -l) files..."
-          echo "$files" | xargs clang-format --dry-run --Werror
+          echo "$files" | xargs clang-format-18 --dry-run --Werror

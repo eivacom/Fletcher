@@ -9,13 +9,14 @@ RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
     cmake \
-    clang-format \
+    clang-format-18 \
     python3 \
     python3-pip \
     git \
     curl \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-18 100
 
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 \
     && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100 \

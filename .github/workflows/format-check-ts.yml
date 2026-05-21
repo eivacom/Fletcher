@@ -27,9 +27,12 @@ jobs:
       group: ubuntu_24.04_x64
     steps:
       - uses: actions/checkout@v6
+      # Pin Node to the same patch version the devcontainer installs so
+      # any tooling that pulls Node-version-sensitive behaviour stays in
+      # lock-step between editor and CI.
       - uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: "24.15.0"
       # Pin prettier in lock-step with the devcontainer's globally-
       # installed version so devcontainer + CI agree on what
       # "formatted" means.
