@@ -99,6 +99,31 @@ A single prefix removes any chance of collision with third-party headers, and a 
 
 All first-party code lives under `namespace fletcher { ... }`. No `eiva::` parent, no per-component nesting unless the component genuinely wants one — `fletcher::gateway` is the only nested namespace in use today, scoped to gateway-internal helpers.
 
+### Code style
+
+| Language | Tool | Config |
+|---|---|---|
+| C / C++ | `clang-format` (Google base, 4-space indent, 100-col, c++20) | [`.clang-format`](.clang-format) |
+| TypeScript / JavaScript / JSON | `prettier` (printWidth 100, single quotes, semi, trailing-comma all) | [`.prettierrc`](.prettierrc) + [`.prettierignore`](.prettierignore) |
+
+The devcontainer ships both tools pre-installed (`clang-format` via apt, `prettier` as a global npm package), pinned to the same versions the CI checks use. The bundled VS Code extension recommendations (`xaver.clang-format` + `esbenp.prettier-vscode`) wire up format-on-save out of the box, so converging on the style takes zero contributor effort — every save reformats the file, and CI's `format-check-cpp` / `format-check-ts` workflows are a safety net rather than a blocker.
+
+To reformat the whole tree manually:
+
+```bash
+# C++
+git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
+  | grep -v -E 'pubsub/third_party/|\.fletcher\.(arrow\.)?pb\.h$' \
+  | xargs clang-format -i
+```
+
+```bash
+# TS/JS/JSON
+npx prettier --write '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
+```
+
+Static-analysis lint (`clang-tidy` / `eslint`) is intentionally out of scope here — those are tracked as separate work.
+
 ---
 
 ## Development environment

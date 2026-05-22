@@ -20,7 +20,7 @@ struct ScalarTypeInfo {
     std::string default_value;     // proto3 zero-default as C++ literal
     std::string builder_type;      // e.g. "arrow::Int32Builder"
     std::string scalar_type;       // e.g. "arrow::Int32Scalar" — for downcasting when decoding
-    bool        value_is_buffer = false;  // true for string/binary (value->ToString())
+    bool value_is_buffer = false;  // true for string/binary (value->ToString())
 };
 
 enum class FieldKind {
@@ -34,8 +34,8 @@ enum class FieldKind {
 
 struct FieldMapping {
     FieldKind kind;
-    bool      nullable;
-    std::string warning;       // Non-empty → emit as a comment in generated code
+    bool nullable;
+    std::string warning;  // Non-empty → emit as a comment in generated code
 
     // SCALAR kind:
     ScalarTypeInfo scalar;
@@ -46,18 +46,18 @@ struct FieldMapping {
     // STRUCT / REPEATED_STRUCT / NESTED_LIST kind:
     std::string nested_class;   // C++ type reference (globally qualified when cross-file)
     std::string nested_header;  // non-empty → #include this path (cross-file dependency)
-    int         list_depth = 0; // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
+    int list_depth = 0;         // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
 
     // MAP kind:
     ScalarTypeInfo map_key;
-    ScalarTypeInfo map_value;           // populated when value is a scalar type
-    std::string    map_value_class;     // C++ type reference (globally qualified when cross-file)
-    std::string    map_value_header;    // non-empty → #include this path (cross-file dep)
-    bool           map_value_is_message = false;
+    ScalarTypeInfo map_value;      // populated when value is a scalar type
+    std::string map_value_class;   // C++ type reference (globally qualified when cross-file)
+    std::string map_value_header;  // non-empty → #include this path (cross-file dep)
+    bool map_value_is_message = false;
 
     // Arrow extension type (empty → no extension).
-    std::string extension_name;         // e.g. "geoarrow.point"
-    std::string extension_metadata;     // JSON metadata string; empty → omit
+    std::string extension_name;      // e.g. "geoarrow.point"
+    std::string extension_metadata;  // JSON metadata string; empty → omit
 
     // Compile-time CRS from proto option (e.g. "EPSG:4326" or raw PROJJSON).
     // Empty → no compile-time CRS.  Resolved to PROJJSON at schema-construction time.
@@ -104,7 +104,6 @@ std::string CppWireTypeIdHex(FieldKind kind);
 
 // Payload byte size for fixed-width scalar types, or -1 for variable-length.
 int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type);
-
 
 // -----------------------------------------------------------------------
 // TypeScript code generation helpers

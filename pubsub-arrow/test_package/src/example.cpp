@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
-
-#include <fletcher/pubsub/pubsub.hpp>
 #include <arrow/api.h>
 
 #include <cassert>
+#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 #include <memory>
 
 using namespace fletcher;
@@ -14,18 +13,15 @@ using namespace fletcher;
 namespace {
 
 class StubProvider : public PubSub {
- public:
-    void CreateTopic(const std::vector<std::string>& /*segments*/,
-                     OwnedSchema /*schema*/,
+   public:
+    void CreateTopic(const std::vector<std::string>& /*segments*/, OwnedSchema /*schema*/,
                      std::any /*config*/) override {}
 
-    void Publish(const std::vector<std::string>& /*segments*/,
-                 RowEncoder /*encoder*/,
+    void Publish(const std::vector<std::string>& /*segments*/, RowEncoder /*encoder*/,
                  const Attachments& /*attachments*/) override {}
 
     SubscriptionResult Subscribe(const std::vector<std::string>& /*segments*/,
-                                 SubscribeCallback /*callback*/,
-                                 std::any /*config*/) override {
+                                 SubscribeCallback /*callback*/, std::any /*config*/) override {
         return {};
     }
 

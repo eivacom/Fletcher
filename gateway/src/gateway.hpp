@@ -7,18 +7,17 @@
 #ifndef FLETCHER_GATEWAY_GATEWAY_HPP_
 #define FLETCHER_GATEWAY_GATEWAY_HPP_
 
-#include <fletcher/pubsub/driver.hpp>
-
 #include <cstdint>
+#include <fletcher/pubsub/driver.hpp>
 #include <memory>
 #include <string>
 
 namespace fletcher {
 
 struct GatewayOptions {
-    std::string address    = "0.0.0.0";
-    uint16_t    port       = 9090;
-    int         io_threads = 1;
+    std::string address = "0.0.0.0";
+    uint16_t port = 9090;
+    int io_threads = 1;
 };
 
 /// WebSocket server that exposes a Driver over the network. Clients
@@ -26,9 +25,8 @@ struct GatewayOptions {
 /// unsubscribe, publish, list_topics) and binary data frames
 /// (serialised Envelope bytes).
 class Gateway {
- public:
-    explicit Gateway(std::shared_ptr<Driver> driver,
-                     GatewayOptions options = {});
+   public:
+    explicit Gateway(std::shared_ptr<Driver> driver, GatewayOptions options = {});
     ~Gateway();
 
     Gateway(const Gateway&) = delete;
@@ -41,7 +39,7 @@ class Gateway {
     /// Stop the IO context, join IO threads, and release resources.
     void Stop();
 
- private:
+   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

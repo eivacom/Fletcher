@@ -9,16 +9,15 @@
 // - Wrapper types produce nullable Arrow scalars
 // - Round-trip preserves nanoseconds-precision values
 
-#include "temporal.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "temporal.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -79,9 +78,9 @@ TEST(TimedEventTest, SchemaStructure) {
 TEST(TimedEventTest, RoundtripWktValues) {
     fletcher_gen::integration::TimedEvent ev;
     ev.set_event_id("evt-001")
-      .set_occurred_at(1'700'000'000'000'000'000LL)
-      .set_elapsed(5'000'000'000LL)
-      .set_score(9.5);
+        .set_occurred_at(1'700'000'000'000'000'000LL)
+        .set_elapsed(5'000'000'000LL)
+        .set_score(9.5);
     // label intentionally left unset → null
 
     auto scalars = RoundTrip(ev.Encode(), fletcher_gen::integration::TimedEventSchema());

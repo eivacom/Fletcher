@@ -36,65 +36,59 @@ std::string JoinSegments(const std::vector<std::string>& segs) {
 struct Driver::Impl {
     struct TopicState {
         std::vector<std::string> segments;
-        OwnedSchema              schema;
-        bool                     provider_subscribed = false;
+        OwnedSchema schema;
+        bool provider_subscribed = false;
     };
 
     struct Subscription {
-        std::string      topic_key;
+        std::string topic_key;
         SubscribeCallback callback;
     };
 
     std::shared_ptr<PubSub> provider;
 
     mutable std::mutex mu;
-    std::unordered_map<std::string, TopicState>    topics;
-    std::unordered_map<uint64_t, Subscription>     subscriptions;
+    std::unordered_map<std::string, TopicState> topics;
+    std::unordered_map<uint64_t, Subscription> subscriptions;
     std::atomic<uint64_t> next_id{1};
 
     // Called with mu held.  Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
-    OwnedSchema EnsureProviderSubscription(
-        const std::string& key, TopicState& ts,
-        std::unique_lock<std::mutex>& lock,
-        std::any config = {}) {
+    OwnedSchema EnsureProviderSubscription(const std::string& key, TopicState& ts,
+                                           std::unique_lock<std::mutex>& lock,
+                                           std::any config = {}) {
         if (ts.provider_subscribed) {
-            if (ts.schema)
-                return OwnedSchema::DeepCopy(ts.schema.get());
+            if (ts.schema) return OwnedSchema::DeepCopy(ts.schema.get());
             return {};
         }
 
         // Capture what we need before releasing the lock.
         auto segments = ts.segments;
         OwnedSchema cached_schema;
-        if (ts.schema)
-            cached_schema = OwnedSchema::DeepCopy(ts.schema.get());
+        if (ts.schema) cached_schema = OwnedSchema::DeepCopy(ts.schema.get());
 
         lock.unlock();
 
         auto result = provider->Subscribe(
-            segments, [this, key](const uint8_t* data, size_t len,
-                                      SharedSchema schema,
-                                      Attachments att) {
+            segments,
+            [this, key](const uint8_t* data, size_t len, SharedSchema schema, Attachments att) {
                 std::vector<SubscribeCallback> cbs;
                 {
                     std::lock_guard lk(mu);
                     for (auto& [id, sub] : subscriptions) {
-                        if (sub.topic_key == key)
-                            cbs.push_back(sub.callback);
+                        if (sub.topic_key == key) cbs.push_back(sub.callback);
                     }
                 }
-                for (auto& cb : cbs)
-                    cb(data, len, schema, att);
-            }, std::move(config));
+                for (auto& cb : cbs) cb(data, len, schema, att);
+            },
+            std::move(config));
 
         lock.lock();
 
         // The topic may have been removed while we were unlocked.
         auto topic_it = topics.find(key);
         if (topic_it == topics.end()) {
-            if (result.schema)
-                return OwnedSchema::DeepCopy(result.schema.get());
+            if (result.schema) return OwnedSchema::DeepCopy(result.schema.get());
             return std::move(cached_schema);
         }
 
@@ -102,8 +96,7 @@ struct Driver::Impl {
         current.provider_subscribed = true;
         OwnedSchema ret;
         if (result.schema) {
-            if (!current.schema)
-                current.schema = OwnedSchema::DeepCopy(result.schema.get());
+            if (!current.schema) current.schema = OwnedSchema::DeepCopy(result.schema.get());
             ret = OwnedSchema::DeepCopy(result.schema.get());
         } else if (current.schema) {
             ret = OwnedSchema::DeepCopy(current.schema.get());
@@ -116,10 +109,8 @@ struct Driver::Impl {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-Driver::Driver(std::shared_ptr<PubSub> provider)
-    : impl_(std::make_unique<Impl>()) {
-    if (!provider)
-        throw std::invalid_argument("Driver: provider must not be null");
+Driver::Driver(std::shared_ptr<PubSub> provider) : impl_(std::make_unique<Impl>()) {
+    if (!provider) throw std::invalid_argument("Driver: provider must not be null");
     impl_->provider = std::move(provider);
 }
 
@@ -134,16 +125,14 @@ Driver::~Driver() {
             }
         }
     }
-    for (auto& segs : to_unsub)
-        impl_->provider->Unsubscribe(segs);
+    for (auto& segs : to_unsub) impl_->provider->Unsubscribe(segs);
 }
 
 // -----------------------------------------------------------------------
 // Topic management
 // -----------------------------------------------------------------------
 
-void Driver::CreateTopic(const std::vector<std::string>& segments,
-                         OwnedSchema schema,
+void Driver::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                          std::any config) {
     std::string key = JoinSegments(segments);
     {
@@ -154,8 +143,7 @@ void Driver::CreateTopic(const std::vector<std::string>& segments,
 
     // Deep-copy for local storage before moving into provider.
     OwnedSchema local_copy;
-    if (schema)
-        local_copy = OwnedSchema::DeepCopy(schema.get());
+    if (schema) local_copy = OwnedSchema::DeepCopy(schema.get());
 
     impl_->provider->CreateTopic(segments, std::move(schema), std::move(config));
 
@@ -163,13 +151,12 @@ void Driver::CreateTopic(const std::vector<std::string>& segments,
         std::lock_guard lock(impl_->mu);
         Impl::TopicState ts;
         ts.segments = segments;
-        ts.schema   = std::move(local_copy);
+        ts.schema = std::move(local_copy);
         impl_->topics[key] = std::move(ts);
     }
 }
 
-void Driver::Publish(const std::vector<std::string>& segments,
-                     PubSub::RowEncoder encoder,
+void Driver::Publish(const std::vector<std::string>& segments, PubSub::RowEncoder encoder,
                      const Attachments& attachments) {
     impl_->provider->Publish(segments, std::move(encoder), attachments);
 }
@@ -178,9 +165,8 @@ void Driver::Publish(const std::vector<std::string>& segments,
 // Subscription
 // -----------------------------------------------------------------------
 
-Driver::SubscribeResult Driver::Subscribe(
-    const std::vector<std::string>& segments, SubscribeCallback cb,
-    std::any config) {
+Driver::SubscribeResult Driver::Subscribe(const std::vector<std::string>& segments,
+                                          SubscribeCallback cb, std::any config) {
     std::string key = JoinSegments(segments);
     std::unique_lock lock(impl_->mu);
 
@@ -194,8 +180,7 @@ Driver::SubscribeResult Driver::Subscribe(
 
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
-    auto schema = impl_->EnsureProviderSubscription(key, it->second, lock,
-                                                     std::move(config));
+    auto schema = impl_->EnsureProviderSubscription(key, it->second, lock, std::move(config));
     return {id, std::move(schema)};
 }
 
@@ -228,8 +213,7 @@ void Driver::Unsubscribe(uint64_t subscription_id) {
         }
     }
 
-    if (!segments_to_unsub.empty())
-        impl_->provider->Unsubscribe(segments_to_unsub);
+    if (!segments_to_unsub.empty()) impl_->provider->Unsubscribe(segments_to_unsub);
 }
 
 // -----------------------------------------------------------------------
@@ -240,8 +224,7 @@ std::vector<std::string> Driver::ListTopics() const {
     std::lock_guard lock(impl_->mu);
     std::vector<std::string> result;
     result.reserve(impl_->topics.size());
-    for (auto& [key, _] : impl_->topics)
-        result.push_back(key);
+    for (auto& [key, _] : impl_->topics) result.push_back(key);
     return result;
 }
 

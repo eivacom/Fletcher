@@ -6,10 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  ObjectBackend,
-  encodePositional,
-} from 'fletcher-gateway-client';
+import { ObjectBackend, encodePositional } from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 
 interface Vector {
@@ -64,7 +61,7 @@ function findEmitVectorsBinary(): string {
   }
   throw new Error(
     `emit_vectors binary not found. Checked: ${candidates.join(', ')}. ` +
-    `Set EMIT_VECTORS_BIN to override.`,
+      `Set EMIT_VECTORS_BIN to override.`,
   );
 }
 
@@ -73,8 +70,8 @@ function inputFor(name: string): Record<string, unknown> {
   if (!input) {
     throw new Error(
       `C++ emitted scenario "${name}" but no expected input is defined ` +
-      `in scenarios{}. Add it to byte-compat.test.ts or remove the Emit() ` +
-      `call in emit_vectors.cpp.`,
+        `in scenarios{}. Add it to byte-compat.test.ts or remove the Emit() ` +
+        `call in emit_vectors.cpp.`,
     );
   }
   return input;
@@ -87,14 +84,14 @@ beforeAll(() => {
   const stdout = execFileSync(bin, [], { encoding: 'utf8' });
   vectors = stdout
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0)
-    .map(l => JSON.parse(l) as Vector);
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as Vector);
 });
 
 describe('protoc + gateway-client-ts byte-compat (telemetry)', () => {
   it('emits exactly the scenarios known to the test', () => {
-    const emitted = vectors.map(v => v.name).sort();
+    const emitted = vectors.map((v) => v.name).sort();
     const expected = Object.keys(scenarios).sort();
     expect(emitted).toEqual(expected);
   });

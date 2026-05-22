@@ -19,7 +19,12 @@ import {
   parseTextResponse,
   parseBinaryMessage,
 } from './ws-protocol.js';
-import type { ServerResponse, SubscribedResponse, TopicsListResponse, ErrorResponse } from './ws-protocol.js';
+import type {
+  ServerResponse,
+  SubscribedResponse,
+  TopicsListResponse,
+  ErrorResponse,
+} from './ws-protocol.js';
 import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/object-backend.js';
 import { encodePositional } from './codec/positional-encoder.js';
@@ -57,9 +62,7 @@ export class FletcherClient {
     };
 
     if (this.opts.backend === 'arrow') {
-      throw new Error(
-        'Arrow backend not yet implemented. Use backend: "object" for now.',
-      );
+      throw new Error('Arrow backend not yet implemented. Use backend: "object" for now.');
     }
     this.backend = new ObjectBackend();
   }
@@ -77,10 +80,7 @@ export class FletcherClient {
    * protoc-gen-fletcher).
    */
   async createTopic(topic: string, schema?: SchemaDescriptor): Promise<void> {
-    const resp = await this.sendAndWait(
-      buildCreateTopic(topic, schema),
-      'topic_created',
-    );
+    const resp = await this.sendAndWait(buildCreateTopic(topic, schema), 'topic_created');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
@@ -107,11 +107,7 @@ export class FletcherClient {
     callback: (row: T, attachments: Map<string, Uint8Array>) => void,
   ): Promise<bigint>;
   // Overload 2 — untyped schema, callback gets Record<string, unknown>.
-  subscribe(
-    topic: string,
-    schema: SchemaDescriptor,
-    callback: MessageCallback,
-  ): Promise<bigint>;
+  subscribe(topic: string, schema: SchemaDescriptor, callback: MessageCallback): Promise<bigint>;
   // Overload 3 — schema from gateway, caller asserts row type via generic.
   subscribe<T = Record<string, unknown>>(
     topic: string,
@@ -134,16 +130,13 @@ export class FletcherClient {
       if (typeof maybeCallback !== 'function') {
         throw new Error(
           'subscribe: callback is required when providing a schema. ' +
-          'Use subscribe(topic, callback) or subscribe(topic, schema, callback).',
+            'Use subscribe(topic, callback) or subscribe(topic, schema, callback).',
         );
       }
       callback = maybeCallback;
     }
 
-    const resp = await this.sendAndWait(
-      buildSubscribe(topic),
-      'subscribed',
-    );
+    const resp = await this.sendAndWait(buildSubscribe(topic), 'subscribed');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
@@ -153,7 +146,7 @@ export class FletcherClient {
     if (!resolvedSchema) {
       throw new Error(
         `subscribe: no schema available for topic "${topic}". ` +
-        'Either pass a SchemaDescriptor / TypedSchema or ensure the publisher created the topic with a schema.',
+          'Either pass a SchemaDescriptor / TypedSchema or ensure the publisher created the topic with a schema.',
       );
     }
 
@@ -166,10 +159,7 @@ export class FletcherClient {
 
   /** Unsubscribe from a subscription. */
   async unsubscribe(subId: bigint): Promise<void> {
-    const resp = await this.sendAndWait(
-      buildUnsubscribe(subId),
-      'unsubscribed',
-    );
+    const resp = await this.sendAndWait(buildUnsubscribe(subId), 'unsubscribed');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
@@ -207,10 +197,7 @@ export class FletcherClient {
       attachments: attachments ?? new Map(),
     };
     const envBytes = serializeEnvelope(envelope);
-    const resp = await this.sendAndWait(
-      buildPublish(topic, envBytes),
-      'published',
-    );
+    const resp = await this.sendAndWait(buildPublish(topic, envBytes), 'published');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
@@ -218,10 +205,7 @@ export class FletcherClient {
 
   /** List all topics on the server. */
   async listTopics(): Promise<string[]> {
-    const resp = await this.sendAndWait(
-      buildListTopics(),
-      'topics_list',
-    );
+    const resp = await this.sendAndWait(buildListTopics(), 'topics_list');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
@@ -284,7 +268,7 @@ export class FletcherClient {
       }
 
       const idx = this.pendingQueue.findIndex(
-        p => p.expectedType === resp.type || resp.type === 'error',
+        (p) => p.expectedType === resp.type || resp.type === 'error',
       );
       if (idx === -1) return;
       const [pending] = this.pendingQueue.splice(idx, 1);
@@ -308,10 +292,7 @@ export class FletcherClient {
     }
   }
 
-  private sendAndWait(
-    frame: string | Uint8Array,
-    expectedType: string,
-  ): Promise<ServerResponse> {
+  private sendAndWait(frame: string | Uint8Array, expectedType: string): Promise<ServerResponse> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not connected'));

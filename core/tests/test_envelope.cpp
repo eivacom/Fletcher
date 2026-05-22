@@ -16,22 +16,22 @@ TEST(EnvelopeTest, RoundtripWithNoAttachments) {
     env.row = {0x01, 0x02, 0x03, 0x04};
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_EQ(restored.row, env.row);
     EXPECT_TRUE(restored.attachments.empty());
 }
 
 TEST(EnvelopeTest, RoundtripWithOneAttachment) {
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
+    auto blob =
+        std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
 
     Envelope env;
     env.row = {0xAA, 0xBB};
     env.attachments["image"] = blob;
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_EQ(restored.row, env.row);
     ASSERT_EQ(restored.attachments.size(), 1u);
@@ -40,12 +40,10 @@ TEST(EnvelopeTest, RoundtripWithOneAttachment) {
 }
 
 TEST(EnvelopeTest, RoundtripWithMultipleAttachments) {
-    auto blob_a = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0x01, 0x02});
-    auto blob_b = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0x03, 0x04, 0x05});
-    auto blob_c = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{});
+    auto blob_a = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x01, 0x02});
+    auto blob_b =
+        std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x03, 0x04, 0x05});
+    auto blob_c = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{});
 
     Envelope env;
     env.row = {0xFF};
@@ -54,7 +52,7 @@ TEST(EnvelopeTest, RoundtripWithMultipleAttachments) {
     env.attachments["empty"] = blob_c;
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_EQ(restored.row, env.row);
     ASSERT_EQ(restored.attachments.size(), 3u);
@@ -72,7 +70,7 @@ TEST(EnvelopeTest, RoundtripWithLargeBlob) {
     env.attachments["big"] = blob;
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_EQ(restored.row, env.row);
     ASSERT_EQ(restored.attachments.count("big"), 1u);
@@ -81,15 +79,14 @@ TEST(EnvelopeTest, RoundtripWithLargeBlob) {
 }
 
 TEST(EnvelopeTest, EmptyRowWithAttachments) {
-    auto blob = std::make_shared<const std::vector<uint8_t>>(
-        std::vector<uint8_t>{0x01});
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x01});
 
     Envelope env;
     // row is empty
     env.attachments["data"] = blob;
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_TRUE(restored.row.empty());
     ASSERT_EQ(restored.attachments.size(), 1u);
@@ -100,7 +97,7 @@ TEST(EnvelopeTest, CompletelyEmptyEnvelope) {
     Envelope env;
 
     auto serialized = SerializeEnvelope(env);
-    auto restored   = DeserializeEnvelope(serialized);
+    auto restored = DeserializeEnvelope(serialized);
 
     EXPECT_TRUE(restored.row.empty());
     EXPECT_TRUE(restored.attachments.empty());
@@ -117,17 +114,16 @@ TEST(EnvelopeTest, ThrowsOnTruncatedBuffer) {
 
 TEST(EnvelopeTest, ThrowsOnTruncatedRowData) {
     // Claim row_len=100 but only provide 4 bytes.
-    std::vector<uint8_t> buf = {0x64, 0x00, 0x00, 0x00,  // row_len = 100
-                                 0x01, 0x02, 0x03, 0x04}; // only 4 bytes
+    std::vector<uint8_t> buf = {0x64, 0x00, 0x00, 0x00,   // row_len = 100
+                                0x01, 0x02, 0x03, 0x04};  // only 4 bytes
     EXPECT_THROW(DeserializeEnvelope(buf), std::invalid_argument);
 }
 
 TEST(EnvelopeTest, ThrowsOnTruncatedAttachmentKey) {
     // Valid row (len=1, data=0xFF), attach_count=1, key_len=100 but no key data.
-    std::vector<uint8_t> buf = {
-        0x01, 0x00, 0x00, 0x00,  // row_len = 1
-        0xFF,                     // row data
-        0x01, 0x00, 0x00, 0x00,  // attach_count = 1
-        0x64, 0x00, 0x00, 0x00}; // key_len = 100 (truncated)
+    std::vector<uint8_t> buf = {0x01, 0x00, 0x00, 0x00,   // row_len = 1
+                                0xFF,                     // row data
+                                0x01, 0x00, 0x00, 0x00,   // attach_count = 1
+                                0x64, 0x00, 0x00, 0x00};  // key_len = 100 (truncated)
     EXPECT_THROW(DeserializeEnvelope(buf), std::invalid_argument);
 }

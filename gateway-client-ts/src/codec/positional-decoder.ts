@@ -24,7 +24,7 @@ function bitfieldBytes(count: number): number {
 }
 
 function isNullBit(data: Uint8Array, offset: number, index: number): boolean {
-  return (data[offset + (index >> 3)] >> (index & 7) & 1) !== 0;
+  return ((data[offset + (index >> 3)] >> (index & 7)) & 1) !== 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -4,13 +4,13 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_DRIVER_HPP_
 
-#include "fletcher/pubsub/pubsub.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "fletcher/pubsub/pubsub.hpp"
 
 namespace fletcher {
 
@@ -24,7 +24,7 @@ namespace fletcher {
 ///
 /// Thread safety: all public methods are safe to call from any thread.
 class Driver {
- public:
+   public:
     explicit Driver(std::shared_ptr<PubSub> provider);
     ~Driver();
 
@@ -33,13 +33,11 @@ class Driver {
 
     /// Create a topic on the underlying provider and register it
     /// in the local topic registry.
-    void CreateTopic(const std::vector<std::string>& segments,
-                     OwnedSchema schema,
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                      std::any config = {});
 
     /// Publish by writing encoded row directly into the provider's buffer.
-    void Publish(const std::vector<std::string>& segments,
-                 PubSub::RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, PubSub::RowEncoder encoder,
                  const Attachments& attachments = {});
 
     /// Result returned by Subscribe.
@@ -49,12 +47,9 @@ class Driver {
     };
 
     /// Subscribe to a topic.  Returns the subscription ID and the schema.
-    using SubscribeCallback = std::function<void(const uint8_t* data,
-                                                 size_t len,
-                                                 SharedSchema schema,
-                                                 Attachments attachments)>;
-    SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              SubscribeCallback cb,
+    using SubscribeCallback = std::function<void(const uint8_t* data, size_t len,
+                                                 SharedSchema schema, Attachments attachments)>;
+    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback cb,
                               std::any config = {});
 
     /// Remove a subscription by ID.
@@ -66,7 +61,7 @@ class Driver {
     /// Check whether a topic has been registered.
     bool HasTopic(const std::vector<std::string>& segments) const;
 
- private:
+   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

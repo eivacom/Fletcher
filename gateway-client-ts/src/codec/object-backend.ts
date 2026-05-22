@@ -13,10 +13,7 @@ export interface DecoderBackend<T> {
 }
 
 export class ObjectBackend implements DecoderBackend<Record<string, unknown>> {
-  decode(
-    schema: SchemaDescriptor,
-    row: Uint8Array,
-  ): Record<string, unknown> {
+  decode(schema: SchemaDescriptor, row: Uint8Array): Record<string, unknown> {
     return decodePositional(schema, row);
   }
 }

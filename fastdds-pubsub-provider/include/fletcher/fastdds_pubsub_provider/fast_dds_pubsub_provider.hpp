@@ -4,9 +4,8 @@
 #ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <fletcher/pubsub/pubsub.hpp>
-
 #include <cstdint>
+#include <fletcher/pubsub/pubsub.hpp>
 #include <memory>
 
 namespace fletcher {
@@ -20,7 +19,7 @@ namespace fletcher {
 /// The companion schema channel (__schema topic) uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL to retain only the latest schema.
 class FastDDSPubSubProvider : public PubSub {
- public:
+   public:
     /// @param domain_id         DDS domain ID (default 0).
     /// @param max_payload_bytes Maximum DDS payload size in bytes (default 1 MB).
     ///                          Bounds the full serialized envelope: CDR framing +
@@ -33,22 +32,18 @@ class FastDDSPubSubProvider : public PubSub {
     FastDDSPubSubProvider(const FastDDSPubSubProvider&) = delete;
     FastDDSPubSubProvider& operator=(const FastDDSPubSubProvider&) = delete;
 
-    void CreateTopic(const std::vector<std::string>& topic_segments,
-                     OwnedSchema schema,
+    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema,
                      std::any config = {}) override;
 
-    void Publish(const std::vector<std::string>& topic_segments,
-                 RowEncoder encoder,
+    void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
                  const Attachments& attachments = {}) override;
 
-    SubscriptionResult Subscribe(
-        const std::vector<std::string>& topic_segments,
-        SubscribeCallback callback,
-        std::any config = {}) override;
+    SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
+                                 SubscribeCallback callback, std::any config = {}) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 
- private:
+   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

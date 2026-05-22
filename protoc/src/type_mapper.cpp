@@ -22,8 +22,10 @@ static std::string DotToColonsTM(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
     for (char c : s) {
-        if (c == '.') out += "::";
-        else          out += c;
+        if (c == '.')
+            out += "::";
+        else
+            out += c;
     }
     return out;
 }
@@ -49,14 +51,11 @@ static std::string ClassNameImpl(const google::protobuf::Descriptor* msg) {
 static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
                                       const google::protobuf::FileDescriptor* context_file) {
     const std::string bare = ClassNameImpl(msg);
-    if (msg->file() == context_file)
-        return bare;
+    if (msg->file() == context_file) return bare;
     // Same package → same C++ namespace, so bare name is sufficient.
-    if (msg->file()->package() == context_file->package())
-        return bare;
+    if (msg->file()->package() == context_file->package()) return bare;
     const std::string& pkg = msg->file()->package();
-    if (pkg.empty())
-        return "::fletcher_gen::" + bare;
+    if (pkg.empty()) return "::fletcher_gen::" + bare;
     return "::fletcher_gen::" + DotToColonsTM(pkg) + "::" + bare;
 }
 
@@ -64,12 +63,10 @@ static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
 // Returns empty string when msg is in the same file as context_file.
 static std::string CrossFileHeader(const google::protobuf::Descriptor* msg,
                                    const google::protobuf::FileDescriptor* context_file) {
-    if (msg->file() == context_file)
-        return "";
+    if (msg->file() == context_file) return "";
     const std::string& name = msg->file()->name();
     constexpr std::string_view kSuffix = ".proto";
-    if (name.size() > kSuffix.size()
-        && name.substr(name.size() - kSuffix.size()) == kSuffix)
+    if (name.size() > kSuffix.size() && name.substr(name.size() - kSuffix.size()) == kSuffix)
         return name.substr(0, name.size() - kSuffix.size()) + ".fletcher.pb.h";
     return name + ".fletcher.pb.h";
 }
@@ -133,31 +130,41 @@ const ScalarTypeInfo* BaseScalar(FD::Type type) {
     // clang-format on
 
     switch (type) {
-        case FD::TYPE_BOOL:     return &kBool;
+        case FD::TYPE_BOOL:
+            return &kBool;
         case FD::TYPE_INT32:
         case FD::TYPE_SINT32:
-        case FD::TYPE_SFIXED32: return &kInt32;
+        case FD::TYPE_SFIXED32:
+            return &kInt32;
         case FD::TYPE_INT64:
         case FD::TYPE_SINT64:
-        case FD::TYPE_SFIXED64: return &kInt64;
+        case FD::TYPE_SFIXED64:
+            return &kInt64;
         case FD::TYPE_UINT32:
-        case FD::TYPE_FIXED32:  return &kUInt32;
+        case FD::TYPE_FIXED32:
+            return &kUInt32;
         case FD::TYPE_UINT64:
-        case FD::TYPE_FIXED64:  return &kUInt64;
-        case FD::TYPE_FLOAT:    return &kFloat;
-        case FD::TYPE_DOUBLE:   return &kDouble;
-        case FD::TYPE_STRING:   return &kString;
-        case FD::TYPE_BYTES:    return &kBytes;
-        case FD::TYPE_ENUM:     return &kEnum;
-        default:                return nullptr;
+        case FD::TYPE_FIXED64:
+            return &kUInt64;
+        case FD::TYPE_FLOAT:
+            return &kFloat;
+        case FD::TYPE_DOUBLE:
+            return &kDouble;
+        case FD::TYPE_STRING:
+            return &kString;
+        case FD::TYPE_BYTES:
+            return &kBytes;
+        case FD::TYPE_ENUM:
+            return &kEnum;
+        default:
+            return nullptr;
     }
 }
 
 bool IsFieldNullable(const google::protobuf::FieldDescriptor* field) {
-    if (field->has_optional_keyword())
-        return true;
-    if (field->file()->syntax() == google::protobuf::FileDescriptor::SYNTAX_PROTO2
-        && field->label() == FD::LABEL_OPTIONAL)
+    if (field->has_optional_keyword()) return true;
+    if (field->file()->syntax() == google::protobuf::FileDescriptor::SYNTAX_PROTO2 &&
+        field->label() == FD::LABEL_OPTIONAL)
         return true;
     return false;
 }
@@ -173,61 +180,88 @@ struct WellKnownScalar {
 
 // google.protobuf.*Value wrappers → nullable scalar of the inner type.
 const ScalarTypeInfo* WrapperTypeInfo(const std::string& fqn) {
-    static const ScalarTypeInfo kBoolVal{
-        "arrow::boolean()", "bool", "bool",
-        "std::make_shared<arrow::BooleanScalar>({val})",
-        "false", "arrow::BooleanBuilder",
-        "arrow::BooleanScalar", false};
-    static const ScalarTypeInfo kInt32Val{
-        "arrow::int32()", "int32_t", "int32_t",
-        "std::make_shared<arrow::Int32Scalar>({val})",
-        "0", "arrow::Int32Builder",
-        "arrow::Int32Scalar", false};
-    static const ScalarTypeInfo kInt64Val{
-        "arrow::int64()", "int64_t", "int64_t",
-        "std::make_shared<arrow::Int64Scalar>({val})",
-        "INT64_C(0)", "arrow::Int64Builder",
-        "arrow::Int64Scalar", false};
-    static const ScalarTypeInfo kUInt32Val{
-        "arrow::uint32()", "uint32_t", "uint32_t",
-        "std::make_shared<arrow::UInt32Scalar>({val})",
-        "0u", "arrow::UInt32Builder",
-        "arrow::UInt32Scalar", false};
-    static const ScalarTypeInfo kUInt64Val{
-        "arrow::uint64()", "uint64_t", "uint64_t",
-        "std::make_shared<arrow::UInt64Scalar>({val})",
-        "UINT64_C(0)", "arrow::UInt64Builder",
-        "arrow::UInt64Scalar", false};
-    static const ScalarTypeInfo kFloatVal{
-        "arrow::float32()", "float", "float",
-        "std::make_shared<arrow::FloatScalar>({val})",
-        "0.0f", "arrow::FloatBuilder",
-        "arrow::FloatScalar", false};
-    static const ScalarTypeInfo kDoubleVal{
-        "arrow::float64()", "double", "double",
-        "std::make_shared<arrow::DoubleScalar>({val})",
-        "0.0", "arrow::DoubleBuilder",
-        "arrow::DoubleScalar", false};
-    static const ScalarTypeInfo kStringVal{
-        "arrow::utf8()", "std::string", "std::string_view",
-        "std::make_shared<arrow::StringScalar>({val})",
-        "\"\"", "arrow::StringBuilder",
-        "arrow::StringScalar", true};
-    static const ScalarTypeInfo kBytesVal{
-        "arrow::binary()", "std::string", "std::string_view",
-        "std::make_shared<arrow::BinaryScalar>({val})",
-        "\"\"", "arrow::BinaryBuilder",
-        "arrow::BinaryScalar", true};
+    static const ScalarTypeInfo kBoolVal{"arrow::boolean()",
+                                         "bool",
+                                         "bool",
+                                         "std::make_shared<arrow::BooleanScalar>({val})",
+                                         "false",
+                                         "arrow::BooleanBuilder",
+                                         "arrow::BooleanScalar",
+                                         false};
+    static const ScalarTypeInfo kInt32Val{"arrow::int32()",
+                                          "int32_t",
+                                          "int32_t",
+                                          "std::make_shared<arrow::Int32Scalar>({val})",
+                                          "0",
+                                          "arrow::Int32Builder",
+                                          "arrow::Int32Scalar",
+                                          false};
+    static const ScalarTypeInfo kInt64Val{"arrow::int64()",
+                                          "int64_t",
+                                          "int64_t",
+                                          "std::make_shared<arrow::Int64Scalar>({val})",
+                                          "INT64_C(0)",
+                                          "arrow::Int64Builder",
+                                          "arrow::Int64Scalar",
+                                          false};
+    static const ScalarTypeInfo kUInt32Val{"arrow::uint32()",
+                                           "uint32_t",
+                                           "uint32_t",
+                                           "std::make_shared<arrow::UInt32Scalar>({val})",
+                                           "0u",
+                                           "arrow::UInt32Builder",
+                                           "arrow::UInt32Scalar",
+                                           false};
+    static const ScalarTypeInfo kUInt64Val{"arrow::uint64()",
+                                           "uint64_t",
+                                           "uint64_t",
+                                           "std::make_shared<arrow::UInt64Scalar>({val})",
+                                           "UINT64_C(0)",
+                                           "arrow::UInt64Builder",
+                                           "arrow::UInt64Scalar",
+                                           false};
+    static const ScalarTypeInfo kFloatVal{"arrow::float32()",
+                                          "float",
+                                          "float",
+                                          "std::make_shared<arrow::FloatScalar>({val})",
+                                          "0.0f",
+                                          "arrow::FloatBuilder",
+                                          "arrow::FloatScalar",
+                                          false};
+    static const ScalarTypeInfo kDoubleVal{"arrow::float64()",
+                                           "double",
+                                           "double",
+                                           "std::make_shared<arrow::DoubleScalar>({val})",
+                                           "0.0",
+                                           "arrow::DoubleBuilder",
+                                           "arrow::DoubleScalar",
+                                           false};
+    static const ScalarTypeInfo kStringVal{"arrow::utf8()",
+                                           "std::string",
+                                           "std::string_view",
+                                           "std::make_shared<arrow::StringScalar>({val})",
+                                           "\"\"",
+                                           "arrow::StringBuilder",
+                                           "arrow::StringScalar",
+                                           true};
+    static const ScalarTypeInfo kBytesVal{"arrow::binary()",
+                                          "std::string",
+                                          "std::string_view",
+                                          "std::make_shared<arrow::BinaryScalar>({val})",
+                                          "\"\"",
+                                          "arrow::BinaryBuilder",
+                                          "arrow::BinaryScalar",
+                                          true};
 
-    if (fqn == "google.protobuf.BoolValue")   return &kBoolVal;
-    if (fqn == "google.protobuf.Int32Value")   return &kInt32Val;
-    if (fqn == "google.protobuf.Int64Value")   return &kInt64Val;
-    if (fqn == "google.protobuf.UInt32Value")  return &kUInt32Val;
-    if (fqn == "google.protobuf.UInt64Value")  return &kUInt64Val;
-    if (fqn == "google.protobuf.FloatValue")   return &kFloatVal;
-    if (fqn == "google.protobuf.DoubleValue")  return &kDoubleVal;
-    if (fqn == "google.protobuf.StringValue")  return &kStringVal;
-    if (fqn == "google.protobuf.BytesValue")   return &kBytesVal;
+    if (fqn == "google.protobuf.BoolValue") return &kBoolVal;
+    if (fqn == "google.protobuf.Int32Value") return &kInt32Val;
+    if (fqn == "google.protobuf.Int64Value") return &kInt64Val;
+    if (fqn == "google.protobuf.UInt32Value") return &kUInt32Val;
+    if (fqn == "google.protobuf.UInt64Value") return &kUInt64Val;
+    if (fqn == "google.protobuf.FloatValue") return &kFloatVal;
+    if (fqn == "google.protobuf.DoubleValue") return &kDoubleVal;
+    if (fqn == "google.protobuf.StringValue") return &kStringVal;
+    if (fqn == "google.protobuf.BytesValue") return &kBytesVal;
     return nullptr;
 }
 
@@ -237,22 +271,19 @@ const ScalarTypeInfo* WrapperTypeInfo(const std::string& fqn) {
 
 bool IsRecursiveImpl(const google::protobuf::Descriptor* msg,
                      std::set<const google::protobuf::Descriptor*>& stack) {
-    if (stack.count(msg))
-        return true;
+    if (stack.count(msg)) return true;
     stack.insert(msg);
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* f = msg->field(i);
-        if (f->type() != FD::TYPE_MESSAGE)
-            continue;
+        if (f->type() != FD::TYPE_MESSAGE) continue;
         if (f->is_map()) {
             // Only the value type can introduce a cycle.
             const auto* val_field = f->message_type()->field(1);
-            if (val_field->type() == FD::TYPE_MESSAGE
-                && IsRecursiveImpl(val_field->message_type(), stack))
+            if (val_field->type() == FD::TYPE_MESSAGE &&
+                IsRecursiveImpl(val_field->message_type(), stack))
                 return true;
         } else {
-            if (IsRecursiveImpl(f->message_type(), stack))
-                return true;
+            if (IsRecursiveImpl(f->message_type(), stack)) return true;
         }
     }
     stack.erase(msg);
@@ -261,14 +292,12 @@ bool IsRecursiveImpl(const google::protobuf::Descriptor* msg,
 
 int NestingDepthImpl(const google::protobuf::Descriptor* msg,
                      std::set<const google::protobuf::Descriptor*>& visited) {
-    if (visited.count(msg))
-        return 0;  // cycle — handled by IsRecursive
+    if (visited.count(msg)) return 0;  // cycle — handled by IsRecursive
     visited.insert(msg);
     int max_d = 0;
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* f = msg->field(i);
-        if (f->type() != FD::TYPE_MESSAGE || f->is_map())
-            continue;
+        if (f->type() != FD::TYPE_MESSAGE || f->is_map()) continue;
         max_d = std::max(max_d, 1 + NestingDepthImpl(f->message_type(), visited));
     }
     visited.erase(msg);
@@ -281,21 +310,19 @@ int NestingDepthImpl(const google::protobuf::Descriptor* msg,
 
 std::optional<FieldMapping> MapScalarField(const FD* field) {
     const ScalarTypeInfo* base = BaseScalar(field->type());
-    if (!base)
-        return std::nullopt;
+    if (!base) return std::nullopt;
     FieldMapping m{};
-    m.kind     = FieldKind::SCALAR;
+    m.kind = FieldKind::SCALAR;
     m.nullable = IsFieldNullable(field);
-    m.scalar   = *base;
+    m.scalar = *base;
     return m;
 }
 
 std::optional<FieldMapping> MapRepeatedScalar(const FD* field) {
     const ScalarTypeInfo* base = BaseScalar(field->type());
-    if (!base)
-        return std::nullopt;
+    if (!base) return std::nullopt;
     FieldMapping m{};
-    m.kind    = FieldKind::REPEATED_SCALAR;
+    m.kind = FieldKind::REPEATED_SCALAR;
     m.nullable = false;  // repeated fields are never null — empty list is the default
     m.element = *base;
     return m;
@@ -304,7 +331,7 @@ std::optional<FieldMapping> MapRepeatedScalar(const FD* field) {
 std::optional<FieldMapping> MapRepeatedEnum(const FD* /*field*/) {
     const ScalarTypeInfo* base = BaseScalar(FD::TYPE_ENUM);
     FieldMapping m{};
-    m.kind    = FieldKind::REPEATED_SCALAR;
+    m.kind = FieldKind::REPEATED_SCALAR;
     m.nullable = false;
     m.element = *base;
     return m;
@@ -312,72 +339,67 @@ std::optional<FieldMapping> MapRepeatedEnum(const FD* /*field*/) {
 
 std::optional<FieldMapping> MapStructField(const FD* field) {
     const auto* msg = field->message_type();
-    if (IsRecursive(msg))
-        return std::nullopt;
+    if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
-    m.kind          = FieldKind::STRUCT;
-    m.nullable      = IsFieldNullable(field);
-    m.nested_class  = QualifiedClassName(msg, field->file());
+    m.kind = FieldKind::STRUCT;
+    m.nullable = IsFieldNullable(field);
+    m.nested_class = QualifiedClassName(msg, field->file());
     m.nested_header = CrossFileHeader(msg, field->file());
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
-        m.warning = "nesting depth " + std::to_string(depth + 1)
-                  + " — some Arrow consumers may not handle deep nesting well";
+        m.warning = "nesting depth " + std::to_string(depth + 1) +
+                    " — some Arrow consumers may not handle deep nesting well";
     return m;
 }
 
 std::optional<FieldMapping> MapRepeatedMessage(const FD* field) {
     const auto* msg = field->message_type();
-    if (IsRecursive(msg))
-        return std::nullopt;
+    if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
-    m.kind          = FieldKind::REPEATED_STRUCT;
-    m.nullable      = false;
-    m.nested_class  = QualifiedClassName(msg, field->file());
+    m.kind = FieldKind::REPEATED_STRUCT;
+    m.nullable = false;
+    m.nested_class = QualifiedClassName(msg, field->file());
     m.nested_header = CrossFileHeader(msg, field->file());
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
-        m.warning = "list of deeply nested struct (depth "
-                  + std::to_string(depth + 1) + ")";
+        m.warning = "list of deeply nested struct (depth " + std::to_string(depth + 1) + ")";
     return m;
 }
 
 std::optional<FieldMapping> MapMapField(const FD* field) {
     const auto* entry = field->message_type();
-    const auto* key_fd  = entry->field(0);  // "key"
-    const auto* val_fd  = entry->field(1);  // "value"
+    const auto* key_fd = entry->field(0);  // "key"
+    const auto* val_fd = entry->field(1);  // "value"
 
     // Key must be a supported scalar (proto restricts keys to integral/string/bool).
     const ScalarTypeInfo* key_info = BaseScalar(key_fd->type());
-    if (!key_info)
-        return std::nullopt;
+    if (!key_info) return std::nullopt;
 
     FieldMapping m{};
-    m.kind    = FieldKind::MAP;
+    m.kind = FieldKind::MAP;
     m.nullable = false;  // repeated (map) fields are never null
     m.map_key = *key_info;
-    m.warning = "map type has limited Arrow compute kernel support; "
-                "consider named struct fields if the key set is known at schema time";
+    m.warning =
+        "map type has limited Arrow compute kernel support; "
+        "consider named struct fields if the key set is known at schema time";
 
     if (val_fd->type() == FD::TYPE_ENUM) {
         m.map_value_is_message = false;
         m.map_value = *BaseScalar(FD::TYPE_ENUM);
     } else if (val_fd->type() == FD::TYPE_MESSAGE) {
         const auto* val_msg = val_fd->message_type();
-        if (IsRecursive(val_msg))
-            return std::nullopt;
+        if (IsRecursive(val_msg)) return std::nullopt;
         m.map_value_is_message = true;
-        m.map_value_class  = QualifiedClassName(val_msg, field->file());
+        m.map_value_class = QualifiedClassName(val_msg, field->file());
         m.map_value_header = CrossFileHeader(val_msg, field->file());
         m.warning += "; map with message values has fragile Parquet round-trip";
     } else {
         const ScalarTypeInfo* vi = BaseScalar(val_fd->type());
-        if (!vi)
-            return std::nullopt;
+        if (!vi) return std::nullopt;
         m.map_value_is_message = false;
         m.map_value = *vi;
     }
@@ -392,27 +414,29 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
 // Returns empty string if not a recognized GeoArrow type.
 std::string GeoArrowExtensionName(const std::string& fqn) {
     // Coordinate structs
-    if (fqn == "geoarrow.Point"  || fqn == "geoarrow.PointZ")  return "geoarrow.point";
-    if (fqn == "geoarrow.Box"    || fqn == "geoarrow.BoxZ")    return "geoarrow.box";
+    if (fqn == "geoarrow.Point" || fqn == "geoarrow.PointZ") return "geoarrow.point";
+    if (fqn == "geoarrow.Box" || fqn == "geoarrow.BoxZ") return "geoarrow.box";
     // Phase 1 list wrappers (depth 1)
-    if (fqn == "geoarrow.LineString"  || fqn == "geoarrow.LineStringZ")  return "geoarrow.linestring";
-    if (fqn == "geoarrow.MultiPoint"  || fqn == "geoarrow.MultiPointZ") return "geoarrow.multipoint";
+    if (fqn == "geoarrow.LineString" || fqn == "geoarrow.LineStringZ") return "geoarrow.linestring";
+    if (fqn == "geoarrow.MultiPoint" || fqn == "geoarrow.MultiPointZ") return "geoarrow.multipoint";
     // Phase 2 nested list types (depth 2-3)
-    if (fqn == "geoarrow.Polygon"          || fqn == "geoarrow.PolygonZ")          return "geoarrow.polygon";
-    if (fqn == "geoarrow.MultiLineString"  || fqn == "geoarrow.MultiLineStringZ")  return "geoarrow.multilinestring";
-    if (fqn == "geoarrow.MultiPolygon"     || fqn == "geoarrow.MultiPolygonZ")     return "geoarrow.multipolygon";
+    if (fqn == "geoarrow.Polygon" || fqn == "geoarrow.PolygonZ") return "geoarrow.polygon";
+    if (fqn == "geoarrow.MultiLineString" || fqn == "geoarrow.MultiLineStringZ")
+        return "geoarrow.multilinestring";
+    if (fqn == "geoarrow.MultiPolygon" || fqn == "geoarrow.MultiPolygonZ")
+        return "geoarrow.multipolygon";
     return {};
 }
 
 // Returns true for wrapper messages that are collapsed into list fields
 // (no class is generated for these).
 bool IsGeoArrowWrapper(const std::string& fqn) {
-    return fqn == "geoarrow.LineString"       || fqn == "geoarrow.LineStringZ"
-        || fqn == "geoarrow.MultiPoint"       || fqn == "geoarrow.MultiPointZ"
-        || fqn == "geoarrow.LinearRing"       || fqn == "geoarrow.LinearRingZ"
-        || fqn == "geoarrow.Polygon"          || fqn == "geoarrow.PolygonZ"
-        || fqn == "geoarrow.MultiLineString"  || fqn == "geoarrow.MultiLineStringZ"
-        || fqn == "geoarrow.MultiPolygon"     || fqn == "geoarrow.MultiPolygonZ";
+    return fqn == "geoarrow.LineString" || fqn == "geoarrow.LineStringZ" ||
+           fqn == "geoarrow.MultiPoint" || fqn == "geoarrow.MultiPointZ" ||
+           fqn == "geoarrow.LinearRing" || fqn == "geoarrow.LinearRingZ" ||
+           fqn == "geoarrow.Polygon" || fqn == "geoarrow.PolygonZ" ||
+           fqn == "geoarrow.MultiLineString" || fqn == "geoarrow.MultiLineStringZ" ||
+           fqn == "geoarrow.MultiPolygon" || fqn == "geoarrow.MultiPolygonZ";
 }
 
 // Search an options message's UnknownFieldSet for a string extension by number.
@@ -445,8 +469,7 @@ std::optional<FieldMapping> MapGeoArrow(const FD* field) {
     const std::string& fqn = msg->full_name();
 
     std::string ext_name = GeoArrowExtensionName(fqn);
-    if (ext_name.empty())
-        return std::nullopt;
+    if (ext_name.empty()) return std::nullopt;
 
     // Coordinate structs (Point, PointZ, Box, BoxZ) → STRUCT with extension metadata.
     if (!IsGeoArrowWrapper(fqn)) {
@@ -462,8 +485,7 @@ std::optional<FieldMapping> MapGeoArrow(const FD* field) {
     int depth = 0;
     const google::protobuf::Descriptor* current = msg;
     while (IsGeoArrowWrapper(current->full_name())) {
-        if (current->field_count() < 1)
-            return std::nullopt;
+        if (current->field_count() < 1) return std::nullopt;
         const auto* inner_field = current->field(0);
         if (!inner_field->is_repeated() || inner_field->type() != FD::TYPE_MESSAGE)
             return std::nullopt;
@@ -474,16 +496,16 @@ std::optional<FieldMapping> MapGeoArrow(const FD* field) {
     // 'depth' is the number of list levels
 
     FieldMapping m{};
-    m.nullable       = IsFieldNullable(field);
-    m.nested_class   = QualifiedClassName(current, field->file());
-    m.nested_header  = CrossFileHeader(current, field->file());
+    m.nullable = IsFieldNullable(field);
+    m.nested_class = QualifiedClassName(current, field->file());
+    m.nested_header = CrossFileHeader(current, field->file());
     m.extension_name = std::move(ext_name);
-    m.crs            = ReadCrsOption(field);
+    m.crs = ReadCrsOption(field);
 
     if (depth == 1) {
         m.kind = FieldKind::REPEATED_STRUCT;
     } else {
-        m.kind       = FieldKind::NESTED_LIST;
+        m.kind = FieldKind::NESTED_LIST;
         m.list_depth = depth;
     }
     return m;
@@ -501,13 +523,15 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
         FieldMapping m{};
         m.kind = FieldKind::SCALAR;
         m.nullable = IsFieldNullable(field);
-        m.scalar = {
-            "arrow::timestamp(arrow::TimeUnit::NANO)",
-            "int64_t", "int64_t",
-            "std::make_shared<arrow::TimestampScalar>"
-                "({val}, arrow::timestamp(arrow::TimeUnit::NANO))",
-            "INT64_C(0)", "arrow::TimestampBuilder",
-            "arrow::TimestampScalar", false};
+        m.scalar = {"arrow::timestamp(arrow::TimeUnit::NANO)",
+                    "int64_t",
+                    "int64_t",
+                    "std::make_shared<arrow::TimestampScalar>"
+                    "({val}, arrow::timestamp(arrow::TimeUnit::NANO))",
+                    "INT64_C(0)",
+                    "arrow::TimestampBuilder",
+                    "arrow::TimestampScalar",
+                    false};
         return m;
     }
 
@@ -516,13 +540,15 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
         FieldMapping m{};
         m.kind = FieldKind::SCALAR;
         m.nullable = IsFieldNullable(field);
-        m.scalar = {
-            "arrow::duration(arrow::TimeUnit::NANO)",
-            "int64_t", "int64_t",
-            "std::make_shared<arrow::DurationScalar>"
-                "({val}, arrow::duration(arrow::TimeUnit::NANO))",
-            "INT64_C(0)", "arrow::DurationBuilder",
-            "arrow::DurationScalar", false};
+        m.scalar = {"arrow::duration(arrow::TimeUnit::NANO)",
+                    "int64_t",
+                    "int64_t",
+                    "std::make_shared<arrow::DurationScalar>"
+                    "({val}, arrow::duration(arrow::TimeUnit::NANO))",
+                    "INT64_C(0)",
+                    "arrow::DurationBuilder",
+                    "arrow::DurationScalar",
+                    false};
         return m;
     }
 
@@ -530,16 +556,15 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
     const ScalarTypeInfo* wrapper = WrapperTypeInfo(fqn);
     if (wrapper) {
         FieldMapping m{};
-        m.kind     = FieldKind::SCALAR;
+        m.kind = FieldKind::SCALAR;
         m.nullable = true;  // wrappers exist to express "nullable T"
-        m.scalar   = *wrapper;
+        m.scalar = *wrapper;
         return m;
     }
 
     // GeoArrow extension types
     auto geo = MapGeoArrow(field);
-    if (geo)
-        return geo;
+    if (geo) return geo;
 
     return std::nullopt;  // unknown well-known or unsupported message
 }
@@ -552,33 +577,27 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
 
 std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* field) {
     // Reject oneof fields (user-defined, not synthetic proto3 optional).
-    if (field->real_containing_oneof())
-        return std::nullopt;
+    if (field->real_containing_oneof()) return std::nullopt;
 
     // Map fields (detected before repeated, since maps are encoded as repeated).
-    if (field->is_map())
-        return MapMapField(field);
+    if (field->is_map()) return MapMapField(field);
 
     // Repeated fields.
     if (field->is_repeated()) {
-        if (field->type() == FD::TYPE_MESSAGE)
-            return MapRepeatedMessage(field);
-        if (field->type() == FD::TYPE_ENUM)
-            return MapRepeatedEnum(field);
+        if (field->type() == FD::TYPE_MESSAGE) return MapRepeatedMessage(field);
+        if (field->type() == FD::TYPE_ENUM) return MapRepeatedEnum(field);
         return MapRepeatedScalar(field);
     }
 
     // Singular message fields (struct or well-known type).
     if (field->type() == FD::TYPE_MESSAGE) {
         auto wk = MapWellKnown(field);
-        if (wk)
-            return wk;
+        if (wk) return wk;
         return MapStructField(field);
     }
 
     // Singular enum.
-    if (field->type() == FD::TYPE_ENUM)
-        return MapScalarField(field);
+    if (field->type() == FD::TYPE_ENUM) return MapScalarField(field);
 
     // Singular scalar.
     return MapScalarField(field);
@@ -586,8 +605,8 @@ std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* fi
 
 std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field) {
     if (field->real_containing_oneof())
-        return "oneof '" + field->real_containing_oneof()->name()
-             + "' cannot be mapped to a Parquet-safe Arrow type; "
+        return "oneof '" + field->real_containing_oneof()->name() +
+               "' cannot be mapped to a Parquet-safe Arrow type; "
                "consider using separate optional fields instead";
 
     if (field->type() == FD::TYPE_MESSAGE) {
@@ -603,8 +622,7 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field) {
             return "message '" + fqn + "' is recursive and cannot be represented in Arrow";
     }
 
-    if (field->type() == FD::TYPE_GROUP)
-        return "proto2 groups are not supported";
+    if (field->type() == FD::TYPE_GROUP) return "proto2 groups are not supported";
 
     return "unsupported proto field type";
 }
@@ -644,23 +662,34 @@ std::string ViewClassName(const google::protobuf::Descriptor* msg) {
 std::string TsScalarType(google::protobuf::FieldDescriptor::Type type) {
     using FDT = google::protobuf::FieldDescriptor;
     switch (type) {
-        case FDT::TYPE_BOOL:     return "boolean";
+        case FDT::TYPE_BOOL:
+            return "boolean";
         case FDT::TYPE_INT32:
         case FDT::TYPE_SINT32:
-        case FDT::TYPE_SFIXED32: return "number";
+        case FDT::TYPE_SFIXED32:
+            return "number";
         case FDT::TYPE_INT64:
         case FDT::TYPE_SINT64:
-        case FDT::TYPE_SFIXED64: return "bigint";
+        case FDT::TYPE_SFIXED64:
+            return "bigint";
         case FDT::TYPE_UINT32:
-        case FDT::TYPE_FIXED32:  return "number";
+        case FDT::TYPE_FIXED32:
+            return "number";
         case FDT::TYPE_UINT64:
-        case FDT::TYPE_FIXED64:  return "bigint";
-        case FDT::TYPE_FLOAT:    return "number";
-        case FDT::TYPE_DOUBLE:   return "number";
-        case FDT::TYPE_STRING:   return "string";
-        case FDT::TYPE_BYTES:    return "Uint8Array";
-        case FDT::TYPE_ENUM:     return "number";
-        default:                 return "";
+        case FDT::TYPE_FIXED64:
+            return "bigint";
+        case FDT::TYPE_FLOAT:
+            return "number";
+        case FDT::TYPE_DOUBLE:
+            return "number";
+        case FDT::TYPE_STRING:
+            return "string";
+        case FDT::TYPE_BYTES:
+            return "Uint8Array";
+        case FDT::TYPE_ENUM:
+            return "number";
+        default:
+            return "";
     }
 }
 
@@ -671,79 +700,110 @@ std::string TsScalarType(google::protobuf::FieldDescriptor::Type type) {
 std::string CppWireTypeIdHex(google::protobuf::FieldDescriptor::Type type) {
     using FDT = google::protobuf::FieldDescriptor;
     switch (type) {
-        case FDT::TYPE_BOOL:     return "0x01";
+        case FDT::TYPE_BOOL:
+            return "0x01";
         case FDT::TYPE_INT32:
         case FDT::TYPE_SINT32:
-        case FDT::TYPE_SFIXED32: return "0x04";
+        case FDT::TYPE_SFIXED32:
+            return "0x04";
         case FDT::TYPE_INT64:
         case FDT::TYPE_SINT64:
-        case FDT::TYPE_SFIXED64: return "0x05";
+        case FDT::TYPE_SFIXED64:
+            return "0x05";
         case FDT::TYPE_UINT32:
-        case FDT::TYPE_FIXED32:  return "0x08";
+        case FDT::TYPE_FIXED32:
+            return "0x08";
         case FDT::TYPE_UINT64:
-        case FDT::TYPE_FIXED64:  return "0x09";
-        case FDT::TYPE_FLOAT:    return "0x0A";
-        case FDT::TYPE_DOUBLE:   return "0x0B";
-        case FDT::TYPE_STRING:   return "0x0C";
-        case FDT::TYPE_BYTES:    return "0x0D";
-        case FDT::TYPE_ENUM:     return "0x04";  // enums map to INT32
-        default:                 return "";
+        case FDT::TYPE_FIXED64:
+            return "0x09";
+        case FDT::TYPE_FLOAT:
+            return "0x0A";
+        case FDT::TYPE_DOUBLE:
+            return "0x0B";
+        case FDT::TYPE_STRING:
+            return "0x0C";
+        case FDT::TYPE_BYTES:
+            return "0x0D";
+        case FDT::TYPE_ENUM:
+            return "0x04";  // enums map to INT32
+        default:
+            return "";
     }
 }
 
 std::string CppWireTypeIdHex(FieldKind kind) {
     switch (kind) {
-        case FieldKind::STRUCT:          return "0x20";
+        case FieldKind::STRUCT:
+            return "0x20";
         case FieldKind::REPEATED_SCALAR:
-        case FieldKind::REPEATED_STRUCT: return "0x21";
-        case FieldKind::MAP:             return "0x24";
-        default:                         return "";
+        case FieldKind::REPEATED_STRUCT:
+            return "0x21";
+        case FieldKind::MAP:
+            return "0x24";
+        default:
+            return "";
     }
 }
 
 int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type) {
     using FDT = google::protobuf::FieldDescriptor;
     switch (type) {
-        case FDT::TYPE_BOOL:     return 1;
+        case FDT::TYPE_BOOL:
+            return 1;
         case FDT::TYPE_INT32:
         case FDT::TYPE_SINT32:
         case FDT::TYPE_SFIXED32:
         case FDT::TYPE_UINT32:
         case FDT::TYPE_FIXED32:
         case FDT::TYPE_FLOAT:
-        case FDT::TYPE_ENUM:     return 4;
+        case FDT::TYPE_ENUM:
+            return 4;
         case FDT::TYPE_INT64:
         case FDT::TYPE_SINT64:
         case FDT::TYPE_SFIXED64:
         case FDT::TYPE_UINT64:
         case FDT::TYPE_FIXED64:
-        case FDT::TYPE_DOUBLE:   return 8;
+        case FDT::TYPE_DOUBLE:
+            return 8;
         case FDT::TYPE_STRING:
-        case FDT::TYPE_BYTES:    return -1;  // variable-length
-        default:                 return -1;
+        case FDT::TYPE_BYTES:
+            return -1;  // variable-length
+        default:
+            return -1;
     }
 }
 
 std::string WireTypeIdName(google::protobuf::FieldDescriptor::Type type) {
     using FDT = google::protobuf::FieldDescriptor;
     switch (type) {
-        case FDT::TYPE_BOOL:     return "WireTypeId.BOOL";
+        case FDT::TYPE_BOOL:
+            return "WireTypeId.BOOL";
         case FDT::TYPE_INT32:
         case FDT::TYPE_SINT32:
-        case FDT::TYPE_SFIXED32: return "WireTypeId.INT32";
+        case FDT::TYPE_SFIXED32:
+            return "WireTypeId.INT32";
         case FDT::TYPE_INT64:
         case FDT::TYPE_SINT64:
-        case FDT::TYPE_SFIXED64: return "WireTypeId.INT64";
+        case FDT::TYPE_SFIXED64:
+            return "WireTypeId.INT64";
         case FDT::TYPE_UINT32:
-        case FDT::TYPE_FIXED32:  return "WireTypeId.UINT32";
+        case FDT::TYPE_FIXED32:
+            return "WireTypeId.UINT32";
         case FDT::TYPE_UINT64:
-        case FDT::TYPE_FIXED64:  return "WireTypeId.UINT64";
-        case FDT::TYPE_FLOAT:    return "WireTypeId.FLOAT32";
-        case FDT::TYPE_DOUBLE:   return "WireTypeId.FLOAT64";
-        case FDT::TYPE_STRING:   return "WireTypeId.STRING";
-        case FDT::TYPE_BYTES:    return "WireTypeId.BINARY";
-        case FDT::TYPE_ENUM:     return "WireTypeId.INT32";
-        default:                 return "";
+        case FDT::TYPE_FIXED64:
+            return "WireTypeId.UINT64";
+        case FDT::TYPE_FLOAT:
+            return "WireTypeId.FLOAT32";
+        case FDT::TYPE_DOUBLE:
+            return "WireTypeId.FLOAT64";
+        case FDT::TYPE_STRING:
+            return "WireTypeId.STRING";
+        case FDT::TYPE_BYTES:
+            return "WireTypeId.BINARY";
+        case FDT::TYPE_ENUM:
+            return "WireTypeId.INT32";
+        default:
+            return "";
     }
 }
 

@@ -4,13 +4,13 @@
 #ifndef FLETCHER_INCLUDE_CORE_ENVELOPE_HPP_
 #define FLETCHER_INCLUDE_CORE_ENVELOPE_HPP_
 
-#include "fletcher/core/types.hpp"
-
 #include <bit>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+
+#include "fletcher/core/types.hpp"
 
 namespace fletcher {
 
@@ -19,8 +19,8 @@ static_assert(std::endian::native == std::endian::little,
 
 // An encoded row bundled with optional attachments.
 struct Envelope {
-    EncodedRow   row;
-    Attachments  attachments;
+    EncodedRow row;
+    Attachments attachments;
 };
 
 // ---------------------------------------------------------------------------
@@ -50,8 +50,7 @@ inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
         buf.insert(buf.end(), p, p + 4);
     };
     auto append_bytes = [&](const uint8_t* data, size_t len) {
-        if (len == 0)
-            return;
+        if (len == 0) return;
         buf.insert(buf.end(), data, data + len);
     };
 
@@ -66,16 +65,14 @@ inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
         append_bytes(reinterpret_cast<const uint8_t*>(key.data()), key.size());
         const uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
         append_u32(blob_len);
-        if (blob_len > 0)
-            append_bytes(blob->data(), blob_len);
+        if (blob_len > 0) append_bytes(blob->data(), blob_len);
     }
 
     return buf;
 }
 
 inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
-    if (size < 8)
-        throw std::invalid_argument("DeserializeEnvelope: buffer too small");
+    if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
 
     size_t pos = 0;
 
@@ -108,8 +105,7 @@ inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
         const uint32_t blob_len = read_u32();
         if (pos + blob_len > size)
             throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
-        auto blob = std::make_shared<const std::vector<uint8_t>>(
-            data + pos, data + pos + blob_len);
+        auto blob = std::make_shared<const std::vector<uint8_t>>(data + pos, data + pos + blob_len);
         pos += blob_len;
 
         attachments[std::move(key)] = std::move(blob);

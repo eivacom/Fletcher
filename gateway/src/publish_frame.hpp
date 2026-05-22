@@ -23,9 +23,9 @@ namespace fletcher::gateway {
 /// the parser was given — the caller must not free the input before
 /// using these.
 struct PublishFrameParts {
-    std::string    topic;
+    std::string topic;
     const uint8_t* envelope_data;
-    std::size_t    envelope_size;
+    std::size_t envelope_size;
 };
 
 /// Parse a PUBLISH binary frame. Throws `std::invalid_argument` when

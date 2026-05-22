@@ -19,10 +19,6 @@
 // Each test uses its own XRCE session_key so the two tests can run
 // concurrently against the same Agent.
 
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
-#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
-
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
@@ -30,6 +26,9 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,20 +51,21 @@ namespace {
 
 constexpr uint32_t kDdsDomain = 145;
 constexpr const char* kAgentIp = "127.0.0.1";
-constexpr uint16_t   kAgentPort = 2018;
+constexpr uint16_t kAgentPort = 2018;
 
 // Schema carries both field-level and top-level Arrow KeyValueMetadata
 // so the /__schema companion-topic round-trip is verified with
 // check_metadata = true, not just the structural type comparison.
 std::shared_ptr<arrow::Schema> SensorSchema() {
     auto temp_meta = arrow::key_value_metadata({"unit"}, {"celsius"});
-    auto schema_meta =
-        arrow::key_value_metadata({"source"}, {"fletcher-interop"});
-    return arrow::schema({
-        arrow::field("sensor_id",   arrow::int32(),   false),
-        arrow::field("temperature", arrow::float64(), false, temp_meta),
-        arrow::field("label",       arrow::utf8(),    false),
-    }, schema_meta);
+    auto schema_meta = arrow::key_value_metadata({"source"}, {"fletcher-interop"});
+    return arrow::schema(
+        {
+            arrow::field("sensor_id", arrow::int32(), false),
+            arrow::field("temperature", arrow::float64(), false, temp_meta),
+            arrow::field("label", arrow::utf8(), false),
+        },
+        schema_meta);
 }
 
 ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
@@ -79,31 +79,23 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
 // Per-sample assertion helper used by both directions: verifies all
 // three field types (int32, float64, utf8) so a wire-format bug that
 // silently mangles any single field would surface immediately.
-void ExpectRowEquals(const ArrowRow& row,
-                     int32_t expected_id,
-                     double expected_temp,
+void ExpectRowEquals(const ArrowRow& row, int32_t expected_id, double expected_temp,
                      const std::string& expected_label) {
     ASSERT_EQ(row.size(), 3u);
-    EXPECT_EQ(
-        std::static_pointer_cast<arrow::Int32Scalar>(row[0])->value,
-        expected_id);
-    EXPECT_DOUBLE_EQ(
-        std::static_pointer_cast<arrow::DoubleScalar>(row[1])->value,
-        expected_temp);
-    EXPECT_EQ(
-        std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(),
-        expected_label);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(row[0])->value, expected_id);
+    EXPECT_DOUBLE_EQ(std::static_pointer_cast<arrow::DoubleScalar>(row[1])->value, expected_temp);
+    EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(), expected_label);
 }
 
 XrceConfig XrceConfigFor(uint32_t session_key) {
     XrceConfig cfg{};
-    cfg.transport          = XrceTransport::kUdp;
-    cfg.agent_ip           = kAgentIp;
-    cfg.agent_port         = kAgentPort;
-    cfg.session_key        = session_key;
+    cfg.transport = XrceTransport::kUdp;
+    cfg.agent_ip = kAgentIp;
+    cfg.agent_port = kAgentPort;
+    cfg.session_key = session_key;
     // Match the FastDDS-side participants on the same DDS domain so the
     // Agent-bridged XRCE participant lands on the same bus.
-    cfg.domain_id          = static_cast<uint16_t>(kDdsDomain);
+    cfg.domain_id = static_cast<uint16_t>(kDdsDomain);
     return cfg;
 }
 
@@ -112,17 +104,15 @@ XrceConfig XrceConfigFor(uint32_t session_key) {
 // Owns the Agent's lifetime for the entire test binary run.
 // ─────────────────────────────────────────────────────────────────────
 class MicroXRCEAgentEnv : public ::testing::Environment {
- public:
+   public:
     void SetUp() override {
         SpawnAgent();
         WaitUntilReachable();
     }
 
-    void TearDown() override {
-        KillAgent();
-    }
+    void TearDown() override { KillAgent(); }
 
- private:
+   private:
     // The Agent binary links dynamically against libmicroxrcedds_agent
     // (and friends) installed in MICRO_XRCE_AGENT_LIB_DIR but not on the
     // system loader's default search path. We give *only the child* an
@@ -141,11 +131,10 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         STARTUPINFOA si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
-        if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE,
-                            CREATE_NEW_PROCESS_GROUP, env_block.data(),
-                            nullptr, &si, &pi)) {
-            FAIL() << "CreateProcess failed for " << path
-                   << " (GetLastError=" << GetLastError() << ")";
+        if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP,
+                            env_block.data(), nullptr, &si, &pi)) {
+            FAIL() << "CreateProcess failed for " << path << " (GetLastError=" << GetLastError()
+                   << ")";
         }
         process_handle_ = pi.hProcess;
         CloseHandle(pi.hThread);
@@ -159,12 +148,10 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
             // thanks to fork's copy-on-write), then exec.
             const char* current = std::getenv("LD_LIBRARY_PATH");
             const std::string updated =
-                std::string(MICRO_XRCE_AGENT_LIB_DIR) + ":" +
-                (current ? current : "");
+                std::string(MICRO_XRCE_AGENT_LIB_DIR) + ":" + (current ? current : "");
             setenv("LD_LIBRARY_PATH", updated.c_str(), 1);
 
-            const char* argv[] = {
-                path.c_str(), "udp4", "-p", port_str.c_str(), nullptr};
+            const char* argv[] = {path.c_str(), "udp4", "-p", port_str.c_str(), nullptr};
             execv(path.c_str(), const_cast<char**>(argv));
             // execv only returns on failure.
             std::_Exit(127);
@@ -192,7 +179,7 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 
         std::string block;
         bool path_written = false;
-        for (char* p = env_strings; *p != '\0'; ) {
+        for (char* p = env_strings; *p != '\0';) {
             const size_t len = std::strlen(p);
             // PATH is case-insensitive on Windows.
             if (len >= 5 && _strnicmp(p, "PATH=", 5) == 0) {
@@ -237,8 +224,7 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
                 std::this_thread::sleep_for(50ms);
             }
         }
-        FAIL() << "MicroXRCEAgent did not become reachable on "
-               << kAgentIp << ":" << kAgentPort
+        FAIL() << "MicroXRCEAgent did not become reachable on " << kAgentIp << ":" << kAgentPort
                << " within 15 s. Last probe error: " << last_error;
     }
 
@@ -285,7 +271,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     std::vector<ArrowRow> rx_rows;
 
     auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
-    auto xrce    = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
 
     PubSubArrow xrce_pub(xrce);
     PubSubArrow fastdds_sub(fastdds);
@@ -312,9 +298,9 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // three field types. Reliable QoS + KEEP_ALL guarantees in-order
     // delivery from a single writer, so order can be asserted.
     const std::vector<std::tuple<int32_t, double, std::string>> samples = {
-        {  1,   23.5, "from-xrce-1"},
-        { 42, -7.125, "from-xrce-2"},
-        {999, 100.0,  "from-xrce-3"},
+        {1, 23.5, "from-xrce-1"},
+        {42, -7.125, "from-xrce-2"},
+        {999, 100.0, "from-xrce-3"},
     };
     for (const auto& [id, temp, label] : samples) {
         xrce_pub.Publish(topic, SensorRow(id, temp, label));
@@ -322,10 +308,10 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
 
     {
         std::unique_lock<std::mutex> lk(mu);
-        ASSERT_TRUE(cv.wait_for(lk, 10s,
-                                [&] { return rx_rows.size() >= samples.size(); }))
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
             << "XRCE → Agent → FastDDS delivery must complete within 10 s "
-               "(received " << rx_rows.size() << "/" << samples.size() << ")";
+               "(received "
+            << rx_rows.size() << "/" << samples.size() << ")";
     }
     fastdds_sub.Unsubscribe(result.subscription_id);
 
@@ -349,7 +335,7 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::vector<ArrowRow> rx_rows;
 
     auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
-    auto xrce    = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
 
     PubSubArrow fastdds_pub(fastdds);
     PubSubArrow xrce_sub(xrce);
@@ -370,9 +356,9 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/true));
 
     const std::vector<std::tuple<int32_t, double, std::string>> samples = {
-        { 99,  12.5,    "from-fastdds-1"},
-        {  0,  -0.001,  "from-fastdds-2"},
-        { -3,  1.0e9,   "from-fastdds-3"},
+        {99, 12.5, "from-fastdds-1"},
+        {0, -0.001, "from-fastdds-2"},
+        {-3, 1.0e9, "from-fastdds-3"},
     };
     for (const auto& [id, temp, label] : samples) {
         fastdds_pub.Publish(topic, SensorRow(id, temp, label));
@@ -380,10 +366,10 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
 
     {
         std::unique_lock<std::mutex> lk(mu);
-        ASSERT_TRUE(cv.wait_for(lk, 10s,
-                                [&] { return rx_rows.size() >= samples.size(); }))
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
             << "FastDDS → Agent → XRCE delivery must complete within 10 s "
-               "(received " << rx_rows.size() << "/" << samples.size() << ")";
+               "(received "
+            << rx_rows.size() << "/" << samples.size() << ")";
     }
     xrce_sub.Unsubscribe(result.subscription_id);
 

@@ -31,15 +31,12 @@
 //   provider is tracked separately; once it exists this same exe
 //   will gain a `--provider TYPE` switch.
 
-#include "gateway.hpp"
-
-#include <fletcher/pubsub/driver.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
 #include <cstdio>
 #include <cstdlib>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/pubsub.hpp>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -47,6 +44,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "gateway.hpp"
 
 namespace {
 
@@ -61,9 +60,8 @@ namespace {
 // but never inspects or validates it — pure passthrough.
 // ─────────────────────────────────────────────────────────────────────
 class InProcessProvider : public fletcher::PubSub {
- public:
-    void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema schema,
+   public:
+    void CreateTopic(const std::vector<std::string>& segments, fletcher::OwnedSchema schema,
                      std::any /*config*/) override {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
@@ -72,8 +70,7 @@ class InProcessProvider : public fletcher::PubSub {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments,
-                 RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const fletcher::Attachments& attachments) override {
         std::vector<uint8_t> buf;
         fletcher::VectorWriteBuffer wb(buf);
@@ -90,10 +87,9 @@ class InProcessProvider : public fletcher::PubSub {
         }
     }
 
-    fletcher::SubscriptionResult Subscribe(
-        const std::vector<std::string>& segments,
-        SubscribeCallback callback,
-        std::any /*config*/) override {
+    fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
+                                           SubscribeCallback callback,
+                                           std::any /*config*/) override {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         slot.callback = std::move(callback);
@@ -112,7 +108,7 @@ class InProcessProvider : public fletcher::PubSub {
         }
     }
 
- private:
+   private:
     struct TopicState {
         SubscribeCallback callback;
         fletcher::OwnedSchema schema;
@@ -134,7 +130,7 @@ class InProcessProvider : public fletcher::PubSub {
 
 struct Args {
     std::string bind_address = "0.0.0.0";
-    uint16_t    port = 9090;
+    uint16_t port = 9090;
 };
 
 Args ParseArgs(int argc, char* argv[]) {
@@ -146,13 +142,10 @@ Args ParseArgs(int argc, char* argv[]) {
         } else if (arg == "--bind-address" && i + 1 < argc) {
             a.bind_address = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
-            std::printf(
-                "Usage: %s [--port N] [--bind-address ADDR]\n",
-                argv[0]);
+            std::printf("Usage: %s [--port N] [--bind-address ADDR]\n", argv[0]);
             std::exit(0);
         } else {
-            std::fprintf(stderr, "fletcher-gateway: unknown argument: %s\n",
-                         arg.c_str());
+            std::fprintf(stderr, "fletcher-gateway: unknown argument: %s\n", arg.c_str());
             std::exit(2);
         }
     }
@@ -175,7 +168,7 @@ int main(int argc, char* argv[]) {
 
     fletcher::GatewayOptions opts;
     opts.address = args.bind_address;
-    opts.port    = args.port;
+    opts.port = args.port;
 
     fletcher::Gateway gw(driver, opts);
     gw.Start();

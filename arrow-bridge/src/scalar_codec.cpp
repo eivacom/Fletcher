@@ -21,9 +21,7 @@ void AppendFixed(std::vector<uint8_t>& buf, T value) {
     buf.insert(buf.end(), bytes, bytes + sizeof(T));
 }
 
-void AppendVariableLength(std::vector<uint8_t>& buf,
-                          const uint8_t*        data,
-                          uint32_t              len) {
+void AppendVariableLength(std::vector<uint8_t>& buf, const uint8_t* data, uint32_t len) {
     AppendFixed(buf, len);
     buf.insert(buf.end(), data, data + len);
 }
@@ -78,15 +76,13 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
         case T::LARGE_BINARY:
         case T::STRING_VIEW:
         case T::BINARY_VIEW: {
-            const auto&   s       = static_cast<const arrow::BaseBinaryScalar&>(scalar);
+            const auto& s = static_cast<const arrow::BaseBinaryScalar&>(scalar);
             const int64_t raw_len = s.value->size();
             if (raw_len < 0 || raw_len > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
                 throw std::invalid_argument(
                     "EncodeScalar: variable-length field exceeds 4 GiB limit");
-            AppendVariableLength(
-                buf,
-                reinterpret_cast<const uint8_t*>(s.value->data()),
-                static_cast<uint32_t>(raw_len));
+            AppendVariableLength(buf, reinterpret_cast<const uint8_t*>(s.value->data()),
+                                 static_cast<uint32_t>(raw_len));
             break;
         }
 
@@ -109,7 +105,7 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             AppendFixed(buf, static_cast<const arrow::DurationScalar&>(scalar).value);
             break;
         case T::FIXED_SIZE_BINARY: {
-            const auto&   s          = static_cast<const arrow::FixedSizeBinaryScalar&>(scalar);
+            const auto& s = static_cast<const arrow::FixedSizeBinaryScalar&>(scalar);
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*scalar.type).byte_width();
             const auto* data = reinterpret_cast<const uint8_t*>(s.value->data());
@@ -156,15 +152,13 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
                 "use a non-dictionary schema field instead");
 
         default:
-            throw std::invalid_argument(
-                "EncodeScalar: unsupported Arrow type: " + scalar.type->ToString());
+            throw std::invalid_argument("EncodeScalar: unsupported Arrow type: " +
+                                        scalar.type->ToString());
     }
 }
 
 std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
-    Reader& r,
-    const std::shared_ptr<arrow::DataType>& type) {
-
+    Reader& r, const std::shared_ptr<arrow::DataType>& type) {
     using T = arrow::Type;
     switch (type->id()) {
         case T::BOOL:
@@ -196,18 +190,25 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
         case T::LARGE_BINARY:
         case T::STRING_VIEW:
         case T::BINARY_VIEW: {
-            uint32_t       len  = r.Read<uint32_t>();
-            const uint8_t* ptr  = r.ReadBytes(len);
-            auto           ibuf = arrow::Buffer::FromString(
-                std::string(reinterpret_cast<const char*>(ptr), len));
+            uint32_t len = r.Read<uint32_t>();
+            const uint8_t* ptr = r.ReadBytes(len);
+            auto ibuf =
+                arrow::Buffer::FromString(std::string(reinterpret_cast<const char*>(ptr), len));
             switch (type->id()) {
-                case T::STRING:       return std::make_shared<arrow::StringScalar>(ibuf);
-                case T::LARGE_STRING: return std::make_shared<arrow::LargeStringScalar>(ibuf);
-                case T::BINARY:       return std::make_shared<arrow::BinaryScalar>(ibuf);
-                case T::LARGE_BINARY: return std::make_shared<arrow::LargeBinaryScalar>(ibuf);
-                case T::STRING_VIEW:  return std::make_shared<arrow::StringViewScalar>(ibuf);
-                case T::BINARY_VIEW:  return std::make_shared<arrow::BinaryViewScalar>(ibuf);
-                default:              break;
+                case T::STRING:
+                    return std::make_shared<arrow::StringScalar>(ibuf);
+                case T::LARGE_STRING:
+                    return std::make_shared<arrow::LargeStringScalar>(ibuf);
+                case T::BINARY:
+                    return std::make_shared<arrow::BinaryScalar>(ibuf);
+                case T::LARGE_BINARY:
+                    return std::make_shared<arrow::LargeBinaryScalar>(ibuf);
+                case T::STRING_VIEW:
+                    return std::make_shared<arrow::StringViewScalar>(ibuf);
+                case T::BINARY_VIEW:
+                    return std::make_shared<arrow::BinaryViewScalar>(ibuf);
+                default:
+                    break;
             }
             break;
         }
@@ -235,8 +236,8 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
         case T::FIXED_SIZE_BINARY: {
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*type).byte_width();
-            const uint8_t* ptr  = r.ReadBytes(byte_width);
-            auto           ibuf = std::make_shared<arrow::Buffer>(ptr, byte_width);
+            const uint8_t* ptr = r.ReadBytes(byte_width);
+            auto ibuf = std::make_shared<arrow::Buffer>(ptr, byte_width);
             return std::make_shared<arrow::FixedSizeBinaryScalar>(ibuf, type);
         }
         case T::HALF_FLOAT:
@@ -245,26 +246,24 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
             return std::make_shared<arrow::MonthIntervalScalar>(r.Read<int32_t>());
         case T::INTERVAL_DAY_TIME: {
             arrow::DayTimeIntervalType::DayMilliseconds v;
-            v.days         = r.Read<int32_t>();
+            v.days = r.Read<int32_t>();
             v.milliseconds = r.Read<int32_t>();
             return std::make_shared<arrow::DayTimeIntervalScalar>(v);
         }
         case T::INTERVAL_MONTH_DAY_NANO: {
             arrow::MonthDayNanoIntervalType::MonthDayNanos v;
-            v.months      = r.Read<int32_t>();
-            v.days        = r.Read<int32_t>();
+            v.months = r.Read<int32_t>();
+            v.days = r.Read<int32_t>();
             v.nanoseconds = r.Read<int64_t>();
             return std::make_shared<arrow::MonthDayNanoIntervalScalar>(v);
         }
         case T::DECIMAL128: {
             const uint8_t* ptr = r.ReadBytes(16);
-            return std::make_shared<arrow::Decimal128Scalar>(
-                arrow::Decimal128(ptr), type);
+            return std::make_shared<arrow::Decimal128Scalar>(arrow::Decimal128(ptr), type);
         }
         case T::DECIMAL256: {
             const uint8_t* ptr = r.ReadBytes(32);
-            return std::make_shared<arrow::Decimal256Scalar>(
-                arrow::Decimal256(ptr), type);
+            return std::make_shared<arrow::Decimal256Scalar>(arrow::Decimal256(ptr), type);
         }
 
         case T::DICTIONARY:
@@ -273,8 +272,8 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
                 "use a non-dictionary schema field instead");
 
         default:
-            throw std::invalid_argument(
-                "DecodeScalar: unsupported Arrow type: " + type->ToString());
+            throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " +
+                                        type->ToString());
     }
     throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " + type->ToString());
 }

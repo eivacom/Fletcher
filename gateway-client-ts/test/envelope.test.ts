@@ -20,9 +20,9 @@ describe('Envelope', () => {
 
   it('round-trips an envelope with attachments', () => {
     const env: Envelope = {
-      row: new Uint8Array([0xDE, 0xAD]),
+      row: new Uint8Array([0xde, 0xad]),
       attachments: new Map([
-        ['image', new Uint8Array([0xFF, 0xD8, 0xFF])],
+        ['image', new Uint8Array([0xff, 0xd8, 0xff])],
         ['meta', new Uint8Array([0x01])],
       ]),
     };
@@ -31,7 +31,7 @@ describe('Envelope', () => {
 
     expect(decoded.row).toEqual(env.row);
     expect(decoded.attachments.size).toBe(2);
-    expect(decoded.attachments.get('image')).toEqual(new Uint8Array([0xFF, 0xD8, 0xFF]));
+    expect(decoded.attachments.get('image')).toEqual(new Uint8Array([0xff, 0xd8, 0xff]));
     expect(decoded.attachments.get('meta')).toEqual(new Uint8Array([0x01]));
   });
 

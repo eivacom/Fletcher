@@ -11,14 +11,13 @@
 // Each component has unit tests against a mock provider; only this test
 // covers the seam between them.
 
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
-#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <condition_variable>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,9 +34,9 @@ constexpr uint32_t kTestDomain = 137;
 
 std::shared_ptr<arrow::Schema> SensorSchema() {
     return arrow::schema({
-        arrow::field("sensor_id",   arrow::int32(),   false),
+        arrow::field("sensor_id", arrow::int32(), false),
         arrow::field("temperature", arrow::float64(), false),
-        arrow::field("label",       arrow::utf8(),    false),
+        arrow::field("label", arrow::utf8(), false),
     });
 }
 
@@ -101,9 +100,7 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     ASSERT_EQ(rx_row.size(), 3u);
     EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(rx_row[0])->value, 42);
     EXPECT_EQ(std::static_pointer_cast<arrow::DoubleScalar>(rx_row[1])->value, 23.5);
-    EXPECT_EQ(
-        std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(),
-        "alpha");
+    EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(), "alpha");
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
@@ -128,8 +125,7 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 
     auto result = sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
         std::lock_guard<std::mutex> lk(mu);
-        received_ids.push_back(
-            std::static_pointer_cast<arrow::Int32Scalar>(row[0])->value);
+        received_ids.push_back(std::static_pointer_cast<arrow::Int32Scalar>(row[0])->value);
         cv.notify_all();
     });
 

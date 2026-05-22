@@ -3,12 +3,11 @@
 //
 #include "fletcher/pubsub_arrow/pubsub_arrow.hpp"
 
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/core/write_buffer.hpp>
-
-#include <arrow/c/bridge.h>
 #include <arrow/api.h>
+#include <arrow/c/bridge.h>
 
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <stdexcept>
 
 namespace fletcher {
@@ -22,8 +21,7 @@ namespace {
 OwnedSchema ExportToNano(const arrow::Schema& schema) {
     OwnedSchema out;
     auto status = arrow::ExportSchema(schema, out.get());
-    if (!status.ok())
-        throw std::runtime_error("PubSubArrow: ExportSchema: " + status.ToString());
+    if (!status.ok()) throw std::runtime_error("PubSubArrow: ExportSchema: " + status.ToString());
     return out;
 }
 
@@ -32,8 +30,7 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
     OwnedSchema copy = OwnedSchema::DeepCopy(schema);
     auto result = arrow::ImportSchema(copy.get());
     if (!result.ok())
-        throw std::runtime_error("PubSubArrow: ImportSchema: " +
-                                 result.status().ToString());
+        throw std::runtime_error("PubSubArrow: ImportSchema: " + result.status().ToString());
     return *result;
 }
 
@@ -51,15 +48,13 @@ PubSubArrow::PubSubArrow(std::shared_ptr<PubSub> provider)
 // -----------------------------------------------------------------------
 
 void PubSubArrow::CreateTopic(const std::vector<std::string>& segments,
-                               std::shared_ptr<arrow::Schema> schema,
-                               std::any config) {
+                              std::shared_ptr<arrow::Schema> schema, std::any config) {
     OwnedSchema nano;
     if (schema) {
         nano = ExportToNano(*schema);
         std::string key = JoinSegments(segments);
         std::lock_guard lock(mu_);
-        codecs_[key] = TopicCodec{schema,
-                                   std::make_unique<Codec>(schema)};
+        codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
     }
     driver_->CreateTopic(segments, std::move(nano), std::move(config));
 }
@@ -68,31 +63,27 @@ void PubSubArrow::CreateTopic(const std::vector<std::string>& segments,
 // Publish
 // -----------------------------------------------------------------------
 
-void PubSubArrow::Publish(const std::vector<std::string>& segments,
-                           const ArrowRow& row,
-                           const Attachments& attachments) {
+void PubSubArrow::Publish(const std::vector<std::string>& segments, const ArrowRow& row,
+                          const Attachments& attachments) {
     std::string key = JoinSegments(segments);
     Codec* codec;
     {
         std::lock_guard lock(mu_);
         auto it = codecs_.find(key);
         if (it == codecs_.end())
-            throw std::runtime_error(
-                "PubSubArrow::Publish: no codec for topic " + key);
+            throw std::runtime_error("PubSubArrow::Publish: no codec for topic " + key);
         codec = it->second.codec.get();
     }
 
     auto encoded = codec->EncodeRow(row);
-    driver_->Publish(segments,
-        [data = std::move(encoded)](WriteBuffer& buf) {
-            buf.Append(data.data(), data.size());
-        },
+    driver_->Publish(
+        segments,
+        [data = std::move(encoded)](WriteBuffer& buf) { buf.Append(data.data(), data.size()); },
         attachments);
 }
 
 void PubSubArrow::PublishDirect(const std::vector<std::string>& segments,
-                                 PubSub::RowEncoder encoder,
-                                 const Attachments& attachments) {
+                                PubSub::RowEncoder encoder, const Attachments& attachments) {
     driver_->Publish(segments, std::move(encoder), attachments);
 }
 
@@ -100,15 +91,14 @@ void PubSubArrow::PublishDirect(const std::vector<std::string>& segments,
 // Subscribe
 // -----------------------------------------------------------------------
 
-PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
-    const std::vector<std::string>& segments, SubscribeCallback callback,
-    std::any config) {
+PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::string>& segments,
+                                                    SubscribeCallback callback, std::any config) {
     std::string key = JoinSegments(segments);
 
-    auto result = driver_->Subscribe(segments,
-        [this, key, cb = std::move(callback)](
-            const uint8_t* data, size_t len,
-            SharedSchema /*schema*/, Attachments att) {
+    auto result = driver_->Subscribe(
+        segments,
+        [this, key, cb = std::move(callback)](const uint8_t* data, size_t len,
+                                              SharedSchema /*schema*/, Attachments att) {
             Codec* codec;
             {
                 std::lock_guard lock(mu_);
@@ -118,7 +108,8 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
             }
             auto row = codec->DecodeRow(data, len);
             cb(std::move(row), std::move(att));
-        }, std::move(config));
+        },
+        std::move(config));
 
     // Convert the nanoarrow schema to Arrow C++.
     std::shared_ptr<arrow::Schema> arrow_schema;
@@ -126,9 +117,7 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
         arrow_schema = ImportFromNano(result.schema.get());
         std::lock_guard lock(mu_);
         if (codecs_.find(key) == codecs_.end()) {
-            codecs_[key] = TopicCodec{
-                arrow_schema,
-                std::make_unique<Codec>(arrow_schema)};
+            codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
         }
     }
 
@@ -139,13 +128,9 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(
 // Subscription management / introspection
 // -----------------------------------------------------------------------
 
-void PubSubArrow::Unsubscribe(uint64_t subscription_id) {
-    driver_->Unsubscribe(subscription_id);
-}
+void PubSubArrow::Unsubscribe(uint64_t subscription_id) { driver_->Unsubscribe(subscription_id); }
 
-std::vector<std::string> PubSubArrow::ListTopics() const {
-    return driver_->ListTopics();
-}
+std::vector<std::string> PubSubArrow::ListTopics() const { return driver_->ListTopics(); }
 
 bool PubSubArrow::HasTopic(const std::vector<std::string>& segments) const {
     return driver_->HasTopic(segments);

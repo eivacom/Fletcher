@@ -40,13 +40,13 @@ describe('Text frame builders (client → server)', () => {
 
 describe('Binary frame builder (client → server)', () => {
   it('buildPublish encodes [TOPIC_LEN:2][TOPIC:N][ENVELOPE:rest]', () => {
-    const envBytes = new Uint8Array([0xAA, 0xBB]);
+    const envBytes = new Uint8Array([0xaa, 0xbb]);
     const frame = buildPublish('t', envBytes);
     const view = new DataView(frame.buffer, frame.byteOffset);
     expect(view.getUint16(0, true)).toBe(1); // topic length
     expect(frame[2]).toBe(0x74); // 't'
-    expect(frame[3]).toBe(0xAA);
-    expect(frame[4]).toBe(0xBB);
+    expect(frame[3]).toBe(0xaa);
+    expect(frame[4]).toBe(0xbb);
     expect(frame.byteLength).toBe(2 + 1 + 2);
   });
 });
@@ -104,13 +104,13 @@ describe('Binary message parser (server → client)', () => {
     const buf = new Uint8Array(8 + 3);
     const view = new DataView(buf.buffer);
     view.setBigUint64(0, 42n, true);
-    buf[8] = 0xCA;
-    buf[9] = 0xFE;
+    buf[8] = 0xca;
+    buf[9] = 0xfe;
     buf[10] = 0x00;
 
     const msg = parseBinaryMessage(buf);
     expect(msg.subId).toBe(42n);
-    expect(msg.envelope).toEqual(new Uint8Array([0xCA, 0xFE, 0x00]));
+    expect(msg.envelope).toEqual(new Uint8Array([0xca, 0xfe, 0x00]));
   });
 
   it('throws on frame shorter than 8 bytes', () => {

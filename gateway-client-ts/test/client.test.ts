@@ -65,8 +65,12 @@ describe('FletcherClient — connect', () => {
         setTimeout(() => this.onerror?.(), 0);
       }
       // Suppress the open scheduled in the parent.
-      override set onopen(_fn: (() => void) | null) { /* noop */ }
-      override get onopen() { return null; }
+      override set onopen(_fn: (() => void) | null) {
+        /* noop */
+      }
+      override get onopen() {
+        return null;
+      }
     };
 
     const client = new FletcherClient({ url: 'ws://localhost:9090' });

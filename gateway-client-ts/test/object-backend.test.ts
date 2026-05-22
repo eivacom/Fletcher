@@ -14,9 +14,9 @@ describe('ObjectBackend (positional)', () => {
 
   const schema: SchemaDescriptor = {
     fields: [
-      { name: 'id',    fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+      { name: 'id', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
       { name: 'value', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
-      { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING,  nullable: true },
+      { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING, nullable: true },
     ],
   };
 
@@ -31,9 +31,9 @@ describe('ObjectBackend (positional)', () => {
   it('returns null for null fields', () => {
     const twoFieldSchema: SchemaDescriptor = {
       fields: [
-        { name: 'id',    fieldNumber: 1, wireType: WireTypeId.INT32,   nullable: false },
+        { name: 'id', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
         { name: 'value', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: true },
-        { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING,  nullable: true },
+        { name: 'label', fieldNumber: 3, wireType: WireTypeId.STRING, nullable: true },
       ],
     };
 

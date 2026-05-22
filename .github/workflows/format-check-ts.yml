@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: format-check-ts
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.mjs"
+      - "**/*.cjs"
+      - "**/*.json"
+      - ".prettierrc"
+      - ".prettierignore"
+      - ".github/workflows/format-check-ts.yml"
+
+jobs:
+  check:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+      # Pin Node to the same patch version the devcontainer installs so
+      # any tooling that pulls Node-version-sensitive behaviour stays in
+      # lock-step between editor and CI.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+      # Pin prettier in lock-step with the devcontainer's globally-
+      # installed version so devcontainer + CI agree on what
+      # "formatted" means.
+      - name: Run prettier --check
+        run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore

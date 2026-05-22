@@ -9,16 +9,15 @@
 // - Round-trip through Codec preserves scalar values
 // - Optional fields are null when not set, valid + correct when set
 
-#include "simple.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "simple.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -84,22 +83,27 @@ TEST(SensorReadingTest, SchemaStructure) {
 
 TEST(SensorReadingTest, EncodeIsNonEmpty) {
     fletcher_gen::integration::SensorReading r;
-    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
-     .set_active(false).set_location("").set_payload("").set_sequence(0u)
-     .set_timestamp_ns(0LL);
+    r.set_sensor_id(1)
+        .set_temperature(0.0)
+        .set_pressure(0.0f)
+        .set_active(false)
+        .set_location("")
+        .set_payload("")
+        .set_sequence(0u)
+        .set_timestamp_ns(0LL);
     EXPECT_FALSE(r.Encode().empty());
 }
 
 TEST(SensorReadingTest, RoundtripScalarValues) {
     fletcher_gen::integration::SensorReading r;
     r.set_sensor_id(42)
-     .set_temperature(23.5)
-     .set_pressure(1013.25f)
-     .set_active(true)
-     .set_location("Room 101")
-     .set_payload("\xDE\xAD\xBE\xEF")
-     .set_sequence(7u)
-     .set_timestamp_ns(1'000'000'000LL);
+        .set_temperature(23.5)
+        .set_pressure(1013.25f)
+        .set_active(true)
+        .set_location("Room 101")
+        .set_payload("\xDE\xAD\xBE\xEF")
+        .set_sequence(7u)
+        .set_timestamp_ns(1'000'000'000LL);
 
     auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     ASSERT_EQ(scalars.size(), 10u);
@@ -127,9 +131,14 @@ TEST(SensorReadingTest, RoundtripScalarValues) {
 
 TEST(SensorReadingTest, OptionalFieldsNullWhenNotSet) {
     fletcher_gen::integration::SensorReading r;
-    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
-     .set_active(false).set_location("").set_payload("").set_sequence(0u)
-     .set_timestamp_ns(0LL);
+    r.set_sensor_id(1)
+        .set_temperature(0.0)
+        .set_pressure(0.0f)
+        .set_active(false)
+        .set_location("")
+        .set_payload("")
+        .set_sequence(0u)
+        .set_timestamp_ns(0LL);
 
     auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     EXPECT_FALSE(scalars[8]->is_valid);  // humidity
@@ -138,9 +147,16 @@ TEST(SensorReadingTest, OptionalFieldsNullWhenNotSet) {
 
 TEST(SensorReadingTest, OptionalFieldsValidWhenSet) {
     fletcher_gen::integration::SensorReading r;
-    r.set_sensor_id(1).set_temperature(0.0).set_pressure(0.0f)
-     .set_active(false).set_location("").set_payload("").set_sequence(0u)
-     .set_timestamp_ns(0LL).set_humidity(55.3).set_label("humid");
+    r.set_sensor_id(1)
+        .set_temperature(0.0)
+        .set_pressure(0.0f)
+        .set_active(false)
+        .set_location("")
+        .set_payload("")
+        .set_sequence(0u)
+        .set_timestamp_ns(0LL)
+        .set_humidity(55.3)
+        .set_label("humid");
 
     auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::SensorReadingSchema());
     ASSERT_TRUE(scalars[8]->is_valid);

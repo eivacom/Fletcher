@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <gtest/gtest.h>
-
 #include <arrow/api.h>
+#include <gtest/gtest.h>
 
 #include <fletcher/arrow_bridge/codec.hpp>
 
@@ -13,24 +12,25 @@
 
 namespace {
 
-std::shared_ptr<arrow::Scalar> Roundtrip(
-    const std::shared_ptr<arrow::DataType>& type,
-    const std::shared_ptr<arrow::Scalar>&   in)
-{
+std::shared_ptr<arrow::Scalar> Roundtrip(const std::shared_ptr<arrow::DataType>& type,
+                                         const std::shared_ptr<arrow::Scalar>& in) {
     auto schema = arrow::schema({arrow::field("v", type, /*nullable=*/true)});
     fletcher::Codec codec(schema);
-    auto row     = codec.EncodeRow({in});
+    auto row = codec.EncodeRow({in});
     auto decoded = codec.DecodeRow(row);
-    if (decoded.size() != 1) { ADD_FAILURE() << "Expected decoded.size() == 1"; return nullptr; }
+    if (decoded.size() != 1) {
+        ADD_FAILURE() << "Expected decoded.size() == 1";
+        return nullptr;
+    }
     return decoded[0];
 }
 
-#define CHECK_POS_RT(type_expr, scalar_expr)                    \
-    do {                                                        \
-        auto _orig = (scalar_expr);                             \
-        auto _dec  = Roundtrip((type_expr), _orig);             \
-        ASSERT_NE(_dec, nullptr);                               \
-        EXPECT_TRUE(_dec->Equals(*_orig));                      \
+#define CHECK_POS_RT(type_expr, scalar_expr)       \
+    do {                                           \
+        auto _orig = (scalar_expr);                \
+        auto _dec = Roundtrip((type_expr), _orig); \
+        ASSERT_NE(_dec, nullptr);                  \
+        EXPECT_TRUE(_dec->Equals(*_orig));         \
     } while (false)
 
 }  // namespace
@@ -45,14 +45,15 @@ TEST(CodecTest, BooleanRoundtrip) {
 }
 
 TEST(CodecTest, IntegerRoundtrip) {
-    CHECK_POS_RT(arrow::int8(),  std::make_shared<arrow::Int8Scalar>(-42));
+    CHECK_POS_RT(arrow::int8(), std::make_shared<arrow::Int8Scalar>(-42));
     CHECK_POS_RT(arrow::int16(), std::make_shared<arrow::Int16Scalar>(1234));
     CHECK_POS_RT(arrow::int32(), std::make_shared<arrow::Int32Scalar>(-1'000'000));
     CHECK_POS_RT(arrow::int64(), std::make_shared<arrow::Int64Scalar>(9'223'372'036'854'775'807LL));
-    CHECK_POS_RT(arrow::uint8(),  std::make_shared<arrow::UInt8Scalar>(255u));
+    CHECK_POS_RT(arrow::uint8(), std::make_shared<arrow::UInt8Scalar>(255u));
     CHECK_POS_RT(arrow::uint16(), std::make_shared<arrow::UInt16Scalar>(65535u));
     CHECK_POS_RT(arrow::uint32(), std::make_shared<arrow::UInt32Scalar>(4'294'967'295u));
-    CHECK_POS_RT(arrow::uint64(), std::make_shared<arrow::UInt64Scalar>(18'446'744'073'709'551'615ull));
+    CHECK_POS_RT(arrow::uint64(),
+                 std::make_shared<arrow::UInt64Scalar>(18'446'744'073'709'551'615ull));
 }
 
 TEST(CodecTest, FloatRoundtrip) {
@@ -65,8 +66,8 @@ TEST(CodecTest, StringAndBinaryRoundtrip) {
     auto str = std::make_shared<arrow::StringScalar>("hello positional");
     CHECK_POS_RT(arrow::utf8(), str);
 
-    auto bin_data = std::make_shared<arrow::Buffer>(
-        reinterpret_cast<const uint8_t*>("\xDE\xAD\xBE\xEF"), 4);
+    auto bin_data =
+        std::make_shared<arrow::Buffer>(reinterpret_cast<const uint8_t*>("\xDE\xAD\xBE\xEF"), 4);
     auto bin = std::make_shared<arrow::BinaryScalar>(bin_data);
     CHECK_POS_RT(arrow::binary(), bin);
 }
@@ -81,8 +82,7 @@ TEST(CodecTest, TemporalTypesRoundtrip) {
 TEST(CodecTest, DecimalRoundtrip) {
     auto dec128_type = arrow::decimal128(10, 2);
     CHECK_POS_RT(dec128_type,
-                 std::make_shared<arrow::Decimal128Scalar>(
-                     arrow::Decimal128(12345), dec128_type));
+                 std::make_shared<arrow::Decimal128Scalar>(arrow::Decimal128(12345), dec128_type));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,8 +158,7 @@ TEST(CodecTest, MultiFieldRowRoundtrip) {
 
     auto decoded = codec.DecodeRow(codec.EncodeRow(row));
     ASSERT_EQ(decoded.size(), 4u);
-    for (int i = 0; i < 4; ++i)
-        EXPECT_TRUE(decoded[i]->Equals(*row[i]));
+    for (int i = 0; i < 4; ++i) EXPECT_TRUE(decoded[i]->Equals(*row[i]));
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +177,8 @@ TEST(CodecTest, StructRoundtrip) {
         arrow::ScalarVector{
             std::make_shared<arrow::Int32Scalar>(7),
             std::make_shared<arrow::StringScalar>("hi"),
-        }, stype);
+        },
+        stype);
 
     auto decoded = codec.DecodeRow(codec.EncodeRow({struct_scalar}));
     ASSERT_EQ(decoded.size(), 1u);
@@ -197,7 +197,8 @@ TEST(CodecTest, StructWithNullChild) {
         arrow::ScalarVector{
             arrow::MakeNullScalar(arrow::int32()),
             std::make_shared<arrow::StringScalar>("hello"),
-        }, stype);
+        },
+        stype);
 
     auto decoded = codec.DecodeRow(codec.EncodeRow({struct_scalar}));
     ASSERT_EQ(decoded.size(), 1u);
@@ -280,11 +281,10 @@ TEST(CodecTest, MapRoundtrip) {
     auto keys = key_builder_ptr.Finish().ValueOrDie();
     auto vals = val_builder_ptr.Finish().ValueOrDie();
 
-    auto entries_type = arrow::struct_({
-        arrow::field("key", arrow::utf8(), false),
-        arrow::field("value", arrow::int32())});
-    auto entries = std::make_shared<arrow::StructArray>(
-        entries_type, 2, arrow::ArrayVector{keys, vals});
+    auto entries_type = arrow::struct_(
+        {arrow::field("key", arrow::utf8(), false), arrow::field("value", arrow::int32())});
+    auto entries =
+        std::make_shared<arrow::StructArray>(entries_type, 2, arrow::ArrayVector{keys, vals});
     auto map_scalar = std::make_shared<arrow::MapScalar>(entries);
 
     auto decoded = codec.DecodeRow(codec.EncodeRow({map_scalar}));
@@ -297,17 +297,18 @@ TEST(CodecTest, MapRoundtrip) {
 // ---------------------------------------------------------------------------
 
 TEST(CodecTest, DenseUnionRoundtrip) {
-    auto union_type = arrow::dense_union({
-        arrow::field("i", arrow::int32()),
-        arrow::field("s", arrow::utf8()),
-    }, {0, 1});
+    auto union_type = arrow::dense_union(
+        {
+            arrow::field("i", arrow::int32()),
+            arrow::field("s", arrow::utf8()),
+        },
+        {0, 1});
     auto schema = arrow::schema({arrow::field("u", union_type)});
     fletcher::Codec codec(schema);
 
     // Encode an int variant.
     auto int_val = std::make_shared<arrow::Int32Scalar>(42);
-    auto union_scalar = std::make_shared<arrow::DenseUnionScalar>(
-        int_val, 0, union_type);
+    auto union_scalar = std::make_shared<arrow::DenseUnionScalar>(int_val, 0, union_type);
 
     auto decoded = codec.DecodeRow(codec.EncodeRow({union_scalar}));
     ASSERT_EQ(decoded.size(), 1u);

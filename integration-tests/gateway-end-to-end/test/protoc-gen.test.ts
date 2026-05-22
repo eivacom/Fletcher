@@ -25,18 +25,15 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  FletcherClient,
-  WireTypeId,
-} from 'fletcher-gateway-client';
+import { FletcherClient, WireTypeId } from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
 // Port can be overridden via env (e.g. when 19092 is occupied locally).
-const TEST_PORT  = parseInt(process.env.TEST_PORT ?? '19092', 10);
-const TEST_URL   = `ws://127.0.0.1:${TEST_PORT}`;
+const TEST_PORT = parseInt(process.env.TEST_PORT ?? '19092', 10);
+const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 const TEST_TOPIC = 'telemetry';
 
 function findGatewayBinary(): string {
@@ -53,16 +50,13 @@ function findGatewayBinary(): string {
   }
   throw new Error(
     `gateway binary not found. Checked: ${candidates.join(', ')}. ` +
-    `Set GATEWAY_BIN to override.`,
+      `Set GATEWAY_BIN to override.`,
   );
 }
 
 async function spawnGateway(port: number): Promise<ChildProcess> {
   const bin = findGatewayBinary();
-  const child = spawn(bin, [
-    '--port', String(port),
-    '--bind-address', '127.0.0.1',
-  ], {
+  const child = spawn(bin, ['--port', String(port), '--bind-address', '127.0.0.1'], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -159,7 +153,9 @@ describe('protoc-gen-fletcher TS class over WebSocket', () => {
     const subId = await client.subscribe(
       TEST_TOPIC,
       Telemetry,
-      (row) => { received.push(row); },  // row: ITelemetry inferred
+      (row) => {
+        received.push(row);
+      }, // row: ITelemetry inferred
     );
 
     const sent: ITelemetry = {
@@ -196,16 +192,14 @@ describe('client publish ↔ subscription round-trip', () => {
     await client.connect();
 
     const received: ITelemetry[] = [];
-    const subId = await client.subscribe(
-      TEST_TOPIC,
-      Telemetry,
-      (row) => { received.push(row); },
-    );
+    const subId = await client.subscribe(TEST_TOPIC, Telemetry, (row) => {
+      received.push(row);
+    });
 
     const sent: ITelemetry[] = [
-      { sensor_id: 1,   temperature: 23.5,   label: 'first'  },
-      { sensor_id: 42,  temperature: -7.125, label: 'second' },
-      { sensor_id: 999, temperature: 1.0e9,  label: 'third'  },
+      { sensor_id: 1, temperature: 23.5, label: 'first' },
+      { sensor_id: 42, temperature: -7.125, label: 'second' },
+      { sensor_id: 999, temperature: 1.0e9, label: 'third' },
     ];
     for (const row of sent) {
       await client.publish(TEST_TOPIC, Telemetry, row);
@@ -240,8 +234,7 @@ describe('client publish ↔ subscription round-trip', () => {
 // or rely on a publisher to have announced one.
 // ---------------------------------------------------------------------
 describe('subscribe<ITelemetry> with gateway-supplied schema', () => {
-  it('subscriber gets typed delivery without passing a local schema',
-     async () => {
+  it('subscriber gets typed delivery without passing a local schema', async () => {
     const PUB_TOPIC = 'telemetry/gateway-supplied';
 
     const pub = new FletcherClient({ url: TEST_URL });
@@ -254,10 +247,9 @@ describe('subscribe<ITelemetry> with gateway-supplied schema', () => {
     await sub.connect();
 
     const received: ITelemetry[] = [];
-    const subId = await sub.subscribe<ITelemetry>(
-      PUB_TOPIC,
-      (row) => { received.push(row); },
-    );
+    const subId = await sub.subscribe<ITelemetry>(PUB_TOPIC, (row) => {
+      received.push(row);
+    });
 
     const sent: ITelemetry = {
       sensor_id: 1,

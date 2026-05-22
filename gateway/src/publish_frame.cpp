@@ -10,8 +10,7 @@ namespace fletcher::gateway {
 namespace {
 
 uint16_t ReadU16LE(const uint8_t* p) {
-    return static_cast<uint16_t>(p[0]) |
-           (static_cast<uint16_t>(p[1]) << 8);
+    return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
 }
 
 }  // anonymous namespace

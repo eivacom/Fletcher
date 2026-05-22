@@ -6,16 +6,15 @@
 // optional strings (customer_note, OrderItem.note). Verifies the
 // full combination round-trips.
 
-#include "complex.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "complex.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -71,15 +70,14 @@ TEST(OrderProtoTest, OrderSchemaCombinesWktListStructMapAndOptional) {
 TEST(OrderProtoTest, OrderRoundtripFullComplexRow) {
     fletcher_gen::integration::OrderItem item1, item2;
     item1.set_product_id("SKU-001").set_quantity(2).set_unit_price(9.99);
-    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99)
-         .set_note("gift wrap");
+    item2.set_product_id("SKU-002").set_quantity(1).set_unit_price(24.99).set_note("gift wrap");
 
     fletcher_gen::integration::Order order;
     order.set_order_id("ORD-12345")
-         .set_created_at(1'700'000'000'000'000'000LL)
-         .set_items({item1, item2})
-         .set_tags({{"priority", 1}, {"region", 3}})
-         .set_customer_note("Leave at door");
+        .set_created_at(1'700'000'000'000'000'000LL)
+        .set_items({item1, item2})
+        .set_tags({{"priority", 1}, {"region", 3}})
+        .set_customer_note("Leave at door");
 
     auto scalars = RoundTrip(order.Encode(), fletcher_gen::integration::OrderSchema());
     ASSERT_EQ(scalars.size(), 5u);

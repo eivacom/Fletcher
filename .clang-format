@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Fletcher's C++ formatting style. Three overrides from Google's defaults,
+# documented inline so contributors and reviewers know why each exists.
+BasedOnStyle: Google
+
+# Fletcher's existing code consistently uses 4 spaces per indent level
+# (verified across core/, pubsub/, arrow-bridge/, gateway/, etc. before
+# this config went live). Google's default is 2; we override to keep
+# the baseline-reformat diff near zero.
+IndentWidth: 4
+
+# 100-column lines fit comfortably on modern monitors and side-by-side
+# review diffs. Google's 80 is too tight for Fletcher's descriptive
+# namespace + template names. Existing code already runs up to ~90 cols.
+ColumnLimit: 100
+
+# Fletcher requires C++20 features (concepts, <bit>, std::span, etc.).
+# Tell clang-format so any standard-sensitive formatting (e.g. concept
+# requires clauses) is handled correctly.
+Standard: c++20

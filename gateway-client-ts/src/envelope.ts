@@ -74,8 +74,7 @@ export function deserializeEnvelope(data: Uint8Array): Envelope {
   let pos = 0;
 
   const readU32 = (): number => {
-    if (pos + 4 > data.byteLength)
-      throw new Error('deserializeEnvelope: unexpected end of buffer');
+    if (pos + 4 > data.byteLength) throw new Error('deserializeEnvelope: unexpected end of buffer');
     const v = view.getUint32(pos, true);
     pos += 4;
     return v;
@@ -83,8 +82,7 @@ export function deserializeEnvelope(data: Uint8Array): Envelope {
 
   // Row.
   const rowLen = readU32();
-  if (pos + rowLen > data.byteLength)
-    throw new Error('deserializeEnvelope: row data truncated');
+  if (pos + rowLen > data.byteLength) throw new Error('deserializeEnvelope: row data truncated');
   const row = data.slice(pos, pos + rowLen);
   pos += rowLen;
 
@@ -93,8 +91,7 @@ export function deserializeEnvelope(data: Uint8Array): Envelope {
   const attachments = new Map<string, Uint8Array>();
   for (let i = 0; i < attachCount; i++) {
     const keyLen = readU32();
-    if (pos + keyLen > data.byteLength)
-      throw new Error('deserializeEnvelope: key data truncated');
+    if (pos + keyLen > data.byteLength) throw new Error('deserializeEnvelope: key data truncated');
     const key = textDecoder.decode(data.subarray(pos, pos + keyLen));
     pos += keyLen;
 
