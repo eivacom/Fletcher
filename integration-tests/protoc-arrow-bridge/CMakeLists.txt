@@ -66,7 +66,7 @@ set(PROTO_STEMS
     pubsub
     evolution_v1
     evolution_v2
-    geoarrow_test)
+    flatten)
 
 set(GENERATED_HEADERS)
 foreach(_stem IN LISTS PROTO_STEMS)
@@ -83,33 +83,11 @@ foreach(_stem IN LISTS PROTO_STEMS)
                 "${_src}"
         DEPENDS "${_src}" fletcher-protoc::plugin
                 "${PROTO_DIR}/fletcher/options.proto"
-                "${PROTO_DIR}/geoarrow/geoarrow.proto"
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
     list(APPEND GENERATED_HEADERS "${_hdr}" "${_vhdr}")
 endforeach()
-
-# geoarrow.proto lives under proto/geoarrow/ so its generated headers go into
-# a matching subdirectory — that keeps the include path "geoarrow/..." working
-# for code that references geoarrow types directly.
-file(MAKE_DIRECTORY "${GENERATED_DIR}/geoarrow")
-set(_geoarrow_src  "${PROTO_DIR}/geoarrow/geoarrow.proto")
-set(_geoarrow_hdr  "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.pb.h")
-set(_geoarrow_vhdr "${GENERATED_DIR}/geoarrow/geoarrow.fletcher.arrow.pb.h")
-add_custom_command(
-    OUTPUT  "${_geoarrow_hdr}" "${_geoarrow_vhdr}"
-    COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
-            "--fletcher_out=${GENERATED_DIR}/geoarrow"
-            "-I" "${PROTO_DIR}/geoarrow"
-            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
-            "${_geoarrow_src}"
-    DEPENDS "${_geoarrow_src}" fletcher-protoc::plugin
-    COMMENT "protoc-gen-fletcher: geoarrow/geoarrow.proto"
-    VERBATIM
-)
-list(APPEND GENERATED_HEADERS "${_geoarrow_hdr}" "${_geoarrow_vhdr}")
 
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
@@ -125,7 +103,7 @@ add_executable(integration_tests
     tests/test_complex.cpp
     tests/test_pubsub.cpp
     tests/test_schema_evolution.cpp
-    tests/test_geoarrow.cpp
+    tests/test_flatten.cpp
     tests/test_native_roundtrip.cpp
     tests/test_arrow_view.cpp)
 add_dependencies(integration_tests generate_headers)

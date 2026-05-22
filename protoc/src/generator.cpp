@@ -878,11 +878,19 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
 // Gather supported fields from a message
 // -----------------------------------------------------------------------
 
-std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
-                                    std::string* skipped_comment) {
-    std::vector<FieldInfo> fields;
+void GatherFieldsImpl(const google::protobuf::Descriptor* msg,
+                      std::vector<FieldInfo>& fields,
+                      std::string* skipped_comment) {
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
+
+        // Field-level flatten: inline the referenced message's fields.
+        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE
+            && !fd->is_repeated() && HasFieldFlatten(fd)) {
+            GatherFieldsImpl(fd->message_type(), fields, skipped_comment);
+            continue;
+        }
+
         if (auto m = MapField(fd)) {
             fields.push_back(
                 {fd->name(), std::move(*m), fd->number(), std::to_string(fd->number())});
@@ -890,6 +898,12 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
             *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
     }
+}
+
+std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
+                                    std::string* skipped_comment) {
+    std::vector<FieldInfo> fields;
+    GatherFieldsImpl(msg, fields, skipped_comment);
     return fields;
 }
 
@@ -1073,18 +1087,7 @@ void EmitNanoarrowTypeSetup(std::ostringstream& o, const std::string& child_expr
 
 std::string GenerateSchemaFunction(const std::string& cls, const std::vector<FieldInfo>& fields,
                                    const google::protobuf::Descriptor* msg) {
-    // Detect whether any field carries GeoArrow extension metadata.
-    bool has_geo = false;
-    for (const auto& fi : fields)
-        if (!fi.mapping.extension_name.empty()) {
-            has_geo = true;
-            break;
-        }
-
     std::ostringstream o;
-
-    // TODO: GeoArrow CRS parameters will be restored in a later phase.
-    (void)has_geo;
 
     o << "/// Returns the nanoarrow schema describing this message's wire layout.\n"
       << "/// Providers publish this schema on companion topics so that subscribers\n"
@@ -1140,9 +1143,9 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
           << "            ArrowCharView(\"field_id\"),\n"
           << "            ArrowCharView(\"" << fi.field_id << "\"));\n";
 
-        // GeoArrow extension metadata (if present)
+        // Arrow extension metadata (if present)
         if (!fi.mapping.extension_name.empty()) {
-            o << "        // TODO: GeoArrow CRS resolution will be restored in a later phase.\n"
+            o << "        // TODO: CRS resolution will be emitted in a later phase.\n"
               << "        ArrowMetadataBuilderAppend(&buf,\n"
               << "            ArrowCharView(\"ARROW:extension:name\"),\n"
               << "            ArrowCharView(\"" << fi.mapping.extension_name << "\"));\n"
@@ -2054,8 +2057,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
           << "#include <functional>\n";
     }
 
-    // TODO: GeoArrow CRS utilities — will be restored in a later phase.
-    // For now, schema functions use nanoarrow metadata APIs directly.
+    // TODO: CRS utilities — will be restored in a later phase.
 
     // Cross-file generated headers (for referenced messages from other .proto files).
     const auto cross_includes = CollectCrossFileIncludes(file);
@@ -2081,9 +2083,10 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
             continue;
         }
 
-        // GeoArrow wrapper messages (LineString, MultiPoint, etc.) are
-        // collapsed into list fields by the type mapper — skip class generation.
-        if (IsGeoArrowWrapper(msg)) continue;
+        // Flattened wrapper messages are absorbed into the parent's schema
+        // by the type mapper — skip class generation.
+        if (IsFlattenedWrapper(msg))
+            continue;
 
         std::string skipped;
         auto fields = GatherFields(msg, &skipped);
@@ -2151,9 +2154,12 @@ std::string DotToSlash(const std::string& s) {
     return out;
 }
 
-// Walk GeoArrow wrapper chain to the innermost coordinate struct.
-const google::protobuf::Descriptor* GeoArrowInnerCoord(const google::protobuf::Descriptor* msg) {
-    while (IsGeoArrowWrapper(msg)) msg = msg->field(0)->message_type();
+// Walk flatten chain to the innermost leaf struct.
+const google::protobuf::Descriptor* FlattenLeafStruct(
+    const google::protobuf::Descriptor* msg) {
+    while (IsFlattenedWrapper(msg) &&
+           msg->field(0)->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE)
+        msg = msg->field(0)->message_type();
     return msg;
 }
 
@@ -2199,7 +2205,7 @@ std::string TsFieldType(const FieldInfo& fi, const google::protobuf::FieldDescri
             return TsInterfaceName(fd->message_type()) + "[]";
 
         case FieldKind::NESTED_LIST: {
-            const auto* coord = GeoArrowInnerCoord(fd->message_type());
+            const auto* coord = FlattenLeafStruct(fd->message_type());
             std::string ts = TsInterfaceName(coord);
             for (int d = 0; d < fi.mapping.list_depth; ++d) ts += "[]";
             return ts;
@@ -2266,11 +2272,11 @@ void EmitTsFieldDescriptor(std::ostringstream& o, const FieldInfo& fi,
           << ", nullable: false, fields: " << TsSchemaConstName(fd->message_type()) << ".fields }";
     } else if (fi.mapping.kind == FieldKind::NESTED_LIST) {
         // Build nested element descriptors from inside out.
-        const auto* coord = GeoArrowInnerCoord(fd->message_type());
-        std::string inner =
-            "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
-            ", nullable: false, fields: " +
-            TsSchemaConstName(coord) + ".fields }";
+        const auto* coord = FlattenLeafStruct(fd->message_type());
+        std::string inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
+                            ", nullable: false, fields: "
+                          + TsSchemaConstName(coord) + ".fields }";
+
         for (int d = 1; d < fi.mapping.list_depth; ++d)
             inner =
                 "{ name: '', fieldNumber: 0, wireType: WireTypeId.LIST"
@@ -2372,8 +2378,9 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
                         ts_imports.insert(fd->message_type()->file()->name());
                 }
                 if (m->kind == FieldKind::NESTED_LIST) {
-                    const auto* coord = GeoArrowInnerCoord(fd->message_type());
-                    if (coord->file() != file) ts_imports.insert(coord->file()->name());
+                    const auto* coord = FlattenLeafStruct(fd->message_type());
+                    if (coord->file() != file)
+                        ts_imports.insert(coord->file()->name());
                 }
                 if (m->kind == FieldKind::MAP && m->map_value_is_message) {
                     const auto* val_fd = fd->message_type()->field(1);
@@ -2690,7 +2697,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
     // Check if any message can produce a view class.
     bool has_views = false;
     for (const auto* msg : messages) {
-        if (IsRecursive(msg) || IsGeoArrowWrapper(msg)) continue;
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
         has_views = true;
         break;
     }
@@ -2758,7 +2765,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
     }
 
     for (const auto* msg : messages) {
-        if (IsRecursive(msg) || IsGeoArrowWrapper(msg)) continue;
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
 
         std::string skipped;
         auto fields = GatherFields(msg, &skipped);
