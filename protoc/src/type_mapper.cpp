@@ -323,6 +323,9 @@ int NestingDepthImpl(const google::protobuf::Descriptor* msg,
 // MapField helpers for composite kinds
 // -----------------------------------------------------------------------
 
+std::optional<FieldMapping> MapFlattenedSingular(const FD* field);
+std::optional<FieldMapping> MapFlattenedRepeated(const FD* field);
+
 std::optional<FieldMapping> MapScalarField(const FD* field) {
     const ScalarTypeInfo* base = BaseScalar(field->type());
     if (!base) return std::nullopt;
