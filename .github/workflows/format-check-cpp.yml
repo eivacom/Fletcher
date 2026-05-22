@@ -5,7 +5,7 @@ name: format-check-cpp
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:

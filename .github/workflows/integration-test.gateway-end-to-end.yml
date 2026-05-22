@@ -5,7 +5,7 @@ name: integration-test.gateway-end-to-end
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:
