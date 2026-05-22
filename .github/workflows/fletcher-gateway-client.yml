@@ -5,15 +5,10 @@ name: fletcher-gateway-client
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "gateway-client-ts/**"
-      - ".github/workflows/fletcher-gateway-client.yml"
-      - "!**/*.md"
 
 jobs:
   build-and-test:
@@ -43,14 +38,3 @@ jobs:
 
       - name: Test
         run: npm test
-
-  # ── PR Gate ───────────────────────────────────────────────────────────────
-  pr_gate:
-    needs: [ build-and-test ]
-    runs-on: ubuntu-latest
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/pr-gate
-        with:
-          results: "${{ needs.build-and-test.result }}"

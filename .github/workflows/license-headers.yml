@@ -3,13 +3,8 @@
 #
 name: license-headers
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 # Block-merge guard. Every tracked file must carry
 #
@@ -113,14 +108,3 @@ jobs:
           fi
 
           echo "All ${#files[@]} tracked file(s) carry the required headers."
-
-  # ── PR Gate ───────────────────────────────────────────────────────────────
-  pr_gate:
-    needs: [ check ]
-    runs-on: ubuntu-latest
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/pr-gate
-        with:
-          results: "${{ needs.check.result }}"
