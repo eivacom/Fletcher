@@ -10,16 +10,15 @@
 // - nullable flatten wrapper
 // - repeated flatten wrapper
 
-#include "flatten.fletcher.pb.h"
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+
+#include "flatten.fletcher.pb.h"
 
 using namespace fletcher;
 
@@ -70,8 +69,7 @@ TEST(FlattenTest, ScalarWrapperRoundtrip) {
     r.set_shape({});
     r.set_bad(fletcher_gen::integration::BadFlatten{});
 
-    auto scalars = RoundTrip(r.Encode(),
-                             fletcher_gen::integration::FlattenTestRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::FlattenTestRowSchema());
     ASSERT_GE(scalars.size(), 1u);
 
     auto* temp = dynamic_cast<arrow::FloatScalar*>(scalars[0].get());
@@ -91,8 +89,7 @@ TEST(FlattenTest, FieldFlattenRoundtrip) {
     r.set_shape({});
     r.set_bad(fletcher_gen::integration::BadFlatten{});
 
-    auto scalars = RoundTrip(r.Encode(),
-                             fletcher_gen::integration::FlattenTestRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::FlattenTestRowSchema());
     ASSERT_GE(scalars.size(), 2u);
 
     auto* pos = dynamic_cast<arrow::StructScalar*>(scalars[1].get());
@@ -113,8 +110,7 @@ TEST(FlattenTest, FieldFlattenInlinesFields) {
     EXPECT_EQ(schema->field(1)->name(), "position");
     EXPECT_EQ(schema->field(1)->type()->id(), arrow::Type::STRUCT);
 
-    auto struct_type = std::dynamic_pointer_cast<arrow::StructType>(
-        schema->field(1)->type());
+    auto struct_type = std::dynamic_pointer_cast<arrow::StructType>(schema->field(1)->type());
     ASSERT_TRUE(struct_type);
     ASSERT_EQ(struct_type->num_fields(), 2);
     EXPECT_EQ(struct_type->field(0)->name(), "x");
@@ -133,18 +129,13 @@ TEST(FlattenTest, ChainedFlattenProducesNestedLists) {
     // with repeated Coord.  Result: List<List<Struct<x,y>>>.
     EXPECT_EQ(schema->field(2)->name(), "shape");
 
-    auto outer_list = std::dynamic_pointer_cast<arrow::ListType>(
-        schema->field(2)->type());
-    ASSERT_TRUE(outer_list) << "Expected outer List, got "
-                            << schema->field(2)->type()->ToString();
+    auto outer_list = std::dynamic_pointer_cast<arrow::ListType>(schema->field(2)->type());
+    ASSERT_TRUE(outer_list) << "Expected outer List, got " << schema->field(2)->type()->ToString();
 
-    auto inner_list = std::dynamic_pointer_cast<arrow::ListType>(
-        outer_list->value_type());
-    ASSERT_TRUE(inner_list) << "Expected inner List, got "
-                            << outer_list->value_type()->ToString();
+    auto inner_list = std::dynamic_pointer_cast<arrow::ListType>(outer_list->value_type());
+    ASSERT_TRUE(inner_list) << "Expected inner List, got " << outer_list->value_type()->ToString();
 
-    auto coord_struct = std::dynamic_pointer_cast<arrow::StructType>(
-        inner_list->value_type());
+    auto coord_struct = std::dynamic_pointer_cast<arrow::StructType>(inner_list->value_type());
     ASSERT_TRUE(coord_struct) << "Expected leaf Struct, got "
                               << inner_list->value_type()->ToString();
     ASSERT_EQ(coord_struct->num_fields(), 2);
@@ -164,8 +155,7 @@ TEST(FlattenTest, ChainedFlattenRoundtrip) {
     r.set_shape({{c1, c2, c3}});
     r.set_bad(fletcher_gen::integration::BadFlatten{});
 
-    auto scalars = RoundTrip(r.Encode(),
-                             fletcher_gen::integration::FlattenTestRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::FlattenTestRowSchema());
     ASSERT_GE(scalars.size(), 3u);
 
     auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
@@ -192,8 +182,7 @@ TEST(FlattenTest, MultifieldFlattenIgnored) {
     EXPECT_EQ(schema->field(4)->name(), "bad");
     EXPECT_EQ(schema->field(4)->type()->id(), arrow::Type::STRUCT);
 
-    auto struct_type = std::dynamic_pointer_cast<arrow::StructType>(
-        schema->field(4)->type());
+    auto struct_type = std::dynamic_pointer_cast<arrow::StructType>(schema->field(4)->type());
     ASSERT_TRUE(struct_type);
     ASSERT_EQ(struct_type->num_fields(), 2);
     EXPECT_EQ(struct_type->field(0)->name(), "x");
@@ -210,10 +199,8 @@ TEST(FlattenTest, RepeatedFlattenWrapperBecomesListScalar) {
     // Result: List<Float32> (not List<Struct<celsius>>).
     EXPECT_EQ(schema->field(3)->name(), "temps");
 
-    auto list_type = std::dynamic_pointer_cast<arrow::ListType>(
-        schema->field(3)->type());
-    ASSERT_TRUE(list_type) << "Expected List, got "
-                           << schema->field(3)->type()->ToString();
+    auto list_type = std::dynamic_pointer_cast<arrow::ListType>(schema->field(3)->type());
+    ASSERT_TRUE(list_type) << "Expected List, got " << schema->field(3)->type()->ToString();
     EXPECT_EQ(list_type->value_type()->id(), arrow::Type::FLOAT);
 }
 
@@ -236,8 +223,7 @@ TEST(FlattenTest, OptionalFlattenNullWhenNotSet) {
     r.set_shape({});
     r.set_bad(fletcher_gen::integration::BadFlatten{});
 
-    auto scalars = RoundTrip(r.Encode(),
-                             fletcher_gen::integration::FlattenTestRowSchema());
+    auto scalars = RoundTrip(r.Encode(), fletcher_gen::integration::FlattenTestRowSchema());
     ASSERT_GE(scalars.size(), 6u);
     EXPECT_FALSE(scalars[5]->is_valid);
 }

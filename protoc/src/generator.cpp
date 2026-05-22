@@ -159,8 +159,9 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
 struct FieldInfo {
     std::string name;
     FieldMapping mapping;
-    int field_number = 0;  // proto field number — stable across renames
-    std::string field_id;  // string form of field_number for metadata
+    int field_number = 0;                                   // proto field number
+    std::string field_id;                                   // string form of field_number
+    const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
 };
 
 // -----------------------------------------------------------------------
@@ -817,22 +818,21 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
 // Gather supported fields from a message
 // -----------------------------------------------------------------------
 
-void GatherFieldsImpl(const google::protobuf::Descriptor* msg,
-                      std::vector<FieldInfo>& fields,
+void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<FieldInfo>& fields,
                       std::string* skipped_comment) {
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
 
         // Field-level flatten: inline the referenced message's fields.
-        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE
-            && !fd->is_repeated() && HasFieldFlatten(fd)) {
+        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
+            HasFieldFlatten(fd)) {
             GatherFieldsImpl(fd->message_type(), fields, skipped_comment);
             continue;
         }
 
         if (auto m = MapField(fd)) {
             fields.push_back(
-                {fd->name(), std::move(*m), fd->number(), std::to_string(fd->number())});
+                {fd->name(), std::move(*m), fd->number(), std::to_string(fd->number()), fd});
         } else {
             *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
@@ -2013,8 +2013,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
 
         // Flattened wrapper messages are absorbed into the parent's schema
         // by the type mapper — skip class generation.
-        if (IsFlattenedWrapper(msg))
-            continue;
+        if (IsFlattenedWrapper(msg)) continue;
 
         std::string skipped;
         auto fields = GatherFields(msg, &skipped);
@@ -2083,8 +2082,7 @@ std::string DotToSlash(const std::string& s) {
 }
 
 // Walk flatten chain to the innermost leaf struct.
-const google::protobuf::Descriptor* FlattenLeafStruct(
-    const google::protobuf::Descriptor* msg) {
+const google::protobuf::Descriptor* FlattenLeafStruct(const google::protobuf::Descriptor* msg) {
     while (IsFlattenedWrapper(msg) &&
            msg->field(0)->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE)
         msg = msg->field(0)->message_type();
@@ -2201,9 +2199,10 @@ void EmitTsFieldDescriptor(std::ostringstream& o, const FieldInfo& fi,
     } else if (fi.mapping.kind == FieldKind::NESTED_LIST) {
         // Build nested element descriptors from inside out.
         const auto* coord = FlattenLeafStruct(fd->message_type());
-        std::string inner = "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
-                            ", nullable: false, fields: "
-                          + TsSchemaConstName(coord) + ".fields }";
+        std::string inner =
+            "{ name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT"
+            ", nullable: false, fields: " +
+            TsSchemaConstName(coord) + ".fields }";
 
         for (int d = 1; d < fi.mapping.list_depth; ++d)
             inner =
@@ -2244,17 +2243,7 @@ std::string GenerateTsMessage(const google::protobuf::Descriptor* msg,
     // Interface
     o << "export interface " << iface << " {\n";
     for (size_t i = 0; i < fields.size(); ++i) {
-        const auto* fd = msg->field(
-            // Find the FieldDescriptor matching our FieldInfo by field number.
-            // GatherFields iterates msg->field(i) in order, so we search.
-            0);
-        // Correct lookup: find fd by field number.
-        for (int fi = 0; fi < msg->field_count(); ++fi) {
-            if (msg->field(fi)->number() == fields[i].field_number) {
-                fd = msg->field(fi);
-                break;
-            }
-        }
+        const auto* fd = fields[i].descriptor;
         std::string ts_type = TsFieldType(fields[i], fd);
         if (fields[i].mapping.nullable) ts_type += " | null";
         o << "  " << fields[i].name << ": " << ts_type << ";\n";
@@ -2267,14 +2256,7 @@ std::string GenerateTsMessage(const google::protobuf::Descriptor* msg,
     o << "export const " << schema_name << ": TypedSchema<" << iface << "> = {\n"
       << "  fields: [\n";
     for (size_t i = 0; i < fields.size(); ++i) {
-        const google::protobuf::FieldDescriptor* fd = nullptr;
-        for (int fi = 0; fi < msg->field_count(); ++fi) {
-            if (msg->field(fi)->number() == fields[i].field_number) {
-                fd = msg->field(fi);
-                break;
-            }
-        }
-        EmitTsFieldDescriptor(o, fields[i], fd, "    ");
+        EmitTsFieldDescriptor(o, fields[i], fields[i].descriptor, "    ");
     }
     o << "  ],\n"
       << "  protoPackage: '" << msg->file()->package() << "',\n"
@@ -2307,8 +2289,7 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
                 }
                 if (m->kind == FieldKind::NESTED_LIST) {
                     const auto* coord = FlattenLeafStruct(fd->message_type());
-                    if (coord->file() != file)
-                        ts_imports.insert(coord->file()->name());
+                    if (coord->file() != file) ts_imports.insert(coord->file()->name());
                 }
                 if (m->kind == FieldKind::MAP && m->map_value_is_message) {
                     const auto* val_fd = fd->message_type()->field(1);

@@ -16,19 +16,20 @@ namespace fletcher {
 
 using FD = google::protobuf::FieldDescriptor;
 
+constexpr int kFlattenOptionNumber = 1;
+
 static bool FindBoolOption(const google::protobuf::Message& opts, int number) {
     const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
     for (int i = 0; i < unknown.field_count(); ++i) {
         const auto& f = unknown.field(i);
-        if (f.number() == number &&
-            f.type() == google::protobuf::UnknownField::TYPE_VARINT)
+        if (f.number() == number && f.type() == google::protobuf::UnknownField::TYPE_VARINT)
             return f.varint() != 0;
     }
     return false;
 }
 
 static bool HasMessageFlatten(const google::protobuf::Descriptor* msg) {
-    return FindBoolOption(msg->options(), 1);
+    return FindBoolOption(msg->options(), kFlattenOptionNumber);
 }
 
 namespace {
@@ -358,8 +359,7 @@ std::optional<FieldMapping> MapStructField(const FD* field) {
     auto flat = MapFlattenedSingular(field);
     if (flat) return flat;
 
-    if (IsRecursive(msg))
-        return std::nullopt;
+    if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
     m.kind = FieldKind::STRUCT;
@@ -381,8 +381,7 @@ std::optional<FieldMapping> MapRepeatedMessage(const FD* field) {
     auto flat = MapFlattenedRepeated(field);
     if (flat) return flat;
 
-    if (IsRecursive(msg))
-        return std::nullopt;
+    if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
     m.kind = FieldKind::REPEATED_STRUCT;
@@ -440,18 +439,17 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
 // through the wrapper chain and return the mapping of the innermost field.
 std::optional<FieldMapping> MapFlattenedSingular(const FD* field) {
     const auto* msg = field->message_type();
-    if (!HasMessageFlatten(msg))
-        return std::nullopt;
+    if (!HasMessageFlatten(msg)) return std::nullopt;
 
     if (msg->field_count() != 1) {
         FieldMapping m{};
-        m.kind    = FieldKind::STRUCT;
+        m.kind = FieldKind::STRUCT;
         m.nullable = IsFieldNullable(field);
-        m.nested_class  = QualifiedClassName(msg, field->file());
+        m.nested_class = QualifiedClassName(msg, field->file());
         m.nested_header = CrossFileHeader(msg, field->file());
-        m.warning = "(fletcher.flatten) ignored on " + msg->full_name()
-                  + " (" + std::to_string(msg->field_count())
-                  + " fields); apply flatten to individual fields instead";
+        m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
+                    std::to_string(msg->field_count()) +
+                    " fields); apply flatten to individual fields instead";
         return m;
     }
 
@@ -460,20 +458,21 @@ std::optional<FieldMapping> MapFlattenedSingular(const FD* field) {
     // so all dispatch logic (WKT, flatten chaining, etc.) applies.
     const auto* inner = msg->field(0);
 
-    // For repeated inner fields in a singular context, the outer message
-    // wrapper is stripped and the inner repeated field becomes the result.
     if (inner->is_repeated()) {
+        std::optional<FieldMapping> resolved;
         if (inner->type() == FD::TYPE_MESSAGE)
-            return MapRepeatedMessage(inner);
-        if (inner->type() == FD::TYPE_ENUM)
-            return MapRepeatedEnum(inner);
-        return MapRepeatedScalar(inner);
+            resolved = MapRepeatedMessage(inner);
+        else if (inner->type() == FD::TYPE_ENUM)
+            resolved = MapRepeatedEnum(inner);
+        else
+            resolved = MapRepeatedScalar(inner);
+        if (resolved && IsFieldNullable(field)) resolved->nullable = true;
+        return resolved;
     }
 
     // Singular inner field — resolve recursively (handles chaining).
     auto resolved = MapField(inner);
-    if (resolved && IsFieldNullable(field))
-        resolved->nullable = true;
+    if (resolved && IsFieldNullable(field)) resolved->nullable = true;
     return resolved;
 }
 
@@ -482,18 +481,17 @@ std::optional<FieldMapping> MapFlattenedSingular(const FD* field) {
 // Generalises the previous hardcoded wrapper chain-walking logic.
 std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
     const auto* msg = field->message_type();
-    if (!HasMessageFlatten(msg))
-        return std::nullopt;
+    if (!HasMessageFlatten(msg)) return std::nullopt;
 
     if (msg->field_count() != 1) {
         FieldMapping m{};
-        m.kind     = FieldKind::REPEATED_STRUCT;
+        m.kind = FieldKind::REPEATED_STRUCT;
         m.nullable = false;
-        m.nested_class  = QualifiedClassName(msg, field->file());
+        m.nested_class = QualifiedClassName(msg, field->file());
         m.nested_header = CrossFileHeader(msg, field->file());
-        m.warning = "(fletcher.flatten) ignored on " + msg->full_name()
-                  + " (" + std::to_string(msg->field_count())
-                  + " fields); apply flatten to individual fields instead";
+        m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
+                    std::to_string(msg->field_count()) +
+                    " fields); apply flatten to individual fields instead";
         return m;
     }
 
@@ -514,15 +512,15 @@ std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
         if (inner->is_repeated()) {
             // Leaf is a repeated scalar/enum — produces one more list level.
             const ScalarTypeInfo* base = (inner->type() == FD::TYPE_ENUM)
-                ? BaseScalar(FD::TYPE_ENUM)
-                : BaseScalar(inner->type());
+                                             ? BaseScalar(FD::TYPE_ENUM)
+                                             : BaseScalar(inner->type());
             if (!base) return std::nullopt;
 
             if (depth == 0) {
                 FieldMapping m{};
-                m.kind     = FieldKind::REPEATED_SCALAR;
+                m.kind = FieldKind::REPEATED_SCALAR;
                 m.nullable = false;
-                m.element  = *base;
+                m.element = *base;
                 return m;
             }
             // depth > 0: nested list of scalars — not yet supported by the
@@ -542,15 +540,15 @@ std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
         // is `repeated`, so the result is always list-wrapped.
         if (inner->type() != FD::TYPE_MESSAGE) {
             const ScalarTypeInfo* base = (inner->type() == FD::TYPE_ENUM)
-                ? BaseScalar(FD::TYPE_ENUM)
-                : BaseScalar(inner->type());
+                                             ? BaseScalar(FD::TYPE_ENUM)
+                                             : BaseScalar(inner->type());
             if (!base) return std::nullopt;
 
             if (depth == 0) {
                 FieldMapping m{};
-                m.kind     = FieldKind::REPEATED_SCALAR;
+                m.kind = FieldKind::REPEATED_SCALAR;
                 m.nullable = false;
-                m.element  = *base;
+                m.element = *base;
                 return m;
             }
             return std::nullopt;
@@ -563,20 +561,19 @@ std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
 
     // 'current' is the leaf struct.  Total list depth = depth (from chain)
     // + 1 (from the caller's own `repeated` keyword).
-    if (IsRecursive(current))
-        return std::nullopt;
+    if (IsRecursive(current)) return std::nullopt;
 
     int total = depth + 1;
 
     FieldMapping m{};
-    m.nullable      = false;
-    m.nested_class  = QualifiedClassName(current, field->file());
+    m.nullable = false;
+    m.nested_class = QualifiedClassName(current, field->file());
     m.nested_header = CrossFileHeader(current, field->file());
 
     if (total <= 1) {
         m.kind = FieldKind::REPEATED_STRUCT;
     } else {
-        m.kind       = FieldKind::NESTED_LIST;
+        m.kind = FieldKind::NESTED_LIST;
         m.list_depth = total;
     }
     return m;
@@ -704,7 +701,7 @@ bool IsFlattenedWrapper(const google::protobuf::Descriptor* msg) {
 }
 
 bool HasFieldFlatten(const google::protobuf::FieldDescriptor* field) {
-    return FindBoolOption(field->options(), 1);
+    return FindBoolOption(field->options(), kFlattenOptionNumber);
 }
 
 int NestingDepth(const google::protobuf::Descriptor* msg) {
