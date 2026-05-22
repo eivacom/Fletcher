@@ -21,7 +21,7 @@ message Coord {
 }
 
 message Point {
-    Coord coord = 1 [(fletcher.flatten) = true];
+    Coord coord = 1 [(fletcher.flatten_field) = true];
 }
 
 // --- Case C: chained message-level flatten (geometry-style nesting) ---

@@ -9,9 +9,9 @@ schema.
 
 ---
 
-## `(fletcher.flatten)`
+## `(fletcher.flatten)` / `(fletcher.flatten_field)`
 
-**Applies to:** `google.protobuf.MessageOptions` and `google.protobuf.FieldOptions`
+**Applies to:** `google.protobuf.MessageOptions` (`flatten`) and `google.protobuf.FieldOptions` (`flatten_field`)
 **Type:** `bool`
 **Extension field number:** `50000`
 
@@ -69,11 +69,11 @@ representation is fully absorbed into the parent.
 
 ```proto
 message Point {
-    Coord coord = 1 [(fletcher.flatten) = true];
+    Coord coord = 1 [(fletcher.flatten_field) = true];
 }
 ```
 
-When a **singular message field** carries `[(fletcher.flatten) = true]`,
+When a **singular message field** carries `[(fletcher.flatten_field) = true]`,
 Fletcher promotes the referenced message's fields into the enclosing
 message, removing the intermediate struct.
 
@@ -85,9 +85,9 @@ This lets types compose building-block messages (e.g. coordinates) without
 introducing extra nesting in the Arrow schema.
 
 Field-level flatten is recursive: if the inlined message itself contains
-fields with `[(fletcher.flatten)]`, those are inlined too.
+fields with `[(fletcher.flatten_field)]`, those are inlined too.
 
-**Non-message fields:** `[(fletcher.flatten)]` on a scalar or enum field is
+**Non-message fields:** `[(fletcher.flatten_field)]` on a scalar or enum field is
 a no-op — there is nothing to inline.
 
 ### Chain-walking behaviour
@@ -105,7 +105,7 @@ Arrow schema.
 | Number | Scope | Option |
 |--------|-------|--------|
 | `50000` | MessageOptions | `fletcher.flatten` |
-| `50000` | FieldOptions | `fletcher.flatten` |
+| `50000` | FieldOptions | `fletcher.flatten_field` |
 
 Field number 50000 is well within the `extensions 1000 to max` range
 that `google.protobuf.MessageOptions` and `FieldOptions` reserve for

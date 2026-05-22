@@ -17,5 +17,5 @@ extend google.protobuf.MessageOptions {
 
 extend google.protobuf.FieldOptions {
     // Inline the referenced message's fields into the enclosing message.
-    optional bool flatten = 50000;
+    optional bool flatten_field = 50000;
 }

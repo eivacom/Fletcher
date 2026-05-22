@@ -71,7 +71,7 @@ bool IsRecursive(const google::protobuf::Descriptor* msg);
 // into the enclosing message's Arrow schema.
 bool IsFlattenedWrapper(const google::protobuf::Descriptor* msg);
 
-// True if the field has [(fletcher.flatten) = true].
+// True if the field has [(fletcher.flatten_field) = true].
 bool HasFieldFlatten(const google::protobuf::FieldDescriptor* field);
 
 // Maximum struct-nesting depth starting from msg.
