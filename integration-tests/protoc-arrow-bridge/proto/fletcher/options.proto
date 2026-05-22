@@ -12,10 +12,10 @@ import "google/protobuf/descriptor.proto";
 
 extend google.protobuf.MessageOptions {
     // Flatten a single-field message wrapper into its inner type.
-    optional bool flatten = 1;
+    optional bool flatten = 50000;
 }
 
 extend google.protobuf.FieldOptions {
     // Inline the referenced message's fields into the enclosing message.
-    optional bool flatten = 1;
+    optional bool flatten = 50000;
 }

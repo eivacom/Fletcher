@@ -13,7 +13,7 @@ schema.
 
 **Applies to:** `google.protobuf.MessageOptions` and `google.protobuf.FieldOptions`
 **Type:** `bool`
-**Extension field number:** `1`
+**Extension field number:** `50000`
 
 Removes intermediate struct wrappers from the Arrow schema.  There are two
 forms — message-level and field-level — which serve different purposes.
@@ -104,9 +104,9 @@ Arrow schema.
 
 | Number | Scope | Option |
 |--------|-------|--------|
-| `1` | MessageOptions | `fletcher.flatten` |
-| `1` | FieldOptions | `fletcher.flatten` |
+| `50000` | MessageOptions | `fletcher.flatten` |
+| `50000` | FieldOptions | `fletcher.flatten` |
 
-Field number 1 is valid because the extensions are in the `fletcher`
-package namespace, separate from the base `google.protobuf.*Options`
-field numbering.
+Field number 50000 is well within the `extensions 1000 to max` range
+that `google.protobuf.MessageOptions` and `FieldOptions` reserve for
+third-party extensions.

@@ -16,7 +16,7 @@ namespace fletcher {
 
 using FD = google::protobuf::FieldDescriptor;
 
-constexpr int kFlattenOptionNumber = 1;
+constexpr int kFlattenOptionNumber = 50000;
 
 static bool FindBoolOption(const google::protobuf::Message& opts, int number) {
     const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
