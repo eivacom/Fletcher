@@ -39,6 +39,18 @@ jobs:
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
     steps:
       - uses: actions/checkout@v6
+      # Filters list only positive patterns; we deliberately avoid '!'
+      # negations. Reason: dorny/paths-filter v4 (with the default
+      # predicate-quantifier: 'some') evaluates every pattern — including
+      # negations — as an independent positive rule, returning `true` for
+      # files that do NOT match the negated glob. A line like '!**/*.md'
+      # therefore matches every non-.md file and causes the filter to
+      # short-circuit to true regardless of the other patterns. As a
+      # result, an unrelated change (e.g. only `.github/ISSUE_TEMPLATE/
+      # config.yml`) would trigger every component build. Trade-off: a
+      # docs-only README edit inside a component dir will now trigger
+      # that component's build once — cheap and predictable, vs. the
+      # broken negation that fired every build on every PR.
       - uses: dorny/paths-filter@v4.0.1
         id: filter
         with:
@@ -53,7 +65,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             arrow-bridge:
               - 'arrow-bridge/**'
               - '.github/workflows/pr.yml'
@@ -63,7 +74,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
@@ -73,7 +83,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             gateway:
               - 'gateway/**'
               - '.github/workflows/pr.yml'
@@ -83,11 +92,9 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             gateway-client:
               - 'gateway-client-ts/**'
               - '.github/workflows/pr.yml'
-              - '!**/*.md'
             protoc:
               - 'protoc/**'
               - '.github/workflows/pr.yml'
@@ -97,7 +104,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             pubsub:
               - 'pubsub/**'
               - '.github/workflows/pr.yml'
@@ -107,7 +113,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             pubsub-arrow:
               - 'pubsub-arrow/**'
               - '.github/workflows/pr.yml'
@@ -117,7 +122,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             xrcedds-pubsub-provider:
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
@@ -127,7 +131,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             format-cpp:
               - '**/*.cpp'
               - '**/*.hpp'
@@ -157,7 +160,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             integration-gateway-e2e:
               - 'core/**'
               - 'pubsub/**'
@@ -169,7 +171,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             integration-protoc-arrow:
               - 'core/**'
               - 'protoc/**'
@@ -180,7 +181,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             integration-protoc-gateway-ts:
               - 'core/**'
               - 'protoc/**'
@@ -191,7 +191,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
             integration-pubsub-arrow-fastdds:
               - 'core/**'
               - 'arrow-bridge/**'
@@ -203,7 +202,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
               - '.devcontainer/**'
-              - '!**/*.md'
 
   setup-devcontainer:
     uses: ./.github/workflows/setup-devcontainer-image.yml
