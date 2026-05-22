@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug report
+        Please fill in as much detail as you can. The more context you provide, the faster we can reproduce and fix the issue.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which Fletcher component is affected?
+      options:
+        - fletcher-core
+        - fletcher-pubsub
+        - fletcher-arrow-bridge
+        - fletcher-pubsub-arrow
+        - fletcher-fastdds-pubsub-provider
+        - fletcher-xrcedds-pubsub-provider
+        - fletcher-protoc
+        - gateway
+        - fletcher-gateway-client
+        - multiple / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear description of what is wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Component version or commit
+      placeholder: "e.g. core-v0.1.0-alpha or a1b2c3d"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / platform
+      placeholder: "e.g. Ubuntu 24.04, Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Compiler / toolchain
+      placeholder: "e.g. GCC 14, MSVC 19.4x, Clang 18"
+    validations:
+      required: false
+
+  - type: input
+    id: conan
+    attributes:
+      label: Conan version (if applicable)
+      placeholder: "e.g. 2.4.0"
+    validations:
+      required: false
+
+  - type: input
+    id: node
+    attributes:
+      label: Node / npm version (if applicable)
+      placeholder: "e.g. Node 22, npm 10"
+    validations:
+      required: false
