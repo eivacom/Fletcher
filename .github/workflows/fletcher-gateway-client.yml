@@ -5,15 +5,10 @@ name: fletcher-gateway-client
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "gateway-client-ts/**"
-      - ".github/workflows/fletcher-gateway-client.yml"
-      - "!**/*.md"
 
 jobs:
   build-and-test:

@@ -5,21 +5,10 @@ name: fletcher-gateway
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "gateway/**"
-      - ".github/workflows/fletcher-gateway.yml"
-      - ".github/actions/install-msvc-tools/**"
-      - ".github/actions/install-cmake/**"
-      - ".github/actions/conan-bootstrap/**"
-      - ".github/actions/pull-devcontainer-image/**"
-      - ".github/workflows/setup-devcontainer-image.yml"
-      - ".devcontainer/**"
-      - "!**/*.md"
 
 # Gateway is never published as a Conan package, so there is no
 # tag-triggered release path and no upload job — the workflow only

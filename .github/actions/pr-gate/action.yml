@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: PR Gate
+description: >
+  Validate that all required jobs passed. Accepts a comma-separated list of
+  job results (e.g. "success,skipped,failure"). Treats "success" and "skipped"
+  as passing; exits non-zero on "failure" or "cancelled".
+
+inputs:
+  results:
+    description: >
+      Comma-separated job results.
+      Example: "success,skipped,failure".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Evaluate required jobs
+      shell: bash
+      env:
+        RESULTS: ${{ inputs.results }}
+      run: |
+        failed=false
+        IFS=',' read -ra tokens <<< "$RESULTS"
+        for result in "${tokens[@]}"; do
+          result="${result//[[:space:]]/}"
+          echo "result: $result"
+          if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+            failed=true
+          fi
+        done
+        echo ""
+        if $failed; then
+          echo "::error::One or more required jobs did not succeed."
+          exit 1
+        fi
+        echo "All required jobs passed."

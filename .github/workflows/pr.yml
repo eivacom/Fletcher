@@ -1,0 +1,1249 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: Fletcher PR build
+
+on:
+  pull_request:
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+
+  # ── Stage 1: detect changed paths & spin up devcontainer image ───────────────
+
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      gateway-client: ${{ steps.filter.outputs.gateway-client }}
+      protoc: ${{ steps.filter.outputs.protoc }}
+      pubsub: ${{ steps.filter.outputs.pubsub }}
+      pubsub-arrow: ${{ steps.filter.outputs.pubsub-arrow }}
+      xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
+      format-cpp: ${{ steps.filter.outputs.format-cpp }}
+      format-ts: ${{ steps.filter.outputs.format-ts }}
+      integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
+      integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
+      integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
+      integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4.0.1
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            core:
+              - 'core/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            arrow-bridge:
+              - 'arrow-bridge/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            fastdds-pubsub-provider:
+              - 'fastdds-pubsub-provider/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            gateway:
+              - 'gateway/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            gateway-client:
+              - 'gateway-client-ts/**'
+              - '.github/workflows/pr.yml'
+              - '!**/*.md'
+            protoc:
+              - 'protoc/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            pubsub:
+              - 'pubsub/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            pubsub-arrow:
+              - 'pubsub-arrow/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            xrcedds-pubsub-provider:
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/install-msvc-tools/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/conan-bootstrap/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            format-cpp:
+              - '**/*.cpp'
+              - '**/*.hpp'
+              - '**/*.h'
+              - '**/*.cc'
+              - '.clang-format'
+              - '.github/workflows/pr.yml'
+            format-ts:
+              - '**/*.ts'
+              - '**/*.tsx'
+              - '**/*.js'
+              - '**/*.mjs'
+              - '**/*.cjs'
+              - '**/*.json'
+              - '.prettierrc'
+              - '.prettierignore'
+              - '.github/workflows/pr.yml'
+            integration-fastdds-xrce:
+              - 'core/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'pubsub-arrow/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'integration-tests/fastdds-xrce-interop/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            integration-gateway-e2e:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'gateway/**'
+              - 'gateway-client-ts/**'
+              - 'integration-tests/gateway-end-to-end/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            integration-protoc-arrow:
+              - 'core/**'
+              - 'protoc/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'integration-tests/protoc-arrow-bridge/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            integration-protoc-gateway-ts:
+              - 'core/**'
+              - 'protoc/**'
+              - 'pubsub/**'
+              - 'gateway-client-ts/**'
+              - 'integration-tests/protoc-gateway-client-ts/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+            integration-pubsub-arrow-fastdds:
+              - 'core/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'pubsub-arrow/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'integration-tests/pubsub-arrow-fastdds/**'
+              - '.github/workflows/pr.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/setup-devcontainer-image.yml'
+              - '.devcontainer/**'
+              - '!**/*.md'
+
+  setup-devcontainer:
+    uses: ./.github/workflows/setup-devcontainer-image.yml
+    secrets: inherit
+
+  # ── Stage 2: component builds ────────────────────────────────────────────────
+
+  build-core-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.core == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: core
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-core-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.core == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/core \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-arrow-bridge-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.arrow-bridge == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            arrow-bridge
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: arrow-bridge
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-arrow-bridge-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.arrow-bridge == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            arrow-bridge
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/arrow-bridge \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-fastdds-pubsub-provider-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            fastdds-pubsub-provider
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: fastdds-pubsub-provider
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-fastdds-pubsub-provider-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            fastdds-pubsub-provider
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/fastdds-pubsub-provider \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-gateway-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.gateway == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: gateway
+        run: |
+          conan install . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+          conan build . -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-gateway-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.gateway == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/gateway \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
+                     conan build . -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-gateway-client:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.gateway-client == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    defaults:
+      run:
+        working-directory: gateway-client-ts
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway-client-ts
+            .github/workflows
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: gateway-client-ts/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+
+  build-protoc-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.protoc == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: protoc
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-protoc-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.protoc == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/protoc \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-pubsub-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.pubsub == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: pubsub
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-RelWithDebInfo -o "&:run_tests=True"
+
+  build-pubsub-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.pubsub == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/pubsub \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-pubsub-arrow-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.pubsub-arrow == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub-arrow
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: pubsub-arrow
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-pubsub-arrow-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.pubsub-arrow == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub-arrow
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/pubsub-arrow \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  build-xrcedds-pubsub-provider-windows:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
+    runs-on:
+      group: windows-server-core-ltsc2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            xrcedds-pubsub-provider
+            .github
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+      - name: Bootstrap Conan
+        uses: ./.github/actions/conan-bootstrap
+        with:
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+      - name: Build and test
+        working-directory: xrcedds-pubsub-provider
+        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+
+  build-xrcedds-pubsub-provider-linux:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            xrcedds-pubsub-provider
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build and test
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/xrcedds-pubsub-provider \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True'"
+
+  format-check-cpp:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.format-cpp == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install clang-format-18
+        run: |
+          apt-get update
+          apt-get install -y clang-format-18
+          clang-format-18 --version
+      - name: Run clang-format --dry-run --Werror
+        run: |
+          files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
+            | grep -v -E '^pubsub/third_party/' \
+            | grep -v -E '\.fletcher\.(arrow\.)?pb\.h$' \
+            | grep -v -E '/build/' \
+            | grep -v -E '^integration-tests/.*/generated-ts/')
+          if [ -z "$files" ]; then
+            echo "No first-party C++ files to check."
+            exit 0
+          fi
+          echo "Checking $(echo "$files" | wc -l) files..."
+          echo "$files" | xargs clang-format-18 --dry-run --Werror
+
+  format-check-ts:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.format-ts == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+      - name: Run prettier --check
+        run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
+
+  license-check:
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check SPDX + Copyright headers on all tracked files
+        run: |
+          set -euo pipefail
+
+          # Every tracked file, minus the denylist.
+          mapfile -t files < <(
+            git ls-files \
+              | grep -v -E '^pubsub/third_party/' \
+              | grep -v -E '^(LICENSE|AUTHORS)$' \
+              | grep -v -E '^\.gitignore$|^\.gitattributes$' \
+              | grep -v -E '\.md$' \
+              | grep -v -E '(^|/)package(-lock)?\.json$' \
+              | grep -v -E '(^|/)\.prettierrc$' \
+              || true
+          )
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "Denylist matched everything tracked — nothing to check."
+            exit 0
+          fi
+
+          echo "Checking ${#files[@]} file(s)."
+
+          missing=()
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || continue
+
+            head -n 10 "$f" > /tmp/header.txt
+
+            spdx_ok=0
+            copy_ok=0
+            grep -q 'SPDX-License-Identifier: LGPL-3.0-or-later' /tmp/header.txt && spdx_ok=1
+            grep -Eq 'Copyright \(C\) [0-9]{4} The Fletcher Authors' /tmp/header.txt && copy_ok=1
+
+            if [ "$spdx_ok" -eq 0 ] || [ "$copy_ok" -eq 0 ]; then
+              reason=""
+              [ "$spdx_ok" -eq 0 ] && reason="$reason missing 'SPDX-License-Identifier: LGPL-3.0-or-later';"
+              [ "$copy_ok" -eq 0 ] && reason="$reason missing 'Copyright (C) <year> The Fletcher Authors';"
+              missing+=("$f -$reason")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::License headers missing on ${#missing[@]} file(s):"
+            for line in "${missing[@]}"; do
+              echo "::error::  $line"
+            done
+            echo
+            echo "Add to the top of each affected file (substitute the right comment prefix"
+            echo "for the file's language — // for C/C++/TypeScript/Protobuf, # for Python/"
+            echo "CMake/YAML/Dockerfile):"
+            echo
+            echo "  // SPDX-License-Identifier: LGPL-3.0-or-later"
+            echo "  // Copyright (C) $(date +%Y) The Fletcher Authors"
+            echo "  //"
+            echo
+            echo "If the file type genuinely cannot carry a header (binary / JSON / no"
+            echo "comment syntax), add it to the denylist in"
+            echo ".github/workflows/license-headers.yml."
+            exit 1
+          fi
+
+          echo "All ${#files[@]} tracked file(s) carry the required headers."
+
+  # ── Stage 2 (continued): integration tests ───────────────────────────────────
+
+  integration-fastdds-xrce-interop:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.integration-fastdds-xrce == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            arrow-bridge
+            pubsub
+            pubsub-arrow
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            integration-tests/fastdds-xrce-interop
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
+          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/fastdds-xrce-interop && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build (includes MicroXRCEAgent from source)' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
+
+  integration-gateway-end-to-end:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.integration-gateway-e2e == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            gateway
+            gateway-client-ts
+            integration-tests/gateway-end-to-end
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/gateway-end-to-end && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure + build' && \
+                     cmake --preset conan-release && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm ci' && \
+                     npm ci && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test' && \
+                     npm test && \
+                     echo '::endgroup::'"
+
+  integration-protoc-arrow-bridge:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.integration-protoc-arrow == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            arrow-bridge
+            pubsub
+            integration-tests/protoc-arrow-bridge
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core arrow-bridge pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/protoc-arrow-bridge && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
+
+  integration-protoc-gateway-client-ts:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            pubsub
+            gateway-client-ts
+            integration-tests/protoc-gateway-client-ts
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/protoc-gateway-client-ts && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure + build' && \
+                     cmake --preset conan-release && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm ci' && \
+                     npm ci && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test' && \
+                     npm test && \
+                     echo '::endgroup::'"
+
+  integration-pubsub-arrow-fastdds:
+    needs: [detect-changes, setup-devcontainer]
+    if: needs.detect-changes.outputs.integration-pubsub-arrow-fastdds == 'true'
+    runs-on:
+      group: ubuntu_24.04_x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            arrow-bridge
+            pubsub
+            pubsub-arrow
+            fastdds-pubsub-provider
+            integration-tests/pubsub-arrow-fastdds
+            .devcontainer
+            .github
+      - name: Generate token for conan-configuration
+        id: generate-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          owner: eivacom
+          repositories: conan-configuration
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          harbor-username: ${{ secrets.HARBOR_USERNAME }}
+          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Build components and run integration tests
+        run: |
+          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
+          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
+            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
+            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
+            fletcher-build \
+            bash -c "set -e && \
+                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/pubsub-arrow-fastdds && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
+                     echo '::endgroup::'"
+
+  # ── Stage 3: PR gate ────────────────────────────────────────────────────────
+  pr_gate:
+    needs:
+      - setup-devcontainer
+      - build-core-windows
+      - build-core-linux
+      - build-arrow-bridge-windows
+      - build-arrow-bridge-linux
+      - build-fastdds-pubsub-provider-windows
+      - build-fastdds-pubsub-provider-linux
+      - build-gateway-windows
+      - build-gateway-linux
+      - build-gateway-client
+      - build-protoc-windows
+      - build-protoc-linux
+      - build-pubsub-windows
+      - build-pubsub-linux
+      - build-pubsub-arrow-windows
+      - build-pubsub-arrow-linux
+      - build-xrcedds-pubsub-provider-windows
+      - build-xrcedds-pubsub-provider-linux
+      - format-check-cpp
+      - format-check-ts
+      - license-check
+      - integration-fastdds-xrce-interop
+      - integration-gateway-end-to-end
+      - integration-protoc-arrow-bridge
+      - integration-protoc-gateway-client-ts
+      - integration-pubsub-arrow-fastdds
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: >-
+            ${{ needs.setup-devcontainer.result }},
+            ${{ needs.build-core-windows.result }},
+            ${{ needs.build-core-linux.result }},
+            ${{ needs.build-arrow-bridge-windows.result }},
+            ${{ needs.build-arrow-bridge-linux.result }},
+            ${{ needs.build-fastdds-pubsub-provider-windows.result }},
+            ${{ needs.build-fastdds-pubsub-provider-linux.result }},
+            ${{ needs.build-gateway-windows.result }},
+            ${{ needs.build-gateway-linux.result }},
+            ${{ needs.build-gateway-client.result }},
+            ${{ needs.build-protoc-windows.result }},
+            ${{ needs.build-protoc-linux.result }},
+            ${{ needs.build-pubsub-windows.result }},
+            ${{ needs.build-pubsub-linux.result }},
+            ${{ needs.build-pubsub-arrow-windows.result }},
+            ${{ needs.build-pubsub-arrow-linux.result }},
+            ${{ needs.build-xrcedds-pubsub-provider-windows.result }},
+            ${{ needs.build-xrcedds-pubsub-provider-linux.result }},
+            ${{ needs.format-check-cpp.result }},
+            ${{ needs.format-check-ts.result }},
+            ${{ needs.license-check.result }},
+            ${{ needs.integration-fastdds-xrce-interop.result }},
+            ${{ needs.integration-gateway-end-to-end.result }},
+            ${{ needs.integration-protoc-arrow-bridge.result }},
+            ${{ needs.integration-protoc-gateway-client-ts.result }},
+            ${{ needs.integration-pubsub-arrow-fastdds.result }}

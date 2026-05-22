@@ -5,21 +5,10 @@ name: format-check-ts
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "**/*.ts"
-      - "**/*.tsx"
-      - "**/*.js"
-      - "**/*.mjs"
-      - "**/*.cjs"
-      - "**/*.json"
-      - ".prettierrc"
-      - ".prettierignore"
-      - ".github/workflows/format-check-ts.yml"
 
 jobs:
   check:

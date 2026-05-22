@@ -35,7 +35,7 @@ runs:
   steps:
     - name: Generate token for conan-configuration
       id: generate-token
-      uses: actions/create-github-app-token@v3.1.1
+      uses: actions/create-github-app-token@v3.2.0
       with:
         client-id: ${{ inputs.github-app-client-id }}
         private-key: ${{ inputs.github-app-private-key }}

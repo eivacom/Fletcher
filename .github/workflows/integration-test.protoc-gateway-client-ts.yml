@@ -5,22 +5,10 @@ name: integration-test.protoc-gateway-client-ts
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "core/**"
-      - "protoc/**"
-      - "pubsub/**"
-      - "gateway-client-ts/**"
-      - "integration-tests/protoc-gateway-client-ts/**"
-      - ".github/workflows/integration-test.protoc-gateway-client-ts.yml"
-      - ".github/actions/pull-devcontainer-image/**"
-      - ".github/workflows/setup-devcontainer-image.yml"
-      - ".devcontainer/**"
-      - "!**/*.md"
 
 jobs:
   setup-devcontainer:
