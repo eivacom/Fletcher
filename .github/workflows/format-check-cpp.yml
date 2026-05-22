@@ -55,3 +55,14 @@ jobs:
           fi
           echo "Checking $(echo "$files" | wc -l) files..."
           echo "$files" | xargs clang-format-18 --dry-run --Werror
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ check ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.check.result }}"

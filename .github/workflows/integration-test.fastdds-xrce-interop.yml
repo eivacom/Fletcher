@@ -97,11 +97,11 @@ jobs:
 
   # ── PR Gate ───────────────────────────────────────────────────────────────
   pr_gate:
-    needs: [ fastdds-xrce-interop ]
+    needs: [ setup-devcontainer, fastdds-xrce-interop ]
     runs-on: ubuntu-latest
     if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/pr-gate
         with:
-          results: "${{ needs.fastdds-xrce-interop.result }}"
+          results: "${{ needs.setup-devcontainer.result }},${{ needs.fastdds-xrce-interop.result }}"

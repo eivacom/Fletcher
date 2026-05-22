@@ -186,11 +186,11 @@ jobs:
 
   # ── PR Gate ───────────────────────────────────────────────────────────────
   pr_gate:
-    needs: [ build-windows, build-linux, upload ]
+    needs: [ setup-devcontainer, build-windows, build-linux, upload ]
     runs-on: ubuntu-latest
     if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/pr-gate
         with:
-          results: "${{ needs.build-windows.result }},${{ needs.build-linux.result }},${{ needs.upload.result }}"
+          results: "${{ needs.setup-devcontainer.result }},${{ needs.build-windows.result }},${{ needs.build-linux.result }},${{ needs.upload.result }}"

@@ -38,3 +38,14 @@ jobs:
       # "formatted" means.
       - name: Run prettier --check
         run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
+
+  # ── PR Gate ───────────────────────────────────────────────────────────────
+  pr_gate:
+    needs: [ check ]
+    runs-on: ubuntu-latest
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          results: "${{ needs.check.result }}"
