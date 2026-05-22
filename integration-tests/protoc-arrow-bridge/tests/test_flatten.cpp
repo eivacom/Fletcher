@@ -81,6 +81,29 @@ TEST(FlattenTest, ScalarWrapperRoundtrip) {
 
 // ---- Case B: struct composition (field-level flatten) ------------------
 
+TEST(FlattenTest, FieldFlattenRoundtrip) {
+    fletcher_gen::integration::Point pt;
+    pt.set_x(10.5).set_y(20.5);
+
+    fletcher_gen::integration::FlattenTestRow r;
+    r.set_reading(0.0f);
+    r.set_position(pt);
+    r.set_shape({});
+    r.set_bad(fletcher_gen::integration::BadFlatten{});
+
+    auto scalars = RoundTrip(r.Encode(),
+                             fletcher_gen::integration::FlattenTestRowSchema());
+    ASSERT_GE(scalars.size(), 2u);
+
+    auto* pos = dynamic_cast<arrow::StructScalar*>(scalars[1].get());
+    ASSERT_NE(pos, nullptr);
+    EXPECT_TRUE(pos->is_valid);
+
+    fletcher_gen::integration::FlattenTestRow decoded(r.Encode());
+    EXPECT_DOUBLE_EQ(decoded.position().x(), 10.5);
+    EXPECT_DOUBLE_EQ(decoded.position().y(), 20.5);
+}
+
 TEST(FlattenTest, FieldFlattenInlinesFields) {
     auto schema = ImportNano(fletcher_gen::integration::FlattenTestRowSchema());
     ASSERT_TRUE(schema);
@@ -127,6 +150,35 @@ TEST(FlattenTest, ChainedFlattenProducesNestedLists) {
     ASSERT_EQ(coord_struct->num_fields(), 2);
     EXPECT_EQ(coord_struct->field(0)->name(), "x");
     EXPECT_EQ(coord_struct->field(1)->name(), "y");
+}
+
+TEST(FlattenTest, ChainedFlattenRoundtrip) {
+    fletcher_gen::integration::Coord c1, c2, c3;
+    c1.set_x(0.0).set_y(0.0);
+    c2.set_x(1.0).set_y(0.0);
+    c3.set_x(0.0).set_y(1.0);
+
+    fletcher_gen::integration::FlattenTestRow r;
+    r.set_reading(0.0f);
+    r.set_position(fletcher_gen::integration::Point{});
+    r.set_shape({{c1, c2, c3}});
+    r.set_bad(fletcher_gen::integration::BadFlatten{});
+
+    auto scalars = RoundTrip(r.Encode(),
+                             fletcher_gen::integration::FlattenTestRowSchema());
+    ASSERT_GE(scalars.size(), 3u);
+
+    auto* outer = dynamic_cast<arrow::ListScalar*>(scalars[2].get());
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->value->length(), 1);
+
+    fletcher_gen::integration::FlattenTestRow decoded(r.Encode());
+    ASSERT_EQ(decoded.shape().size(), 1u);
+    ASSERT_EQ(decoded.shape()[0].size(), 3u);
+    EXPECT_DOUBLE_EQ(decoded.shape()[0][0].x(), 0.0);
+    EXPECT_DOUBLE_EQ(decoded.shape()[0][0].y(), 0.0);
+    EXPECT_DOUBLE_EQ(decoded.shape()[0][2].x(), 0.0);
+    EXPECT_DOUBLE_EQ(decoded.shape()[0][2].y(), 1.0);
 }
 
 // ---- Case D: multi-field flatten (ignored) -----------------------------

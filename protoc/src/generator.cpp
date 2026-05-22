@@ -164,67 +164,6 @@ struct FieldInfo {
 };
 
 // -----------------------------------------------------------------------
-// Wire format helpers for EncodeTo code generation
-// -----------------------------------------------------------------------
-
-// Returns the WireTypeId hex byte for a field's Arrow type.
-std::string WireTypeHex(const FieldInfo& fi) {
-    switch (fi.mapping.kind) {
-        case FieldKind::STRUCT:
-            return "0x20";
-        case FieldKind::REPEATED_SCALAR:
-        case FieldKind::REPEATED_STRUCT:
-            return "0x21";
-        case FieldKind::MAP:
-            return "0x24";
-        case FieldKind::NESTED_LIST:
-            return "0x21";
-        case FieldKind::SCALAR: {
-            const auto& expr = fi.mapping.scalar.arrow_type_expr;
-            if (expr == "arrow::boolean()") return "0x01";
-            if (expr == "arrow::int32()") return "0x04";
-            if (expr == "arrow::int64()") return "0x05";
-            if (expr == "arrow::uint32()") return "0x08";
-            if (expr == "arrow::uint64()") return "0x09";
-            if (expr == "arrow::float32()") return "0x0A";
-            if (expr == "arrow::float64()") return "0x0B";
-            if (expr == "arrow::utf8()") return "0x0C";
-            if (expr == "arrow::binary()") return "0x0D";
-            if (expr.find("timestamp") != std::string::npos) return "0x10";
-            if (expr.find("duration") != std::string::npos) return "0x13";
-            return "";
-        }
-    }
-    return "";
-}
-
-// Returns the fixed payload byte size for a scalar, or -1 for variable-length.
-int PayloadSize(const FieldInfo& fi) {
-    if (fi.mapping.kind != FieldKind::SCALAR) return -1;
-    const auto& st = fi.mapping.scalar.storage_type;
-    if (st == "bool") return 1;
-    if (st == "int32_t") return 4;
-    if (st == "uint32_t") return 4;
-    if (st == "float") return 4;
-    if (st == "int64_t") return 8;
-    if (st == "uint64_t") return 8;
-    if (st == "double") return 8;
-    return -1;  // std::string → variable
-}
-
-// Returns the fixed payload byte size for a scalar type (keys or values).
-int ScalarPayloadSize(const ScalarTypeInfo& info) {
-    if (info.storage_type == "bool") return 1;
-    if (info.storage_type == "int32_t") return 4;
-    if (info.storage_type == "uint32_t") return 4;
-    if (info.storage_type == "float") return 4;
-    if (info.storage_type == "int64_t") return 8;
-    if (info.storage_type == "uint64_t") return 8;
-    if (info.storage_type == "double") return 8;
-    return -1;  // string → variable
-}
-
-// -----------------------------------------------------------------------
 // Arrow type expression for the schema — constructed from the FieldMapping
 // -----------------------------------------------------------------------
 
@@ -1142,17 +1081,6 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
           << "        ArrowMetadataBuilderAppend(&buf,\n"
           << "            ArrowCharView(\"field_id\"),\n"
           << "            ArrowCharView(\"" << fi.field_id << "\"));\n";
-
-        // Arrow extension metadata (if present)
-        if (!fi.mapping.extension_name.empty()) {
-            o << "        // TODO: CRS resolution will be emitted in a later phase.\n"
-              << "        ArrowMetadataBuilderAppend(&buf,\n"
-              << "            ArrowCharView(\"ARROW:extension:name\"),\n"
-              << "            ArrowCharView(\"" << fi.mapping.extension_name << "\"));\n"
-              << "        ArrowMetadataBuilderAppend(&buf,\n"
-              << "            ArrowCharView(\"ARROW:extension:metadata\"),\n"
-              << "            ArrowCharView(\"{}\"));\n";
-        }
 
         o << "        ArrowSchemaSetMetadata(" << ci << ",\n"
           << "            reinterpret_cast<const char*>(buf.data));\n"

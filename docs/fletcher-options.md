@@ -87,43 +87,16 @@ introducing extra nesting in the Arrow schema.
 Field-level flatten is recursive: if the inlined message itself contains
 fields with `[(fletcher.flatten)]`, those are inlined too.
 
----
+**Non-message fields:** `[(fletcher.flatten)]` on a scalar or enum field is
+a no-op — there is nothing to inline.
 
-## `(fletcher.default_crs)`
+### Chain-walking behaviour
 
-**Applies to:** `google.protobuf.MessageOptions`
-**Type:** `string`
-**Extension field number:** `50001`
-
-Sets a default CRS (Coordinate Reference System) identifier for all fields
-in the message that carry GeoArrow extension types.  The value is resolved
-at schema-construction time — it may be a well-known identifier like
-`"EPSG:4326"` or raw PROJJSON.
-
-```proto
-message Survey {
-    option (fletcher.default_crs) = "EPSG:4326";
-    // All geo fields inherit this CRS unless overridden.
-}
-```
-
----
-
-## `(fletcher.crs)`
-
-**Applies to:** `google.protobuf.FieldOptions`
-**Type:** `string`
-**Extension field number:** `50002`
-
-Overrides the message-level `default_crs` for a single field.
-
-```proto
-message Survey {
-    option (fletcher.default_crs) = "EPSG:4326";
-    Point position = 1;                              // uses EPSG:4326
-    Point local_pos = 2 [(fletcher.crs) = "EPSG:3857"]; // overridden
-}
-```
+When the compiler resolves a chain of flattened wrappers (message-level),
+it stops at the first message that is **not** a valid flatten target
+(i.e. it does not have `(fletcher.flatten) = true`, or it has more than
+one field).  That message becomes the leaf struct type in the resulting
+Arrow schema.
 
 ---
 
@@ -133,9 +106,7 @@ message Survey {
 |--------|-------|--------|
 | `1` | MessageOptions | `fletcher.flatten` |
 | `1` | FieldOptions | `fletcher.flatten` |
-| `50001` | MessageOptions | `fletcher.default_crs` |
-| `50002` | FieldOptions | `fletcher.crs` |
 
-Field numbers 1 for `flatten` are valid because the extensions are in the
-`fletcher` package namespace, separate from the base `google.protobuf.*Options`
+Field number 1 is valid because the extensions are in the `fletcher`
+package namespace, separate from the base `google.protobuf.*Options`
 field numbering.

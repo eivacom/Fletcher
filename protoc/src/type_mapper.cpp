@@ -16,17 +16,6 @@ namespace fletcher {
 
 using FD = google::protobuf::FieldDescriptor;
 
-static std::string FindStringOption(const google::protobuf::Message& opts, int number) {
-    const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
-    for (int i = 0; i < unknown.field_count(); ++i) {
-        const auto& f = unknown.field(i);
-        if (f.number() == number &&
-            f.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED)
-            return f.length_delimited();
-    }
-    return {};
-}
-
 static bool FindBoolOption(const google::protobuf::Message& opts, int number) {
     const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
     for (int i = 0; i < unknown.field_count(); ++i) {
@@ -40,12 +29,6 @@ static bool FindBoolOption(const google::protobuf::Message& opts, int number) {
 
 static bool HasMessageFlatten(const google::protobuf::Descriptor* msg) {
     return FindBoolOption(msg->options(), 1);
-}
-
-static std::string ReadCrsOption(const FD* field) {
-    auto crs = FindStringOption(field->options(), 50002);
-    if (!crs.empty()) return crs;
-    return FindStringOption(field->containing_type()->options(), 50001);
 }
 
 namespace {
@@ -208,11 +191,6 @@ bool IsFieldNullable(const google::protobuf::FieldDescriptor* field) {
 // -----------------------------------------------------------------------
 // Well-known type helpers
 // -----------------------------------------------------------------------
-
-struct WellKnownScalar {
-    const char* full_name;
-    const ScalarTypeInfo* info;
-};
 
 // google.protobuf.*Value wrappers → nullable scalar of the inner type.
 const ScalarTypeInfo* WrapperTypeInfo(const std::string& fqn) {
@@ -835,34 +813,6 @@ std::string CppWireTypeIdHex(FieldKind kind) {
             return "0x24";
         default:
             return "";
-    }
-}
-
-int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type) {
-    using FDT = google::protobuf::FieldDescriptor;
-    switch (type) {
-        case FDT::TYPE_BOOL:
-            return 1;
-        case FDT::TYPE_INT32:
-        case FDT::TYPE_SINT32:
-        case FDT::TYPE_SFIXED32:
-        case FDT::TYPE_UINT32:
-        case FDT::TYPE_FIXED32:
-        case FDT::TYPE_FLOAT:
-        case FDT::TYPE_ENUM:
-            return 4;
-        case FDT::TYPE_INT64:
-        case FDT::TYPE_SINT64:
-        case FDT::TYPE_SFIXED64:
-        case FDT::TYPE_UINT64:
-        case FDT::TYPE_FIXED64:
-        case FDT::TYPE_DOUBLE:
-            return 8;
-        case FDT::TYPE_STRING:
-        case FDT::TYPE_BYTES:
-            return -1;  // variable-length
-        default:
-            return -1;
     }
 }
 

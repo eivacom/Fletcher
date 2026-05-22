@@ -12,14 +12,10 @@ import "google/protobuf/descriptor.proto";
 
 extend google.protobuf.MessageOptions {
     // Flatten a single-field message wrapper into its inner type.
-    optional bool   flatten     = 1;
-    // Default CRS for all GeoArrow fields in the message.
-    optional string default_crs = 50001;
+    optional bool flatten = 1;
 }
 
 extend google.protobuf.FieldOptions {
     // Inline the referenced message's fields into the enclosing message.
-    optional bool   flatten = 1;
-    // CRS override for a single GeoArrow field.
-    optional string crs     = 50002;
+    optional bool flatten = 1;
 }
