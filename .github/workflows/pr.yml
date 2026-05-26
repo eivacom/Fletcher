@@ -59,6 +59,8 @@ jobs:
             core:
               - 'core/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -68,6 +70,8 @@ jobs:
             arrow-bridge:
               - 'arrow-bridge/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -77,6 +81,8 @@ jobs:
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -86,6 +92,8 @@ jobs:
             gateway:
               - 'gateway/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -98,6 +106,8 @@ jobs:
             protoc:
               - 'protoc/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -107,6 +117,8 @@ jobs:
             pubsub:
               - 'pubsub/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -116,6 +128,8 @@ jobs:
             pubsub-arrow:
               - 'pubsub-arrow/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -125,6 +139,8 @@ jobs:
             xrcedds-pubsub-provider:
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
+              - '.github/actions/conan-build-windows/**'
+              - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.github/actions/conan-bootstrap/**'
@@ -753,6 +769,7 @@ jobs:
         with:
           results: >-
             ${{ needs.setup-devcontainer.result }},
+            ${{ needs.build-matrix-prep.result }},
             ${{ needs.build-windows.result }},
             ${{ needs.build-linux.result }},
             ${{ needs.build-gateway-client.result }},
