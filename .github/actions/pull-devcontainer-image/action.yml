@@ -3,9 +3,9 @@
 #
 name: "Pull the pre-built Fletcher devcontainer image"
 description: >-
-  Logs in to Harbor with the repository bot credentials, pulls the
-  devcontainer image just built by the setup-devcontainer-image workflow, and
-  tags it locally as `fletcher-build` so the rest of the workflow can
+  Logs in to Docker Hub with the eivaorg OAT, pulls the devcontainer image
+  just built by the setup-devcontainer-image workflow, and tags it locally as
+  `fletcher-build` so the rest of the workflow can
   `docker run --rm ... fletcher-build` exactly the way it used to under
   the previous setup-devcontainer-image action.
   Replaces setup-devcontainer-image, which ran buildx on every
@@ -18,22 +18,18 @@ inputs:
   image:
     description: "Full image reference (output of the devcontainer-image reusable workflow)"
     required: true
-  harbor-username:
-    description: "Harbor robot username with read access to the prebuilt image"
-    required: true
-  harbor-password:
-    description: "Harbor robot password matching the username"
+  dockerhub-token:
+    description: "Docker Hub OAT for the eivaorg organisation"
     required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Log in to Harbor
+    - name: Log in to Docker Hub
       shell: bash
       env:
-        HARBOR_USERNAME: ${{ inputs.harbor-username }}
-        HARBOR_PASSWORD: ${{ inputs.harbor-password }}
-      run: echo "$HARBOR_PASSWORD" | docker login dockerrepo.eiva.com -u "$HARBOR_USERNAME" --password-stdin
+        DOCKERHUB_TOKEN: ${{ inputs.dockerhub-token }}
+      run: echo "$DOCKERHUB_TOKEN" | docker login -u eivaorg --password-stdin
 
     - name: Pull and retag as fletcher-build
       shell: bash

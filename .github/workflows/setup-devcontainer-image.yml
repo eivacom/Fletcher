@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 # Build the Fletcher devcontainer image once per commit and publish it
-# to Harbor at dockerrepo.eiva.com/fletcher/devcontainer:<sha>. Consumer
+# to Docker Hub at eivaorg/fletcher-devcontainer:<sha>. Consumer
 # workflows declare a top-level setup-devcontainer job that calls into
 # this reusable workflow, then their Linux build jobs `needs:` it and
 # pull the published image instead of doing their own buildx.
@@ -69,16 +69,15 @@ jobs:
           sparse-checkout: .devcontainer
           sparse-checkout-cone-mode: false
 
-      - name: Log in to Harbor
+      - name: Log in to Docker Hub
         env:
-          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
-          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
-        run: echo "$HARBOR_PASSWORD" | docker login dockerrepo.eiva.com -u "$HARBOR_USERNAME" --password-stdin
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u eivaorg --password-stdin
 
       - name: Resolve image tag
         id: tag
         run: |
-          echo "image=dockerrepo.eiva.com/fletcher/devcontainer:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "image=eivaorg/fletcher-devcontainer:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       # Cheap remote existence check — manifest-inspect is a HEAD request
       # against Harbor. If a previous concurrency-queue entry already
@@ -101,7 +100,7 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         env:
           IMAGE: ${{ steps.tag.outputs.image }}
-          MAIN_TAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'dockerrepo.eiva.com/fletcher/devcontainer:main' || '' }}
+          MAIN_TAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'eivaorg/fletcher-devcontainer:main' || '' }}
         run: |
           docker buildx create --name fletcher-builder --use --bootstrap 2>/dev/null || docker buildx use fletcher-builder
           tags=(--tag "$IMAGE")
@@ -111,6 +110,6 @@ jobs:
           docker buildx build \
             --push \
             "${tags[@]}" \
-            --cache-from type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache \
-            --cache-to   type=registry,ref=dockerrepo.eiva.com/fletcher/devcontainer:cache,mode=max \
+            --cache-from type=registry,ref=eivaorg/fletcher-devcontainer:cache \
+            --cache-to   type=registry,ref=eivaorg/fletcher-devcontainer:cache,mode=max \
             .devcontainer

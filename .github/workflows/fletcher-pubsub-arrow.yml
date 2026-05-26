@@ -91,8 +91,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build, test and export package
         run: |

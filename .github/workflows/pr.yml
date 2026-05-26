@@ -256,8 +256,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -319,8 +318,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -382,8 +380,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -447,8 +444,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -536,8 +532,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -599,8 +594,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -662,8 +656,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -725,8 +718,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build and test
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -876,8 +868,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
@@ -938,8 +929,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -1000,8 +990,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -1061,8 +1050,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
@@ -1124,8 +1112,7 @@ jobs:
         uses: ./.github/actions/pull-devcontainer-image
         with:
           image: ${{ needs.setup-devcontainer.outputs.image }}
-          harbor-username: ${{ secrets.HARBOR_USERNAME }}
-          harbor-password: ${{ secrets.HARBOR_PASSWORD }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
           auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
