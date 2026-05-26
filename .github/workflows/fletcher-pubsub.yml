@@ -29,20 +29,6 @@ jobs:
             pubsub
             .github
 
-      - name: Install MSVC tools
-        uses: ./.github/actions/install-msvc-tools
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
-
-      - name: Bootstrap Conan
-        uses: ./.github/actions/conan-bootstrap
-        with:
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
       - name: Get package reference
         id: conan-ref
         shell: pwsh
@@ -51,9 +37,14 @@ jobs:
           $inspect = conan inspect . --format=json | ConvertFrom-Json
           echo "ref=$($inspect.name)/$($inspect.version)" >> $env:GITHUB_OUTPUT
 
-      - name: Build and test
-        working-directory: pubsub
-        run: conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-RelWithDebInfo -o "&:run_tests=True"
+      - uses: ./.github/actions/conan-build-windows
+        with:
+          component: pubsub
+          conan-profile: Visual-Studio-2022-v143-x64-RelWithDebInfo
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
       - name: Export package from Conan cache
         working-directory: pubsub
@@ -78,35 +69,16 @@ jobs:
             .devcontainer
             .github
 
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
+      - uses: ./.github/actions/conan-build-linux
         with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
-
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
+          component: pubsub
+          export-package: "true"
+          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
+          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build, test and export package
-        run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace/pubsub \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }} \
-            fletcher-build \
-            bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o '&:run_tests=True' && \
-                     ref=\$(conan inspect . --format=json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[\"name\"]+\"/\"+d[\"version\"])') && \
-                     conan cache save \"\$ref\" --file conan-pkg-linux.tgz"
 
       - name: Upload package artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')

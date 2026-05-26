@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Build and test a Fletcher Conan component on Linux"
+description: >-
+  Generates a GitHub App token, pulls the pre-built devcontainer image,
+  then builds and tests the specified component inside the container.
+  Supports conan-create (default) and conan-install+build modes.
+  Optionally exports the built package to conan-pkg-linux.tgz.
+
+inputs:
+  component:
+    description: "Source directory name (e.g. core, arrow-bridge)"
+    required: true
+  conan-profile:
+    description: "Conan profile to use for the build"
+    required: false
+    default: "Ubuntu22-gcc-12-Release"
+  build-mode:
+    description: "Build mode: 'create' (default) or 'install-build'"
+    required: false
+    default: "create"
+  export-package:
+    description: "When true, export the built package to conan-pkg-linux.tgz"
+    required: false
+    default: "false"
+  devcontainer-image:
+    description: "Full image reference output from setup-devcontainer-image"
+    required: true
+  github-app-client-id:
+    description: "GitHub App client ID for accessing eivacom/conan-configuration"
+    required: true
+  github-app-private-key:
+    description: "GitHub App private key matching the client ID"
+    required: true
+  conan-eiva-username:
+    description: "conan-eiva Artifactory username"
+    required: true
+  conan-eiva-password:
+    description: "conan-eiva Artifactory password"
+    required: true
+  dockerhub-token:
+    description: "Docker Hub OAT for the eivaorg organisation"
+    required: true
+
+outputs:
+  conan-ref:
+    description: "Conan package reference (name/version), populated when export-package is true"
+    value: ${{ steps.build.outputs.conan-ref }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate token for conan-configuration
+      id: generate-token
+      uses: actions/create-github-app-token@v3.1.1
+      with:
+        client-id: ${{ inputs.github-app-client-id }}
+        private-key: ${{ inputs.github-app-private-key }}
+        owner: eivacom
+        repositories: conan-configuration
+
+    - name: Pull devcontainer image
+      uses: ./.github/actions/pull-devcontainer-image
+      with:
+        image: ${{ inputs.devcontainer-image }}
+        dockerhub-token: ${{ inputs.dockerhub-token }}
+
+    - name: Build and test
+      id: build
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        PROFILE: ${{ inputs.conan-profile }}
+        BUILD_MODE: ${{ inputs.build-mode }}
+        EXPORT_PACKAGE: ${{ inputs.export-package }}
+        GH_APP_TOKEN: ${{ steps.generate-token.outputs.token }}
+        CONAN_LOGIN_USERNAME: ${{ inputs.conan-eiva-username }}
+        CONAN_LOGIN_PASSWORD: ${{ inputs.conan-eiva-password }}
+      run: |
+        auth_header=$(echo -n "x-access-token:${GH_APP_TOKEN}" | base64 -w0)
+
+        if [[ "$BUILD_MODE" == "install-build" ]]; then
+          BUILD_CMD="conan install . --build=missing -pr:a=$PROFILE -o '&:run_tests=True' && conan build . -pr:a=$PROFILE -o '&:run_tests=True'"
+        else
+          BUILD_CMD="conan create . --build=missing -pr:a=$PROFILE -o '&:run_tests=True'"
+        fi
+
+        if [[ "$EXPORT_PACKAGE" == "true" ]]; then
+          EXPORT_SUFFIX=" && ref=\$(conan inspect . --format=json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[\"name\"]+\"/\"+d[\"version\"])') && conan cache save \"\$ref\" --file conan-pkg-linux.tgz && echo \"\$ref\" > /workspace/${COMPONENT}/.conan-ref"
+        else
+          EXPORT_SUFFIX=""
+        fi
+
+        docker run --rm \
+          -v "${GITHUB_WORKSPACE}:/workspace" \
+          -w "/workspace/${COMPONENT}" \
+          -e "GIT_EXTRA_HEADER=Authorization: Basic ${auth_header}" \
+          -e "CONAN_LOGIN_USERNAME=${CONAN_LOGIN_USERNAME}" \
+          -e "CONAN_LOGIN_PASSWORD=${CONAN_LOGIN_PASSWORD}" \
+          fletcher-build \
+          bash -c "git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
+                   conan config install https://github.com/eivacom/conan-configuration.git --type git && \
+                   conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
+                   ${BUILD_CMD}${EXPORT_SUFFIX}"
+
+        if [[ "$EXPORT_PACKAGE" == "true" ]] && [[ -f "${GITHUB_WORKSPACE}/${COMPONENT}/.conan-ref" ]]; then
+          conan_ref=$(cat "${GITHUB_WORKSPACE}/${COMPONENT}/.conan-ref")
+          rm -f "${GITHUB_WORKSPACE}/${COMPONENT}/.conan-ref"
+          echo "conan-ref=${conan_ref}" >> "$GITHUB_OUTPUT"
+        fi

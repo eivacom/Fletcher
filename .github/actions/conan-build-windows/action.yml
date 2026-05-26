@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Build and test a Fletcher Conan component on Windows"
+description: >-
+  Installs MSVC tools, CMake, bootstraps Conan, then builds and tests
+  the specified component. Supports conan-create (default) and
+  conan-install+build modes.
+
+inputs:
+  component:
+    description: "Source directory name (e.g. core, arrow-bridge)"
+    required: true
+  conan-profile:
+    description: "Conan profile to use for the build"
+    required: false
+    default: "Visual-Studio-2022-v143-x64-Release"
+  build-mode:
+    description: "Build mode: 'create' (default) or 'install-build'"
+    required: false
+    default: "create"
+  github-app-client-id:
+    description: "GitHub App client ID for accessing eivacom/conan-configuration"
+    required: true
+  github-app-private-key:
+    description: "GitHub App private key matching the client ID"
+    required: true
+  conan-eiva-username:
+    description: "conan-eiva Artifactory username"
+    required: true
+  conan-eiva-password:
+    description: "conan-eiva Artifactory password"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install MSVC tools
+      uses: ./.github/actions/install-msvc-tools
+
+    - name: Install CMake
+      uses: ./.github/actions/install-cmake
+
+    - name: Bootstrap Conan
+      uses: ./.github/actions/conan-bootstrap
+      with:
+        github-app-client-id: ${{ inputs.github-app-client-id }}
+        github-app-private-key: ${{ inputs.github-app-private-key }}
+        conan-eiva-username: ${{ inputs.conan-eiva-username }}
+        conan-eiva-password: ${{ inputs.conan-eiva-password }}
+
+    - name: Build and test
+      shell: bash
+      working-directory: ${{ inputs.component }}
+      env:
+        PROFILE: ${{ inputs.conan-profile }}
+        BUILD_MODE: ${{ inputs.build-mode }}
+      run: |
+        if [[ "$BUILD_MODE" == "install-build" ]]; then
+          conan install . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
+          conan build . -pr:a="$PROFILE" -o "&:run_tests=True"
+        else
+          conan create . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
+        fi
