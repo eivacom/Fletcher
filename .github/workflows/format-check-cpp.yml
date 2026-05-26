@@ -16,16 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Self-hosted runner ships without `sudo`; runs as root already, so
-      # the apt-get calls work without elevation. `-y` to skip the prompt.
-      # Pin to clang-format-18 (the version Ubuntu 24.04 currently provides
-      # and the devcontainer installs) so CI and editor agree on what
-      # "formatted" means; future Ubuntu LTS bumps will not silently change
-      # the formatter behaviour underneath us.
       - name: Install clang-format-18
         run: |
-          apt-get update
-          apt-get install -y clang-format-18
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18
           clang-format-18 --version
 
       # Build the file list at runtime so the workflow stays in sync with
