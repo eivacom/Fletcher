@@ -45,8 +45,7 @@ permissions:
 
 jobs:
   build:
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     # FIFO-serialize every build job that shares the same git SHA. When 13
     # consumer workflows trigger simultaneously on a PR, only the first
     # setup-devcontainer to pop the queue does the actual buildx + push;

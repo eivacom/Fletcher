@@ -23,8 +23,7 @@ jobs:
     secrets: inherit
 
   build-windows:
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -61,8 +60,7 @@ jobs:
 
   build-linux:
     needs: setup-devcontainer
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:

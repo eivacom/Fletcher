@@ -212,8 +212,7 @@ jobs:
   build-core-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.core == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -238,8 +237,7 @@ jobs:
   build-core-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.core == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -276,8 +274,7 @@ jobs:
   build-arrow-bridge-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.arrow-bridge == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -302,8 +299,7 @@ jobs:
   build-arrow-bridge-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.arrow-bridge == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -341,8 +337,7 @@ jobs:
   build-fastdds-pubsub-provider-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -367,8 +362,7 @@ jobs:
   build-fastdds-pubsub-provider-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -406,8 +400,7 @@ jobs:
   build-gateway-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.gateway == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -434,8 +427,7 @@ jobs:
   build-gateway-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.gateway == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -474,8 +466,7 @@ jobs:
   build-gateway-client:
     needs: detect-changes
     if: needs.detect-changes.outputs.gateway-client == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: gateway-client-ts
@@ -500,8 +491,7 @@ jobs:
   build-protoc-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.protoc == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -526,8 +516,7 @@ jobs:
   build-protoc-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.protoc == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -565,8 +554,7 @@ jobs:
   build-pubsub-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.pubsub == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -591,8 +579,7 @@ jobs:
   build-pubsub-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.pubsub == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -630,8 +617,7 @@ jobs:
   build-pubsub-arrow-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.pubsub-arrow == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -656,8 +642,7 @@ jobs:
   build-pubsub-arrow-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.pubsub-arrow == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -695,8 +680,7 @@ jobs:
   build-xrcedds-pubsub-provider-windows:
     needs: detect-changes
     if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -721,8 +705,7 @@ jobs:
   build-xrcedds-pubsub-provider-linux:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -760,8 +743,7 @@ jobs:
   format-check-cpp:
     needs: detect-changes
     if: needs.detect-changes.outputs.format-cpp == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Install clang-format-18
@@ -786,8 +768,7 @@ jobs:
   format-check-ts:
     needs: detect-changes
     if: needs.detect-changes.outputs.format-ts == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -797,8 +778,7 @@ jobs:
         run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
 
   license-check:
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Check SPDX + Copyright headers on all tracked files
@@ -870,8 +850,7 @@ jobs:
   integration-fastdds-xrce-interop:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.integration-fastdds-xrce == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -934,8 +913,7 @@ jobs:
   integration-gateway-end-to-end:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.integration-gateway-e2e == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -998,8 +976,7 @@ jobs:
   integration-protoc-arrow-bridge:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.integration-protoc-arrow == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -1060,8 +1037,7 @@ jobs:
   integration-protoc-gateway-client-ts:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -1123,8 +1099,7 @@ jobs:
   integration-pubsub-arrow-fastdds:
     needs: [detect-changes, setup-devcontainer]
     if: needs.detect-changes.outputs.integration-pubsub-arrow-fastdds == 'true'
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:

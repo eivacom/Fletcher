@@ -12,8 +12,7 @@ on:
 
 jobs:
   check:
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       # Pin Node to the same patch version the devcontainer installs so

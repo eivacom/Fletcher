@@ -12,8 +12,7 @@ on:
 
 jobs:
   build-and-test:
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: gateway-client-ts

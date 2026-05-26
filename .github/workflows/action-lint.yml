@@ -15,8 +15,7 @@ on:
 
 jobs:
   actionlint:
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout .github folder
         uses: actions/checkout@v6

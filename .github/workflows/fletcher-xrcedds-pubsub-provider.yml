@@ -19,8 +19,7 @@ jobs:
     secrets: inherit
 
   build-windows:
-    runs-on:
-      group: windows-server-core-ltsc2025
+    runs-on: windows-latest
     outputs:
       conan-ref: ${{ steps.conan-ref.outputs.ref }}
     steps:
@@ -70,8 +69,7 @@ jobs:
 
   build-linux:
     needs: setup-devcontainer
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -122,8 +120,7 @@ jobs:
   # ── Upload — runs only on release tag pushes after both platforms pass ────
   upload:
     needs: [ build-windows, build-linux ]
-    runs-on:
-      group: ubuntu_24.04_x64
+    runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
 
     steps:
