@@ -209,153 +209,81 @@ jobs:
 
   # ── Stage 2: component builds ────────────────────────────────────────────────
 
-  build-core-windows:
+  build-matrix-prep:
     needs: detect-changes
-    if: needs.detect-changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.prep.outputs.matrix }}
+    steps:
+      - id: prep
+        env:
+          CHANGED_CORE:         ${{ needs.detect-changes.outputs.core }}
+          CHANGED_ARROW:        ${{ needs.detect-changes.outputs.arrow-bridge }}
+          CHANGED_PUBSUB:       ${{ needs.detect-changes.outputs.pubsub }}
+          CHANGED_PUBSUB_ARROW: ${{ needs.detect-changes.outputs.pubsub-arrow }}
+          CHANGED_PROTOC:       ${{ needs.detect-changes.outputs.protoc }}
+          CHANGED_GATEWAY:      ${{ needs.detect-changes.outputs.gateway }}
+          CHANGED_FASTDDS:      ${{ needs.detect-changes.outputs.fastdds-pubsub-provider }}
+          CHANGED_XRCEDDS:      ${{ needs.detect-changes.outputs.xrcedds-pubsub-provider }}
+        run: |
+          entries=()
+          [[ "$CHANGED_CORE"         == "true" ]] && entries+=('{"name":"core","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_ARROW"        == "true" ]] && entries+=('{"name":"arrow-bridge","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_PUBSUB"       == "true" ]] && entries+=('{"name":"pubsub","win-profile":"Visual-Studio-2022-v143-x64-RelWithDebInfo","build-mode":"create"}')
+          [[ "$CHANGED_PUBSUB_ARROW" == "true" ]] && entries+=('{"name":"pubsub-arrow","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_PROTOC"       == "true" ]] && entries+=('{"name":"protoc","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_GATEWAY"      == "true" ]] && entries+=('{"name":"gateway","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"install-build"}')
+          [[ "$CHANGED_FASTDDS"      == "true" ]] && entries+=('{"name":"fastdds-pubsub-provider","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_XRCEDDS"      == "true" ]] && entries+=('{"name":"xrcedds-pubsub-provider","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          if [[ ${#entries[@]} -eq 0 ]]; then
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+          else
+            matrix=$(printf ',%s' "${entries[@]}")
+            echo "matrix=[${matrix:1}]" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-windows:
+    needs: [build-matrix-prep]
+    if: needs.build-matrix-prep.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.build-matrix-prep.outputs.matrix) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
+            ${{ matrix.component.name }}
             .github
       - uses: ./.github/actions/conan-build-windows
         with:
-          component: core
+          component: ${{ matrix.component.name }}
+          conan-profile: ${{ matrix.component.win-profile }}
+          build-mode: ${{ matrix.component.build-mode }}
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
           conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
           conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
 
-  build-core-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.core == 'true'
+  build-linux:
+    needs: [build-matrix-prep, setup-devcontainer]
+    if: needs.build-matrix-prep.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.build-matrix-prep.outputs.matrix) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
+            ${{ matrix.component.name }}
             .github
       - uses: ./.github/actions/conan-build-linux
         with:
-          component: core
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-arrow-bridge-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.arrow-bridge == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            arrow-bridge
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: arrow-bridge
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-arrow-bridge-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.arrow-bridge == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            arrow-bridge
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: arrow-bridge
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-fastdds-pubsub-provider-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            fastdds-pubsub-provider
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: fastdds-pubsub-provider
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-fastdds-pubsub-provider-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.fastdds-pubsub-provider == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            fastdds-pubsub-provider
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: fastdds-pubsub-provider
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-gateway-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.gateway == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            gateway
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: gateway
-          build-mode: install-build
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-gateway-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.gateway == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            gateway
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: gateway
-          build-mode: install-build
+          component: ${{ matrix.component.name }}
+          build-mode: ${{ matrix.component.build-mode }}
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
@@ -387,159 +315,6 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test
-
-  build-protoc-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.protoc == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: protoc
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-protoc-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.protoc == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: protoc
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-pubsub-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.pubsub == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            pubsub
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: pubsub
-          conan-profile: Visual-Studio-2022-v143-x64-RelWithDebInfo
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-pubsub-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.pubsub == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            pubsub
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: pubsub
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-pubsub-arrow-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.pubsub-arrow == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            pubsub-arrow
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: pubsub-arrow
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-pubsub-arrow-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.pubsub-arrow == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            pubsub-arrow
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: pubsub-arrow
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-  build-xrcedds-pubsub-provider-windows:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            xrcedds-pubsub-provider
-            .github
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: xrcedds-pubsub-provider
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-
-  build-xrcedds-pubsub-provider-linux:
-    needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            xrcedds-pubsub-provider
-            .github
-      - uses: ./.github/actions/conan-build-linux
-        with:
-          component: xrcedds-pubsub-provider
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   format-check-cpp:
     needs: detect-changes
@@ -958,23 +733,10 @@ jobs:
   pr_gate:
     needs:
       - setup-devcontainer
-      - build-core-windows
-      - build-core-linux
-      - build-arrow-bridge-windows
-      - build-arrow-bridge-linux
-      - build-fastdds-pubsub-provider-windows
-      - build-fastdds-pubsub-provider-linux
-      - build-gateway-windows
-      - build-gateway-linux
+      - build-matrix-prep
+      - build-windows
+      - build-linux
       - build-gateway-client
-      - build-protoc-windows
-      - build-protoc-linux
-      - build-pubsub-windows
-      - build-pubsub-linux
-      - build-pubsub-arrow-windows
-      - build-pubsub-arrow-linux
-      - build-xrcedds-pubsub-provider-windows
-      - build-xrcedds-pubsub-provider-linux
       - format-check-cpp
       - format-check-ts
       - license-check
@@ -991,23 +753,9 @@ jobs:
         with:
           results: >-
             ${{ needs.setup-devcontainer.result }},
-            ${{ needs.build-core-windows.result }},
-            ${{ needs.build-core-linux.result }},
-            ${{ needs.build-arrow-bridge-windows.result }},
-            ${{ needs.build-arrow-bridge-linux.result }},
-            ${{ needs.build-fastdds-pubsub-provider-windows.result }},
-            ${{ needs.build-fastdds-pubsub-provider-linux.result }},
-            ${{ needs.build-gateway-windows.result }},
-            ${{ needs.build-gateway-linux.result }},
+            ${{ needs.build-windows.result }},
+            ${{ needs.build-linux.result }},
             ${{ needs.build-gateway-client.result }},
-            ${{ needs.build-protoc-windows.result }},
-            ${{ needs.build-protoc-linux.result }},
-            ${{ needs.build-pubsub-windows.result }},
-            ${{ needs.build-pubsub-linux.result }},
-            ${{ needs.build-pubsub-arrow-windows.result }},
-            ${{ needs.build-pubsub-arrow-linux.result }},
-            ${{ needs.build-xrcedds-pubsub-provider-windows.result }},
-            ${{ needs.build-xrcedds-pubsub-provider-linux.result }},
             ${{ needs.format-check-cpp.result }},
             ${{ needs.format-check-ts.result }},
             ${{ needs.license-check.result }},
