@@ -69,13 +69,6 @@ jobs:
           sparse-checkout: .devcontainer
           sparse-checkout-cone-mode: false
 
-      # Create the buildx builder before logging in so that the moby/buildkit
-      # bootstrap pull is anonymous. If login happens first, Docker forwards
-      # the OAT on every registry request — including moby/* public images —
-      # and the token's limited scopes trigger "insufficient scopes" errors.
-      - name: Create buildx builder
-        run: docker buildx create --name fletcher-builder --use --bootstrap 2>/dev/null || docker buildx use fletcher-builder
-
       - name: Log in to Docker Hub
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -109,6 +102,7 @@ jobs:
           IMAGE: ${{ steps.tag.outputs.image }}
           MAIN_TAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'eivaorg/fletcher-devcontainer:main' || '' }}
         run: |
+          docker buildx create --name fletcher-builder --use --bootstrap 2>/dev/null || docker buildx use fletcher-builder
           tags=(--tag "$IMAGE")
           if [[ -n "$MAIN_TAG" ]]; then
             tags+=(--tag "$MAIN_TAG")
