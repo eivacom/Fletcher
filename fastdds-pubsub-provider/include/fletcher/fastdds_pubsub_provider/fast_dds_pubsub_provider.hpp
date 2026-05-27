@@ -12,9 +12,10 @@ namespace fletcher {
 
 /// PubSub transport backed by eProsima Fast DDS.
 ///
-/// Data topic DataWriter/DataReader QoS: RELIABLE reliability, KEEP_ALL
-/// history, and TRANSIENT_LOCAL durability so messages are not silently
-/// dropped and late-joining subscribers receive historical samples.
+/// Default data topic QoS (DataWriter and DataReader): RELIABLE reliability,
+/// KEEP_ALL history, and TRANSIENT_LOCAL durability.  Callers can override
+/// per-topic by passing a DataWriterQos to CreateTopic or a DataReaderQos
+/// to Subscribe via the std::any config parameter.
 ///
 /// The companion schema channel (__schema topic) uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL to retain only the latest schema.

@@ -30,6 +30,7 @@
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -282,6 +283,8 @@ struct FastDDSPubSubProvider::Impl {
         // Schema (nanoarrow ArrowSchema).
         OwnedSchema schema;
         bool is_publisher = false;
+        // Caller-supplied DataWriterQos; used when lazily creating the writer.
+        std::optional<DataWriterQos> writer_qos_override;
     };
 
     uint32_t max_payload = 0;
@@ -345,7 +348,7 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 // -----------------------------------------------------------------------
 
 void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema, std::any /*config*/) {
+                                        OwnedSchema schema, std::any config) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -360,6 +363,11 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     auto& ts = impl_->topics[name];
     ts.topic = topic;
     ts.is_publisher = true;
+
+    if (config.has_value()) {
+        auto* wqos = std::any_cast<DataWriterQos>(&config);
+        if (wqos) ts.writer_qos_override = *wqos;
+    }
 
     // Create companion __schema topic and eagerly publish the schema
     // so that late-joining subscribers receive it via TRANSIENT_LOCAL.
@@ -403,9 +411,13 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // Lazily create the DataWriter on first publish.
     if (!ts.writer) {
         DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
-        wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-        wqos.history().kind = KEEP_ALL_HISTORY_QOS;
-        wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+        if (ts.writer_qos_override) {
+            wqos = *ts.writer_qos_override;
+        } else {
+            wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+            wqos.history().kind = KEEP_ALL_HISTORY_QOS;
+            wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+        }
 
         ts.writer = impl_->publisher->create_datawriter(ts.topic, wqos);
         if (!ts.writer)
@@ -422,7 +434,7 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback,
-                                                    std::any /*config*/) {
+                                                    std::any config) {
     std::string name = JoinSegments(topic_segments);
     OwnedSchema schema;
 
@@ -503,9 +515,14 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())) : nullptr);
 
     DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
-    rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-    rqos.history().kind = KEEP_ALL_HISTORY_QOS;
-    rqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    auto* rqos_override = config.has_value() ? std::any_cast<DataReaderQos>(&config) : nullptr;
+    if (rqos_override) {
+        rqos = *rqos_override;
+    } else {
+        rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+        rqos.history().kind = KEEP_ALL_HISTORY_QOS;
+        rqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    }
 
     ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get());
     if (!ts.reader) throw std::runtime_error("FastDDS: failed to create DataReader for: " + name);
