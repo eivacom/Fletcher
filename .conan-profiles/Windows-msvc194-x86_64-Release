@@ -9,3 +9,4 @@ compiler.version=194
 os=Windows
 [options]
 *:shared=True
+gtest/*:shared=False
