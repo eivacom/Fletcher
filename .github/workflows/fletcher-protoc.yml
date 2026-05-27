@@ -37,13 +37,19 @@ jobs:
           $inspect = conan inspect . --format=json | ConvertFrom-Json
           echo "ref=$($inspect.name)/$($inspect.version)" >> $env:GITHUB_OUTPUT
 
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+
       - uses: ./.github/actions/conan-build-windows
         with:
           component: protoc
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
       - name: Export package from Conan cache
         working-directory: protoc
@@ -75,8 +81,8 @@ jobs:
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Upload package artifact
@@ -111,8 +117,8 @@ jobs:
         with:
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
       - name: Check package version is not already published
         uses: ./.github/actions/check-version-not-published

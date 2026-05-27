@@ -38,14 +38,20 @@ jobs:
       # conan-default configure preset, with conan-release reserved for
       # the build step), while on Linux single-config generators the
       # opposite is true. Letting Conan dispatch sidesteps the asymmetry.
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+
       - uses: ./.github/actions/conan-build-windows
         with:
           component: gateway
           build-mode: install-build
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
   build-linux:
     needs: setup-devcontainer
@@ -65,6 +71,6 @@ jobs:
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
           github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
           github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_ROBOT_PASSWORD }}
+          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
+          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
