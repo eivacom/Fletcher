@@ -63,10 +63,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             arrow-bridge:
               - 'arrow-bridge/**'
               - '.github/workflows/pr.yml'
@@ -74,10 +71,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
@@ -85,10 +79,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             gateway:
               - 'gateway/**'
               - '.github/workflows/pr.yml'
@@ -96,10 +87,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             gateway-client:
               - 'gateway-client-ts/**'
               - '.github/workflows/pr.yml'
@@ -110,10 +98,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             pubsub:
               - 'pubsub/**'
               - '.github/workflows/pr.yml'
@@ -121,10 +106,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             pubsub-arrow:
               - 'pubsub-arrow/**'
               - '.github/workflows/pr.yml'
@@ -132,10 +114,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             xrcedds-pubsub-provider:
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
@@ -143,10 +122,7 @@ jobs:
               - '.github/actions/conan-build-linux/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
-              - '.github/actions/conan-bootstrap/**'
-              - '.github/actions/pull-devcontainer-image/**'
-              - '.github/workflows/setup-devcontainer-image.yml'
-              - '.devcontainer/**'
+              - '.conan-profiles/**'
             format-cpp:
               - '**/*.cpp'
               - '**/*.hpp'
@@ -243,14 +219,14 @@ jobs:
           CHANGED_XRCEDDS:      ${{ needs.detect-changes.outputs.xrcedds-pubsub-provider }}
         run: |
           entries=()
-          [[ "$CHANGED_CORE"         == "true" ]] && entries+=('{"name":"core","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
-          [[ "$CHANGED_ARROW"        == "true" ]] && entries+=('{"name":"arrow-bridge","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
-          [[ "$CHANGED_PUBSUB"       == "true" ]] && entries+=('{"name":"pubsub","win-profile":"Visual-Studio-2022-v143-x64-RelWithDebInfo","build-mode":"create"}')
-          [[ "$CHANGED_PUBSUB_ARROW" == "true" ]] && entries+=('{"name":"pubsub-arrow","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
-          [[ "$CHANGED_PROTOC"       == "true" ]] && entries+=('{"name":"protoc","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
-          [[ "$CHANGED_GATEWAY"      == "true" ]] && entries+=('{"name":"gateway","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"install-build"}')
-          [[ "$CHANGED_FASTDDS"      == "true" ]] && entries+=('{"name":"fastdds-pubsub-provider","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
-          [[ "$CHANGED_XRCEDDS"      == "true" ]] && entries+=('{"name":"xrcedds-pubsub-provider","win-profile":"Visual-Studio-2022-v143-x64-Release","build-mode":"create"}')
+          [[ "$CHANGED_CORE"         == "true" ]] && entries+=('{"name":"core","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_ARROW"        == "true" ]] && entries+=('{"name":"arrow-bridge","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_PUBSUB"       == "true" ]] && entries+=('{"name":"pubsub","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_PUBSUB_ARROW" == "true" ]] && entries+=('{"name":"pubsub-arrow","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_PROTOC"       == "true" ]] && entries+=('{"name":"protoc","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_GATEWAY"      == "true" ]] && entries+=('{"name":"gateway","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"install-build"}')
+          [[ "$CHANGED_FASTDDS"      == "true" ]] && entries+=('{"name":"fastdds-pubsub-provider","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
+          [[ "$CHANGED_XRCEDDS"      == "true" ]] && entries+=('{"name":"xrcedds-pubsub-provider","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
           if [[ ${#entries[@]} -eq 0 ]]; then
             echo "matrix=[]" >> "$GITHUB_OUTPUT"
           else
@@ -272,6 +248,7 @@ jobs:
           sparse-checkout: |
             ${{ matrix.component.name }}
             .github
+            .conan-profiles
 
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
@@ -284,10 +261,6 @@ jobs:
           component: ${{ matrix.component.name }}
           conan-profile: ${{ matrix.component.win-profile }}
           build-mode: ${{ matrix.component.build-mode }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
   build-linux:
     needs: [build-matrix-prep, setup-devcontainer]
@@ -303,15 +276,12 @@ jobs:
           sparse-checkout: |
             ${{ matrix.component.name }}
             .github
+            .conan-profiles
       - uses: ./.github/actions/conan-build-linux
         with:
           component: ${{ matrix.component.name }}
           build-mode: ${{ matrix.component.build-mode }}
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   build-gateway-client:
@@ -463,14 +433,6 @@ jobs:
             integration-tests/fastdds-xrce-interop
             .devcontainer
             .github
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
@@ -478,25 +440,19 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
                        echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/fastdds-xrce-interop && \
                      echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     conan install . --build=missing && \
                      echo '::endgroup::' && \
                      echo '::group::cmake configure' && \
                      cmake --preset conan-release && \
@@ -524,14 +480,6 @@ jobs:
             integration-tests/gateway-end-to-end
             .devcontainer
             .github
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
@@ -539,25 +487,19 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     conan profile detect && \
                      for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/gateway-end-to-end && \
                      echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     conan install . --build=missing && \
                      echo '::endgroup::' && \
                      echo '::group::cmake configure + build' && \
                      cmake --preset conan-release && \
@@ -585,14 +527,6 @@ jobs:
             integration-tests/protoc-arrow-bridge
             .devcontainer
             .github
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
@@ -600,25 +534,19 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/protoc-arrow-bridge && \
                      echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     conan install . --build=missing && \
                      echo '::endgroup::' && \
                      echo '::group::cmake configure' && \
                      cmake --preset conan-release && \
@@ -645,14 +573,6 @@ jobs:
             integration-tests/protoc-gateway-client-ts
             .devcontainer
             .github
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
@@ -660,25 +580,19 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     conan profile detect && \
                      for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/protoc-gateway-client-ts && \
                      echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     conan install . --build=missing && \
                      echo '::endgroup::' && \
                      echo '::group::cmake configure + build' && \
                      cmake --preset conan-release && \
@@ -707,14 +621,6 @@ jobs:
             integration-tests/pubsub-arrow-fastdds
             .devcontainer
             .github
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
@@ -722,25 +628,19 @@ jobs:
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64 -w0)
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     conan remote login conan-eiva \$CONAN_LOGIN_USERNAME -p \$CONAN_LOGIN_PASSWORD && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider; do \
                        echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/pubsub-arrow-fastdds && \
                      echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     conan install . --build=missing && \
                      echo '::endgroup::' && \
                      echo '::group::cmake configure' && \
                      cmake --preset conan-release && \

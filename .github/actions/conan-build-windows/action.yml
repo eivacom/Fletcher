@@ -3,7 +3,8 @@
 #
 name: "Build and test a Fletcher Conan component on Windows"
 description: >-
-  Bootstraps Conan, then builds and tests the specified component.
+  Installs Python and Conan, copies the in-repo Conan profiles, then
+  builds and tests the specified component against ConanCenter.
   Supports conan-create (default) and conan-install+build modes.
   Callers are responsible for installing MSVC tools and CMake beforehand.
 
@@ -12,36 +13,35 @@ inputs:
     description: "Source directory name (e.g. core, arrow-bridge)"
     required: true
   conan-profile:
-    description: "Conan profile to use for the build"
+    description: "Conan profile name (must exist in .conan-profiles/)"
     required: false
-    default: "Visual-Studio-2022-v143-x64-Release"
+    default: "Windows-msvc194-x86_64-Release"
   build-mode:
     description: "Build mode: 'create' (default) or 'install-build'"
     required: false
     default: "create"
-  github-app-client-id:
-    description: "GitHub App client ID for accessing eivacom/conan-configuration"
-    required: true
-  github-app-private-key:
-    description: "GitHub App private key matching the client ID"
-    required: true
-  conan-eiva-username:
-    description: "conan-eiva Artifactory username"
-    required: true
-  conan-eiva-password:
-    description: "conan-eiva Artifactory password"
-    required: true
+  conan-version:
+    description: "Conan version to install"
+    required: false
+    default: "2.27.1"
 
 runs:
   using: "composite"
   steps:
-    - name: Bootstrap Conan
-      uses: ./.github/actions/conan-bootstrap
+    - name: Set up Python
+      uses: actions/setup-python@v6.2.0
       with:
-        github-app-client-id: ${{ inputs.github-app-client-id }}
-        github-app-private-key: ${{ inputs.github-app-private-key }}
-        conan-eiva-username: ${{ inputs.conan-eiva-username }}
-        conan-eiva-password: ${{ inputs.conan-eiva-password }}
+        python-version: "3.x"
+
+    - name: Install Conan
+      shell: bash
+      run: pip install "conan==${{ inputs.conan-version }}"
+
+    - name: Install Conan profiles
+      shell: bash
+      run: |
+        mkdir -p ~/.conan2/profiles
+        cp .conan-profiles/* ~/.conan2/profiles/
 
     - name: Build and test
       shell: bash

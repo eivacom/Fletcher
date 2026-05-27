@@ -21,21 +21,14 @@ jobs:
   build-windows:
     runs-on: windows-latest
     outputs:
-      conan-ref: ${{ steps.conan-ref.outputs.ref }}
+      conan-ref: ${{ steps.get-ref.outputs.conan-ref }}
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             arrow-bridge
             .github
-
-      - name: Get package reference
-        id: conan-ref
-        shell: pwsh
-        working-directory: arrow-bridge
-        run: |
-          $inspect = conan inspect . --format=json | ConvertFrom-Json
-          echo "ref=$($inspect.name)/$($inspect.version)" >> $env:GITHUB_OUTPUT
+            .conan-profiles
 
       - name: Install MSVC tools
         uses: ./.github/actions/install-msvc-tools
@@ -46,22 +39,27 @@ jobs:
       - uses: ./.github/actions/conan-build-windows
         with:
           component: arrow-bridge
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
-      - name: Export package from Conan cache
-        working-directory: arrow-bridge
-        run: conan cache save "${{ steps.conan-ref.outputs.ref }}" --file conan-pkg-windows.tgz
-
-      - name: Upload package artifact
+      - name: Get Conan reference
+        id: get-ref
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v7
+        shell: bash
+        working-directory: arrow-bridge
+        run: |
+          ref=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['name'] + '/' + d['version'])")
+          echo "conan-ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Save Conan package
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-arrow-bridge-windows.tgz"
+
+      - name: Upload Windows artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
         with:
-          name: conan-pkg-windows
-          path: arrow-bridge/conan-pkg-windows.tgz
-          retention-days: 1
+          name: fletcher-arrow-bridge-windows
+          path: fletcher-arrow-bridge-windows.tgz
 
   build-linux:
     needs: setup-devcontainer
@@ -71,34 +69,29 @@ jobs:
         with:
           sparse-checkout: |
             arrow-bridge
-            .devcontainer
             .github
+            .conan-profiles
 
       - uses: ./.github/actions/conan-build-linux
         with:
           component: arrow-bridge
-          export-package: "true"
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          artifact-name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-arrow-bridge-linux.tgz' || '' }}
 
-      - name: Upload package artifact
+      - name: Upload Linux artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: conan-pkg-linux
-          path: arrow-bridge/conan-pkg-linux.tgz
-          retention-days: 1
+          name: fletcher-arrow-bridge-linux
+          path: fletcher-arrow-bridge-linux.tgz
 
-  # ── Upload — runs only after both platforms pass ──────────────────────────
   upload:
-    needs: [ build-windows, build-linux ]
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -112,34 +105,18 @@ jobs:
           conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
           tag-prefix: arrow-bridge-v
 
-      - name: Bootstrap Conan
-        uses: ./.github/actions/conan-bootstrap
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
+          pattern: fletcher-arrow-bridge-*
+          merge-multiple: true
 
-      - name: Check package version is not already published
-        uses: ./.github/actions/check-version-not-published
-        with:
-          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
-
-      - name: Download Windows package artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: conan-pkg-windows
-
-      - name: Download Linux package artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: conan-pkg-linux
-
-      - name: Restore Windows package into Conan cache
-        run: conan cache restore conan-pkg-windows.tgz
-
-      - name: Restore Linux package into Conan cache
-        run: conan cache restore conan-pkg-linux.tgz
-
-      - name: Upload to Artifactory
-        run: conan upload "${{ needs.build-windows.outputs.conan-ref }}" -r conan-eiva --confirm
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            "fletcher-arrow-bridge-windows.tgz" \
+            "fletcher-arrow-bridge-linux.tgz"

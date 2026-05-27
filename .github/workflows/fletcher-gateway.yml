@@ -30,6 +30,7 @@ jobs:
           sparse-checkout: |
             gateway
             .github
+            .conan-profiles
 
       # `conan build .` dispatches cmake configure / build / test via the
       # conanfile's build() method, picking the right preset for the
@@ -48,10 +49,6 @@ jobs:
         with:
           component: gateway
           build-mode: install-build
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
 
   build-linux:
     needs: setup-devcontainer
@@ -61,16 +58,12 @@ jobs:
         with:
           sparse-checkout: |
             gateway
-            .devcontainer
             .github
+            .conan-profiles
 
       - uses: ./.github/actions/conan-build-linux
         with:
           component: gateway
           build-mode: install-build
           devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-          github-app-client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          github-app-private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          conan-eiva-username: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }}
-          conan-eiva-password: ${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

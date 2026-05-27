@@ -27,17 +27,8 @@ jobs:
             arrow-bridge
             pubsub
             integration-tests/protoc-arrow-bridge
-            .devcontainer
+            .conan-profiles
             .github
-
-      - name: Generate token for conan-configuration
-        id: generate-token
-        uses: actions/create-github-app-token@v3.1.1
-        with:
-          client-id: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_CLIENT_ID }}
-          private-key: ${{ secrets.GH_EIVA_ROBOT_APPLICATION_KEY }}
-          owner: eivacom
-          repositories: conan-configuration
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
@@ -47,16 +38,12 @@ jobs:
 
       - name: Build components and run integration tests
         run: |
-          auth_header=$(echo -n "x-access-token:${{ steps.generate-token.outputs.token }}" | base64)
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            -e GIT_EXTRA_HEADER="Authorization: Basic $auth_header" \
-            -e CONAN_LOGIN_USERNAME=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_USERNAME }} \
-            -e CONAN_LOGIN_PASSWORD=${{ secrets.CONAN_EIVA_ARTIFACTORY_FLETCHER_ROBOT_PASSWORD }} \
             fletcher-build \
             bash -c "set -e && \
-                     git config --global http.extraHeader \"\$GIT_EXTRA_HEADER\" && \
-                     conan config install https://github.com/eivacom/conan-configuration.git --type git && \
-                     PROFILE=Ubuntu22-gcc-12-Release && \
+                     pip install conan==2.27.1 && \
+                     mkdir -p ~/.conan2/profiles && cp .conan-profiles/* ~/.conan2/profiles/ && \
+                     PROFILE=Linux-gcc13-x86_64-Release && \
                      for COMPONENT in core arrow-bridge pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
