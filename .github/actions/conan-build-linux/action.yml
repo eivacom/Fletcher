@@ -64,7 +64,7 @@ runs:
           fletcher-build \
           bash -c '
             set -e
-            pip install "conan==${CONAN_VERSION}"
+            pip install "conan==${CONAN_VERSION}" --break-system-packages
             mkdir -p ~/.conan2/profiles
             cp /workspace/.conan-profiles/* ~/.conan2/profiles/
             if [[ "${BUILD_MODE}" == "install-build" ]]; then

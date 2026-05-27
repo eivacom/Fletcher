@@ -42,7 +42,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
+                     pip install conan==2.27.1 --break-system-packages && \
                      mkdir -p ~/.conan2/profiles && cp .conan-profiles/* ~/.conan2/profiles/ && \
                      PROFILE=Linux-gcc13-x86_64-Release && \
                      for COMPONENT in core pubsub protoc; do \

@@ -347,72 +347,7 @@ jobs:
         run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
 
   license-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Check SPDX + Copyright headers on all tracked files
-        run: |
-          set -euo pipefail
-
-          # Every tracked file, minus the denylist.
-          mapfile -t files < <(
-            git ls-files \
-              | grep -v -E '^pubsub/third_party/' \
-              | grep -v -E '^(LICENSE|AUTHORS)$' \
-              | grep -v -E '^\.gitignore$|^\.gitattributes$' \
-              | grep -v -E '\.md$' \
-              | grep -v -E '(^|/)package(-lock)?\.json$' \
-              | grep -v -E '(^|/)\.prettierrc$' \
-              || true
-          )
-
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "Denylist matched everything tracked — nothing to check."
-            exit 0
-          fi
-
-          echo "Checking ${#files[@]} file(s)."
-
-          missing=()
-          for f in "${files[@]}"; do
-            [ -f "$f" ] || continue
-
-            head -n 10 "$f" > /tmp/header.txt
-
-            spdx_ok=0
-            copy_ok=0
-            grep -q 'SPDX-License-Identifier: LGPL-3.0-or-later' /tmp/header.txt && spdx_ok=1
-            grep -Eq 'Copyright \(C\) [0-9]{4} The Fletcher Authors' /tmp/header.txt && copy_ok=1
-
-            if [ "$spdx_ok" -eq 0 ] || [ "$copy_ok" -eq 0 ]; then
-              reason=""
-              [ "$spdx_ok" -eq 0 ] && reason="$reason missing 'SPDX-License-Identifier: LGPL-3.0-or-later';"
-              [ "$copy_ok" -eq 0 ] && reason="$reason missing 'Copyright (C) <year> The Fletcher Authors';"
-              missing+=("$f -$reason")
-            fi
-          done
-
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::License headers missing on ${#missing[@]} file(s):"
-            for line in "${missing[@]}"; do
-              echo "::error::  $line"
-            done
-            echo
-            echo "Add to the top of each affected file (substitute the right comment prefix"
-            echo "for the file's language — // for C/C++/TypeScript/Protobuf, # for Python/"
-            echo "CMake/YAML/Dockerfile):"
-            echo
-            echo "  // SPDX-License-Identifier: LGPL-3.0-or-later"
-            echo "  // Copyright (C) $(date +%Y) The Fletcher Authors"
-            echo "  //"
-            echo
-            echo "If the file type genuinely cannot carry a header (binary / JSON / no"
-            echo "comment syntax), add it to the denylist in"
-            echo ".github/workflows/license-headers.yml."
-            exit 1
-          fi
-
-          echo "All ${#files[@]} tracked file(s) carry the required headers."
+    uses: ./.github/workflows/license-headers.yml
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
 
