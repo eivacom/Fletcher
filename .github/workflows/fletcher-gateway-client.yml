@@ -9,6 +9,7 @@ concurrency:
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   build-and-test:

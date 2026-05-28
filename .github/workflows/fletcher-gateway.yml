@@ -9,6 +9,18 @@ concurrency:
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference. When set, this workflow
+          skips its own setup-devcontainer job and uses the supplied image
+          on the Linux build job. Callers (e.g. pr.yml) pass the image
+          they already built so we don't queue a second setup-devcontainer
+          run for the same commit. Leave empty for standalone runs.
+        required: false
+        type: string
+        default: ""
 
 # Gateway is never published as a Conan package, so there is no
 # tag-triggered release path and no upload job — the workflow only
@@ -19,6 +31,7 @@ on:
 
 jobs:
   setup-devcontainer:
+    if: ${{ inputs.devcontainer-image == '' }}
     uses: ./.github/workflows/setup-devcontainer-image.yml
     secrets: inherit
 
@@ -57,6 +70,7 @@ jobs:
 
   build-linux:
     needs: setup-devcontainer
+    if: ${{ always() && needs.setup-devcontainer.result != 'failure' && needs.setup-devcontainer.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -69,7 +83,7 @@ jobs:
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
+          image: ${{ inputs.devcontainer-image || needs.setup-devcontainer.outputs.image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Install, build, and test

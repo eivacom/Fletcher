@@ -59,62 +59,95 @@ jobs:
             core:
               - 'core/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-core.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             arrow-bridge:
               - 'arrow-bridge/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-arrow-bridge.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-fastdds-pubsub-provider.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             gateway:
               - 'gateway/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-gateway.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             gateway-client:
               - 'gateway-client-ts/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-gateway-client.yml'
             protoc:
               - 'protoc/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-protoc.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             pubsub:
               - 'pubsub/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-pubsub.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             pubsub-arrow:
               - 'pubsub-arrow/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-pubsub-arrow.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             xrcedds-pubsub-provider:
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/fletcher-xrcedds-pubsub-provider.yml'
+              - '.github/workflows/setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
             format-cpp:
               - '**/*.cpp'
               - '**/*.hpp'
@@ -192,147 +225,82 @@ jobs:
     secrets: inherit
 
   # ── Stage 2: component builds ────────────────────────────────────────────────
+  #
+  # Each component's build flow is defined once in its standalone workflow
+  # (fletcher-<component>.yml), which also handles tag-push releases. pr.yml
+  # invokes those workflows via `workflow_call`, passing the devcontainer
+  # image so the child skips re-building it. Tag-push runs of the child
+  # workflows leave the input empty and run their own setup-devcontainer.
 
-  build-matrix-prep:
+  fletcher-core:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.core == 'true' }}
+    uses: ./.github/workflows/fletcher-core.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-arrow-bridge:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.arrow-bridge == 'true' }}
+    uses: ./.github/workflows/fletcher-arrow-bridge.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-pubsub:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
+    uses: ./.github/workflows/fletcher-pubsub.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-pubsub-arrow:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.pubsub-arrow == 'true' }}
+    uses: ./.github/workflows/fletcher-pubsub-arrow.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-protoc:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.protoc == 'true' }}
+    uses: ./.github/workflows/fletcher-protoc.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-gateway:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.gateway == 'true' }}
+    uses: ./.github/workflows/fletcher-gateway.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-fastdds-pubsub-provider:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.fastdds-pubsub-provider == 'true' }}
+    uses: ./.github/workflows/fletcher-fastdds-pubsub-provider.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-xrcedds-pubsub-provider:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true' }}
+    uses: ./.github/workflows/fletcher-xrcedds-pubsub-provider.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fletcher-gateway-client:
     needs: detect-changes
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.prep.outputs.matrix }}
-    steps:
-      - id: prep
-        env:
-          CHANGED_CORE:         ${{ needs.detect-changes.outputs.core }}
-          CHANGED_ARROW:        ${{ needs.detect-changes.outputs.arrow-bridge }}
-          CHANGED_PUBSUB:       ${{ needs.detect-changes.outputs.pubsub }}
-          CHANGED_PUBSUB_ARROW: ${{ needs.detect-changes.outputs.pubsub-arrow }}
-          CHANGED_PROTOC:       ${{ needs.detect-changes.outputs.protoc }}
-          CHANGED_GATEWAY:      ${{ needs.detect-changes.outputs.gateway }}
-          CHANGED_FASTDDS:      ${{ needs.detect-changes.outputs.fastdds-pubsub-provider }}
-          CHANGED_XRCEDDS:      ${{ needs.detect-changes.outputs.xrcedds-pubsub-provider }}
-        run: |
-          entries=()
-          [[ "$CHANGED_CORE"         == "true" ]] && entries+=('{"name":"core","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_ARROW"        == "true" ]] && entries+=('{"name":"arrow-bridge","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_PUBSUB"       == "true" ]] && entries+=('{"name":"pubsub","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_PUBSUB_ARROW" == "true" ]] && entries+=('{"name":"pubsub-arrow","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_PROTOC"       == "true" ]] && entries+=('{"name":"protoc","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_GATEWAY"      == "true" ]] && entries+=('{"name":"gateway","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"install-build"}')
-          [[ "$CHANGED_FASTDDS"      == "true" ]] && entries+=('{"name":"fastdds-pubsub-provider","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          [[ "$CHANGED_XRCEDDS"      == "true" ]] && entries+=('{"name":"xrcedds-pubsub-provider","win-profile":"Windows-msvc194-x86_64-Release","build-mode":"create"}')
-          if [[ ${#entries[@]} -eq 0 ]]; then
-            echo "matrix=[]" >> "$GITHUB_OUTPUT"
-          else
-            matrix=$(printf ',%s' "${entries[@]}")
-            echo "matrix=[${matrix:1}]" >> "$GITHUB_OUTPUT"
-          fi
-
-  build-windows:
-    needs: [build-matrix-prep]
-    if: needs.build-matrix-prep.outputs.matrix != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        component: ${{ fromJSON(needs.build-matrix-prep.outputs.matrix) }}
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            ${{ matrix.component.name }}
-            .github
-            .conan-profiles
-
-      - name: Install MSVC tools
-        uses: ./.github/actions/install-msvc-tools
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
-
-      - name: Install Conan
-        uses: ./.github/actions/conan-install
-
-      - name: Build and test
-        shell: bash
-        working-directory: ${{ matrix.component.name }}
-        env:
-          PROFILE: ${{ matrix.component.win-profile }}
-          BUILD_MODE: ${{ matrix.component.build-mode }}
-        run: |
-          if [ "$BUILD_MODE" = "install-build" ]; then
-            conan install . --build=missing -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
-            conan build . -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
-          else
-            conan create . --build=missing -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
-          fi
-
-  build-linux:
-    needs: [build-matrix-prep, setup-devcontainer]
-    if: needs.build-matrix-prep.outputs.matrix != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        component: ${{ fromJSON(needs.build-matrix-prep.outputs.matrix) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            ${{ matrix.component.name }}
-            .github
-            .conan-profiles
-
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and test
-        shell: bash
-        env:
-          COMPONENT: ${{ matrix.component.name }}
-          BUILD_MODE: ${{ matrix.component.build-mode }}
-        run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w "/workspace/${COMPONENT}" \
-            -e BUILD_MODE="$BUILD_MODE" \
-            fletcher-build \
-            bash -c '
-              set -e
-              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
-              if [ "$BUILD_MODE" = "install-build" ]; then
-                conan install . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
-                conan build . -pr:a="$PROFILE" -o "&:run_tests=True"
-              else
-                conan create . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
-              fi
-            '
-
-  build-gateway-client:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.gateway-client == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: gateway-client-ts
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            gateway-client-ts
-            .github/workflows
-      - uses: actions/setup-node@v6.4.0
-        with:
-          node-version: 24.15.0
-          cache: npm
-          cache-dependency-path: gateway-client-ts/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Build
-        run: npm run build
-      - name: Test
-        run: npm test
+    if: ${{ needs.detect-changes.outputs.gateway-client == 'true' }}
+    uses: ./.github/workflows/fletcher-gateway-client.yml
+    secrets: inherit
 
   format-check-cpp:
     needs: detect-changes
@@ -611,10 +579,15 @@ jobs:
   pr_gate:
     needs:
       - setup-devcontainer
-      - build-matrix-prep
-      - build-windows
-      - build-linux
-      - build-gateway-client
+      - fletcher-core
+      - fletcher-arrow-bridge
+      - fletcher-pubsub
+      - fletcher-pubsub-arrow
+      - fletcher-protoc
+      - fletcher-gateway
+      - fletcher-fastdds-pubsub-provider
+      - fletcher-xrcedds-pubsub-provider
+      - fletcher-gateway-client
       - format-check-cpp
       - format-check-ts
       - license-check
@@ -631,10 +604,15 @@ jobs:
         with:
           results: >-
             ${{ needs.setup-devcontainer.result }},
-            ${{ needs.build-matrix-prep.result }},
-            ${{ needs.build-windows.result }},
-            ${{ needs.build-linux.result }},
-            ${{ needs.build-gateway-client.result }},
+            ${{ needs.fletcher-core.result }},
+            ${{ needs.fletcher-arrow-bridge.result }},
+            ${{ needs.fletcher-pubsub.result }},
+            ${{ needs.fletcher-pubsub-arrow.result }},
+            ${{ needs.fletcher-protoc.result }},
+            ${{ needs.fletcher-gateway.result }},
+            ${{ needs.fletcher-fastdds-pubsub-provider.result }},
+            ${{ needs.fletcher-xrcedds-pubsub-provider.result }},
+            ${{ needs.fletcher-gateway-client.result }},
             ${{ needs.format-check-cpp.result }},
             ${{ needs.format-check-ts.result }},
             ${{ needs.license-check.result }},
