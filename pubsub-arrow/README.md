@@ -66,7 +66,8 @@ consumers don't need to declare them separately.
 
 ## CI pipeline
 
-`.github/workflows/fletcher-pubsub-arrow.yml` runs `build-windows` +
-`build-linux` on every PR touching `pubsub-arrow/**`, and an `upload`
-job that creates a GitHub Release with the platform-specific .tgz assets attached
-on a `pubsub-arrow-v*.*.*` release-tag push.
+`.github/workflows/fletcher-pubsub-arrow.yml` is `workflow_call`-only;
+it runs `build-windows` + `build-linux` and is invoked from `pr.yml`
+on PRs touching `pubsub-arrow/**` and from `release-pubsub-arrow.yml`
+on `pubsub-arrow-v*` tag pushes. The `upload` job that creates the
+GitHub Release lives in `release-pubsub-arrow.yml`.

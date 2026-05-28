@@ -61,6 +61,8 @@ separately.
 
 ## CI pipeline
 
-`.github/workflows/fletcher-arrow-bridge.yml` runs `build-windows` +
-`build-linux` on every PR touching `arrow-bridge/**`, and an `upload` job
-that creates a GitHub Release with the platform-specific .tgz assets attached on push.
+`.github/workflows/fletcher-arrow-bridge.yml` is `workflow_call`-only;
+it runs `build-windows` + `build-linux` and is invoked from `pr.yml`
+on PRs touching `arrow-bridge/**` and from `release-arrow-bridge.yml`
+on `arrow-bridge-v*` tag pushes. The `upload` job that creates the
+GitHub Release lives in `release-arrow-bridge.yml`.
