@@ -12,4 +12,4 @@ target_link_libraries(xrce_provider_tests PRIVATE
     microxrcedds_client)
 
 include(GoogleTest)
-gtest_add_tests(TARGET xrce_provider_tests)
+gtest_discover_tests(xrce_provider_tests DISCOVERY_MODE PRE_TEST)
