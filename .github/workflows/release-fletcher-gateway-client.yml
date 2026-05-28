@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Release orchestration for @eiva/fletcher-gateway-client. Invokes
+# fletcher-gateway-client.yml to build and test, then publishes the
+# package to npmjs.com.
+#
+# Triggers:
+#   * push: tags 'gateway-client-v*'     — real release.
+
+name: release-fletcher-gateway-client
+
+on:
+  push:
+    tags:
+      - 'gateway-client-v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  build-and-test:
+    uses: ./.github/workflows/fletcher-gateway-client.yml
+    secrets: inherit
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway-client-ts
+            .github/workflows
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gateway-client-ts
+          path: gateway-client-ts/dist
+
+      - name: Publish to npm
+        working-directory: gateway-client-ts
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
