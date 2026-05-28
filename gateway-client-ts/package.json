@@ -1,6 +1,6 @@
 {
   "name": "@eiva/fletcher-gateway-client",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.1-alpha",
   "description": "TypeScript client for the Fletcher gateway — WebSocket transport with positional row codec",
   "type": "module",
   "main": "dist/index.js",
