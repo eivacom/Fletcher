@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'arrow-bridge-v*'     — real release.
 
-name: arrow-bridge
+name: cd.arrow-bridge
 
 on:
   push:

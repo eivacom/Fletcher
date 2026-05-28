@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'core-v*'     — real release.
 
-name: core
+name: cd.core
 
 on:
   push:

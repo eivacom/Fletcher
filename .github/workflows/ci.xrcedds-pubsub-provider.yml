@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: xrcedds-pubsub-provider
+name: ci.xrcedds-pubsub-provider
 
 concurrency:
   group: ci.xrcedds-pubsub-provider-${{ github.ref }}

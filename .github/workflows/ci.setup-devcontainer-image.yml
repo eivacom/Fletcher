@@ -26,7 +26,7 @@
 #   * push to main — pre-builds and re-tags as :main so subsequent
 #     PR runs prime the cache from a known-good baseline.
 
-name: setup-devcontainer-image
+name: ci.setup-devcontainer-image
 
 on:
   workflow_call:
@@ -87,7 +87,7 @@ jobs:
           echo "image=eivaorg/fletcher-devcontainer:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       # Cheap remote existence check — manifest-inspect is a HEAD request
-      # against Harbor. If a previous concurrency-queue entry already
+      # against Docker Hub. If a previous concurrency-queue entry already
       # built and pushed this exact SHA tag, the build step below is
       # skipped entirely (~5s job instead of ~3min).
       - name: Check if image already exists

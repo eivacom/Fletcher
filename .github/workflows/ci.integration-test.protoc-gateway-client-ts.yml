@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: integration-test.protoc-gateway-client-ts
+name: ci.integration-test.protoc-gateway-client-ts
 
 concurrency:
   group: ci.integration-test.protoc-gateway-client-ts-${{ github.ref }}
