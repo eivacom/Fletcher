@@ -43,3 +43,4 @@ jobs:
         with:
           name: gateway-client-ts
           path: gateway-client-ts/dist
+          retention-days: 5
