@@ -41,8 +41,20 @@ jobs:
           name: gateway-client-ts
           path: gateway-client-ts/dist
 
+      - name: Resolve dist-tag
+        id: dist-tag
+        working-directory: gateway-client-ts
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            PRE=$(echo "$VERSION" | sed 's/^[0-9]*\.[0-9]*\.[0-9]*-//' | cut -d. -f1)
+            echo "tag=$PRE" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
         working-directory: gateway-client-ts
-        run: npm publish --access public
+        run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
