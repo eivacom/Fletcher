@@ -13,7 +13,24 @@
 # headers via find_path (the Conan cache is already on
 # CMAKE_PREFIX_PATH for any consumer that ran conan install).
 cmake_minimum_required(VERSION 3.15)
-project(gateway LANGUAGES CXX)
+
+# Single source of truth for the gateway version lives in VERSION at the
+# component root. CMake's project(VERSION ...) only accepts strict
+# MAJOR.MINOR.PATCH, so we parse the numeric prefix for project() and
+# the Windows .rc FILEVERSION (which must be 4 16-bit ints) while
+# keeping the full string (with any pre-release suffix) for displays
+# and --version output.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" GATEWAY_VERSION_RAW)
+string(STRIP "${GATEWAY_VERSION_RAW}" GATEWAY_VERSION_FULL)
+if(NOT GATEWAY_VERSION_FULL MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    message(FATAL_ERROR "gateway/VERSION must start with MAJOR.MINOR.PATCH, got '${GATEWAY_VERSION_FULL}'")
+endif()
+set(GATEWAY_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set(GATEWAY_VERSION_MINOR "${CMAKE_MATCH_2}")
+set(GATEWAY_VERSION_PATCH "${CMAKE_MATCH_3}")
+set(GATEWAY_VERSION_NUMERIC "${GATEWAY_VERSION_MAJOR}.${GATEWAY_VERSION_MINOR}.${GATEWAY_VERSION_PATCH}")
+
+project(gateway VERSION ${GATEWAY_VERSION_NUMERIC} LANGUAGES CXX)
 
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-core   CONFIG REQUIRED)
@@ -50,10 +67,25 @@ target_link_libraries(gateway PRIVATE
     fletcher-pubsub::fletcher-pubsub
     fletcher-core::fletcher-core
     nlohmann_json::nlohmann_json)
+
+# Compile-time version string consumed by --version. The full string
+# (including any pre-release suffix from VERSION) is embedded as a
+# macro the source can substitute into printf.
+target_compile_definitions(gateway PRIVATE
+    GATEWAY_VERSION_STRING="${GATEWAY_VERSION_FULL}")
+
 if(WIN32)
     target_compile_definitions(gateway PRIVATE
         WIN32_LEAN_AND_MEAN
         _WIN32_WINNT=0x0A00)   # Windows 10+
+
+    # Embed VERSIONINFO so Explorer's Properties → Details shows version
+    # and product fields on gateway.exe. Linker on MSVC compiles .rc files
+    # automatically when listed as a source.
+    configure_file(cmake/version.rc.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/version.rc
+                   @ONLY)
+    target_sources(gateway PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────

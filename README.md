@@ -217,8 +217,8 @@ package's workflow — not all of them.
 ### Cutting a release
 
 1. Bump the package's version and merge to `main`. The version lives in
-   `<component>/conanfile.py` for Conan components and
-   `gateway-client-ts/package.json` for the npm client.
+   `<component>/conanfile.py` for Conan components, `gateway/VERSION` for
+   the gateway exe, and `gateway-client-ts/package.json` for the npm client.
 2. From `main`, tag and push:
 
    ```bash
@@ -263,10 +263,11 @@ package's workflow — not all of them.
 
 - For Conan-package components, the tag and `conanfile.py` version **must
   match**. The release workflow verifies this via
-  `actions/verify-tag-version-conan` and fails fast if they differ. `gateway/`
-  has no conanfile version, so the tag itself is the version. For
+  `actions/verify-tag-version-conan` and fails fast if they differ.
+  `gateway/` has its version in `gateway/VERSION` (a plain text file)
+  and `release-gateway.yml` verifies the tag against it. For
   `gateway-client-ts/`, the tag must match `package.json`'s `version`
-  field.
+  field (`actions/verify-tag-version-npm`).
 - Re-releasing an existing version requires either deleting the existing
   GitHub Release (and tag) first or bumping the version — `gh release
   create` refuses to overwrite an existing release. npm publish has the

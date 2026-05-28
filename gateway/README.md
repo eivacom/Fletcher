@@ -59,7 +59,12 @@ gateway --port 9090 --bind-address 0.0.0.0
 |---|---|---|
 | `--port N` | `9090` | TCP port to listen on. |
 | `--bind-address ADDR` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only deployments. |
+| `--version` | — | Print `fletcher-gateway <version>` and exit. The version string is read from `gateway/VERSION` at build time. |
 | `--help`, `-h` | — | Print usage and exit. |
+
+### Version metadata
+
+`gateway/VERSION` is the single source of truth for the gateway version. CMake reads it at configure time and (a) feeds the numeric `MAJOR.MINOR.PATCH` prefix into `project(VERSION ...)`, (b) embeds the full string (including any pre-release suffix) as a `GATEWAY_VERSION_STRING` compile definition consumed by `--version`, and (c) on Windows generates a `version.rc` resource that the linker bakes into `gateway.exe`. Right-click `gateway.exe` → Properties → Details shows the same `FileVersion` / `ProductVersion` Windows users expect. The `release-gateway.yml` workflow verifies that the pushed tag matches `gateway/VERSION` before creating the release.
 
 ### Process lifecycle
 
