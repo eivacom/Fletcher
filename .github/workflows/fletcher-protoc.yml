@@ -3,6 +3,10 @@
 #
 name: fletcher-protoc
 
+concurrency:
+  group: fletcher-protoc-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

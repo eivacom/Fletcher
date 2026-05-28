@@ -3,6 +3,10 @@
 #
 name: fletcher-pubsub-arrow
 
+concurrency:
+  group: fletcher-pubsub-arrow-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

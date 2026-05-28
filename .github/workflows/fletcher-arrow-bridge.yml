@@ -3,6 +3,10 @@
 #
 name: fletcher-arrow-bridge
 
+concurrency:
+  group: fletcher-arrow-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

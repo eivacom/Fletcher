@@ -3,6 +3,10 @@
 #
 name: fletcher-gateway-client
 
+concurrency:
+  group: fletcher-gateway-client-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
 

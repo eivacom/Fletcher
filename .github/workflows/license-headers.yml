@@ -3,13 +3,12 @@
 #
 name: license-headers
 
-on:
-  workflow_dispatch:
-  workflow_call:
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+  group: license-headers-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
 
 # Block-merge guard. Every tracked file must carry
 #

@@ -3,6 +3,10 @@
 #
 name: integration-test.gateway-end-to-end
 
+concurrency:
+  group: integration-test.gateway-end-to-end-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

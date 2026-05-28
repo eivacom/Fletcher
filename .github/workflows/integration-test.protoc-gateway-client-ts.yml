@@ -3,6 +3,10 @@
 #
 name: integration-test.protoc-gateway-client-ts
 
+concurrency:
+  group: integration-test.protoc-gateway-client-ts-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

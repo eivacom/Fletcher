@@ -6,9 +6,15 @@ name: Fletcher PR build
 on:
   pull_request:
 
-concurrency:
-  group: pr-${{ github.ref }}
-  cancel-in-progress: true
+# No workflow-level concurrency. Instead each job below declares its
+# own `concurrency: group: <job>-${{ github.ref }} cancel-in-progress: true`.
+# This lets a new PR commit start its pr.yml run immediately (no parent
+# lock waiting on the old run to finish) — each new job cancels its
+# predecessor directly at the job level, including the workflow_call
+# caller jobs, whose cancellation propagates into the called workflows
+# (and thus into their long-running docker runs). The previous
+# workflow-level `concurrency: pr-<ref>` blocked the new run while the
+# old run's integration tests slowly responded to cancel signals.
 
 permissions:
   contents: read
@@ -19,6 +25,9 @@ jobs:
   # ── Stage 1: detect changed paths & spin up devcontainer image ───────────────
 
   detect-changes:
+    concurrency:
+      group: detect-changes-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     outputs:
       core: ${{ steps.filter.outputs.core }}
@@ -30,8 +39,6 @@ jobs:
       pubsub: ${{ steps.filter.outputs.pubsub }}
       pubsub-arrow: ${{ steps.filter.outputs.pubsub-arrow }}
       xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
-      format-cpp: ${{ steps.filter.outputs.format-cpp }}
-      format-ts: ${{ steps.filter.outputs.format-ts }}
       integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
@@ -140,23 +147,6 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
               - '.devcontainer/**'
-            format-cpp:
-              - '**/*.cpp'
-              - '**/*.hpp'
-              - '**/*.h'
-              - '**/*.cc'
-              - '.clang-format'
-              - '.github/workflows/pr.yml'
-            format-ts:
-              - '**/*.ts'
-              - '**/*.tsx'
-              - '**/*.js'
-              - '**/*.mjs'
-              - '**/*.cjs'
-              - '**/*.json'
-              - '.prettierrc'
-              - '.prettierignore'
-              - '.github/workflows/pr.yml'
             integration-fastdds-xrce:
               - 'core/**'
               - 'arrow-bridge/**'
@@ -326,45 +316,13 @@ jobs:
     uses: ./.github/workflows/fletcher-gateway-client.yml
     secrets: inherit
 
-  format-check-cpp:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.format-cpp == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install clang-format-18
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format-18
-          clang-format-18 --version
-      - name: Run clang-format --dry-run --Werror
-        run: |
-          files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
-            | grep -v -E '^pubsub/third_party/' \
-            | grep -v -E '\.fletcher\.(arrow\.)?pb\.h$' \
-            | grep -v -E '/build/' \
-            | grep -v -E '^integration-tests/.*/generated-ts/')
-          if [ -z "$files" ]; then
-            echo "No first-party C++ files to check."
-            exit 0
-          fi
-          echo "Checking $(echo "$files" | wc -l) files..."
-          echo "$files" | xargs clang-format-18 --dry-run --Werror
-
-  format-check-ts:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.format-ts == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24.15.0"
-      - name: Run prettier --check
-        run: npx --yes prettier@3.3.3 --check '**/*.{ts,tsx,js,mjs,cjs,json}' --ignore-path .prettierignore
-
-  license-check:
-    uses: ./.github/workflows/license-headers.yml
+  # format-check-cpp, format-check-ts, license-headers, and action-lint
+  # are standalone workflows that trigger directly on `pull_request` with
+  # their own path filters (.github/workflows/{format-check-cpp,
+  # format-check-ts,license-headers,action-lint}.yml). They are not
+  # invoked from pr.yml and therefore aren't part of the pr_gate
+  # aggregation — configure them as separate required status checks on
+  # the branch protection rule if needed.
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
   #
@@ -426,9 +384,6 @@ jobs:
       - fletcher-fastdds-pubsub-provider
       - fletcher-xrcedds-pubsub-provider
       - fletcher-gateway-client
-      - format-check-cpp
-      - format-check-ts
-      - license-check
       - integration-fastdds-xrce-interop
       - integration-gateway-end-to-end
       - integration-protoc-arrow-bridge
@@ -451,9 +406,6 @@ jobs:
             ${{ needs.fletcher-fastdds-pubsub-provider.result }},
             ${{ needs.fletcher-xrcedds-pubsub-provider.result }},
             ${{ needs.fletcher-gateway-client.result }},
-            ${{ needs.format-check-cpp.result }},
-            ${{ needs.format-check-ts.result }},
-            ${{ needs.license-check.result }},
             ${{ needs.integration-fastdds-xrce-interop.result }},
             ${{ needs.integration-gateway-end-to-end.result }},
             ${{ needs.integration-protoc-arrow-bridge.result }},

@@ -3,6 +3,10 @@
 #
 name: integration-test.protoc-arrow-bridge
 
+concurrency:
+  group: integration-test.protoc-arrow-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

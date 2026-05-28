@@ -3,6 +3,10 @@
 #
 name: integration-test.fastdds-xrce-interop
 
+concurrency:
+  group: integration-test.fastdds-xrce-interop-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

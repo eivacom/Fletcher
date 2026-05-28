@@ -3,6 +3,10 @@
 #
 name: integration-test.pubsub-arrow-fastdds
 
+concurrency:
+  group: integration-test.pubsub-arrow-fastdds-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

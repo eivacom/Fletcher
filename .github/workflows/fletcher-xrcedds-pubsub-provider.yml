@@ -3,6 +3,10 @@
 #
 name: fletcher-xrcedds-pubsub-provider
 
+concurrency:
+  group: fletcher-xrcedds-pubsub-provider-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:

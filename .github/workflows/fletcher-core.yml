@@ -3,6 +3,15 @@
 #
 name: fletcher-core
 
+# Group is keyed on `github.ref`, so two PR commits to the same ref
+# cancel each other (cancel-in-progress: true) while tag pushes
+# (different ref per tag) and parallel PRs (different ref per PR) stay
+# independent. Hardcoded workflow name avoids the `github.workflow`-
+# resolves-to-caller trap in workflow_call context.
+concurrency:
+  group: fletcher-core-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:
