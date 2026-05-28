@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Release orchestration for fletcher-protoc. Owns the setup-devcontainer
+# step + invokes fletcher-protoc.yml with the resulting image. The actual
+# build/test/upload logic lives in fletcher-protoc.yml so PR runs (via
+# pr.yml) and release tag-push runs share the same source of truth.
+#
+# Triggers:
+#   * push: tags 'protoc-v*'     — real release; fletcher-protoc's upload
+#                                 job runs (it gates on event_name == 'push').
+
+name: release-protoc
+
+on:
+  push:
+    tags:
+      - 'protoc-v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/setup-devcontainer-image.yml
+    secrets: inherit
+
+  release:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/fletcher-protoc.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
+    secrets: inherit

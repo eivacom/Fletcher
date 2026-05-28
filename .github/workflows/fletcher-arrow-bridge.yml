@@ -4,30 +4,20 @@
 name: fletcher-arrow-bridge
 
 on:
-  workflow_dispatch:
   workflow_call:
     inputs:
       devcontainer-image:
         description: >-
-          Pre-built devcontainer image reference. When set, this workflow
-          skips its own setup-devcontainer job and uses the supplied image
-          on the Linux build job. Callers (e.g. pr.yml) pass the image
-          they already built so we don't queue a second setup-devcontainer
-          run for the same commit. Leave empty for standalone runs
-          triggered by workflow_dispatch or push:tags.
-        required: false
+          Pre-built devcontainer image reference (e.g.
+          dockerrepo.eiva.com/fletcher/devcontainer:<sha>). The caller is
+          responsible for invoking setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. pr.yml passes the
+          image it built once and shares across all callers; the
+          release-arrow-bridge.yml wrapper does the same for tag-push releases.
+        required: true
         type: string
-        default: ""
-  push:
-    tags:
-      - 'arrow-bridge-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
-  setup-devcontainer:
-    if: ${{ inputs.devcontainer-image == '' }}
-    uses: ./.github/workflows/setup-devcontainer-image.yml
-    secrets: inherit
-
   build-windows:
     runs-on: windows-2022
     outputs:
@@ -39,9 +29,6 @@ jobs:
             arrow-bridge
             .github
             .conan-profiles
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
 
       - name: Install Conan
         uses: ./.github/actions/conan-install
@@ -74,8 +61,6 @@ jobs:
           retention-days: 5
 
   build-linux:
-    needs: setup-devcontainer
-    if: ${{ always() && needs.setup-devcontainer.result != 'failure' && needs.setup-devcontainer.result != 'cancelled' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -88,7 +73,7 @@ jobs:
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
         with:
-          image: ${{ inputs.devcontainer-image || needs.setup-devcontainer.outputs.image }}
+          image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and test
