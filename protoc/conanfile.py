@@ -26,6 +26,9 @@ class FletcherProtocPluginConan(ConanFile):
         "tests/*",
     )
 
+    def configure(self):
+        self.options["protobuf"].shared = False
+
     def requirements(self):
         self.requires("protobuf/3.21.12", visible=True)
         if self.options.run_tests:
