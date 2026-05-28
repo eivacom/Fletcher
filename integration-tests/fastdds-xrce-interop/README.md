@@ -37,34 +37,34 @@ The workflow `.github/workflows/integration-test.fastdds-xrce-interop.yml` trigg
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
-From the repo root inside the devcontainer (or on a Windows shell with the Visual-Studio profile):
+From the repo root inside the devcontainer (Linux) or a Windows shell (substitute the Windows profile):
 
 ```bash
-conan create core/.                     --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.                     --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create arrow-bridge/.             --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create arrow-bridge/.             --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub/.                   --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/.                   --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub-arrow/.             --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub-arrow/.             --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create fastdds-pubsub-provider/.  --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create fastdds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create xrcedds-pubsub-provider/.  --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create xrcedds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ### Build the integration test (and the Agent)
@@ -74,7 +74,7 @@ cd integration-tests/fastdds-xrce-interop
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

@@ -73,22 +73,18 @@ provider->Unsubscribe({"my", "topic"});
 
 **Prerequisites:** Visual Studio 2022 with C++ workload, CMake, Python, Conan 2.
 
-Install the EIVA Conan configuration (remote + profiles) once:
-
-```bat
-conan config install https://github.com/eivacom/conan-configuration.git
-```
+Conan profiles live in [`../.conan-profiles/`](../.conan-profiles) in the repo and are referenced by relative path — no separate profile-install step is needed.
 
 Build and package (Release, no tests):
 
 ```bat
-conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release
+conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
 Build, run tests, and package:
 
 ```bat
-conan create . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Release -o "&:run_tests=True"
+conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 The built package lands in the local Conan cache (`%USERPROFILE%\.conan2`).
@@ -96,7 +92,7 @@ The built package lands in the local Conan cache (`%USERPROFILE%\.conan2`).
 To iterate without the full `conan create` cycle use `conan build` against the source tree:
 
 ```bat
-conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 To run the tests separately with CTest after a `conan build` (Visual Studio is a multi-config generator so the config must be specified):
@@ -124,13 +120,13 @@ rm -rf build/
 Build and run tests:
 
 ```bash
-conan build . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan build . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 Build, package, and run tests (equivalent to CI):
 
 ```bash
-conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 Run tests separately with CTest after a `conan build` (the Linux build lives under `build/<BuildType>`):
@@ -178,51 +174,55 @@ consumers do not need to depend on Fast DDS directly.
 
 ## CI pipeline
 
-The workflow is defined in `.github/workflows/fletcher-fastdds-pubsub-provider.yml` and runs on every
-push to `feature/fletcher-fastdds-pubsub-provider`, on every pull request touching `fastdds-pubsub-provider/**`,
-and on release tags matching `fastdds-pubsub-provider-v*`.
+The build workflow is defined in `.github/workflows/fletcher-fastdds-pubsub-provider.yml`.
+It is `workflow_call`-only — invoked from `pr.yml` for pull requests
+touching `fastdds-pubsub-provider/**` and from `release-fastdds-pubsub-provider.yml`
+on `fastdds-pubsub-provider-v*` tag pushes. The matching upload job
+lives in `release-fastdds-pubsub-provider.yml`, not here.
 
 ```
-push / pull_request
+pr.yml (PRs) / release-fastdds-pubsub-provider.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
 build-windows                            build-linux
-Windows Server Core LTSC 2025            Ubuntu 24.04 x64
+windows-2022                             ubuntu-latest
 Native runner                            Docker container (.devcontainer)
-Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
-         v143-x64-Release
+Profile: Windows-msvc194-                Profile: Linux-gcc13-
+         x86_64-Release                            x86_64-Release
         │                                      │
         └──────────────────┬───────────────────┘
                            │ both must pass
-                           ▼
+                           ▼ (only on tag push)
                         upload
-                  (tag push only)
-                  Creates GitHub Release (.tgz assets)
+              (release-fastdds-pubsub-provider.yml job)
+              Creates GitHub Release with
+              fletcher-fastdds-pubsub-provider-{windows,linux}-conan-package.tgz
 ```
 
 ### Build profiles
 
 | Job | Runner | Profile | Build type |
 |---|---|---|---|
-| `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-Release` | Release |
-| `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
+| `build-windows` | `windows-2022` | `.conan-profiles/Windows-msvc194-x86_64-Release` | Release |
+| `build-linux` | `ubuntu-latest` (Docker) | `.conan-profiles/Linux-gcc13-x86_64-Release` | Release |
 
 Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as part of every CI build.
 
 ### Package handoff
 
-Both platforms produce a separate binary package. Each build job saves its
-package to a GitHub Actions artifact; the `upload` job downloads both, restores
-them into the Conan cache, and attaches them as GitHub Release assets:
+Both platforms produce a separate binary package. Each build job saves
+its package to a GitHub Actions workflow artifact; on a tag push the
+`upload` job in `release-fastdds-pubsub-provider.yml` downloads both and
+attaches them as GitHub Release assets:
 
 ```
 conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
-The `upload` job only runs on a tag push after both `build-windows` and
-`build-linux` pass, and verifies that the tag version matches the version in
-`conanfile.py` before uploading.
+The `upload` job only runs from `release-fastdds-pubsub-provider.yml`
+(tag push), and verifies that the tag version matches the version in
+`conanfile.py` before creating the release.
 
 ## Runtime requirements
 

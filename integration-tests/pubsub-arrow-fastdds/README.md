@@ -33,7 +33,7 @@ The workflow `.github/workflows/integration-test.pubsub-arrow-fastdds.yml` trigg
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
@@ -42,23 +42,23 @@ cd /workspaces/Fletcher
 ```
 
 ```bash
-conan create core/.                    --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.                    --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create arrow-bridge/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create arrow-bridge/.            --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub/.                  --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/.                  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub-arrow/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub-arrow/.            --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create fastdds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ### Build the integration test
@@ -68,7 +68,7 @@ cd /workspaces/Fletcher/integration-tests/pubsub-arrow-fastdds
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

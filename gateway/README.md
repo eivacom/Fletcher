@@ -61,11 +61,11 @@ cd gateway
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Release
+conan build . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 `conan build .` runs the recipe's `build()` method, which dispatches the right cmake configure / build invocations for the generator in use. On Linux (single-config Ninja/Make) it resolves to `cmake --preset conan-release && cmake --build --preset conan-release`; on Windows (multi-config Visual Studio) it picks `conan-default` for configure and `conan-release` for build. Letting Conan dispatch avoids the platform-specific preset asymmetry.
@@ -91,11 +91,11 @@ cd gateway
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+conan install . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 ```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+conan build . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 The `-o "&:run_tests=True"` switch pulls `gtest` into the dependency graph, sets `FLETCHER_BUILD_TESTS=ON` for CMake, and makes the recipe's `build()` invoke `cmake.test()` after the build — so a successful `conan build` means the gtest suite already ran. Omit the switch for a tests-off plain build.

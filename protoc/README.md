@@ -11,25 +11,25 @@ Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 Build locally:
 
 ```bash
-conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug
+conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
 Build locally and run unit tests:
 
 ```bash
-conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 Create the Conan package and run test_package:
 
 ```bash
-conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug
+conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
 Create the Conan package with unit tests:
 
 ```bash
-conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 ### Linux (devcontainer)
@@ -39,25 +39,25 @@ See the repo root's [Development environment](../README.md#development-environme
 Build locally:
 
 ```bash
-conan build . --build=missing -pr:a=Ubuntu22-gcc-12-Debug
+conan build . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 Build locally and run unit tests:
 
 ```bash
-conan build . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan build . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 Create the Conan package and run test_package:
 
 ```bash
-conan create . -pr:a=Ubuntu22-gcc-12-Debug
+conan create . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 Create the Conan package with unit tests:
 
 ```bash
-conan create . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan create . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 ## Using the plugin

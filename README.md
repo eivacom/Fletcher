@@ -132,7 +132,9 @@ A single devcontainer at `.devcontainer/` covers every Fletcher component. Compo
 
 ### VS Code (recommended)
 
-Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The `postCreateCommand` runs `conan config install https://github.com/eivacom/conan-configuration.git` on first launch, installing the EIVA Conan profiles and remote.
+Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The image ships with CMake, Conan, GCC 13, Node, and the formatters preinstalled — no `postCreateCommand` runs.
+
+Conan profiles live in [`.conan-profiles/`](.conan-profiles) in the repo. Build commands pass them by relative path (`-pr:a=../.conan-profiles/<profile>`), so no profile-install step is needed and the dev profile set always matches what CI uses.
 
 Released Fletcher packages are attached as assets on GitHub Releases — see
 [Consuming a released Conan package](#consuming-a-released-conan-package)
@@ -154,13 +156,7 @@ Start a shell with the repo mounted:
 docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
 ```
 
-Inside the container, replicate what the `postCreateCommand` does in VS Code:
-
-```bash
-conan config install https://github.com/eivacom/conan-configuration.git
-```
-
-Then `cd <component>` and follow the same build / test commands the component README documents.
+No further setup is needed — Conan profiles live in [`.conan-profiles/`](.conan-profiles) in the repo and are referenced by relative path. `cd <component>` and follow the build / test commands the component README documents.
 
 ### CI devcontainer image
 

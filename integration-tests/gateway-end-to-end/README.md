@@ -54,15 +54,15 @@ The workflow `.github/workflows/integration-test.gateway-end-to-end.yml` trigger
 See the repo root's [Development environment](../../README.md#development-environment) for how to open the devcontainer. From inside it, from the repo root:
 
 ```bash
-conan create core/.   --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.   --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create protoc/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 `protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure.
@@ -74,7 +74,7 @@ cd integration-tests/gateway-end-to-end
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

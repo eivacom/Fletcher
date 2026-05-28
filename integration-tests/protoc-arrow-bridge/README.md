@@ -20,37 +20,37 @@ Why this matters: an edge device using the typed proto-row classes (no Apache Ar
 The workflow `.github/workflows/integration-test.protoc-arrow-bridge.yml` triggers when any of `core/**`, `protoc/**`, `arrow-bridge/**`, `pubsub/**` or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
-2. `conan install`s this directory — version ranges (`[*]`) resolve to whatever just landed in the cache, never the published versions on conan-eiva.
+2. `conan install`s this directory — version ranges (`[*]`) resolve to whatever just landed in the cache, never the versions published on GitHub Releases.
 3. Configures + builds + runs `byte_compat_tests` via gtest.
 
 That way a PR can change protoc and arrow-bridge in the same commit, and the integration test verifies they still agree on bytes — no need to publish first.
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). The `postCreateCommand` runs `conan config install` automatically — no `conan-eiva` login is needed because the integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
-The integration test should run against this branch's component code, not whatever happens to be on conan-eiva. From the repo root:
+The integration test should run against this branch's component code, not whatever has been published on GitHub Releases. From the repo root:
 
 ```bash
 cd /workspaces/Fletcher
 ```
 
 ```bash
-conan create core/.         --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.         --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create arrow-bridge/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create arrow-bridge/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub/.       --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/.       --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create protoc/.       --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create protoc/.       --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 Each `conan create` builds the component and registers the branch's version in `~/.conan2/p/`. Subsequent `conan install` calls find them there.
@@ -62,7 +62,7 @@ cd /workspaces/Fletcher/integration-tests/protoc-arrow-bridge
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

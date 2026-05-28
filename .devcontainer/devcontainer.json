@@ -6,7 +6,6 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "postCreateCommand": "conan config install https://github.com/eivacom/conan-configuration.git",
   "customizations": {
     "vscode": {
       "extensions": [
