@@ -356,6 +356,7 @@ jobs:
   # ── Stage 3: PR gate ────────────────────────────────────────────────────────
   pr_gate:
     needs:
+      - detect-changes
       - setup-devcontainer
       - fletcher-core
       - fletcher-arrow-bridge
@@ -377,7 +378,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/pr-gate
         with:
+          # detect-changes is upstream of every component caller — if it
+          # fails, all the downstream jobs get `result: skipped`, which
+          # pr-gate would otherwise count as a pass. Listing it
+          # explicitly makes a detect-changes failure block the PR.
           results: >-
+            ${{ needs.detect-changes.result }},
             ${{ needs.setup-devcontainer.result }},
             ${{ needs.fletcher-core.result }},
             ${{ needs.fletcher-arrow-bridge.result }},
