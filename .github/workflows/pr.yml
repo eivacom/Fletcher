@@ -174,8 +174,10 @@ jobs:
               - 'xrcedds-pubsub-provider/**'
               - 'integration-tests/fastdds-xrce-interop/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/integration-test.fastdds-xrce-interop.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
               - '.devcontainer/**'
             integration-gateway-e2e:
               - 'core/**'
@@ -185,8 +187,10 @@ jobs:
               - 'gateway-client-ts/**'
               - 'integration-tests/gateway-end-to-end/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/integration-test.gateway-end-to-end.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
               - '.devcontainer/**'
             integration-protoc-arrow:
               - 'core/**'
@@ -195,8 +199,10 @@ jobs:
               - 'pubsub/**'
               - 'integration-tests/protoc-arrow-bridge/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/integration-test.protoc-arrow-bridge.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
               - '.devcontainer/**'
             integration-protoc-gateway-ts:
               - 'core/**'
@@ -205,8 +211,10 @@ jobs:
               - 'gateway-client-ts/**'
               - 'integration-tests/protoc-gateway-client-ts/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/integration-test.protoc-gateway-client-ts.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
               - '.devcontainer/**'
             integration-pubsub-arrow-fastdds:
               - 'core/**'
@@ -216,8 +224,10 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'integration-tests/pubsub-arrow-fastdds/**'
               - '.github/workflows/pr.yml'
+              - '.github/workflows/integration-test.pubsub-arrow-fastdds.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
               - '.devcontainer/**'
 
   setup-devcontainer:
@@ -365,237 +375,51 @@ jobs:
     uses: ./.github/workflows/license-headers.yml
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
+  #
+  # Each integration test's build flow is defined in its standalone
+  # integration-test.<name>.yml workflow. pr.yml invokes them via
+  # workflow_call and passes the pre-built devcontainer image so the
+  # nested setup-devcontainer is skipped.
 
   integration-fastdds-xrce-interop:
     needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.integration-fastdds-xrce == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            arrow-bridge
-            pubsub
-            pubsub-arrow
-            fastdds-pubsub-provider
-            xrcedds-pubsub-provider
-            integration-tests/fastdds-xrce-interop
-            .devcontainer
-            .github
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build components and run integration tests
-        run: |
-          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
-            fletcher-build \
-            bash -c "set -e && \
-                     conan profile detect && \
-                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
-                       echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
-                       echo '::endgroup::'; \
-                     done && \
-                     cd integration-tests/fastdds-xrce-interop && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
-                     cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build (includes MicroXRCEAgent from source)' && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
-                     echo '::endgroup::'"
+    if: ${{ needs.detect-changes.outputs.integration-fastdds-xrce == 'true' }}
+    uses: ./.github/workflows/integration-test.fastdds-xrce-interop.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
 
   integration-gateway-end-to-end:
     needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.integration-gateway-e2e == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            pubsub
-            protoc
-            gateway
-            gateway-client-ts
-            integration-tests/gateway-end-to-end
-            .devcontainer
-            .github
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build components and run integration tests
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            fletcher-build \
-            bash -c "set -e && \
-                     conan profile detect && \
-                     for COMPONENT in core pubsub protoc; do \
-                       echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
-                       echo '::endgroup::'; \
-                     done && \
-                     cd integration-tests/gateway-end-to-end && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure + build' && \
-                     cmake --preset conan-release && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::npm ci' && \
-                     npm ci && \
-                     echo '::endgroup::' && \
-                     echo '::group::npm test' && \
-                     npm test && \
-                     echo '::endgroup::'"
+    if: ${{ needs.detect-changes.outputs.integration-gateway-e2e == 'true' }}
+    uses: ./.github/workflows/integration-test.gateway-end-to-end.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
 
   integration-protoc-arrow-bridge:
     needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.integration-protoc-arrow == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            protoc
-            arrow-bridge
-            pubsub
-            integration-tests/protoc-arrow-bridge
-            .devcontainer
-            .github
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build components and run integration tests
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            fletcher-build \
-            bash -c "set -e && \
-                     conan profile detect && \
-                     for COMPONENT in core arrow-bridge pubsub protoc; do \
-                       echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
-                       echo '::endgroup::'; \
-                     done && \
-                     cd integration-tests/protoc-arrow-bridge && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
-                     cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build' && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
-                     echo '::endgroup::'"
+    if: ${{ needs.detect-changes.outputs.integration-protoc-arrow == 'true' }}
+    uses: ./.github/workflows/integration-test.protoc-arrow-bridge.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
 
   integration-protoc-gateway-client-ts:
     needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            protoc
-            pubsub
-            gateway-client-ts
-            integration-tests/protoc-gateway-client-ts
-            .devcontainer
-            .github
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build components and run integration tests
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
-            fletcher-build \
-            bash -c "set -e && \
-                     conan profile detect && \
-                     for COMPONENT in core pubsub protoc; do \
-                       echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
-                       echo '::endgroup::'; \
-                     done && \
-                     cd integration-tests/protoc-gateway-client-ts && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure + build' && \
-                     cmake --preset conan-release && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::npm ci' && \
-                     npm ci && \
-                     echo '::endgroup::' && \
-                     echo '::group::npm test' && \
-                     npm test && \
-                     echo '::endgroup::'"
+    if: ${{ needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true' }}
+    uses: ./.github/workflows/integration-test.protoc-gateway-client-ts.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
 
   integration-pubsub-arrow-fastdds:
     needs: [detect-changes, setup-devcontainer]
-    if: needs.detect-changes.outputs.integration-pubsub-arrow-fastdds == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            arrow-bridge
-            pubsub
-            pubsub-arrow
-            fastdds-pubsub-provider
-            integration-tests/pubsub-arrow-fastdds
-            .devcontainer
-            .github
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build components and run integration tests
-        run: |
-          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
-            fletcher-build \
-            bash -c "set -e && \
-                     conan profile detect && \
-                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider; do \
-                       echo '::group::conan create '\$COMPONENT && \
-                       (cd \$COMPONENT && conan create . --build=missing -o '&:run_tests=True') && \
-                       echo '::endgroup::'; \
-                     done && \
-                     cd integration-tests/pubsub-arrow-fastdds && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
-                     cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build' && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
-                     echo '::endgroup::'"
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-arrow-fastdds == 'true' }}
+    uses: ./.github/workflows/integration-test.pubsub-arrow-fastdds.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
 
   # ── Stage 3: PR gate ────────────────────────────────────────────────────────
   pr_gate:
