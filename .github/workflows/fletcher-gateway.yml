@@ -15,18 +15,18 @@ on:
           Pre-built devcontainer image reference (e.g.
           dockerrepo.eiva.com/fletcher/devcontainer:<sha>). The caller is
           responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. Gateway has no
-          tag-push release path, so this workflow is only ever called
-          from pr.yml.
+          workflow only consumes the resulting image. pr.yml passes the
+          image it built once and shares across all callers; the
+          release-gateway.yml wrapper does the same for tag-push releases.
         required: true
         type: string
 
-# Gateway is never published as a Conan package, so there is no
-# tag-triggered release path and no upload job — the workflow only
-# verifies that the exe builds and the unit-test suite passes on both
-# Linux and Windows. End-to-end coverage of the gateway against
-# gateway-client-ts lives in the gateway-end-to-end integration-test
-# workflow.
+# Gateway is distributed as a standalone executable (no Conan package,
+# no public headers). On tag-push the gateway binary is packaged per
+# platform and uploaded as a workflow artifact; release-gateway.yml's
+# upload job consumes those artifacts to create the GitHub Release.
+# End-to-end coverage of the gateway against gateway-client-ts lives
+# in the gateway-end-to-end integration-test workflow.
 
 jobs:
   build-windows:
@@ -71,6 +71,23 @@ jobs:
           conan install . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
           conan build . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
+      # Binary path per gateway/README.md: build/Release/gateway.exe on
+      # Windows. Packaged as a tar.gz so the release asset filename is
+      # consistent across platforms.
+      - name: Package gateway binary
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        working-directory: gateway
+        run: tar -czf gateway-windows.tgz -C build/Release gateway.exe
+
+      - name: Upload Windows artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gateway-windows
+          path: gateway/gateway-windows.tgz
+          retention-days: 5
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -91,10 +108,13 @@ jobs:
 
       - name: Build dependencies, install, build, and test
         shell: bash
+        env:
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'gateway-linux.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -w /workspace/gateway \
+            -e ARTIFACT_NAME="$ARTIFACT_NAME" \
             fletcher-build \
             bash -c '
               set -e
@@ -104,4 +124,17 @@ jobs:
               conan create ../pubsub --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              # Binary path per gateway/README.md: build/Release/gateway. Packaged
+              # inside docker so the resulting tgz is readable by the runner user.
+              if [[ -n "$ARTIFACT_NAME" ]]; then
+                tar -czf "/workspace/$ARTIFACT_NAME" -C build/Release gateway
+              fi
             '
+
+      - name: Upload Linux artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gateway-linux
+          path: gateway-linux.tgz
+          retention-days: 5
