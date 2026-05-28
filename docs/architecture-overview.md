@@ -279,7 +279,7 @@ conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Lin
 conan create xrcedds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-A single consolidated devcontainer at `.devcontainer/` (repo root) covers every Fletcher component. CI builds and locally-opened "Reopen in Container" sessions both use it, sharing one image cache key in Harbor (`dockerrepo.eiva.com/fletcher/devcontainer:cache`).
+A single consolidated devcontainer at `.devcontainer/` (repo root) covers every Fletcher component. CI builds and locally-opened "Reopen in Container" sessions both use it, sharing one image cache key on Docker Hub (`eivaorg/fletcher-devcontainer:cache`).
 
 ### 8.3 TypeScript gateway client
 

@@ -29,7 +29,13 @@ class FletcherProtocPluginConan(ConanFile):
     def requirements(self):
         self.requires("protobuf/3.21.12", visible=True)
         if self.options.run_tests:
-            self.requires("gtest/1.17.0")
+            # test_requires (rather than requires) so gtest does NOT show up in
+            # self.dependencies.host during package() — otherwise its DLLs would
+            # be copied next to fletcher-protoc.exe on Windows, leaking test-only
+            # binaries into the shipped package. package_id() ignores run_tests,
+            # so a run_tests=True build must produce the same package contents
+            # as a run_tests=False build.
+            self.test_requires("gtest/1.17.0")
 
     def package_id(self):
         del self.info.options.run_tests
