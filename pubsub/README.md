@@ -102,7 +102,7 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
                            │ both must pass
                            ▼
                         upload
-                  Publishes to conan-eiva Artifactory
+                  Creates GitHub Release (.tgz assets)
 ```
 
 ### Build profiles

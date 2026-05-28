@@ -97,7 +97,7 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
                            ▼
                         upload
                   (push / workflow_dispatch only)
-                  Publishes to conan-eiva Artifactory
+                  Creates GitHub Release (.tgz assets)
 ```
 
 ### Build profiles
@@ -114,7 +114,7 @@ platform-independent package ID. The Windows build saves the package to a
 GitHub Actions artifact which the `upload` job restores and publishes:
 
 ```
-conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  conan cache restore  →  conan upload
+conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
 Upload is skipped on pull requests — it only runs on `push` and `workflow_dispatch`.

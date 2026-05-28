@@ -66,14 +66,14 @@ jobs:
       - name: Save Conan package
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-core-windows.tgz"
+        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-core-windows-conan-package.tgz"
 
-      - name: Upload Windows artifact
+      - name: Upload Windows Conan package .tgz artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-core-windows
-          path: fletcher-core-windows.tgz
+          path: fletcher-core-windows-conan-package.tgz
           retention-days: 5
 
   build-linux:
@@ -95,7 +95,7 @@ jobs:
       - name: Build and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-core-linux.tgz' || '' }}
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-core-linux-conan-package.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -111,10 +111,10 @@ jobs:
               fi
             '
 
-      - name: Upload Linux artifact
+      - name: Upload Linux Conan package .tgz artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-core-linux
-          path: fletcher-core-linux.tgz
+          path: fletcher-core-linux-conan-package.tgz
           retention-days: 5

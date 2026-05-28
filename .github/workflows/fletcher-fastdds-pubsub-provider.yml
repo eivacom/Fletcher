@@ -74,14 +74,14 @@ jobs:
       - name: Save Conan package
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-fastdds-pubsub-provider-windows.tgz"
+        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-fastdds-pubsub-provider-windows-conan-package.tgz"
 
-      - name: Upload Windows artifact
+      - name: Upload Windows Conan package .tgz artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-fastdds-pubsub-provider-windows
-          path: fletcher-fastdds-pubsub-provider-windows.tgz
+          path: fletcher-fastdds-pubsub-provider-windows-conan-package.tgz
           retention-days: 5
 
   build-linux:
@@ -105,7 +105,7 @@ jobs:
       - name: Build dependencies, build, and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-fastdds-pubsub-provider-linux.tgz' || '' }}
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-fastdds-pubsub-provider-linux-conan-package.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -125,10 +125,10 @@ jobs:
               fi
             '
 
-      - name: Upload Linux artifact
+      - name: Upload Linux Conan package .tgz artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-fastdds-pubsub-provider-linux
-          path: fletcher-fastdds-pubsub-provider-linux.tgz
+          path: fletcher-fastdds-pubsub-provider-linux-conan-package.tgz
           retention-days: 5

@@ -71,21 +71,20 @@ jobs:
           conan install . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
           conan build . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
-      # Binary path per gateway/README.md: build/Release/gateway.exe on
-      # Windows. Packaged as a tar.gz so the release asset filename is
-      # consistent across platforms.
-      - name: Package gateway binary
+      # Binary path per gateway/README.md: build/Release/gateway.exe.
+      # Staged at workspace root so the artifact contains just gateway.exe
+      # (upload-artifact preserves any leading directories from the path).
+      - name: Stage gateway.exe
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        working-directory: gateway
-        run: tar -czf gateway-windows.tgz -C build/Release gateway.exe
+        run: cp gateway/build/Release/gateway.exe gateway.exe
 
-      - name: Upload Windows artifact
+      - name: Upload Windows binary
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-windows
-          path: gateway/gateway-windows.tgz
+          path: gateway.exe
           retention-days: 5
 
   build-linux:
@@ -109,7 +108,7 @@ jobs:
       - name: Build dependencies, install, build, and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'gateway-linux.tgz' || '' }}
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'gateway-linux.tar.gz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -125,16 +124,16 @@ jobs:
               conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               # Binary path per gateway/README.md: build/Release/gateway. Packaged
-              # inside docker so the resulting tgz is readable by the runner user.
+              # inside docker so the resulting tarball is readable by the runner user.
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 tar -czf "/workspace/$ARTIFACT_NAME" -C build/Release gateway
               fi
             '
 
-      - name: Upload Linux artifact
+      - name: Upload Linux binary
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-linux
-          path: gateway-linux.tgz
+          path: gateway-linux.tar.gz
           retention-days: 5

@@ -198,7 +198,7 @@ Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
                            ▼
                         upload
                   (tag push only)
-                  Publishes to conan-eiva Artifactory
+                  Creates GitHub Release (.tgz assets)
 ```
 
 ### Build profiles
@@ -214,10 +214,10 @@ Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as par
 
 Both platforms produce a separate binary package. Each build job saves its
 package to a GitHub Actions artifact; the `upload` job downloads both, restores
-them into the Conan cache, and publishes to Artifactory:
+them into the Conan cache, and attaches them as GitHub Release assets:
 
 ```
-conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  conan cache restore  →  conan upload
+conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
 The `upload` job only runs on a tag push after both `build-windows` and

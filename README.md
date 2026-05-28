@@ -134,11 +134,9 @@ A single devcontainer at `.devcontainer/` covers every Fletcher component. Compo
 
 Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The `postCreateCommand` runs `conan config install https://github.com/eivacom/conan-configuration.git` on first launch, installing the EIVA Conan profiles and remote.
 
-To pull the released Fletcher packages from `conan-eiva`, log in once per container:
-
-```bash
-conan remote login conan-eiva <username>
-```
+Released Fletcher packages are attached as assets on GitHub Releases — see
+[Consuming a released Conan package](#consuming-a-released-conan-package)
+below. No private Conan remote login is required.
 
 Then follow each component's README for the component-specific build, test, and consumption commands.
 
@@ -184,10 +182,19 @@ Harbor is the destination today because the secrets are already in place and the
 
 ## Releasing
 
-Releases are cut by pushing a **component-prefixed git tag** that matches the
-version in the package's `conanfile.py`. The CI workflow for that component
-then runs builds on Windows + Linux and, if both succeed, publishes the
-package to the `conan-eiva` Artifactory remote.
+Releases are cut by pushing a **component-prefixed git tag**. The matching
+`release-<component>.yml` workflow runs builds on Windows + Linux and, if
+both succeed, creates a GitHub Release with the build artefacts attached.
+For Conan-package components the tag must match the version in the
+package's `conanfile.py`; `gateway/` has no conanfile version so the tag
+itself is the version.
+
+### Release assets
+
+| Component type | Attached assets |
+|---|---|
+| Conan-package (7 components) | `fletcher-<name>-{linux,windows}-conan-package.tgz` — `conan cache save` exports, one per build profile |
+| `gateway/` | `gateway.exe` (raw Windows binary) + `gateway-linux.tar.gz` (Linux binary with exec bit preserved inside the tarball) |
 
 ### Tag format
 
@@ -204,6 +211,7 @@ package to the `conan-eiva` Artifactory remote.
 | `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
 | `fastdds-pubsub-provider/` | `fastdds-pubsub-provider-v` | `fastdds-pubsub-provider-v0.1.0-alpha` |
 | `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider-v` | `xrcedds-pubsub-provider-v0.1.0-alpha` |
+| `gateway/` | `gateway-v` | `gateway-v0.1.0-alpha` |
 
 `gateway-client-ts/` does not yet release through tag-push CI.
 
@@ -245,24 +253,55 @@ package's workflow — not all of them.
    git push origin core-v0.1.1-alpha
    ```
 
-3. Watch the workflow run for that component complete on
-   [GitHub Actions](https://github.com/eivacom/Fletcher/actions). The `upload`
-   job is gated on
-   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`,
-   so only tag pushes publish to Artifactory — `workflow_dispatch` and
-   `pull_request` runs build and test but never upload.
+3. Watch the matching `release-<component>` workflow run on
+   [GitHub Actions](https://github.com/eivacom/Fletcher/actions). Its
+   `upload` job creates a GitHub Release tagged `<component>-v<version>`
+   with the platform-specific assets attached.
 
 ### Notes
 
-- Tag and `conanfile.py` version **must match**. The workflow verifies
-  this and the upload job fails fast if they differ.
-- The upload job also fails if the package version is already published
-  on `conan-eiva` — re-releasing an existing version requires bumping
-  `conanfile.py` first.
+- For Conan-package components, the tag and `conanfile.py` version **must
+  match**. The release workflow verifies this via
+  `actions/verify-tag-version` and fails fast if they differ. `gateway/`
+  has no conanfile version, so the tag itself is the version.
+- Re-releasing an existing version requires either deleting the existing
+  GitHub Release (and tag) first or bumping the version — `gh release
+  create` refuses to overwrite an existing release.
 - Releases are independent per component. Bumping `core` does not require
   re-releasing the others.
 - Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the
   version and go into the tag.
+
+### Consuming a released Conan package
+
+Each Conan-package component publishes two archives as GitHub Release assets:
+
+| File | Built for |
+|---|---|
+| `fletcher-<component>-linux-conan-package.tgz` | Linux x86_64, GCC 13, libstdc++ (release profile) |
+| `fletcher-<component>-windows-conan-package.tgz` | Windows x86_64, MSVC 194 (release profile) |
+
+Each archive is produced by `conan cache save` and contains the full
+Conan package (recipe revision + built binary). To consume one from
+another project's Conan cache:
+
+```bash
+gh release download core-v0.1.0-alpha --repo eivacom/Fletcher --pattern 'fletcher-core-linux-conan-package.tgz'
+```
+
+```bash
+conan cache restore fletcher-core-linux-conan-package.tgz
+```
+
+```python
+# In your conanfile.py:
+self.requires("fletcher-core/0.1.0-alpha")
+```
+
+`conan cache restore` registers the package under the exact profile it
+was built with (Linux-gcc13-x86_64-Release / Windows-msvc194-x86_64-Release).
+Consumers targeting a different profile must build the package from
+source with `conan create <component>` against the Fletcher checkout.
 
 ---
 

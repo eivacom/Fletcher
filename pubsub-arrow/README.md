@@ -68,5 +68,5 @@ consumers don't need to declare them separately.
 
 `.github/workflows/fletcher-pubsub-arrow.yml` runs `build-windows` +
 `build-linux` on every PR touching `pubsub-arrow/**`, and an `upload`
-job that publishes platform-specific package binaries to Artifactory
+job that creates a GitHub Release with the platform-specific .tgz assets attached
 on a `pubsub-arrow-v*.*.*` release-tag push.

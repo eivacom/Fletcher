@@ -7,7 +7,7 @@ Fletcher's WebSocket gateway server. A schema-agnostic byte router that exposes 
 A single executable, `gateway`, built from the sources in `src/`. There is no public C++ API:
 
 - **No installed headers.** All headers live under `src/` and are not part of any export interface.
-- **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation, and nothing is ever uploaded to Artifactory. The only artifact this directory ships is the exe.
+- **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation. The gateway exe is distributed via GitHub Releases (`release-gateway.yml` on `gateway-v*` tag pushes), not as a Conan package.
 - **No library target exposed externally.** Sources compile into a tiny internal helper static library (`gateway_codec`, for unit-test linkage only) plus the exe. Neither is installed or consumed from outside this directory.
 
 If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/) for the reference implementation).

@@ -61,5 +61,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            "fletcher-arrow-bridge-windows.tgz" \
-            "fletcher-arrow-bridge-linux.tgz"
+            "fletcher-arrow-bridge-windows-conan-package.tgz" \
+            "fletcher-arrow-bridge-linux-conan-package.tgz"

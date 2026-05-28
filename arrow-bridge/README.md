@@ -63,4 +63,4 @@ separately.
 
 `.github/workflows/fletcher-arrow-bridge.yml` runs `build-windows` +
 `build-linux` on every PR touching `arrow-bridge/**`, and an `upload` job
-that publishes platform-specific package binaries to Artifactory on push.
+that creates a GitHub Release with the platform-specific .tgz assets attached on push.
