@@ -20,6 +20,14 @@ on:
           release-fastdds-pubsub-provider.yml wrapper does the same for tag-push releases.
         required: true
         type: string
+    outputs:
+      conan-ref:
+        description: >-
+          Conan package reference (name/version) computed on tag-push by
+          build-windows. Empty on PR runs. Consumed by
+          release-fastdds-pubsub-provider.yml's upload job to verify the tag
+          matches conanfile version.
+        value: ${{ jobs.build-windows.outputs.conan-ref }}
 
 jobs:
   build-windows:
@@ -94,7 +102,7 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and test
+      - name: Build dependencies, build, and test
         shell: bash
         env:
           ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-fastdds-pubsub-provider-linux.tgz' || '' }}
@@ -124,38 +132,3 @@ jobs:
           name: fletcher-fastdds-pubsub-provider-linux
           path: fletcher-fastdds-pubsub-provider-linux.tgz
           retention-days: 5
-
-  upload:
-    needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            fastdds-pubsub-provider
-            .github
-
-      - name: Verify tag version matches conanfile.py version
-        uses: ./.github/actions/verify-tag-version
-        with:
-          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
-          tag-prefix: fastdds-pubsub-provider-v
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v8.0.1
-        with:
-          pattern: fletcher-fastdds-pubsub-provider-*
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes \
-            "fletcher-fastdds-pubsub-provider-windows.tgz" \
-            "fletcher-fastdds-pubsub-provider-linux.tgz"

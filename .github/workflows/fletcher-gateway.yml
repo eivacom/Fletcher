@@ -89,7 +89,7 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Install, build, and test
+      - name: Build dependencies, install, build, and test
         shell: bash
         run: |
           docker run --rm \

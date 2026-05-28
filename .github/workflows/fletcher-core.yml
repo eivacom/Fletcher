@@ -25,6 +25,13 @@ on:
           release-core.yml wrapper does the same for tag-push releases.
         required: true
         type: string
+    outputs:
+      conan-ref:
+        description: >-
+          Conan package reference (name/version) computed on tag-push by
+          build-windows. Empty on PR runs. Consumed by release-core.yml's
+          upload job to verify the tag matches conanfile version.
+        value: ${{ jobs.build-windows.outputs.conan-ref }}
 
 jobs:
   build-windows:
@@ -111,38 +118,3 @@ jobs:
           name: fletcher-core-linux
           path: fletcher-core-linux.tgz
           retention-days: 5
-
-  upload:
-    needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            core
-            .github
-
-      - name: Verify tag version matches conanfile.py version
-        uses: ./.github/actions/verify-tag-version
-        with:
-          conan-ref: ${{ needs.build-windows.outputs.conan-ref }}
-          tag-prefix: core-v
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v8.0.1
-        with:
-          pattern: fletcher-core-*
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes \
-            "fletcher-core-windows.tgz" \
-            "fletcher-core-linux.tgz"
