@@ -3,10 +3,6 @@
 #
 name: fletcher-xrcedds-pubsub-provider
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
-
 on:
   workflow_dispatch:
   workflow_call:
