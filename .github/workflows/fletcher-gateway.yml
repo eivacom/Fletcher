@@ -32,6 +32,15 @@ jobs:
             .github
             .conan-profiles
 
+      - name: Install MSVC tools
+        uses: ./.github/actions/install-msvc-tools
+
+      - name: Install CMake
+        uses: ./.github/actions/install-cmake
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
       # `conan build .` dispatches cmake configure / build / test via the
       # conanfile's build() method, picking the right preset for the
       # generator in use. Calling cmake --preset conan-release directly
@@ -39,16 +48,12 @@ jobs:
       # conan-default configure preset, with conan-release reserved for
       # the build step), while on Linux single-config generators the
       # opposite is true. Letting Conan dispatch sidesteps the asymmetry.
-      - name: Install MSVC tools
-        uses: ./.github/actions/install-msvc-tools
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
-
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: gateway
-          build-mode: install-build
+      - name: Install, build, and test
+        shell: bash
+        working-directory: gateway
+        run: |
+          conan install . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
+          conan build . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
   build-linux:
     needs: setup-devcontainer
@@ -61,9 +66,21 @@ jobs:
             .github
             .conan-profiles
 
-      - uses: ./.github/actions/conan-build-linux
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          component: gateway
-          build-mode: install-build
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+          image: ${{ needs.setup-devcontainer.outputs.image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Install, build, and test
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/gateway \
+            fletcher-build \
+            bash -c '
+              set -e
+              conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+            '

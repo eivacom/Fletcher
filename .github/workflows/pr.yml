@@ -59,32 +59,28 @@ jobs:
             core:
               - 'core/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             arrow-bridge:
               - 'arrow-bridge/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             gateway:
               - 'gateway/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
@@ -94,32 +90,28 @@ jobs:
             protoc:
               - 'protoc/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             pubsub:
               - 'pubsub/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             pubsub-arrow:
               - 'pubsub-arrow/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
             xrcedds-pubsub-provider:
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/pr.yml'
-              - '.github/actions/conan-build-windows/**'
-              - '.github/actions/conan-build-linux/**'
+              - '.github/actions/conan-install/**'
               - '.github/actions/install-msvc-tools/**'
               - '.github/actions/install-cmake/**'
               - '.conan-profiles/**'
@@ -256,11 +248,22 @@ jobs:
       - name: Install CMake
         uses: ./.github/actions/install-cmake
 
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: ${{ matrix.component.name }}
-          conan-profile: ${{ matrix.component.win-profile }}
-          build-mode: ${{ matrix.component.build-mode }}
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build and test
+        shell: bash
+        working-directory: ${{ matrix.component.name }}
+        env:
+          PROFILE: ${{ matrix.component.win-profile }}
+          BUILD_MODE: ${{ matrix.component.build-mode }}
+        run: |
+          if [ "$BUILD_MODE" = "install-build" ]; then
+            conan install . --build=missing -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
+            conan build . -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
+          else
+            conan create . --build=missing -pr:a="../.conan-profiles/$PROFILE" -o "&:run_tests=True"
+          fi
 
   build-linux:
     needs: [build-matrix-prep, setup-devcontainer]
@@ -277,12 +280,34 @@ jobs:
             ${{ matrix.component.name }}
             .github
             .conan-profiles
-      - uses: ./.github/actions/conan-build-linux
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          component: ${{ matrix.component.name }}
-          build-mode: ${{ matrix.component.build-mode }}
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+          image: ${{ needs.setup-devcontainer.outputs.image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and test
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component.name }}
+          BUILD_MODE: ${{ matrix.component.build-mode }}
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w "/workspace/${COMPONENT}" \
+            -e BUILD_MODE="$BUILD_MODE" \
+            fletcher-build \
+            bash -c '
+              set -e
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              if [ "$BUILD_MODE" = "install-build" ]; then
+                conan install . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
+                conan build . -pr:a="$PROFILE" -o "&:run_tests=True"
+              else
+                conan create . --build=missing -pr:a="$PROFILE" -o "&:run_tests=True"
+              fi
+            '
 
   build-gateway-client:
     needs: detect-changes
@@ -378,7 +403,6 @@ jobs:
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
                      conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
                        echo '::group::conan create '\$COMPONENT && \
@@ -425,7 +449,6 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
                      conan profile detect && \
                      for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
@@ -472,7 +495,6 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
                      conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
@@ -518,7 +540,6 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
                      conan profile detect && \
                      for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
@@ -566,7 +587,6 @@ jobs:
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 && \
                      conan profile detect && \
                      for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider; do \
                        echo '::group::conan create '\$COMPONENT && \

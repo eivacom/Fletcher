@@ -36,9 +36,13 @@ jobs:
       - name: Install CMake
         uses: ./.github/actions/install-cmake
 
-      - uses: ./.github/actions/conan-build-windows
-        with:
-          component: pubsub-arrow
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build and test
+        shell: bash
+        working-directory: pubsub-arrow
+        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
       - name: Get Conan reference
         id: get-ref
@@ -56,7 +60,7 @@ jobs:
 
       - name: Upload Windows artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-pubsub-arrow-windows
           path: fletcher-pubsub-arrow-windows.tgz
@@ -72,16 +76,34 @@ jobs:
             .github
             .conan-profiles
 
-      - uses: ./.github/actions/conan-build-linux
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          component: pubsub-arrow
-          devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+          image: ${{ needs.setup-devcontainer.outputs.image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          artifact-name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-pubsub-arrow-linux.tgz' || '' }}
+
+      - name: Build and test
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-pubsub-arrow-linux.tgz' || '' }}
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/pubsub-arrow \
+            -e ARTIFACT_NAME="$ARTIFACT_NAME" \
+            fletcher-build \
+            bash -c '
+              set -e
+              conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              if [[ -n "$ARTIFACT_NAME" ]]; then
+                REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
+                conan cache save "$REF" --file "/workspace/$ARTIFACT_NAME"
+              fi
+            '
 
       - name: Upload Linux artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-pubsub-arrow-linux
           path: fletcher-pubsub-arrow-linux.tgz
@@ -106,7 +128,7 @@ jobs:
           tag-prefix: pubsub-arrow-v
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: fletcher-pubsub-arrow-*
           merge-multiple: true

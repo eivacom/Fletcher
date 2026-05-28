@@ -41,9 +41,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
-                     pip install conan==2.27.1 --break-system-packages && \
-                     mkdir -p ~/.conan2/profiles && cp .conan-profiles/* ~/.conan2/profiles/ && \
-                     PROFILE=Linux-gcc13-x86_64-Release && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
                      for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
