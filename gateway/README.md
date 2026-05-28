@@ -26,6 +26,27 @@ This keeps the gateway as a pure byte router: it forwards row bytes between publ
 
 `gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
 
+## Installing
+
+Pre-built binaries are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Pick the asset for your platform:
+
+**Windows** — download `gateway.exe` and run it directly. No archive to unpack:
+
+```powershell
+gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway.exe
+.\gateway.exe --port 9090
+```
+
+**Linux** — download and extract `gateway-linux.tar.gz`. The exec bit is preserved inside the tarball:
+
+```bash
+gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway-linux.tar.gz
+tar -xzf gateway-linux.tar.gz
+./gateway --port 9090
+```
+
+To build from source instead of using a release binary, see [Building](#building) below.
+
 ## Running
 
 ```bash
