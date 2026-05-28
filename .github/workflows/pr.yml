@@ -232,12 +232,22 @@ jobs:
   # image so the child skips re-building it. Tag-push runs of the child
   # workflows leave the input empty and run their own setup-devcontainer.
 
+  # The seven Conan-package component workflows declare `permissions:
+  # contents: write` on their tag-push `upload` job (it calls
+  # `gh release create`). GitHub Actions validates that nested
+  # permissions are a subset of the caller's at workflow_call time —
+  # even though the `upload` job is gated to never run on PRs. We
+  # therefore grant `contents: write` per caller-job so pr.yml's
+  # workflow-level permissions can stay at `contents: read`.
+
   fletcher-core:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.core == 'true' }}
     uses: ./.github/workflows/fletcher-core.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-arrow-bridge:
@@ -246,6 +256,8 @@ jobs:
     uses: ./.github/workflows/fletcher-arrow-bridge.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-pubsub:
@@ -254,6 +266,8 @@ jobs:
     uses: ./.github/workflows/fletcher-pubsub.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-pubsub-arrow:
@@ -262,6 +276,8 @@ jobs:
     uses: ./.github/workflows/fletcher-pubsub-arrow.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-protoc:
@@ -270,6 +286,8 @@ jobs:
     uses: ./.github/workflows/fletcher-protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-gateway:
@@ -286,6 +304,8 @@ jobs:
     uses: ./.github/workflows/fletcher-fastdds-pubsub-provider.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-xrcedds-pubsub-provider:
@@ -294,6 +314,8 @@ jobs:
     uses: ./.github/workflows/fletcher-xrcedds-pubsub-provider.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    permissions:
+      contents: write
     secrets: inherit
 
   fletcher-gateway-client:
