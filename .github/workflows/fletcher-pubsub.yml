@@ -31,11 +31,19 @@ jobs:
         with:
           sparse-checkout: |
             pubsub
+            core
             .github
             .conan-profiles
 
       - name: Install Conan
         uses: ./.github/actions/conan-install
+
+      # fletcher-core is not on any Conan remote, so its recipe must be in
+      # the local cache before `conan create` on pubsub can resolve it.
+      - name: Build fletcher-core (dependency)
+        shell: bash
+        working-directory: pubsub
+        run: conan create ../core --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 
       - name: Build and test
         shell: bash
@@ -71,6 +79,7 @@ jobs:
         with:
           sparse-checkout: |
             pubsub
+            core
             .github
             .conan-profiles
 
@@ -92,6 +101,9 @@ jobs:
             fletcher-build \
             bash -c '
               set -e
+              # fletcher-core must be in the local cache before pubsub can resolve it
+              # (no Conan remote hosts the fletcher-* packages).
+              conan create ../core --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")

@@ -31,11 +31,25 @@ jobs:
         with:
           sparse-checkout: |
             pubsub-arrow
+            core
+            pubsub
+            arrow-bridge
             .github
             .conan-profiles
 
       - name: Install Conan
         uses: ./.github/actions/conan-install
+
+      # fletcher-core/pubsub/arrow-bridge are not on any Conan remote, so their
+      # recipes must be in the local cache before `conan create` on pubsub-arrow
+      # can resolve them. Order: core → pubsub, arrow-bridge (both need core).
+      - name: Build fletcher-core, fletcher-pubsub, fletcher-arrow-bridge (dependencies)
+        shell: bash
+        working-directory: pubsub-arrow
+        run: |
+          conan create ../core --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../pubsub --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../arrow-bridge --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 
       - name: Build and test
         shell: bash
@@ -71,6 +85,9 @@ jobs:
         with:
           sparse-checkout: |
             pubsub-arrow
+            core
+            pubsub
+            arrow-bridge
             .github
             .conan-profiles
 
@@ -92,6 +109,11 @@ jobs:
             fletcher-build \
             bash -c '
               set -e
+              # fletcher-core/pubsub/arrow-bridge must be in the local cache before
+              # pubsub-arrow can resolve them (no Conan remote hosts the fletcher-* packages).
+              conan create ../core --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../pubsub --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../arrow-bridge --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")

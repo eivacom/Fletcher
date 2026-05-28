@@ -36,6 +36,8 @@ jobs:
         with:
           sparse-checkout: |
             gateway
+            core
+            pubsub
             .github
             .conan-profiles
 
@@ -44,6 +46,16 @@ jobs:
 
       - name: Install Conan
         uses: ./.github/actions/conan-install
+
+      # Gateway's conanfile requires fletcher-core and fletcher-pubsub via version
+      # ranges. Neither is on any Conan remote, so they must be in the local cache
+      # before `conan install` can resolve them.
+      - name: Build fletcher-core, fletcher-pubsub (dependencies)
+        shell: bash
+        working-directory: gateway
+        run: |
+          conan create ../core --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../pubsub --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 
       # `conan build .` dispatches cmake configure / build / test via the
       # conanfile's build() method, picking the right preset for the
@@ -66,6 +78,8 @@ jobs:
         with:
           sparse-checkout: |
             gateway
+            core
+            pubsub
             .github
             .conan-profiles
 
@@ -84,6 +98,10 @@ jobs:
             fletcher-build \
             bash -c '
               set -e
+              # fletcher-core/pubsub must be in the local cache before gateway can
+              # resolve them (no Conan remote hosts the fletcher-* packages).
+              conan create ../core --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../pubsub --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
             '
