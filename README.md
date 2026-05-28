@@ -160,19 +160,19 @@ No further setup is needed — Conan profiles live in [`.conan-profiles/`](.cona
 
 ### CI devcontainer image
 
-Every component workflow that needs the Linux toolchain begins with a `setup-devcontainer` job that calls the reusable `setup-devcontainer-image` workflow (`.github/workflows/setup-devcontainer-image.yml`). That job builds the devcontainer image and pushes it to Docker Hub:
+Every component workflow that needs the Linux toolchain begins with a `setup-devcontainer` job that calls the reusable `setup-devcontainer-image` workflow (`.github/workflows/ci.setup-devcontainer-image.yml`). That job builds the devcontainer image and pushes it to Docker Hub:
 
 ```
 eivaorg/fletcher-devcontainer:<git-sha>
 ```
 
-`eivaorg/fletcher-devcontainer:cache` keeps a BuildKit layer cache between runs. When a push to `main` actually rebuilds the image — the workflow only triggers on pushes touching `.devcontainer/**` or `setup-devcontainer-image.yml` itself — the new image also gets tagged `:main` so subsequent PRs that do not touch those paths prime their build from a known-good baseline.
+`eivaorg/fletcher-devcontainer:cache` keeps a BuildKit layer cache between runs. When a push to `main` actually rebuilds the image — the workflow only triggers on pushes touching `.devcontainer/**` or `ci.setup-devcontainer-image.yml` itself — the new image also gets tagged `:main` so subsequent PRs that do not touch those paths prime their build from a known-good baseline.
 
 Every `setup-devcontainer` invocation shares the concurrency group `setup-devcontainer-image-<sha>` with `queue: max`, so when many component workflows trigger on the same commit the build jobs run one-at-a-time in FIFO order. Only the first one actually runs `buildx`; the rest see the SHA-tagged image already on Docker Hub (a cheap `docker manifest inspect`) and skip the build entirely. One `ubuntu:24.04` pull per commit, not one per component workflow.
 
 The Linux jobs that consume the toolchain pull the image via the `pull-devcontainer-image` composite action (`.github/actions/pull-devcontainer-image`) and retag it locally as `fletcher-build`. No `buildx` runs on the consumer jobs, so they never pull `ubuntu:24.04` themselves and never compete for the Docker Hub free-tier rate limit.
 
-Docker Hub is the destination today because the secrets are already in place and pulls are unauthenticated by default for public repos. Switching to another OCI registry (ghcr.io, ECR, …) only requires changing the registry URL in `setup-devcontainer-image.yml` and `pull-devcontainer-image/action.yml`.
+Docker Hub is the destination today because the secrets are already in place and pulls are unauthenticated by default for public repos. Switching to another OCI registry (ghcr.io, ECR, …) only requires changing the registry URL in `ci.setup-devcontainer-image.yml` and `pull-devcontainer-image/action.yml`.
 
 ---
 
@@ -265,7 +265,7 @@ package's workflow — not all of them.
   match**. The release workflow verifies this via
   `actions/verify-tag-version-conan` and fails fast if they differ.
   `gateway/` has its version in `gateway/VERSION` (a plain text file)
-  and `release-gateway.yml` verifies the tag against it. For
+  and `cd.gateway.yml` verifies the tag against it. For
   `gateway-client-ts/`, the tag must match `package.json`'s `version`
   field (`actions/verify-tag-version-npm`).
 - Re-releasing an existing version requires either deleting the existing

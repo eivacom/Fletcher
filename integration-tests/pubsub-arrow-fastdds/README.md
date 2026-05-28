@@ -25,7 +25,7 @@ Current scenarios:
 
 ## How it runs in CI
 
-The workflow `.github/workflows/integration-test.pubsub-arrow-fastdds.yml` triggers when any of `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, or this directory changes on a PR. It:
+The workflow `.github/workflows/ci.integration-test.pubsub-arrow-fastdds.yml` triggers when any of `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
 2. `conan install` + `cmake build` produces the `integration_tests` gtest binary.

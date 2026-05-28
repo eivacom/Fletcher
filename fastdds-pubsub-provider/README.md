@@ -174,14 +174,14 @@ consumers do not need to depend on Fast DDS directly.
 
 ## CI pipeline
 
-The build workflow is defined in `.github/workflows/fletcher-fastdds-pubsub-provider.yml`.
-It is `workflow_call`-only — invoked from `pr.yml` for pull requests
-touching `fastdds-pubsub-provider/**` and from `release-fastdds-pubsub-provider.yml`
+The build workflow is defined in `.github/workflows/ci.fastdds-pubsub-provider.yml`.
+It is `workflow_call`-only — invoked from `ci.pr.yml` for pull requests
+touching `fastdds-pubsub-provider/**` and from `cd.fastdds-pubsub-provider.yml`
 on `fastdds-pubsub-provider-v*` tag pushes. The matching upload job
-lives in `release-fastdds-pubsub-provider.yml`, not here.
+lives in `cd.fastdds-pubsub-provider.yml`, not here.
 
 ```
-pr.yml (PRs) / release-fastdds-pubsub-provider.yml (tag push)
+ci.pr.yml (PRs) / cd.fastdds-pubsub-provider.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
@@ -195,7 +195,7 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
                            │ both must pass
                            ▼ (only on tag push)
                         upload
-              (release-fastdds-pubsub-provider.yml job)
+              (cd.fastdds-pubsub-provider.yml job)
               Creates GitHub Release with
               fletcher-fastdds-pubsub-provider-{windows,linux}-conan-package.tgz
 ```
@@ -213,14 +213,14 @@ Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as par
 
 Both platforms produce a separate binary package. Each build job saves
 its package to a GitHub Actions workflow artifact; on a tag push the
-`upload` job in `release-fastdds-pubsub-provider.yml` downloads both and
+`upload` job in `cd.fastdds-pubsub-provider.yml` downloads both and
 attaches them as GitHub Release assets:
 
 ```
 conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
-The `upload` job only runs from `release-fastdds-pubsub-provider.yml`
+The `upload` job only runs from `cd.fastdds-pubsub-provider.yml`
 (tag push), and verifies that the tag version matches the version in
 `conanfile.py` before creating the release.
 

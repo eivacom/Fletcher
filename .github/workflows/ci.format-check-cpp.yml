@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: format-check-cpp
+name: ci.format-check-cpp
 
 concurrency:
-  group: format-check-cpp-${{ github.ref }}
+  group: ci.format-check-cpp-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -15,7 +15,7 @@ on:
       - "**/*.h"
       - "**/*.cc"
       - ".clang-format"
-      - ".github/workflows/format-check-cpp.yml"
+      - ".github/workflows/ci.format-check-cpp.yml"
 
 jobs:
   check:

@@ -2,9 +2,9 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 # Release orchestration for fletcher-gateway. Owns the setup-devcontainer
-# step, invokes fletcher-gateway.yml with the resulting image to build and
+# step, invokes ci.gateway.yml with the resulting image to build and
 # upload per-platform gateway binaries, and creates the GitHub Release.
-# fletcher-gateway.yml is also called from pr.yml — build/test logic is
+# ci.gateway.yml is also called from ci.pr.yml — build/test logic is
 # shared so PR and release runs use the same source of truth.
 #
 # Gateway's version lives in gateway/VERSION (a plain text file).
@@ -15,7 +15,7 @@
 # Triggers:
 #   * push: tags 'gateway-v*'     — real release.
 
-name: release-gateway
+name: cd.gateway
 
 on:
   push:
@@ -24,12 +24,12 @@ on:
 
 jobs:
   setup-devcontainer:
-    uses: ./.github/workflows/setup-devcontainer-image.yml
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
     secrets: inherit
 
   release:
     needs: setup-devcontainer
-    uses: ./.github/workflows/fletcher-gateway.yml
+    uses: ./.github/workflows/ci.gateway.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit

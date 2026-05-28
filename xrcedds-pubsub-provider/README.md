@@ -204,14 +204,14 @@ Micro XRCE-DDS Client and Micro-CDR are built from source as part of this packag
 
 ## CI pipeline
 
-The build workflow is defined in `.github/workflows/fletcher-xrcedds-pubsub-provider.yml`.
-It is `workflow_call`-only — invoked from `pr.yml` for pull requests
-touching `xrcedds-pubsub-provider/**` and from `release-xrcedds-pubsub-provider.yml`
+The build workflow is defined in `.github/workflows/ci.xrcedds-pubsub-provider.yml`.
+It is `workflow_call`-only — invoked from `ci.pr.yml` for pull requests
+touching `xrcedds-pubsub-provider/**` and from `cd.xrcedds-pubsub-provider.yml`
 on `xrcedds-pubsub-provider-v*` tag pushes. The matching upload job
-lives in `release-xrcedds-pubsub-provider.yml`, not here.
+lives in `cd.xrcedds-pubsub-provider.yml`, not here.
 
 ```
-pr.yml (PRs) / release-xrcedds-pubsub-provider.yml (tag push)
+ci.pr.yml (PRs) / cd.xrcedds-pubsub-provider.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
@@ -225,7 +225,7 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
                            │ both must pass
                            ▼ (only on tag push)
                         upload
-              (release-xrcedds-pubsub-provider.yml job)
+              (cd.xrcedds-pubsub-provider.yml job)
               Creates GitHub Release with
               fletcher-xrcedds-pubsub-provider-{windows,linux}-conan-package.tgz
 ```
@@ -243,13 +243,13 @@ Both jobs build with `-o "&:run_tests=True"` so the full GTest suite runs as par
 
 Both platforms produce a separate binary package. Each build job saves
 its package to a GitHub Actions workflow artifact; on a tag push the
-`upload` job in `release-xrcedds-pubsub-provider.yml` downloads both and
+`upload` job in `cd.xrcedds-pubsub-provider.yml` downloads both and
 attaches them as GitHub Release assets:
 
 ```
 conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
-The `upload` job only runs from `release-xrcedds-pubsub-provider.yml`
+The `upload` job only runs from `cd.xrcedds-pubsub-provider.yml`
 (tag push), and verifies that the tag version matches the version in
 `conanfile.py` before creating the release.

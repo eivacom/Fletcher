@@ -50,7 +50,7 @@ Every tracked source file must carry these two lines within its first ten lines,
 //
 ```
 
-The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/license-headers.yml`.
+The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/ci.license-headers.yml`.
 
 ### C++ style
 

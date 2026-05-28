@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: fletcher-gateway
+name: gateway
 
 concurrency:
-  group: fletcher-gateway-${{ github.ref }}
+  group: ci.gateway-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -14,16 +14,16 @@ on:
         description: >-
           Pre-built devcontainer image reference (e.g.
           eivaorg/fletcher-devcontainer:<sha>). The caller is
-          responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. pr.yml passes the
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
           image it built once and shares across all callers; the
-          release-gateway.yml wrapper does the same for tag-push releases.
+          cd.gateway.yml wrapper does the same for tag-push releases.
         required: true
         type: string
 
 # Gateway is distributed as a standalone executable (no Conan package,
 # no public headers). On tag-push the gateway binary is packaged per
-# platform and uploaded as a workflow artifact; release-gateway.yml's
+# platform and uploaded as a workflow artifact; cd.gateway.yml's
 # upload job consumes those artifacts to create the GitHub Release.
 # End-to-end coverage of the gateway against gateway-client-ts lives
 # in the gateway-end-to-end integration-test workflow.

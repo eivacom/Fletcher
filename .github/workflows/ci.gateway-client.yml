@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: fletcher-gateway-client
+name: gateway-client
 
 concurrency:
-  group: fletcher-gateway-client-${{ github.ref }}
+  group: ci.gateway-client-${{ github.ref }}
   cancel-in-progress: true
 
 on:

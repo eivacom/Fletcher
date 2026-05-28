@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: license-headers
+name: ci.license-headers
 
 concurrency:
-  group: license-headers-${{ github.ref }}
+  group: ci.license-headers-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -112,7 +112,7 @@ jobs:
             echo
             echo "If the file type genuinely cannot carry a header (binary / JSON / no"
             echo "comment syntax), add it to the denylist in"
-            echo ".github/workflows/license-headers.yml."
+            echo ".github/workflows/ci.license-headers.yml."
             exit 1
           fi
 

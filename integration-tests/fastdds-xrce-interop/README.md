@@ -33,7 +33,7 @@ The first build pulls in eProsima's full dependency tree (fast-dds + fast-cdr + 
 
 ## How it runs in CI
 
-The workflow `.github/workflows/integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test inside the devcontainer image. The Agent is built and torn down by the test fixture — the workflow does nothing special for it.
+The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test inside the devcontainer image. The Agent is built and torn down by the test fixture — the workflow does nothing special for it.
 
 ## Running locally
 

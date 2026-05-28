@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: format-check-ts
+name: ci.format-check-ts
 
 concurrency:
-  group: format-check-ts-${{ github.ref }}
+  group: ci.format-check-ts-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -18,7 +18,7 @@ on:
       - "**/*.json"
       - ".prettierrc"
       - ".prettierignore"
-      - ".github/workflows/format-check-ts.yml"
+      - ".github/workflows/ci.format-check-ts.yml"
 
 jobs:
   check:

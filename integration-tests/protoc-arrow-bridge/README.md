@@ -17,7 +17,7 @@ Why this matters: an edge device using the typed proto-row classes (no Apache Ar
 
 ## How it runs in CI
 
-The workflow `.github/workflows/integration-test.protoc-arrow-bridge.yml` triggers when any of `core/**`, `protoc/**`, `arrow-bridge/**`, `pubsub/**` or this directory changes on a PR. It:
+The workflow `.github/workflows/ci.integration-test.protoc-arrow-bridge.yml` triggers when any of `core/**`, `protoc/**`, `arrow-bridge/**`, `pubsub/**` or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
 2. `conan install`s this directory — version ranges (`[*]`) resolve to whatever just landed in the cache, never the versions published on GitHub Releases.

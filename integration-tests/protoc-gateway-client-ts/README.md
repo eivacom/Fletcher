@@ -18,7 +18,7 @@ The companion test in `integration-tests/protoc-arrow-bridge/` proves the same i
 
 ## How it runs in CI
 
-The workflow `.github/workflows/integration-test.protoc-gateway-client-ts.yml` triggers when any of `core/**`, `protoc/**`, `pubsub/**`, `gateway-client-ts/**`, or this directory changes on a PR. It:
+The workflow `.github/workflows/ci.integration-test.protoc-gateway-client-ts.yml` triggers when any of `core/**`, `protoc/**`, `pubsub/**`, `gateway-client-ts/**`, or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
 2. `conan install` + `cmake build` produces the `emit_vectors` C++ binary that emits canonical scenario vectors as JSON lines.

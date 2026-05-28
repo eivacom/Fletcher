@@ -1,15 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: fletcher-core
+name: protoc
 
-# Group is keyed on `github.ref`, so two PR commits to the same ref
-# cancel each other (cancel-in-progress: true) while tag pushes
-# (different ref per tag) and parallel PRs (different ref per PR) stay
-# independent. Hardcoded workflow name avoids the `github.workflow`-
-# resolves-to-caller trap in workflow_call context.
 concurrency:
-  group: fletcher-core-${{ github.ref }}
+  group: ci.protoc-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -19,17 +14,17 @@ on:
         description: >-
           Pre-built devcontainer image reference (e.g.
           eivaorg/fletcher-devcontainer:<sha>). The caller is
-          responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. pr.yml passes the
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
           image it built once and shares across all callers; the
-          release-core.yml wrapper does the same for tag-push releases.
+          cd.protoc.yml wrapper does the same for tag-push releases.
         required: true
         type: string
     outputs:
       conan-ref:
         description: >-
           Conan package reference (name/version) computed on tag-push by
-          build-windows. Empty on PR runs. Consumed by release-core.yml's
+          build-windows. Empty on PR runs. Consumed by cd.protoc.yml's
           upload job to verify the tag matches conanfile version.
         value: ${{ jobs.build-windows.outputs.conan-ref }}
 
@@ -42,7 +37,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
+            protoc
             .github
             .conan-profiles
 
@@ -51,14 +46,14 @@ jobs:
 
       - name: Build and test
         shell: bash
-        working-directory: core
+        working-directory: protoc
         run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
       - name: Get Conan reference
         id: get-ref
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        working-directory: core
+        working-directory: protoc
         run: |
           ref=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['name'] + '/' + d['version'])")
           echo "conan-ref=$ref" >> "$GITHUB_OUTPUT"
@@ -66,14 +61,14 @@ jobs:
       - name: Save Conan package
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-core-windows-conan-package.tgz"
+        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-protoc-windows-conan-package.tgz"
 
       - name: Upload Windows Conan package .tgz artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: fletcher-core-windows
-          path: fletcher-core-windows-conan-package.tgz
+          name: fletcher-protoc-windows
+          path: fletcher-protoc-windows-conan-package.tgz
           retention-days: 5
 
   build-linux:
@@ -82,7 +77,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
+            protoc
             .github
             .conan-profiles
 
@@ -95,11 +90,11 @@ jobs:
       - name: Build and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-core-linux-conan-package.tgz' || '' }}
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-protoc-linux-conan-package.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace/core \
+            -w /workspace/protoc \
             -e ARTIFACT_NAME="$ARTIFACT_NAME" \
             fletcher-build \
             bash -c '
@@ -115,6 +110,6 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: fletcher-core-linux
-          path: fletcher-core-linux-conan-package.tgz
+          name: fletcher-protoc-linux
+          path: fletcher-protoc-linux-conan-package.tgz
           retention-days: 5

@@ -78,13 +78,13 @@ Steps 1–3 iterate during development without writing to the Conan cache. Step 
 
 ## CI pipeline
 
-The build workflow is defined in `.github/workflows/fletcher-core.yml`.
-It is `workflow_call`-only — invoked from `pr.yml` for pull requests
-touching `core/**` and from `release-core.yml` on `core-v*` tag pushes.
-The matching upload job lives in `release-core.yml`, not here.
+The build workflow is defined in `.github/workflows/ci.core.yml`.
+It is `workflow_call`-only — invoked from `ci.pr.yml` for pull requests
+touching `core/**` and from `cd.core.yml` on `core-v*` tag pushes.
+The matching upload job lives in `cd.core.yml`, not here.
 
 ```
-pr.yml (PRs) / release-core.yml (tag push)
+ci.pr.yml (PRs) / cd.core.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
@@ -98,7 +98,7 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
                            │ both must pass
                            ▼ (only on tag push)
                         upload
-              (release-core.yml job)
+              (cd.core.yml job)
               Creates GitHub Release with
               fletcher-core-{windows,linux}-conan-package.tgz
 ```
@@ -115,15 +115,15 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
 Because `fletcher-core` is a header-only library it produces a single
 platform-independent package ID. Each build job saves the Conan package
 to a GitHub Actions workflow artifact; on a tag push the `upload` job in
-`release-core.yml` downloads both and attaches them as GitHub Release
+`cd.core.yml` downloads both and attaches them as GitHub Release
 assets:
 
 ```
 conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
-The `upload` job only runs from `release-core.yml` (tag push). PR runs
-through `pr.yml` build and test but produce no release artifacts.
+The `upload` job only runs from `cd.core.yml` (tag push). PR runs
+through `ci.pr.yml` build and test but produce no release artifacts.
 
 ---
 

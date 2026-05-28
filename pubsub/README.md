@@ -84,13 +84,13 @@ Steps 1–3 iterate during development without writing to the Conan cache. Step 
 
 ## CI pipeline
 
-The build workflow is defined in `.github/workflows/fletcher-pubsub.yml`.
-It is `workflow_call`-only — invoked from `pr.yml` for pull requests
-touching `pubsub/**` and from `release-pubsub.yml` on `pubsub-v*` tag
-pushes. The matching upload job lives in `release-pubsub.yml`, not here.
+The build workflow is defined in `.github/workflows/ci.pubsub.yml`.
+It is `workflow_call`-only — invoked from `ci.pr.yml` for pull requests
+touching `pubsub/**` and from `cd.pubsub.yml` on `pubsub-v*` tag
+pushes. The matching upload job lives in `cd.pubsub.yml`, not here.
 
 ```
-pr.yml (PRs) / release-pubsub.yml (tag push)
+ci.pr.yml (PRs) / cd.pubsub.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
@@ -104,7 +104,7 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
                            │ both must pass
                            ▼ (only on tag push)
                         upload
-              (release-pubsub.yml job)
+              (cd.pubsub.yml job)
               Creates GitHub Release with
               fletcher-pubsub-{windows,linux}-conan-package.tgz
 ```
@@ -121,7 +121,7 @@ Profile: Windows-msvc194-                Profile: Linux-gcc13-
 Unlike `fletcher-core` (header-only, single platform-independent ID),
 `fletcher-pubsub` is a real compiled static library: the Windows and Linux
 jobs each produce their own platform-specific package. The `upload` job in
-`release-pubsub.yml` downloads both workflow artifacts and attaches them as
+`cd.pubsub.yml` downloads both workflow artifacts and attaches them as
 GitHub Release assets.
 
 ---

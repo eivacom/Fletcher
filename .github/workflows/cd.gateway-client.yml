@@ -2,13 +2,13 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 # Release orchestration for @eiva/fletcher-gateway-client. Invokes
-# fletcher-gateway-client.yml to build and test, then publishes the
+# ci.gateway-client.yml to build and test, then publishes the
 # package to npmjs.com.
 #
 # Triggers:
 #   * push: tags 'gateway-client-v*'     — real release.
 
-name: release-gateway-client
+name: cd.gateway-client
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
 
 jobs:
   build-and-test:
-    uses: ./.github/workflows/fletcher-gateway-client.yml
+    uses: ./.github/workflows/ci.gateway-client.yml
     secrets: inherit
 
   publish:

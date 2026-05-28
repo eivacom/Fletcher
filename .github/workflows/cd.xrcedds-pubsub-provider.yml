@@ -1,31 +1,31 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-# Release orchestration for fletcher-pubsub. Owns the setup-devcontainer
-# step, invokes fletcher-pubsub.yml with the resulting image to build and
-# upload artifacts, and creates the GitHub Release. fletcher-pubsub.yml is
-# also called from pr.yml — build/test logic is shared so PR and release
+# Release orchestration for fletcher-xrcedds-pubsub-provider. Owns the setup-devcontainer
+# step, invokes ci.xrcedds-pubsub-provider.yml with the resulting image to build and
+# upload artifacts, and creates the GitHub Release. ci.xrcedds-pubsub-provider.yml is
+# also called from ci.pr.yml — build/test logic is shared so PR and release
 # runs use the same source of truth. The upload job lives here so PR
 # runs do not show a skipped upload rectangle.
 #
 # Triggers:
-#   * push: tags 'pubsub-v*'     — real release.
+#   * push: tags 'xrcedds-pubsub-provider-v*'     — real release.
 
-name: release-pubsub
+name: cd.xrcedds-pubsub-provider
 
 on:
   push:
     tags:
-      - 'pubsub-v[0-9]*.[0-9]*.[0-9]*'
+      - 'xrcedds-pubsub-provider-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
   setup-devcontainer:
-    uses: ./.github/workflows/setup-devcontainer-image.yml
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
     secrets: inherit
 
   release:
     needs: setup-devcontainer
-    uses: ./.github/workflows/fletcher-pubsub.yml
+    uses: ./.github/workflows/ci.xrcedds-pubsub-provider.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
@@ -39,19 +39,19 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            pubsub
+            xrcedds-pubsub-provider
             .github
 
       - name: Verify tag version matches conanfile.py version
         uses: ./.github/actions/verify-tag-version-conan
         with:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
-          tag-prefix: pubsub-v
+          tag-prefix: xrcedds-pubsub-provider-v
 
       - name: Download artifacts
         uses: actions/download-artifact@v8.0.1
         with:
-          pattern: fletcher-pubsub-*
+          pattern: fletcher-xrcedds-pubsub-provider-*
           merge-multiple: true
 
       - name: Create GitHub Release
@@ -61,5 +61,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            "fletcher-pubsub-windows-conan-package.tgz" \
-            "fletcher-pubsub-linux-conan-package.tgz"
+            "fletcher-xrcedds-pubsub-provider-windows-conan-package.tgz" \
+            "fletcher-xrcedds-pubsub-provider-linux-conan-package.tgz"

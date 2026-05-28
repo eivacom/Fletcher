@@ -1,31 +1,31 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-# Release orchestration for fletcher-core. Owns the setup-devcontainer
-# step, invokes fletcher-core.yml with the resulting image to build and
-# upload artifacts, and creates the GitHub Release. fletcher-core.yml is
-# also called from pr.yml — build/test logic is shared so PR and release
+# Release orchestration for fletcher-fastdds-pubsub-provider. Owns the setup-devcontainer
+# step, invokes ci.fastdds-pubsub-provider.yml with the resulting image to build and
+# upload artifacts, and creates the GitHub Release. ci.fastdds-pubsub-provider.yml is
+# also called from ci.pr.yml — build/test logic is shared so PR and release
 # runs use the same source of truth. The upload job lives here so PR
 # runs do not show a skipped upload rectangle.
 #
 # Triggers:
-#   * push: tags 'core-v*'     — real release.
+#   * push: tags 'fastdds-pubsub-provider-v*'     — real release.
 
-name: release-core
+name: cd.fastdds-pubsub-provider
 
 on:
   push:
     tags:
-      - 'core-v[0-9]*.[0-9]*.[0-9]*'
+      - 'fastdds-pubsub-provider-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
   setup-devcontainer:
-    uses: ./.github/workflows/setup-devcontainer-image.yml
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
     secrets: inherit
 
   release:
     needs: setup-devcontainer
-    uses: ./.github/workflows/fletcher-core.yml
+    uses: ./.github/workflows/ci.fastdds-pubsub-provider.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
@@ -39,19 +39,19 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
+            fastdds-pubsub-provider
             .github
 
       - name: Verify tag version matches conanfile.py version
         uses: ./.github/actions/verify-tag-version-conan
         with:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
-          tag-prefix: core-v
+          tag-prefix: fastdds-pubsub-provider-v
 
       - name: Download artifacts
         uses: actions/download-artifact@v8.0.1
         with:
-          pattern: fletcher-core-*
+          pattern: fletcher-fastdds-pubsub-provider-*
           merge-multiple: true
 
       - name: Create GitHub Release
@@ -61,5 +61,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            "fletcher-core-windows-conan-package.tgz" \
-            "fletcher-core-linux-conan-package.tgz"
+            "fletcher-fastdds-pubsub-provider-windows-conan-package.tgz" \
+            "fletcher-fastdds-pubsub-provider-linux-conan-package.tgz"

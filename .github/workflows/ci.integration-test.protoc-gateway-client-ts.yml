@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: integration-test.fastdds-xrce-interop
+name: ci.integration-test.protoc-gateway-client-ts
 
 concurrency:
-  group: integration-test.fastdds-xrce-interop-${{ github.ref }}
+  group: ci.integration-test.protoc-gateway-client-ts-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -14,26 +14,24 @@ on:
         description: >-
           Pre-built devcontainer image reference (e.g.
           eivaorg/fletcher-devcontainer:<sha>). The caller is
-          responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. pr.yml passes the
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
           image it built once and shares across all callers.
         required: true
         type: string
 
 jobs:
-  fastdds-xrce-interop:
+  protoc-gateway-client-ts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             core
-            arrow-bridge
+            protoc
             pubsub
-            pubsub-arrow
-            fastdds-pubsub-provider
-            xrcedds-pubsub-provider
-            integration-tests/fastdds-xrce-interop
+            gateway-client-ts
+            integration-tests/protoc-gateway-client-ts
             .conan-profiles
             .github
 
@@ -45,25 +43,26 @@ jobs:
 
       - name: Build components and run integration tests
         run: |
-          docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     for COMPONENT in core arrow-bridge pubsub pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider; do \
+                     for COMPONENT in core pubsub protoc; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
                      done && \
-                     cd integration-tests/fastdds-xrce-interop && \
+                     cd integration-tests/protoc-gateway-client-ts && \
                      echo '::group::conan install integration test' && \
                      conan install . --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
+                     echo '::group::cmake configure + build' && \
                      cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build (includes MicroXRCEAgent from source)' && \
                      cmake --build --preset conan-release && \
                      echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
+                     echo '::group::npm ci' && \
+                     npm ci && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test' && \
+                     npm test && \
                      echo '::endgroup::'"

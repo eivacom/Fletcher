@@ -61,8 +61,8 @@ separately.
 
 ## CI pipeline
 
-`.github/workflows/fletcher-arrow-bridge.yml` is `workflow_call`-only;
-it runs `build-windows` + `build-linux` and is invoked from `pr.yml`
-on PRs touching `arrow-bridge/**` and from `release-arrow-bridge.yml`
+`.github/workflows/ci.arrow-bridge.yml` is `workflow_call`-only;
+it runs `build-windows` + `build-linux` and is invoked from `ci.pr.yml`
+on PRs touching `arrow-bridge/**` and from `cd.arrow-bridge.yml`
 on `arrow-bridge-v*` tag pushes. The `upload` job that creates the
-GitHub Release lives in `release-arrow-bridge.yml`.
+GitHub Release lives in `cd.arrow-bridge.yml`.

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: integration-test.protoc-gateway-client-ts
+name: ci.integration-test.gateway-end-to-end
 
 concurrency:
-  group: integration-test.protoc-gateway-client-ts-${{ github.ref }}
+  group: ci.integration-test.gateway-end-to-end-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -14,24 +14,25 @@ on:
         description: >-
           Pre-built devcontainer image reference (e.g.
           eivaorg/fletcher-devcontainer:<sha>). The caller is
-          responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. pr.yml passes the
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
           image it built once and shares across all callers.
         required: true
         type: string
 
 jobs:
-  protoc-gateway-client-ts:
+  gateway-end-to-end:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             core
-            protoc
             pubsub
+            protoc
+            gateway
             gateway-client-ts
-            integration-tests/protoc-gateway-client-ts
+            integration-tests/gateway-end-to-end
             .conan-profiles
             .github
 
@@ -52,7 +53,7 @@ jobs:
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
                      done && \
-                     cd integration-tests/protoc-gateway-client-ts && \
+                     cd integration-tests/gateway-end-to-end && \
                      echo '::group::conan install integration test' && \
                      conan install . --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::' && \

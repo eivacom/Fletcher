@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: fletcher-arrow-bridge
+name: arrow-bridge
 
 concurrency:
-  group: fletcher-arrow-bridge-${{ github.ref }}
+  group: ci.arrow-bridge-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -14,17 +14,17 @@ on:
         description: >-
           Pre-built devcontainer image reference (e.g.
           eivaorg/fletcher-devcontainer:<sha>). The caller is
-          responsible for invoking setup-devcontainer-image.yml; this
-          workflow only consumes the resulting image. pr.yml passes the
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
           image it built once and shares across all callers; the
-          release-arrow-bridge.yml wrapper does the same for tag-push releases.
+          cd.arrow-bridge.yml wrapper does the same for tag-push releases.
         required: true
         type: string
     outputs:
       conan-ref:
         description: >-
           Conan package reference (name/version) computed on tag-push by
-          build-windows. Empty on PR runs. Consumed by release-arrow-bridge.yml's
+          build-windows. Empty on PR runs. Consumed by cd.arrow-bridge.yml's
           upload job to verify the tag matches conanfile version.
         value: ${{ jobs.build-windows.outputs.conan-ref }}
 

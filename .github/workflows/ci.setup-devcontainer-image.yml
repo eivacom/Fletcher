@@ -19,14 +19,14 @@
 # Triggers:
 #   * workflow_call — every consumer workflow declares
 #         setup-devcontainer:
-#           uses: ./.github/workflows/setup-devcontainer-image.yml
+#           uses: ./.github/workflows/ci.setup-devcontainer-image.yml
 #           secrets: inherit
 #     and `needs: setup-devcontainer` on its Linux jobs. Output:
 #     `image` — the full registry/repo:tag string the consumer pulls.
 #   * push to main — pre-builds and re-tags as :main so subsequent
 #     PR runs prime the cache from a known-good baseline.
 
-name: setup-devcontainer-image
+name: ci.setup-devcontainer-image
 
 on:
   workflow_call:
@@ -38,7 +38,7 @@ on:
     branches: [main]
     paths:
       - ".devcontainer/**"
-      - ".github/workflows/setup-devcontainer-image.yml"
+      - ".github/workflows/ci.setup-devcontainer-image.yml"
 
 permissions:
   contents: read
@@ -59,7 +59,7 @@ jobs:
     # only retain the latest pending entry and cancel the others, which
     # is the opposite of what we want here.
     concurrency:
-      group: setup-devcontainer-image-${{ github.sha }}
+      group: ci.setup-devcontainer-image-${{ github.sha }}
       queue: max
     outputs:
       image: ${{ steps.tag.outputs.image }}
