@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Verify tag version matches npm package version"
+description: "Fails if the release tag version differs from the version field in package.json."
+
+inputs:
+  package-json:
+    description: "Path to package.json (e.g. gateway-client-ts/package.json)"
+    required: true
+  tag-prefix:
+    description: "Tag prefix including the trailing v, e.g. gateway-client-v"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        PACKAGE_JSON: ${{ inputs.package-json }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        pkg_version=$(node -p "require('./${PACKAGE_JSON}').version")
+        tag_version="${GITHUB_REF##refs/tags/${TAG_PREFIX}}"
+        if [ "$tag_version" != "$pkg_version" ]; then
+          echo "::error::Tag version '$tag_version' does not match package.json version '$pkg_version' (package: $PACKAGE_JSON, tag: $GITHUB_REF)"
+          exit 1
+        fi
+        echo "Tag and package.json versions match: $pkg_version"

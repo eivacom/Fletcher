@@ -43,7 +43,7 @@ jobs:
             .github
 
       - name: Verify tag version matches conanfile.py version
-        uses: ./.github/actions/verify-tag-version
+        uses: ./.github/actions/verify-tag-version-conan
         with:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
           tag-prefix: core-v

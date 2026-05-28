@@ -187,10 +187,11 @@ itself is the version.
 
 ### Release assets
 
-| Component type | Attached assets |
+| Component type | Distribution |
 |---|---|
-| Conan-package (7 components) | `fletcher-<name>-{linux,windows}-conan-package.tgz` — `conan cache save` exports, one per build profile |
-| `gateway/` | `gateway.exe` (raw Windows binary) + `gateway-linux.tar.gz` (Linux binary with exec bit preserved inside the tarball) |
+| Conan-package (7 components) | GitHub Release with `fletcher-<name>-{linux,windows}-conan-package.tgz` — `conan cache save` exports, one per build profile |
+| `gateway/` | GitHub Release with `gateway.exe` (raw Windows binary) + `gateway-linux.tar.gz` (Linux binary with exec bit preserved inside the tarball) |
+| `gateway-client-ts/` | `npm publish` to [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client) — dist-tag derived from the version (`latest` for release, pre-release suffix otherwise) |
 
 ### Tag format
 
@@ -208,15 +209,16 @@ itself is the version.
 | `fastdds-pubsub-provider/` | `fastdds-pubsub-provider-v` | `fastdds-pubsub-provider-v0.1.0-alpha` |
 | `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider-v` | `xrcedds-pubsub-provider-v0.1.0-alpha` |
 | `gateway/` | `gateway-v` | `gateway-v0.1.0-alpha` |
-
-`gateway-client-ts/` does not yet release through tag-push CI.
+| `gateway-client-ts/` | `gateway-client-v` | `gateway-client-v0.1.0-alpha` |
 
 The component prefix is required so that pushing a tag triggers exactly one
 package's workflow — not all of them.
 
 ### Cutting a release
 
-1. Bump the package's version in `<component>/conanfile.py` and merge to `main`.
+1. Bump the package's version and merge to `main`. The version lives in
+   `<component>/conanfile.py` for Conan components and
+   `gateway-client-ts/package.json` for the npm client.
 2. From `main`, tag and push:
 
    ```bash
@@ -250,23 +252,32 @@ package's workflow — not all of them.
    ```
 
 3. Watch the matching `release-<component>` workflow run on
-   [GitHub Actions](https://github.com/eivacom/Fletcher/actions). Its
-   `upload` job creates a GitHub Release tagged `<component>-v<version>`
-   with the platform-specific assets attached.
+   [GitHub Actions](https://github.com/eivacom/Fletcher/actions).
+   Conan components and `gateway/` create a GitHub Release tagged
+   `<component>-v<version>` with the platform-specific assets attached;
+   `gateway-client-ts/` runs `npm publish` to
+   [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client)
+   with a dist-tag derived from the version.
 
 ### Notes
 
 - For Conan-package components, the tag and `conanfile.py` version **must
   match**. The release workflow verifies this via
-  `actions/verify-tag-version` and fails fast if they differ. `gateway/`
-  has no conanfile version, so the tag itself is the version.
+  `actions/verify-tag-version-conan` and fails fast if they differ. `gateway/`
+  has no conanfile version, so the tag itself is the version. For
+  `gateway-client-ts/`, the tag must match `package.json`'s `version`
+  field.
 - Re-releasing an existing version requires either deleting the existing
   GitHub Release (and tag) first or bumping the version — `gh release
-  create` refuses to overwrite an existing release.
+  create` refuses to overwrite an existing release. npm publish has the
+  same constraint: a version already published to the registry cannot be
+  republished.
 - Releases are independent per component. Bumping `core` does not require
   re-releasing the others.
 - Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the
-  version and go into the tag.
+  version and go into the tag. For the npm client the suffix also
+  determines the dist-tag (`@latest` for pure semver, `@alpha`/`@beta`/…
+  otherwise).
 
 ### Consuming a released Conan package
 
