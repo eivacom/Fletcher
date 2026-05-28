@@ -13,7 +13,7 @@
 # simultaneously on the same SHA. With the build now serialized
 # behind a `concurrency: queue: max` group keyed by the git SHA, only
 # the FIRST queued build job actually runs buildx. The next 12 pop
-# off the queue, see the SHA-tagged image already in Harbor, and
+# off the queue, see the SHA-tagged image already on Docker Hub, and
 # skip the build — one ubuntu manifest pull per SHA, not N.
 #
 # Triggers:
@@ -26,7 +26,7 @@
 #   * push to main — pre-builds and re-tags as :main so subsequent
 #     PR runs prime the cache from a known-good baseline.
 
-name: ci.setup-devcontainer-image
+name: setup-devcontainer-image
 
 on:
   workflow_call:
@@ -50,7 +50,7 @@ jobs:
     # consumer workflows trigger simultaneously on a PR, only the first
     # setup-devcontainer to pop the queue does the actual buildx + push;
     # the remaining 12 wake one by one, see the SHA-tagged image already
-    # in Harbor (the `Check image` step below), and skip the build. They
+    # on Docker Hub (the `Check image` step below), and skip the build. They
     # still output the same image reference so `needs.setup-devcontainer.
     # outputs.image` is identical across all callers.
     #
@@ -95,7 +95,7 @@ jobs:
         run: |
           if docker manifest inspect "${{ steps.tag.outputs.image }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Image already exists in Harbor — skipping build."
+            echo "Image already exists on Docker Hub — skipping build."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi

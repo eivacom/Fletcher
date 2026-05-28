@@ -8,7 +8,7 @@
 # Triggers:
 #   * push: tags 'gateway-client-v*'     — real release.
 
-name: cd.gateway-client
+name: gateway-client
 
 on:
   push:

@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'pubsub-arrow-v*'     — real release.
 
-name: cd.pubsub-arrow
+name: pubsub-arrow
 
 on:
   push:

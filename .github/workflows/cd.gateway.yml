@@ -15,7 +15,7 @@
 # Triggers:
 #   * push: tags 'gateway-v*'     — real release.
 
-name: cd.gateway
+name: gateway
 
 on:
   push:

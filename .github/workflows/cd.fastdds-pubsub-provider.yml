@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'fastdds-pubsub-provider-v*'     — real release.
 
-name: cd.fastdds-pubsub-provider
+name: fastdds-pubsub-provider
 
 on:
   push:

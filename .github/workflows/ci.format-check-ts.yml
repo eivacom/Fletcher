@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: ci.format-check-ts
+name: format-check-ts
 
 concurrency:
   group: ci.format-check-ts-${{ github.ref }}

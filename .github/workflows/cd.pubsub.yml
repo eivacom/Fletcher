@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'pubsub-v*'     — real release.
 
-name: cd.pubsub
+name: pubsub
 
 on:
   push:

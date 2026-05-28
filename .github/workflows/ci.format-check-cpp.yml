@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-name: ci.format-check-cpp
+name: format-check-cpp
 
 concurrency:
   group: ci.format-check-cpp-${{ github.ref }}

@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'xrcedds-pubsub-provider-v*'     — real release.
 
-name: cd.xrcedds-pubsub-provider
+name: xrcedds-pubsub-provider
 
 on:
   push:

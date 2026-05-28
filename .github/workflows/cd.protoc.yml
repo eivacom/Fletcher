@@ -11,7 +11,7 @@
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
 
-name: cd.protoc
+name: protoc
 
 on:
   push:
