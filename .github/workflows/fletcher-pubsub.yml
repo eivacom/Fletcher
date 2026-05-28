@@ -78,6 +78,7 @@ jobs:
         with:
           name: fletcher-pubsub-windows
           path: fletcher-pubsub-windows.tgz
+          retention-days: 5
 
   build-linux:
     needs: setup-devcontainer
@@ -122,6 +123,7 @@ jobs:
         with:
           name: fletcher-pubsub-linux
           path: fletcher-pubsub-linux.tgz
+          retention-days: 5
 
   upload:
     needs: [build-windows, build-linux]

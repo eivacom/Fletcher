@@ -78,6 +78,7 @@ jobs:
         with:
           name: fletcher-xrcedds-pubsub-provider-windows
           path: fletcher-xrcedds-pubsub-provider-windows.tgz
+          retention-days: 5
 
   build-linux:
     needs: setup-devcontainer
@@ -122,6 +123,7 @@ jobs:
         with:
           name: fletcher-xrcedds-pubsub-provider-linux
           path: fletcher-xrcedds-pubsub-provider-linux.tgz
+          retention-days: 5
 
   upload:
     needs: [build-windows, build-linux]

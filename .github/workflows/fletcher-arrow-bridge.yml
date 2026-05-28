@@ -78,6 +78,7 @@ jobs:
         with:
           name: fletcher-arrow-bridge-windows
           path: fletcher-arrow-bridge-windows.tgz
+          retention-days: 5
 
   build-linux:
     needs: setup-devcontainer
@@ -122,6 +123,7 @@ jobs:
         with:
           name: fletcher-arrow-bridge-linux
           path: fletcher-arrow-bridge-linux.tgz
+          retention-days: 5
 
   upload:
     needs: [build-windows, build-linux]

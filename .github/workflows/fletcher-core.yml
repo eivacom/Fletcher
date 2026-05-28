@@ -78,6 +78,7 @@ jobs:
         with:
           name: fletcher-core-windows
           path: fletcher-core-windows.tgz
+          retention-days: 5
 
   build-linux:
     needs: setup-devcontainer
@@ -122,6 +123,7 @@ jobs:
         with:
           name: fletcher-core-linux
           path: fletcher-core-linux.tgz
+          retention-days: 5
 
   upload:
     needs: [build-windows, build-linux]
