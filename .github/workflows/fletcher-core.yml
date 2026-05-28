@@ -29,7 +29,7 @@ jobs:
     secrets: inherit
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     outputs:
       conan-ref: ${{ steps.get-ref.outputs.conan-ref }}
     steps:
@@ -40,11 +40,8 @@ jobs:
             .github
             .conan-profiles
 
-      - name: Install MSVC tools
-        uses: ./.github/actions/install-msvc-tools
-
-      - name: Install CMake
-        uses: ./.github/actions/install-cmake
+      
+            
 
       - name: Install Conan
         uses: ./.github/actions/conan-install
