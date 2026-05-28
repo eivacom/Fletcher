@@ -11,4 +11,4 @@ target_link_libraries(core_tests PRIVATE
     fletcher-core)
 
 include(GoogleTest)
-gtest_discover_tests(core_tests)
+gtest_discover_tests(core_tests DISCOVERY_MODE PRE_TEST)

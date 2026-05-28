@@ -11,4 +11,4 @@ target_link_libraries(fletcher_proto_plugin_tests PRIVATE
     fletcher_plugin_core)
 
 include(GoogleTest)
-gtest_discover_tests(fletcher_proto_plugin_tests)
+gtest_discover_tests(fletcher_proto_plugin_tests DISCOVERY_MODE PRE_TEST)

@@ -11,4 +11,4 @@ target_link_libraries(arrow_bridge_tests PRIVATE
     fletcher-arrow-bridge)
 
 include(GoogleTest)
-gtest_discover_tests(arrow_bridge_tests)
+gtest_discover_tests(arrow_bridge_tests DISCOVERY_MODE PRE_TEST)
