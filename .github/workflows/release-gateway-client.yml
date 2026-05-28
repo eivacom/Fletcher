@@ -8,7 +8,7 @@
 # Triggers:
 #   * push: tags 'gateway-client-v*'     — real release.
 
-name: release-fletcher-gateway-client
+name: release-gateway-client
 
 on:
   push:
