@@ -1,6 +1,6 @@
 {
   "name": "@eiva/fletcher-gateway-client",
-  "version": "0.1.2-alpha",
+  "version": "0.1.3-alpha",
   "description": "TypeScript client for the Fletcher gateway — WebSocket transport with positional row codec",
   "license": "LGPL-3.0-or-later",
   "repository": {

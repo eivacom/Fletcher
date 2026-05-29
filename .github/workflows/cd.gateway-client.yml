@@ -2,8 +2,8 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 # Release orchestration for @eiva/fletcher-gateway-client. Invokes
-# ci.gateway-client.yml to build and test, then publishes the
-# package to npmjs.com.
+# ci.gateway-client.yml to build and test, publishes the package to
+# npmjs.com, then creates a GitHub Release with a link to the npm page.
 #
 # Triggers:
 #   * push: tags 'gateway-client-v*'     — real release.
@@ -64,3 +64,24 @@ jobs:
         run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#gateway-client-v}"
+          GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.ref_name }}" \
+            -q '.body')
+          NOTES=$(printf "## npm\n\nhttps://www.npmjs.com/package/@eiva/fletcher-gateway-client/v/%s\n\n%s" "${VERSION}" "${GENERATED}")
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --notes "${NOTES}"
