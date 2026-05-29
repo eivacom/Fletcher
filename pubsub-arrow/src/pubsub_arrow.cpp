@@ -6,9 +6,13 @@
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 
+#include <chrono>
+#include <condition_variable>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <stdexcept>
+#include <thread>
+#include <utility>
 
 namespace fletcher {
 
@@ -37,11 +41,181 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
 }  // anonymous namespace
 
 // -----------------------------------------------------------------------
+// RecordBatchBatcher — accumulates decoded rows into RecordBatches and
+// flushes on row-count, timeout, or close (see the batched Subscribe).
+// -----------------------------------------------------------------------
+
+class PubSubArrow::RecordBatchBatcher {
+   public:
+    RecordBatchBatcher(RecordBatchCallback cb, int64_t max_rows, std::chrono::milliseconds timeout)
+        : cb_(std::move(cb)), max_rows_(max_rows < 1 ? 1 : max_rows), timeout_(timeout) {
+        timer_ = std::thread([this] { TimerLoop(); });
+    }
+
+    ~RecordBatchBatcher() { Stop(); }
+
+    RecordBatchBatcher(const RecordBatchBatcher&) = delete;
+    RecordBatchBatcher& operator=(const RecordBatchBatcher&) = delete;
+
+    // Provides the schema once known (from the subscription result). Until a
+    // non-null schema is set the batcher buffers but cannot build batches.
+    void SetSchema(std::shared_ptr<arrow::Schema> schema) {
+        std::unique_lock<std::mutex> lk(mu_);
+        schema_ = std::move(schema);
+        ready_ = (schema_ != nullptr);
+        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_)
+            Flush(lk, BatchStatus::Reason::kRowLimit);
+        cv_.notify_all();
+    }
+
+    void AddRow(ArrowRow row, Attachments att) {
+        std::unique_lock<std::mutex> lk(mu_);
+        if (stopped_) return;
+        rows_.push_back(std::move(row));
+        atts_.push_back(std::move(att));
+        ArmTimer();
+        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_)
+            Flush(lk, BatchStatus::Reason::kRowLimit);
+    }
+
+    // A row that failed to decode: counted as lost. Its attachment is dropped
+    // with it, since the metadata identifying the attachment was in that row.
+    void NoteDropped() {
+        std::unique_lock<std::mutex> lk(mu_);
+        if (stopped_) return;
+        ++dropped_;
+        ArmTimer();
+    }
+
+    // Stops the timer thread and delivers any pending rows/drops (reason
+    // kClosing). Idempotent.
+    void Stop() {
+        std::thread t;
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            if (!stopped_) {
+                stopped_ = true;
+                Flush(lk, BatchStatus::Reason::kClosing);
+                cv_.notify_all();
+            }
+            t = std::move(timer_);
+        }
+        // Don't join ourselves if a callback on the timer thread called Stop().
+        if (t.joinable()) {
+            if (t.get_id() == std::this_thread::get_id())
+                t.detach();
+            else
+                t.join();
+        }
+    }
+
+   private:
+    bool HasPending() const { return !rows_.empty() || dropped_ > 0; }
+
+    // Arms the timeout deadline on the first event (row or drop) of a window.
+    void ArmTimer() {
+        if (!has_deadline_ && HasPending()) {
+            deadline_ = std::chrono::steady_clock::now() + timeout_;
+            has_deadline_ = true;
+            cv_.notify_all();
+        }
+    }
+
+    void TimerLoop() {
+        std::unique_lock<std::mutex> lk(mu_);
+        while (!stopped_) {
+            if (!has_deadline_) {
+                cv_.wait(lk, [this] { return stopped_ || has_deadline_; });
+                continue;
+            }
+            // Wake on stop, on the deadline being cleared (flushed by count), or
+            // when the deadline is reached.
+            if (cv_.wait_until(lk, deadline_, [this] { return stopped_ || !has_deadline_; }))
+                continue;
+            if (ready_)
+                Flush(lk, BatchStatus::Reason::kTimeout);
+            else
+                // Deadline reached but schema not ready yet — wait for it.
+                cv_.wait(lk, [this] { return stopped_ || ready_ || !has_deadline_; });
+        }
+    }
+
+    // Builds a batch from the pending rows and delivers it. Per design, a
+    // window with only dropped rows still delivers a zero-row batch so the
+    // loss is reported. Caller holds `lk`; the callback runs with it released.
+    void Flush(std::unique_lock<std::mutex>& lk, BatchStatus::Reason reason) {
+        has_deadline_ = false;
+        if (!ready_) return;                         // schema not set — cannot build
+        if (rows_.empty() && dropped_ == 0) return;  // truly idle — nothing to deliver
+
+        std::vector<ArrowRow> rows = std::move(rows_);
+        std::vector<Attachments> atts = std::move(atts_);
+        int64_t dropped = dropped_;
+        rows_.clear();
+        atts_.clear();
+        dropped_ = 0;
+        auto schema = schema_;
+
+        lk.unlock();
+        cb_(BuildBatch(schema, rows), std::move(atts), BatchStatus{reason, dropped});
+        lk.lock();
+    }
+
+    static std::shared_ptr<arrow::RecordBatch> BuildBatch(
+        const std::shared_ptr<arrow::Schema>& schema, const std::vector<ArrowRow>& rows) {
+        const int num_fields = schema->num_fields();
+        std::vector<std::shared_ptr<arrow::Array>> columns(static_cast<size_t>(num_fields));
+        for (int c = 0; c < num_fields; ++c) {
+            auto builder = arrow::MakeBuilder(schema->field(c)->type()).ValueOrDie();
+            (void)builder->Reserve(static_cast<int64_t>(rows.size()));
+            for (const auto& row : rows) {
+                // row[c] is always present: DecodeRow yields one scalar per
+                // field (null fields as MakeNullScalar), and the scalar was
+                // produced from a successful decode of this exact schema, so
+                // AppendScalar is expected to succeed. AppendNull is a
+                // best-effort fallback that keeps column lengths aligned.
+                if (!builder->AppendScalar(*row[static_cast<size_t>(c)]).ok())
+                    (void)builder->AppendNull();
+            }
+            columns[static_cast<size_t>(c)] = builder->Finish().ValueOrDie();
+        }
+        return arrow::RecordBatch::Make(schema, static_cast<int64_t>(rows.size()),
+                                        std::move(columns));
+    }
+
+    RecordBatchCallback cb_;
+    int64_t max_rows_;
+    std::chrono::milliseconds timeout_;
+
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::shared_ptr<arrow::Schema> schema_;
+    std::vector<ArrowRow> rows_;
+    std::vector<Attachments> atts_;
+    int64_t dropped_ = 0;
+    std::chrono::steady_clock::time_point deadline_;
+    bool has_deadline_ = false;
+    bool ready_ = false;
+    bool stopped_ = false;
+    std::thread timer_;
+};
+
+// -----------------------------------------------------------------------
 // Construction
 // -----------------------------------------------------------------------
 
 PubSubArrow::PubSubArrow(std::shared_ptr<PubSub> provider)
     : driver_(std::make_unique<Driver>(std::move(provider))) {}
+
+PubSubArrow::~PubSubArrow() {
+    std::vector<std::shared_ptr<RecordBatchBatcher>> to_stop;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (auto& entry : batchers_) to_stop.push_back(entry.second);
+        batchers_.clear();
+    }
+    for (auto& b : to_stop) b->Stop();  // join timer threads + deliver closing flush
+}
 
 // -----------------------------------------------------------------------
 // Topic management
@@ -124,11 +298,76 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
     return {result.subscription_id, std::move(arrow_schema)};
 }
 
+PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::string>& segments,
+                                                    RecordBatchCallback callback,
+                                                    BatchOptions options, std::any config) {
+    std::string key = JoinSegments(segments);
+
+    auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
+                                                        options.timeout);
+
+    auto result = driver_->Subscribe(
+        segments,
+        [this, key, batcher](const uint8_t* data, size_t len, SharedSchema /*schema*/,
+                             Attachments att) {
+            Codec* codec;
+            {
+                std::lock_guard lock(mu_);
+                auto it = codecs_.find(key);
+                if (it == codecs_.end()) return;
+                codec = it->second.codec.get();
+            }
+            ArrowRow row;
+            try {
+                row = codec->DecodeRow(data, len);
+            } catch (const std::exception&) {
+                // Row failed to decode: count it lost and discard its
+                // attachment too — the metadata identifying the attachment
+                // lived in this row, so the system can't act on the blob.
+                batcher->NoteDropped();
+                return;
+            }
+            batcher->AddRow(std::move(row), std::move(att));
+        },
+        std::move(config));
+
+    // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand it to
+    // the batcher so it can build batches.
+    std::shared_ptr<arrow::Schema> arrow_schema;
+    if (result.schema) {
+        arrow_schema = ImportFromNano(result.schema.get());
+        std::lock_guard lock(mu_);
+        if (codecs_.find(key) == codecs_.end())
+            codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
+    }
+    batcher->SetSchema(arrow_schema);
+
+    {
+        std::lock_guard lock(mu_);
+        batchers_[result.subscription_id] = std::move(batcher);
+    }
+    return {result.subscription_id, std::move(arrow_schema)};
+}
+
 // -----------------------------------------------------------------------
 // Subscription management / introspection
 // -----------------------------------------------------------------------
 
-void PubSubArrow::Unsubscribe(uint64_t subscription_id) { driver_->Unsubscribe(subscription_id); }
+void PubSubArrow::Unsubscribe(uint64_t subscription_id) {
+    std::shared_ptr<RecordBatchBatcher> batcher;
+    {
+        std::lock_guard lock(mu_);
+        auto it = batchers_.find(subscription_id);
+        if (it != batchers_.end()) {
+            batcher = std::move(it->second);
+            batchers_.erase(it);
+        }
+    }
+    // Flush the partial batch (reason kClosing) and join the timer before the
+    // driver stops delivering. No-op for non-batched (ArrowRow) subscriptions.
+    if (batcher) batcher->Stop();
+    driver_->Unsubscribe(subscription_id);
+}
 
 std::vector<std::string> PubSubArrow::ListTopics() const { return driver_->ListTopics(); }
 
