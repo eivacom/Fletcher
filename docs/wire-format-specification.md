@@ -203,11 +203,20 @@ Subscription IDs are stringified in JSON to avoid JavaScript `Number` precision 
 
 ---
 
+## Dictionary Types
+
+A `DICTIONARY` field is encoded as its **value type**, one value per row — the
+indices are a columnar optimization that has no meaning in a single row, so they
+are never sent. `Codec::DecodeRow` returns a plain value scalar for a dictionary
+field; the batched (RecordBatch) subscriber re-folds the accumulated values into
+a `DictionaryArray` of the field's declared dictionary type. The dictionary
+**value type must be a primitive/scalar type** — nested value types
+(struct/list/map/union) are rejected with a clear error.
+
 ## Unsupported Types
 
 | Type | Reason |
 |---|---|
-| `DICTIONARY` | Dictionary encoding is a columnar optimization whose dictionary array lives outside any individual row; there is no lossless, self-contained per-row encoding. |
 | `oneof` | Arrow union is not supported by Parquet and has limited compute kernel coverage. |
 | Recursive messages | Arrow schemas are finite DAGs — no way to represent unbounded recursion. |
 | `google.protobuf.Any` | Dynamically typed — no static Arrow mapping possible. |

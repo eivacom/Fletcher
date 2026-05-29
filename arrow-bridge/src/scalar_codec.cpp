@@ -26,6 +26,31 @@ void AppendVariableLength(std::vector<uint8_t>& buf, const uint8_t* data, uint32
     buf.insert(buf.end(), data, data + len);
 }
 
+// Dictionary columns are transferred as their value type per row (the indices
+// are a columnar optimisation that is reconstructed by the RecordBatch
+// subscriber, not sent on the wire). Only scalar value types are supported.
+void EnsureDictionaryValueSupported(const arrow::DataType& value_type) {
+    using T = arrow::Type;
+    switch (value_type.id()) {
+        case T::STRUCT:
+        case T::LIST:
+        case T::LARGE_LIST:
+        case T::FIXED_SIZE_LIST:
+        case T::MAP:
+        case T::SPARSE_UNION:
+        case T::DENSE_UNION:
+        case T::DICTIONARY:
+            throw std::invalid_argument(
+                "Fletcher dictionary support: the dictionary value type must be a "
+                "primitive/scalar type (got " +
+                value_type.ToString() +
+                "). Nested dictionary value types (struct/list/map/union/nested dictionary) "
+                "are not supported.");
+        default:
+            break;
+    }
+}
+
 }  // namespace
 
 namespace detail {
@@ -146,10 +171,17 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             break;
         }
 
-        case T::DICTIONARY:
-            throw std::invalid_argument(
-                "EncodeScalar: DICTIONARY type is not supported in the per-row format; "
-                "use a non-dictionary schema field instead");
+        case T::DICTIONARY: {
+            // Encode the underlying value (resolve index -> value), not the index.
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(*scalar.type);
+            EnsureDictionaryValueSupported(*dict_type.value_type());
+            auto value = static_cast<const arrow::DictionaryScalar&>(scalar).GetEncodedValue();
+            if (!value.ok())
+                throw std::invalid_argument("EncodeScalar: cannot resolve dictionary value: " +
+                                            value.status().ToString());
+            EncodeScalar(buf, **value);
+            break;
+        }
 
         default:
             throw std::invalid_argument("EncodeScalar: unsupported Arrow type: " +
@@ -266,10 +298,13 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
             return std::make_shared<arrow::Decimal256Scalar>(arrow::Decimal256(ptr), type);
         }
 
-        case T::DICTIONARY:
-            throw std::invalid_argument(
-                "DecodeScalar: DICTIONARY type is not supported in the per-row format; "
-                "use a non-dictionary schema field instead");
+        case T::DICTIONARY: {
+            // The wire carries the value type; decode to a plain value scalar.
+            // The RecordBatch subscriber re-folds these into a DictionaryArray.
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(*type);
+            EnsureDictionaryValueSupported(*dict_type.value_type());
+            return DecodeScalarFromReader(r, dict_type.value_type());
+        }
 
         default:
             throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " +

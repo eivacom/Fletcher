@@ -4,9 +4,13 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -206,4 +210,259 @@ TEST(PubSubArrowTest, ListTopicsAndHasTopic) {
     auto topics = pa.ListTopics();
     ASSERT_EQ(topics.size(), 1);
     EXPECT_EQ(topics[0], "test/topic");
+}
+
+// ---------------------------------------------------------------------------
+// Batched (RecordBatch) Subscribe
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using BatchStatus = PubSubArrow::BatchStatus;
+
+// Thread-safe sink for delivered batches (batches may arrive on the batcher's
+// timer thread for timeout flushes).
+struct BatchSink {
+    struct Delivery {
+        int64_t num_rows;
+        std::vector<Attachments> attachments;
+        BatchStatus status;
+        std::shared_ptr<arrow::RecordBatch> batch;
+    };
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<Delivery> deliveries;
+
+    PubSubArrow::RecordBatchCallback callback() {
+        return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments> att,
+                      BatchStatus status) {
+            std::lock_guard<std::mutex> lk(mu);
+            deliveries.push_back({batch ? batch->num_rows() : -1, std::move(att), status, batch});
+            cv.notify_all();
+        };
+    }
+
+    bool WaitFor(size_t n, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu);
+        return cv.wait_for(lk, timeout, [&] { return deliveries.size() >= n; });
+    }
+};
+
+ArrowRow MakeRow(int32_t x, const std::string& name) {
+    return {std::make_shared<arrow::Int32Scalar>(x), std::make_shared<arrow::StringScalar>(name)};
+}
+
+}  // namespace
+
+TEST(PubSubArrowBatchTest, FlushesAtRowLimit) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::minutes(10);  // long, so only the count triggers
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    for (int i = 0; i < 3; ++i) pa.Publish(kTopic, MakeRow(i, "n"));
+
+    // The count trigger flushes synchronously on the publishing thread.
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 3);
+    EXPECT_EQ(sink.deliveries[0].attachments.size(), 3u);
+    EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 0);
+    EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kRowLimit);
+}
+
+TEST(PubSubArrowBatchTest, FlushesAtTimeout) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 100000;  // high, so only the timeout triggers
+    opt.timeout = std::chrono::milliseconds(100);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    pa.Publish(kTopic, MakeRow(1, "a"));
+    pa.Publish(kTopic, MakeRow(2, "b"));
+
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 2);
+    EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 0);
+    EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kTimeout);
+}
+
+TEST(PubSubArrowBatchTest, ClosingFlushOnUnsubscribe) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 100000;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = pa.Subscribe(kTopic, sink.callback(), opt);
+
+    pa.Publish(kTopic, MakeRow(7, "x"));
+    pa.Publish(kTopic, MakeRow(8, "y"));
+    pa.Unsubscribe(result.subscription_id);  // flushes the partial batch
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 2);
+    EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kClosing);
+}
+
+TEST(PubSubArrowBatchTest, AttachmentsAlignWithRows) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 2;
+    opt.timeout = std::chrono::minutes(10);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xBE, 0xEF});
+    pa.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
+    pa.Publish(kTopic, MakeRow(2, "b"));                   // row 1 has none
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    ASSERT_EQ(sink.deliveries[0].num_rows, 2);
+    ASSERT_EQ(sink.deliveries[0].attachments.size(), 2u);
+    EXPECT_EQ(sink.deliveries[0].attachments[0].count("img"), 1u);
+    EXPECT_TRUE(sink.deliveries[0].attachments[1].empty());
+}
+
+TEST(PubSubArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 100000;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = pa.Subscribe(kTopic, sink.callback(), opt);
+
+    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x01});
+    pa.Publish(kTopic, MakeRow(1, "good"), {{"img", blob}});  // decodes fine
+
+    // A truncated buffer (just the 1-byte null bitfield) underruns when the
+    // int32 field is read, so DecodeRow throws and the row is dropped — and
+    // its attachment is discarded with it.
+    pa.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); }, {{"orphan", blob}});
+
+    pa.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 1);             // only the good row
+    EXPECT_EQ(sink.deliveries[0].attachments.size(), 1u);  // dropped row's attachment gone
+    EXPECT_EQ(sink.deliveries[0].attachments[0].count("img"), 1u);
+    EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
+}
+
+TEST(PubSubArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    pa.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 100000;
+    opt.timeout = std::chrono::milliseconds(100);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    // Only a malformed row arrives in this window.
+    pa.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 0);  // zero-row batch (decision A)
+    EXPECT_EQ(sink.deliveries[0].attachments.size(), 0u);
+    EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
+    EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kTimeout);
+}
+
+// ---------------------------------------------------------------------------
+// Dictionary columns — transferred as values, re-folded into a DictionaryArray
+// ---------------------------------------------------------------------------
+
+TEST(PubSubArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::minutes(10);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    // Published as plain values; subscriber re-folds into a dictionary.
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("blue")});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto batch = sink.deliveries[0].batch;
+    ASSERT_NE(batch, nullptr);
+    ASSERT_EQ(batch->num_columns(), 1);
+    auto col = batch->column(0);
+    ASSERT_EQ(col->type_id(), arrow::Type::DICTIONARY);
+    EXPECT_TRUE(col->type()->Equals(*dict_type));
+
+    auto dict_col = std::static_pointer_cast<arrow::DictionaryArray>(col);
+    EXPECT_EQ(dict_col->length(), 3);
+    EXPECT_EQ(dict_col->dictionary()->length(), 2);  // "red", "blue"
+
+    auto idx = std::static_pointer_cast<arrow::Int32Array>(dict_col->indices());
+    EXPECT_EQ(idx->Value(0), idx->Value(2));  // both "red" -> same index
+    EXPECT_NE(idx->Value(0), idx->Value(1));  // "red" vs "blue"
+
+    auto values = std::static_pointer_cast<arrow::StringArray>(dict_col->dictionary());
+    EXPECT_EQ(values->GetString(idx->Value(0)), "red");
+    EXPECT_EQ(values->GetString(idx->Value(1)), "blue");
+}
+
+TEST(PubSubArrowBatchTest, DictionaryColumnPreservesNulls) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::minutes(10);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+    pa.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto col = sink.deliveries[0].batch->column(0);
+    ASSERT_EQ(col->type_id(), arrow::Type::DICTIONARY);
+    EXPECT_EQ(col->length(), 3);
+    EXPECT_TRUE(col->IsValid(0));
+    EXPECT_FALSE(col->IsValid(1));  // null preserved through re-folding
+    EXPECT_TRUE(col->IsValid(2));
+
+    auto dict_col = std::static_pointer_cast<arrow::DictionaryArray>(col);
+    EXPECT_EQ(dict_col->dictionary()->length(), 1);  // only "x"
 }

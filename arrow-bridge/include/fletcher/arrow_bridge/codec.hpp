@@ -33,7 +33,12 @@ using ArrowRow = std::vector<std::shared_ptr<arrow::Scalar>>;
 //   defines the layout completely.  Schema discovery is handled by the
 //   pub/sub layer's companion topic mechanism.
 //
-//   DICTIONARY is not supported.
+//   DICTIONARY fields are transferred as their value type, one value per row
+//   (the indices are a columnar optimisation, reconstructed by the RecordBatch
+//   subscriber rather than sent on the wire). DecodeRow yields a plain value
+//   scalar for a dictionary field. The dictionary value type must be a
+//   primitive/scalar type; nested value types (struct/list/map/union) are not
+//   supported.
 
 // Binds a schema to EncodeRow / DecodeRow for the positional format.
 class Codec {
