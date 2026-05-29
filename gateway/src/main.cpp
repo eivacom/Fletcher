@@ -141,8 +141,11 @@ Args ParseArgs(int argc, char* argv[]) {
             a.port = static_cast<uint16_t>(std::stoi(argv[++i]));
         } else if (arg == "--bind-address" && i + 1 < argc) {
             a.bind_address = argv[++i];
+        } else if (arg == "--version") {
+            std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
+            std::exit(0);
         } else if (arg == "--help" || arg == "-h") {
-            std::printf("Usage: %s [--port N] [--bind-address ADDR]\n", argv[0]);
+            std::printf("Usage: %s [--port N] [--bind-address ADDR] [--version]\n", argv[0]);
             std::exit(0);
         } else {
             std::fprintf(stderr, "fletcher-gateway: unknown argument: %s\n", arg.c_str());

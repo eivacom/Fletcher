@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Build the Fletcher devcontainer image once per commit and publish it
+# to Docker Hub at eivaorg/fletcher-devcontainer:<sha>. Consumer
+# workflows declare a top-level setup-devcontainer job that calls into
+# this reusable workflow, then their Linux build jobs `needs:` it and
+# pull the published image instead of doing their own buildx.
+#
+# The old per-job pattern (every consumer workflow ran buildx itself,
+# which pulled docker.io/library/ubuntu:24.04 anonymously) cascaded
+# into 429 rate-limit errors when N component workflows triggered
+# simultaneously on the same SHA. With the build now serialized
+# behind a `concurrency: queue: max` group keyed by the git SHA, only
+# the FIRST queued build job actually runs buildx. The next 12 pop
+# off the queue, see the SHA-tagged image already on Docker Hub, and
+# skip the build — one ubuntu manifest pull per SHA, not N.
+#
+# Triggers:
+#   * workflow_call — every consumer workflow declares
+#         setup-devcontainer:
+#           uses: ./.github/workflows/ci.setup-devcontainer-image.yml
+#           secrets: inherit
+#     and `needs: setup-devcontainer` on its Linux jobs. Output:
+#     `image` — the full registry/repo:tag string the consumer pulls.
+#   * push to main — pre-builds and re-tags as :main so subsequent
+#     PR runs prime the cache from a known-good baseline.
+
+name: ci.setup-devcontainer-image
+
+on:
+  workflow_call:
+    outputs:
+      image:
+        description: "Full image reference (registry/repo:tag) of the just-built devcontainer image"
+        value: ${{ jobs.build.outputs.image }}
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - ".github/workflows/ci.setup-devcontainer-image.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # FIFO-serialize every build job that shares the same git SHA. When 13
+    # consumer workflows trigger simultaneously on a PR, only the first
+    # setup-devcontainer to pop the queue does the actual buildx + push;
+    # the remaining 12 wake one by one, see the SHA-tagged image already
+    # on Docker Hub (the `Check image` step below), and skip the build. They
+    # still output the same image reference so `needs.setup-devcontainer.
+    # outputs.image` is identical across all callers.
+    #
+    # `queue: max` (GitHub Actions, released ~April 2026) allows up to 100
+    # entries to queue in FIFO order. The default `queue: single` would
+    # only retain the latest pending entry and cancel the others, which
+    # is the opposite of what we want here.
+    concurrency:
+      group: ci.setup-devcontainer-image-${{ github.sha }}
+      queue: max
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .devcontainer
+          sparse-checkout-cone-mode: false
+
+      # Create the buildx builder before logging in so that the moby/buildkit
+      # bootstrap pull is anonymous. If login happens first, Docker forwards
+      # the OAT on every registry request — including moby/* public images —
+      # and the token's limited scopes trigger "insufficient scopes" errors.
+      - name: Create buildx builder
+        run: docker buildx create --name fletcher-builder --use --bootstrap 2>/dev/null || docker buildx use fletcher-builder
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u eivaorg --password-stdin
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          echo "image=eivaorg/fletcher-devcontainer:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      # Cheap remote existence check — manifest-inspect is a HEAD request
+      # against Docker Hub. If a previous concurrency-queue entry already
+      # built and pushed this exact SHA tag, the build step below is
+      # skipped entirely (~5s job instead of ~3min).
+      - name: Check if image already exists
+        id: check
+        run: |
+          if docker manifest inspect "${{ steps.tag.outputs.image }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image already exists on Docker Hub — skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # On push-to-main we also tag :main so subsequent PRs that do not
+      # change the devcontainer can pull a known-good baseline without
+      # waiting for their own build job. On PR runs we only tag the SHA.
+      - name: Build + push
+        if: steps.check.outputs.exists == 'false'
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          MAIN_TAG: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'eivaorg/fletcher-devcontainer:main' || '' }}
+        run: |
+          tags=(--tag "$IMAGE")
+          if [[ -n "$MAIN_TAG" ]]; then
+            tags+=(--tag "$MAIN_TAG")
+          fi
+          docker buildx build \
+            --push \
+            "${tags[@]}" \
+            --cache-from type=registry,ref=eivaorg/fletcher-devcontainer:cache \
+            --cache-to   type=registry,ref=eivaorg/fletcher-devcontainer:cache,mode=max \
+            .devcontainer

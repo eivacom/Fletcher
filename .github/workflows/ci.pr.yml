@@ -1,0 +1,401 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.pr
+
+on:
+  pull_request:
+
+# No workflow-level concurrency. Instead each job below declares its
+# own `concurrency: group: <job>-${{ github.ref }} cancel-in-progress: true`.
+# This lets a new PR commit start its ci.pr.yml run immediately (no parent
+# lock waiting on the old run to finish) — each new job cancels its
+# predecessor directly at the job level, including the workflow_call
+# caller jobs, whose cancellation propagates into the called workflows
+# (and thus into their long-running docker runs). The previous
+# workflow-level `concurrency: pr-<ref>` blocked the new run while the
+# old run's integration tests slowly responded to cancel signals.
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+
+  # ── Stage 1: detect changed paths & spin up devcontainer image ───────────────
+
+  detect-changes:
+    concurrency:
+      group: ci.pr-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      gateway-client: ${{ steps.filter.outputs.gateway-client }}
+      protoc: ${{ steps.filter.outputs.protoc }}
+      pubsub: ${{ steps.filter.outputs.pubsub }}
+      pubsub-arrow: ${{ steps.filter.outputs.pubsub-arrow }}
+      xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
+      integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
+      integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
+      integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
+      integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
+    steps:
+      - uses: actions/checkout@v6
+      # Filters list only positive patterns; we deliberately avoid '!'
+      # negations. Reason: dorny/paths-filter v4 (with the default
+      # predicate-quantifier: 'some') evaluates every pattern — including
+      # negations — as an independent positive rule, returning `true` for
+      # files that do NOT match the negated glob. A line like '!**/*.md'
+      # therefore matches every non-.md file and causes the filter to
+      # short-circuit to true regardless of the other patterns. As a
+      # result, an unrelated change (e.g. only `.github/ISSUE_TEMPLATE/
+      # config.yml`) would trigger every component build. Trade-off: a
+      # docs-only README edit inside a component dir will now trigger
+      # that component's build once — cheap and predictable, vs. the
+      # broken negation that fired every build on every PR.
+      - uses: dorny/paths-filter@v4.0.1
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            core:
+              - 'core/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.core.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            arrow-bridge:
+              - 'arrow-bridge/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.arrow-bridge.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            fastdds-pubsub-provider:
+              - 'fastdds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.fastdds-pubsub-provider.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            gateway:
+              - 'gateway/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.gateway.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            gateway-client:
+              - 'gateway-client-ts/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.gateway-client.yml'
+            protoc:
+              - 'protoc/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.protoc.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            pubsub:
+              - 'pubsub/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.pubsub.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            pubsub-arrow:
+              - 'pubsub-arrow/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.pubsub-arrow.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            xrcedds-pubsub-provider:
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.xrcedds-pubsub-provider.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-fastdds-xrce:
+              - 'core/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'pubsub-arrow/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'integration-tests/fastdds-xrce-interop/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.fastdds-xrce-interop.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-gateway-e2e:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'gateway/**'
+              - 'gateway-client-ts/**'
+              - 'integration-tests/gateway-end-to-end/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-end-to-end.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-protoc-arrow:
+              - 'core/**'
+              - 'protoc/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'integration-tests/protoc-arrow-bridge/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-arrow-bridge.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-protoc-gateway-ts:
+              - 'core/**'
+              - 'protoc/**'
+              - 'pubsub/**'
+              - 'gateway-client-ts/**'
+              - 'integration-tests/protoc-gateway-client-ts/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-gateway-client-ts.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-pubsub-arrow-fastdds:
+              - 'core/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'pubsub-arrow/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'integration-tests/pubsub-arrow-fastdds/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.pubsub-arrow-fastdds.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+
+  setup-devcontainer:
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
+    secrets: inherit
+
+  # ── Stage 2: component builds ────────────────────────────────────────────────
+  #
+  # Each component's build flow is defined once in its standalone workflow
+  # (fletcher-<component>.yml), which also handles tag-push releases. ci.pr.yml
+  # invokes those workflows via `workflow_call`, passing the devcontainer
+  # image so the child skips re-building it. Tag-push runs of the child
+  # workflows leave the input empty and run their own setup-devcontainer.
+
+  # Component callers do not need `contents: write` — tag-push uploads
+  # (gh release create) live in the release-<component>.yml wrappers,
+  # not inside the called fletcher-*.yml workflows.
+
+  core:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.core == 'true' }}
+    uses: ./.github/workflows/ci.core.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  arrow-bridge:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.arrow-bridge == 'true' }}
+    uses: ./.github/workflows/ci.arrow-bridge.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  pubsub:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
+    uses: ./.github/workflows/ci.pubsub.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  pubsub-arrow:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.pubsub-arrow == 'true' }}
+    uses: ./.github/workflows/ci.pubsub-arrow.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  protoc:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.protoc == 'true' }}
+    uses: ./.github/workflows/ci.protoc.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  gateway:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.gateway == 'true' }}
+    uses: ./.github/workflows/ci.gateway.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  fastdds-pubsub-provider:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.fastdds-pubsub-provider == 'true' }}
+    uses: ./.github/workflows/ci.fastdds-pubsub-provider.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  xrcedds-pubsub-provider:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.xrcedds-pubsub-provider == 'true' }}
+    uses: ./.github/workflows/ci.xrcedds-pubsub-provider.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  gateway-client:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.gateway-client == 'true' }}
+    uses: ./.github/workflows/ci.gateway-client.yml
+    secrets: inherit
+
+  # format-check-cpp, format-check-ts, license-headers, and action-lint
+  # are standalone workflows that trigger directly on `pull_request` with
+  # their own path filters (.github/workflows/{format-check-cpp,
+  # format-check-ts,license-headers,action-lint}.yml). They are not
+  # invoked from ci.pr.yml and therefore aren't part of the pr_gate
+  # aggregation — configure them as separate required status checks on
+  # the branch protection rule if needed.
+
+  # ── Stage 2 (continued): integration tests ───────────────────────────────────
+  #
+  # Each integration test's build flow is defined in its standalone
+  # integration-test.<name>.yml workflow. ci.pr.yml invokes them via
+  # workflow_call and passes the pre-built devcontainer image so the
+  # nested setup-devcontainer is skipped.
+
+  integration-test-fastdds-xrce-interop:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-fastdds-xrce == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.fastdds-xrce-interop.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-gateway-end-to-end:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-e2e == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-end-to-end.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-protoc-arrow-bridge:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-arrow == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-arrow-bridge.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-protoc-gateway-client-ts:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-gateway-client-ts.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-pubsub-arrow-fastdds:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-arrow-fastdds == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.pubsub-arrow-fastdds.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  # ── Stage 3: PR gate ────────────────────────────────────────────────────────
+  pr_gate:
+    needs:
+      - detect-changes
+      - setup-devcontainer
+      - core
+      - arrow-bridge
+      - pubsub
+      - pubsub-arrow
+      - protoc
+      - gateway
+      - fastdds-pubsub-provider
+      - xrcedds-pubsub-provider
+      - gateway-client
+      - integration-test-fastdds-xrce-interop
+      - integration-test-gateway-end-to-end
+      - integration-test-protoc-arrow-bridge
+      - integration-test-protoc-gateway-client-ts
+      - integration-test-pubsub-arrow-fastdds
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/pr-gate
+        with:
+          # detect-changes is upstream of every component caller — if it
+          # fails, all the downstream jobs get `result: skipped`, which
+          # pr-gate would otherwise count as a pass. Listing it
+          # explicitly makes a detect-changes failure block the PR.
+          results: >-
+            ${{ needs.detect-changes.result }},
+            ${{ needs.setup-devcontainer.result }},
+            ${{ needs.core.result }},
+            ${{ needs.arrow-bridge.result }},
+            ${{ needs.pubsub.result }},
+            ${{ needs.pubsub-arrow.result }},
+            ${{ needs.protoc.result }},
+            ${{ needs.gateway.result }},
+            ${{ needs.fastdds-pubsub-provider.result }},
+            ${{ needs.xrcedds-pubsub-provider.result }},
+            ${{ needs.gateway-client.result }},
+            ${{ needs.integration-test-fastdds-xrce-interop.result }},
+            ${{ needs.integration-test-gateway-end-to-end.result }},
+            ${{ needs.integration-test-protoc-arrow-bridge.result }},
+            ${{ needs.integration-test-protoc-gateway-client-ts.result }},
+            ${{ needs.integration-test-pubsub-arrow-fastdds.result }}

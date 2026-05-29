@@ -43,7 +43,7 @@ The gateway is schema-agnostic — there is no `--config` and no topic pre-decla
 
 ## How it runs in CI
 
-The workflow `.github/workflows/integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
+The workflow `.github/workflows/ci.integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
 1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`) via `conan create <component>/.` into the local Conan cache.
 2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
@@ -54,15 +54,15 @@ The workflow `.github/workflows/integration-test.gateway-end-to-end.yml` trigger
 See the repo root's [Development environment](../../README.md#development-environment) for how to open the devcontainer. From inside it, from the repo root:
 
 ```bash
-conan create core/.   --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.   --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create pubsub/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create pubsub/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan create protoc/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 `protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure.
@@ -74,7 +74,7 @@ cd integration-tests/gateway-end-to-end
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Release orchestration for @eiva/fletcher-gateway-client. Invokes
+# ci.gateway-client.yml to build and test, then publishes the
+# package to npmjs.com.
+#
+# Triggers:
+#   * push: tags 'gateway-client-v*'     — real release.
+
+name: cd.gateway-client
+
+on:
+  push:
+    tags:
+      - 'gateway-client-v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  build-and-test:
+    uses: ./.github/workflows/ci.gateway-client.yml
+    secrets: inherit
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway-client-ts
+            .github
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag version matches package.json version
+        uses: ./.github/actions/verify-tag-version-npm
+        with:
+          package-json: gateway-client-ts/package.json
+          tag-prefix: gateway-client-v
+
+      - name: Download artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: gateway-client-ts
+          path: gateway-client-ts/dist
+
+      - name: Resolve dist-tag
+        id: dist-tag
+        working-directory: gateway-client-ts
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            PRE=$(echo "$VERSION" | sed 's/^[0-9]*\.[0-9]*\.[0-9]*-//' | cut -d. -f1)
+            echo "tag=$PRE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        working-directory: gateway-client-ts
+        run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

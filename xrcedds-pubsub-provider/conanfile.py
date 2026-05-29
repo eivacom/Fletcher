@@ -52,10 +52,11 @@ class FletcherPubsubConan(ConanFile):
         cmake.configure()
         cmake.build()
         if self.options.run_tests:
-            self.run(
-                f'ctest --test-dir "{self.build_folder}" '
-                f'-C {self.settings.build_type} --output-on-failure'
-            )
+            # cmake.test() activates VirtualRunEnv so dependency DLLs (gtest,
+            # etc.) are on PATH when the test executables launch. A bare
+            # self.run("ctest ...") skips this and fails on Windows with
+            # 0xC0000135 (STATUS_DLL_NOT_FOUND) under *:shared=True.
+            cmake.test()
 
     def package(self):
         # Public pubsub headers.

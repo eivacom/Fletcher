@@ -23,7 +23,7 @@ Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 ### Windows
 
 ```bash
-conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 ### Linux (devcontainer)
@@ -31,7 +31,7 @@ conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
 See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory:
 
 ```bash
-conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 ---
@@ -61,6 +61,8 @@ separately.
 
 ## CI pipeline
 
-`.github/workflows/fletcher-arrow-bridge.yml` runs `build-windows` +
-`build-linux` on every PR touching `arrow-bridge/**`, and an `upload` job
-that publishes platform-specific package binaries to Artifactory on push.
+`.github/workflows/ci.arrow-bridge.yml` is `workflow_call`-only;
+it runs `build-windows` + `build-linux` and is invoked from `ci.pr.yml`
+on PRs touching `arrow-bridge/**` and from `cd.arrow-bridge.yml`
+on `arrow-bridge-v*` tag pushes. The `upload` job that creates the
+GitHub Release lives in `cd.arrow-bridge.yml`.

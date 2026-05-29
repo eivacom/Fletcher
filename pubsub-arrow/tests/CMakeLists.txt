@@ -11,4 +11,4 @@ target_link_libraries(pubsub_arrow_tests PRIVATE
     fletcher-pubsub-arrow)
 
 include(GoogleTest)
-gtest_discover_tests(pubsub_arrow_tests)
+gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST)

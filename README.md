@@ -132,13 +132,13 @@ A single devcontainer at `.devcontainer/` covers every Fletcher component. Compo
 
 ### VS Code (recommended)
 
-Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The `postCreateCommand` runs `conan config install https://github.com/eivacom/conan-configuration.git` on first launch, installing the EIVA Conan profiles and remote.
+Open the repository root in VS Code and select **Reopen in Container** (or run `Dev Containers: Reopen in Container` from the Command Palette). The image ships with CMake, Conan, GCC 13, Node, and the formatters preinstalled — no `postCreateCommand` runs.
 
-To pull the released Fletcher packages from `conan-eiva`, log in once per container:
+Conan profiles live in [`.conan-profiles/`](.conan-profiles) in the repo. Build commands pass them by relative path (`-pr:a=../.conan-profiles/<profile>`), so no profile-install step is needed and the dev profile set always matches what CI uses.
 
-```bash
-conan remote login conan-eiva <username>
-```
+Released Fletcher packages are attached as assets on GitHub Releases — see
+[Consuming a released Conan package](#consuming-a-released-conan-package)
+below. No private Conan remote login is required.
 
 Then follow each component's README for the component-specific build, test, and consumption commands.
 
@@ -156,38 +156,42 @@ Start a shell with the repo mounted:
 docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
 ```
 
-Inside the container, replicate what the `postCreateCommand` does in VS Code:
-
-```bash
-conan config install https://github.com/eivacom/conan-configuration.git
-```
-
-Then `cd <component>` and follow the same build / test commands the component README documents.
+No further setup is needed — Conan profiles live in [`.conan-profiles/`](.conan-profiles) in the repo and are referenced by relative path. `cd <component>` and follow the build / test commands the component README documents.
 
 ### CI devcontainer image
 
-Every component workflow that needs the Linux toolchain begins with a `setup-devcontainer` job that calls the reusable `setup-devcontainer-image` workflow (`.github/workflows/setup-devcontainer-image.yml`). That job builds the devcontainer image and pushes it to Harbor:
+Every component workflow that needs the Linux toolchain begins with a `setup-devcontainer` job that calls the reusable `setup-devcontainer-image` workflow (`.github/workflows/ci.setup-devcontainer-image.yml`). That job builds the devcontainer image and pushes it to Docker Hub:
 
 ```
-dockerrepo.eiva.com/fletcher/devcontainer:<git-sha>
+eivaorg/fletcher-devcontainer:<git-sha>
 ```
 
-`dockerrepo.eiva.com/fletcher/devcontainer:cache` keeps a BuildKit layer cache between runs. When a push to `main` actually rebuilds the image — the workflow only triggers on pushes touching `.devcontainer/**` or `setup-devcontainer-image.yml` itself — the new image also gets tagged `:main` so subsequent PRs that do not touch those paths prime their build from a known-good baseline.
+`eivaorg/fletcher-devcontainer:cache` keeps a BuildKit layer cache between runs. When a push to `main` actually rebuilds the image — the workflow only triggers on pushes touching `.devcontainer/**` or `ci.setup-devcontainer-image.yml` itself — the new image also gets tagged `:main` so subsequent PRs that do not touch those paths prime their build from a known-good baseline.
 
-Every `setup-devcontainer` invocation shares the concurrency group `setup-devcontainer-image-<sha>` with `queue: max`, so when many component workflows trigger on the same commit the build jobs run one-at-a-time in FIFO order. Only the first one actually runs `buildx`; the rest see the SHA-tagged image already in Harbor (a cheap `docker manifest inspect`) and skip the build entirely. One `ubuntu:24.04` pull per commit, not one per component workflow.
+Every `setup-devcontainer` invocation shares the concurrency group `setup-devcontainer-image-<sha>` with `queue: max`, so when many component workflows trigger on the same commit the build jobs run one-at-a-time in FIFO order. Only the first one actually runs `buildx`; the rest see the SHA-tagged image already on Docker Hub (a cheap `docker manifest inspect`) and skip the build entirely. One `ubuntu:24.04` pull per commit, not one per component workflow.
 
 The Linux jobs that consume the toolchain pull the image via the `pull-devcontainer-image` composite action (`.github/actions/pull-devcontainer-image`) and retag it locally as `fletcher-build`. No `buildx` runs on the consumer jobs, so they never pull `ubuntu:24.04` themselves and never compete for the Docker Hub free-tier rate limit.
 
-Harbor is the destination today because the secrets are already in place and the registry is reachable from the runner pool. Switching to a public OCI registry (e.g. ghcr.io) only requires changing the registry URL in `setup-devcontainer-image.yml` and `pull-devcontainer-image/action.yml`.
+Docker Hub is the destination today because the secrets are already in place and pulls are unauthenticated by default for public repos. Switching to another OCI registry (ghcr.io, ECR, …) only requires changing the registry URL in `ci.setup-devcontainer-image.yml` and `pull-devcontainer-image/action.yml`.
 
 ---
 
 ## Releasing
 
-Releases are cut by pushing a **component-prefixed git tag** that matches the
-version in the package's `conanfile.py`. The CI workflow for that component
-then runs builds on Windows + Linux and, if both succeed, publishes the
-package to the `conan-eiva` Artifactory remote.
+Releases are cut by pushing a **component-prefixed git tag**. The matching
+`release-<component>.yml` workflow runs builds on Windows + Linux and, if
+both succeed, creates a GitHub Release with the build artefacts attached.
+For Conan-package components the tag must match the version in the
+package's `conanfile.py`; `gateway/` has no conanfile version so the tag
+itself is the version.
+
+### Release assets
+
+| Component type | Distribution |
+|---|---|
+| Conan-package (7 components) | GitHub Release with `fletcher-<name>-{linux,windows}-conan-package.tgz` — `conan cache save` exports, one per build profile |
+| `gateway/` | GitHub Release with `gateway.exe` (raw Windows binary) + `gateway-linux.tar.gz` (Linux binary with exec bit preserved inside the tarball) |
+| `gateway-client-ts/` | `npm publish` to [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client) — dist-tag derived from the version (`latest` for release, pre-release suffix otherwise) |
 
 ### Tag format
 
@@ -204,15 +208,17 @@ package to the `conan-eiva` Artifactory remote.
 | `pubsub-arrow/` | `pubsub-arrow-v` | `pubsub-arrow-v0.1.0-alpha` |
 | `fastdds-pubsub-provider/` | `fastdds-pubsub-provider-v` | `fastdds-pubsub-provider-v0.1.0-alpha` |
 | `xrcedds-pubsub-provider/` | `xrcedds-pubsub-provider-v` | `xrcedds-pubsub-provider-v0.1.0-alpha` |
-
-`gateway-client-ts/` does not yet release through tag-push CI.
+| `gateway/` | `gateway-v` | `gateway-v0.1.0-alpha` |
+| `gateway-client-ts/` | `gateway-client-v` | `gateway-client-v0.1.0-alpha` |
 
 The component prefix is required so that pushing a tag triggers exactly one
 package's workflow — not all of them.
 
 ### Cutting a release
 
-1. Bump the package's version in `<component>/conanfile.py` and merge to `main`.
+1. Bump the package's version and merge to `main`. The version lives in
+   `<component>/conanfile.py` for Conan components, `gateway/VERSION` for
+   the gateway exe, and `gateway-client-ts/package.json` for the npm client.
 2. From `main`, tag and push:
 
    ```bash
@@ -245,24 +251,65 @@ package's workflow — not all of them.
    git push origin core-v0.1.1-alpha
    ```
 
-3. Watch the workflow run for that component complete on
-   [GitHub Actions](https://github.com/eivacom/Fletcher/actions). The `upload`
-   job is gated on
-   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`,
-   so only tag pushes publish to Artifactory — `workflow_dispatch` and
-   `pull_request` runs build and test but never upload.
+3. Watch the matching `release-<component>` workflow run on
+   [GitHub Actions](https://github.com/eivacom/Fletcher/actions).
+   Conan components and `gateway/` create a GitHub Release tagged
+   `<component>-v<version>` with the platform-specific assets attached;
+   `gateway-client-ts/` runs `npm publish` to
+   [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client)
+   with a dist-tag derived from the version.
 
 ### Notes
 
-- Tag and `conanfile.py` version **must match**. The workflow verifies
-  this and the upload job fails fast if they differ.
-- The upload job also fails if the package version is already published
-  on `conan-eiva` — re-releasing an existing version requires bumping
-  `conanfile.py` first.
+- For Conan-package components, the tag and `conanfile.py` version **must
+  match**. The release workflow verifies this via
+  `actions/verify-tag-version-conan` and fails fast if they differ.
+  `gateway/` has its version in `gateway/VERSION` (a plain text file)
+  and `cd.gateway.yml` verifies the tag against it. For
+  `gateway-client-ts/`, the tag must match `package.json`'s `version`
+  field (`actions/verify-tag-version-npm`).
+- Re-releasing an existing version requires either deleting the existing
+  GitHub Release (and tag) first or bumping the version — `gh release
+  create` refuses to overwrite an existing release. npm publish has the
+  same constraint: a version already published to the registry cannot be
+  republished.
 - Releases are independent per component. Bumping `core` does not require
   re-releasing the others.
 - Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the
-  version and go into the tag.
+  version and go into the tag. For the npm client the suffix also
+  determines the dist-tag (`@latest` for pure semver, `@alpha`/`@beta`/…
+  otherwise).
+
+### Consuming a released Conan package
+
+Each Conan-package component publishes two archives as GitHub Release assets:
+
+| File | Built for |
+|---|---|
+| `fletcher-<component>-linux-conan-package.tgz` | Linux x86_64, GCC 13, libstdc++ (release profile) |
+| `fletcher-<component>-windows-conan-package.tgz` | Windows x86_64, MSVC 194 (release profile) |
+
+Each archive is produced by `conan cache save` and contains the full
+Conan package (recipe revision + built binary). To consume one from
+another project's Conan cache:
+
+```bash
+gh release download core-v0.1.0-alpha --repo eivacom/Fletcher --pattern 'fletcher-core-linux-conan-package.tgz'
+```
+
+```bash
+conan cache restore fletcher-core-linux-conan-package.tgz
+```
+
+```python
+# In your conanfile.py:
+self.requires("fletcher-core/0.1.0-alpha")
+```
+
+`conan cache restore` registers the package under the exact profile it
+was built with (Linux-gcc13-x86_64-Release / Windows-msvc194-x86_64-Release).
+Consumers targeting a different profile must build the package from
+source with `conan create <component>` against the Fletcher checkout.
 
 ---
 

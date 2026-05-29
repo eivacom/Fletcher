@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Set up Conan on the runner"
+description: >-
+  Installs Python and Conan on the current runner. Intended for runners
+  that build Fletcher components directly (i.e. Windows). On Linux the
+  devcontainer image already ships Python + Conan, so those workflows
+  skip this action and run `conan` inside `docker run` against the
+  pulled image.
+
+  Conan profiles are referenced by their in-repo path
+  (`-pr:a=.conan-profiles/<name>` on the runner, or
+  `-pr:a=/workspace/.conan-profiles/<name>` inside the docker container),
+  so this action does NOT copy profiles into `~/.conan2/profiles/`.
+
+inputs:
+  conan-version:
+    description: "Conan version to install via pip"
+    required: false
+    default: "2.28.1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6.2.0
+      with:
+        python-version: "3.14.5"
+
+    - name: Install Conan
+      shell: bash
+      run: pip install "conan==${{ inputs.conan-version }}"

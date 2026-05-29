@@ -23,4 +23,4 @@ target_link_libraries(integration_tests PRIVATE
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)
 
 include(GoogleTest)
-gtest_discover_tests(integration_tests)
+gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)

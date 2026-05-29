@@ -29,7 +29,13 @@ class FletcherProtocPluginConan(ConanFile):
     def requirements(self):
         self.requires("protobuf/3.21.12", visible=True)
         if self.options.run_tests:
-            self.requires("gtest/1.17.0")
+            # test_requires (rather than requires) so gtest does NOT show up in
+            # self.dependencies.host during package() — otherwise its DLLs would
+            # be copied next to fletcher-protoc.exe on Windows, leaking test-only
+            # binaries into the shipped package. package_id() ignores run_tests,
+            # so a run_tests=True build must produce the same package contents
+            # as a run_tests=False build.
+            self.test_requires("gtest/1.17.0")
 
     def package_id(self):
         del self.info.options.run_tests
@@ -64,6 +70,15 @@ class FletcherProtocPluginConan(ConanFile):
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "bin"),
              keep_path=False)
+        # Bundle dependency DLLs next to the exe on Windows. protoc spawns
+        # fletcher-protoc.exe as a plugin subprocess with no Conan environment
+        # active, so DLLs must be co-located (first entry in Windows DLL search).
+        if self.settings.os == "Windows":
+            for dep in self.dependencies.host.values():
+                for bindir in dep.cpp_info.bindirs:
+                    copy(self, "*.dll", src=bindir,
+                         dst=os.path.join(self.package_folder, "bin"),
+                         keep_path=False)
         # Package the CMake target module.
         copy(self, "*.cmake",
              src=os.path.join(self.source_folder, "cmake"),

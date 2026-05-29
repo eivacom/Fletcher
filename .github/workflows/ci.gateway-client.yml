@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.gateway-client
+
+concurrency:
+  group: ci.gateway-client-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway-client-ts
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            gateway-client-ts
+            .github/workflows
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: gateway-client-ts/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gateway-client-ts
+          path: gateway-client-ts/dist
+          retention-days: 5

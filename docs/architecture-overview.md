@@ -270,16 +270,16 @@ The monorepo is a polyrepo of Conan packages — each component is built indepen
 
 ```bash
 # Build each component into the local Conan cache (order matters for dependencies):
-conan create core/.                    --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create arrow-bridge/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create pubsub/.                  --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create pubsub-arrow/.            --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create protoc/.                  --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create fastdds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
-conan create xrcedds-pubsub-provider/. --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan create core/.                    --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create arrow-bridge/.            --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create pubsub/.                  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create pubsub-arrow/.            --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create protoc/.                  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create xrcedds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-A single consolidated devcontainer at `.devcontainer/` (repo root) covers every Fletcher component. CI builds and locally-opened "Reopen in Container" sessions both use it, sharing one image cache key in Harbor (`dockerrepo.eiva.com/fletcher/devcontainer:cache`).
+A single consolidated devcontainer at `.devcontainer/` (repo root) covers every Fletcher component. CI builds and locally-opened "Reopen in Container" sessions both use it, sharing one image cache key on Docker Hub (`eivaorg/fletcher-devcontainer:cache`).
 
 ### 8.3 TypeScript gateway client
 

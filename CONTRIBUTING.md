@@ -11,17 +11,16 @@ Thank you for your interest in contributing. Fletcher is an LGPL-3.0-or-later pr
 
 Fletcher's build toolchain lives entirely inside the devcontainer at `.devcontainer/`. All component READMEs assume you are working inside it.
 
-**VS Code** — open the repo root and select *Reopen in Container*. The `postCreateCommand` installs the Conan profiles and remote automatically.
+**VS Code** — open the repo root and select *Reopen in Container*. CMake, Conan, GCC 13, Node and the formatters are preinstalled in the image.
 
 **Manual Docker** — build the image once and mount the repo:
 
 ```bash
 docker build -t fletcher-build .devcontainer
 docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
-conan config install https://github.com/eivacom/conan-configuration.git
 ```
 
-Then follow the individual component `README.md` for build and test commands.
+Conan profiles live in [`.conan-profiles/`](.conan-profiles) and are referenced by relative path (`-pr:a=../.conan-profiles/<profile>`), so no profile-install step is needed. Then follow the individual component `README.md` for build and test commands.
 
 ## Repository layout
 
@@ -51,7 +50,7 @@ Every tracked source file must carry these two lines within its first ten lines,
 //
 ```
 
-The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/license-headers.yml`.
+The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/ci.license-headers.yml`.
 
 ### C++ style
 

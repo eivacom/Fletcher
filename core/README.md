@@ -20,22 +20,22 @@ Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
 
 Build locally:
 ```bash
-conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug
+conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
 Build locally and run unit tests:
 ```bash
-conan build . --build=missing -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 Create the Conan package (required to produce packaged headers under `include/core/`):
 ```bash
-conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug
+conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
 Create the Conan package with unit tests:
 ```bash
-conan create . -pr:a=Visual-Studio-2022-v143-x64-Debug -o "&:run_tests=True"
+conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
 > Note: `conan build` only runs the build step and does not produce the package output.
@@ -49,12 +49,12 @@ See the repo root's [Development environment](../README.md#development-environme
 
 1. Install dependencies and configure the build tree:
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan install . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 2. Build the library and tests:
 ```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan build . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 3. Run the unit tests directly via CTest:
@@ -64,7 +64,7 @@ ctest --test-dir build/Debug --output-on-failure
 
 4. Create and publish to the local Conan cache (headers + cmake module):
 ```bash
-conan create . --build=missing -pr:a=Ubuntu22-gcc-12-Debug -o "&:run_tests=True"
+conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 5. Verify the package is in the local cache:
@@ -78,46 +78,52 @@ Steps 1–3 iterate during development without writing to the Conan cache. Step 
 
 ## CI pipeline
 
-The workflow is defined in `.github/workflows/fletcher-core.yml` and runs on every
-push to `feature/fletcher-core` and on every pull request touching `core/**`.
+The build workflow is defined in `.github/workflows/ci.core.yml`.
+It is `workflow_call`-only — invoked from `ci.pr.yml` for pull requests
+touching `core/**` and from `cd.core.yml` on `core-v*` tag pushes.
+The matching upload job lives in `cd.core.yml`, not here.
 
 ```
-push / pull_request
+ci.pr.yml (PRs) / cd.core.yml (tag push)
         │
         ├──────────────────────────────────────┐
         ▼                                      ▼
 build-windows                            build-linux
-Windows Server Core LTSC 2025            Ubuntu 24.04 x64
+windows-2022                             ubuntu-latest
 Native runner                            Docker container (.devcontainer)
-Profile: Visual-Studio-2022-             Profile: Ubuntu22-gcc-12-Release
-         v143-x64-Release
+Profile: Windows-msvc194-                Profile: Linux-gcc13-
+         x86_64-Release                            x86_64-Release
         │                                      │
         └──────────────────┬───────────────────┘
                            │ both must pass
-                           ▼
+                           ▼ (only on tag push)
                         upload
-                  (push / workflow_dispatch only)
-                  Publishes to conan-eiva Artifactory
+              (cd.core.yml job)
+              Creates GitHub Release with
+              fletcher-core-{windows,linux}-conan-package.tgz
 ```
 
 ### Build profiles
 
 | Job | Runner | Profile | Build type |
 |---|---|---|---|
-| `build-windows` | `windows-server-core-ltsc2025` | `Visual-Studio-2022-v143-x64-Release` | Release |
-| `build-linux` | `ubuntu_24.04_x64` (Docker) | `Ubuntu22-gcc-12-Release` | Release |
+| `build-windows` | `windows-2022` | `.conan-profiles/Windows-msvc194-x86_64-Release` | Release |
+| `build-linux` | `ubuntu-latest` (Docker) | `.conan-profiles/Linux-gcc13-x86_64-Release` | Release |
 
 ### Package handoff
 
 Because `fletcher-core` is a header-only library it produces a single
-platform-independent package ID. The Windows build saves the package to a
-GitHub Actions artifact which the `upload` job restores and publishes:
+platform-independent package ID. Each build job saves the Conan package
+to a GitHub Actions workflow artifact; on a tag push the `upload` job in
+`cd.core.yml` downloads both and attaches them as GitHub Release
+assets:
 
 ```
-conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  conan cache restore  →  conan upload
+conan cache save  →  actions/upload-artifact  →  actions/download-artifact  →  gh release create
 ```
 
-Upload is skipped on pull requests — it only runs on `push` and `workflow_dispatch`.
+The `upload` job only runs from `cd.core.yml` (tag push). PR runs
+through `ci.pr.yml` build and test but produce no release artifacts.
 
 ---
 

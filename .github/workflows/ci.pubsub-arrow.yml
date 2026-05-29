@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.pubsub-arrow
+
+concurrency:
+  group: ci.pubsub-arrow-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers; the
+          cd.pubsub-arrow.yml wrapper does the same for tag-push releases.
+        required: true
+        type: string
+    outputs:
+      conan-ref:
+        description: >-
+          Conan package reference (name/version) computed on tag-push by
+          build-windows. Empty on PR runs. Consumed by cd.pubsub-arrow.yml's
+          upload job to verify the tag matches conanfile version.
+        value: ${{ jobs.build-windows.outputs.conan-ref }}
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    outputs:
+      conan-ref: ${{ steps.get-ref.outputs.conan-ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub-arrow
+            core
+            pubsub
+            arrow-bridge
+            .github
+            .conan-profiles
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # fletcher-core/pubsub/arrow-bridge are not on any Conan remote, so their
+      # recipes must be in the local cache before `conan create` on pubsub-arrow
+      # can resolve them. Order: core → pubsub, arrow-bridge (both need core).
+      - name: Build fletcher-core, fletcher-pubsub, fletcher-arrow-bridge (dependencies)
+        shell: bash
+        working-directory: pubsub-arrow
+        run: |
+          conan create ../core --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../pubsub --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../arrow-bridge --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: Build and test
+        shell: bash
+        working-directory: pubsub-arrow
+        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
+
+      - name: Get Conan reference
+        id: get-ref
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        working-directory: pubsub-arrow
+        run: |
+          ref=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['name'] + '/' + d['version'])")
+          echo "conan-ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Save Conan package
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}" --file "fletcher-pubsub-arrow-windows-conan-package.tgz"
+
+      - name: Upload Windows Conan package .tgz artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-pubsub-arrow-windows
+          path: fletcher-pubsub-arrow-windows-conan-package.tgz
+          retention-days: 5
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pubsub-arrow
+            core
+            pubsub
+            arrow-bridge
+            .github
+            .conan-profiles
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build dependencies, build, and test
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-pubsub-arrow-linux-conan-package.tgz' || '' }}
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/pubsub-arrow \
+            -e ARTIFACT_NAME="$ARTIFACT_NAME" \
+            fletcher-build \
+            bash -c '
+              set -e
+              # fletcher-core/pubsub/arrow-bridge must be in the local cache before
+              # pubsub-arrow can resolve them (no Conan remote hosts the fletcher-* packages).
+              conan create ../core --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../pubsub --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../arrow-bridge --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              if [[ -n "$ARTIFACT_NAME" ]]; then
+                REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
+                conan cache save "$REF" --file "/workspace/$ARTIFACT_NAME"
+              fi
+            '
+
+      - name: Upload Linux Conan package .tgz artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-pubsub-arrow-linux
+          path: fletcher-pubsub-arrow-linux-conan-package.tgz
+          retention-days: 5

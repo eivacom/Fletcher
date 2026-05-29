@@ -7,7 +7,7 @@ Fletcher's WebSocket gateway server. A schema-agnostic byte router that exposes 
 A single executable, `gateway`, built from the sources in `src/`. There is no public C++ API:
 
 - **No installed headers.** All headers live under `src/` and are not part of any export interface.
-- **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation, and nothing is ever uploaded to Artifactory. The only artifact this directory ships is the exe.
+- **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation. The gateway exe is distributed via GitHub Releases (`cd.gateway.yml` on `gateway-v*` tag pushes), not as a Conan package.
 - **No library target exposed externally.** Sources compile into a tiny internal helper static library (`gateway_codec`, for unit-test linkage only) plus the exe. Neither is installed or consumed from outside this directory.
 
 If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/) for the reference implementation).
@@ -26,6 +26,27 @@ This keeps the gateway as a pure byte router: it forwards row bytes between publ
 
 `gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
 
+## Installing
+
+Pre-built binaries are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Pick the asset for your platform:
+
+**Windows** — download `gateway.exe` and run it directly. No archive to unpack:
+
+```powershell
+gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway.exe
+.\gateway.exe --port 9090
+```
+
+**Linux** — download and extract `gateway-linux.tar.gz`. The exec bit is preserved inside the tarball:
+
+```bash
+gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway-linux.tar.gz
+tar -xzf gateway-linux.tar.gz
+./gateway --port 9090
+```
+
+To build from source instead of using a release binary, see [Building](#building) below.
+
 ## Running
 
 ```bash
@@ -38,7 +59,12 @@ gateway --port 9090 --bind-address 0.0.0.0
 |---|---|---|
 | `--port N` | `9090` | TCP port to listen on. |
 | `--bind-address ADDR` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only deployments. |
+| `--version` | — | Print `fletcher-gateway <version>` and exit. The version string is read from `gateway/VERSION` at build time. |
 | `--help`, `-h` | — | Print usage and exit. |
+
+### Version metadata
+
+`gateway/VERSION` is the single source of truth for the gateway version. CMake reads it at configure time and (a) feeds the numeric `MAJOR.MINOR.PATCH` prefix into `project(VERSION ...)`, (b) embeds the full string (including any pre-release suffix) as a `GATEWAY_VERSION_STRING` compile definition consumed by `--version`, and (c) on Windows generates a `version.rc` resource that the linker bakes into `gateway.exe`. Right-click `gateway.exe` → Properties → Details shows the same `FileVersion` / `ProductVersion` Windows users expect. The `cd.gateway.yml` workflow verifies that the pushed tag matches `gateway/VERSION` before creating the release.
 
 ### Process lifecycle
 
@@ -61,11 +87,11 @@ cd gateway
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release
+conan install . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Release
+conan build . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 `conan build .` runs the recipe's `build()` method, which dispatches the right cmake configure / build invocations for the generator in use. On Linux (single-config Ninja/Make) it resolves to `cmake --preset conan-release && cmake --build --preset conan-release`; on Windows (multi-config Visual Studio) it picks `conan-default` for configure and `conan-release` for build. Letting Conan dispatch avoids the platform-specific preset asymmetry.
@@ -91,16 +117,16 @@ cd gateway
 ```
 
 ```bash
-conan install . --build=missing -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+conan install . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 ```bash
-conan build . -pr:a=Ubuntu22-gcc-12-Release -o "&:run_tests=True"
+conan build . -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
 ```
 
 The `-o "&:run_tests=True"` switch pulls `gtest` into the dependency graph, sets `FLETCHER_BUILD_TESTS=ON` for CMake, and makes the recipe's `build()` invoke `cmake.test()` after the build — so a successful `conan build` means the gtest suite already ran. Omit the switch for a tests-off plain build.
 
-This is the same path CI takes (`.github/workflows/fletcher-gateway.yml`) on both Linux and Windows, so the local run matches what gates the pull request.
+This is the same path CI takes (`.github/workflows/ci.gateway.yml`) on both Linux and Windows, so the local run matches what gates the pull request.
 
 ## WebSocket protocol
 

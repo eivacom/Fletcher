@@ -12,4 +12,4 @@ target_link_libraries(gateway_tests PRIVATE
     gateway_codec)
 
 include(GoogleTest)
-gtest_discover_tests(gateway_tests)
+gtest_discover_tests(gateway_tests DISCOVERY_MODE PRE_TEST)

@@ -1,7 +1,14 @@
 {
-  "name": "fletcher-gateway-client",
-  "version": "0.1.0-alpha",
+  "name": "@eiva/fletcher-gateway-client",
+  "version": "0.1.2-alpha",
   "description": "TypeScript client for the Fletcher gateway — WebSocket transport with positional row codec",
+  "license": "LGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eivacom/Fletcher.git",
+    "directory": "gateway-client-ts"
+  },
+  "homepage": "https://github.com/eivacom/Fletcher/tree/main/gateway-client-ts#readme",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.gateway-end-to-end
+
+concurrency:
+  group: ci.integration-test.gateway-end-to-end-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers.
+        required: true
+        type: string
+
+jobs:
+  gateway-end-to-end:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            gateway
+            gateway-client-ts
+            integration-tests/gateway-end-to-end
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build components and run integration tests
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     for COMPONENT in core pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/gateway-end-to-end && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure + build' && \
+                     cmake --preset conan-release && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm ci' && \
+                     npm ci && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test' && \
+                     npm test && \
+                     echo '::endgroup::'"
