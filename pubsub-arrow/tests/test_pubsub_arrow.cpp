@@ -227,6 +227,7 @@ struct BatchSink {
         int64_t num_rows;
         std::vector<Attachments> attachments;
         BatchStatus status;
+        std::shared_ptr<arrow::RecordBatch> batch;
     };
 
     std::mutex mu;
@@ -237,7 +238,7 @@ struct BatchSink {
         return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments> att,
                       BatchStatus status) {
             std::lock_guard<std::mutex> lk(mu);
-            deliveries.push_back({batch ? batch->num_rows() : -1, std::move(att), status});
+            deliveries.push_back({batch ? batch->num_rows() : -1, std::move(att), status, batch});
             cv.notify_all();
         };
     }
@@ -392,4 +393,76 @@ TEST(PubSubArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
     EXPECT_EQ(sink.deliveries[0].attachments.size(), 0u);
     EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
     EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kTimeout);
+}
+
+// ---------------------------------------------------------------------------
+// Dictionary columns — transferred as values, re-folded into a DictionaryArray
+// ---------------------------------------------------------------------------
+
+TEST(PubSubArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::minutes(10);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    // Published as plain values; subscriber re-folds into a dictionary.
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("blue")});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto batch = sink.deliveries[0].batch;
+    ASSERT_NE(batch, nullptr);
+    ASSERT_EQ(batch->num_columns(), 1);
+    auto col = batch->column(0);
+    ASSERT_EQ(col->type_id(), arrow::Type::DICTIONARY);
+    EXPECT_TRUE(col->type()->Equals(*dict_type));
+
+    auto dict_col = std::static_pointer_cast<arrow::DictionaryArray>(col);
+    EXPECT_EQ(dict_col->length(), 3);
+    EXPECT_EQ(dict_col->dictionary()->length(), 2);  // "red", "blue"
+
+    auto idx = std::static_pointer_cast<arrow::Int32Array>(dict_col->indices());
+    EXPECT_EQ(idx->Value(0), idx->Value(2));  // both "red" -> same index
+    EXPECT_NE(idx->Value(0), idx->Value(1));  // "red" vs "blue"
+
+    auto values = std::static_pointer_cast<arrow::StringArray>(dict_col->dictionary());
+    EXPECT_EQ(values->GetString(idx->Value(0)), "red");
+    EXPECT_EQ(values->GetString(idx->Value(1)), "blue");
+}
+
+TEST(PubSubArrowBatchTest, DictionaryColumnPreservesNulls) {
+    auto mock = std::make_shared<MockProvider>();
+    PubSubArrow pa(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+
+    BatchSink sink;
+    PubSubArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::minutes(10);
+    pa.Subscribe(kTopic, sink.callback(), opt);
+
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+    pa.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});
+    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto col = sink.deliveries[0].batch->column(0);
+    ASSERT_EQ(col->type_id(), arrow::Type::DICTIONARY);
+    EXPECT_EQ(col->length(), 3);
+    EXPECT_TRUE(col->IsValid(0));
+    EXPECT_FALSE(col->IsValid(1));  // null preserved through re-folding
+    EXPECT_TRUE(col->IsValid(2));
+
+    auto dict_col = std::static_pointer_cast<arrow::DictionaryArray>(col);
+    EXPECT_EQ(dict_col->dictionary()->length(), 1);  // only "x"
 }

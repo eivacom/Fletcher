@@ -5,6 +5,7 @@
 
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
+#include <arrow/compute/api.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -166,7 +167,14 @@ class PubSubArrow::RecordBatchBatcher {
         const int num_fields = schema->num_fields();
         std::vector<std::shared_ptr<arrow::Array>> columns(static_cast<size_t>(num_fields));
         for (int c = 0; c < num_fields; ++c) {
-            auto builder = arrow::MakeBuilder(schema->field(c)->type()).ValueOrDie();
+            const auto& field_type = schema->field(c)->type();
+            if (field_type->id() == arrow::Type::DICTIONARY) {
+                // Dictionary columns arrive as plain value scalars on the wire;
+                // re-fold them into a real DictionaryArray here.
+                columns[static_cast<size_t>(c)] = BuildDictionaryColumn(field_type, rows, c);
+                continue;
+            }
+            auto builder = arrow::MakeBuilder(field_type).ValueOrDie();
             (void)builder->Reserve(static_cast<int64_t>(rows.size()));
             for (const auto& row : rows) {
                 // row[c] is always present: DecodeRow yields one scalar per
@@ -181,6 +189,36 @@ class PubSubArrow::RecordBatchBatcher {
         }
         return arrow::RecordBatch::Make(schema, static_cast<int64_t>(rows.size()),
                                         std::move(columns));
+    }
+
+    // Re-folds a dictionary column: build the value array from the per-row
+    // (plain value, or null) scalars, then dictionary-encode it to the field's
+    // declared dictionary type.
+    static std::shared_ptr<arrow::Array> BuildDictionaryColumn(
+        const std::shared_ptr<arrow::DataType>& dict_type, const std::vector<ArrowRow>& rows,
+        int col) {
+        const auto& value_type = static_cast<const arrow::DictionaryType&>(*dict_type).value_type();
+        auto builder = arrow::MakeBuilder(value_type).ValueOrDie();
+        (void)builder->Reserve(static_cast<int64_t>(rows.size()));
+        for (const auto& row : rows) {
+            const auto& s = row[static_cast<size_t>(col)];
+            if (!s || !s->is_valid || !builder->AppendScalar(*s).ok()) (void)builder->AppendNull();
+        }
+        auto value_array = builder->Finish().ValueOrDie();
+
+        // arrow::compute::DictionaryEncode yields dictionary(int32, value_type);
+        // cast to the field's declared type when its index type differs.
+        auto encoded = arrow::compute::DictionaryEncode(arrow::Datum(value_array)).ValueOrDie();
+        auto array = encoded.make_array();
+        if (!array->type()->Equals(*dict_type)) {
+            auto casted = arrow::compute::Cast(arrow::Datum(array), dict_type);
+            if (!casted.ok())
+                throw std::invalid_argument("PubSubArrow: cannot build dictionary column of type " +
+                                            dict_type->ToString() + ": " +
+                                            casted.status().ToString());
+            array = casted.ValueOrDie().make_array();
+        }
+        return array;
     }
 
     RecordBatchCallback cb_;

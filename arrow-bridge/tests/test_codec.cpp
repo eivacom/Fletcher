@@ -374,3 +374,54 @@ TEST(CodecTest, NinePlusFieldsUseMultiByteNullBitfield) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dictionary fields — transferred as the value type, one value per row.
+// ---------------------------------------------------------------------------
+
+TEST(CodecTest, DictionaryFieldTransfersValueType) {
+    // A dictionary field may be supplied as a plain value-type scalar; it
+    // round-trips to a plain value scalar (indices are not on the wire).
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    auto schema = arrow::schema({arrow::field("v", dict_type, /*nullable=*/true)});
+    fletcher::Codec codec(schema);
+
+    auto value = std::make_shared<arrow::StringScalar>("alpha");
+    auto decoded = codec.DecodeRow(codec.EncodeRow({value}));
+    ASSERT_EQ(decoded.size(), 1u);
+    ASSERT_TRUE(decoded[0]->is_valid);
+    EXPECT_EQ(decoded[0]->type->id(), arrow::Type::STRING);
+    EXPECT_TRUE(decoded[0]->Equals(*value));
+}
+
+TEST(CodecTest, DictionaryScalarEncodesResolvedValue) {
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    auto schema = arrow::schema({arrow::field("v", dict_type, /*nullable=*/true)});
+    fletcher::Codec codec(schema);
+
+    // Build a DictionaryScalar that points at "z".
+    arrow::StringBuilder vb;
+    ASSERT_TRUE(vb.AppendValues({"x", "y", "z"}).ok());
+    auto dict_values = vb.Finish().ValueOrDie();
+    arrow::Int32Builder ib;
+    ASSERT_TRUE(ib.Append(2).ok());
+    auto indices = ib.Finish().ValueOrDie();
+    auto dict_arr =
+        arrow::DictionaryArray::FromArrays(dict_type, indices, dict_values).ValueOrDie();
+    auto ds = dict_arr->GetScalar(0).ValueOrDie();
+
+    auto decoded = codec.DecodeRow(codec.EncodeRow({ds}));
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_TRUE(decoded[0]->Equals(arrow::StringScalar("z")));
+}
+
+TEST(CodecTest, DictionaryNestedValueTypeRejected) {
+    // Nested dictionary value types are not supported and must error clearly.
+    auto nested = arrow::dictionary(arrow::int32(), arrow::list(arrow::int32()));
+    auto schema = arrow::schema({arrow::field("v", nested, /*nullable=*/true)});
+    fletcher::Codec codec(schema);
+
+    // One field, marked non-null (0x00 bitfield): decode reaches the guard.
+    const std::vector<uint8_t> buf = {0x00};
+    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+}
