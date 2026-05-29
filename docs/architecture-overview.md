@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Fletcher -->
-<!-- Title: Architecture Overview -->
-
 # Fletcher — Architecture Overview
 
 ## 1. Vision and Design Principles

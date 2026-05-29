@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Architecture Overview -->
-<!-- Title: Data Flow Diagrams -->
-
 # Data Flow Diagrams
 
 ## Sensor-to-Subscriber Pipeline

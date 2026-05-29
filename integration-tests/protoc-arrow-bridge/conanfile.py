@@ -14,8 +14,8 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
     The components themselves (protoc, arrow-bridge, etc.) are expected to
     be in the local Conan cache (built earlier in the workflow via
     `conan create <component>/.`). Conan resolves locally first, so the
-    branch's in-flight versions are used — we never reach for the
-    conan-eiva remote for our own packages.
+    branch's in-flight versions are used — we never reach for an
+    external remote for our own packages.
     """
     settings = "os", "compiler", "build_type", "arch"
     generators = "CMakeDeps", "CMakeToolchain"

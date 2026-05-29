@@ -1,10 +1,6 @@
-<!-- Space: Software -->
-<!-- Parent: Architecture -->
-<!-- Title: Fletcher -->
-
 # Fletcher
 
-Architecture documentation for Fletcher, EIVA's Arrow-native row serialization and pub/sub library system for sensor telemetry, message buses, and analytics ingestion.
+Architecture documentation for Fletcher, an Arrow-native row serialization and pub/sub library system for sensor telemetry, message buses, and analytics ingestion.
 
 | Document | Description |
 |---|---|

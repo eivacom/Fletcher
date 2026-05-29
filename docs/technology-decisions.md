@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Architecture Overview -->
-<!-- Title: Technology Decision Log -->
-
 # Technology Decision Log
 
 This document records significant technology decisions, the rationale behind them, alternatives considered, and known risks. It is a living document updated as the architecture evolves.
