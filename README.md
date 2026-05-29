@@ -9,6 +9,8 @@ Fletcher bridges two worlds: **Protocol Buffers** for message definition and **A
 
 The same encoded bytes flow unchanged from a microcontroller publishing over DDS, through a server decoding with Apache Arrow C++, to a browser rendering live data over WebSocket — with no format conversion at any hop.
 
+Fletcher began as part of EIVA's upcoming NaviSuite 5 architecture for marine surveying and inspection operations, which adopts a fully Arrow-based data model end to end. Because every customer integrating with NaviSuite 5 needs Fletcher — and because the library is entirely self-contained and useful well beyond the survey-and-inspection domain — we have chosen to open-source it. Fletcher is an integral part of that architecture, so it is continuously maintained and supported; outside contributions are very welcome and actively encouraged.
+
 ---
 
 ## Contents
