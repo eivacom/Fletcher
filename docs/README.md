@@ -5,13 +5,15 @@ This directory contains the architecture documentation for Fletcher, an Arrow-na
 ## Structure
 
 ```
-fletcher.md                    # Documentation landing page
-architecture-overview.md       # Main architecture document
+architecture-overview.md       # Main architecture document — start here
 component-diagram.md           # Component detail and dependency graph
 data-flow-diagrams.md          # Encode/decode, pub/sub, browser flows
 wire-format-specification.md   # Positional wire format, type mapping, envelope
 technology-decisions.md        # Technology decision log (TD-001 through TD-007)
+fletcher-options.md            # (fletcher.flatten) schema-flattening option
 ```
+
+The project [README](../README.md) is the top-level introduction and getting-started guide; this directory holds the deeper architecture references.
 
 ## Viewing
 
