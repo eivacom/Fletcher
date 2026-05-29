@@ -108,7 +108,7 @@ class PositionalWriter {
     ListContext BeginList(uint32_t count) {
         buf_.AppendFixed(count);
         size_t bf_offset = buf_.Position();
-        size_t nbytes = BitfieldBytes(static_cast<int>(count));
+        size_t nbytes = BitfieldBytes(count);
         for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
         return ListContext{buf_, bf_offset, count};
     }
@@ -136,7 +136,7 @@ class PositionalWriter {
     WriteBuffer& buf() { return buf_; }
 
    private:
-    static size_t BitfieldBytes(int n) { return static_cast<size_t>((n + 7) / 8); }
+    static size_t BitfieldBytes(size_t n) { return (n + 7) / 8; }
 
     WriteBuffer& buf_;
     int num_fields_;
@@ -152,8 +152,8 @@ class PositionalReader {
     PositionalReader(const uint8_t* data, size_t len, int num_fields)
         : data_(data), len_(len), pos_(0), num_fields_(num_fields) {
         // Read the null bitfield.
-        size_t nbytes = BitfieldBytes(num_fields);
-        if (pos_ + nbytes > len_)
+        size_t nbytes = BitfieldBytes(static_cast<size_t>(num_fields));
+        if (nbytes > len_ - pos_)
             throw std::invalid_argument("PositionalReader: buffer underrun (bitfield)");
         bitfield_ = data_ + pos_;
         pos_ += nbytes;
@@ -218,25 +218,39 @@ class PositionalReader {
 
     ListHeader ReadListHeader() {
         uint32_t count = Read<uint32_t>();
-        size_t nbytes = BitfieldBytes(static_cast<int>(count));
-        const uint8_t* bf = ReadBytes(nbytes);
+        // Reject a corrupt/oversized count before computing the bitfield size
+        // and before the caller loops `count` times.
+        if (count > Remaining())
+            throw std::invalid_argument("PositionalReader: list count exceeds remaining buffer");
+        const uint8_t* bf = ReadBytes(BitfieldBytes(count));
         return ListHeader{count, bf};
     }
 
     // Read a map header: COUNT (no bitfield — keys are never null).
     // Caller reads key payloads, then calls ReadMapValueBitfield().
-    uint32_t ReadMapCount() { return Read<uint32_t>(); }
-
-    const uint8_t* ReadMapValueBitfield(uint32_t count) {
-        size_t nbytes = BitfieldBytes(static_cast<int>(count));
-        return ReadBytes(nbytes);
+    uint32_t ReadMapCount() {
+        uint32_t count = Read<uint32_t>();
+        if (count > Remaining())
+            throw std::invalid_argument("PositionalReader: map count exceeds remaining buffer");
+        return count;
     }
+
+    const uint8_t* ReadMapValueBitfield(uint32_t count) { return ReadBytes(BitfieldBytes(count)); }
 
     // Bytes consumed so far.
     size_t BytesConsumed() const { return pos_; }
 
     // Remaining bytes.
     size_t Remaining() const { return len_ - pos_; }
+
+    // Throws if this reader has not consumed its entire buffer. Trailing bytes
+    // mean the payload does not match the schema (corruption, a length-prefix
+    // bug, or a padded/concatenated buffer). Generated message constructors
+    // should call this on the top-level reader after reading all fields.
+    void VerifyFullyConsumed() const {
+        if (pos_ != len_)
+            throw std::invalid_argument("PositionalReader: buffer not fully consumed");
+    }
 
     // Called when a sub-reader (from ReadStruct) is done, to advance
     // the parent's position.
@@ -262,8 +276,8 @@ class PositionalReader {
     // Sub-reader constructor (tracks parent for position advance).
     PositionalReader(const uint8_t* data, size_t len, int num_fields, PositionalReader* parent)
         : data_(data), len_(len), pos_(0), num_fields_(num_fields), parent_(parent) {
-        size_t nbytes = BitfieldBytes(num_fields);
-        if (pos_ + nbytes > len_)
+        size_t nbytes = BitfieldBytes(static_cast<size_t>(num_fields));
+        if (nbytes > len_ - pos_)
             throw std::invalid_argument("PositionalReader: buffer underrun (struct bitfield)");
         bitfield_ = data_ + pos_;
         pos_ += nbytes;
@@ -271,7 +285,8 @@ class PositionalReader {
 
     template <typename T>
     T Read() {
-        if (pos_ + sizeof(T) > len_)
+        // Overflow-safe form of `pos_ + sizeof(T) > len_` (pos_ <= len_ always).
+        if (sizeof(T) > len_ - pos_)
             throw std::invalid_argument("PositionalReader: buffer underrun");
         T value;
         std::memcpy(&value, data_ + pos_, sizeof(T));
@@ -280,13 +295,17 @@ class PositionalReader {
     }
 
     const uint8_t* ReadBytes(size_t n) {
-        if (pos_ + n > len_) throw std::invalid_argument("PositionalReader: buffer underrun");
+        // Overflow-safe: a wrapping `pos_ + n` could pass for an
+        // attacker-controlled length and permit an out-of-bounds read.
+        if (n > len_ - pos_) throw std::invalid_argument("PositionalReader: buffer underrun");
         const uint8_t* ptr = data_ + pos_;
         pos_ += n;
         return ptr;
     }
 
-    static size_t BitfieldBytes(int n) { return static_cast<size_t>((n + 7) / 8); }
+    // size_t param so a wire-supplied uint32_t count never narrows to a
+    // negative int before the (n + 7) / 8 arithmetic.
+    static size_t BitfieldBytes(size_t n) { return (n + 7) / 8; }
 
     const uint8_t* data_;
     size_t len_;
