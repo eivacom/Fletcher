@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Fletcher -->
-<!-- Title: Architecture Overview -->
-
 # Fletcher — Architecture Overview
 
 ## 1. Vision and Design Principles
@@ -318,7 +314,7 @@ C++ tests run through GTest in each component's `tests/` directory and are disco
 | pubsub-arrow | `pubsub-arrow/tests/` | Arrow C++ / nanoarrow schema conversion, ArrowRow encode/decode through adapter |
 | fastdds-pubsub-provider | `fastdds-pubsub-provider/tests/` | DDS topic discovery, schema companion topic, end-to-end publish/subscribe |
 | xrcedds-pubsub-provider | `xrcedds-pubsub-provider/tests/` | Same surface as the FastDDS provider, against an XRCE-DDS Agent |
-| protoc-arrow-bridge integration | `integration-tests/protoc-arrow-bridge/tests/` | Byte-compat invariants between protoc-generated row classes and `Codec` across every wire-format scenario (scalars, WKT, nested, collections, maps, complex, pubsub wrappers, GeoArrow, schema evolution). Also exercises native (no Arrow C++) and ArrowRowView paths. |
+| protoc-arrow-bridge integration | `integration-tests/protoc-arrow-bridge/tests/` | Byte-compat invariants between protoc-generated row classes and `Codec` across every wire-format scenario (scalars, WKT, nested, collections, maps, complex, pubsub wrappers, flatten, schema evolution). Also exercises native (no Arrow C++) and ArrowRowView paths. |
 | gateway-client-ts | `gateway-client-ts/test/` | Envelope roundtrips, WebSocket protocol frames, positional codec roundtrips, end-to-end client behaviour against a mock WebSocket. |
 
 See [Technology Decision Log](technology-decisions.md) for rationale behind each technology choice.

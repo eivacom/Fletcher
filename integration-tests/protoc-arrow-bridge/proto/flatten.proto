@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+syntax = "proto3";
+package integration;
+
+import "fletcher/options.proto";
+
+// --- Case A: scalar wrapper (message-level flatten) ---
+
+message Temperature {
+    option (fletcher.flatten) = true;
+    float celsius = 1;
+}
+
+// --- Case B: struct composition (field-level flatten) ---
+
+message Coord {
+    double x = 1;
+    double y = 2;
+}
+
+message Point {
+    Coord coord = 1 [(fletcher.flatten_field) = true];
+}
+
+// --- Case C: chained message-level flatten (geometry-style nesting) ---
+
+message Ring {
+    option (fletcher.flatten) = true;
+    repeated Coord vertices = 1;
+}
+
+message Polygon {
+    option (fletcher.flatten) = true;
+    repeated Ring rings = 1;
+}
+
+// --- Case D: multi-field message with flatten (should warn + ignore) ---
+
+message BadFlatten {
+    option (fletcher.flatten) = true;
+    double x = 1;
+    double y = 2;
+}
+
+// --- Container exercising all cases ---
+
+message FlattenTestRow {
+    Temperature              reading  = 1;
+    Point                    position = 2;
+    Polygon                  shape    = 3;
+    repeated Temperature     temps    = 4;
+    BadFlatten               bad      = 5;
+    optional Temperature     opt_temp = 6;
+}

@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Architecture Overview -->
-<!-- Title: Component and Dependency Diagram -->
-
 # Component and Dependency Diagram
 
 ## System Context

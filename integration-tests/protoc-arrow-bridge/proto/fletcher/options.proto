@@ -8,15 +8,14 @@ package fletcher;
 
 import "google/protobuf/descriptor.proto";
 
-// Default CRS for all GeoArrow fields in the message.
-// Value is a CRS identifier resolved at schema-construction time,
-// e.g. "EPSG:4326" (looked up to PROJJSON) or raw PROJJSON.
+// See docs/fletcher-options.md for the full specification.
+
 extend google.protobuf.MessageOptions {
-    optional string default_crs = 50001;
+    // Flatten a single-field message wrapper into its inner type.
+    optional bool flatten = 50000;
 }
 
-// CRS override for a single GeoArrow field.
-// Takes precedence over the message-level default_crs.
 extend google.protobuf.FieldOptions {
-    optional string crs = 50002;
+    // Inline the referenced message's fields into the enclosing message.
+    optional bool flatten_field = 50000;
 }

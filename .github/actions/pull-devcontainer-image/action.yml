@@ -26,15 +26,30 @@ runs:
   using: "composite"
   steps:
     - name: Log in to Docker Hub
-      shell: bash
-      env:
-        DOCKERHUB_TOKEN: ${{ inputs.dockerhub-token }}
-      run: echo "$DOCKERHUB_TOKEN" | docker login -u eivaorg --password-stdin
+      uses: docker/login-action@v4.2.0
+      with:
+        username: eivaorg
+        password: ${{ inputs.dockerhub-token }}
 
+    # docker pull can hit transient "Error response from daemon: ... unknown:"
+    # registry hiccups that succeed on retry. Five attempts with linear
+    # backoff (5s, 10s, 15s, 20s — 50s total max wait) covers Docker Hub's
+    # typical recovery window.
     - name: Pull and retag as fletcher-build
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
       run: |
-        docker pull "$IMAGE"
+        for attempt in 1 2 3 4 5; do
+          if docker pull "$IMAGE"; then
+            break
+          fi
+          if [ "$attempt" -eq 5 ]; then
+            echo "::error::docker pull failed after 5 attempts"
+            exit 1
+          fi
+          delay=$((attempt * 5))
+          echo "::warning::docker pull failed on attempt $attempt, retrying in ${delay}s..."
+          sleep "$delay"
+        done
         docker tag "$IMAGE" fletcher-build

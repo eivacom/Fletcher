@@ -10,9 +10,29 @@
 
 namespace fletcher {
 
-namespace {
+// -----------------------------------------------------------------------
+// Custom option helpers (visible to both anonymous namespace and public API)
+// -----------------------------------------------------------------------
 
 using FD = google::protobuf::FieldDescriptor;
+
+constexpr int kFlattenOptionNumber = 50000;
+
+static bool FindBoolOption(const google::protobuf::Message& opts, int number) {
+    const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
+    for (int i = 0; i < unknown.field_count(); ++i) {
+        const auto& f = unknown.field(i);
+        if (f.number() == number && f.type() == google::protobuf::UnknownField::TYPE_VARINT)
+            return f.varint() != 0;
+    }
+    return false;
+}
+
+static bool HasMessageFlatten(const google::protobuf::Descriptor* msg) {
+    return FindBoolOption(msg->options(), kFlattenOptionNumber);
+}
+
+namespace {
 
 // -----------------------------------------------------------------------
 // Cross-file reference helpers
@@ -173,11 +193,6 @@ bool IsFieldNullable(const google::protobuf::FieldDescriptor* field) {
 // Well-known type helpers
 // -----------------------------------------------------------------------
 
-struct WellKnownScalar {
-    const char* full_name;
-    const ScalarTypeInfo* info;
-};
-
 // google.protobuf.*Value wrappers → nullable scalar of the inner type.
 const ScalarTypeInfo* WrapperTypeInfo(const std::string& fqn) {
     static const ScalarTypeInfo kBoolVal{"arrow::boolean()",
@@ -308,6 +323,9 @@ int NestingDepthImpl(const google::protobuf::Descriptor* msg,
 // MapField helpers for composite kinds
 // -----------------------------------------------------------------------
 
+std::optional<FieldMapping> MapFlattenedSingular(const FD* field);
+std::optional<FieldMapping> MapFlattenedRepeated(const FD* field);
+
 std::optional<FieldMapping> MapScalarField(const FD* field) {
     const ScalarTypeInfo* base = BaseScalar(field->type());
     if (!base) return std::nullopt;
@@ -339,6 +357,11 @@ std::optional<FieldMapping> MapRepeatedEnum(const FD* /*field*/) {
 
 std::optional<FieldMapping> MapStructField(const FD* field) {
     const auto* msg = field->message_type();
+
+    // Message-level flatten: strip the wrapper and map the inner field.
+    auto flat = MapFlattenedSingular(field);
+    if (flat) return flat;
+
     if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
@@ -356,6 +379,11 @@ std::optional<FieldMapping> MapStructField(const FD* field) {
 
 std::optional<FieldMapping> MapRepeatedMessage(const FD* field) {
     const auto* msg = field->message_type();
+
+    // Message-level flatten: strip the wrapper, accumulate list depth.
+    auto flat = MapFlattenedRepeated(field);
+    if (flat) return flat;
+
     if (IsRecursive(msg)) return std::nullopt;
 
     FieldMapping m{};
@@ -407,106 +435,149 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
 }
 
 // -----------------------------------------------------------------------
-// GeoArrow extension type recognition
+// Message-level flatten: resolve wrapper chains
 // -----------------------------------------------------------------------
 
-// Maps a geoarrow.* FQN to its GeoArrow extension name.
-// Returns empty string if not a recognized GeoArrow type.
-std::string GeoArrowExtensionName(const std::string& fqn) {
-    // Coordinate structs
-    if (fqn == "geoarrow.Point" || fqn == "geoarrow.PointZ") return "geoarrow.point";
-    if (fqn == "geoarrow.Box" || fqn == "geoarrow.BoxZ") return "geoarrow.box";
-    // Phase 1 list wrappers (depth 1)
-    if (fqn == "geoarrow.LineString" || fqn == "geoarrow.LineStringZ") return "geoarrow.linestring";
-    if (fqn == "geoarrow.MultiPoint" || fqn == "geoarrow.MultiPointZ") return "geoarrow.multipoint";
-    // Phase 2 nested list types (depth 2-3)
-    if (fqn == "geoarrow.Polygon" || fqn == "geoarrow.PolygonZ") return "geoarrow.polygon";
-    if (fqn == "geoarrow.MultiLineString" || fqn == "geoarrow.MultiLineStringZ")
-        return "geoarrow.multilinestring";
-    if (fqn == "geoarrow.MultiPolygon" || fqn == "geoarrow.MultiPolygonZ")
-        return "geoarrow.multipolygon";
-    return {};
-}
-
-// Returns true for wrapper messages that are collapsed into list fields
-// (no class is generated for these).
-bool IsGeoArrowWrapper(const std::string& fqn) {
-    return fqn == "geoarrow.LineString" || fqn == "geoarrow.LineStringZ" ||
-           fqn == "geoarrow.MultiPoint" || fqn == "geoarrow.MultiPointZ" ||
-           fqn == "geoarrow.LinearRing" || fqn == "geoarrow.LinearRingZ" ||
-           fqn == "geoarrow.Polygon" || fqn == "geoarrow.PolygonZ" ||
-           fqn == "geoarrow.MultiLineString" || fqn == "geoarrow.MultiLineStringZ" ||
-           fqn == "geoarrow.MultiPolygon" || fqn == "geoarrow.MultiPolygonZ";
-}
-
-// Search an options message's UnknownFieldSet for a string extension by number.
-// Custom options are stored as unknown fields when the extension isn't compiled
-// into the plugin binary.
-static std::string FindStringOption(const google::protobuf::Message& opts, int number) {
-    const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
-    for (int i = 0; i < unknown.field_count(); ++i) {
-        const auto& f = unknown.field(i);
-        if (f.number() == number &&
-            f.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED)
-            return f.length_delimited();
-    }
-    return {};
-}
-
-// Read the CRS string from fletcher.crs (field option) or fletcher.default_crs
-// (message option).  Returns empty if neither is set.
-std::string ReadCrsOption(const FD* field) {
-    // Field-level: fletcher.crs (extension number 50002)
-    auto crs = FindStringOption(field->options(), 50002);
-    if (!crs.empty()) return crs;
-
-    // Message-level: fletcher.default_crs (extension number 50001)
-    return FindStringOption(field->containing_type()->options(), 50001);
-}
-
-std::optional<FieldMapping> MapGeoArrow(const FD* field) {
+// For a singular message field whose target has (fletcher.flatten), resolve
+// through the wrapper chain and return the mapping of the innermost field.
+std::optional<FieldMapping> MapFlattenedSingular(const FD* field) {
     const auto* msg = field->message_type();
-    const std::string& fqn = msg->full_name();
+    if (!HasMessageFlatten(msg)) return std::nullopt;
 
-    std::string ext_name = GeoArrowExtensionName(fqn);
-    if (ext_name.empty()) return std::nullopt;
-
-    // Coordinate structs (Point, PointZ, Box, BoxZ) → STRUCT with extension metadata.
-    if (!IsGeoArrowWrapper(fqn)) {
-        auto m = MapStructField(field);
-        if (!m) return std::nullopt;
-        m->extension_name = std::move(ext_name);
-        m->crs = ReadCrsOption(field);
+    if (msg->field_count() != 1) {
+        FieldMapping m{};
+        m.kind = FieldKind::STRUCT;
+        m.nullable = IsFieldNullable(field);
+        m.nested_class = QualifiedClassName(msg, field->file());
+        m.nested_header = CrossFileHeader(msg, field->file());
+        m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
+                    std::to_string(msg->field_count()) +
+                    " fields); apply flatten to individual fields instead";
         return m;
     }
 
-    // Walk the wrapper chain to find the innermost coordinate struct.
-    // Each wrapper must have field(0) = repeated Message.
+    // Walk through the single inner field — may itself be another flattened
+    // wrapper, a scalar, a repeated, etc.  Use MapField on the inner field
+    // so all dispatch logic (WKT, flatten chaining, etc.) applies.
+    const auto* inner = msg->field(0);
+
+    if (inner->is_repeated()) {
+        std::optional<FieldMapping> resolved;
+        if (inner->type() == FD::TYPE_MESSAGE)
+            resolved = MapRepeatedMessage(inner);
+        else if (inner->type() == FD::TYPE_ENUM)
+            resolved = MapRepeatedEnum(inner);
+        else
+            resolved = MapRepeatedScalar(inner);
+        if (resolved && IsFieldNullable(field)) resolved->nullable = true;
+        return resolved;
+    }
+
+    // Singular inner field — resolve recursively (handles chaining).
+    auto resolved = MapField(inner);
+    if (resolved && IsFieldNullable(field)) resolved->nullable = true;
+    return resolved;
+}
+
+// For a repeated message field whose target has (fletcher.flatten), walk
+// the flatten chain counting list levels until we reach a leaf type.
+// Generalises the previous hardcoded wrapper chain-walking logic.
+std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
+    const auto* msg = field->message_type();
+    if (!HasMessageFlatten(msg)) return std::nullopt;
+
+    if (msg->field_count() != 1) {
+        FieldMapping m{};
+        m.kind = FieldKind::REPEATED_STRUCT;
+        m.nullable = false;
+        m.nested_class = QualifiedClassName(msg, field->file());
+        m.nested_header = CrossFileHeader(msg, field->file());
+        m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
+                    std::to_string(msg->field_count()) +
+                    " fields); apply flatten to individual fields instead";
+        return m;
+    }
+
+    // Walk the chain: each flattened wrapper with a repeated-message inner
+    // field adds one list nesting level.  depth counts only chain-internal
+    // levels; the caller's own `repeated` keyword adds +1 at the end.
     int depth = 0;
     const google::protobuf::Descriptor* current = msg;
-    while (IsGeoArrowWrapper(current->full_name())) {
-        if (current->field_count() < 1) return std::nullopt;
-        const auto* inner_field = current->field(0);
-        if (!inner_field->is_repeated() || inner_field->type() != FD::TYPE_MESSAGE)
+    while (HasMessageFlatten(current) && current->field_count() == 1) {
+        const auto* inner = current->field(0);
+
+        if (inner->is_repeated() && inner->type() == FD::TYPE_MESSAGE) {
+            ++depth;
+            current = inner->message_type();
+            continue;
+        }
+
+        if (inner->is_repeated()) {
+            // Leaf is a repeated scalar/enum — produces one more list level.
+            const ScalarTypeInfo* base = (inner->type() == FD::TYPE_ENUM)
+                                             ? BaseScalar(FD::TYPE_ENUM)
+                                             : BaseScalar(inner->type());
+            if (!base) return std::nullopt;
+
+            if (depth == 0) {
+                FieldMapping m{};
+                m.kind = FieldKind::REPEATED_SCALAR;
+                m.nullable = false;
+                m.element = *base;
+                return m;
+            }
+            // depth > 0: nested list of scalars — not yet supported by the
+            // generator (would need NESTED_LIST with scalar leaf).  Fall
+            // through to produce a warning.
             return std::nullopt;
-        ++depth;
-        current = inner_field->message_type();
+        }
+
+        // Singular inner field — the wrapper strips without adding a list
+        // level.  If the inner is itself a flattened message, continue walking.
+        if (inner->type() == FD::TYPE_MESSAGE && HasMessageFlatten(inner->message_type())) {
+            current = inner->message_type();
+            continue;
+        }
+
+        // Singular scalar/enum leaf inside the chain.  The caller's field
+        // is `repeated`, so the result is always list-wrapped.
+        if (inner->type() != FD::TYPE_MESSAGE) {
+            const ScalarTypeInfo* base = (inner->type() == FD::TYPE_ENUM)
+                                             ? BaseScalar(FD::TYPE_ENUM)
+                                             : BaseScalar(inner->type());
+            if (!base) return std::nullopt;
+
+            if (depth == 0) {
+                FieldMapping m{};
+                m.kind = FieldKind::REPEATED_SCALAR;
+                m.nullable = false;
+                m.element = *base;
+                return m;
+            }
+            return std::nullopt;
+        }
+
+        // Singular non-flattened message leaf — it becomes a struct.
+        current = inner->message_type();
+        break;
     }
-    // 'current' is now the coordinate struct (Point, PointZ, etc.)
-    // 'depth' is the number of list levels
+
+    // 'current' is the leaf struct.  Total list depth = depth (from chain)
+    // + 1 (from the caller's own `repeated` keyword).
+    if (IsRecursive(current)) return std::nullopt;
+
+    int total = depth + 1;
 
     FieldMapping m{};
-    m.nullable = IsFieldNullable(field);
+    m.nullable = false;
     m.nested_class = QualifiedClassName(current, field->file());
     m.nested_header = CrossFileHeader(current, field->file());
-    m.extension_name = std::move(ext_name);
-    m.crs = ReadCrsOption(field);
 
-    if (depth == 1) {
+    if (total <= 1) {
         m.kind = FieldKind::REPEATED_STRUCT;
     } else {
         m.kind = FieldKind::NESTED_LIST;
-        m.list_depth = depth;
+        m.list_depth = total;
     }
     return m;
 }
@@ -561,10 +632,6 @@ std::optional<FieldMapping> MapWellKnown(const FD* field) {
         m.scalar = *wrapper;
         return m;
     }
-
-    // GeoArrow extension types
-    auto geo = MapGeoArrow(field);
-    if (geo) return geo;
 
     return std::nullopt;  // unknown well-known or unsupported message
 }
@@ -632,8 +699,12 @@ bool IsRecursive(const google::protobuf::Descriptor* msg) {
     return IsRecursiveImpl(msg, stack);
 }
 
-bool IsGeoArrowWrapper(const google::protobuf::Descriptor* msg) {
-    return IsGeoArrowWrapper(msg->full_name());
+bool IsFlattenedWrapper(const google::protobuf::Descriptor* msg) {
+    return HasMessageFlatten(msg) && msg->field_count() == 1;
+}
+
+bool HasFieldFlatten(const google::protobuf::FieldDescriptor* field) {
+    return FindBoolOption(field->options(), kFlattenOptionNumber);
 }
 
 int NestingDepth(const google::protobuf::Descriptor* msg) {
@@ -742,34 +813,6 @@ std::string CppWireTypeIdHex(FieldKind kind) {
             return "0x24";
         default:
             return "";
-    }
-}
-
-int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type) {
-    using FDT = google::protobuf::FieldDescriptor;
-    switch (type) {
-        case FDT::TYPE_BOOL:
-            return 1;
-        case FDT::TYPE_INT32:
-        case FDT::TYPE_SINT32:
-        case FDT::TYPE_SFIXED32:
-        case FDT::TYPE_UINT32:
-        case FDT::TYPE_FIXED32:
-        case FDT::TYPE_FLOAT:
-        case FDT::TYPE_ENUM:
-            return 4;
-        case FDT::TYPE_INT64:
-        case FDT::TYPE_SINT64:
-        case FDT::TYPE_SFIXED64:
-        case FDT::TYPE_UINT64:
-        case FDT::TYPE_FIXED64:
-        case FDT::TYPE_DOUBLE:
-            return 8;
-        case FDT::TYPE_STRING:
-        case FDT::TYPE_BYTES:
-            return -1;  // variable-length
-        default:
-            return -1;
     }
 }
 

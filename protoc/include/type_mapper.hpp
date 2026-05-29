@@ -54,14 +54,6 @@ struct FieldMapping {
     std::string map_value_class;   // C++ type reference (globally qualified when cross-file)
     std::string map_value_header;  // non-empty → #include this path (cross-file dep)
     bool map_value_is_message = false;
-
-    // Arrow extension type (empty → no extension).
-    std::string extension_name;      // e.g. "geoarrow.point"
-    std::string extension_metadata;  // JSON metadata string; empty → omit
-
-    // Compile-time CRS from proto option (e.g. "EPSG:4326" or raw PROJJSON).
-    // Empty → no compile-time CRS.  Resolved to PROJJSON at schema-construction time.
-    std::string crs;
 };
 
 // Classify a proto field and return enough information to generate Arrow code.
@@ -74,9 +66,13 @@ std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
 // True if the message (directly or transitively) references itself.
 bool IsRecursive(const google::protobuf::Descriptor* msg);
 
-// True for GeoArrow wrapper messages (LineString, MultiPoint, etc.) that are
-// collapsed into list fields — no class should be generated for these.
-bool IsGeoArrowWrapper(const google::protobuf::Descriptor* msg);
+// True if the message has (fletcher.flatten) = true and exactly one field.
+// No class should be generated for these — their representation is absorbed
+// into the enclosing message's Arrow schema.
+bool IsFlattenedWrapper(const google::protobuf::Descriptor* msg);
+
+// True if the field has [(fletcher.flatten_field) = true].
+bool HasFieldFlatten(const google::protobuf::FieldDescriptor* field);
 
 // Maximum struct-nesting depth starting from msg.
 // A flat message (only scalar fields) has depth 0.
@@ -101,9 +97,6 @@ std::string CppWireTypeIdHex(google::protobuf::FieldDescriptor::Type type);
 // WireTypeId hex literal for a composite field kind.
 // STRUCT → "0x20", LIST → "0x21", MAP → "0x24".
 std::string CppWireTypeIdHex(FieldKind kind);
-
-// Payload byte size for fixed-width scalar types, or -1 for variable-length.
-int FixedPayloadSize(google::protobuf::FieldDescriptor::Type type);
 
 // -----------------------------------------------------------------------
 // TypeScript code generation helpers

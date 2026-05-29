@@ -1,7 +1,3 @@
-<!-- Space: Software -->
-<!-- Parent: Architecture Overview -->
-<!-- Title: Wire Format Specification -->
-
 # Wire Format Specification
 
 ## Positional Wire Format

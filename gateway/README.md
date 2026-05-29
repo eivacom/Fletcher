@@ -10,7 +10,7 @@ A single executable, `gateway`, built from the sources in `src/`. There is no pu
 - **Not a publishable Conan package.** The `conanfile.py` here exists only as a local build driver (dependency graph + CMake toolchain) — it has no `name` / `version`, so `conan create` is not a valid invocation. The gateway exe is distributed via GitHub Releases (`cd.gateway.yml` on `gateway-v*` tag pushes), not as a Conan package.
 - **No library target exposed externally.** Sources compile into a tiny internal helper static library (`gateway_codec`, for unit-test linkage only) plus the exe. Neither is installed or consumed from outside this directory.
 
-If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/) for the reference implementation).
+If you need to integrate with the gateway from another project, the only supported interface is the WebSocket protocol (see [gateway-client-ts](../gateway-client-ts/README.md) for the reference implementation).
 
 ## Schema-agnostic by design (with optional schema passthrough)
 
@@ -24,7 +24,7 @@ This keeps the gateway as a pure byte router: it forwards row bytes between publ
 
 ## Provider note (current limitation)
 
-`gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
+`gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/README.md)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
 
 ## Installing
 
@@ -104,7 +104,7 @@ The resulting binary is at `build/Release/gateway` (`gateway.exe` on Windows).
 add_subdirectory(path/to/gateway path/to/build/gateway_build)
 ```
 
-This brings the `gateway` exe target into your build tree without exposing any of gateway's internal headers or library code. The integration test ([integration-tests/gateway-end-to-end/](../integration-tests/gateway-end-to-end/)) uses this pattern.
+This brings the `gateway` exe target into your build tree without exposing any of gateway's internal headers or library code. The integration test ([integration-tests/gateway-end-to-end/](../integration-tests/gateway-end-to-end/README.md)) uses this pattern.
 
 ## Unit tests
 
@@ -134,7 +134,7 @@ The gateway exposes Fletcher's WebSocket protocol — text JSON control frames +
 
 - [`gateway-client-ts/src/ws-protocol.ts`](../gateway-client-ts/src/ws-protocol.ts) for the canonical frame builders and parsers (TypeScript).
 - [`gateway-client-ts/src/client.ts`](../gateway-client-ts/src/client.ts) for `FletcherClient`, a higher-level wrapper.
-- [`integration-tests/gateway-end-to-end/`](../integration-tests/gateway-end-to-end/) for end-to-end coverage of both the protocol and the binary frame layouts.
+- [`integration-tests/gateway-end-to-end/`](../integration-tests/gateway-end-to-end/README.md) for end-to-end coverage of both the protocol and the binary frame layouts.
 
 Frame layouts at a glance:
 
