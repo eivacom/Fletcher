@@ -425,3 +425,87 @@ TEST(CodecTest, DictionaryNestedValueTypeRejected) {
     const std::vector<uint8_t> buf = {0x00};
     EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// Malformed-input / safety (Phase 1 hardening)
+// ---------------------------------------------------------------------------
+
+TEST(CodecTest, DecodeRejectsTrailingBytes) {
+    auto schema = arrow::schema({arrow::field("v", arrow::int32())});
+    fletcher::Codec codec(schema);
+    auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(7)});
+    row.push_back(0xAB);  // padding / corruption after a valid row
+    EXPECT_THROW(codec.DecodeRow(row), std::invalid_argument);
+}
+
+TEST(CodecTest, DecodeRejectsTruncatedBuffer) {
+    auto schema = arrow::schema({arrow::field("v", arrow::int32())});
+    fletcher::Codec codec(schema);
+    auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(7)});
+    ASSERT_GT(row.size(), 1u);
+    row.pop_back();  // one byte short
+    EXPECT_THROW(codec.DecodeRow(row), std::invalid_argument);
+}
+
+TEST(CodecTest, DecodeRejectsOversizedListCount) {
+    auto schema = arrow::schema({arrow::field("v", arrow::list(arrow::int32()))});
+    fletcher::Codec codec(schema);
+    // [row bitfield = 0x00 (field present)] [list COUNT = 0xFFFFFFFF] and nothing else.
+    const std::vector<uint8_t> buf = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+}
+
+TEST(CodecTest, DecodeRejectsOversizedMapCount) {
+    auto schema = arrow::schema({arrow::field("v", arrow::map(arrow::utf8(), arrow::int32()))});
+    fletcher::Codec codec(schema);
+    const std::vector<uint8_t> buf = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// Map type fidelity (decode preserves the schema's map type, not a default)
+// ---------------------------------------------------------------------------
+
+TEST(CodecTest, MapDecodePreservesKeysSortedType) {
+    auto map_type = arrow::map(arrow::utf8(), arrow::int32(), /*keys_sorted=*/true);
+    auto schema = arrow::schema({arrow::field("m", map_type)});
+    fletcher::Codec codec(schema);
+
+    arrow::StringBuilder kb;
+    ASSERT_TRUE(kb.Append("a").ok());
+    auto keys = kb.Finish().ValueOrDie();
+    arrow::Int32Builder vb;
+    ASSERT_TRUE(vb.Append(1).ok());
+    auto vals = vb.Finish().ValueOrDie();
+    // Build the entries struct from the schema's own entries type.
+    const auto& mt = static_cast<const arrow::MapType&>(*map_type);
+    auto entries = arrow::StructArray::Make({keys, vals}, mt.value_type()->fields()).ValueOrDie();
+    std::shared_ptr<arrow::Scalar> map_scalar =
+        std::make_shared<arrow::MapScalar>(entries, map_type);
+
+    auto decoded = codec.DecodeRow(codec.EncodeRow({map_scalar}));
+    ASSERT_EQ(decoded.size(), 1u);
+    // The decoded scalar keeps the schema's keys_sorted=true map type rather
+    // than a reconstructed keys_sorted=false default.
+    EXPECT_TRUE(decoded[0]->type->Equals(*map_type));
+}
+
+// ---------------------------------------------------------------------------
+// Sparse union (first round-trip coverage; only the active variant survives)
+// ---------------------------------------------------------------------------
+
+TEST(CodecTest, SparseUnionRoundtripActiveVariant) {
+    auto union_type = arrow::sparse_union(
+        {arrow::field("i", arrow::int32()), arrow::field("s", arrow::utf8())}, {0, 1});
+    auto schema = arrow::schema({arrow::field("u", union_type)});
+    fletcher::Codec codec(schema);
+
+    // Active variant: the string child (field index 1). FromValue fills the
+    // inactive children with null scalars, which is exactly what decode rebuilds.
+    auto active = std::make_shared<arrow::StringScalar>("hi");
+    auto union_scalar = arrow::SparseUnionScalar::FromValue(active, /*field_index=*/1, union_type);
+
+    auto decoded = codec.DecodeRow(codec.EncodeRow({union_scalar}));
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_TRUE(decoded[0]->Equals(*union_scalar));
+}
