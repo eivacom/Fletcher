@@ -12,7 +12,9 @@ The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional w
 
 The `std::vector<std::string>` topic segments from `PubSub` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
 
-### QoS settings (both DataWriter and DataReader)
+### QoS settings
+
+By default the provider uses the following QoS for both DataWriter and DataReader:
 
 | Policy | Setting | Reason |
 |---|---|---|
@@ -21,6 +23,35 @@ The `std::vector<std::string>` topic segments from `PubSub` are joined with `/` 
 | `durability` | `TRANSIENT_LOCAL_DURABILITY_QOS` | Samples published before a subscriber joins are replayed to that subscriber on discovery, so no data is lost during startup races. |
 
 These three policies together implement "at-least-once" delivery within a single DDS domain.
+
+#### Custom QoS
+
+The `config` parameter on `CreateTopic` and `Subscribe` accepts a `std::any` carrying a `DataWriterQos` or `DataReaderQos` respectively. When provided, the provider uses it instead of the defaults above. This keeps all Fast DDS types behind the provider boundary -- the `PubSub` interface stays transport-agnostic.
+
+```cpp
+#include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
+#include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
+
+using namespace eprosima::fastdds::dds;
+
+// Publisher side: KEEP_LAST(10) writer
+DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
+wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+wqos.history().kind = KEEP_LAST_HISTORY_QOS;
+wqos.history().depth = 10;
+provider->CreateTopic({"my", "topic"}, schema, wqos);
+
+// Subscriber side: VOLATILE reader
+DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
+rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+rqos.durability().kind = VOLATILE_DURABILITY_QOS;
+rqos.history().kind = KEEP_LAST_HISTORY_QOS;
+rqos.history().depth = 10;
+provider->Subscribe({"my", "topic"}, callback, rqos);
+```
+
+Omitting the `config` parameter (or passing an empty `std::any`) falls back to the built-in defaults.
 
 ## Usage
 
