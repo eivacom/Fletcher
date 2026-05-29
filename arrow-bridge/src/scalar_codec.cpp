@@ -130,6 +130,10 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             AppendFixed(buf, static_cast<const arrow::DurationScalar&>(scalar).value);
             break;
         case T::FIXED_SIZE_BINARY: {
+            // Arrow's FixedSizeBinaryScalar constructor enforces
+            // value->size() == byte_width (a hard CHECK), so a scalar reaching
+            // here always has a buffer of exactly the declared width; no extra
+            // size guard is needed (and the undersized case is unconstructable).
             const auto& s = static_cast<const arrow::FixedSizeBinaryScalar&>(scalar);
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*scalar.type).byte_width();

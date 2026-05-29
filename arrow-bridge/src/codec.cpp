@@ -29,7 +29,9 @@ void AppendFixed(std::vector<uint8_t>& buf, T value) {
 }
 
 // Number of bytes needed for a null bitfield covering `n` items.
-size_t BitfieldBytes(int n) { return static_cast<size_t>((n + 7) / 8); }
+// Takes int64_t so a wire-supplied uint32_t count never narrows to a negative
+// int (which would make the (n + 7) / 8 arithmetic produce garbage).
+size_t BitfieldBytes(int64_t n) { return static_cast<size_t>((n + 7) / 8); }
 
 // Write a null bitfield: bit i is 1 if the i-th item is null.
 void WriteNullBitfield(std::vector<uint8_t>& buf, const arrow::ScalarVector& scalars, int count) {
@@ -215,7 +217,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalStruct(
 
 std::shared_ptr<arrow::Array> DecodeListElements(
     detail::Reader& r, int64_t count, const std::shared_ptr<arrow::DataType>& elem_type) {
-    const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(static_cast<int>(count)));
+    const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
 
     auto builder = arrow::MakeBuilder(elem_type).ValueOrDie();
     for (int64_t i = 0; i < count; ++i) {
@@ -245,6 +247,11 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::LARGE_LIST: {
             const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
             uint32_t count = r.Read<uint32_t>();
+            // A list cannot have more elements than there are remaining bytes
+            // (every element contributes at least its null bit); reject a
+            // corrupt/oversized count before allocating or looping.
+            if (count > r.remaining())
+                throw std::invalid_argument("Codec: list element count exceeds remaining buffer");
             auto arr = DecodeListElements(r, count, list_type.value_type());
             if (type->id() == T::LIST) return std::make_shared<arrow::ListScalar>(arr, type);
             return std::make_shared<arrow::LargeListScalar>(arr, type);
@@ -259,6 +266,8 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::MAP: {
             const auto& map_type = static_cast<const arrow::MapType&>(*type);
             uint32_t count = r.Read<uint32_t>();
+            if (count > r.remaining())
+                throw std::invalid_argument("Codec: map entry count exceeds remaining buffer");
 
             // Keys: no null bitfield.
             auto key_builder = arrow::MakeBuilder(map_type.key_type()).ValueOrDie();
@@ -270,7 +279,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
             }
 
             // Values: null bitfield + payloads.
-            const uint8_t* val_bitfield = r.ReadBytes(BitfieldBytes(static_cast<int>(count)));
+            const uint8_t* val_bitfield = r.ReadBytes(BitfieldBytes(count));
             auto val_builder = arrow::MakeBuilder(map_type.item_type()).ValueOrDie();
             for (uint32_t i = 0; i < count; ++i) {
                 if (ReadNullBit(val_bitfield, static_cast<int>(i))) {
@@ -288,12 +297,15 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
 
             auto key_arr = key_builder->Finish().ValueOrDie();
             auto val_arr = val_builder->Finish().ValueOrDie();
-            auto entries_type = arrow::struct_({arrow::field("key", key_arr->type(), false),
-                                                arrow::field("value", val_arr->type())});
+            // Build the entries struct and the MapScalar from the schema's own
+            // types (map_type.value_type() is the entries struct), and return a
+            // scalar typed as the original field type — preserving the schema's
+            // entries field names, value nullability, and keys_sorted flag
+            // instead of reconstructing them with defaults.
             auto entries = std::make_shared<arrow::StructArray>(
-                entries_type, static_cast<int64_t>(count), arrow::ArrayVector{key_arr, val_arr});
-            auto actual_map_type = arrow::map(key_arr->type(), val_arr->type());
-            return std::make_shared<arrow::MapScalar>(entries, actual_map_type);
+                map_type.value_type(), static_cast<int64_t>(count),
+                arrow::ArrayVector{key_arr, val_arr});
+            return std::make_shared<arrow::MapScalar>(entries, type);
         }
         case T::SPARSE_UNION: {
             const auto& union_type = static_cast<const arrow::SparseUnionType&>(*type);
@@ -400,6 +412,17 @@ ArrowRow Codec::DecodeRow(const uint8_t* data, size_t len) const {
             values[i] = DecodePositionalValue(r, schema_->field(i)->type());
         }
     }
+
+    // A well-formed buffer is consumed exactly. Trailing bytes mean the buffer
+    // does not match the schema (corruption, a length-prefix bug, or a
+    // concatenated/padded payload) — reject rather than silently accept.
+    // Top-level only: nested struct/list/map/union decode share this same
+    // reader cursor and must not be checked here.
+    if (r.pos != r.size)
+        throw std::invalid_argument("Codec::DecodeRow: buffer not fully consumed (" +
+                                    std::to_string(r.remaining()) +
+                                    " trailing byte(s)); does not match schema");
+
     return values;
 }
 
