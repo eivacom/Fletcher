@@ -23,6 +23,8 @@ jobs:
   publish:
     needs: build-and-test
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -61,9 +63,7 @@ jobs:
 
       - name: Publish to npm
         working-directory: gateway-client-ts
-        run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
 
   create-release:
     needs: publish
