@@ -90,6 +90,16 @@ fields with `[(fletcher.flatten_field)]`, those are inlined too.
 **Non-message fields:** `[(fletcher.flatten_field)]` on a scalar or enum field is
 a no-op — there is nothing to inline.
 
+**Field identity:** an inlined field keeps the inner sub-message's own proto
+`field_number` (so two inlined fields, or an inlined field and an enclosing
+field, can share a number). The Arrow schema therefore carries an additional
+`field_id` metadata key holding the dotted path from the enclosing message —
+e.g. inlining `Coord` (`coord` is field 1) yields `field_id = "1.1"` and
+`"1.2"` for its `x`/`y` fields. `field_id` is unique within a message even when
+`field_number` repeats; for non-inlined top-level fields it equals the
+`field_number` string. Decoding is positional, so neither value affects the
+wire format — they are schema metadata for consumers.
+
 ### Chain-walking behaviour
 
 When the compiler resolves a chain of flattened wrappers (message-level),

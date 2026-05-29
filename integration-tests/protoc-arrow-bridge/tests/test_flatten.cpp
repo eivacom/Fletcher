@@ -119,6 +119,36 @@ TEST(FlattenTest, FieldFlattenInlinesFields) {
     EXPECT_EQ(struct_type->field(1)->type()->id(), arrow::Type::DOUBLE);
 }
 
+// Returns the value of metadata key `key` on `field`, or "" if absent.
+static std::string MetaValue(const std::shared_ptr<arrow::Field>& field, const std::string& key) {
+    const auto& md = field->metadata();
+    if (!md) return "";
+    int idx = md->FindKey(key);
+    return idx < 0 ? "" : md->value(idx);
+}
+
+TEST(FlattenTest, FieldFlattenAssignsUniqueFieldIdPaths) {
+    auto schema = ImportNano(fletcher_gen::integration::FlattenTestRowSchema());
+    ASSERT_TRUE(schema);
+
+    // "position" inlines Coord (Point.coord is field 1) → the inlined x/y keep
+    // their own (inner) proto numbers 1 and 2, but field_id carries the full
+    // dotted path so the inlined fields stay uniquely identifiable.
+    auto struct_type = std::dynamic_pointer_cast<arrow::StructType>(schema->field(1)->type());
+    ASSERT_TRUE(struct_type);
+    ASSERT_EQ(struct_type->num_fields(), 2);
+
+    EXPECT_EQ(MetaValue(struct_type->field(0), "field_id"), "1.1");
+    EXPECT_EQ(MetaValue(struct_type->field(1), "field_id"), "1.2");
+
+    // field_number stays the leaf proto number (parseable int for consumers).
+    EXPECT_EQ(MetaValue(struct_type->field(0), "field_number"), "1");
+    EXPECT_EQ(MetaValue(struct_type->field(1), "field_number"), "2");
+
+    // A non-inlined top-level field's field_id equals its field_number string.
+    EXPECT_EQ(MetaValue(schema->field(0), "field_id"), "1");
+}
+
 // ---- Case C: chained flatten (geometry nesting) ------------------------
 
 TEST(FlattenTest, ChainedFlattenProducesNestedLists) {

@@ -159,8 +159,10 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
 struct FieldInfo {
     std::string name;
     FieldMapping mapping;
-    int field_number = 0;                                   // proto field number
-    std::string field_id;                                   // string form of field_number
+    int field_number = 0;  // leaf proto field number
+    std::string field_id;  // dotted field-number path, unique even when field-level
+                           // flatten inlines sub-messages (e.g. "2.1"); equals the
+                           // field_number string for non-inlined top-level fields
     const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
 };
 
@@ -818,21 +820,30 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
 // Gather supported fields from a message
 // -----------------------------------------------------------------------
 
+// `id_prefix` is the dotted field-number path of the chain of field-level
+// flatten wrappers we have descended through (empty at the top level).  It is
+// used to build a unique `field_id` for each inlined field: a field-flattened
+// sub-message's fields keep their own (inner) proto `field_number`, which can
+// collide with the enclosing message's numbers, so `field_id` carries the full
+// path (e.g. "2.1") to disambiguate them in the schema metadata.
 void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<FieldInfo>& fields,
-                      std::string* skipped_comment) {
+                      std::string* skipped_comment, const std::string& id_prefix) {
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
 
-        // Field-level flatten: inline the referenced message's fields.
+        const std::string path = id_prefix.empty() ? std::to_string(fd->number())
+                                                   : id_prefix + "." + std::to_string(fd->number());
+
+        // Field-level flatten: inline the referenced message's fields, carrying
+        // this field's number into the path so inlined field_ids stay unique.
         if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
             HasFieldFlatten(fd)) {
-            GatherFieldsImpl(fd->message_type(), fields, skipped_comment);
+            GatherFieldsImpl(fd->message_type(), fields, skipped_comment, path);
             continue;
         }
 
         if (auto m = MapField(fd)) {
-            fields.push_back(
-                {fd->name(), std::move(*m), fd->number(), std::to_string(fd->number()), fd});
+            fields.push_back({fd->name(), std::move(*m), fd->number(), path, fd});
         } else {
             *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
@@ -842,7 +853,7 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment) {
     std::vector<FieldInfo> fields;
-    GatherFieldsImpl(msg, fields, skipped_comment);
+    GatherFieldsImpl(msg, fields, skipped_comment, "");
     return fields;
 }
 
