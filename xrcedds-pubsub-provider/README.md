@@ -104,7 +104,7 @@ The unit tests do **not** require an Agent — the test that exercises missing-A
 
 **Prerequisites:** Visual Studio 2022 with C++ workload, CMake, Python, Conan 2.
 
-Conan profiles live in [`../.conan-profiles/`](../.conan-profiles) in the repo and are referenced by relative path — no separate profile-install step is needed.
+Conan profiles live in [`../.conan-profiles/`](../.conan-profiles/) in the repo and are referenced by relative path — no separate profile-install step is needed.
 
 Build and package (Release, no tests):
 

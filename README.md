@@ -196,7 +196,7 @@ Each component's `README.md` covers how to build, test, and consume it. `gateway
 
 ## Documentation
 
-The [`docs/`](docs/) directory holds the full architecture documentation. Start with the overview and drill in as needed:
+The [`docs/`](docs/README.md) directory holds the full architecture documentation. Start with the overview and drill in as needed:
 
 | Document | What it covers |
 |---|---|
@@ -233,7 +233,7 @@ conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Lin
 conan create xrcedds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-Each `conan create` builds and runs that component's tests. Profiles for Linux (GCC 13) and Windows (MSVC 194) live in [`.conan-profiles/`](.conan-profiles).
+Each `conan create` builds and runs that component's tests. Profiles for Linux (GCC 13) and Windows (MSVC 194) live in [`.conan-profiles/`](.conan-profiles/).
 
 ### TypeScript client
 

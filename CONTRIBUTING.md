@@ -20,7 +20,7 @@ docker build -t fletcher-build .devcontainer
 docker run --rm -it -v $(pwd):/workspace -w /workspace fletcher-build bash
 ```
 
-Conan profiles live in [`.conan-profiles/`](.conan-profiles) and are referenced by relative path (`-pr:a=../.conan-profiles/<profile>`), so no profile-install step is needed. Then follow the individual component `README.md` for build and test commands.
+Conan profiles live in [`.conan-profiles/`](.conan-profiles/) and are referenced by relative path (`-pr:a=../.conan-profiles/<profile>`), so no profile-install step is needed. Then follow the individual component `README.md` for build and test commands.
 
 ## Repository layout
 
