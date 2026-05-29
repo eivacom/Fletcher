@@ -77,9 +77,11 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#gateway-client-v}"
-          NOTES=$(printf "## npm\n\nhttps://www.npmjs.com/package/@eiva/fletcher-gateway-client/v/%s\n" "${VERSION}")
+          GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.ref_name }}" \
+            -q '.body')
+          NOTES=$(printf "## npm\n\nhttps://www.npmjs.com/package/@eiva/fletcher-gateway-client/v/%s\n\n%s" "${VERSION}" "${GENERATED}")
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes \
             --notes "${NOTES}"
