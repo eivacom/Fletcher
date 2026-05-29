@@ -94,93 +94,17 @@ add_custom_command(
 )
 ```
 
-## Using from a TypeScript / npm project
+## npm package (TypeScript / JS consumers)
 
-Two npm dev-dependencies wire the plugin into a TypeScript project end-to-end:
-
-- [`@eiva/protoc-gen-fletcher`](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher) — Node shim that downloads the platform-matching native plugin binary from this repo's GitHub Releases on first invocation, caches it under `~/.cache/protoc-gen-fletcher/<version>/`, and exposes it as `protoc-gen-fletcher` in `node_modules/.bin/`.
-- [`@protobuf-ts/protoc`](https://www.npmjs.com/package/@protobuf-ts/protoc) — ships the actual `protoc` compiler. Declared as a peer dependency of `@eiva/protoc-gen-fletcher`; npm 7+ auto-installs it.
-
-> **Not** [`@grpc/proto-loader`](https://www.npmjs.com/package/@grpc/proto-loader): that package loads `.proto` files at **runtime** into JavaScript objects via `protobufjs` reflection — a different problem from code generation. It does not produce the typed `TypedSchema<T>` objects that `FletcherClient.publish`/`subscribe` expect.
-
-### 1. Install
+For TypeScript / JavaScript projects that consume Fletcher topics via `@eiva/fletcher-gateway-client`, the plugin ships as the [**`@eiva/protoc-gen-fletcher`**](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher) npm package — a Node shim that downloads the platform-matching native binary from this repo's GitHub Releases on first invocation and exposes it as `protoc-gen-fletcher` in `node_modules/.bin/`.
 
 ```bash
 npm install --save-dev @eiva/protoc-gen-fletcher
 ```
 
-### 2. Wire `proto:gen` as a `prebuild` hook
+The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths alias and platform-support matrix, lives in the [npm package's README](npm/README.md) (which is also what npm.js shows on the registry page). The integration test at [`integration-tests/protoc-gen-fletcher-npm/`](../integration-tests/protoc-gen-fletcher-npm/) exercises the consumer flow end-to-end on every PR.
 
-`package.json`:
-
-```json
-{
-  "scripts": {
-    "proto:gen": "protoc --plugin=protoc-gen-fletcher=./node_modules/.bin/protoc-gen-fletcher --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/*.proto",
-    "prebuild": "npm run proto:gen",
-    "build": "tsc"
-  }
-}
-```
-
-With `proto:gen` as the `prebuild` hook, every `npm run build` regenerates `.fletcher.ts` files first, then compiles — keeping generated bindings in sync with `.proto` edits automatically. `--fletcher_opt=ts` switches the plugin from its default C++ output to TypeScript schema descriptors.
-
-### Consume the generated descriptors
-
-For a `proto/telemetry.proto` containing:
-
-```proto
-syntax = "proto3";
-package myapp;
-
-message Telemetry {
-  int32 sensor_id = 1;
-  double temperature = 2;
-  string label = 3;
-  bool valid = 4;
-  repeated int32 readings = 5;
-}
-```
-
-`npm run build` writes `src/generated/telemetry.fletcher.ts`. Consume it from application code:
-
-```ts
-import { FletcherClient } from '@eiva/fletcher-gateway-client';
-import { Telemetry, type ITelemetry } from './generated/telemetry.fletcher.js';
-
-const client = new FletcherClient({ url: 'ws://localhost:9090' });
-await client.connect();
-
-await client.createTopic('telemetry', Telemetry);
-await client.publish('telemetry', Telemetry, {
-  sensor_id: 42,
-  temperature: 23.5,
-  label: 'intake',
-  valid: true,
-  readings: [100, 200, 300],
-} satisfies ITelemetry);
-
-await client.subscribe('telemetry', Telemetry, (row) => {
-  console.log(row.sensor_id, row.temperature);
-});
-```
-
-The `Telemetry` const is a `TypedSchema<ITelemetry>` — its field layout matches the wire format the C++ side emits, so a publisher and subscriber across the language boundary agree on every byte. The integration test at [`integration-tests/protoc-gateway-client-ts/`](../integration-tests/protoc-gateway-client-ts/) verifies this on every PR.
-
-### Aligning the generated `import` with the published npm name
-
-The generated `.fletcher.ts` files currently emit `import … from 'fletcher-gateway-client'`, but the package on npm is scoped as `@eiva/fletcher-gateway-client`. Bridge the mismatch with a `paths` entry in `tsconfig.json` until the generator is updated:
-
-```jsonc
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "fletcher-gateway-client": ["node_modules/@eiva/fletcher-gateway-client"]
-    }
-  }
-}
-```
+> **Not** [`@grpc/proto-loader`](https://www.npmjs.com/package/@grpc/proto-loader): that package loads `.proto` files at **runtime** into JavaScript objects via `protobufjs` reflection — a different problem from code generation. It does not produce the typed `TypedSchema<T>` objects that `FletcherClient.publish`/`subscribe` expect.
 
 ## Proto to Arrow type mapping
 
