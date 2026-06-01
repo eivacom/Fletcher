@@ -8,7 +8,7 @@
 // but the same DDS domain) and verifies that ArrowRow instances + their
 // schema round-trip across the adapter + DDS path.
 //
-// Each component has unit tests against a mock provider; only this test
+// Each component has its own unit tests in isolation; only this test
 // covers the seam between them.
 
 #include <arrow/api.h>
@@ -164,13 +164,10 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 // ---------------------------------------------------------------------------
 // Batched RecordBatch Subscribe over real FastDDS.
 //
-// The unit tests against MockProvider exercise the batcher's logic with
-// synchronous delivery on the publisher thread. This integration test
-// drives the same batcher across two real DomainParticipants, so it
-// covers:
+// Covers two integration-only aspects of the batched path:
 //
-//   - the batcher timer thread interacting with FastDDS' listener thread
-//     (rows arrive from a thread the publisher does not own)
+//   - the batcher's internal timer thread interacting with FastDDS' listener
+//     thread (rows arrive from a thread the publisher does not own)
 //   - lazy codec acquisition from the SharedSchema delivered with each
 //     sample, which is the subscriber-only mode for the batched path
 // ---------------------------------------------------------------------------
