@@ -1,0 +1,18 @@
+{
+  "name": "protoc-plugin-cli-integration-test",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Command-line integration test for fletcher-protoc. Spawns Google's official protoc against the locally-built (statically linked) fletcher-protoc plugin and asserts output. No npm packages on the protoc-or-plugin path; vitest is used only as test runner.",
+  "license": "LGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

@@ -2,11 +2,15 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 # Release orchestration for fletcher-protoc. Owns the setup-devcontainer
-# step, invokes ci.protoc.yml with the resulting image to build and
-# upload artifacts, and creates the GitHub Release. ci.protoc.yml is
-# also called from ci.pr.yml — build/test logic is shared so PR and release
-# runs use the same source of truth. The upload job lives here so PR
-# runs do not show a skipped upload rectangle.
+# step, invokes ci.protoc.yml with the resulting image to build the
+# Conan-package artifacts (shared-linked, for Conan consumers), runs a
+# parallel pair of build-static-* jobs to produce single-file raw
+# binaries (statically-linked, for npm consumers + manual download
+# scenarios), assembles the GitHub Release, and publishes to npm.
+# ci.protoc.yml is also called from ci.pr.yml — build/test logic is
+# shared so PR and release runs use the same source of truth for the
+# Conan path. The upload + npm-publish jobs live here so PR runs do not
+# show a skipped upload rectangle.
 #
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
@@ -30,8 +34,98 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # Static-link build for the raw GitHub Release assets (npm consumers
+  # and anyone who downloads the binary directly). The `-o "*:shared=False"`
+  # flag forces protobuf, zlib, and any other transitive dependency to be
+  # statically linked into fletcher-protoc[.exe]. The result is a single
+  # file with no DLL dependencies — Google's `protoc.exe` is shipped the
+  # same way. This is what we extract and upload as `protoc-gen-fletcher-*`.
+  #
+  # The shared build (ci.protoc.yml above) is kept for the Conan tarball
+  # release assets because Conan consumers want shared libs (so they can
+  # share with other deps that link against protobuf).
+  build-static-linux:
+    needs: setup-devcontainer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ needs.setup-devcontainer.outputs.image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build static fletcher-protoc and extract binary
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace \
+            fletcher-build \
+            bash -c '
+              set -euo pipefail
+              conan create protoc/. --build=missing \
+                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release \
+                -o "*:shared=False"
+              bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc" -type f -print -quit)
+              if [ -z "$bin" ]; then
+                echo "::error::fletcher-protoc binary not found in Conan cache after static build"
+                find ~/.conan2 -name "fletcher-protoc*" -type f
+                exit 1
+              fi
+              cp "$bin" /workspace/protoc-gen-fletcher-linux-x64
+              chmod +x /workspace/protoc-gen-fletcher-linux-x64
+              ls -lah /workspace/protoc-gen-fletcher-linux-x64
+            '
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-linux-static
+          path: protoc-gen-fletcher-linux-x64
+          retention-days: 5
+
+  build-static-windows:
+    needs: setup-devcontainer
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build static fletcher-protoc
+        shell: bash
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+
+      - name: Extract static binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc.exe" -type f -print -quit)
+          if [ -z "$bin" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache after static build"
+            find ~/.conan2 -name "fletcher-protoc*" -type f
+            exit 1
+          fi
+          cp "$bin" protoc-gen-fletcher-windows-x64.exe
+          ls -lah protoc-gen-fletcher-windows-x64.exe
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-windows-static
+          path: protoc-gen-fletcher-windows-x64.exe
+          retention-days: 5
+
   upload:
-    needs: release
+    needs: [release, build-static-linux, build-static-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,50 +148,37 @@ jobs:
           package-json: protoc/npm/package.json
           tag-prefix: protoc-v
 
-      - name: Download artifacts
+      # Download all four upstream artifacts at once:
+      #   - fletcher-protoc-linux + fletcher-protoc-windows
+      #       → shared-linked Conan-package tarballs (from ci.protoc.yml)
+      #   - fletcher-protoc-linux-static + fletcher-protoc-windows-static
+      #       → static-linked raw binaries (from build-static-* jobs)
+      # `merge-multiple: true` flattens each artifact's single file into
+      # the current directory, matching the file names the gh release
+      # create command below expects.
+      - name: Download all release artifacts
         uses: actions/download-artifact@v8.0.1
         with:
           pattern: fletcher-protoc-*
           merge-multiple: true
 
-      # Extract the raw plugin binary out of each Conan tarball so the npm
-      # shim (@eiva/protoc-gen-fletcher) can download it directly without
-      # having to unpack a Conan archive. Conan tarballs ship with the binary
-      # at <package-folder>/bin/fletcher-protoc[.exe]; `find` locates it
-      # regardless of the cache path's revision hash.
-      - name: Extract raw plugin binaries
+      - name: Verify all release assets are present
         shell: bash
         run: |
           set -euo pipefail
-          tmp=$(mktemp -d)
-
-          # `find -print -quit` makes find exit cleanly after the first match.
-          # Avoids the SIGPIPE that `find ... | head -1` triggers under
-          # pipefail when find keeps walking past head's first read. Each
-          # binary's existence is asserted explicitly so a missing match
-          # surfaces a clear error instead of an opaque empty-arg `cp`.
-
-          mkdir -p "$tmp/linux"
-          tar -xzf fletcher-protoc-linux-conan-package.tgz -C "$tmp/linux"
-          bin=$(find "$tmp/linux" -path '*/bin/fletcher-protoc' -type f -print -quit)
-          if [ -z "$bin" ]; then
-            echo "::error::fletcher-protoc not found in Linux Conan tarball"
-            exit 1
-          fi
-          cp "$bin" protoc-gen-fletcher-linux-x64
+          for asset in \
+            fletcher-protoc-linux-conan-package.tgz \
+            fletcher-protoc-windows-conan-package.tgz \
+            protoc-gen-fletcher-linux-x64 \
+            protoc-gen-fletcher-windows-x64.exe; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::Missing release asset: $asset"
+              ls -lah
+              exit 1
+            fi
+          done
           chmod +x protoc-gen-fletcher-linux-x64
-
-          mkdir -p "$tmp/windows"
-          tar -xzf fletcher-protoc-windows-conan-package.tgz -C "$tmp/windows"
-          bin=$(find "$tmp/windows" -path '*/bin/fletcher-protoc.exe' -type f -print -quit)
-          if [ -z "$bin" ]; then
-            echo "::error::fletcher-protoc.exe not found in Windows Conan tarball"
-            exit 1
-          fi
-          cp "$bin" protoc-gen-fletcher-windows-x64.exe
-
-          rm -rf "$tmp"
-          ls -lah protoc-gen-fletcher-*
+          ls -lah fletcher-protoc-*-conan-package.tgz protoc-gen-fletcher-*
 
       - name: Create GitHub Release
         env:

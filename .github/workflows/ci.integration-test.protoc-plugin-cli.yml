@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.protoc-plugin-cli
+
+concurrency:
+  group: ci.integration-test.protoc-plugin-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+jobs:
+  # Linux exercises the command-line protoc-plugin flow inside the
+  # devcontainer image (the same env every other Fletcher Linux build runs
+  # in). The plugin is built with `-o "*:shared=False"` so the resulting
+  # fletcher-protoc binary statically links protobuf + zlib — matching
+  # what the npm release ships and what end users get from GitHub Releases.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            integration-tests/protoc-plugin-cli
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build static plugin, install + run vitest
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     echo '::group::conan create protoc (static link)' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE -o '*:shared=False' && \
+                     echo '::endgroup::' && \
+                     cd integration-tests/protoc-plugin-cli && \
+                     echo '::group::npm install' && \
+                       npm install && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test (vitest spawns protoc + plugin)' && \
+                       npm test && \
+                     echo '::endgroup::'"
+
+  # Windows runs natively on the windows-2022 image (Node + Git Bash are
+  # pre-installed). conan-install brings Python + Conan onto the runner;
+  # the static plugin build forces protobuf to be linked in so the
+  # resulting fletcher-protoc.exe has no DLL dependencies — that's the
+  # regression the third vitest test case ("runs standalone when copied
+  # to a clean directory with no co-located DLLs") guards.
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            integration-tests/protoc-plugin-cli
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build fletcher-protoc (static link)
+        shell: bash
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+
+      - name: npm install
+        shell: bash
+        working-directory: integration-tests/protoc-plugin-cli
+        run: npm install
+
+      - name: npm test (vitest spawns protoc + plugin)
+        shell: bash
+        working-directory: integration-tests/protoc-plugin-cli
+        run: npm test

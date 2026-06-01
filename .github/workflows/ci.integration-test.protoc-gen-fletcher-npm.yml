@@ -33,8 +33,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
-            pubsub
             protoc
             integration-tests/protoc-gen-fletcher-npm
             .conan-profiles
@@ -52,11 +50,8 @@ jobs:
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     echo '::group::conan create core' && \
-                       conan create core/. --build=missing -pr:a=\$PROFILE && \
-                     echo '::endgroup::' && \
-                     echo '::group::conan create protoc' && \
-                       conan create protoc/. --build=missing -pr:a=\$PROFILE && \
+                     echo '::group::conan create protoc (static link, matches npm release)' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE -o '*:shared=False' && \
                      echo '::endgroup::' && \
                      echo '::group::prime shim cache with the just-built binary' && \
                        VERSION=\$(node -p \"require('./protoc/npm/package.json').version\") && \
@@ -92,8 +87,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            core
-            pubsub
             protoc
             integration-tests/protoc-gen-fletcher-npm
             .conan-profiles
@@ -102,13 +95,9 @@ jobs:
       - name: Install Conan
         uses: ./.github/actions/conan-install
 
-      - name: Build fletcher-core (dependency)
+      - name: Build fletcher-protoc (static link, matches npm release)
         shell: bash
-        run: conan create core --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
-
-      - name: Build fletcher-protoc
-        shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
 
       - name: Prime shim cache with the just-built binary
         shell: bash
