@@ -109,8 +109,7 @@ export async function ensureProtoc(): Promise<string> {
     }
   } else {
     const script: string =
-      `import sys, zipfile; ` +
-      `zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])`;
+      `import sys, zipfile; ` + `zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])`;
     const result = spawnSync('python3', ['-c', script, zipPath, root], {
       stdio: 'inherit',
       shell: false,

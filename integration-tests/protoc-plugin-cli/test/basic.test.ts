@@ -78,7 +78,8 @@ describe('protoc + fletcher-protoc (command line, no npm packages)', () => {
     // the raw protoc-gen-fletcher-windows-x64.exe from GitHub Releases
     // and place it under node_modules/.bin/ or a custom directory.
     const isolatedDir: string = mkdtempSync(join(tmpdir(), 'fletcher-protoc-isolated-'));
-    const exeBaseName: string = process.platform === 'win32' ? 'fletcher-protoc.exe' : 'fletcher-protoc';
+    const exeBaseName: string =
+      process.platform === 'win32' ? 'fletcher-protoc.exe' : 'fletcher-protoc';
     const isolated: string = join(isolatedDir, exeBaseName);
     try {
       copyFileSync(plugin, isolated);
