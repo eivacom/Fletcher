@@ -86,10 +86,4 @@ std::vector<std::string> Publisher::ListTopics() const {
     return result;
 }
 
-bool Publisher::HasTopic(const std::vector<std::string>& segments) const {
-    std::string key = internal::JoinSegments(segments);
-    std::lock_guard lock(impl_->mu);
-    return impl_->topics.count(key) > 0;
-}
-
 }  // namespace fletcher

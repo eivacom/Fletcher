@@ -46,7 +46,6 @@ class PublisherArrow {
                        const Attachments& attachments = {});
 
     std::vector<std::string> ListTopics() const;
-    bool HasTopic(const std::vector<std::string>& segments) const;
 
    private:
     std::unique_ptr<Publisher> publisher_;

@@ -103,15 +103,13 @@ TEST(PublisherArrowTest, CreateTopicConvertsArrowSchema) {
     EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST(PublisherArrowTest, ListTopicsAndHasTopic) {
+TEST(PublisherArrowTest, ListTopics) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
 
     EXPECT_TRUE(pub.ListTopics().empty());
-    EXPECT_FALSE(pub.HasTopic(kTopic));
 
     pub.CreateTopic(kTopic, TestSchema());
-    EXPECT_TRUE(pub.HasTopic(kTopic));
 
     std::vector<std::string> topics = pub.ListTopics();
     ASSERT_EQ(topics.size(), 1);

@@ -77,10 +77,6 @@ void PublisherArrow::PublishDirect(const std::vector<std::string>& segments,
 
 std::vector<std::string> PublisherArrow::ListTopics() const { return publisher_->ListTopics(); }
 
-bool PublisherArrow::HasTopic(const std::vector<std::string>& segments) const {
-    return publisher_->HasTopic(segments);
-}
-
 std::string PublisherArrow::JoinSegments(const std::vector<std::string>& segs) {
     if (segs.empty()) {
         return {};

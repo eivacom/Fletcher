@@ -150,17 +150,6 @@ TEST(PublisherTest, ListTopics) {
     EXPECT_EQ(topics[1], "c/d");
 }
 
-TEST(PublisherTest, HasTopic) {
-    auto mock = std::make_shared<MockProvider>();
-    Publisher publisher(mock);
-
-    EXPECT_FALSE(publisher.HasTopic(kTopic));
-
-    publisher.CreateTopic(kTopic, TestSchema());
-    EXPECT_TRUE(publisher.HasTopic(kTopic));
-    EXPECT_FALSE(publisher.HasTopic({"other"}));
-}
-
 TEST(PublisherTest, NullProviderThrows) { EXPECT_THROW(Publisher(nullptr), std::invalid_argument); }
 
 // ---------------------------------------------------------------------------

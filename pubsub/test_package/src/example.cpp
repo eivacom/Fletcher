@@ -59,7 +59,6 @@ int main() {
 
     // Publisher topic registration + introspection.
     publisher.CreateTopic({"hello", "world"}, std::move(schema));
-    assert(publisher.HasTopic({"hello", "world"}));
     assert(publisher.ListTopics().size() == 1);
 
     return 0;

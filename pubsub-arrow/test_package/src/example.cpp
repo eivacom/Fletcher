@@ -41,7 +41,6 @@ int main() {
     });
 
     pub.CreateTopic({"hello", "world"}, schema);
-    assert(pub.HasTopic({"hello", "world"}));
     assert(pub.ListTopics().size() == 1);
 
     return 0;

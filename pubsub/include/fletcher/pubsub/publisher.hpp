@@ -41,9 +41,6 @@ class Publisher {
     /// List all registered topic names (segments joined with "/").
     std::vector<std::string> ListTopics() const;
 
-    /// Check whether a topic has been registered.
-    bool HasTopic(const std::vector<std::string>& segments) const;
-
    private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
