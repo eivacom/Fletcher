@@ -71,15 +71,29 @@ jobs:
           set -euo pipefail
           tmp=$(mktemp -d)
 
+          # `find -print -quit` makes find exit cleanly after the first match.
+          # Avoids the SIGPIPE that `find ... | head -1` triggers under
+          # pipefail when find keeps walking past head's first read. Each
+          # binary's existence is asserted explicitly so a missing match
+          # surfaces a clear error instead of an opaque empty-arg `cp`.
+
           mkdir -p "$tmp/linux"
           tar -xzf fletcher-protoc-linux-conan-package.tgz -C "$tmp/linux"
-          bin=$(find "$tmp/linux" -path '*/bin/fletcher-protoc' -type f | head -1)
+          bin=$(find "$tmp/linux" -path '*/bin/fletcher-protoc' -type f -print -quit)
+          if [ -z "$bin" ]; then
+            echo "::error::fletcher-protoc not found in Linux Conan tarball"
+            exit 1
+          fi
           cp "$bin" protoc-gen-fletcher-linux-x64
           chmod +x protoc-gen-fletcher-linux-x64
 
           mkdir -p "$tmp/windows"
           tar -xzf fletcher-protoc-windows-conan-package.tgz -C "$tmp/windows"
-          bin=$(find "$tmp/windows" -path '*/bin/fletcher-protoc.exe' -type f | head -1)
+          bin=$(find "$tmp/windows" -path '*/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$bin" ]; then
+            echo "::error::fletcher-protoc.exe not found in Windows Conan tarball"
+            exit 1
+          fi
           cp "$bin" protoc-gen-fletcher-windows-x64.exe
 
           rm -rf "$tmp"
@@ -100,6 +114,14 @@ jobs:
   npm-publish:
     needs: upload
     runs-on: ubuntu-latest
+    # id-token: write is required for `npm publish --provenance` to mint
+    # an OIDC token that npm exchanges for a signed Sigstore attestation
+    # linking the package back to this exact workflow run. Matches the
+    # cd.gateway-client.yml pattern so both @eiva npm packages ship with
+    # provenance.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -125,6 +147,6 @@ jobs:
 
       - name: Publish to npm
         working-directory: protoc/npm
-        run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }}
+        run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

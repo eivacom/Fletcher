@@ -60,7 +60,7 @@ jobs:
                      echo '::endgroup::' && \
                      echo '::group::prime shim cache with the just-built binary' && \
                        VERSION=\$(node -p \"require('./protoc/npm/package.json').version\") && \
-                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f | head -1) && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
                        if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
                        echo \"version=\$VERSION  bin=\$BIN\" && \
                        mkdir -p ~/.cache/protoc-gen-fletcher/\"\$VERSION\" && \
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -e
           VERSION=$(node -p "require('./protoc/npm/package.json').version")
-          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f | head -1)
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
           if [ -z "$BIN" ]; then
             echo "::error::fletcher-protoc.exe not found in Conan cache"
             find ~/.conan2 -name 'fletcher-protoc*' -type f
