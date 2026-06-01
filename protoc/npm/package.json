@@ -1,0 +1,35 @@
+{
+  "name": "@eiva/protoc-gen-fletcher",
+  "version": "0.1.1-alpha",
+  "description": "protoc plugin that generates typed TypeScript schema descriptors for Fletcher's positional wire format. Downloads the platform-matching native plugin binary from GitHub Releases on first invocation.",
+  "license": "LGPL-3.0-or-later",
+  "homepage": "https://github.com/eivacom/Fletcher/tree/main/protoc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eivacom/Fletcher.git",
+    "directory": "protoc/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/eivacom/Fletcher/issues"
+  },
+  "keywords": [
+    "protoc",
+    "protobuf",
+    "fletcher",
+    "code-generation",
+    "typescript"
+  ],
+  "bin": {
+    "protoc-gen-fletcher": "./bin/protoc-gen-fletcher.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@protobuf-ts/protoc": "^2.9.5"
+  }
+}

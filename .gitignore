@@ -8,6 +8,11 @@
 **/node_modules/
 **/dist/
 **/generated-ts/
+**/src/generated/
+**/package-lock.json
+
+# Local caches used by integration tests (e.g. downloaded protoc binaries)
+**/.cache/
 
 # Log files
 *.log

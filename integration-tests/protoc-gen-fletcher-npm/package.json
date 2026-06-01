@@ -1,0 +1,20 @@
+{
+  "name": "protoc-gen-fletcher-npm-integration-test",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Consumer-perspective integration test for @eiva/protoc-gen-fletcher. Installs the npm shim from the local working copy, generates TypeScript bindings via the prebuild hook, compiles, and runs the resulting binary.",
+  "license": "LGPL-3.0-or-later",
+  "scripts": {
+    "proto:gen": "node -e \"require('fs').mkdirSync('src/generated',{recursive:true})\" && protoc --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/example.proto",
+    "prebuild": "npm run proto:gen",
+    "build": "tsc",
+    "test": "node dist/main.js"
+  },
+  "devDependencies": {
+    "@eiva/protoc-gen-fletcher": "file:../../protoc/npm",
+    "@protobuf-ts/protoc": "^2.9.5",
+    "@types/node": "^22",
+    "fletcher-gateway-client": "npm:@eiva/fletcher-gateway-client@^0.1.3-alpha",
+    "typescript": "^5.4.0"
+  }
+}

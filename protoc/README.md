@@ -76,7 +76,7 @@ protoc \
 
 - `--fletcher_opt=ts` — generate TypeScript schema descriptors (`.fletcher.ts`) instead of C++ headers.
 
-## Conan package
+## Conan package (C++ consumers)
 
 When consumed as a Conan package, `fletcher-protoc` provides an imported CMake target:
 
@@ -93,6 +93,18 @@ add_custom_command(
     DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 )
 ```
+
+## npm package (TypeScript / JS consumers)
+
+For TypeScript / JavaScript projects that consume Fletcher topics via `@eiva/fletcher-gateway-client`, the plugin ships as the [**`@eiva/protoc-gen-fletcher`**](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher) npm package — a Node shim that downloads the platform-matching native binary from this repo's GitHub Releases on first invocation and exposes it as `protoc-gen-fletcher` in `node_modules/.bin/`.
+
+```bash
+npm install --save-dev @eiva/protoc-gen-fletcher
+```
+
+The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths alias and platform-support matrix, lives in the [npm package's README](npm/README.md) (which is also what npm.js shows on the registry page). The integration test at [`integration-tests/protoc-gen-fletcher-npm/`](../integration-tests/protoc-gen-fletcher-npm/) exercises the consumer flow end-to-end on every PR.
+
+> **Not** [`@grpc/proto-loader`](https://www.npmjs.com/package/@grpc/proto-loader): that package loads `.proto` files at **runtime** into JavaScript objects via `protobufjs` reflection — a different problem from code generation. It does not produce the typed `TypedSchema<T>` objects that `FletcherClient.publish`/`subscribe` expect.
 
 ## Proto to Arrow type mapping
 

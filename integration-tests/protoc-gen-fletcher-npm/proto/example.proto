@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+syntax = "proto3";
+
+package example;
+
+// Minimal message used solely to verify protoc-gen-fletcher's TypeScript
+// output: covers a scalar, a string, and a repeated scalar so the
+// generated TypedSchema's `fields` array has more than one entry to
+// inspect at runtime.
+message Greeting {
+  string name = 1;
+  int32 priority = 2;
+  repeated int32 tags = 3;
+}

@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.protoc-gen-fletcher-npm
+
+concurrency:
+  group: ci.integration-test.protoc-gen-fletcher-npm-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+jobs:
+  # Linux exercises the consumer flow inside the devcontainer image (the
+  # same env every other Fletcher Linux build runs in). On a cache miss
+  # the shim would download from GitHub Releases; the prime-cache step
+  # turns that into a hit so the test stays hermetic.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-gen-fletcher-npm
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build plugin, prime shim cache, install + build + run integration test
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     echo '::group::conan create protoc (static link, matches npm release)' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE -o '*:shared=False' && \
+                     echo '::endgroup::' && \
+                     echo '::group::prime shim cache with the just-built binary' && \
+                       VERSION=\$(node -p \"require('./protoc/npm/package.json').version\") && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
+                       if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
+                       echo \"version=\$VERSION  bin=\$BIN\" && \
+                       mkdir -p ~/.cache/protoc-gen-fletcher/\"\$VERSION\" && \
+                       cp \"\$BIN\" ~/.cache/protoc-gen-fletcher/\"\$VERSION\"/protoc-gen-fletcher-linux-x64 && \
+                       chmod +x ~/.cache/protoc-gen-fletcher/\"\$VERSION\"/protoc-gen-fletcher-linux-x64 && \
+                     echo '::endgroup::' && \
+                     cd integration-tests/protoc-gen-fletcher-npm && \
+                     echo '::group::npm install (resolves the file path to local plugin + bare-alias gateway-client)' && \
+                       npm install && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm run build (triggers prebuild -> proto:gen -> tsc)' && \
+                       npm run build && \
+                     echo '::endgroup::' && \
+                     echo '::group::assert generated + compiled artefacts exist' && \
+                       test -f src/generated/example.fletcher.ts && \
+                       test -f dist/main.js && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm test (run compiled program)' && \
+                       npm test && \
+                     echo '::endgroup::'"
+
+  # Windows runs natively on the windows-2022 image (Node + Git Bash are
+  # pre-installed). conan-install brings Python + Conan onto the runner;
+  # the rest of the flow uses Git Bash to keep the bash script symmetric
+  # with the Linux job.
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-gen-fletcher-npm
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build fletcher-protoc (static link, matches npm release)
+        shell: bash
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+
+      - name: Prime shim cache with the just-built binary
+        shell: bash
+        run: |
+          set -e
+          VERSION=$(node -p "require('./protoc/npm/package.json').version")
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            find ~/.conan2 -name 'fletcher-protoc*' -type f
+            exit 1
+          fi
+          echo "version=$VERSION  bin=$BIN"
+          mkdir -p ~/.cache/protoc-gen-fletcher/"$VERSION"
+          cp "$BIN" ~/.cache/protoc-gen-fletcher/"$VERSION"/protoc-gen-fletcher-windows-x64.exe
+
+      - name: npm install (resolves the file path to local plugin + bare-alias gateway-client)
+        shell: bash
+        working-directory: integration-tests/protoc-gen-fletcher-npm
+        run: npm install
+
+      - name: npm run build (triggers prebuild -> proto:gen -> tsc)
+        shell: bash
+        working-directory: integration-tests/protoc-gen-fletcher-npm
+        run: npm run build
+
+      - name: Assert generated + compiled artefacts exist
+        shell: bash
+        working-directory: integration-tests/protoc-gen-fletcher-npm
+        run: |
+          test -f src/generated/example.fletcher.ts
+          test -f dist/main.js
+
+      - name: npm test (run compiled program)
+        shell: bash
+        working-directory: integration-tests/protoc-gen-fletcher-npm
+        run: npm test

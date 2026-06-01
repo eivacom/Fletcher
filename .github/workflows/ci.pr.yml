@@ -44,6 +44,8 @@ jobs:
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
+      integration-protoc-gen-fletcher-npm: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-npm }}
+      integration-protoc-plugin-cli: ${{ steps.filter.outputs.integration-protoc-plugin-cli }}
     steps:
       - uses: actions/checkout@v6
       # Filters list only positive patterns; we deliberately avoid '!'
@@ -211,6 +213,26 @@ jobs:
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            integration-protoc-gen-fletcher-npm:
+              - 'protoc/**'
+              - 'integration-tests/protoc-gen-fletcher-npm/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-gen-fletcher-npm.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/actions/conan-install/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-protoc-plugin-cli:
+              - 'protoc/**'
+              - 'integration-tests/protoc-plugin-cli/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-plugin-cli.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/actions/conan-install/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
 
   setup-devcontainer:
     uses: ./.github/workflows/ci.setup-devcontainer-image.yml
@@ -353,6 +375,22 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-protoc-gen-fletcher-npm:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-gen-fletcher-npm == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-gen-fletcher-npm.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-protoc-plugin-cli:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-plugin-cli == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-plugin-cli.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   # ── Stage 3: PR gate ────────────────────────────────────────────────────────
   pr_gate:
     needs:
@@ -372,6 +410,8 @@ jobs:
       - integration-test-protoc-arrow-bridge
       - integration-test-protoc-gateway-client-ts
       - integration-test-pubsub-arrow-fastdds
+      - integration-test-protoc-gen-fletcher-npm
+      - integration-test-protoc-plugin-cli
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -398,4 +438,6 @@ jobs:
             ${{ needs.integration-test-gateway-end-to-end.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
-            ${{ needs.integration-test-pubsub-arrow-fastdds.result }}
+            ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
+            ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
+            ${{ needs.integration-test-protoc-plugin-cli.result }}
