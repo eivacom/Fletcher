@@ -63,8 +63,8 @@ jobs:
                        chmod +x ~/.cache/protoc-gen-fletcher/\"\$VERSION\"/protoc-gen-fletcher-linux-x64 && \
                      echo '::endgroup::' && \
                      cd integration-tests/protoc-gen-fletcher-npm && \
-                     echo '::group::npm install (local shim + published gateway-client)' && \
-                       npm install --save-dev ../../protoc/npm @eiva/fletcher-gateway-client && \
+                     echo '::group::npm install (resolves file: path to local plugin + bare-alias gateway-client)' && \
+                       npm install && \
                      echo '::endgroup::' && \
                      echo '::group::npm run build (triggers prebuild -> proto:gen -> tsc)' && \
                        npm run build && \
@@ -114,10 +114,10 @@ jobs:
           mkdir -p ~/.cache/protoc-gen-fletcher/"$VERSION"
           cp "$BIN" ~/.cache/protoc-gen-fletcher/"$VERSION"/protoc-gen-fletcher-windows-x64.exe
 
-      - name: npm install (local shim + published gateway-client)
+      - name: npm install (resolves file: path to local plugin + bare-alias gateway-client)
         shell: bash
         working-directory: integration-tests/protoc-gen-fletcher-npm
-        run: npm install --save-dev ../../protoc/npm @eiva/fletcher-gateway-client
+        run: npm install
 
       - name: npm run build (triggers prebuild -> proto:gen -> tsc)
         shell: bash

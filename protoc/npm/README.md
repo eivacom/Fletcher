@@ -12,7 +12,19 @@ This package is a thin Node.js shim. On first invocation it downloads the platfo
 npm install --save-dev @eiva/protoc-gen-fletcher
 ```
 
-`@protobuf-ts/protoc` (which ships the `protoc` compiler binary itself) is declared as a peer dependency. npm 7+ auto-installs it. Older npm versions print a warning naming the missing peer — install it explicitly in that case.
+```bash
+npm install --save-dev @protobuf-ts/protoc
+```
+
+```bash
+npm install --save-dev fletcher-gateway-client@npm:@eiva/fletcher-gateway-client
+```
+
+Three pieces:
+
+- **`@eiva/protoc-gen-fletcher`** — this plugin shim.
+- **`@protobuf-ts/protoc`** — ships the `protoc` compiler binary itself. Declared as a peer dependency; npm 7+ auto-installs it, older npm versions print a warning. Install explicitly above to be safe.
+- **`fletcher-gateway-client`** under the bare alias `npm:@eiva/fletcher-gateway-client` — the generated `.fletcher.ts` files import `WireTypeId` and the `TypedSchema` type from a **bare** `'fletcher-gateway-client'` specifier. Installing under that alias makes the published `@eiva/fletcher-gateway-client` resolve at runtime via standard Node resolution (no tsconfig path-alias trickery needed).
 
 ## Usage
 
