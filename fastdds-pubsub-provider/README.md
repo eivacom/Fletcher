@@ -1,6 +1,6 @@
 # FastDDSPubSubProvider
 
-Implements `fletcher::PubSub` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
+Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
 ## How it works
 
@@ -10,9 +10,15 @@ The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional w
 
 ### Topic name
 
-The `std::vector<std::string>` topic segments from `PubSub` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
+The `std::vector<std::string>` topic segments from `PubSubProvider` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
 
-### QoS settings (both DataWriter and DataReader)
+### QoS configuration
+
+QoS is configured up-front via `FastDDSProviderOptions` at construction time. The Options struct has provider-instance defaults (`default_writer_qos`, `default_reader_qos`) and per-topic overrides (`topic_writer_qos`, `topic_reader_qos`). For a given topic, the per-topic override (if present) wins; otherwise the instance default is applied. There are no runtime setters — configuration is immutable after construction.
+
+#### Fletcher's default QoS profile
+
+If you construct `FastDDSPubSubProvider(FastDDSProviderOptions{})` without touching the QoS fields, both data DataWriter and DataReader get this profile:
 
 | Policy | Setting | Reason |
 |---|---|---|
@@ -22,20 +28,27 @@ The `std::vector<std::string>` topic segments from `PubSub` are joined with `/` 
 
 These three policies together implement "at-least-once" delivery within a single DDS domain.
 
+The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` + `TRANSIENT_LOCAL`. It is a Fletcher-internal implementation detail and not configurable.
+
 ## Usage
 
 ```cpp
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
-// Create a provider on DDS domain 0 (default).
-// max_payload_bytes bounds the full DDS payload: CDR framing + row bytes + attachments.
-auto provider = std::make_shared<FastDDSPubSubProvider>(
-    /*domain_id=*/0,
-    /*max_payload_bytes=*/1024 * 1024);  // 1 MB
+// Default options — Fletcher's profile on domain 0, 1 MB max payload.
+auto provider = std::make_shared<FastDDSPubSubProvider>(FastDDSProviderOptions{});
+
+// Custom options — pick a DDS domain and tune QoS:
+FastDDSProviderOptions opts;
+opts.domain_id = 7;
+opts.max_payload_bytes = 4 * 1024 * 1024;
+opts.default_writer_qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
+opts.default_writer_qos.history().depth = 10;
+auto custom = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
 ```
 
-The provider is then passed to generated `Publisher` and `Subscriber` classes:
+The provider is passed to `fletcher::Publisher` / `fletcher::Subscriber` or to generated `<Msg>Publisher` / `<Msg>Subscriber` classes:
 
 ```cpp
 // Generated from a proto service definition (in fletcher_gen namespace):
@@ -45,25 +58,40 @@ TelemetryFeed_TelemetryStreamPublisher pub(provider);
 pub.Publish(Telemetry().set_device_id(1).set_value(98.6));
 
 TelemetryFeed_TelemetryStreamSubscriber sub(provider);
-sub.Subscribe([](Telemetry msg, fletcher::Attachments att) {
+uint64_t sub_id = sub.Subscribe([](Telemetry msg, fletcher::Attachments att) {
     // Called on a Fast DDS internal listener thread.
 });
 ```
 
-Or used directly through the `PubSub` interface:
+Or used directly through the `PubSubProvider` interface:
 
 ```cpp
 provider->CreateTopic({"my", "topic"}, schema);
 provider->Publish({"my", "topic"}, encoded_row);
-provider->Subscribe({"my", "topic"}, [](const EncodedRow& row) { ... });
+provider->Subscribe({"my", "topic"}, [](const uint8_t* data, size_t len,
+                                          SharedSchema, Attachments) { ... });
 provider->Unsubscribe({"my", "topic"});
 ```
+
+### Per-topic QoS overrides
+
+```cpp
+FastDDSProviderOptions opts;
+// Override only the "telemetry/high-rate" topic to use KEEP_LAST(5):
+auto& wqos = opts.topic_writer_qos["telemetry/high-rate"];
+wqos = opts.default_writer_qos;  // start from the default
+wqos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
+wqos.history().depth = 5;
+auto provider = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
+```
+
+The key in `topic_writer_qos` / `topic_reader_qos` is the joined topic name (segments joined with `/`).
 
 ### Constraints
 
 - `CreateTopic` must be called before `Publish` on the publisher side. Calling it twice for the same topic throws.
 - On the subscriber side `Subscribe` can be called without a prior `CreateTopic` — it polls the `__schema` companion DDS topic (up to 5 s) to retrieve the schema published by the publisher.
-- Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing.
+- Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
 - The subscription callback is invoked from a Fast DDS internal listener thread. Shared state accessed from the callback must be protected externally.
 - `FastDDSPubSubProvider` is non-copyable and non-movable (DDS entities cannot be transferred).
 

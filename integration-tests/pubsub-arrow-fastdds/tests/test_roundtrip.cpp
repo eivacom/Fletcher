@@ -17,7 +17,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -51,8 +52,12 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
 }  // namespace
 
 TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
+    FastDDSProviderOptions pub_opts;
+    pub_opts.domain_id = kTestDomain;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
+    FastDDSProviderOptions sub_opts;
+    sub_opts.domain_id = kTestDomain;
+    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -61,8 +66,8 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     bool received = false;
     ArrowRow rx_row;
 
-    PubSubArrow pub(pub_provider);
-    PubSubArrow sub(sub_provider);
+    PublisherArrow pub(pub_provider);
+    SubscriberArrow sub(sub_provider);
 
     const auto schema = SensorSchema();
     const std::vector<std::string> topic{"sensor", "feed"};
@@ -104,8 +109,12 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(kTestDomain);
+    FastDDSProviderOptions pub_opts;
+    pub_opts.domain_id = kTestDomain;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
+    FastDDSProviderOptions sub_opts;
+    sub_opts.domain_id = kTestDomain;
+    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -113,8 +122,8 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
     std::condition_variable cv;
     std::vector<int32_t> received_ids;
 
-    PubSubArrow pub(pub_provider);
-    PubSubArrow sub(sub_provider);
+    PublisherArrow pub(pub_provider);
+    SubscriberArrow sub(sub_provider);
 
     const auto schema = SensorSchema();
     const std::vector<std::string> topic{"sensor", "stream"};

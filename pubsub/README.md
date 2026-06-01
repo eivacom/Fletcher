@@ -1,14 +1,16 @@
 # fletcher-pubsub
 
 A static library providing the high-level Fletcher pub/sub API. It defines the
-abstract `PubSub` provider interface (raw byte buffers + nanoarrow schemas) and
-a `Driver` wrapper that adds multi-subscriber fan-out and a topic registry on
-top of any concrete provider. Wire-compatible Arrow IPC schema
-serialization helpers are included.
+abstract `PubSubProvider` interface (raw byte buffers + nanoarrow schemas) and
+two concrete client classes — `Publisher` and `Subscriber` — that both take a
+`shared_ptr<PubSubProvider>` in their constructor. `Subscriber` adds
+multi-subscriber fan-out and a topic registry on top of any concrete provider.
+Wire-compatible Arrow IPC schema serialization helpers are included.
 
 Headers are located under `include/fletcher/pubsub/` and consumed as `#include <fletcher/pubsub/<header>.hpp>`:
-- `pubsub.hpp` — `PubSub` interface and supporting types.
-- `driver.hpp` — `Driver` (multi-subscriber fan-out, topic registry).
+- `provider.hpp` — `PubSubProvider` abstract interface and supporting types.
+- `publisher.hpp` — `Publisher` (CreateTopic + Publish + topic registry).
+- `subscriber.hpp` — `Subscriber` (Subscribe + Unsubscribe + multi-subscriber fan-out + subscription IDs).
 - `owned_schema.hpp` — RAII wrapper around `ArrowSchema`.
 - `schema_ipc.hpp` — Arrow IPC schema serialize/deserialize helpers.
 
@@ -176,8 +178,9 @@ target_link_libraries(my-project PRIVATE fletcher::pubsub)
 ### 3. Include the headers
 
 ```cpp
-#include <fletcher/pubsub/driver.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/publisher.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 ```

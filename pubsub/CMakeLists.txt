@@ -12,7 +12,8 @@ find_package(fletcher-core CONFIG REQUIRED)
 add_subdirectory(third_party/nanoarrow)
 
 add_library(fletcher-pubsub STATIC
-    src/driver.cpp
+    src/publisher.cpp
+    src/subscriber.cpp
     src/schema_ipc.cpp)
 
 target_include_directories(fletcher-pubsub PUBLIC

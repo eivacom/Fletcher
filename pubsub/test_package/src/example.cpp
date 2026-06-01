@@ -5,10 +5,11 @@
 
 #include <cassert>
 #include <fletcher/core/write_buffer.hpp>
-#include <fletcher/pubsub/driver.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <memory>
 #include <vector>
 
@@ -16,16 +17,16 @@ using namespace fletcher;
 
 namespace {
 
-class StubProvider : public PubSub {
+class StubProvider : public PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>& /*segments*/, OwnedSchema /*schema*/,
-                     std::any /*config*/) override {}
+    void CreateTopic(const std::vector<std::string>& /*segments*/,
+                     OwnedSchema /*schema*/) override {}
 
     void Publish(const std::vector<std::string>& /*segments*/, RowEncoder /*encoder*/,
                  const Attachments& /*attachments*/) override {}
 
     SubscriptionResult Subscribe(const std::vector<std::string>& /*segments*/,
-                                 SubscribeCallback /*callback*/, std::any /*config*/) override {
+                                 SubscribeCallback /*callback*/) override {
         return {};
     }
 
@@ -44,7 +45,9 @@ OwnedSchema MakeSchema() {
 }  // namespace
 
 int main() {
-    Driver driver(std::make_shared<StubProvider>());
+    auto provider = std::make_shared<StubProvider>();
+    Publisher publisher(provider);
+    Subscriber subscriber(provider);
 
     OwnedSchema schema = MakeSchema();
     assert(schema.valid());
@@ -54,10 +57,10 @@ int main() {
     OwnedSchema restored = DeserializeSchemaIpc(serialized.data(), serialized.size());
     assert(restored.valid());
 
-    // Driver topic registration + introspection.
-    driver.CreateTopic({"hello", "world"}, std::move(schema));
-    assert(driver.HasTopic({"hello", "world"}));
-    assert(driver.ListTopics().size() == 1);
+    // Publisher topic registration + introspection.
+    publisher.CreateTopic({"hello", "world"}, std::move(schema));
+    assert(publisher.HasTopic({"hello", "world"}));
+    assert(publisher.ListTopics().size() == 1);
 
     return 0;
 }

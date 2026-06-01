@@ -13,7 +13,8 @@ find_package(fletcher-core REQUIRED)
 find_package(fastdds REQUIRED)
 
 add_library(fletcher-fastdds-pubsub-provider STATIC
-    src/fast_dds_pubsub_provider.cpp)
+    src/fast_dds_pubsub_provider.cpp
+    src/qos_defaults.cpp)
 target_include_directories(fletcher-fastdds-pubsub-provider PUBLIC include)
 target_link_libraries(fletcher-fastdds-pubsub-provider
     PUBLIC  fletcher-pubsub::fletcher-pubsub

@@ -27,6 +27,7 @@
 #include <fastdds/dds/topic/TypeSupport.hpp>
 #include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <map>
 #include <mutex>
@@ -98,7 +99,7 @@ class RawBytesTopicType : public TopicDataType {
 struct TransportData {
     // Publish path — encoder writes row bytes directly into
     // the DDS payload buffer via FixedWriteBuffer.
-    PubSub::RowEncoder encoder;
+    PubSubProvider::RowEncoder encoder;
     const Attachments* attachments = nullptr;
 
     // Subscribe path (decoded in-place by deserialize, moved by listener).
@@ -232,7 +233,7 @@ class FletcherTopicType : public TopicDataType {
 
 class SubscriptionListener : public DataReaderListener {
    public:
-    SubscriptionListener(PubSub::SubscribeCallback cb, SharedSchema schema)
+    SubscriptionListener(PubSubProvider::SubscribeCallback cb, SharedSchema schema)
         : callback_(std::move(cb)), schema_(std::move(schema)) {}
 
     void on_data_available(DataReader* reader) override {
@@ -246,23 +247,9 @@ class SubscriptionListener : public DataReaderListener {
     }
 
    private:
-    PubSub::SubscribeCallback callback_;
+    PubSubProvider::SubscribeCallback callback_;
     SharedSchema schema_;
 };
-
-// -----------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------
-
-std::string JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) return {};
-    std::string out = segs[0];
-    for (size_t i = 1; i < segs.size(); ++i) {
-        out += '/';
-        out += segs[i];
-    }
-    return out;
-}
 
 }  // anonymous namespace
 
@@ -292,27 +279,56 @@ struct FastDDSPubSubProvider::Impl {
     TypeSupport schema_type_support;
     std::mutex mu;
     std::map<std::string, TopicState> topics;
+
+    // Provider-instance defaults, captured at construction.
+    DataWriterQos default_writer_qos;
+    DataReaderQos default_reader_qos;
+
+    // Per-topic QoS overrides — keyed by joined topic name.
+    std::unordered_map<std::string, DataWriterQos> topic_writer_qos;
+    std::unordered_map<std::string, DataReaderQos> topic_reader_qos;
+
+    // Resolve writer QoS for a topic: per-topic override → instance default.
+    DataWriterQos ResolveWriterQos(const std::string& name) const {
+        auto it = topic_writer_qos.find(name);
+        if (it != topic_writer_qos.end()) {
+            return it->second;
+        }
+        return default_writer_qos;
+    }
+
+    DataReaderQos ResolveReaderQos(const std::string& name) const {
+        auto it = topic_reader_qos.find(name);
+        if (it != topic_reader_qos.end()) {
+            return it->second;
+        }
+        return default_reader_qos;
+    }
 };
 
 // -----------------------------------------------------------------------
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-FastDDSPubSubProvider::FastDDSPubSubProvider(uint32_t domain_id, uint32_t max_payload_bytes)
+FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     : impl_(std::make_unique<Impl>()) {
-    impl_->max_payload = max_payload_bytes;
+    impl_->max_payload = options.max_payload_bytes;
+    impl_->default_writer_qos = std::move(options.default_writer_qos);
+    impl_->default_reader_qos = std::move(options.default_reader_qos);
+    impl_->topic_writer_qos = std::move(options.topic_writer_qos);
+    impl_->topic_reader_qos = std::move(options.topic_reader_qos);
 
     DomainParticipantQos pqos = PARTICIPANT_QOS_DEFAULT;
     pqos.name("FletcherParticipant");
     impl_->participant =
-        DomainParticipantFactory::get_instance()->create_participant(domain_id, pqos);
+        DomainParticipantFactory::get_instance()->create_participant(options.domain_id, pqos);
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    impl_->type_support.reset(new FletcherTopicType(max_payload_bytes));
+    impl_->type_support.reset(new FletcherTopicType(options.max_payload_bytes));
     impl_->type_support.register_type(impl_->participant);
 
-    impl_->schema_type_support.reset(new RawBytesTopicType(max_payload_bytes));
+    impl_->schema_type_support.reset(new RawBytesTopicType(options.max_payload_bytes));
     impl_->schema_type_support.register_type(impl_->participant);
 
     impl_->publisher = impl_->participant->create_publisher(PUBLISHER_QOS_DEFAULT);
@@ -341,12 +357,12 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
 }
 
 // -----------------------------------------------------------------------
-// PubSub interface
+// PubSubProvider interface
 // -----------------------------------------------------------------------
 
 void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema, std::any /*config*/) {
-    std::string name = JoinSegments(topic_segments);
+                                        OwnedSchema schema) {
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     if (impl_->topics.count(name))
@@ -392,7 +408,7 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
 void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
                                     RowEncoder encoder, const Attachments& attachments) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     auto it = impl_->topics.find(name);
@@ -400,13 +416,10 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
     auto& ts = it->second;
 
-    // Lazily create the DataWriter on first publish.
+    // Lazily create the DataWriter on first publish. QoS is resolved
+    // from per-topic override → instance default at this point.
     if (!ts.writer) {
-        DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
-        wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-        wqos.history().kind = KEEP_ALL_HISTORY_QOS;
-        wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
-
+        DataWriterQos wqos = impl_->ResolveWriterQos(name);
         ts.writer = impl_->publisher->create_datawriter(ts.topic, wqos);
         if (!ts.writer)
             throw std::runtime_error("FastDDS: failed to create DataWriter for: " + name);
@@ -421,9 +434,8 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 }
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
-                                                    SubscribeCallback callback,
-                                                    std::any /*config*/) {
-    std::string name = JoinSegments(topic_segments);
+                                                    SubscribeCallback callback) {
+    std::string name = internal::JoinSegments(topic_segments);
     OwnedSchema schema;
 
     // --- Phase 1: read schema from companion topic (outside lock) ---
@@ -502,10 +514,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         std::move(callback),
         ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())) : nullptr);
 
-    DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
-    rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-    rqos.history().kind = KEEP_ALL_HISTORY_QOS;
-    rqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    DataReaderQos rqos = impl_->ResolveReaderQos(name);
 
     ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get());
     if (!ts.reader) throw std::runtime_error("FastDDS: failed to create DataReader for: " + name);
@@ -516,7 +525,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
 }
 
 void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     auto it = impl_->topics.find(name);

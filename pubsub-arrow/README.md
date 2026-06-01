@@ -1,24 +1,28 @@
 # fletcher-pubsub-arrow
 
-Server-side Arrow C++ wrapper around the `fletcher-pubsub` `Driver`.
-Bridges the gap between the nanoarrow-based pub/sub core (raw bytes +
-`ArrowSchema` C structs) and Apache Arrow C++ types (`arrow::Schema`,
-`ArrowRow`).
+Server-side Arrow C++ wrappers around `fletcher-pubsub`'s `Publisher` and
+`Subscriber`. Bridges the gap between the nanoarrow-based pub/sub core (raw
+bytes + `ArrowSchema` C structs) and Apache Arrow C++ types
+(`arrow::Schema`, `ArrowRow`).
 
 ```cpp
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 
-fletcher::PubSubArrow ps(provider);
-ps.CreateTopic({"orders", "v1"}, arrow_schema);
-ps.Publish({"orders", "v1"}, arrow_row);
-ps.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow row,
-                                  fletcher::Attachments att) { ... });
+fletcher::PublisherArrow pub(provider);
+pub.CreateTopic({"orders", "v1"}, arrow_schema);
+pub.Publish({"orders", "v1"}, arrow_row);
+
+fletcher::SubscriberArrow sub(provider);
+sub.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow row,
+                                   fletcher::Attachments att) { ... });
 ```
 
-Internally owns a `Driver` and a per-topic `Codec` (from
-`fletcher-arrow-bridge`) so callers can publish and subscribe with
-Arrow scalars; the wire format remains byte-identical to what edge code
-produces via the raw `Driver`.
+`PublisherArrow` internally owns a `Publisher` and a per-topic `Codec` (from
+`fletcher-arrow-bridge`); `SubscriberArrow` owns a `Subscriber` and lazily
+creates a `Codec` from the schema received from the publisher. The wire
+format remains byte-identical to what edge code produces via the raw
+`Publisher` / `Subscriber`.
 
 ---
 
@@ -110,7 +114,8 @@ target_link_libraries(my-target PRIVATE fletcher::pubsub-arrow)
 ```
 
 ```cpp
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 ```
 
 `pubsub-arrow` re-exports its dependencies (`fletcher-pubsub`,

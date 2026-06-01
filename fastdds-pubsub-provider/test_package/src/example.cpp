@@ -20,7 +20,7 @@ static OwnedSchema MakeSchema() {
     return s;
 }
 
-static PubSub::RowEncoder MakeEncoder(int32_t x) {
+static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
     return [x](WriteBuffer& buf) {
         buf.AppendByte(0x00);
         buf.AppendFixed<int32_t>(x);
@@ -28,13 +28,13 @@ static PubSub::RowEncoder MakeEncoder(int32_t x) {
 }
 
 int main() {
-    FastDDSPubSubProvider pub_provider;
-    FastDDSPubSubProvider sub_provider;
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    auto result = sub_provider.Subscribe(
+    SubscriptionResult result = sub_provider.Subscribe(
         {"example", "topic"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
             if (len >= 5) {
                 int32_t v;
@@ -51,8 +51,9 @@ int main() {
     pub_provider.Publish({"example", "topic"}, MakeEncoder(42));
 
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline)
+    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 
     if (received.load() != 42) {
         std::fprintf(stderr, "FAIL: expected 42, got %d\n", received.load());

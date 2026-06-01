@@ -4,7 +4,7 @@
 // JSON ↔ nanoarrow ArrowSchema conversion. The gateway uses these to
 // translate between the SchemaDescriptor JSON that travels over the
 // WebSocket protocol and the OwnedSchema objects that `pubsub`'s
-// Driver consumes.
+// Publisher consumes.
 //
 // Internal to the gateway exe — not part of any public include path
 // or installed interface. Lives in its own translation unit so unit
