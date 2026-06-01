@@ -75,17 +75,38 @@ provider->Unsubscribe({"my", "topic"});
 
 ### Per-topic QoS overrides
 
+Set a different writer QoS per topic when you publish to several topics that each need their own profile. The map key is the joined topic string (segments joined with `/`); any topic not present in the map falls back to `default_writer_qos` / `default_reader_qos`.
+
 ```cpp
 FastDDSProviderOptions opts;
-// Override only the "telemetry/high-rate" topic to use KEEP_LAST(5):
-auto& wqos = opts.topic_writer_qos["telemetry/high-rate"];
-wqos = opts.default_writer_qos;  // start from the default
-wqos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
-wqos.history().depth = 5;
+
+// "telemetry/high-rate": shallow history, drop old samples.
+auto& fast = opts.topic_writer_qos["telemetry/high-rate"];
+fast = opts.default_writer_qos;
+fast.history().kind    = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
+fast.history().depth   = 5;
+fast.durability().kind = eprosima::fastdds::dds::VOLATILE_DURABILITY_QOS;
+
+// "config/snapshot": keep everything, durable for late subscribers.
+auto& cfg = opts.topic_writer_qos["config/snapshot"];
+cfg = opts.default_writer_qos;
+cfg.history().kind    = eprosima::fastdds::dds::KEEP_ALL_HISTORY_QOS;
+cfg.durability().kind = eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
+
+// "ops/log": fire-and-forget, no reliability overhead.
+auto& log = opts.topic_writer_qos["ops/log"];
+log = opts.default_writer_qos;
+log.reliability().kind = eprosima::fastdds::dds::BEST_EFFORT_RELIABILITY_QOS;
+
 auto provider = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
+Publisher publisher(provider);
+publisher.CreateTopic({"telemetry", "high-rate"}, schema_a);  // uses 'fast'
+publisher.CreateTopic({"config", "snapshot"},   schema_b);    // uses 'cfg'
+publisher.CreateTopic({"ops", "log"},           schema_c);    // uses 'log'
+publisher.CreateTopic({"misc", "events"},       schema_d);    // uses default_writer_qos
 ```
 
-The key in `topic_writer_qos` / `topic_reader_qos` is the joined topic name (segments joined with `/`).
+`topic_reader_qos` works the same way on the subscriber side.
 
 ### Constraints
 
