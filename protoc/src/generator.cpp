@@ -1917,7 +1917,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    /// discover the topic and its schema when Subscribe() is called.\n";
     o << "    explicit " << cls << "(\n"
       << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
-      << "        : subscriber_(std::make_unique<fletcher::Subscriber>(std::move(provider))) {}\n\n";
+      << "        : subscriber_(std::make_unique<fletcher::Subscriber>(std::move(provider))) "
+         "{}\n\n";
 
     // Subscribe — delivers decoded message + Attachments to the caller.
     // Returns the schema received from the publisher via the provider.
@@ -1929,7 +1930,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
-      << "            [cb = std::move(cb)](const uint8_t* data, size_t len,\n"
+      << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
+      << "                                 const uint8_t* data, size_t len,\n"
       << "                                 fletcher::SharedSchema /*schema*/,\n"
       << "                                 fletcher::Attachments att) {\n"
       << "                cb(" << msg_class << "(data, len), std::move(att));\n"

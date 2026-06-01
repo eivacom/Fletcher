@@ -6,10 +6,10 @@
 namespace fletcher {
 namespace internal {
 
-using eprosima::fastdds::dds::DataReaderQos;
-using eprosima::fastdds::dds::DataWriterQos;
 using eprosima::fastdds::dds::DATAREADER_QOS_DEFAULT;
+using eprosima::fastdds::dds::DataReaderQos;
 using eprosima::fastdds::dds::DATAWRITER_QOS_DEFAULT;
+using eprosima::fastdds::dds::DataWriterQos;
 using eprosima::fastdds::dds::KEEP_ALL_HISTORY_QOS;
 using eprosima::fastdds::dds::RELIABLE_RELIABILITY_QOS;
 using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;

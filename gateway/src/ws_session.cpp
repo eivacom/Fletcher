@@ -175,13 +175,16 @@ void WsSession::OnCreateTopic(const nlohmann::json& msg) {
 void WsSession::OnSubscribe(const std::string& topic) {
     auto segments = SplitTopic(topic);
 
-    auto sub_id_ptr = std::make_shared<uint64_t>(0);
     std::weak_ptr<WsSession> weak = shared_from_this();
 
+    // Subscriber::Subscribe passes the subscription_id to the callback on
+    // every invocation, so we don't need a side-channel to communicate it.
+    // This closes a race where samples delivered synchronously during
+    // Subscribe() (e.g. retained TRANSIENT_LOCAL data) would have been
+    // framed with sub-id 0 before the outer code could write the real id.
     auto result =
-        subscriber_->Subscribe(segments, [weak, sub_id_ptr](const uint8_t* data, size_t len,
-                                                            SharedSchema /*schema*/,
-                                                            Attachments att) {
+        subscriber_->Subscribe(segments, [weak](uint64_t sub_id, const uint8_t* data, size_t len,
+                                                SharedSchema /*schema*/, Attachments att) {
             auto self = weak.lock();
             if (!self) return;
 
@@ -193,7 +196,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
 
                 std::vector<uint8_t> frame;
                 frame.reserve(8 + binary.size());
-                AppendU64LE(frame, *sub_id_ptr);
+                AppendU64LE(frame, sub_id);
                 AppendBytes(frame, binary.data(), binary.size());
 
                 net::post(self->ws_.get_executor(), [self, f = std::move(frame)]() mutable {
@@ -206,7 +209,6 @@ void WsSession::OnSubscribe(const std::string& topic) {
         });
 
     uint64_t sub_id = result.subscription_id;
-    *sub_id_ptr = sub_id;
     subscriptions_[sub_id] = topic;
 
     // Routing always; schema only when a publisher announced one. The

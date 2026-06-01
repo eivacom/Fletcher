@@ -161,9 +161,7 @@ TEST(PublisherTest, HasTopic) {
     EXPECT_FALSE(publisher.HasTopic({"other"}));
 }
 
-TEST(PublisherTest, NullProviderThrows) {
-    EXPECT_THROW(Publisher(nullptr), std::invalid_argument);
-}
+TEST(PublisherTest, NullProviderThrows) { EXPECT_THROW(Publisher(nullptr), std::invalid_argument); }
 
 // ---------------------------------------------------------------------------
 // Subscriber tests
@@ -177,9 +175,8 @@ TEST(SubscriberTest, PublishDelegatesToProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     int32_t received_value = 0;
-    subscriber.Subscribe(kTopic, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-        received_value = DecodeTestRow(data, len);
-    });
+    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema,
+                                     Attachments) { received_value = DecodeTestRow(data, len); });
 
     publisher.Publish(kTopic, MakeTestEncoder(42));
 
@@ -192,10 +189,10 @@ TEST(SubscriberTest, SubscribeReturnsUniqueIds) {
     Subscriber subscriber(mock);
     publisher.CreateTopic(kTopic, TestSchema());
 
-    Subscriber::SubscribeResult r1 =
-        subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
-    Subscriber::SubscribeResult r2 =
-        subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    Subscriber::SubscribeResult r1 = subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+    Subscriber::SubscribeResult r2 = subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     EXPECT_NE(r1.subscription_id, r2.subscription_id);
 }
@@ -206,7 +203,7 @@ TEST(SubscriberTest, SubscribeToUnknownTopicSucceeds) {
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        {"no", "such"}, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+        {"no", "such"}, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
     EXPECT_GT(result.subscription_id, 0u);
 }
 
@@ -217,8 +214,8 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
 
     publisher.CreateTopic(kTopic, TestSchema());
 
-    Subscriber::SubscribeResult result =
-        subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    Subscriber::SubscribeResult result = subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
     ASSERT_TRUE(result.schema.valid());
     EXPECT_EQ(result.schema->n_children, 1);
     EXPECT_EQ(std::string(result.schema->children[0]->name), "x");
@@ -233,10 +230,10 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    subscriber.Subscribe(kTopic,
-                         [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(kTopic,
-                         [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+    subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
+    subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
 
@@ -257,9 +254,9 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
     int count_a = 0;
     int count_b = 0;
     Subscriber::SubscribeResult ra = subscriber.Subscribe(
-        kTopic, [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(kTopic,
-                         [&](const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
+    subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
     EXPECT_EQ(count_a, 1);
@@ -277,8 +274,8 @@ TEST(SubscriberTest, UnsubscribeLastSubscriberUnsubscribesFromProvider) {
     Subscriber subscriber(mock);
     publisher.CreateTopic(kTopic, TestSchema());
 
-    Subscriber::SubscribeResult r =
-        subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    Subscriber::SubscribeResult r = subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
     EXPECT_EQ(mock->unsubscribe_count, 0);
 
     subscriber.Unsubscribe(r.subscription_id);
@@ -291,9 +288,10 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
     Subscriber subscriber(mock);
     publisher.CreateTopic(kTopic, TestSchema());
 
-    Subscriber::SubscribeResult r1 =
-        subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
-    subscriber.Subscribe(kTopic, [](const uint8_t*, size_t, SharedSchema, Attachments) {});
+    Subscriber::SubscribeResult r1 = subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+    subscriber.Subscribe(kTopic,
+                         [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
@@ -318,11 +316,11 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    subscriber.Subscribe(kTopic,
-                         [&](const uint8_t* data, size_t len, SharedSchema, Attachments att) {
-                             received_value = DecodeTestRow(data, len);
-                             received_att = std::move(att);
-                         });
+    subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments att) {
+            received_value = DecodeTestRow(data, len);
+            received_att = std::move(att);
+        });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 

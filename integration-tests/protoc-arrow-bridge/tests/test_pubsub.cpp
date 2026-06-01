@@ -4,8 +4,8 @@
 // pubsub.proto — generated Publisher / Subscriber classes.
 //
 // The plugin emits typed Publisher / Subscriber wrappers around the
-// pubsub::Driver/PubSub interface. These tests use a MockPubSubProvider
-// (in-process, no DDS) to exercise:
+// fletcher::PubSubProvider interface. These tests use a
+// MockPubSubProvider (in-process, no DDS) to exercise:
 //
 // - Publisher creates a topic with the right schema on construction
 // - Publish encodes a typed message and delivers bytes to the provider
@@ -179,7 +179,8 @@ TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    uint64_t sub_id = sub.Subscribe([&](fletcher_gen::integration::Telemetry, Attachments) { ++count; });
+    uint64_t sub_id =
+        sub.Subscribe([&](fletcher_gen::integration::Telemetry, Attachments) { ++count; });
 
     fletcher_gen::integration::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");

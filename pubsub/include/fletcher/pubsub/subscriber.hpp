@@ -41,8 +41,13 @@ class Subscriber {
         OwnedSchema schema;
     };
 
-    using SubscribeCallback = std::function<void(const uint8_t* data, size_t len,
-                                                 SharedSchema schema, Attachments attachments)>;
+    /// User callback. The first parameter is the subscription_id this
+    /// callback was registered under, so callers (e.g. the gateway WS
+    /// session) can correlate samples with the subscription without
+    /// racing against the Subscribe() return.
+    using SubscribeCallback =
+        std::function<void(uint64_t subscription_id, const uint8_t* data, size_t len,
+                           SharedSchema schema, Attachments attachments)>;
 
     /// Subscribe to a topic. Returns a per-subscription ID for targeted
     /// unsubscribe and the schema that the publisher registered.

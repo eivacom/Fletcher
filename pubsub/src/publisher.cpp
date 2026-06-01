@@ -22,8 +22,7 @@ struct Publisher::Impl {
     std::unordered_map<std::string, TopicState> topics;
 };
 
-Publisher::Publisher(std::shared_ptr<PubSubProvider> provider)
-    : impl_(std::make_unique<Impl>()) {
+Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
         throw std::invalid_argument("Publisher: provider must not be null");
     }
@@ -34,9 +33,16 @@ Publisher::~Publisher() = default;
 
 void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
     std::string key = internal::JoinSegments(segments);
+
+    // Atomically claim the topic key under the lock so two concurrent
+    // CreateTopic calls for the same topic cannot both pass the
+    // duplicate check and reach provider->CreateTopic.
     {
         std::lock_guard lock(impl_->mu);
-        if (impl_->topics.count(key)) {
+        Impl::TopicState ts;
+        ts.segments = segments;
+        auto [it, inserted] = impl_->topics.try_emplace(key, std::move(ts));
+        if (!inserted) {
             throw std::runtime_error("Publisher: topic already exists: " + key);
         }
     }
@@ -46,14 +52,22 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
         local_copy = OwnedSchema::DeepCopy(schema.get());
     }
 
-    impl_->provider->CreateTopic(segments, std::move(schema));
+    try {
+        impl_->provider->CreateTopic(segments, std::move(schema));
+    } catch (...) {
+        // Provider rejected the topic — roll back the claim so a
+        // subsequent retry can succeed.
+        std::lock_guard lock(impl_->mu);
+        impl_->topics.erase(key);
+        throw;
+    }
 
     {
         std::lock_guard lock(impl_->mu);
-        Impl::TopicState ts;
-        ts.segments = segments;
-        ts.schema = std::move(local_copy);
-        impl_->topics[key] = std::move(ts);
+        auto it = impl_->topics.find(key);
+        if (it != impl_->topics.end()) {
+            it->second.schema = std::move(local_copy);
+        }
     }
 }
 

@@ -35,11 +35,18 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
     OwnedSchema nano;
     if (schema) {
         nano = ExportToNano(*schema);
+    }
+
+    // Delegate to the underlying Publisher FIRST. If it throws (duplicate
+    // topic, provider failure) we leave the local codec registry
+    // untouched, so it stays in sync with the Publisher's view.
+    publisher_->CreateTopic(segments, std::move(nano));
+
+    if (schema) {
         std::string key = JoinSegments(segments);
         std::lock_guard lock(mu_);
         codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
     }
-    publisher_->CreateTopic(segments, std::move(nano));
 }
 
 void PublisherArrow::Publish(const std::vector<std::string>& segments, const ArrowRow& row,

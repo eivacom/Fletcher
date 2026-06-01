@@ -7,6 +7,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "fletcher/pubsub/internal/segments.hpp"
@@ -32,7 +33,7 @@ struct Subscriber::Impl {
     std::unordered_map<uint64_t, Subscription> subscriptions;
     std::atomic<uint64_t> next_id{1};
 
-    // Called with mu held.  Releases the lock while calling into the
+    // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
     OwnedSchema EnsureProviderSubscription(const std::string& key, TopicState& ts,
                                            std::unique_lock<std::mutex>& lock) {
@@ -54,17 +55,26 @@ struct Subscriber::Impl {
         SubscriptionResult result = provider->Subscribe(
             segments,
             [this, key](const uint8_t* data, size_t len, SharedSchema schema, Attachments att) {
-                std::vector<SubscribeCallback> cbs;
+                // Snapshot (id, callback) pairs under the lock, then
+                // invoke outside the lock so callbacks can call back
+                // into Subscriber without deadlocking.
+                std::vector<std::pair<uint64_t, SubscribeCallback>> cbs;
                 {
                     std::lock_guard lk(mu);
                     for (const auto& [id, sub] : subscriptions) {
                         if (sub.topic_key == key) {
-                            cbs.push_back(sub.callback);
+                            cbs.emplace_back(id, sub.callback);
                         }
                     }
                 }
-                for (const auto& cb : cbs) {
-                    cb(data, len, schema, att);
+                // Copy attachments to all but the last callback; move
+                // into the last one to avoid an unnecessary copy when
+                // the attachments map is large.
+                for (size_t i = 0; i + 1 < cbs.size(); ++i) {
+                    cbs[i].second(cbs[i].first, data, len, schema, att);
+                }
+                if (!cbs.empty()) {
+                    cbs.back().second(cbs.back().first, data, len, schema, std::move(att));
                 }
             });
 
@@ -94,8 +104,7 @@ struct Subscriber::Impl {
     }
 };
 
-Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider)
-    : impl_(std::make_unique<Impl>()) {
+Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
         throw std::invalid_argument("Subscriber: provider must not be null");
     }
@@ -122,7 +131,7 @@ Subscriber::~Subscriber() {
 }
 
 Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>& segments,
-                                                   SubscribeCallback cb) {
+                                                  SubscribeCallback cb) {
     std::string key = internal::JoinSegments(segments);
     std::unique_lock lock(impl_->mu);
 
@@ -136,7 +145,17 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
 
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
-    OwnedSchema schema = impl_->EnsureProviderSubscription(key, it->second, lock);
+
+    OwnedSchema schema;
+    try {
+        schema = impl_->EnsureProviderSubscription(key, it->second, lock);
+    } catch (...) {
+        // Provider subscription failed — roll back the local
+        // subscription record so callers can retry without leaving
+        // dangling state behind.
+        impl_->subscriptions.erase(id);
+        throw;
+    }
     return {id, std::move(schema)};
 }
 

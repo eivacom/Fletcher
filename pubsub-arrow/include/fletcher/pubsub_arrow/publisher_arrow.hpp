@@ -42,8 +42,8 @@ class PublisherArrow {
                  const Attachments& attachments = {});
 
     /// Publish using a direct encoder (passthrough to Publisher).
-    void PublishDirect(const std::vector<std::string>& segments,
-                       PubSubProvider::RowEncoder encoder, const Attachments& attachments = {});
+    void PublishDirect(const std::vector<std::string>& segments, PubSubProvider::RowEncoder encoder,
+                       const Attachments& attachments = {});
 
     std::vector<std::string> ListTopics() const;
     bool HasTopic(const std::vector<std::string>& segments) const;

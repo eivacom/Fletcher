@@ -53,6 +53,9 @@ class SubscriberArrow {
         std::unique_ptr<Codec> codec;
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
+    // Maps subscription_id -> topic key so Unsubscribe can free codec
+    // entries once the last subscription for a topic is gone.
+    std::unordered_map<uint64_t, std::string> sub_topic_;
 
     static std::string JoinSegments(const std::vector<std::string>& segs);
 };

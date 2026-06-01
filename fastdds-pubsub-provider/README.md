@@ -197,8 +197,11 @@ target_link_libraries(my_app PRIVATE
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 ```
 
-The `fast-dds::fast-dds` link dependency is private to this library;
-consumers do not need to depend on Fast DDS directly.
+The `fast-dds::fast-dds` link dependency is **public** to this library
+because `FastDDSProviderOptions` exposes `eprosima::fastdds::dds::DataWriterQos`
+and `eprosima::fastdds::dds::DataReaderQos` in its public API. Consumers
+get the FastDDS headers transitively and can include them directly when
+they need to construct or tune a QoS profile.
 
 ## CI pipeline
 
