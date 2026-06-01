@@ -425,9 +425,10 @@ Codec* PubSubArrow::AcquireCodec(const std::string& key, const SharedSchema& sch
         return nullptr;
     }
     if (!arrow_schema) return nullptr;
-    auto ins = codecs_.emplace(
-        key, TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)});
-    return ins.first->second.codec.get();
+    auto codec = std::make_unique<Codec>(arrow_schema);
+    Codec* codec_ptr = codec.get();
+    codecs_.emplace(key, TopicCodec{arrow_schema, std::move(codec)});
+    return codec_ptr;
 }
 
 // -----------------------------------------------------------------------
