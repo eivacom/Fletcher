@@ -158,7 +158,14 @@ class PubSubArrow::RecordBatchBatcher {
         auto schema = schema_;
 
         lk.unlock();
-        cb_(BuildBatch(schema, rows), std::move(atts), BatchStatus{reason, dropped});
+        // Isolate the user callback: a throw here would otherwise escape the
+        // timer thread (→ std::terminate) or propagate out of ~PubSubArrow via
+        // Stop()'s kClosing flush. Internal threads must not depend on user
+        // code being noexcept.
+        try {
+            cb_(BuildBatch(schema, rows), std::move(atts), BatchStatus{reason, dropped});
+        } catch (...) {
+        }
         lk.lock();
     }
 
@@ -253,6 +260,12 @@ PubSubArrow::~PubSubArrow() {
         batchers_.clear();
     }
     for (auto& b : to_stop) b->Stop();  // join timer threads + deliver closing flush
+
+    // Tear down the driver here, while mu_/codecs_ are still alive. Member
+    // destruction order would otherwise destroy driver_ last (it's the first
+    // member), so subscriber lambdas unwound by ~Driver could touch mu_ and
+    // codecs_ after they've already been destroyed.
+    driver_.reset();
 }
 
 // -----------------------------------------------------------------------
@@ -346,14 +359,17 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
 
     auto result = driver_->Subscribe(
         segments,
-        [this, key, batcher](const uint8_t* data, size_t len, SharedSchema /*schema*/,
+        [this, key, batcher](const uint8_t* data, size_t len, SharedSchema schema,
                              Attachments att) {
-            Codec* codec;
-            {
-                std::lock_guard lock(mu_);
-                auto it = codecs_.find(key);
-                if (it == codecs_.end()) return;
-                codec = it->second.codec.get();
+            // Lazy-init the codec from the per-message schema: in
+            // subscriber-only mode (no prior CreateTopic) the codec isn't
+            // registered yet and the provider can deliver before
+            // driver_->Subscribe returns. If no codec can be built, count
+            // the message as dropped so the loss is reported.
+            Codec* codec = AcquireCodec(key, schema);
+            if (!codec) {
+                batcher->NoteDropped();
+                return;
             }
             ArrowRow row;
             try {
@@ -369,22 +385,49 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
         },
         std::move(config));
 
-    // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand it to
-    // the batcher so it can build batches.
-    std::shared_ptr<arrow::Schema> arrow_schema;
-    if (result.schema) {
-        arrow_schema = ImportFromNano(result.schema.get());
-        std::lock_guard lock(mu_);
-        if (codecs_.find(key) == codecs_.end())
-            codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
-    }
-    batcher->SetSchema(arrow_schema);
+    // From here on the driver may already be delivering to the captured
+    // batcher. If post-setup throws, the lambda keeps the batcher alive via
+    // its shared_ptr capture and the caller never sees an id to unsubscribe
+    // — so we must roll back the driver subscription.
+    try {
+        // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand
+        // it to the batcher so it can build batches.
+        std::shared_ptr<arrow::Schema> arrow_schema;
+        if (result.schema) {
+            arrow_schema = ImportFromNano(result.schema.get());
+            std::lock_guard lock(mu_);
+            if (codecs_.find(key) == codecs_.end())
+                codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
+        }
+        batcher->SetSchema(arrow_schema);
 
-    {
-        std::lock_guard lock(mu_);
-        batchers_[result.subscription_id] = std::move(batcher);
+        {
+            std::lock_guard lock(mu_);
+            batchers_[result.subscription_id] = std::move(batcher);
+        }
+        return {result.subscription_id, std::move(arrow_schema)};
+    } catch (...) {
+        batcher->Stop();
+        driver_->Unsubscribe(result.subscription_id);
+        throw;
     }
-    return {result.subscription_id, std::move(arrow_schema)};
+}
+
+Codec* PubSubArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
+    std::lock_guard lock(mu_);
+    auto it = codecs_.find(key);
+    if (it != codecs_.end()) return it->second.codec.get();
+    if (!schema) return nullptr;
+    std::shared_ptr<arrow::Schema> arrow_schema;
+    try {
+        arrow_schema = ImportFromNano(schema.get());
+    } catch (...) {
+        return nullptr;
+    }
+    if (!arrow_schema) return nullptr;
+    auto ins = codecs_.emplace(
+        key, TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)});
+    return ins.first->second.codec.get();
 }
 
 // -----------------------------------------------------------------------

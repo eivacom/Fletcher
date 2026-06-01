@@ -119,6 +119,12 @@ class PubSubArrow {
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
 
+    // Find the codec for `key`, building it lazily from the per-message
+    // SharedSchema when missing (subscriber-only path: no prior CreateTopic,
+    // and the provider can deliver before driver_->Subscribe returns).
+    // Returns nullptr if no schema is available to build one. Acquires mu_.
+    Codec* AcquireCodec(const std::string& key, const SharedSchema& schema);
+
     // Accumulates decoded rows into RecordBatches for the batched Subscribe
     // overload. Defined in pubsub_arrow.cpp; one per batched subscription,
     // keyed by subscription id so Unsubscribe can stop and flush it.
