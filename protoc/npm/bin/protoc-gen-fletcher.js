@@ -33,7 +33,7 @@ function platformAssetName() {
   }
   throw new Error(
     `protoc-gen-fletcher: unsupported platform ${platform}/${arch}. ` +
-      `Supported: linux/x64, win32/x64.`
+      `Supported: linux/x64, win32/x64.`,
   );
 }
 
@@ -57,8 +57,8 @@ function followRedirects(url, depth) {
             new Error(
               `Download failed (${res.statusCode}): ${url}\n` +
                 `Check that the release exists at ` +
-                `https://github.com/eivacom/Fletcher/releases/tag/protoc-v${VERSION}`
-            )
+                `https://github.com/eivacom/Fletcher/releases/tag/protoc-v${VERSION}`,
+            ),
           );
         }
         const chunks = [];

@@ -5,7 +5,7 @@
   "description": "Consumer-perspective integration test for @eiva/protoc-gen-fletcher. Installs the npm shim from the local working copy, generates TypeScript bindings via the prebuild hook, compiles, and runs the resulting binary.",
   "license": "LGPL-3.0-or-later",
   "scripts": {
-    "proto:gen": "protoc --plugin=protoc-gen-fletcher=./node_modules/.bin/protoc-gen-fletcher --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/example.proto",
+    "proto:gen": "node -e \"require('fs').mkdirSync('src/generated',{recursive:true})\" && protoc --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/example.proto",
     "prebuild": "npm run proto:gen",
     "build": "tsc",
     "test": "node dist/main.js"

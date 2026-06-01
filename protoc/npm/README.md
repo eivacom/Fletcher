@@ -21,12 +21,17 @@ Wire `proto:gen` into your `package.json`. Adding it as a `prebuild` script keep
 ```json
 {
   "scripts": {
-    "proto:gen": "protoc --plugin=protoc-gen-fletcher=./node_modules/.bin/protoc-gen-fletcher --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/*.proto",
+    "proto:gen": "node -e \"require('fs').mkdirSync('src/generated',{recursive:true})\" && protoc --fletcher_opt=ts --fletcher_out=src/generated -I proto proto/*.proto",
     "prebuild": "npm run proto:gen",
     "build": "tsc"
   }
 }
 ```
+
+Two notes:
+
+- The leading `node -e mkdirSync(...)` ensures `src/generated/` exists before `protoc` runs — `protoc` does not auto-create its `--fletcher_out` directory, and `mkdir -p` is not portable to Windows.
+- No `--plugin=` flag is needed. `protoc` searches `PATH` (which npm prepends `node_modules/.bin/` to during script execution) for `protoc-gen-<name>` based on the `--<name>_out` flag, with the OS's executable-extension rules — so the `protoc-gen-fletcher.cmd` wrapper that npm writes alongside the bin shim is found correctly on Windows.
 
 Then:
 
