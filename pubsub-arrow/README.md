@@ -22,6 +22,61 @@ produces via the raw `Driver`.
 
 ---
 
+## Batched RecordBatch subscribe
+
+Rows arrive one at a time, but analytics wants columns. The batched
+`Subscribe` overload accumulates incoming rows and delivers an
+`arrow::RecordBatch` when **either** a row-count limit is reached **or** a
+timeout elapses since the batch started filling — whichever comes first
+(defaults: 8000 rows, 1 minute).
+
+```cpp
+fletcher::PubSubArrow ps(provider);
+
+ps.Subscribe(
+    {"orders", "v1"},
+    [](std::shared_ptr<arrow::RecordBatch> batch,
+       std::vector<fletcher::Attachments> attachments,  // attachments[i] -> row i
+       fletcher::PubSubArrow::BatchStatus status) {
+        // status.reason: kRowLimit | kTimeout | kClosing
+        // status.rows_dropped: rows lost since the last flush (0 == all good)
+        process(batch);
+    },
+    {.max_rows = 4096, .timeout = std::chrono::seconds(5)});  // or omit for defaults
+```
+
+The callback's third argument, `BatchStatus`, says **why** the batch was
+delivered (`reason`) and whether any samples were lost (`rows_dropped`). A row
+that fails to decode is counted in `rows_dropped` and contributes neither a row
+nor an attachment, so a window with only dropped rows still delivers a zero-row
+batch to report the loss. The partial batch is flushed with reason `kClosing`
+on `Unsubscribe`. The callback target must outlive the subscription.
+
+### Dictionary columns
+
+A dictionary is a columnar optimisation that means nothing for a single row, so
+a `dictionary(index, value)` field is transferred as its **value type**, one
+value per row. The per-row `Subscribe` overload hands you a plain value scalar;
+the batched overload re-folds the accumulated values into a real
+`DictionaryArray` of the field's declared type when it assembles each batch:
+
+```cpp
+auto schema = arrow::schema({arrow::field(
+    "category", arrow::dictionary(arrow::int32(), arrow::utf8()))});
+ps.CreateTopic({"events", "v1"}, schema);
+
+// Publish plain values; no need to dictionary-encode on the sending side.
+ps.Publish({"events", "v1"}, {std::make_shared<arrow::StringScalar>("click")});
+
+// In the batched subscriber, the "category" column of each RecordBatch comes
+// out as a DictionaryArray (values deduplicated, nulls preserved).
+```
+
+The dictionary **value type must be a primitive/scalar type**; nested value
+types (struct/list/map/union) are rejected with a clear error.
+
+---
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

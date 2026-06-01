@@ -22,7 +22,8 @@ namespace fletcher {
 namespace detail {
 
 // Append the binary encoding of scalar to buf.
-// Throws std::invalid_argument for unsupported types or for DICTIONARY.
+// A DICTIONARY scalar is encoded as its resolved value (the value type must be
+// a scalar type). Throws std::invalid_argument for unsupported types.
 void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar);
 
 // Decode one scalar of the given type from a Reader, advancing its position.

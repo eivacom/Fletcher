@@ -364,13 +364,21 @@ EncodedRow Codec::EncodeRow(const ArrowRow& values) const {
         const auto& scalar = values[i];
         if (!scalar || !scalar->is_valid) continue;
 
-        if (scalar->type->id() != schema_->field(i)->type()->id())
-            throw std::invalid_argument("Codec::EncodeRow: type mismatch for field '" +
-                                        schema_->field(i)->name() + "': schema expects " +
-                                        schema_->field(i)->type()->ToString() + ", got " +
-                                        scalar->type->ToString());
+        const auto& field_type = *schema_->field(i)->type();
+        bool type_ok = scalar->type->id() == field_type.id();
+        if (!type_ok && field_type.id() == arrow::Type::DICTIONARY) {
+            // A dictionary field may be supplied as a DictionaryScalar or as a
+            // plain value-type scalar; it is transferred as its value type.
+            const auto& value_type =
+                *static_cast<const arrow::DictionaryType&>(field_type).value_type();
+            type_ok = scalar->type->id() == value_type.id();
+        }
+        if (!type_ok)
+            throw std::invalid_argument(
+                "Codec::EncodeRow: type mismatch for field '" + schema_->field(i)->name() +
+                "': schema expects " + field_type.ToString() + ", got " + scalar->type->ToString());
 
-        EncodePositionalValue(buf, *scalar, *schema_->field(i)->type());
+        EncodePositionalValue(buf, *scalar, field_type);
     }
 
     return buf;

@@ -176,7 +176,19 @@ The following Protocol Buffer constructs are not supported, by design:
 | Recursive messages | Arrow schemas are finite DAGs. No way to represent unbounded recursion as a static schema. |
 | `google.protobuf.Any` | Dynamically typed — no static Arrow mapping possible. |
 | `google.protobuf.Struct` | Dynamic key set with recursive `Value` oneof. Suffers from both limitations simultaneously. |
-| `DICTIONARY` types | Dictionary encoding is a columnar optimization whose dictionary array lives outside any individual row. |
+
+### Dictionary types
+
+`DICTIONARY` columns *are* supported, but with a row-oriented twist. Dictionary
+encoding is a columnar optimization whose dictionary array lives outside any
+individual row, so Fletcher transfers a dictionary field as its **value type**,
+one value per row. The per-row (`ArrowRow`) decode path therefore yields a plain
+value scalar. The batched `PubSubArrow::Subscribe` (RecordBatch) path re-folds
+those values into a real `DictionaryArray` of the field's declared dictionary
+type when it assembles each batch — that is the only place a dictionary makes
+sense. The dictionary **value type must be a primitive/scalar type**; nested
+value types (struct/list/map/union) are not supported and are rejected with a
+clear error.
 
 ---
 
