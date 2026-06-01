@@ -6,10 +6,10 @@
 #
 #   setup-devcontainer
 #       │
-#       ├── release (ci.protoc.yml)              ── Conan-package tarballs
-#       ├── build-static-linux                   ── raw single-file binary
-#       └── build-static-windows                 ── raw single-file binary
-#               │
+#       └── release (ci.protoc.yml)
+#               │  produces 4 artifacts:
+#               │    fletcher-protoc-{linux,windows}            (Conan .tgz)
+#               │    fletcher-protoc-{linux,windows}-static     (raw binary)
 #               ▼
 #         npm-publish                            ── @eiva/protoc-gen-fletcher
 #               │
@@ -18,16 +18,17 @@
 #                                                   npm link prepended to
 #                                                   auto-generated notes
 #
+# All build jobs (shared + static) live in ci.protoc.yml as the single
+# source of truth. On tag-push it produces both the Conan tarballs and
+# the raw static binaries; on PR runs the static jobs are gated off
+# (the integration-test workflows already exercise the static build
+# via their own `conan create`).
+#
 # Publishing to npm BEFORE creating the GitHub Release lets the release
 # body link to the just-published version on npmjs.com (same pattern as
 # cd.gateway-client.yml). Conan consumers get the .tgz tarballs as
 # release assets; npm/raw-binary consumers get the statically-linked
 # single-file binaries.
-#
-# ci.protoc.yml is also called from ci.pr.yml — build/test logic is
-# shared so PR and release runs use the same source of truth for the
-# Conan path. The release-creation jobs live here so PR runs do not
-# show a skipped upload rectangle.
 #
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
@@ -51,98 +52,8 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # Static-link build for the raw GitHub Release assets (npm consumers
-  # and anyone who downloads the binary directly). The `-o "*:shared=False"`
-  # flag forces protobuf, zlib, and any other transitive dependency to be
-  # statically linked into fletcher-protoc[.exe]. The result is a single
-  # file with no DLL dependencies — Google's `protoc.exe` is shipped the
-  # same way. This is what we extract and upload as `protoc-gen-fletcher-*`.
-  #
-  # The shared build (ci.protoc.yml above) is kept for the Conan tarball
-  # release assets because Conan consumers want shared libs (so they can
-  # share with other deps that link against protobuf).
-  build-static-linux:
-    needs: setup-devcontainer
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .conan-profiles
-            .github
-
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ needs.setup-devcontainer.outputs.image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build static fletcher-protoc and extract binary
-        run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace \
-            fletcher-build \
-            bash -c '
-              set -euo pipefail
-              conan create protoc/. --build=missing \
-                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release \
-                -o "*:shared=False"
-              bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc" -type f -print -quit)
-              if [ -z "$bin" ]; then
-                echo "::error::fletcher-protoc binary not found in Conan cache after static build"
-                find ~/.conan2 -name "fletcher-protoc*" -type f
-                exit 1
-              fi
-              cp "$bin" /workspace/protoc-gen-fletcher-linux-x64
-              chmod +x /workspace/protoc-gen-fletcher-linux-x64
-              ls -lah /workspace/protoc-gen-fletcher-linux-x64
-            '
-
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: fletcher-protoc-linux-static
-          path: protoc-gen-fletcher-linux-x64
-          retention-days: 5
-
-  build-static-windows:
-    needs: setup-devcontainer
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .conan-profiles
-            .github
-
-      - name: Install Conan
-        uses: ./.github/actions/conan-install
-
-      - name: Build static fletcher-protoc
-        shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
-
-      - name: Extract static binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc.exe" -type f -print -quit)
-          if [ -z "$bin" ]; then
-            echo "::error::fletcher-protoc.exe not found in Conan cache after static build"
-            find ~/.conan2 -name "fletcher-protoc*" -type f
-            exit 1
-          fi
-          cp "$bin" protoc-gen-fletcher-windows-x64.exe
-          ls -lah protoc-gen-fletcher-windows-x64.exe
-
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: fletcher-protoc-windows-static
-          path: protoc-gen-fletcher-windows-x64.exe
-          retention-days: 5
-
   npm-publish:
-    needs: [release, build-static-linux, build-static-windows]
+    needs: release
     runs-on: ubuntu-latest
     # id-token: write is required for `npm publish --provenance` to mint
     # an OIDC token that npm exchanges for a signed Sigstore attestation
