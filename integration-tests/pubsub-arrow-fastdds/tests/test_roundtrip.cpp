@@ -160,3 +160,108 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         EXPECT_EQ(received_ids[i], i) << "row " << i << " out of order";
     }
 }
+
+// ---------------------------------------------------------------------------
+// Batched RecordBatch Subscribe over real FastDDS.
+//
+// The unit tests against MockProvider exercise the batcher's logic with
+// synchronous delivery on the publisher thread. This integration test
+// drives the same batcher across two real DomainParticipants, so it
+// covers:
+//
+//   - the batcher timer thread interacting with FastDDS' listener thread
+//     (rows arrive from a thread the publisher does not own)
+//   - lazy codec acquisition from the SharedSchema delivered with each
+//     sample, which is the subscriber-only mode for the batched path
+// ---------------------------------------------------------------------------
+TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
+    FastDDSProviderOptions pub_opts;
+    pub_opts.domain_id = kTestDomain;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
+    FastDDSProviderOptions sub_opts;
+    sub_opts.domain_id = kTestDomain;
+    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+
+    // Capture state must outlive `sub`: a delivery on the FastDDS listener
+    // thread could otherwise touch destroyed locals during teardown.
+    std::mutex mu;
+    std::condition_variable cv;
+    using BatchStatus = SubscriberArrow::BatchStatus;
+    struct Delivery {
+        int64_t num_rows;
+        size_t num_attachments;
+        BatchStatus status;
+        std::shared_ptr<arrow::RecordBatch> batch;
+    };
+    std::vector<Delivery> deliveries;
+
+    PublisherArrow pub(pub_provider);
+    SubscriberArrow sub(sub_provider);
+
+    const auto schema = SensorSchema();
+    const std::vector<std::string> topic{"sensor", "batched"};
+
+    pub.CreateTopic(topic, schema);
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 3;
+    opt.timeout = std::chrono::seconds(10);  // long, so only the count triggers
+    auto result = sub.Subscribe(
+        topic,
+        [&](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments> att,
+            BatchStatus status) {
+            std::lock_guard<std::mutex> lk(mu);
+            deliveries.push_back(
+                {batch ? batch->num_rows() : -1, att.size(), status, std::move(batch)});
+            cv.notify_all();
+        },
+        opt);
+
+    ASSERT_NE(result.schema, nullptr);
+    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+
+    // Publish exactly max_rows samples — RELIABLE + TRANSIENT_LOCAL + KEEP_ALL
+    // guarantees ordered delivery to the matched DataReader. Once the batcher
+    // has counted three rows on the listener thread, it flushes a kRowLimit
+    // batch.
+    pub.Publish(topic, SensorRow(0, 0.5, "a"));
+    pub.Publish(topic, SensorRow(1, 1.5, "b"));
+    pub.Publish(topic, SensorRow(2, 2.5, "c"));
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return !deliveries.empty(); }))
+            << "batched callback never fired within 10 s";
+    }
+
+    // Tear down before reading deliveries so the FastDDS listener thread can
+    // no longer mutate the vector.
+    sub.Unsubscribe(result.subscription_id);
+
+    ASSERT_EQ(deliveries.size(), 1u) << "expected exactly one row-limit flush";
+    const Delivery& d = deliveries[0];
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit);
+    EXPECT_EQ(d.status.rows_dropped, 0);
+    EXPECT_EQ(d.num_rows, 3);
+    EXPECT_EQ(d.num_attachments, 3u);
+
+    ASSERT_NE(d.batch, nullptr);
+    EXPECT_TRUE(d.batch->schema()->Equals(*schema, /*check_metadata=*/false));
+
+    auto ids = std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0));
+    auto temps = std::static_pointer_cast<arrow::DoubleArray>(d.batch->column(1));
+    auto labels = std::static_pointer_cast<arrow::StringArray>(d.batch->column(2));
+    ASSERT_EQ(ids->length(), 3);
+    ASSERT_EQ(temps->length(), 3);
+    ASSERT_EQ(labels->length(), 3);
+
+    EXPECT_EQ(ids->Value(0), 0);
+    EXPECT_EQ(ids->Value(1), 1);
+    EXPECT_EQ(ids->Value(2), 2);
+    EXPECT_DOUBLE_EQ(temps->Value(0), 0.5);
+    EXPECT_DOUBLE_EQ(temps->Value(1), 1.5);
+    EXPECT_DOUBLE_EQ(temps->Value(2), 2.5);
+    EXPECT_EQ(labels->GetString(0), "a");
+    EXPECT_EQ(labels->GetString(1), "b");
+    EXPECT_EQ(labels->GetString(2), "c");
+}
