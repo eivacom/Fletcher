@@ -1,15 +1,32 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-# Release orchestration for fletcher-protoc. Owns the setup-devcontainer
-# step, invokes ci.protoc.yml with the resulting image to build the
-# Conan-package artifacts (shared-linked, for Conan consumers), runs a
-# parallel pair of build-static-* jobs to produce single-file raw
-# binaries (statically-linked, for npm consumers + manual download
-# scenarios), assembles the GitHub Release, and publishes to npm.
+# Release orchestration for fletcher-protoc. Pipeline order matches
+# cd.gateway-client.yml so both @eiva npm packages release the same way:
+#
+#   setup-devcontainer
+#       │
+#       ├── release (ci.protoc.yml)              ── Conan-package tarballs
+#       ├── build-static-linux                   ── raw single-file binary
+#       └── build-static-windows                 ── raw single-file binary
+#               │
+#               ▼
+#         npm-publish                            ── @eiva/protoc-gen-fletcher
+#               │
+#               ▼
+#         create-release                         ── GitHub Release with
+#                                                   npm link prepended to
+#                                                   auto-generated notes
+#
+# Publishing to npm BEFORE creating the GitHub Release lets the release
+# body link to the just-published version on npmjs.com (same pattern as
+# cd.gateway-client.yml). Conan consumers get the .tgz tarballs as
+# release assets; npm/raw-binary consumers get the statically-linked
+# single-file binaries.
+#
 # ci.protoc.yml is also called from ci.pr.yml — build/test logic is
 # shared so PR and release runs use the same source of truth for the
-# Conan path. The upload + npm-publish jobs live here so PR runs do not
+# Conan path. The release-creation jobs live here so PR runs do not
 # show a skipped upload rectangle.
 #
 # Triggers:
@@ -124,8 +141,55 @@ jobs:
           path: protoc-gen-fletcher-windows-x64.exe
           retention-days: 5
 
-  upload:
+  npm-publish:
     needs: [release, build-static-linux, build-static-windows]
+    runs-on: ubuntu-latest
+    # id-token: write is required for `npm publish --provenance` to mint
+    # an OIDC token that npm exchanges for a signed Sigstore attestation
+    # linking the package back to this exact workflow run. Matches the
+    # cd.gateway-client.yml pattern so both @eiva npm packages ship with
+    # provenance.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc/npm
+            .github
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24.15.0
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag version matches protoc/npm/package.json version
+        uses: ./.github/actions/verify-tag-version-npm
+        with:
+          package-json: protoc/npm/package.json
+          tag-prefix: protoc-v
+
+      - name: Resolve dist-tag
+        id: dist-tag
+        working-directory: protoc/npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            PRE=$(echo "$VERSION" | sed 's/^[0-9]*\.[0-9]*\.[0-9]*-//' | cut -d. -f1)
+            echo "tag=$PRE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        working-directory: protoc/npm
+        run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-release:
+    needs: npm-publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -140,12 +204,6 @@ jobs:
         uses: ./.github/actions/verify-tag-version-conan
         with:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
-          tag-prefix: protoc-v
-
-      - name: Verify tag version matches protoc/npm/package.json version
-        uses: ./.github/actions/verify-tag-version-npm
-        with:
-          package-json: protoc/npm/package.json
           tag-prefix: protoc-v
 
       # Download all four upstream artifacts at once:
@@ -180,54 +238,24 @@ jobs:
           chmod +x protoc-gen-fletcher-linux-x64
           ls -lah fletcher-protoc-*-conan-package.tgz protoc-gen-fletcher-*
 
+      # Compose release notes: prepend a link to the just-published npm
+      # version, then append GitHub's auto-generated PR/commit list.
+      # Matches cd.gateway-client.yml's create-release pattern.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#protoc-v}"
+          GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.ref_name }}" \
+            -q '.body')
+          NOTES=$(printf "## npm\n\nhttps://www.npmjs.com/package/@eiva/protoc-gen-fletcher/v/%s\n\n%s" "${VERSION}" "${GENERATED}")
           gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes \
+            --notes "${NOTES}" \
             "fletcher-protoc-windows-conan-package.tgz" \
             "fletcher-protoc-linux-conan-package.tgz" \
             "protoc-gen-fletcher-linux-x64" \
             "protoc-gen-fletcher-windows-x64.exe"
-
-  npm-publish:
-    needs: upload
-    runs-on: ubuntu-latest
-    # id-token: write is required for `npm publish --provenance` to mint
-    # an OIDC token that npm exchanges for a signed Sigstore attestation
-    # linking the package back to this exact workflow run. Matches the
-    # cd.gateway-client.yml pattern so both @eiva npm packages ship with
-    # provenance.
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc/npm
-
-      - uses: actions/setup-node@v6.4.0
-        with:
-          node-version: 24.15.0
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Resolve dist-tag
-        id: dist-tag
-        working-directory: protoc/npm
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            PRE=$(echo "$VERSION" | sed 's/^[0-9]*\.[0-9]*\.[0-9]*-//' | cut -d. -f1)
-            echo "tag=$PRE" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish to npm
-        working-directory: protoc/npm
-        run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
