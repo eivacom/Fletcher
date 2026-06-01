@@ -182,11 +182,14 @@ jobs:
             echo "tag=$PRE" >> "$GITHUB_OUTPUT"
           fi
 
+      # Trusted Publishing: npm exchanges the id-token (OIDC) minted by
+      # GitHub Actions for a short-lived publish credential, gated on the
+      # repo + workflow filename configured on npmjs.com under
+      # @eiva/protoc-gen-fletcher → Settings → Trusted Publishers. No
+      # NODE_AUTH_TOKEN needed. Matches cd.gateway-client.yml.
       - name: Publish to npm
         working-directory: protoc/npm
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   create-release:
     # `release` is also a transitive dep (via npm-publish), but it's
