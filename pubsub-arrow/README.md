@@ -28,20 +28,20 @@ format remains byte-identical to what edge code produces via the raw
 
 ## Batched RecordBatch subscribe
 
-Rows arrive one at a time, but analytics wants columns. The batched
-`Subscribe` overload accumulates incoming rows and delivers an
-`arrow::RecordBatch` when **either** a row-count limit is reached **or** a
-timeout elapses since the batch started filling — whichever comes first
-(defaults: 8000 rows, 1 minute).
+Rows arrive one at a time, but analytics wants columns. `SubscriberArrow`
+provides a batched `Subscribe` overload that accumulates incoming rows and
+delivers an `arrow::RecordBatch` when **either** a row-count limit is reached
+**or** a timeout elapses since the batch started filling — whichever comes
+first (defaults: 8000 rows, 1 minute).
 
 ```cpp
-fletcher::PubSubArrow ps(provider);
+fletcher::SubscriberArrow sub(provider);
 
-ps.Subscribe(
+sub.Subscribe(
     {"orders", "v1"},
     [](std::shared_ptr<arrow::RecordBatch> batch,
        std::vector<fletcher::Attachments> attachments,  // attachments[i] -> row i
-       fletcher::PubSubArrow::BatchStatus status) {
+       fletcher::SubscriberArrow::BatchStatus status) {
         // status.reason: kRowLimit | kTimeout | kClosing
         // status.rows_dropped: rows lost since the last flush (0 == all good)
         process(batch);
@@ -67,10 +67,12 @@ the batched overload re-folds the accumulated values into a real
 ```cpp
 auto schema = arrow::schema({arrow::field(
     "category", arrow::dictionary(arrow::int32(), arrow::utf8()))});
-ps.CreateTopic({"events", "v1"}, schema);
+
+fletcher::PublisherArrow pub(provider);
+pub.CreateTopic({"events", "v1"}, schema);
 
 // Publish plain values; no need to dictionary-encode on the sending side.
-ps.Publish({"events", "v1"}, {std::make_shared<arrow::StringScalar>("click")});
+pub.Publish({"events", "v1"}, {std::make_shared<arrow::StringScalar>("click")});
 
 // In the batched subscriber, the "category" column of each RecordBatch comes
 // out as a DictionaryArray (values deduplicated, nulls preserved).
