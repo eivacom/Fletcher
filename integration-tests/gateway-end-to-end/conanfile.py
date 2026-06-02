@@ -30,6 +30,10 @@ class GatewayEndToEndIntegrationConan(ConanFile):
         # `conan create` step has put in the local cache.
         self.requires("fletcher-pubsub/[*, include_prerelease]")
         self.requires("fletcher-core/[*, include_prerelease]")
+        # gateway now always links the FastDDS provider (it ships both
+        # providers and selects at runtime), so building the gateway via
+        # add_subdirectory pulls this in.
+        self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
         # protoc-gen-fletcher plugin + protobuf for generating the TS
         # row class used by the proto-gen test case.
         self.requires("fletcher-protoc/[*, include_prerelease]")

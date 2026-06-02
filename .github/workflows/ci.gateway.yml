@@ -38,6 +38,7 @@ jobs:
             gateway
             core
             pubsub
+            fastdds-pubsub-provider
             .github
             .conan-profiles
 
@@ -47,15 +48,18 @@ jobs:
       - name: Install Conan
         uses: ./.github/actions/conan-install
 
-      # Gateway's conanfile requires fletcher-core and fletcher-pubsub via version
-      # ranges. Neither is on any Conan remote, so they must be in the local cache
-      # before `conan install` can resolve them.
-      - name: Build fletcher-core, fletcher-pubsub (dependencies)
+      # Gateway's conanfile requires fletcher-core, fletcher-pubsub and
+      # fletcher-fastdds-pubsub-provider via version ranges. None is on any Conan
+      # remote, so they must be in the local cache before `conan install` can
+      # resolve them. fastdds-pubsub-provider itself depends on core + pubsub,
+      # so those are created first.
+      - name: Build fletcher-core, fletcher-pubsub, fletcher-fastdds-pubsub-provider (dependencies)
         shell: bash
         working-directory: gateway
         run: |
           conan create ../core --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
           conan create ../pubsub --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../fastdds-pubsub-provider --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 
       # `conan build .` dispatches cmake configure / build / test via the
       # conanfile's build() method, picking the right preset for the
@@ -96,6 +100,7 @@ jobs:
             gateway
             core
             pubsub
+            fastdds-pubsub-provider
             .github
             .conan-profiles
 
@@ -117,10 +122,13 @@ jobs:
             fletcher-build \
             bash -c '
               set -e
-              # fletcher-core/pubsub must be in the local cache before gateway can
-              # resolve them (no Conan remote hosts the fletcher-* packages).
+              # fletcher-core/pubsub/fastdds-pubsub-provider must be in the local
+              # cache before gateway can resolve them (no Conan remote hosts the
+              # fletcher-* packages). fastdds-pubsub-provider depends on core +
+              # pubsub, so those come first.
               conan create ../core --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan create ../pubsub --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../fastdds-pubsub-provider --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               # Binary path per gateway/README.md: build/Release/gateway. Packaged

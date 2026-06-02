@@ -30,6 +30,7 @@ jobs:
             core
             pubsub
             protoc
+            fastdds-pubsub-provider
             gateway
             gateway-client-ts
             integration-tests/gateway-end-to-end
@@ -48,7 +49,7 @@ jobs:
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     for COMPONENT in core pubsub protoc; do \
+                     for COMPONENT in core pubsub protoc fastdds-pubsub-provider; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \

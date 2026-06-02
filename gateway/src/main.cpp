@@ -11,6 +11,11 @@
 // CLI:
 //   --port N               TCP port to listen on (default 9090).
 //   --bind-address ADDR    bind address (default 0.0.0.0).
+//   --provider TYPE        pub/sub provider: "inprocess" (default) or
+//                          "fastdds". Both are compiled in; the switch
+//                          selects between them at runtime.
+//   --domain-id N          DDS domain id for the fastdds provider (default 0).
+//                          Ignored by the inprocess provider.
 //
 // The gateway is schema-agnostic. It knows nothing about topic schemas
 // or which topics exist before clients show up; clients establish
@@ -26,10 +31,12 @@
 //     (Windows SIGTERM semantics differ from POSIX).
 //
 // Provider note:
-//   The exe currently always uses an in-process loopback provider —
-//   the only provider implementation gateway has. A real DDS-backed
-//   provider is tracked separately; once it exists this same exe
-//   will gain a `--provider TYPE` switch.
+//   The default provider is an in-process loopback (--provider inprocess),
+//   which only connects WebSocket clients on the same process. The
+//   DDS-backed provider (--provider fastdds) bridges the gateway to any
+//   FastDDS app on the same DDS domain, so a WebSocket client can pub/sub
+//   to data flowing over DDS. Both providers are always compiled into the
+//   exe; the switch selects between them at runtime.
 
 #include <cstdio>
 #include <cstdlib>
@@ -47,6 +54,8 @@
 #include <vector>
 
 #include "gateway.hpp"
+
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 
 namespace {
 
@@ -131,6 +140,8 @@ class InProcessProvider : public fletcher::PubSubProvider {
 struct Args {
     std::string bind_address = "0.0.0.0";
     uint16_t port = 9090;
+    std::string provider = "inprocess";
+    uint32_t domain_id = 0;
 };
 
 Args ParseArgs(int argc, char* argv[]) {
@@ -141,16 +152,28 @@ Args ParseArgs(int argc, char* argv[]) {
             a.port = static_cast<uint16_t>(std::stoi(argv[++i]));
         } else if (arg == "--bind-address" && i + 1 < argc) {
             a.bind_address = argv[++i];
+        } else if (arg == "--provider" && i + 1 < argc) {
+            a.provider = argv[++i];
+        } else if (arg == "--domain-id" && i + 1 < argc) {
+            a.domain_id = static_cast<uint32_t>(std::stoul(argv[++i]));
         } else if (arg == "--version") {
             std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
             std::exit(0);
         } else if (arg == "--help" || arg == "-h") {
-            std::printf("Usage: %s [--port N] [--bind-address ADDR] [--version]\n", argv[0]);
+            std::printf(
+                "Usage: %s [--port N] [--bind-address ADDR] "
+                "[--provider inprocess|fastdds] [--domain-id N] [--version]\n",
+                argv[0]);
             std::exit(0);
         } else {
             std::fprintf(stderr, "fletcher-gateway: unknown argument: %s\n", arg.c_str());
             std::exit(2);
         }
+    }
+    if (a.provider != "inprocess" && a.provider != "fastdds") {
+        std::fprintf(stderr, "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
+                     a.provider.c_str());
+        std::exit(2);
     }
     return a;
 }
@@ -166,7 +189,15 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    auto provider = std::make_shared<InProcessProvider>();
+    std::shared_ptr<fletcher::PubSubProvider> provider;
+    if (args.provider == "fastdds") {
+        fletcher::FastDDSProviderOptions dds_opts;
+        dds_opts.domain_id = args.domain_id;
+        provider = std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
+    } else {
+        provider = std::make_shared<InProcessProvider>();
+    }
+
     auto publisher = std::make_shared<fletcher::Publisher>(provider);
     auto subscriber = std::make_shared<fletcher::Subscriber>(provider);
 
