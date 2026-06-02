@@ -10,7 +10,7 @@ import os
 class FletcherPubsubArrowConan(ConanFile):
     name = "fletcher-pubsub-arrow"
     version = "0.2.0-alpha"
-    description = "Arrow C++ wrapper around the fletcher-pubsub Driver"
+    description = "Arrow C++ wrappers around the fletcher-pubsub Publisher/Subscriber"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
