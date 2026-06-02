@@ -27,9 +27,10 @@ class FletcherPubsubArrowConan(ConanFile):
     )
 
     def requirements(self):
-        # pubsub types appear in the public PubSubArrow interface (Driver,
-        # PubSub, Attachments) and arrow-bridge types (Codec, ArrowRow) appear
-        # in encode/decode paths, so headers must be transitively visible.
+        # pubsub types appear in the public PubSubArrow interface (Publisher,
+        # Subscriber, PubSubProvider, Attachments) and arrow-bridge types
+        # (Codec, ArrowRow) appear in encode/decode paths, so headers must be
+        # transitively visible.
         self.requires("fletcher-pubsub/0.2.0-alpha", transitive_headers=True)
         self.requires("fletcher-arrow-bridge/0.1.1-alpha", transitive_headers=True, transitive_libs=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
