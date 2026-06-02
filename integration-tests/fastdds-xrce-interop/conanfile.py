@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
+import os
+
 from conan import ConanFile
 from conan.tools.cmake import CMake, cmake_layout
 
@@ -45,4 +47,9 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
-        cmake.test(cli_args=["--output-on-failure"])
+        # Conan's CMake.test() runs `cmake --build --target test`, which
+        # delegates to ctest internally; cli_args/build_tool_args of
+        # cmake.test() go to `cmake --build`, NOT to ctest. The portable
+        # way to make ctest emit failed-test output is the env var.
+        os.environ["CTEST_OUTPUT_ON_FAILURE"] = "1"
+        cmake.test()
