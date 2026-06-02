@@ -64,10 +64,7 @@ function findGatewayBinary(): string {
   const buildRoot = resolve(here, '..', 'build');
   const found = findBinaryRecursive(buildRoot, ['gateway', 'gateway.exe']);
   if (found) return found;
-  throw new Error(
-    `gateway binary not found under ${buildRoot}. ` +
-      `Set GATEWAY_BIN to override.`,
-  );
+  throw new Error(`gateway binary not found under ${buildRoot}. ` + `Set GATEWAY_BIN to override.`);
 }
 
 function findBinaryRecursive(root: string, names: string[]): string | undefined {

@@ -57,8 +57,7 @@ function findEmitVectorsBinary(): string {
   const found = findBinaryRecursive(buildRoot, ['emit_vectors', 'emit_vectors.exe']);
   if (found) return found;
   throw new Error(
-    `emit_vectors binary not found under ${buildRoot}. ` +
-      `Set EMIT_VECTORS_BIN to override.`,
+    `emit_vectors binary not found under ${buildRoot}. ` + `Set EMIT_VECTORS_BIN to override.`,
   );
 }
 
