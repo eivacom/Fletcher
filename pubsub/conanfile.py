@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-pubsub"
-    version = "0.1.0-alpha"
+    version = "0.2.0-alpha"
     description = "Fletcher PubSub library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"

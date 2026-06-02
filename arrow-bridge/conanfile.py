@@ -9,7 +9,7 @@ import os
 
 class FletcherArrowBridgeConan(ConanFile):
     name = "fletcher-arrow-bridge"
-    version = "0.1.0-alpha"
+    version = "0.1.1-alpha"
     description = "Fletcher Arrow C++ bridge — Codec, ArrowRowView, CRS utilities"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
