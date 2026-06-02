@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#ifndef FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
-#define FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
+#ifndef FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
+#define FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
 
-#include <any>
 #include <cstdint>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
@@ -17,7 +16,7 @@
 
 namespace fletcher {
 
-/// Result returned by PubSub::Subscribe, carrying the schema
+/// Result returned by PubSubProvider::Subscribe, carrying the schema
 /// that the publisher registered when it created the topic.
 struct SubscriptionResult {
     OwnedSchema schema;
@@ -26,24 +25,29 @@ struct SubscriptionResult {
 /// Abstract transport provider for pub/sub.
 ///
 /// The provider deals with raw byte buffers and nanoarrow schemas —
-/// no Apache Arrow C++ dependency.  Higher-level wrappers (PubSubArrow)
-/// add ArrowRow convenience for server-side code that needs it.
+/// no Apache Arrow C++ dependency.  Higher-level wrappers (Publisher,
+/// Subscriber, PublisherArrow, SubscriberArrow) add convenience APIs
+/// on top of this interface.
 ///
 /// Topic names are represented as a list of string segments so that
 /// the provider can join them with any separator it prefers.
-class PubSub {
+///
+/// Provider semantics: ONE callback per topic. Fan-out (multiple
+/// local subscribers to the same topic) is handled by the Subscriber
+/// class, not by providers.
+///
+/// Provider-specific configuration (e.g. QoS) is supplied at provider
+/// construction time via a provider-specific Options struct. There is
+/// no per-call config parameter.
+class PubSubProvider {
    public:
-    virtual ~PubSub() = default;
+    virtual ~PubSubProvider() = default;
 
     /// Called once per topic by the publisher.  The schema describes the
     /// Arrow structure of rows on this topic.  Ownership of the schema
     /// is transferred to the provider.
-    ///
-    /// @param config  Provider-specific topic configuration (e.g. QoS).
-    ///                The provider interprets this via std::any_cast to
-    ///                its own config struct.  Empty = provider defaults.
-    virtual void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema,
-                             std::any config = {}) = 0;
+    virtual void CreateTopic(const std::vector<std::string>& topic_segments,
+                             OwnedSchema schema) = 0;
 
     /// Callback that encodes a row directly into a WriteBuffer.
     using RowEncoder = std::function<void(WriteBuffer&)>;
@@ -63,11 +67,8 @@ class PubSub {
 
     /// Subscribe to a named topic.  Returns the schema that the
     /// publisher provided when it created the topic.
-    ///
-    /// @param config  Provider-specific subscriber configuration (e.g. QoS).
-    ///                Empty = provider defaults.
     virtual SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                         SubscribeCallback callback, std::any config = {}) = 0;
+                                         SubscribeCallback callback) = 0;
 
     /// Remove a previously registered subscription.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
@@ -75,4 +76,4 @@ class PubSub {
 
 }  // namespace fletcher
 
-#endif  // FLETCHER_INCLUDE_PUBSUB_PUBSUB_HPP_
+#endif  // FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_

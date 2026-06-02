@@ -12,7 +12,8 @@ find_package(fletcher-arrow-bridge CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 
 add_library(fletcher-pubsub-arrow STATIC
-    src/pubsub_arrow.cpp)
+    src/publisher_arrow.cpp
+    src/subscriber_arrow.cpp)
 
 target_include_directories(fletcher-pubsub-arrow
     PUBLIC

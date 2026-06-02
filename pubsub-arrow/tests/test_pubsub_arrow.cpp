@@ -8,7 +8,9 @@
 #include <condition_variable>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -20,13 +22,14 @@ using namespace fletcher;
 // Mock provider (nanoarrow interface)
 // ---------------------------------------------------------------------------
 
-class MockProvider : public PubSub {
+class MockProvider : public PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
-                     std::any /*config*/) override {
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
         std::string key = Join(segments);
         topics_created.push_back(key);
-        if (schema) schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        if (schema) {
+            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        }
     }
 
     void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
@@ -41,19 +44,22 @@ class MockProvider : public PubSub {
         if (it != callbacks_.end()) {
             SharedSchema sp;
             auto sit = schemas_.find(key);
-            if (sit != schemas_.end())
+            if (sit != schemas_.end()) {
                 sp = MakeSharedSchema(OwnedSchema::DeepCopy(sit->second.get()));
+            }
             it->second(buf.data(), buf.size(), sp, attachments);
         }
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback, std::any /*config*/) override {
+                                 SubscribeCallback callback) override {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         OwnedSchema schema;
-        if (it != schemas_.end()) schema = OwnedSchema::DeepCopy(it->second.get());
+        if (it != schemas_.end()) {
+            schema = OwnedSchema::DeepCopy(it->second.get());
+        }
         return {std::move(schema)};
     }
 
@@ -70,7 +76,9 @@ class MockProvider : public PubSub {
     static std::string Join(const std::vector<std::string>& segs) {
         std::string out;
         for (size_t i = 0; i < segs.size(); ++i) {
-            if (i > 0) out += '/';
+            if (i > 0) {
+                out += '/';
+            }
             out += segs[i];
         }
         return out;
@@ -87,24 +95,42 @@ static auto TestSchema() {
 static const std::vector<std::string> kTopic = {"test", "topic"};
 
 // ---------------------------------------------------------------------------
-// Tests
+// PublisherArrow tests
 // ---------------------------------------------------------------------------
 
-TEST(PubSubArrowTest, CreateTopicConvertsArrowSchemaToArrowSchema) {
+TEST(PublisherArrowTest, CreateTopicConvertsArrowSchema) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
 
-    pa.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kTopic, TestSchema());
     ASSERT_EQ(mock->topics_created.size(), 1);
     EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST(PubSubArrowTest, SubscribeReturnsArrowSchema) {
+TEST(PublisherArrowTest, ListTopics) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
 
-    pa.CreateTopic(kTopic, TestSchema());
-    auto result = pa.Subscribe(kTopic, [](ArrowRow, Attachments) {});
+    EXPECT_TRUE(pub.ListTopics().empty());
+
+    pub.CreateTopic(kTopic, TestSchema());
+
+    std::vector<std::string> topics = pub.ListTopics();
+    ASSERT_EQ(topics.size(), 1);
+    EXPECT_EQ(topics[0], "test/topic");
+}
+
+// ---------------------------------------------------------------------------
+// SubscriberArrow tests
+// ---------------------------------------------------------------------------
+
+TEST(SubscriberArrowTest, SubscribeReturnsArrowSchema) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+
+    pub.CreateTopic(kTopic, TestSchema());
+    SubscriberArrow::SubscribeResult result = sub.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
     ASSERT_NE(result.schema, nullptr);
     EXPECT_EQ(result.schema->num_fields(), 2);
@@ -116,18 +142,19 @@ TEST(PubSubArrowTest, SubscribeReturnsArrowSchema) {
 
 TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
 
-    pa.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kTopic, TestSchema());
 
     ArrowRow received;
-    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
 
     ArrowRow sent = {
         std::make_shared<arrow::Int32Scalar>(42),
         std::make_shared<arrow::StringScalar>("hello"),
     };
-    pa.Publish(kTopic, sent);
+    pub.Publish(kTopic, sent);
 
     ASSERT_EQ(received.size(), 2);
     EXPECT_EQ(static_cast<const arrow::Int32Scalar&>(*received[0]).value, 42);
@@ -136,12 +163,13 @@ TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
 
 TEST(PubSubArrowTest, PublishWithAttachments) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
 
-    pa.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kTopic, TestSchema());
 
     Attachments received_att;
-    pa.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
+    sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
@@ -149,7 +177,7 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
         std::make_shared<arrow::Int32Scalar>(1),
         std::make_shared<arrow::StringScalar>("a"),
     };
-    pa.Publish(kTopic, row, {{"img", blob}});
+    pub.Publish(kTopic, row, {{"img", blob}});
 
     ASSERT_EQ(received_att.count("img"), 1);
     EXPECT_EQ(*received_att.at("img"), *blob);
@@ -157,17 +185,17 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
 
 TEST(PubSubArrowTest, PublishDirectPassthrough) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
 
-    auto schema = arrow::schema({arrow::field("x", arrow::int32())});
-    pa.CreateTopic(kTopic, schema);
+    std::shared_ptr<arrow::Schema> schema = arrow::schema({arrow::field("x", arrow::int32())});
+    pub.CreateTopic(kTopic, schema);
 
     ArrowRow received;
-    pa.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
 
-    // Publish using direct encoder (positional format: 1 field).
-    pa.PublishDirect(kTopic, [](WriteBuffer& buf) {
-        buf.AppendByte(0x00);  // null bitfield: 1 field, not null
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) {
+        buf.AppendByte(0x00);
         int32_t val = 99;
         buf.Append(reinterpret_cast<const uint8_t*>(&val), sizeof(val));
     });
@@ -178,47 +206,34 @@ TEST(PubSubArrowTest, PublishDirectPassthrough) {
 
 TEST(PubSubArrowTest, Unsubscribe) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
 
-    pa.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kTopic, TestSchema());
 
     int count = 0;
-    auto result = pa.Subscribe(kTopic, [&](ArrowRow, Attachments) { count++; });
+    SubscriberArrow::SubscribeResult result =
+        sub.Subscribe(kTopic, [&](ArrowRow, Attachments) { count++; });
 
     ArrowRow row = {
         std::make_shared<arrow::Int32Scalar>(1),
         std::make_shared<arrow::StringScalar>("a"),
     };
-    pa.Publish(kTopic, row);
+    pub.Publish(kTopic, row);
     EXPECT_EQ(count, 1);
 
-    pa.Unsubscribe(result.subscription_id);
-    pa.Publish(kTopic, row);
-    EXPECT_EQ(count, 1);  // not incremented
-}
-
-TEST(PubSubArrowTest, ListTopicsAndHasTopic) {
-    auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-
-    EXPECT_TRUE(pa.ListTopics().empty());
-    EXPECT_FALSE(pa.HasTopic(kTopic));
-
-    pa.CreateTopic(kTopic, TestSchema());
-    EXPECT_TRUE(pa.HasTopic(kTopic));
-
-    auto topics = pa.ListTopics();
-    ASSERT_EQ(topics.size(), 1);
-    EXPECT_EQ(topics[0], "test/topic");
+    sub.Unsubscribe(result.subscription_id);
+    pub.Publish(kTopic, row);
+    EXPECT_EQ(count, 1);
 }
 
 // ---------------------------------------------------------------------------
-// Batched (RecordBatch) Subscribe
+// Batched RecordBatch Subscribe — flush triggers, attachments, dropped rows
 // ---------------------------------------------------------------------------
 
 namespace {
 
-using BatchStatus = PubSubArrow::BatchStatus;
+using BatchStatus = SubscriberArrow::BatchStatus;
 
 // Thread-safe sink for delivered batches (batches may arrive on the batcher's
 // timer thread for timeout flushes).
@@ -234,7 +249,7 @@ struct BatchSink {
     std::condition_variable cv;
     std::vector<Delivery> deliveries;
 
-    PubSubArrow::RecordBatchCallback callback() {
+    SubscriberArrow::RecordBatchCallback callback() {
         return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments> att,
                       BatchStatus status) {
             std::lock_guard<std::mutex> lk(mu);
@@ -255,18 +270,19 @@ ArrowRow MakeRow(int32_t x, const std::string& name) {
 
 }  // namespace
 
-TEST(PubSubArrowBatchTest, FlushesAtRowLimit) {
+TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);  // long, so only the count triggers
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
-    for (int i = 0; i < 3; ++i) pa.Publish(kTopic, MakeRow(i, "n"));
+    for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
 
     // The count trigger flushes synchronously on the publishing thread.
     std::lock_guard<std::mutex> lk(sink.mu);
@@ -277,19 +293,20 @@ TEST(PubSubArrowBatchTest, FlushesAtRowLimit) {
     EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kRowLimit);
 }
 
-TEST(PubSubArrowBatchTest, FlushesAtTimeout) {
+TEST(SubscriberArrowBatchTest, FlushesAtTimeout) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;  // high, so only the timeout triggers
     opt.timeout = std::chrono::milliseconds(100);
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
-    pa.Publish(kTopic, MakeRow(1, "a"));
-    pa.Publish(kTopic, MakeRow(2, "b"));
+    pub.Publish(kTopic, MakeRow(1, "a"));
+    pub.Publish(kTopic, MakeRow(2, "b"));
 
     ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
@@ -299,20 +316,21 @@ TEST(PubSubArrowBatchTest, FlushesAtTimeout) {
     EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kTimeout);
 }
 
-TEST(PubSubArrowBatchTest, ClosingFlushOnUnsubscribe) {
+TEST(SubscriberArrowBatchTest, ClosingFlushOnUnsubscribe) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::minutes(10);
-    auto result = pa.Subscribe(kTopic, sink.callback(), opt);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
 
-    pa.Publish(kTopic, MakeRow(7, "x"));
-    pa.Publish(kTopic, MakeRow(8, "y"));
-    pa.Unsubscribe(result.subscription_id);  // flushes the partial batch
+    pub.Publish(kTopic, MakeRow(7, "x"));
+    pub.Publish(kTopic, MakeRow(8, "y"));
+    sub.Unsubscribe(result.subscription_id);  // flushes the partial batch
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -320,20 +338,21 @@ TEST(PubSubArrowBatchTest, ClosingFlushOnUnsubscribe) {
     EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kClosing);
 }
 
-TEST(PubSubArrowBatchTest, AttachmentsAlignWithRows) {
+TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 2;
     opt.timeout = std::chrono::minutes(10);
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xBE, 0xEF});
-    pa.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
-    pa.Publish(kTopic, MakeRow(2, "b"));                   // row 1 has none
+    pub.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
+    pub.Publish(kTopic, MakeRow(2, "b"));                   // row 1 has none
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -343,26 +362,27 @@ TEST(PubSubArrowBatchTest, AttachmentsAlignWithRows) {
     EXPECT_TRUE(sink.deliveries[0].attachments[1].empty());
 }
 
-TEST(PubSubArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
+TEST(SubscriberArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::minutes(10);
-    auto result = pa.Subscribe(kTopic, sink.callback(), opt);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x01});
-    pa.Publish(kTopic, MakeRow(1, "good"), {{"img", blob}});  // decodes fine
+    pub.Publish(kTopic, MakeRow(1, "good"), {{"img", blob}});  // decodes fine
 
     // A truncated buffer (just the 1-byte null bitfield) underruns when the
     // int32 field is read, so DecodeRow throws and the row is dropped — and
     // its attachment is discarded with it.
-    pa.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); }, {{"orphan", blob}});
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); }, {{"orphan", blob}});
 
-    pa.Unsubscribe(result.subscription_id);
+    sub.Unsubscribe(result.subscription_id);
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -372,19 +392,20 @@ TEST(PubSubArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
     EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
 }
 
-TEST(PubSubArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
+TEST(SubscriberArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
-    pa.CreateTopic(kTopic, TestSchema());
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::milliseconds(100);
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
     // Only a malformed row arrives in this window.
-    pa.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
 
     ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
@@ -399,22 +420,23 @@ TEST(PubSubArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
 // Dictionary columns — transferred as values, re-folded into a DictionaryArray
 // ---------------------------------------------------------------------------
 
-TEST(PubSubArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
+TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
-    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+    pub.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
     // Published as plain values; subscriber re-folds into a dictionary.
-    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
-    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("blue")});
-    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+    pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
+    pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("blue")});
+    pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -438,21 +460,22 @@ TEST(PubSubArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
     EXPECT_EQ(values->GetString(idx->Value(1)), "blue");
 }
 
-TEST(PubSubArrowBatchTest, DictionaryColumnPreservesNulls) {
+TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
     auto mock = std::make_shared<MockProvider>();
-    PubSubArrow pa(mock);
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
-    pa.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
+    pub.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
 
     BatchSink sink;
-    PubSubArrow::BatchOptions opt;
+    SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    pa.Subscribe(kTopic, sink.callback(), opt);
+    sub.Subscribe(kTopic, sink.callback(), opt);
 
-    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
-    pa.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});
-    pa.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+    pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
+    pub.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});
+    pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);

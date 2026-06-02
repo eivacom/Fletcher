@@ -87,7 +87,7 @@ struct XrceDDSPubSubProvider::Impl {
         SharedSchema shared_schema;  // for callback delivery
         bool is_publisher = false;
         bool has_reader = false;
-        PubSub::SubscribeCallback callback;
+        PubSubProvider::SubscribeCallback callback;
     };
 
     XrceConfig config;
@@ -295,11 +295,11 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 }  // anonymous namespace
 
 // -----------------------------------------------------------------------
-// PubSub interface
+// PubSubProvider interface
 // -----------------------------------------------------------------------
 
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema, std::any /*config*/) {
+                                        OwnedSchema schema) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -435,8 +435,7 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 }
 
 SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
-                                                    SubscribeCallback callback,
-                                                    std::any /*config*/) {
+                                                    SubscribeCallback callback) {
     std::string name = JoinSegments(topic_segments);
     OwnedSchema schema;
 

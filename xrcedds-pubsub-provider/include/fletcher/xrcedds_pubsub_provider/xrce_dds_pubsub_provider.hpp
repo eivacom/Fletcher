@@ -5,7 +5,7 @@
 #define FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
 #include <memory>
 #include <string>
 
@@ -47,14 +47,14 @@ struct XrceConfig {
     uint16_t domain_id = 0;
 };
 
-/// PubSub transport backed by eProsima Micro XRCE-DDS Client.
+/// PubSubProvider transport backed by eProsima Micro XRCE-DDS Client.
 ///
 /// Requires a running XRCE-DDS Agent process (e.g. MicroXRCEAgent).
 /// The client communicates with the agent over UDP, TCP, or serial.
 ///
 /// Schema delivery uses a companion "__schema" topic with RELIABLE QoS,
 /// matching the FastDDS provider pattern.
-class XrceDDSPubSubProvider : public PubSub {
+class XrceDDSPubSubProvider : public PubSubProvider {
    public:
     explicit XrceDDSPubSubProvider(const XrceConfig& config = {});
     ~XrceDDSPubSubProvider() override;
@@ -62,14 +62,13 @@ class XrceDDSPubSubProvider : public PubSub {
     XrceDDSPubSubProvider(const XrceDDSPubSubProvider&) = delete;
     XrceDDSPubSubProvider& operator=(const XrceDDSPubSubProvider&) = delete;
 
-    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema,
-                     std::any config = {}) override;
+    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
 
     void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
                  const Attachments& attachments = {}) override;
 
     SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                 SubscribeCallback callback, std::any config = {}) override;
+                                 SubscribeCallback callback) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

@@ -1734,7 +1734,7 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
 
     // Constructor from raw bytes
     o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
-      << "    /// received from a PubSub callback or read from a WAL.\n";
+      << "    /// received from a Subscriber callback or read from a WAL.\n";
     o << "    explicit " << cls << "(const uint8_t* data, size_t len) {\n"
       << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
     for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
@@ -1809,8 +1809,8 @@ bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
 void EmitTopicSegments(std::ostringstream& o, const std::string& package,
                        const std::string& svc_name, const std::string& method_name) {
     o << "    /// Returns the hierarchical topic path derived from the proto\n"
-      << "    /// service and method names. Used by the Driver to register,\n"
-      << "    /// look up, and route messages on the pub/sub layer.\n";
+      << "    /// service and method names. Used by the Publisher/Subscriber to\n"
+      << "    /// register, look up, and route messages on the pub/sub layer.\n";
     o << "    static const std::vector<std::string>& TopicSegments() {\n"
       << "        static const std::vector<std::string> kSegments = {";
     if (!package.empty()) o << "\n            \"" << package << "\",";
@@ -1859,24 +1859,19 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     // Constructor
     o << "    /// Creates the publisher and registers the topic with its schema\n"
       << "    /// on the provider. After construction, subscribers can discover\n"
-      << "    /// the topic and receive the schema for decoding.\n"
-      << "    ///\n"
-      << "    /// @param config  Provider-specific topic configuration (e.g. QoS).\n"
-      << "    ///                Passed through to PubSub::CreateTopic as std::any.\n";
+      << "    /// the topic and receive the schema for decoding.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSub> provider,\n"
-      << "            std::any config = {})\n"
-      << "        : provider_(std::move(provider))\n"
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "        : publisher_(std::make_unique<fletcher::Publisher>(std::move(provider)))\n"
       << "    {\n"
-      << "        provider_->CreateTopic(TopicSegments(), " << msg_class << "Schema(),\n"
-      << "                               std::move(config));\n"
+      << "        publisher_->CreateTopic(TopicSegments(), " << msg_class << "Schema());\n"
       << "    }\n\n";
 
     // Publish (without attachments)
     o << "    /// Encodes and publishes a single row. The encoding happens\n"
       << "    /// directly into the provider's transport buffer to avoid copies.\n";
     o << "    void Publish(const " << msg_class << "& row) {\n"
-      << "        provider_->Publish(TopicSegments(),\n"
+      << "        publisher_->Publish(TopicSegments(),\n"
       << "            [&](fletcher::WriteBuffer& buf) { row.EncodeTo(buf); });\n"
       << "    }\n\n";
 
@@ -1886,14 +1881,14 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    /// of the same Envelope.\n";
     o << "    void Publish(const " << msg_class << "& row,\n"
       << "                 fletcher::Attachments attachments) {\n"
-      << "        provider_->Publish(TopicSegments(),\n"
+      << "        publisher_->Publish(TopicSegments(),\n"
       << "            [&](fletcher::WriteBuffer& buf) { row.EncodeTo(buf); },\n"
       << "            std::move(attachments));\n"
       << "    }\n\n";
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<fletcher::PubSub> provider_;\n"
+      << "    std::unique_ptr<fletcher::Publisher> publisher_;\n"
       << "};\n";
 
     return o.str();
@@ -1921,39 +1916,38 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     o << "    /// Binds to the provider without creating a topic — subscribers\n"
       << "    /// discover the topic and its schema when Subscribe() is called.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSub> provider)\n"
-      << "        : provider_(std::move(provider)) {}\n\n";
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "        : subscriber_(std::make_unique<fletcher::Subscriber>(std::move(provider))) "
+         "{}\n\n";
 
     // Subscribe — delivers decoded message + Attachments to the caller.
     // Returns the schema received from the publisher via the provider.
     o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
       << "    /// are decoded into a typed message before being delivered to the\n"
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
-      << "    /// Returns the schema advertised by the publisher for this topic.\n"
-      << "    ///\n"
-      << "    /// @param config  Provider-specific subscriber configuration (e.g. QoS).\n"
-      << "    ///                Passed through to PubSub::Subscribe as std::any.\n";
-    o << "    fletcher::SubscriptionResult Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb,\n"
-      << "        std::any config = {})\n"
+      << "    /// Returns the subscription ID (used for Unsubscribe).\n";
+    o << "    uint64_t Subscribe(\n"
+      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
       << "    {\n"
-      << "        return provider_->Subscribe(TopicSegments(),\n"
-      << "            [cb = std::move(cb)](const uint8_t* data, size_t len,\n"
+      << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
+      << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
+      << "                                 const uint8_t* data, size_t len,\n"
       << "                                 fletcher::SharedSchema /*schema*/,\n"
       << "                                 fletcher::Attachments att) {\n"
       << "                cb(" << msg_class << "(data, len), std::move(att));\n"
-      << "            }, std::move(config));\n"
+      << "            });\n"
+      << "        return result.subscription_id;\n"
       << "    }\n\n";
 
     // Unsubscribe
     o << "    /// Stops delivery and releases the subscription on the provider.\n";
-    o << "    void Unsubscribe() {\n"
-      << "        provider_->Unsubscribe(TopicSegments());\n"
+    o << "    void Unsubscribe(uint64_t subscription_id) {\n"
+      << "        subscriber_->Unsubscribe(subscription_id);\n"
       << "    }\n\n";
 
     // Private
     o << " private:\n"
-      << "    std::shared_ptr<fletcher::PubSub> provider_;\n"
+      << "    std::unique_ptr<fletcher::Subscriber> subscriber_;\n"
       << "};\n";
 
     return o.str();
@@ -1991,8 +1985,9 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
     }
 
     if (!schema_only && file->service_count() > 0) {
-        o << "#include <fletcher/pubsub/pubsub.hpp>\n"
-          << "#include <any>\n"
+        o << "#include <fletcher/pubsub/provider.hpp>\n"
+          << "#include <fletcher/pubsub/publisher.hpp>\n"
+          << "#include <fletcher/pubsub/subscriber.hpp>\n"
           << "#include <functional>\n";
     }
 

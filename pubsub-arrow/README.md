@@ -1,43 +1,47 @@
 # fletcher-pubsub-arrow
 
-Server-side Arrow C++ wrapper around the `fletcher-pubsub` `Driver`.
-Bridges the gap between the nanoarrow-based pub/sub core (raw bytes +
-`ArrowSchema` C structs) and Apache Arrow C++ types (`arrow::Schema`,
-`ArrowRow`).
+Server-side Arrow C++ wrappers around `fletcher-pubsub`'s `Publisher` and
+`Subscriber`. Bridges the gap between the nanoarrow-based pub/sub core (raw
+bytes + `ArrowSchema` C structs) and Apache Arrow C++ types
+(`arrow::Schema`, `ArrowRow`).
 
 ```cpp
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 
-fletcher::PubSubArrow ps(provider);
-ps.CreateTopic({"orders", "v1"}, arrow_schema);
-ps.Publish({"orders", "v1"}, arrow_row);
-ps.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow row,
-                                  fletcher::Attachments att) { ... });
+fletcher::PublisherArrow pub(provider);
+pub.CreateTopic({"orders", "v1"}, arrow_schema);
+pub.Publish({"orders", "v1"}, arrow_row);
+
+fletcher::SubscriberArrow sub(provider);
+sub.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow row,
+                                   fletcher::Attachments att) { ... });
 ```
 
-Internally owns a `Driver` and a per-topic `Codec` (from
-`fletcher-arrow-bridge`) so callers can publish and subscribe with
-Arrow scalars; the wire format remains byte-identical to what edge code
-produces via the raw `Driver`.
+`PublisherArrow` internally owns a `Publisher` and a per-topic `Codec` (from
+`fletcher-arrow-bridge`); `SubscriberArrow` owns a `Subscriber` and lazily
+creates a `Codec` from the schema received from the publisher. The wire
+format remains byte-identical to what edge code produces via the raw
+`Publisher` / `Subscriber`.
 
 ---
 
 ## Batched RecordBatch subscribe
 
-Rows arrive one at a time, but analytics wants columns. The batched
-`Subscribe` overload accumulates incoming rows and delivers an
-`arrow::RecordBatch` when **either** a row-count limit is reached **or** a
-timeout elapses since the batch started filling — whichever comes first
-(defaults: 8000 rows, 1 minute).
+Rows arrive one at a time, but analytics wants columns. `SubscriberArrow`
+provides a batched `Subscribe` overload that accumulates incoming rows and
+delivers an `arrow::RecordBatch` when **either** a row-count limit is reached
+**or** a timeout elapses since the batch started filling — whichever comes
+first (defaults: 8000 rows, 1 minute).
 
 ```cpp
-fletcher::PubSubArrow ps(provider);
+fletcher::SubscriberArrow sub(provider);
 
-ps.Subscribe(
+sub.Subscribe(
     {"orders", "v1"},
     [](std::shared_ptr<arrow::RecordBatch> batch,
        std::vector<fletcher::Attachments> attachments,  // attachments[i] -> row i
-       fletcher::PubSubArrow::BatchStatus status) {
+       fletcher::SubscriberArrow::BatchStatus status) {
         // status.reason: kRowLimit | kTimeout | kClosing
         // status.rows_dropped: rows lost since the last flush (0 == all good)
         process(batch);
@@ -63,10 +67,12 @@ the batched overload re-folds the accumulated values into a real
 ```cpp
 auto schema = arrow::schema({arrow::field(
     "category", arrow::dictionary(arrow::int32(), arrow::utf8()))});
-ps.CreateTopic({"events", "v1"}, schema);
+
+fletcher::PublisherArrow pub(provider);
+pub.CreateTopic({"events", "v1"}, schema);
 
 // Publish plain values; no need to dictionary-encode on the sending side.
-ps.Publish({"events", "v1"}, {std::make_shared<arrow::StringScalar>("click")});
+pub.Publish({"events", "v1"}, {std::make_shared<arrow::StringScalar>("click")});
 
 // In the batched subscriber, the "category" column of each RecordBatch comes
 // out as a DictionaryArray (values deduplicated, nulls preserved).
@@ -110,7 +116,8 @@ target_link_libraries(my-target PRIVATE fletcher::pubsub-arrow)
 ```
 
 ```cpp
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 ```
 
 `pubsub-arrow` re-exports its dependencies (`fletcher-pubsub`,

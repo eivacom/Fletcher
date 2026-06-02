@@ -4,8 +4,8 @@
 // pubsub.proto — generated Publisher / Subscriber classes.
 //
 // The plugin emits typed Publisher / Subscriber wrappers around the
-// pubsub::Driver/PubSub interface. These tests use a MockPubSubProvider
-// (in-process, no DDS) to exercise:
+// fletcher::PubSubProvider interface. These tests use a
+// MockPubSubProvider (in-process, no DDS) to exercise:
 //
 // - Publisher creates a topic with the right schema on construction
 // - Publish encodes a typed message and delivers bytes to the provider
@@ -20,7 +20,7 @@
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
 #include <map>
 #include <memory>
 #include <vector>
@@ -42,7 +42,7 @@ std::shared_ptr<arrow::Schema> ImportNano(OwnedSchema nano) {
 
 // Minimal in-process provider that records calls and delivers published
 // rows back to subscribers synchronously. No DDS, no transport.
-class MockPubSubProvider : public PubSub {
+class MockPubSubProvider : public PubSubProvider {
    public:
     struct CreatedTopic {
         std::vector<std::string> segments;
@@ -59,8 +59,7 @@ class MockPubSubProvider : public PubSub {
     std::vector<PublishedMsg> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
-                     std::any /*config*/) override {
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
         created_topics.push_back({segments, std::move(schema)});
     }
 
@@ -84,7 +83,7 @@ class MockPubSubProvider : public PubSub {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback, std::any /*config*/) override {
+                                 SubscribeCallback callback) override {
         subscribers[segments] = std::move(callback);
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
@@ -180,7 +179,8 @@ TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
-    sub.Subscribe([&](fletcher_gen::integration::Telemetry, Attachments) { ++count; });
+    uint64_t sub_id =
+        sub.Subscribe([&](fletcher_gen::integration::Telemetry, Attachments) { ++count; });
 
     fletcher_gen::integration::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
@@ -188,7 +188,7 @@ TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     pub.Publish(row);
     EXPECT_EQ(count, 1);
 
-    sub.Unsubscribe();
+    sub.Unsubscribe(sub_id);
     pub.Publish(row);
     EXPECT_EQ(count, 1);  // no delivery after unsubscribe
 }

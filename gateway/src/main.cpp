@@ -34,9 +34,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fletcher/core/write_buffer.hpp>
-#include <fletcher/pubsub/driver.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/publisher.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -59,10 +60,10 @@ namespace {
 // Gateway forwards that schema to its WebSocket clients on subscribe,
 // but never inspects or validates it — pure passthrough.
 // ─────────────────────────────────────────────────────────────────────
-class InProcessProvider : public fletcher::PubSub {
+class InProcessProvider : public fletcher::PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>& segments, fletcher::OwnedSchema schema,
-                     std::any /*config*/) override {
+    void CreateTopic(const std::vector<std::string>& segments,
+                     fletcher::OwnedSchema schema) override {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         if (schema) {
@@ -88,8 +89,7 @@ class InProcessProvider : public fletcher::PubSub {
     }
 
     fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                           SubscribeCallback callback,
-                                           std::any /*config*/) override {
+                                           SubscribeCallback callback) override {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         slot.callback = std::move(callback);
@@ -167,13 +167,14 @@ int main(int argc, char* argv[]) {
     }
 
     auto provider = std::make_shared<InProcessProvider>();
-    auto driver = std::make_shared<fletcher::Driver>(provider);
+    auto publisher = std::make_shared<fletcher::Publisher>(provider);
+    auto subscriber = std::make_shared<fletcher::Subscriber>(provider);
 
     fletcher::GatewayOptions opts;
     opts.address = args.bind_address;
     opts.port = args.port;
 
-    fletcher::Gateway gw(driver, opts);
+    fletcher::Gateway gw(std::move(publisher), std::move(subscriber), opts);
     gw.Start();
 
     std::printf("READY %u\n", args.port);

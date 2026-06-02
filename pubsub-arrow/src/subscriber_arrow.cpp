@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "fletcher/pubsub_arrow/pubsub_arrow.hpp"
+#include "fletcher/pubsub_arrow/subscriber_arrow.hpp"
 
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
@@ -9,7 +9,6 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <stdexcept>
 #include <thread>
@@ -17,25 +16,17 @@
 
 namespace fletcher {
 
-// -----------------------------------------------------------------------
-// Arrow C Data Interface helpers
-// -----------------------------------------------------------------------
-
 namespace {
 
-OwnedSchema ExportToNano(const arrow::Schema& schema) {
-    OwnedSchema out;
-    auto status = arrow::ExportSchema(schema, out.get());
-    if (!status.ok()) throw std::runtime_error("PubSubArrow: ExportSchema: " + status.ToString());
-    return out;
-}
-
 std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
-    if (!schema || !schema->release) return nullptr;
+    if (!schema || !schema->release) {
+        return nullptr;
+    }
     OwnedSchema copy = OwnedSchema::DeepCopy(schema);
     auto result = arrow::ImportSchema(copy.get());
-    if (!result.ok())
-        throw std::runtime_error("PubSubArrow: ImportSchema: " + result.status().ToString());
+    if (!result.ok()) {
+        throw std::runtime_error("SubscriberArrow: ImportSchema: " + result.status().ToString());
+    }
     return *result;
 }
 
@@ -46,7 +37,7 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
 // flushes on row-count, timeout, or close (see the batched Subscribe).
 // -----------------------------------------------------------------------
 
-class PubSubArrow::RecordBatchBatcher {
+class SubscriberArrow::RecordBatchBatcher {
    public:
     RecordBatchBatcher(RecordBatchCallback cb, int64_t max_rows, std::chrono::milliseconds timeout)
         : cb_(std::move(cb)), max_rows_(max_rows < 1 ? 1 : max_rows), timeout_(timeout) {
@@ -64,8 +55,9 @@ class PubSubArrow::RecordBatchBatcher {
         std::unique_lock<std::mutex> lk(mu_);
         schema_ = std::move(schema);
         ready_ = (schema_ != nullptr);
-        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_)
+        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
+        }
         cv_.notify_all();
     }
 
@@ -75,8 +67,9 @@ class PubSubArrow::RecordBatchBatcher {
         rows_.push_back(std::move(row));
         atts_.push_back(std::move(att));
         ArmTimer();
-        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_)
+        if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
+        }
     }
 
     // A row that failed to decode: counted as lost. Its attachment is dropped
@@ -103,10 +96,11 @@ class PubSubArrow::RecordBatchBatcher {
         }
         // Don't join ourselves if a callback on the timer thread called Stop().
         if (t.joinable()) {
-            if (t.get_id() == std::this_thread::get_id())
+            if (t.get_id() == std::this_thread::get_id()) {
                 t.detach();
-            else
+            } else {
                 t.join();
+            }
         }
     }
 
@@ -131,13 +125,15 @@ class PubSubArrow::RecordBatchBatcher {
             }
             // Wake on stop, on the deadline being cleared (flushed by count), or
             // when the deadline is reached.
-            if (cv_.wait_until(lk, deadline_, [this] { return stopped_ || !has_deadline_; }))
+            if (cv_.wait_until(lk, deadline_, [this] { return stopped_ || !has_deadline_; })) {
                 continue;
-            if (ready_)
+            }
+            if (ready_) {
                 Flush(lk, BatchStatus::Reason::kTimeout);
-            else
+            } else {
                 // Deadline reached but schema not ready yet — wait for it.
                 cv_.wait(lk, [this] { return stopped_ || ready_ || !has_deadline_; });
+            }
         }
     }
 
@@ -159,9 +155,9 @@ class PubSubArrow::RecordBatchBatcher {
 
         lk.unlock();
         // Isolate the user callback: a throw here would otherwise escape the
-        // timer thread (→ std::terminate) or propagate out of ~PubSubArrow via
-        // Stop()'s kClosing flush. Internal threads must not depend on user
-        // code being noexcept.
+        // timer thread (→ std::terminate) or propagate out of ~SubscriberArrow
+        // via Stop()'s kClosing flush. Internal threads must not depend on
+        // user code being noexcept.
         try {
             cb_(BuildBatch(schema, rows), std::move(atts), BatchStatus{reason, dropped});
         } catch (...) {
@@ -189,8 +185,9 @@ class PubSubArrow::RecordBatchBatcher {
                 // produced from a successful decode of this exact schema, so
                 // AppendScalar is expected to succeed. AppendNull is a
                 // best-effort fallback that keeps column lengths aligned.
-                if (!builder->AppendScalar(*row[static_cast<size_t>(c)]).ok())
+                if (!builder->AppendScalar(*row[static_cast<size_t>(c)]).ok()) {
                     (void)builder->AppendNull();
+                }
             }
             columns[static_cast<size_t>(c)] = builder->Finish().ValueOrDie();
         }
@@ -209,7 +206,9 @@ class PubSubArrow::RecordBatchBatcher {
         (void)builder->Reserve(static_cast<int64_t>(rows.size()));
         for (const auto& row : rows) {
             const auto& s = row[static_cast<size_t>(col)];
-            if (!s || !s->is_valid || !builder->AppendScalar(*s).ok()) (void)builder->AppendNull();
+            if (!s || !s->is_valid || !builder->AppendScalar(*s).ok()) {
+                (void)builder->AppendNull();
+            }
         }
         auto value_array = builder->Finish().ValueOrDie();
 
@@ -219,10 +218,11 @@ class PubSubArrow::RecordBatchBatcher {
         auto array = encoded.make_array();
         if (!array->type()->Equals(*dict_type)) {
             auto casted = arrow::compute::Cast(arrow::Datum(array), dict_type);
-            if (!casted.ok())
-                throw std::invalid_argument("PubSubArrow: cannot build dictionary column of type " +
-                                            dict_type->ToString() + ": " +
-                                            casted.status().ToString());
+            if (!casted.ok()) {
+                throw std::invalid_argument(
+                    "SubscriberArrow: cannot build dictionary column of type " +
+                    dict_type->ToString() + ": " + casted.status().ToString());
+            }
             array = casted.ValueOrDie().make_array();
         }
         return array;
@@ -249,10 +249,10 @@ class PubSubArrow::RecordBatchBatcher {
 // Construction
 // -----------------------------------------------------------------------
 
-PubSubArrow::PubSubArrow(std::shared_ptr<PubSub> provider)
-    : driver_(std::make_unique<Driver>(std::move(provider))) {}
+SubscriberArrow::SubscriberArrow(std::shared_ptr<PubSubProvider> provider)
+    : subscriber_(std::make_unique<Subscriber>(std::move(provider))) {}
 
-PubSubArrow::~PubSubArrow() {
+SubscriberArrow::~SubscriberArrow() {
     std::vector<std::shared_ptr<RecordBatchBatcher>> to_stop;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -261,82 +261,38 @@ PubSubArrow::~PubSubArrow() {
     }
     for (auto& b : to_stop) b->Stop();  // join timer threads + deliver closing flush
 
-    // Tear down the driver here, while mu_/codecs_ are still alive. Member
-    // destruction order would otherwise destroy driver_ last (it's the first
-    // member), so subscriber lambdas unwound by ~Driver could touch mu_ and
-    // codecs_ after they've already been destroyed.
-    driver_.reset();
+    // Tear down the Subscriber here, while mu_/codecs_ are still alive.
+    // Member destruction order would otherwise destroy subscriber_ last
+    // (it's the first member), so subscriber lambdas unwound by
+    // ~Subscriber could touch mu_ and codecs_ after they're gone.
+    subscriber_.reset();
 }
 
 // -----------------------------------------------------------------------
-// Topic management
+// Subscribe — ArrowRow per-row delivery
 // -----------------------------------------------------------------------
 
-void PubSubArrow::CreateTopic(const std::vector<std::string>& segments,
-                              std::shared_ptr<arrow::Schema> schema, std::any config) {
-    OwnedSchema nano;
-    if (schema) {
-        nano = ExportToNano(*schema);
-        std::string key = JoinSegments(segments);
-        std::lock_guard lock(mu_);
-        codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
-    }
-    driver_->CreateTopic(segments, std::move(nano), std::move(config));
-}
-
-// -----------------------------------------------------------------------
-// Publish
-// -----------------------------------------------------------------------
-
-void PubSubArrow::Publish(const std::vector<std::string>& segments, const ArrowRow& row,
-                          const Attachments& attachments) {
-    std::string key = JoinSegments(segments);
-    Codec* codec;
-    {
-        std::lock_guard lock(mu_);
-        auto it = codecs_.find(key);
-        if (it == codecs_.end())
-            throw std::runtime_error("PubSubArrow::Publish: no codec for topic " + key);
-        codec = it->second.codec.get();
-    }
-
-    auto encoded = codec->EncodeRow(row);
-    driver_->Publish(
-        segments,
-        [data = std::move(encoded)](WriteBuffer& buf) { buf.Append(data.data(), data.size()); },
-        attachments);
-}
-
-void PubSubArrow::PublishDirect(const std::vector<std::string>& segments,
-                                PubSub::RowEncoder encoder, const Attachments& attachments) {
-    driver_->Publish(segments, std::move(encoder), attachments);
-}
-
-// -----------------------------------------------------------------------
-// Subscribe
-// -----------------------------------------------------------------------
-
-PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::string>& segments,
-                                                    SubscribeCallback callback, std::any config) {
+SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
+    const std::vector<std::string>& segments, SubscribeCallback callback) {
     std::string key = JoinSegments(segments);
 
-    auto result = driver_->Subscribe(
+    Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
-        [this, key, cb = std::move(callback)](const uint8_t* data, size_t len,
+        [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
                                               SharedSchema /*schema*/, Attachments att) {
             Codec* codec;
             {
                 std::lock_guard lock(mu_);
                 auto it = codecs_.find(key);
-                if (it == codecs_.end()) return;
+                if (it == codecs_.end()) {
+                    return;
+                }
                 codec = it->second.codec.get();
             }
-            auto row = codec->DecodeRow(data, len);
+            ArrowRow row = codec->DecodeRow(data, len);
             cb(std::move(row), std::move(att));
-        },
-        std::move(config));
+        });
 
-    // Convert the nanoarrow schema to Arrow C++.
     std::shared_ptr<arrow::Schema> arrow_schema;
     if (result.schema) {
         arrow_schema = ImportFromNano(result.schema.get());
@@ -346,26 +302,35 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
         }
     }
 
+    // Track sub_id -> topic_key so Unsubscribe can release the codec
+    // entry when the last subscription for a topic is removed.
+    {
+        std::lock_guard lock(mu_);
+        sub_topic_[result.subscription_id] = key;
+    }
+
     return {result.subscription_id, std::move(arrow_schema)};
 }
 
-PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::string>& segments,
-                                                    RecordBatchCallback callback,
-                                                    BatchOptions options, std::any config) {
+// -----------------------------------------------------------------------
+// Subscribe — batched RecordBatch delivery
+// -----------------------------------------------------------------------
+
+SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
+    const std::vector<std::string>& segments, RecordBatchCallback callback, BatchOptions options) {
     std::string key = JoinSegments(segments);
 
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
                                                         options.timeout);
 
-    auto result = driver_->Subscribe(
-        segments,
-        [this, key, batcher](const uint8_t* data, size_t len, SharedSchema schema,
-                             Attachments att) {
+    Subscriber::SubscribeResult result = subscriber_->Subscribe(
+        segments, [this, key, batcher](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
+                                       SharedSchema schema, Attachments att) {
             // Lazy-init the codec from the per-message schema: in
             // subscriber-only mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before
-            // driver_->Subscribe returns. If no codec can be built, count
-            // the message as dropped so the loss is reported.
+            // subscriber_->Subscribe returns. If no codec can be built,
+            // count the message as dropped so the loss is reported.
             Codec* codec = AcquireCodec(key, schema);
             if (!codec) {
                 batcher->NoteDropped();
@@ -382,13 +347,12 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
                 return;
             }
             batcher->AddRow(std::move(row), std::move(att));
-        },
-        std::move(config));
+        });
 
-    // From here on the driver may already be delivering to the captured
+    // From here on the subscriber may already be delivering to the captured
     // batcher. If post-setup throws, the lambda keeps the batcher alive via
     // its shared_ptr capture and the caller never sees an id to unsubscribe
-    // — so we must roll back the driver subscription.
+    // — so we must roll back the subscription.
     try {
         // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand
         // it to the batcher so it can build batches.
@@ -396,24 +360,26 @@ PubSubArrow::SubscribeResult PubSubArrow::Subscribe(const std::vector<std::strin
         if (result.schema) {
             arrow_schema = ImportFromNano(result.schema.get());
             std::lock_guard lock(mu_);
-            if (codecs_.find(key) == codecs_.end())
+            if (codecs_.find(key) == codecs_.end()) {
                 codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
+            }
         }
         batcher->SetSchema(arrow_schema);
 
         {
             std::lock_guard lock(mu_);
             batchers_[result.subscription_id] = std::move(batcher);
+            sub_topic_[result.subscription_id] = key;
         }
         return {result.subscription_id, std::move(arrow_schema)};
     } catch (...) {
         batcher->Stop();
-        driver_->Unsubscribe(result.subscription_id);
+        subscriber_->Unsubscribe(result.subscription_id);
         throw;
     }
 }
 
-Codec* PubSubArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
+Codec* SubscriberArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
     std::lock_guard lock(mu_);
     auto it = codecs_.find(key);
     if (it != codecs_.end()) return it->second.codec.get();
@@ -431,11 +397,7 @@ Codec* PubSubArrow::AcquireCodec(const std::string& key, const SharedSchema& sch
     return codec_ptr;
 }
 
-// -----------------------------------------------------------------------
-// Subscription management / introspection
-// -----------------------------------------------------------------------
-
-void PubSubArrow::Unsubscribe(uint64_t subscription_id) {
+void SubscriberArrow::Unsubscribe(uint64_t subscription_id) {
     std::shared_ptr<RecordBatchBatcher> batcher;
     {
         std::lock_guard lock(mu_);
@@ -446,23 +408,36 @@ void PubSubArrow::Unsubscribe(uint64_t subscription_id) {
         }
     }
     // Flush the partial batch (reason kClosing) and join the timer before the
-    // driver stops delivering. No-op for non-batched (ArrowRow) subscriptions.
+    // Subscriber stops delivering. No-op for non-batched (ArrowRow) subscriptions.
     if (batcher) batcher->Stop();
-    driver_->Unsubscribe(subscription_id);
+    subscriber_->Unsubscribe(subscription_id);
+
+    // Clean up the per-subscription topic-key bookkeeping and free the codec
+    // entry if this was the last subscription for that topic.
+    std::lock_guard lock(mu_);
+    auto it = sub_topic_.find(subscription_id);
+    if (it == sub_topic_.end()) {
+        return;
+    }
+    std::string key = std::move(it->second);
+    sub_topic_.erase(it);
+
+    bool any_remaining = false;
+    for (const auto& [_, topic] : sub_topic_) {
+        if (topic == key) {
+            any_remaining = true;
+            break;
+        }
+    }
+    if (!any_remaining) {
+        codecs_.erase(key);
+    }
 }
 
-std::vector<std::string> PubSubArrow::ListTopics() const { return driver_->ListTopics(); }
-
-bool PubSubArrow::HasTopic(const std::vector<std::string>& segments) const {
-    return driver_->HasTopic(segments);
-}
-
-// -----------------------------------------------------------------------
-// Utility
-// -----------------------------------------------------------------------
-
-std::string PubSubArrow::JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) return {};
+std::string SubscriberArrow::JoinSegments(const std::vector<std::string>& segs) {
+    if (segs.empty()) {
+        return {};
+    }
     std::string out = segs[0];
     for (size_t i = 1; i < segs.size(); ++i) {
         out += '/';

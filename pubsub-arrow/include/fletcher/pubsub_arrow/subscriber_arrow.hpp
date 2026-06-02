@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#ifndef FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
-#define FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
+#ifndef FLETCHER_INCLUDE_SUBSCRIBER_ARROW_HPP_
+#define FLETCHER_INCLUDE_SUBSCRIBER_ARROW_HPP_
 
 #include <arrow/type_fwd.h>
 
 #include <chrono>
 #include <cstdint>
 #include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/driver.hpp>
-#include <fletcher/pubsub/pubsub.hpp>
+#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -21,34 +21,24 @@
 
 namespace fletcher {
 
-/// Arrow-friendly wrapper around the nanoarrow-based PubSub Driver.
+/// Arrow-friendly wrapper around Subscriber. Decodes incoming row
+/// bytes into ArrowRow via Codec before delivering to the caller, or
+/// accumulates them into RecordBatches via the batched Subscribe
+/// overload.
 ///
-/// PubSubArrow bridges the gap between the nanoarrow pub/sub core (which
-/// deals with raw bytes and ArrowSchema C structs) and server-side code
-/// that works with Arrow C++ types (arrow::Schema, ArrowRow).
-///
-/// Edge-deployed code uses the Driver directly; server-side code uses
-/// PubSubArrow for convenience.
-class PubSubArrow {
+/// Server-side code that works with Arrow C++ types should use
+/// SubscriberArrow; edge-deployed code that already speaks the raw
+/// row-bytes interface uses Subscriber directly.
+class SubscriberArrow {
    public:
-    explicit PubSubArrow(std::shared_ptr<PubSub> provider);
+    explicit SubscriberArrow(std::shared_ptr<PubSubProvider> provider);
 
     /// Stops and flushes any batched subscriptions (see the RecordBatch
     /// Subscribe overload) before teardown.
-    ~PubSubArrow();
+    ~SubscriberArrow();
 
-    /// Create a topic with an Arrow C++ schema.
-    /// Passing nullptr is allowed (topic created without schema).
-    void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> schema, std::any config = {});
-
-    /// Publish an ArrowRow (encoded via Codec).
-    void Publish(const std::vector<std::string>& segments, const ArrowRow& row,
-                 const Attachments& attachments = {});
-
-    /// Publish using a direct encoder (passthrough to Driver).
-    void PublishDirect(const std::vector<std::string>& segments, PubSub::RowEncoder encoder,
-                       const Attachments& attachments = {});
+    SubscriberArrow(const SubscriberArrow&) = delete;
+    SubscriberArrow& operator=(const SubscriberArrow&) = delete;
 
     struct SubscribeResult {
         uint64_t subscription_id;
@@ -57,8 +47,7 @@ class PubSubArrow {
 
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, Attachments attachments)>;
-    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback callback,
-                              std::any config = {});
+    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback callback);
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
@@ -93,8 +82,7 @@ class PubSubArrow {
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;
     SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              RecordBatchCallback callback, BatchOptions options,
-                              std::any config = {});
+                              RecordBatchCallback callback, BatchOptions options);
 
     /// Convenience overload using the default BatchOptions (8000 rows, 1 min).
     /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's
@@ -106,11 +94,10 @@ class PubSubArrow {
 
     void Unsubscribe(uint64_t subscription_id);
 
-    std::vector<std::string> ListTopics() const;
-    bool HasTopic(const std::vector<std::string>& segments) const;
-
    private:
-    std::unique_ptr<Driver> driver_;
+    class RecordBatchBatcher;  // defined in subscriber_arrow.cpp
+
+    std::unique_ptr<Subscriber> subscriber_;
 
     mutable std::mutex mu_;
     struct TopicCodec {
@@ -118,22 +105,21 @@ class PubSubArrow {
         std::unique_ptr<Codec> codec;
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
-
-    // Find the codec for `key`, building it lazily from the per-message
-    // SharedSchema when missing (subscriber-only path: no prior CreateTopic,
-    // and the provider can deliver before driver_->Subscribe returns).
-    // Returns nullptr if no schema is available to build one. Acquires mu_.
-    Codec* AcquireCodec(const std::string& key, const SharedSchema& schema);
-
-    // Accumulates decoded rows into RecordBatches for the batched Subscribe
-    // overload. Defined in pubsub_arrow.cpp; one per batched subscription,
-    // keyed by subscription id so Unsubscribe can stop and flush it.
-    class RecordBatchBatcher;
+    // Maps subscription_id -> topic key so Unsubscribe can free codec
+    // entries once the last subscription for a topic is gone.
+    std::unordered_map<uint64_t, std::string> sub_topic_;
+    // Live batched subscriptions (sub_id -> batcher).
     std::unordered_map<uint64_t, std::shared_ptr<RecordBatchBatcher>> batchers_;
+
+    // Look up the codec for `key`, lazily creating one from the
+    // delivered schema if none is registered yet. Used by the batched
+    // path so a subscriber-only process can still decode rows that
+    // arrive before subscriber_->Subscribe returns.
+    Codec* AcquireCodec(const std::string& key, const SharedSchema& schema);
 
     static std::string JoinSegments(const std::vector<std::string>& segs);
 };
 
 }  // namespace fletcher
 
-#endif  // FLETCHER_INCLUDE_PUBSUB_ARROW_HPP_
+#endif  // FLETCHER_INCLUDE_SUBSCRIBER_ARROW_HPP_

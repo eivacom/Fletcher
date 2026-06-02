@@ -58,8 +58,11 @@ std::string Base64Encode(const uint8_t* data, size_t len) {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-WsSession::WsSession(net::ip::tcp::socket socket, std::shared_ptr<Driver> driver)
-    : ws_(std::move(socket)), driver_(std::move(driver)) {}
+WsSession::WsSession(net::ip::tcp::socket socket, std::shared_ptr<Publisher> publisher,
+                     std::shared_ptr<Subscriber> subscriber)
+    : ws_(std::move(socket)),
+      publisher_(std::move(publisher)),
+      subscriber_(std::move(subscriber)) {}
 
 WsSession::~WsSession() { UnsubscribeAll(); }
 
@@ -165,19 +168,23 @@ void WsSession::OnCreateTopic(const nlohmann::json& msg) {
         // needed to round-trip JSON ↔ ArrowSchema.
         schema = gateway::BuildArrowSchemaFromJson(msg["schema"]);
     }
-    driver_->CreateTopic(SplitTopic(topic), std::move(schema));
+    publisher_->CreateTopic(SplitTopic(topic), std::move(schema));
     SendText(json{{"type", "topic_created"}}.dump());
 }
 
 void WsSession::OnSubscribe(const std::string& topic) {
     auto segments = SplitTopic(topic);
 
-    auto sub_id_ptr = std::make_shared<uint64_t>(0);
     std::weak_ptr<WsSession> weak = shared_from_this();
 
+    // Subscriber::Subscribe passes the subscription_id to the callback on
+    // every invocation, so we don't need a side-channel to communicate it.
+    // This closes a race where samples delivered synchronously during
+    // Subscribe() (e.g. retained TRANSIENT_LOCAL data) would have been
+    // framed with sub-id 0 before the outer code could write the real id.
     auto result =
-        driver_->Subscribe(segments, [weak, sub_id_ptr](const uint8_t* data, size_t len,
-                                                        SharedSchema /*schema*/, Attachments att) {
+        subscriber_->Subscribe(segments, [weak](uint64_t sub_id, const uint8_t* data, size_t len,
+                                                SharedSchema /*schema*/, Attachments att) {
             auto self = weak.lock();
             if (!self) return;
 
@@ -189,7 +196,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
 
                 std::vector<uint8_t> frame;
                 frame.reserve(8 + binary.size());
-                AppendU64LE(frame, *sub_id_ptr);
+                AppendU64LE(frame, sub_id);
                 AppendBytes(frame, binary.data(), binary.size());
 
                 net::post(self->ws_.get_executor(), [self, f = std::move(frame)]() mutable {
@@ -202,7 +209,6 @@ void WsSession::OnSubscribe(const std::string& topic) {
         });
 
     uint64_t sub_id = result.subscription_id;
-    *sub_id_ptr = sub_id;
     subscriptions_[sub_id] = topic;
 
     // Routing always; schema only when a publisher announced one. The
@@ -222,7 +228,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
 }
 
 void WsSession::OnUnsubscribe(uint64_t sub_id) {
-    driver_->Unsubscribe(sub_id);
+    subscriber_->Unsubscribe(sub_id);
     subscriptions_.erase(sub_id);
     SendText(json{{"type", "unsubscribed"}}.dump());
 }
@@ -235,7 +241,7 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     auto segments = SplitTopic(parts.topic);
     auto envelope = DeserializeEnvelope(parts.envelope_data, parts.envelope_size);
 
-    driver_->Publish(
+    publisher_->Publish(
         segments,
         [row_data = std::move(envelope.row)](WriteBuffer& buf) {
             buf.Append(row_data.data(), row_data.size());
@@ -246,7 +252,7 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
 }
 
 void WsSession::OnListTopics() {
-    auto topics = driver_->ListTopics();
+    auto topics = publisher_->ListTopics();
     SendText(json{
         {"type", "topics_list"},
         {"topics", topics},
@@ -303,7 +309,7 @@ void WsSession::SendError(const std::string& msg) {
 void WsSession::UnsubscribeAll() {
     for (auto& [sub_id, _] : subscriptions_) {
         try {
-            driver_->Unsubscribe(sub_id);
+            subscriber_->Unsubscribe(sub_id);
         } catch (...) {
         }
     }

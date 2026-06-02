@@ -4,7 +4,7 @@
 find_package(GTest REQUIRED)
 
 add_executable(pubsub_tests
-    test_driver.cpp)
+    test_publisher_subscriber.cpp)
 
 target_link_libraries(pubsub_tests PRIVATE
     GTest::gtest_main

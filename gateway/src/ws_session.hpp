@@ -10,7 +10,8 @@
 #include <boost/beast/websocket.hpp>
 #include <cstdint>
 #include <deque>
-#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/publisher.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <memory>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
@@ -63,13 +64,14 @@ namespace ws = beast::websocket;
 
 /// A single WebSocket connection.
 ///
-/// Each session maintains its own set of Driver subscriptions and
+/// Each session maintains its own set of Subscriber subscriptions and
 /// unsubscribes on disconnect.  Writes are serialised through an
 /// Asio strand so that provider callbacks (arriving on arbitrary
 /// threads) never race with control-frame responses.
 class WsSession : public std::enable_shared_from_this<WsSession> {
    public:
-    WsSession(net::ip::tcp::socket socket, std::shared_ptr<Driver> driver);
+    WsSession(net::ip::tcp::socket socket, std::shared_ptr<Publisher> publisher,
+              std::shared_ptr<Subscriber> subscriber);
     ~WsSession();
 
     /// Start the WebSocket handshake and begin reading frames.
@@ -108,14 +110,15 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     static std::vector<std::string> SplitTopic(const std::string& topic);
 
     ws::stream<beast::tcp_stream> ws_;
-    std::shared_ptr<Driver> driver_;
+    std::shared_ptr<Publisher> publisher_;
+    std::shared_ptr<Subscriber> subscriber_;
     beast::flat_buffer read_buf_;
 
     // Outgoing write queue (strand-serialised).
     std::deque<OutgoingFrame> write_queue_;
     bool writing_ = false;
 
-    // Active Driver subscriptions owned by this session.
+    // Active Subscriber subscriptions owned by this session.
     std::unordered_map<uint64_t, std::string> subscriptions_;  // sub_id → topic
 };
 

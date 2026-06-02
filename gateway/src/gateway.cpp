@@ -21,8 +21,12 @@ using tcp = net::ip::tcp;
 
 class Listener : public std::enable_shared_from_this<Listener> {
    public:
-    Listener(net::io_context& ioc, tcp::endpoint endpoint, std::shared_ptr<Driver> driver)
-        : ioc_(ioc), acceptor_(net::make_strand(ioc)), driver_(std::move(driver)) {
+    Listener(net::io_context& ioc, tcp::endpoint endpoint, std::shared_ptr<Publisher> publisher,
+             std::shared_ptr<Subscriber> subscriber)
+        : ioc_(ioc),
+          acceptor_(net::make_strand(ioc)),
+          publisher_(std::move(publisher)),
+          subscriber_(std::move(subscriber)) {
         beast::error_code ec;
 
         acceptor_.open(endpoint.protocol(), ec);
@@ -46,14 +50,16 @@ class Listener : public std::enable_shared_from_this<Listener> {
         acceptor_.async_accept(
             net::make_strand(ioc_), [self](beast::error_code ec, tcp::socket socket) {
                 if (ec) return;  // acceptor was closed (Stop)
-                std::make_shared<WsSession>(std::move(socket), self->driver_)->Run();
+                std::make_shared<WsSession>(std::move(socket), self->publisher_, self->subscriber_)
+                    ->Run();
                 self->DoAccept();
             });
     }
 
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
-    std::shared_ptr<Driver> driver_;
+    std::shared_ptr<Publisher> publisher_;
+    std::shared_ptr<Subscriber> subscriber_;
 };
 
 // -----------------------------------------------------------------------
@@ -62,7 +68,8 @@ class Listener : public std::enable_shared_from_this<Listener> {
 
 struct Gateway::Impl {
     GatewayOptions options;
-    std::shared_ptr<Driver> driver;
+    std::shared_ptr<Publisher> publisher;
+    std::shared_ptr<Subscriber> subscriber;
     std::unique_ptr<net::io_context> ioc;
     std::shared_ptr<Listener> listener;
     std::vector<std::thread> threads;
@@ -72,10 +79,13 @@ struct Gateway::Impl {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-Gateway::Gateway(std::shared_ptr<Driver> driver, GatewayOptions options)
+Gateway::Gateway(std::shared_ptr<Publisher> publisher, std::shared_ptr<Subscriber> subscriber,
+                 GatewayOptions options)
     : impl_(std::make_unique<Impl>()) {
-    if (!driver) throw std::invalid_argument("Gateway: driver must not be null");
-    impl_->driver = std::move(driver);
+    if (!publisher) throw std::invalid_argument("Gateway: publisher must not be null");
+    if (!subscriber) throw std::invalid_argument("Gateway: subscriber must not be null");
+    impl_->publisher = std::move(publisher);
+    impl_->subscriber = std::move(subscriber);
     impl_->options = std::move(options);
 }
 
@@ -94,7 +104,8 @@ void Gateway::Start() {
 
     auto ep = tcp::endpoint(net::ip::make_address(opts.address), opts.port);
 
-    impl_->listener = std::make_shared<Listener>(*impl_->ioc, ep, impl_->driver);
+    impl_->listener =
+        std::make_shared<Listener>(*impl_->ioc, ep, impl_->publisher, impl_->subscriber);
     impl_->listener->Run();
 
     // Spin up IO threads.

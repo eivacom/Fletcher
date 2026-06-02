@@ -1,6 +1,6 @@
 # xrcedds-pubsub-provider
 
-Implements `fletcher::PubSub` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v2.4.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP, TCP, or serial.
+Implements `fletcher::PubSubProvider` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v2.4.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP, TCP, or serial.
 
 ## How it works
 
@@ -67,7 +67,7 @@ auto provider2 = XrceDDSPubSubProvider(cfg);
 | `session_key` | `0xAABBCCDD` | XRCE session key — must be unique per client on the same Agent |
 | `connect_timeout_ms` | `3000` | Timeout for the initial session creation handshake; lower this in tests |
 
-### PubSub interface
+### PubSubProvider interface
 
 ```cpp
 provider.CreateTopic({"my", "topic"}, schema);

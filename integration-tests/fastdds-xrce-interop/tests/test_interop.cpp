@@ -27,7 +27,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/pubsub_arrow/pubsub_arrow.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 #include <memory>
 #include <mutex>
@@ -270,11 +271,13 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
+    FastDDSProviderOptions fast_opts;
+    fast_opts.domain_id = kDdsDomain;
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
 
-    PubSubArrow xrce_pub(xrce);
-    PubSubArrow fastdds_sub(fastdds);
+    PublisherArrow xrce_pub(xrce);
+    SubscriberArrow fastdds_sub(fastdds);
 
     const auto schema = SensorSchema();
     const std::vector<std::string> topic{"interop", "sensor"};
@@ -334,11 +337,13 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(kDdsDomain);
+    FastDDSProviderOptions fast_opts;
+    fast_opts.domain_id = kDdsDomain;
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
 
-    PubSubArrow fastdds_pub(fastdds);
-    PubSubArrow xrce_sub(xrce);
+    PublisherArrow fastdds_pub(fastdds);
+    SubscriberArrow xrce_sub(xrce);
 
     const auto schema = SensorSchema();
     const std::vector<std::string> topic{"interop", "command"};

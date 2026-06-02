@@ -8,7 +8,8 @@
 #define FLETCHER_GATEWAY_GATEWAY_HPP_
 
 #include <cstdint>
-#include <fletcher/pubsub/driver.hpp>
+#include <fletcher/pubsub/publisher.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <memory>
 #include <string>
 
@@ -20,13 +21,14 @@ struct GatewayOptions {
     int io_threads = 1;
 };
 
-/// WebSocket server that exposes a Driver over the network. Clients
-/// connect via WebSocket and exchange JSON control frames (subscribe,
-/// unsubscribe, publish, list_topics) and binary data frames
-/// (serialised Envelope bytes).
+/// WebSocket server that exposes a Publisher + Subscriber over the
+/// network. Clients connect via WebSocket and exchange JSON control
+/// frames (subscribe, unsubscribe, publish, list_topics) and binary
+/// data frames (serialised Envelope bytes).
 class Gateway {
    public:
-    explicit Gateway(std::shared_ptr<Driver> driver, GatewayOptions options = {});
+    Gateway(std::shared_ptr<Publisher> publisher, std::shared_ptr<Subscriber> subscriber,
+            GatewayOptions options = {});
     ~Gateway();
 
     Gateway(const Gateway&) = delete;
