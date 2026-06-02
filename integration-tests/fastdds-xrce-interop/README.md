@@ -67,34 +67,18 @@ conan create fastdds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Li
 conan create xrcedds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-### Build the integration test (and the Agent)
+### Build and run the integration test
 
 ```bash
 cd integration-tests/fastdds-xrce-interop
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
-```
-
-This `cmake --build` is where the Agent gets compiled (one-time cost on a clean build dir).
-
-### Run the tests
-
-```bash
-ctest --preset conan-release --output-on-failure
-```
-
-The test binary spawns the Agent itself; nothing else needs to be running.
+`conan build` runs the conanfile's `build()` method which executes the full configure + cmake build + ctest sequence — including the one-time MicroXRCEAgent superbuild (~10–15 min on a clean build dir; incremental thereafter). The test binary spawns the Agent itself, so nothing else needs to be running.
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. The Agent ExternalProject is incremental — it doesn't rebuild unless you wipe the build directory.
+Re-run only the `conan create` for the component you touched, then re-run `conan build .` for the integration test. CMake handles incremental rebuilds — the Agent ExternalProject does not rebuild unless you wipe the build directory.

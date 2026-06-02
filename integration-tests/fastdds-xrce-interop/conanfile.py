@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMake, cmake_layout
 
 
 class FastDdsXrceInteropIntegrationConan(ConanFile):
@@ -16,10 +16,11 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
     only test that proves topic naming, envelope serialisation, and the
     /__schema companion topic stay byte-compatible across the Agent.
 
-    Not published as a Conan package — this conanfile only exists so
-    `conan install` resolves the right deps and writes a CMake toolchain.
-    The components themselves are expected to be in the local Conan
-    cache (built earlier in the workflow via `conan create <component>/.`).
+    Not published as a Conan package — `conan build .` runs the full
+    configure + build + ctest sequence against the Conan toolchain
+    derived from the active profile. The components themselves are
+    expected to be in the local Conan cache (built earlier in the
+    workflow via `conan create <component>/.`).
     """
 
     settings = "os", "compiler", "build_type", "arch"
@@ -39,3 +40,9 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def build(self):
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
+        cmake.test(cli_args=["--output-on-failure"])

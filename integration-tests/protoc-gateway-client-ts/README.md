@@ -57,18 +57,10 @@ cd /workspaces/Fletcher/integration-tests/protoc-gateway-client-ts
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
-```
-
-The last step produces `build/Release/emit_vectors` plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` (consumed by the C++ binary) and `generated-ts/<stem>.fletcher.ts` (consumed by vitest).
+`conan build` runs the conanfile's `build()` method (configure + cmake build) to produce `build/Release/emit_vectors` plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` (consumed by the C++ binary) and `generated-ts/<stem>.fletcher.ts` (consumed by vitest).
 
 ### Run the TS test
 
@@ -84,4 +76,4 @@ vitest spawns `emit_vectors`, parses the JSON-line output, and asserts both deco
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.
+Re-run only the `conan create` for the component you touched, then re-run `conan build .` for the integration test. CMake handles incremental rebuilds; Conan picks up the latest component version from the local cache automatically.

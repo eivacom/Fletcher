@@ -2,14 +2,15 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMake, cmake_layout
 
 
 class ProtocArrowBridgeIntegrationConan(ConanFile):
     """Cross-component integration test consumer.
 
-    Not published as a Conan package — this conanfile only exists so that
-    `conan install` resolves the right deps and writes a CMake toolchain.
+    Not published as a Conan package — `conan build .` runs the full
+    configure + build + ctest sequence against the Conan toolchain
+    derived from the active profile.
 
     The components themselves (protoc, arrow-bridge, etc.) are expected to
     be in the local Conan cache (built earlier in the workflow via
@@ -43,3 +44,9 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def build(self):
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
+        cmake.test(cli_args=["--output-on-failure"])

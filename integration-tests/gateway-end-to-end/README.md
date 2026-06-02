@@ -74,15 +74,7 @@ cd integration-tests/gateway-end-to-end
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
-```
-
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
@@ -92,6 +84,8 @@ npm ci
 ```bash
 npm test
 ```
+
+`conan build` runs the conanfile's `build()` method (configure + cmake build) to produce `build/Release/gateway_build/gateway`. The cross-language assertions live in vitest and run via `npm test` against that binary.
 
 The vitest suite spawns `build/Release/gateway_build/gateway` with `--port`, `--bind-address`, and `--config test-config.yml`, waits for `READY <port>`, runs the four scenarios, and tears the gateway down via `stop\n` on stdin.
 

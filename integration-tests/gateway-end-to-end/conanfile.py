@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMake, cmake_layout
 
 
 class GatewayEndToEndIntegrationConan(ConanFile):
@@ -15,6 +15,9 @@ class GatewayEndToEndIntegrationConan(ConanFile):
     through Conan. The accompanying vitest suite spawns the resulting
     exe and exercises the WebSocket protocol via the real
     FletcherClient from gateway-client-ts.
+
+    `conan build .` runs configure + cmake build to produce the exe;
+    the vitest suite that spawns it runs in a separate `npm test` step.
 
     Boost, nlohmann_json, and yaml-cpp are required by gateway's
     sources. pubsub + core are expected to be present in the local
@@ -41,3 +44,11 @@ class GatewayEndToEndIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def build(self):
+        # No CMake-level tests — the `gateway` exe is the build output,
+        # and the cross-language test lives in npm/vitest land (spawned
+        # by a separate `npm test` step in the workflow + dev docs).
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
