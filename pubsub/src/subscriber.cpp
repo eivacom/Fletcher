@@ -17,7 +17,9 @@ namespace fletcher {
 struct Subscriber::Impl {
     struct TopicState {
         std::vector<std::string> segments;
-        OwnedSchema schema;
+        // The provider's schema future, cached so fan-out subscribers to the
+        // same topic all share it (shared_future is copyable).
+        std::shared_future<SharedSchema> schema_future;
         bool provider_subscribed = false;
     };
 
@@ -35,20 +37,14 @@ struct Subscriber::Impl {
 
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
-    OwnedSchema EnsureProviderSubscription(const std::string& key, TopicState& ts,
-                                           std::unique_lock<std::mutex>& lock) {
+    std::shared_future<SharedSchema> EnsureProviderSubscription(const std::string& key,
+                                                                TopicState& ts,
+                                                                std::unique_lock<std::mutex>& lock) {
         if (ts.provider_subscribed) {
-            if (ts.schema) {
-                return OwnedSchema::DeepCopy(ts.schema.get());
-            }
-            return {};
+            return ts.schema_future;
         }
 
         std::vector<std::string> segments = ts.segments;
-        OwnedSchema cached_schema;
-        if (ts.schema) {
-            cached_schema = OwnedSchema::DeepCopy(ts.schema.get());
-        }
 
         lock.unlock();
 
@@ -83,24 +79,14 @@ struct Subscriber::Impl {
         // The topic may have been removed while we were unlocked.
         auto topic_it = topics.find(key);
         if (topic_it == topics.end()) {
-            if (result.schema) {
-                return OwnedSchema::DeepCopy(result.schema.get());
-            }
-            return std::move(cached_schema);
+            return result.schema;
         }
 
         TopicState& current = topic_it->second;
         current.provider_subscribed = true;
-        OwnedSchema ret;
-        if (result.schema) {
-            if (!current.schema) {
-                current.schema = OwnedSchema::DeepCopy(result.schema.get());
-            }
-            ret = OwnedSchema::DeepCopy(result.schema.get());
-        } else if (current.schema) {
-            ret = OwnedSchema::DeepCopy(current.schema.get());
-        }
-        return ret;
+        // Cache the provider's schema future so fan-out subscribers share it.
+        current.schema_future = result.schema;
+        return current.schema_future;
     }
 };
 
@@ -146,7 +132,7 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
 
-    OwnedSchema schema;
+    std::shared_future<SharedSchema> schema;
     try {
         schema = impl_->EnsureProviderSubscription(key, it->second, lock);
     } catch (...) {

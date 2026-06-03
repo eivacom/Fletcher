@@ -293,9 +293,10 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // /__schema must round-trip the full schema including Arrow
     // KeyValueMetadata — anything weaker would let a CDR length-prefix
     // off-by-N or schema-IPC bug slip past the test.
-    ASSERT_NE(result.schema, nullptr)
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr)
         << "schema must propagate via /__schema across the Agent bridge";
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/true));
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
     // Three back-to-back publishes with distinct values across all
     // three field types. Reliable QoS + KEEP_ALL guarantees in-order
@@ -356,9 +357,10 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
         cv.notify_all();
     });
 
-    ASSERT_NE(result.schema, nullptr)
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr)
         << "schema must propagate via /__schema across the Agent bridge";
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/true));
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
     const std::vector<std::tuple<int32_t, double, std::string>> samples = {
         {99, 12.5, "from-fastdds-1"},

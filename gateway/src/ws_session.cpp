@@ -3,8 +3,10 @@
 //
 #include "ws_session.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <fletcher/core/envelope.hpp>
+#include <future>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
@@ -219,10 +221,18 @@ void WsSession::OnSubscribe(const std::string& topic) {
         {"subId", std::to_string(sub_id)},
         {"topic", topic},
     };
-    if (result.schema) {
-        auto ipc_bytes = SerializeSchemaIpc(result.schema.get());
-        response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-        response["schema"] = gateway::ArrowSchemaToJson(result.schema.get());
+    // The schema future resolves asynchronously for late-joining DDS
+    // subscribers; only forward it in the subscribed response when it is
+    // already available (publisher-first / in-process loopback). Otherwise
+    // the client relies on its own schema (e.g. protoc-generated).
+    if (result.schema.valid() &&
+        result.schema.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        SharedSchema schema = result.schema.get();
+        if (schema) {
+            auto ipc_bytes = SerializeSchemaIpc(schema.get());
+            response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+            response["schema"] = gateway::ArrowSchemaToJson(schema.get());
+        }
     }
     SendText(response.dump());
 }

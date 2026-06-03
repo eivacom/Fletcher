@@ -12,6 +12,7 @@
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -42,7 +43,9 @@ class SubscriberArrow {
 
     struct SubscribeResult {
         uint64_t subscription_id;
-        std::shared_ptr<arrow::Schema> schema;
+        // Future for the topic's Arrow schema (see SubscriptionResult):
+        // non-blocking, resolves with a non-null schema once known.
+        std::shared_future<std::shared_ptr<arrow::Schema>> schema;
     };
 
     /// Subscribe with ArrowRow delivery.

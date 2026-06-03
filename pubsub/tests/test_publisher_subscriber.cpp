@@ -53,11 +53,11 @@ class MockProvider : public PubSubProvider {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
-        OwnedSchema schema;
+        SharedSchema schema;
         if (it != schemas_.end()) {
-            schema = OwnedSchema::DeepCopy(it->second.get());
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {std::move(schema)};
+        return {MakeReadySchemaFuture(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -206,9 +206,11 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
     Subscriber::SubscribeResult result = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
     ASSERT_TRUE(result.schema.valid());
-    EXPECT_EQ(result.schema->n_children, 1);
-    EXPECT_EQ(std::string(result.schema->children[0]->name), "x");
-    EXPECT_EQ(std::string(result.schema->children[0]->format), "i");
+    SharedSchema sch = result.schema.get();
+    ASSERT_TRUE(sch);
+    EXPECT_EQ(sch->n_children, 1);
+    EXPECT_EQ(std::string(sch->children[0]->name), "x");
+    EXPECT_EQ(std::string(sch->children[0]->format), "i");
 }
 
 TEST(SubscriberTest, MultiSubscriberFanOut) {

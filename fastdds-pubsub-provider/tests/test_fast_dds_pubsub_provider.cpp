@@ -77,9 +77,11 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
         });
 
     ASSERT_TRUE(result.schema.valid());
-    ASSERT_EQ(result.schema->n_children, 1);
-    EXPECT_EQ(std::string(result.schema->children[0]->name), "x");
-    EXPECT_EQ(std::string(result.schema->children[0]->format), "i");
+    SharedSchema sch = result.schema.get();
+    ASSERT_TRUE(sch);
+    ASSERT_EQ(sch->n_children, 1);
+    EXPECT_EQ(std::string(sch->children[0]->name), "x");
+    EXPECT_EQ(std::string(sch->children[0]->format), "i");
 
     pub_provider.Publish({"roundtrip", "x"}, MakeEncoder(42));
 

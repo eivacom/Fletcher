@@ -519,9 +519,12 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
     ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get());
     if (!ts.reader) throw std::runtime_error("FastDDS: failed to create DataReader for: " + name);
 
-    OwnedSchema result_schema;
-    if (ts.schema) result_schema = OwnedSchema::DeepCopy(ts.schema.get());
-    return {std::move(result_schema)};
+    // B1: behaviour unchanged (the schema poll above already resolved it);
+    // wrap it in an already-ready future to match the new contract. B2 makes
+    // this path non-blocking with an asynchronously-resolved promise.
+    SharedSchema result_schema;
+    if (ts.schema) result_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
+    return {MakeReadySchemaFuture(std::move(result_schema))};
 }
 
 void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {

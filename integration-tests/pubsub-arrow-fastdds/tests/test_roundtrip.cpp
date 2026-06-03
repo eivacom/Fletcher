@@ -83,8 +83,9 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 
     // Subscribe internally polls until the schema arrives via the companion
     // /__schema topic, so once it returns the subscriber knows the schema.
-    ASSERT_NE(result.schema, nullptr);
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr);
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
     // No sleep before publish. The data-topic DataWriter is RELIABLE +
     // TRANSIENT_LOCAL + KEEP_ALL, so the sample is retained and delivered
@@ -138,7 +139,7 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         cv.notify_all();
     });
 
-    ASSERT_NE(result.schema, nullptr);
+    ASSERT_NE(result.schema.get(), nullptr);
 
     // No sleep before publish. KEEP_ALL durability retains every sample
     // until the reader matches and consumes them in published order.
@@ -214,8 +215,9 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
         },
         opt);
 
-    ASSERT_NE(result.schema, nullptr);
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr);
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
     // Publish exactly max_rows samples — RELIABLE + TRANSIENT_LOCAL + KEEP_ALL
     // guarantees ordered delivery to the matched DataReader. Once the batcher

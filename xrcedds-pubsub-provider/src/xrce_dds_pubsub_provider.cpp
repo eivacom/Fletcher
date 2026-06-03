@@ -593,9 +593,9 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
     uxr_buffer_request_data(&impl_->session, impl_->reliable_out, ts.reader_id, impl_->reliable_in,
                             &delivery);
 
-    OwnedSchema result_schema;
-    if (ts.schema) result_schema = OwnedSchema::DeepCopy(ts.schema.get());
-    return {std::move(result_schema)};
+    // Schema is resolved synchronously here; wrap it in an already-ready
+    // future to satisfy the SubscriptionResult contract.
+    return {MakeReadySchemaFuture(ts.shared_schema)};
 }
 
 void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {

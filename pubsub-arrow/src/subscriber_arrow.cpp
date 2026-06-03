@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <fletcher/pubsub/owned_schema.hpp>
+#include <future>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -28,6 +29,16 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
         throw std::runtime_error("SubscriberArrow: ImportSchema: " + result.status().ToString());
     }
     return *result;
+}
+
+// A SubscribeResult schema future that is already resolved. B1: providers
+// deliver the schema synchronously, so the Arrow schema is known at Subscribe.
+// B2 fulfils this from the first decoded sample for late-joining subscribers.
+std::shared_future<std::shared_ptr<arrow::Schema>> MakeReadyArrowFuture(
+    std::shared_ptr<arrow::Schema> schema) {
+    std::promise<std::shared_ptr<arrow::Schema>> p;
+    p.set_value(std::move(schema));
+    return p.get_future().share();
 }
 
 }  // anonymous namespace
@@ -293,9 +304,13 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             cb(std::move(row), std::move(att));
         });
 
+    // B1: the provider's schema future is already resolved (synchronous
+    // providers / publisher-first DDS), so .get() does not block. B2 makes
+    // this non-blocking + lazily codec-acquired for late-joining subscribers.
+    SharedSchema nano = result.schema.get();
     std::shared_ptr<arrow::Schema> arrow_schema;
-    if (result.schema) {
-        arrow_schema = ImportFromNano(result.schema.get());
+    if (nano) {
+        arrow_schema = ImportFromNano(nano.get());
         std::lock_guard lock(mu_);
         if (codecs_.find(key) == codecs_.end()) {
             codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
@@ -309,7 +324,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         sub_topic_[result.subscription_id] = key;
     }
 
-    return {result.subscription_id, std::move(arrow_schema)};
+    return {result.subscription_id, MakeReadyArrowFuture(std::move(arrow_schema))};
 }
 
 // -----------------------------------------------------------------------
@@ -356,9 +371,10 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     try {
         // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand
         // it to the batcher so it can build batches.
+        SharedSchema nano = result.schema.get();  // B1: ready (synchronous providers)
         std::shared_ptr<arrow::Schema> arrow_schema;
-        if (result.schema) {
-            arrow_schema = ImportFromNano(result.schema.get());
+        if (nano) {
+            arrow_schema = ImportFromNano(nano.get());
             std::lock_guard lock(mu_);
             if (codecs_.find(key) == codecs_.end()) {
                 codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
@@ -371,7 +387,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             batchers_[result.subscription_id] = std::move(batcher);
             sub_topic_[result.subscription_id] = key;
         }
-        return {result.subscription_id, std::move(arrow_schema)};
+        return {result.subscription_id, MakeReadyArrowFuture(std::move(arrow_schema))};
     } catch (...) {
         batcher->Stop();
         subscriber_->Unsubscribe(result.subscription_id);

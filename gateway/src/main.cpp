@@ -102,11 +102,11 @@ class InProcessProvider : public fletcher::PubSubProvider {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         slot.callback = std::move(callback);
-        fletcher::SubscriptionResult result;
+        fletcher::SharedSchema schema;
         if (slot.schema) {
-            result.schema = fletcher::OwnedSchema::DeepCopy(slot.schema.get());
+            schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(slot.schema.get()));
         }
-        return result;
+        return {fletcher::MakeReadySchemaFuture(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
