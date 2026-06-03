@@ -258,14 +258,14 @@ Each Conan-package component attaches two archives to its GitHub Release — one
 Each archive is a `conan cache save` export (recipe revision + built binary). To consume one:
 
 ```bash
-gh release download core-v0.1.0-alpha --repo eivacom/Fletcher \
+gh release download core-v0.3.0-alpha --repo eivacom/Fletcher \
   --pattern 'fletcher-core-linux-conan-package.tgz'
 conan cache restore fletcher-core-linux-conan-package.tgz
 ```
 
 ```python
 # In your conanfile.py:
-self.requires("fletcher-core/0.1.0-alpha")
+self.requires("fletcher-core/0.3.0-alpha")
 ```
 
 `conan cache restore` registers the package under the exact profile it was built with. To target a different profile, build from source with `conan create <component>` against a Fletcher checkout.
@@ -274,7 +274,7 @@ The `gateway-client-ts` package is published to npm as [`@eiva/fletcher-gateway-
 
 ## Roadmap
 
-Fletcher is at an early (`0.1.x-alpha`) stage. Planned work, roughly in priority order:
+Fletcher is at an early (`0.3.x-alpha`) stage. Planned work, roughly in priority order:
 
 - **Dynamically loadable transport plugins.** Make transport providers (Fast DDS, XRCE-DDS, …) loadable at runtime as plugins, so an application can pick a transport without compile-time coupling to its library.
 - **A protocol bridge service.** A standalone service that loads two transport plugins and bridges traffic between them — e.g. relay XRCE-DDS telemetry from an embedded segment onto a Fast DDS backbone, or DDS onto WebSocket — without bespoke glue code.
@@ -295,7 +295,39 @@ Releases are cut by maintainers by pushing a **component-prefixed git tag** (`<c
 | `gateway/` | `gateway-v` | `gateway/VERSION` |
 | `gateway-client-ts/` | `gateway-client-v` | `gateway-client-ts/package.json` |
 
-For Conan and gateway components the tag version **must match** the version source (CI verifies and fails fast otherwise). Releases are independent per component — bumping one does not require re-releasing the others. Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
+For Conan and gateway components the tag version **must match** the version source (CI verifies and fails fast otherwise). Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
+
+### Version scheme — `MAJOR.MINOR` signals compatibility
+
+Every Fletcher component follows `MAJOR.MINOR.PATCH`, and **`MAJOR.MINOR` is a cross-component compatibility marker**: all components that share the same `MAJOR.MINOR` are designed, built, and tested to interoperate as one coherent set. Components carrying the same `MAJOR.MINOR` — regardless of their individual `PATCH` levels — are guaranteed compatible across the build graph (Conan dependencies), the wire format, and the generated-code / gateway-client contracts. The current line is **`0.3.x-alpha`**.
+
+- **`MAJOR` / `MINOR` — moves in lockstep.** A new compatibility series is cut by bumping every component to the same new `MAJOR.MINOR` (e.g. `0.3.x` → `0.4.x`), even components with no source change, so the shared line stays unambiguous. A `MAJOR` bump signals a breaking change to a public API, the wire format, or the gateway protocol; a `MINOR` bump signals backward-compatible additions within the series. Mixing components from different `MAJOR.MINOR` lines is unsupported.
+- **`PATCH` — moves independently per component.** Bug fixes and other changes that preserve compatibility within the current series advance only the affected component's `PATCH`. So `fletcher-core/0.3.2-alpha` and `fletcher-pubsub/0.3.5-alpha` are an expected, supported combination; their matching `0.3` says they belong together.
+
+In short: **match `MAJOR.MINOR` across the packages you combine; let `PATCH` float.** The pinned `self.requires("fletcher-…/0.3.0-alpha")` lines in each `conanfile.py` record the exact set a release was validated against, while the shared `0.3` is the compatibility contract.
+
+### Shipping a bug fix (patch bump)
+
+A bug fix stays *within* the current compatibility series, so it touches only the affected component's `PATCH`. Crucially, **the fix is branched from the release tag being patched — not from `main`** — because `main` has usually moved on (newer patches, or work toward a future series) and you want to ship the fix on top of *exactly* what was released, with nothing else pulled in:
+
+1. **Branch off the release tag** for the version you are patching — e.g. `git switch -c hotfix/pubsub-0.3.1 pubsub-v0.3.0-alpha`. This gives you the released tree and nothing newer.
+2. **Fix and test** the change on that branch. Do not touch the `MAJOR.MINOR` of the component or anything else in the tree.
+3. **Bump the `PATCH`** in that component's version source (`conanfile.py`, `gateway/VERSION`, or `package.json`) — e.g. `fletcher-pubsub/0.3.0-alpha` → `0.3.1-alpha`. Leave the other components alone.
+4. **Tag the new patch and release.** Push the tag (`pubsub-v0.3.1-alpha`); CI verifies the tag matches the version source, builds on Windows + Linux, and publishes the artifact. The release ships straight from the hotfix branch.
+5. **Cherry-pick the fix back into `main`** (`git cherry-pick <fix-commit>`) so the fix is not lost in the next series. If `main` is already on a newer version, carry over only the code fix — resolve the version-source bump to whatever `main`'s component version should be (don't blindly overwrite it with `0.3.1-alpha`).
+
+Because the `MAJOR.MINOR` is unchanged, `fletcher-pubsub/0.3.1-alpha` drops straight into any existing `0.3.x` deployment — consumers that float `PATCH` pick it up with no coordination. Only bump a dependant's pinned `self.requires(...)` if it must adopt the fix immediately; otherwise the shared `0.3` already guarantees compatibility.
+
+### Implementing a breaking change
+
+A breaking change — to a public API, the wire format, or the gateway protocol — requires a new `MAJOR.MINOR` series. The work does **not** have to land in one atomic commit across all nine packages; instead it is developed and shipped as **pre-release (`-alpha` / `-beta`) packages**, and the rule that *all* `MAJOR.MINOR` numbers match is relaxed **only during that development phase**:
+
+1. **Branch** off `main` for the breaking work — e.g. `feature/0.4-typed-envelope`.
+2. **Bump the leading components** to the new series as **pre-releases** as they change — e.g. `fletcher-core/0.4.0-alpha`, then `fletcher-pubsub/0.4.0-alpha` once it adopts the new core. Components that have not yet been migrated may remain on the previous series (`0.3.x`). **During development the `MAJOR.MINOR` numbers are allowed to diverge** across the tree — this is expected while the new series is being built out.
+3. **Iterate** through `-alpha` → `-beta` → `-rc` pre-releases as the change stabilizes. Pre-release packages are explicitly opt-in for consumers (Conan requires `include_prerelease`; npm uses the matching dist-tag), so divergence here never reaches anyone consuming official releases.
+4. **Promote to an official release** only once **every** component has been migrated onto the new line and the whole set is green. At promotion the divergence must be resolved: **all components are aligned to the same `MAJOR.MINOR`** (e.g. the entire tree is on `0.4.x`), the pinned `self.requires(...)` lines are re-pinned to the new series, and the pre-release suffix is dropped (or advanced to the agreed release suffix). The lockstep-`MAJOR.MINOR` invariant is therefore enforced for **official releases only** — pre-releases are the staging ground where the new series is assembled.
+
+The guiding rule: **official releases always have matching `MAJOR.MINOR` across the packages; pre-release (`-alpha`/`-beta`) series may diverge while a breaking change is under construction, and the divergence is closed at promotion.**
 
 ## License
 
