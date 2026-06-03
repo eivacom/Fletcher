@@ -5,9 +5,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <mutex>
 #include <thread>
 
 using namespace fletcher;
@@ -254,4 +256,58 @@ TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     EXPECT_EQ(received.load(), 2026);
+}
+
+// ---------------------------------------------------------------------------
+// Subscriber-first: Subscribe before any publisher/topic exists must not block
+// or throw, and once a publisher appears the schema future resolves and the
+// first callback fires with a non-null schema (data is held until the schema
+// arrives — the callback is never invoked with a null schema).
+// ---------------------------------------------------------------------------
+TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int32_t> received{-1};
+    SharedSchema rx_schema;
+
+    // Subscribe with no publisher yet — must return immediately (no block, no throw).
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"subfirst", "x"}, [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+            std::lock_guard<std::mutex> lk(mu);
+            rx_schema = schema;
+            if (len >= 5) received.store(DecodeRow(data));
+            cv.notify_all();
+        });
+
+    // No publisher has announced the schema yet, so the future is unresolved.
+    EXPECT_TRUE(result.schema.valid());
+    EXPECT_EQ(result.schema.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+
+    // A publisher appears and publishes.
+    pub_provider.CreateTopic({"subfirst", "x"}, MakeSchema());
+    pub_provider.Publish({"subfirst", "x"}, MakeEncoder(99));
+
+    // The schema future now resolves with a non-null schema.
+    ASSERT_EQ(result.schema.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    SharedSchema fut_schema = result.schema.get();
+    ASSERT_TRUE(fut_schema);
+    EXPECT_EQ(fut_schema->n_children, 1);
+
+    // The first callback fired with the row and a non-null schema.
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return received.load() != -1; }));
+    }
+    EXPECT_EQ(received.load(), 99);
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        ASSERT_TRUE(rx_schema);
+        EXPECT_EQ(rx_schema->n_children, 1);
+    }
+
+    sub_provider.Unsubscribe({"subfirst", "x"});
 }
