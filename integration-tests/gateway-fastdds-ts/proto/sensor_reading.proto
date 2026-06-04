@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// Proto for the gateway-fastdds-ts integration test.
+//
+// One message reused in both directions, and two client-streaming service
+// methods — one per direction — so protoc-gen-fletcher emits a typed
+// Publisher/Subscriber pair (C++) and a topic constant (TS) for each:
+//
+//   SensorFeed.CppToTs  — C++ FastDDS peer publishes, TS client subscribes.
+//   SensorFeed.TsToCpp  — TS client publishes, C++ FastDDS peer subscribes.
+//
+// Field types are kept to int32 / double / string — the set already proven
+// byte-compatible across the C++ encoder and the TS decoder.
+syntax = "proto3";
+
+package gwfastdds;
+
+import "google/protobuf/empty.proto";
+
+message SensorReading {
+    int32  sensor_id = 1;
+    double value     = 2;
+    string unit      = 3;
+}
+
+service SensorFeed {
+    rpc CppToTs(stream SensorReading) returns (google.protobuf.Empty);
+    rpc TsToCpp(stream SensorReading) returns (google.protobuf.Empty);
+}
