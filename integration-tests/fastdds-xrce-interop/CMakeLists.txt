@@ -27,7 +27,24 @@ set(AGENT_INSTALL_DIR ${CMAKE_BINARY_DIR}/microxrcedds_agent-install)
 set(AGENT_BINARY ${AGENT_INSTALL_DIR}/bin/MicroXRCEAgent${CMAKE_EXECUTABLE_SUFFIX})
 set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
 
+# UAGENT_SUPERBUILD nests the Agent's own fast-dds / fast-cdr / asio /
+# tinyxml2 / spdlog ExternalProjects several levels under this project's
+# prefix. On Windows the default prefix (deep under the test's build/
+# dir) pushes those nested build paths past the 260-char MAX_PATH limit,
+# which breaks MSBuild's FileTracker (FTK1011 / C1083) during the
+# superbuild's own configure. A short prefix keeps the nested paths well
+# under the limit. Overridable (cache var) for local builds that prefer a
+# different writable location.
+if(WIN32)
+    set(AGENT_PREFIX "C:/fl-uxa" CACHE PATH
+        "MicroXRCEAgent ExternalProject prefix (short on Windows to avoid MAX_PATH)")
+else()
+    set(AGENT_PREFIX "${CMAKE_BINARY_DIR}/microxrcedds_agent_proj-prefix" CACHE PATH
+        "MicroXRCEAgent ExternalProject prefix")
+endif()
+
 ExternalProject_Add(microxrcedds_agent_proj
+    PREFIX         ${AGENT_PREFIX}
     GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
     GIT_TAG        v2.4.3
     CMAKE_ARGS
