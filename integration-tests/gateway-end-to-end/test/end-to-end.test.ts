@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -56,28 +56,18 @@ function findGatewayBinary(): string {
   if (process.env.GATEWAY_BIN) {
     return process.env.GATEWAY_BIN;
   }
-  // Conan's cmake_layout puts the build folder in different places per
-  // generator: Linux single-config writes `build/Release/`, Windows
-  // multi-config writes `build/<profile-name>/Release/`. Walk `build/`
-  // recursively for any file named `gateway[.exe]` rather than hardcoding
-  // both layouts.
-  const buildRoot = resolve(here, '..', 'build');
-  const found = findBinaryRecursive(buildRoot, ['gateway', 'gateway.exe']);
-  if (found) return found;
-  throw new Error(`gateway binary not found under ${buildRoot}. ` + `Set GATEWAY_BIN to override.`);
-}
-
-function findBinaryRecursive(root: string, names: string[]): string | undefined {
-  if (!existsSync(root)) return undefined;
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    const full = resolve(root, entry.name);
-    if (entry.isFile() && names.includes(entry.name)) return full;
-    if (entry.isDirectory()) {
-      const nested = findBinaryRecursive(full, names);
-      if (nested) return nested;
-    }
+  const candidates = [
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway'),
+    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway.exe'),
+    resolve(here, '..', 'build', 'build', 'Release', 'gateway_build', 'gateway'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
   }
-  return undefined;
+  throw new Error(
+    `gateway binary not found. Checked: ${candidates.join(', ')}. ` +
+      `Set GATEWAY_BIN to override.`,
+  );
 }
 
 async function spawnGateway(port: number): Promise<ChildProcess> {

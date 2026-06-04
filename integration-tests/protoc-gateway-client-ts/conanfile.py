@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import CMake, cmake_layout
+from conan.tools.cmake import cmake_layout
 
 
 class ProtocGatewayClientTsIntegrationConan(ConanFile):
@@ -12,10 +12,6 @@ class ProtocGatewayClientTsIntegrationConan(ConanFile):
     encode known scenarios. A TypeScript vitest test then spawns the
     binary, decodes the bytes via the generated TS codec, and asserts
     cross-language byte-compatibility.
-
-    `conan build .` runs configure + cmake build to produce the emitter
-    binary; the cross-language assertions run in a separate `npm test`
-    step.
 
     The components themselves (protoc, core, pubsub, etc.) are expected
     to be in the local Conan cache (built earlier in the workflow via
@@ -36,11 +32,3 @@ class ProtocGatewayClientTsIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
-
-    def build(self):
-        # No CMake-level tests — the emit_vectors binary is the build
-        # output, and the cross-language assertions live in vitest
-        # (spawned by a separate `npm test` step).
-        cmake = CMake(self)
-        cmake.configure()
-        cmake.build()

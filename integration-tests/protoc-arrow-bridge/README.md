@@ -55,18 +55,32 @@ conan create protoc/.       --build=missing -pr:a=.conan-profiles/Linux-gcc13-x8
 
 Each `conan create` builds the component and registers the branch's version in `~/.conan2/p/`. Subsequent `conan install` calls find them there.
 
-### Build and run the integration test
+### Build the integration test
 
 ```bash
 cd /workspaces/Fletcher/integration-tests/protoc-arrow-bridge
 ```
 
 ```bash
-conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-`conan build` runs the conanfile's `build()` method which executes configure + cmake build + ctest in one go. The build produces the `integration_tests` gtest binary plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` and `<stem>.fletcher.arrow.pb.h`; ctest then runs the binary.
+```bash
+cmake --preset conan-release
+```
+
+```bash
+cmake --build --preset conan-release
+```
+
+The last step produces the `integration_tests` gtest binary plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` and `<stem>.fletcher.arrow.pb.h`.
+
+### Run the tests
+
+```bash
+ctest --preset conan-release --output-on-failure
+```
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then re-run `conan build .` for the integration test. CMake handles incremental rebuilds; Conan picks up the latest component version from the local cache automatically.
+Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.

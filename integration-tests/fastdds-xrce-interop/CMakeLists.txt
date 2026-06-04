@@ -26,25 +26,11 @@ enable_testing()
 # build directory's cache, so iteration is fast.
 include(ExternalProject)
 
-# Windows ships with a 260-character MAX_PATH limit by default. MSBuild's
-# FileTracker writes deeply nested *.tlog files; combined with the Agent's
-# UAGENT_SUPERBUILD (which nests spdlog/fast-dds/asio/tinyxml2/micro-cdr
-# under the Agent's own ExternalProject), the path grows past 260 chars
-# (FTK1011 error). Anchoring the Agent's build under a short top-level
-# path keeps the deepest tlog under MAX_PATH on the GitHub windows-2022
-# runners. On Linux the default location under ${CMAKE_BINARY_DIR} is
-# fine — there's no MAX_PATH issue.
-if(WIN32)
-    set(AGENT_PREFIX "C:/_x")
-else()
-    set(AGENT_PREFIX "${CMAKE_BINARY_DIR}/microxrcedds_agent_proj-prefix")
-endif()
 set(AGENT_INSTALL_DIR ${CMAKE_BINARY_DIR}/microxrcedds_agent-install)
 set(AGENT_BINARY ${AGENT_INSTALL_DIR}/bin/MicroXRCEAgent${CMAKE_EXECUTABLE_SUFFIX})
 set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
 
 ExternalProject_Add(microxrcedds_agent_proj
-    PREFIX ${AGENT_PREFIX}
     GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
     GIT_TAG        v2.4.3
     CMAKE_ARGS

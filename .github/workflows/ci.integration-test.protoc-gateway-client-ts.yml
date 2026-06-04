@@ -55,8 +55,12 @@ jobs:
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/protoc-gateway-client-ts && \
-                     echo '::group::conan build integration test (configure + build emit_vectors)' && \
-                     conan build . --build=missing -pr:a=\$PROFILE && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure + build' && \
+                     cmake --preset conan-release && \
+                     cmake --build --preset conan-release && \
                      echo '::endgroup::' && \
                      echo '::group::npm ci' && \
                      npm ci && \
@@ -93,10 +97,20 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: conan build integration test (configure + build emit_vectors)
+      - name: conan install integration test
         shell: bash
         working-directory: integration-tests/protoc-gateway-client-ts
-        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+        run: conan install . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: cmake configure
+        shell: bash
+        working-directory: integration-tests/protoc-gateway-client-ts
+        run: cmake --preset conan-release
+
+      - name: cmake build
+        shell: bash
+        working-directory: integration-tests/protoc-gateway-client-ts
+        run: cmake --build --preset conan-release
 
       - name: npm ci
         shell: bash

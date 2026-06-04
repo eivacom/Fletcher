@@ -56,8 +56,18 @@ jobs:
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
                      done && \
-                     echo '::group::conan build integration test (configure + build MicroXRCEAgent superbuild + ctest)' && \
-                     (cd integration-tests/fastdds-xrce-interop && conan build . --build=missing -pr:a=\$PROFILE) && \
+                     cd integration-tests/fastdds-xrce-interop && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build (includes MicroXRCEAgent from source)' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
                      echo '::endgroup::'"
 
   windows:
@@ -90,7 +100,22 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: conan build integration test (configure + build MicroXRCEAgent superbuild + ctest)
+      - name: conan install integration test
         shell: bash
         working-directory: integration-tests/fastdds-xrce-interop
-        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+        run: conan install . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: cmake configure
+        shell: bash
+        working-directory: integration-tests/fastdds-xrce-interop
+        run: cmake --preset conan-release
+
+      - name: cmake build (includes MicroXRCEAgent from source)
+        shell: bash
+        working-directory: integration-tests/fastdds-xrce-interop
+        run: cmake --build --preset conan-release
+
+      - name: ctest
+        shell: bash
+        working-directory: integration-tests/fastdds-xrce-interop
+        run: ctest --preset conan-release --output-on-failure

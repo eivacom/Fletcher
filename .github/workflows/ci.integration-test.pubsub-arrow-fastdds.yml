@@ -55,8 +55,18 @@ jobs:
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
                      done && \
-                     echo '::group::conan build integration test (configure + build + ctest)' && \
-                     (cd integration-tests/pubsub-arrow-fastdds && conan build . --build=missing -pr:a=\$PROFILE) && \
+                     cd integration-tests/pubsub-arrow-fastdds && \
+                     echo '::group::conan install integration test' && \
+                     conan install . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake configure' && \
+                     cmake --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::cmake build' && \
+                     cmake --build --preset conan-release && \
+                     echo '::endgroup::' && \
+                     echo '::group::ctest' && \
+                     ctest --preset conan-release --output-on-failure && \
                      echo '::endgroup::'"
 
   windows:
@@ -88,7 +98,22 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: conan build integration test (configure + build + ctest)
+      - name: conan install integration test
         shell: bash
         working-directory: integration-tests/pubsub-arrow-fastdds
-        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+        run: conan install . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: cmake configure
+        shell: bash
+        working-directory: integration-tests/pubsub-arrow-fastdds
+        run: cmake --preset conan-release
+
+      - name: cmake build
+        shell: bash
+        working-directory: integration-tests/pubsub-arrow-fastdds
+        run: cmake --build --preset conan-release
+
+      - name: ctest
+        shell: bash
+        working-directory: integration-tests/pubsub-arrow-fastdds
+        run: ctest --preset conan-release --output-on-failure

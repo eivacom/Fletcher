@@ -175,14 +175,7 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 
         char* env_strings = GetEnvironmentStringsA();
         if (!env_strings) {
-            // FAIL() inside a non-void function expands to a bare `return;`
-            // on MSVC — incompatible with this function's std::string return
-            // type. ADD_FAILURE() records the failure without returning;
-            // we then return an empty block so callers see a string they
-            // can pass to CreateProcess (and the recorded failure surfaces
-            // through the test framework).
-            ADD_FAILURE() << "GetEnvironmentStringsA returned null";
-            return std::string();
+            FAIL() << "GetEnvironmentStringsA returned null";
         }
 
         std::string block;

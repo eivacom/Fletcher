@@ -61,18 +61,30 @@ conan create pubsub-arrow/.            --build=missing -pr:a=.conan-profiles/Lin
 conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-### Build and run the integration test
+### Build the integration test
 
 ```bash
 cd /workspaces/Fletcher/integration-tests/pubsub-arrow-fastdds
 ```
 
 ```bash
-conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-`conan build` runs the conanfile's `build()` method which executes configure + cmake build + ctest in one go.
+```bash
+cmake --preset conan-release
+```
+
+```bash
+cmake --build --preset conan-release
+```
+
+### Run the tests
+
+```bash
+ctest --preset conan-release --output-on-failure
+```
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then re-run `conan build .` for the integration test. CMake handles incremental rebuilds; Conan picks up the latest component version from the local cache automatically.
+Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.

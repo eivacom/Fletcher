@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-import os
-
 from conan import ConanFile
-from conan.tools.cmake import CMake, cmake_layout
+from conan.tools.cmake import cmake_layout
 
 
 class ProtocArrowBridgeIntegrationConan(ConanFile):
     """Cross-component integration test consumer.
 
-    Not published as a Conan package — `conan build .` runs the full
-    configure + build + ctest sequence against the Conan toolchain
-    derived from the active profile.
+    Not published as a Conan package — this conanfile only exists so that
+    `conan install` resolves the right deps and writes a CMake toolchain.
 
     The components themselves (protoc, arrow-bridge, etc.) are expected to
     be in the local Conan cache (built earlier in the workflow via
@@ -46,31 +43,3 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
-
-    def build(self):
-        cmake = CMake(self)
-        cmake.configure()
-        cmake.build()
-        # Conan's CMake.test() runs `cmake --build --target test`, which
-        # delegates to ctest internally; cli_args/build_tool_args of
-        # cmake.test() go to `cmake --build`, NOT to ctest. The portable
-        # way to make ctest emit failed-test output is the env var.
-        os.environ["CTEST_OUTPUT_ON_FAILURE"] = "1"
-        # On Windows, the six PubSubProtoTest cases crash with SEH
-        # 0xc0000005 (access violation) inside Publisher::Publish. Root
-        # cause is most likely an ABI mismatch on the std::function<void
-        # (WriteBuffer&)> RowEncoder type-erasure that crosses the
-        # fletcher-pubsub DLL boundary (templates + DLLs on MSVC tend
-        # to instantiate inconsistently when build flags differ between
-        # the producer and the consumer). The other 50 ctest cases in
-        # this suite pass on Windows; skip just these six to keep
-        # Windows coverage moving while the underlying ABI issue is
-        # tracked separately. The same tests pass on Linux.
-        if self.settings.os == "Windows":
-            os.environ["GTEST_FILTER"] = "-PubSubProtoTest.PublishEncodesAndDeliversToProvider" \
-                ":PubSubProtoTest.MultiplePublishesAccumulate" \
-                ":PubSubProtoTest.SubscriberReceivesTypedMessageFromPublishedRows" \
-                ":PubSubProtoTest.UnsubscribeStopsDelivery" \
-                ":PubSubProtoTest.PublishWithAttachmentsDeliversBlobToSubscriber" \
-                ":PubSubProtoTest.PublishWithoutAttachmentsHasEmptyAttachments"
-        cmake.test()

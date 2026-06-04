@@ -3,7 +3,7 @@
 //
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectBackend, encodePositional } from 'fletcher-gateway-client';
@@ -49,29 +49,20 @@ function findEmitVectorsBinary(): string {
   if (process.env.EMIT_VECTORS_BIN) {
     return process.env.EMIT_VECTORS_BIN;
   }
-  // Conan's cmake_layout puts the build folder in different places per
-  // generator: Linux single-config writes `build/Release/`, Windows
-  // multi-config writes `build/<profile-name>/Release/`. Walk `build/`
-  // recursively for any file named `emit_vectors[.exe]`.
-  const buildRoot = resolve(here, '..', 'build');
-  const found = findBinaryRecursive(buildRoot, ['emit_vectors', 'emit_vectors.exe']);
-  if (found) return found;
-  throw new Error(
-    `emit_vectors binary not found under ${buildRoot}. ` + `Set EMIT_VECTORS_BIN to override.`,
-  );
-}
-
-function findBinaryRecursive(root: string, names: string[]): string | undefined {
-  if (!existsSync(root)) return undefined;
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    const full = resolve(root, entry.name);
-    if (entry.isFile() && names.includes(entry.name)) return full;
-    if (entry.isDirectory()) {
-      const nested = findBinaryRecursive(full, names);
-      if (nested) return nested;
-    }
+  // Conan + CMake's `cmake --preset conan-release` puts the binary under
+  // build/Release/. Walk a couple of likely layouts.
+  const candidates = [
+    resolve(here, '..', 'build', 'Release', 'emit_vectors'),
+    resolve(here, '..', 'build', 'Release', 'emit_vectors.exe'),
+    resolve(here, '..', 'build', 'build', 'Release', 'emit_vectors'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
   }
-  return undefined;
+  throw new Error(
+    `emit_vectors binary not found. Checked: ${candidates.join(', ')}. ` +
+      `Set EMIT_VECTORS_BIN to override.`,
+  );
 }
 
 function inputFor(name: string): Record<string, unknown> {
