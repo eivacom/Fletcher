@@ -104,34 +104,34 @@ class MockPubSubProvider : public PubSubProvider {
 
 TEST(PubSubProtoTest, PublisherConstructionCreatesTopicWithCorrectSchema) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     ASSERT_EQ(mock->created_topics.size(), 1u);
     EXPECT_EQ(mock->created_topics[0].segments,
-              (std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"}));
+              (std::vector<std::string>{"integration.pubsub", "TelemetryFeed", "TelemetryStream"}));
     auto schema = ImportNano(OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
     EXPECT_EQ(schema->num_fields(), 4);
 }
 
 TEST(PubSubProtoTest, PublishEncodesAndDeliversToProvider) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    fletcher_gen::integration::Telemetry row;
+    fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
     ASSERT_EQ(mock->published.size(), 1u);
     EXPECT_EQ(mock->published[0].segments,
-              (std::vector<std::string>{"integration", "TelemetryFeed", "TelemetryStream"}));
+              (std::vector<std::string>{"integration.pubsub", "TelemetryFeed", "TelemetryStream"}));
     EXPECT_FALSE(mock->published[0].encoded.empty());
 }
 
 TEST(PubSubProtoTest, MultiplePublishesAccumulate) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    fletcher_gen::integration::Telemetry r1, r2, r3;
+    fletcher_gen::integration::pubsub::Telemetry r1, r2, r3;
     r1.set_device_id(1).set_value(1.0).set_timestamp(100LL).set_metric_name("a");
     r2.set_device_id(2).set_value(2.0).set_timestamp(200LL).set_metric_name("b");
     r3.set_device_id(3).set_value(3.0).set_timestamp(300LL).set_metric_name("c");
@@ -147,7 +147,7 @@ TEST(PubSubProtoTest, MultiplePublishesAccumulate) {
 
 TEST(PubSubProtoTest, SubscriberConstructionDoesNotCreateTopic) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     // Subscriber-only processes don't call CreateTopic; the schema is
     // discovered from the provider when Subscribe() is called.
@@ -156,14 +156,14 @@ TEST(PubSubProtoTest, SubscriberConstructionDoesNotCreateTopic) {
 
 TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    fletcher_gen::integration::Telemetry received;
+    fletcher_gen::integration::pubsub::Telemetry received;
     sub.Subscribe(
-        [&](fletcher_gen::integration::Telemetry msg, Attachments) { received = std::move(msg); });
+        [&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments) { received = std::move(msg); });
 
-    fletcher_gen::integration::Telemetry row;
+    fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
     pub.Publish(row);
 
@@ -175,14 +175,14 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
 
 TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     int count = 0;
     uint64_t sub_id =
-        sub.Subscribe([&](fletcher_gen::integration::Telemetry, Attachments) { ++count; });
+        sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry, Attachments) { ++count; });
 
-    fletcher_gen::integration::Telemetry row;
+    fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
 
     pub.Publish(row);
@@ -195,17 +195,17 @@ TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
 
 TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
-    fletcher_gen::integration::Telemetry received;
+    fletcher_gen::integration::pubsub::Telemetry received;
     Attachments received_att;
-    sub.Subscribe([&](fletcher_gen::integration::Telemetry msg, Attachments att) {
+    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments att) {
         received = std::move(msg);
         received_att = std::move(att);
     });
 
-    fletcher_gen::integration::Telemetry row;
+    fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
 
     auto blob =
@@ -220,9 +220,9 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
 
 TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {
     auto mock = std::make_shared<MockPubSubProvider>();
-    fletcher_gen::integration::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    fletcher_gen::integration::Telemetry row;
+    fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
     pub.Publish(row);
 
