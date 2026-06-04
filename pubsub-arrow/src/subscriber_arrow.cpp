@@ -279,9 +279,9 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     std::string key = JoinSegments(segments);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
-        segments, [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data,
-                                                        size_t len, SharedSchema schema,
-                                                        Attachments att) {
+        segments,
+        [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
+                                              SharedSchema schema, Attachments att) {
             // Lazy codec acquisition from the per-message schema: in
             // subscriber-first mode the codec is not registered at Subscribe
             // time (no prior CreateTopic), and the provider may deliver before
@@ -329,9 +329,9 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     auto schema_set = std::make_shared<std::once_flag>();
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
-        segments, [this, key, batcher, schema_set](uint64_t /*sub_id*/, const uint8_t* data,
-                                                   size_t len, SharedSchema schema,
-                                                   Attachments att) {
+        segments,
+        [this, key, batcher, schema_set](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
+                                         SharedSchema schema, Attachments att) {
             // Lazy-init the codec from the per-message schema: in
             // subscriber-first mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before Subscribe

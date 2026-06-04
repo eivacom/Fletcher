@@ -37,9 +37,8 @@ struct Subscriber::Impl {
 
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
-    std::shared_future<SharedSchema> EnsureProviderSubscription(const std::string& key,
-                                                                TopicState& ts,
-                                                                std::unique_lock<std::mutex>& lock) {
+    std::shared_future<SharedSchema> EnsureProviderSubscription(
+        const std::string& key, TopicState& ts, std::unique_lock<std::mutex>& lock) {
         if (ts.provider_subscribed) {
             return ts.schema_future;
         }

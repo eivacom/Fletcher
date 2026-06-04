@@ -295,8 +295,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // KeyValueMetadata — anything weaker would let a CDR length-prefix
     // off-by-N or schema-IPC bug slip past the test.
     std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
-    ASSERT_NE(sub_schema, nullptr)
-        << "schema must propagate via /__schema across the Agent bridge";
+    ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
     // Three back-to-back publishes with distinct values across all
@@ -359,8 +358,7 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     });
 
     std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
-    ASSERT_NE(sub_schema, nullptr)
-        << "schema must propagate via /__schema across the Agent bridge";
+    ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
     const std::vector<std::tuple<int32_t, double, std::string>> samples = {
@@ -442,8 +440,7 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
 
     // The future resolves once /__schema arrives — guaranteed non-null.
     std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
-    ASSERT_NE(sub_schema, nullptr)
-        << "schema must propagate via /__schema across the Agent bridge";
+    ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
     {

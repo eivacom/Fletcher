@@ -517,9 +517,9 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             name.c_str(), UXR_REPLACE);
         WaitForStatus(&impl_->session, req_part, "subscriber participant");
 
-        uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
-                                                         ts.topic_id, ts.participant_id,
-                                                         name.c_str(), "fletcher", UXR_REPLACE);
+        uint16_t req_topic =
+            uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out, ts.topic_id,
+                                        ts.participant_id, name.c_str(), "fletcher", UXR_REPLACE);
         WaitForStatus(&impl_->session, req_topic, "subscriber topic");
     }
 

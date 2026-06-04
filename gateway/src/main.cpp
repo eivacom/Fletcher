@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
@@ -54,8 +55,6 @@
 #include <vector>
 
 #include "gateway.hpp"
-
-#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 
 namespace {
 
@@ -171,7 +170,8 @@ Args ParseArgs(int argc, char* argv[]) {
         }
     }
     if (a.provider != "inprocess" && a.provider != "fastdds") {
-        std::fprintf(stderr, "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
+        std::fprintf(stderr,
+                     "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
                      a.provider.c_str());
         std::exit(2);
     }

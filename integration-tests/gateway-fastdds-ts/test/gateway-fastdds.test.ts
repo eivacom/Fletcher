@@ -146,7 +146,16 @@ const recvLines: string[] = [];
 beforeAll(async () => {
   gateway = await spawnUntilReady(
     findBinary('GATEWAY_BIN', 'gateway', 'gateway_build'),
-    ['--provider', 'fastdds', '--domain-id', DOMAIN_ID, '--port', String(TEST_PORT), '--bind-address', '127.0.0.1'],
+    [
+      '--provider',
+      'fastdds',
+      '--domain-id',
+      DOMAIN_ID,
+      '--port',
+      String(TEST_PORT),
+      '--bind-address',
+      '127.0.0.1',
+    ],
     'gateway',
   );
   peer = await spawnUntilReady(
@@ -242,7 +251,10 @@ describe('gateway FastDDS provider — bidirectional', () => {
     ws.binaryType = 'arraybuffer';
 
     const response = await new Promise<Record<string, unknown>>((res, rej) => {
-      const timeout = setTimeout(() => rej(new Error('no subscribed response within 15 s')), 15_000);
+      const timeout = setTimeout(
+        () => rej(new Error('no subscribed response within 15 s')),
+        15_000,
+      );
       ws.onopen = () => ws.send(buildSubscribe(SensorFeed_CppToTsTopic));
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
