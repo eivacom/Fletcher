@@ -25,9 +25,11 @@
 #include <atomic>
 #include <bit>
 #include <cstring>
+#include <exception>
 #include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
+#include <future>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -88,6 +90,16 @@ struct XrceDDSPubSubProvider::Impl {
         bool is_publisher = false;
         bool has_reader = false;
         PubSubProvider::SubscribeCallback callback;
+
+        // Subscriber-first support. Subscribe is non-blocking and resolves the
+        // schema asynchronously through the companion __schema reader (see
+        // OnTopic): schema_promise is fulfilled when the schema arrives, and
+        // data that arrives before the schema is buffered in `pending` so the
+        // callback is never invoked with a null schema.
+        std::promise<SharedSchema> schema_promise;
+        std::shared_future<SharedSchema> schema_future;
+        bool schema_resolved = false;
+        std::vector<Envelope> pending;
     };
 
     XrceConfig config;
@@ -122,6 +134,11 @@ struct XrceDDSPubSubProvider::Impl {
     // Demux: datareader object_id.id → topic name.
     std::map<uint16_t, std::string> reader_to_topic;
 
+    // Demux for companion __schema readers: object_id.id → topic name. Kept
+    // separate from reader_to_topic so OnTopic can tell a schema sample from a
+    // data sample by which map the reader id lands in.
+    std::map<uint16_t, std::string> schema_reader_to_topic;
+
     // Background run-loop.
     std::atomic<bool> running{false};
     std::thread run_thread;
@@ -140,17 +157,11 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     auto* impl = static_cast<Impl*>(args);
     std::lock_guard lock(impl->mu);
 
-    auto rit = impl->reader_to_topic.find(object_id.id);
-    if (rit == impl->reader_to_topic.end()) return;
-
-    auto tit = impl->topics.find(rit->second);
-    if (tit == impl->topics.end() || !tit->second.callback) return;
-
     // Read the payload from the ucdrBuffer. MicroXRCEAgent strips the
     // CDR encapsulation header, so the first 4 bytes here are the OMG
     // CDR `sequence<octet>` length field that other DDS peers (e.g.
     // FastDDSPubSubProvider) put on the DDS bus. Skip + validate before
-    // decoding the envelope.
+    // decoding.
     std::vector<uint8_t> payload(length);
     ucdr_deserialize_array_uint8_t(ub, payload.data(), length);
 
@@ -158,10 +169,53 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     uint32_t seq_len = 0;
     std::memcpy(&seq_len, payload.data(), 4);
     if (static_cast<size_t>(4) + seq_len > payload.size()) return;
+    const uint8_t* body = payload.data() + 4;
 
-    auto envelope = DeserializeEnvelope(payload.data() + 4, seq_len);
-    tit->second.callback(envelope.row.data(), envelope.row.size(), tit->second.shared_schema,
-                         std::move(envelope.attachments));
+    // Companion __schema reader? Resolve the schema future, set the per-topic
+    // shared schema, and flush any data buffered before the schema arrived
+    // (subscriber-first). This runs on the same thread that already holds
+    // impl->mu (the session pump), so the recursive lock above is re-entered
+    // safely — there are no separate listener threads as in the FastDDS path.
+    auto sit = impl->schema_reader_to_topic.find(object_id.id);
+    if (sit != impl->schema_reader_to_topic.end()) {
+        auto tit = impl->topics.find(sit->second);
+        if (tit == impl->topics.end()) return;
+        auto& ts = tit->second;
+        if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
+
+        OwnedSchema schema = DeserializeSchemaIpc(body, seq_len);
+        if (!schema) return;
+        ts.schema = OwnedSchema::DeepCopy(schema.get());
+        ts.shared_schema = MakeSharedSchema(std::move(schema));
+        ts.schema_promise.set_value(ts.shared_schema);
+        ts.schema_resolved = true;
+
+        if (ts.callback) {
+            for (auto& env : ts.pending) {
+                ts.callback(env.row.data(), env.row.size(), ts.shared_schema,
+                            std::move(env.attachments));
+            }
+        }
+        ts.pending.clear();
+        return;
+    }
+
+    // Otherwise it is a data reader.
+    auto rit = impl->reader_to_topic.find(object_id.id);
+    if (rit == impl->reader_to_topic.end()) return;
+    auto tit = impl->topics.find(rit->second);
+    if (tit == impl->topics.end() || !tit->second.callback) return;
+    auto& ts = tit->second;
+
+    Envelope envelope = DeserializeEnvelope(body, seq_len);
+    if (!ts.shared_schema) {
+        // Subscriber-first: the schema has not arrived yet. Buffer the sample;
+        // it is flushed in order when the __schema sample resolves the future.
+        ts.pending.push_back(std::move(envelope));
+        return;
+    }
+    ts.callback(envelope.row.data(), envelope.row.size(), ts.shared_schema,
+                std::move(envelope.attachments));
 }
 
 // -----------------------------------------------------------------------
@@ -437,42 +491,49 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback) {
     std::string name = JoinSegments(topic_segments);
-    OwnedSchema schema;
+    std::lock_guard lock(impl_->mu);
 
-    // --- Phase 1: try to read schema from companion topic ---
-    {
-        std::lock_guard lock(impl_->mu);
-        auto it = impl_->topics.find(name);
-        if (it != impl_->topics.end() && it->second.schema) {
-            schema = OwnedSchema::DeepCopy(it->second.schema.get());
-        }
+    auto& ts = impl_->topics[name];
+    if (ts.has_reader) throw std::runtime_error("XRCE: already subscribed to: " + name);
+
+    // Subscribe is non-blocking and never throws when no publisher exists yet
+    // (subscriber-first). The schema is delivered asynchronously: data that
+    // arrives before it is buffered (see OnTopic) so the first callback is
+    // never invoked with a null schema. A fresh promise/future is wired up for
+    // this subscription.
+    ts.schema_promise = std::promise<SharedSchema>();
+    ts.schema_future = ts.schema_promise.get_future().share();
+    ts.schema_resolved = false;
+
+    // If no participant yet (subscriber-side), create one + the data topic.
+    // Publisher-side topics already did this in CreateTopic.
+    if (ts.participant_id.type == UXR_INVALID_ID) {
+        uint16_t base = impl_->AllocId();
+        ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
+        ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
+
+        uint16_t req_part = uxr_buffer_create_participant_bin(
+            &impl_->session, impl_->reliable_out, ts.participant_id, impl_->config.domain_id,
+            name.c_str(), UXR_REPLACE);
+        WaitForStatus(&impl_->session, req_part, "subscriber participant");
+
+        uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
+                                                         ts.topic_id, ts.participant_id,
+                                                         name.c_str(), "fletcher", UXR_REPLACE);
+        WaitForStatus(&impl_->session, req_topic, "subscriber topic");
     }
 
-    if (!schema) {
-        // Need to create temporary entities to read the schema topic.
-        // We reuse the same participant or create a new one.
-        std::lock_guard lock(impl_->mu);
-
-        auto& ts = impl_->topics[name];
-
-        // If no participant yet (subscriber-side), create one.
-        if (ts.participant_id.type == UXR_INVALID_ID) {
-            uint16_t base = impl_->AllocId();
-            ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
-            ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
-
-            uint16_t req_part = uxr_buffer_create_participant_bin(
-                &impl_->session, impl_->reliable_out, ts.participant_id, impl_->config.domain_id,
-                name.c_str(), UXR_REPLACE);
-            WaitForStatus(&impl_->session, req_part, "subscriber participant");
-
-            uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
-                                                             ts.topic_id, ts.participant_id,
-                                                             name.c_str(), "fletcher", UXR_REPLACE);
-            WaitForStatus(&impl_->session, req_topic, "subscriber topic");
-        }
-
-        // Create schema reader entities.
+    if (ts.schema) {
+        // Schema already known on this provider (publisher-side / cached):
+        // resolve the future immediately.
+        ts.shared_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
+        ts.schema_promise.set_value(ts.shared_schema);
+        ts.schema_resolved = true;
+    } else if (ts.schema_reader_id.type == UXR_INVALID_ID) {
+        // Subscriber-side: create a persistent companion __schema reader and
+        // route its samples to OnTopic, which resolves the schema future when a
+        // publisher announces the schema. No poll, no callback swap, no throw —
+        // so a subscriber can subscribe before any publisher exists.
         uint16_t schema_base = impl_->AllocId();
         ts.schema_topic_id = uxr_object_id(schema_base, UXR_TOPIC_ID);
         ts.schema_subscriber_id = uxr_object_id(schema_base, UXR_SUBSCRIBER_ID);
@@ -503,60 +564,18 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
         uint8_t statuses[2]{};
         WaitForStatuses(&impl_->session, reqs, statuses, 2, "schema subscriber+reader");
 
-        // Temporarily install a schema-reading callback.
-        // We save/restore the topic callback args to pass schema data back.
-        struct SchemaCapture {
-            OwnedSchema* schema;
-            uint16_t reader_id;
-        };
-        SchemaCapture capture{&schema, ts.schema_reader_id.id};
+        // Route this schema reader's samples to OnTopic for async resolution.
+        impl_->schema_reader_to_topic[ts.schema_reader_id.id] = name;
 
-        auto schema_cb = [](uxrSession*, uxrObjectId obj_id, uint16_t, uxrStreamId,
-                            struct ucdrBuffer* ub, uint16_t length, void* args) {
-            auto* cap = static_cast<SchemaCapture*>(args);
-            if (obj_id.id != cap->reader_id) return;
-            std::vector<uint8_t> data(length);
-            ucdr_deserialize_array_uint8_t(ub, data.data(), length);
-            // Skip the CDR `sequence<octet>` length prefix added by
-            // the publisher side (mirrors Publish/OnTopic wrapping).
-            if (data.size() < 4) return;
-            uint32_t seq_len = 0;
-            std::memcpy(&seq_len, data.data(), 4);
-            if (static_cast<size_t>(4) + seq_len > data.size()) return;
-            *(cap->schema) = DeserializeSchemaIpc(data.data() + 4, seq_len);
-        };
-
-        // Temporarily swap the topic callback.
-        uxr_set_topic_callback(&impl_->session, schema_cb, &capture);
-
-        // Request schema data.
-        uxrDeliveryControl delivery{};
-        delivery.max_samples = 1;
+        // Request continuous schema delivery; the retained TRANSIENT_LOCAL
+        // sample arrives once a publisher announces the schema.
+        uxrDeliveryControl schema_delivery{};
+        schema_delivery.max_samples = UXR_MAX_SAMPLES_UNLIMITED;
         uxr_buffer_request_data(&impl_->session, impl_->reliable_out, ts.schema_reader_id,
-                                impl_->reliable_in, &delivery);
-
-        // Poll for schema (up to 5 seconds).
-        constexpr int kMaxRetries = 50;
-        for (int i = 0; i < kMaxRetries && !schema; ++i) {
-            uxr_run_session_time(&impl_->session, 100);
-        }
-
-        // Restore the normal topic callback.
-        uxr_set_topic_callback(&impl_->session, Impl::OnTopic, impl_.get());
-
-        // Clean up temporary schema reader.
-        uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
-        uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_subscriber_id);
-
-        if (schema) ts.schema = OwnedSchema::DeepCopy(schema.get());
+                                impl_->reliable_in, &schema_delivery);
     }
 
-    // --- Phase 2: create data subscription ---
-    std::lock_guard lock(impl_->mu);
-    auto& ts = impl_->topics[name];
-
-    if (ts.has_reader) throw std::runtime_error("XRCE: already subscribed to: " + name);
-
+    // --- Data subscription ---
     // Create subscriber + data reader if needed.
     if (ts.subscriber_id.type == UXR_INVALID_ID) {
         uint16_t sub_base = impl_->AllocId();
@@ -583,19 +602,21 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
     ts.callback = std::move(callback);
     ts.has_reader = true;
-    if (ts.schema && !ts.shared_schema)
-        ts.shared_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
     impl_->reader_to_topic[ts.reader_id.id] = name;
 
-    // Request continuous data delivery.
+    // Request continuous data delivery ONCE. A single READ_DATA with
+    // max_samples=UNLIMITED establishes a standing stream on the Agent that
+    // delivers samples as they arrive — including from a writer that matches
+    // later (subscriber-first). It must NOT be re-issued: re-requesting makes
+    // the Agent stop+restart the read, dropping samples during the gap.
     uxrDeliveryControl delivery{};
     delivery.max_samples = UXR_MAX_SAMPLES_UNLIMITED;
     uxr_buffer_request_data(&impl_->session, impl_->reliable_out, ts.reader_id, impl_->reliable_in,
                             &delivery);
 
-    // Schema is resolved synchronously here; wrap it in an already-ready
-    // future to satisfy the SubscriptionResult contract.
-    return {MakeReadySchemaFuture(ts.shared_schema)};
+    // Non-blocking: hand back the schema future. It is already satisfied for
+    // publisher-side/cached topics, and resolves asynchronously otherwise.
+    return {ts.schema_future};
 }
 
 void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
@@ -606,12 +627,34 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
     if (it == impl_->topics.end()) return;
 
     auto& ts = it->second;
+
+    // If the schema never arrived, break the promise so a consumer blocked on
+    // the future wakes up instead of waiting forever (and the promise is not
+    // destroyed unsatisfied).
+    if (!ts.schema_resolved) {
+        try {
+            ts.schema_promise.set_exception(std::make_exception_ptr(
+                std::runtime_error("XRCE: unsubscribed before schema arrived: " + name)));
+        } catch (const std::future_error&) {
+            // No future was ever handed out, or it was already satisfied.
+        }
+        ts.schema_resolved = true;
+    }
+
+    if (ts.schema_reader_id.type != UXR_INVALID_ID) {
+        uxr_buffer_cancel_data(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
+        uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
+        impl_->schema_reader_to_topic.erase(ts.schema_reader_id.id);
+        ts.schema_reader_id.type = UXR_INVALID_ID;
+    }
+
     if (ts.has_reader) {
         uxr_buffer_cancel_data(&impl_->session, impl_->reliable_out, ts.reader_id);
         uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.reader_id);
         impl_->reader_to_topic.erase(ts.reader_id.id);
         ts.has_reader = false;
         ts.callback = nullptr;
+        ts.pending.clear();
     }
 }
 
