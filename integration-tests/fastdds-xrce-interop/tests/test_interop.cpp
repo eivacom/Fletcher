@@ -175,7 +175,11 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 
         char* env_strings = GetEnvironmentStringsA();
         if (!env_strings) {
-            FAIL() << "GetEnvironmentStringsA returned null";
+            // ADD_FAILURE (not FAIL) because FAIL expands to a bare `return;`,
+            // which MSVC rejects in this std::string-returning function (C2440);
+            // gcc tolerates it. Record the failure, then return explicitly.
+            ADD_FAILURE() << "GetEnvironmentStringsA returned null";
+            return {};
         }
 
         std::string block;
