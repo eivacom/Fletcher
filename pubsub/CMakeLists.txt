@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(fletcher-pubsub LANGUAGES CXX C)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(fletcher-core CONFIG REQUIRED)
 
 add_subdirectory(third_party/nanoarrow)
@@ -15,6 +12,10 @@ add_library(fletcher-pubsub STATIC
     src/publisher.cpp
     src/subscriber.cpp
     src/schema_ipc.cpp)
+
+# C++ standard comes from the Conan profile (compiler.cppstd). This only
+# states the public minimum the headers require, propagated to consumers.
+target_compile_features(fletcher-pubsub PUBLIC cxx_std_20)
 
 target_include_directories(fletcher-pubsub PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

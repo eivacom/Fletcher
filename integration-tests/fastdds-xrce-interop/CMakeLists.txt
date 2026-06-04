@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(fastdds-xrce-interop-integration CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)

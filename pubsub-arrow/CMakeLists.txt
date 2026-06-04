@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(fletcher-pubsub-arrow LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-arrow-bridge CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
@@ -14,6 +11,10 @@ find_package(Arrow CONFIG REQUIRED)
 add_library(fletcher-pubsub-arrow STATIC
     src/publisher_arrow.cpp
     src/subscriber_arrow.cpp)
+
+# C++ standard comes from the Conan profile (compiler.cppstd). This only
+# states the public minimum the headers require, propagated to consumers.
+target_compile_features(fletcher-pubsub-arrow PUBLIC cxx_std_20)
 
 target_include_directories(fletcher-pubsub-arrow
     PUBLIC
