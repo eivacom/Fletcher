@@ -61,8 +61,8 @@ int main(int argc, char* argv[]) {
     // (and any rows buffered until it arrives) are delivered once the TS client
     // publishes through the gateway, so no local placeholder publisher for
     // TsToCpp is needed.
-    fletcher_gen::gwfastdds::SensorFeed_TsToCppSubscriber subscriber(provider);
-    subscriber.Subscribe([](fletcher_gen::gwfastdds::SensorReading row, fletcher::Attachments) {
+    fletcher_gen::gwfastdds::SensorFeed_TsToCppSubscriber ts_to_cpp(provider);
+    ts_to_cpp.Subscribe([](fletcher_gen::gwfastdds::SensorReading row, fletcher::Attachments) {
         std::printf("RECV sensor_id=%d value=%g unit=%s\n", row.sensor_id(), row.value(),
                     std::string(row.unit()).c_str());
         std::fflush(stdout);
