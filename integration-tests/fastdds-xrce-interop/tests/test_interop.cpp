@@ -30,6 +30,7 @@
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -375,6 +376,80 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
         std::unique_lock<std::mutex> lk(mu);
         ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
             << "FastDDS → Agent → XRCE delivery must complete within 10 s "
+               "(received "
+            << rx_rows.size() << "/" << samples.size() << ")";
+    }
+    xrce_sub.Unsubscribe(result.subscription_id);
+
+    ASSERT_EQ(rx_rows.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& [id, temp, label] = samples[i];
+        SCOPED_TRACE("sample " + std::to_string(i));
+        ExpectRowEquals(rx_rows[i], id, temp, label);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Subscriber-first: XRCE subscribes BEFORE any FastDDS publisher exists.
+// Subscribe must be non-blocking (so the schema future is not yet ready)
+// and must never throw when no publisher has announced the schema. Once
+// the FastDDS publisher comes up — TRANSIENT_LOCAL on both the data and
+// /__schema topics — the schema future resolves and the first callback
+// fires with a non-null schema and the buffered rows, in order.
+//
+// This is the cross-language counterpart to the FastDDS provider's
+// SubscribeBeforePublishDeliversWithSchema unit test: it proves the XRCE
+// provider buffers data behind the async /__schema reader rather than
+// blocking or dropping the early samples.
+// ─────────────────────────────────────────────────────────────────────
+TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<ArrowRow> rx_rows;
+
+    FastDDSProviderOptions fast_opts;
+    fast_opts.domain_id = kDdsDomain;
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00003));
+
+    PublisherArrow fastdds_pub(fastdds);
+    SubscriberArrow xrce_sub(xrce);
+
+    const auto schema = SensorSchema();
+    const std::vector<std::string> topic{"interop", "subfirst"};
+
+    // Subscribe with no publisher present. Must return immediately without
+    // throwing, and the schema future must not yet be ready.
+    auto result = xrce_sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
+        std::lock_guard<std::mutex> lk(mu);
+        rx_rows.push_back(std::move(row));
+        cv.notify_all();
+    });
+    EXPECT_NE(result.schema.wait_for(0s), std::future_status::ready)
+        << "schema future must not be ready before any publisher announces it";
+
+    // Bring up the FastDDS publisher and publish a known set of rows.
+    fastdds_pub.CreateTopic(topic, schema);
+
+    const std::vector<std::tuple<int32_t, double, std::string>> samples = {
+        {7, 0.5, "subfirst-1"},
+        {8, 1.5, "subfirst-2"},
+        {9, 2.5, "subfirst-3"},
+    };
+    for (const auto& [id, temp, label] : samples) {
+        fastdds_pub.Publish(topic, SensorRow(id, temp, label));
+    }
+
+    // The future resolves once /__schema arrives — guaranteed non-null.
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr)
+        << "schema must propagate via /__schema across the Agent bridge";
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
+            << "subscriber-first delivery must complete within 10 s "
                "(received "
             << rx_rows.size() << "/" << samples.size() << ")";
     }
