@@ -45,8 +45,7 @@ function findGatewayBinary(): string {
   const found = findBinaryRecursive(buildDir, name);
   if (found) return found;
   throw new Error(
-    `gateway binary (${name}) not found under ${buildDir}. ` +
-      `Set GATEWAY_BIN to override.`,
+    `gateway binary (${name}) not found under ${buildDir}. ` + `Set GATEWAY_BIN to override.`,
   );
 }
 
