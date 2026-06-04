@@ -46,7 +46,7 @@ The gateway is schema-agnostic — there is no `--config` and no topic pre-decla
 The workflow `.github/workflows/ci.integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
 1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`) via `conan create <component>/.` into the local Conan cache.
-2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
+2. Runs `conan build .` in this directory (configure + build) to produce the `gateway` exe.
 3. Runs `npm ci` + `npm test` to execute the vitest suite against the binary.
 
 ## Running locally
@@ -74,15 +74,7 @@ cd integration-tests/gateway-end-to-end
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
-```
-
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash

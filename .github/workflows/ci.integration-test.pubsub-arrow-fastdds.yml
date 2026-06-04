@@ -56,17 +56,8 @@ jobs:
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/pubsub-arrow-fastdds && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
-                     cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build' && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
+                     echo '::group::conan build integration test (configure + build + ctest)' && \
+                     conan build . --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::'"
 
   windows:
@@ -98,22 +89,7 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: conan install integration test
+      - name: conan build integration test (configure + build + ctest)
         shell: bash
         working-directory: integration-tests/pubsub-arrow-fastdds
-        run: conan install . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
-
-      - name: cmake configure
-        shell: bash
-        working-directory: integration-tests/pubsub-arrow-fastdds
-        run: cmake --preset conan-default
-
-      - name: cmake build
-        shell: bash
-        working-directory: integration-tests/pubsub-arrow-fastdds
-        run: cmake --build --preset conan-release
-
-      - name: ctest
-        shell: bash
-        working-directory: integration-tests/pubsub-arrow-fastdds
-        run: ctest --preset conan-release --output-on-failure
+        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release

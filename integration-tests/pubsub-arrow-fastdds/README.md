@@ -28,12 +28,12 @@ Current scenarios:
 The workflow `.github/workflows/ci.integration-test.pubsub-arrow-fastdds.yml` triggers when any of `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
-2. `conan install` + `cmake build` produces the `integration_tests` gtest binary.
-3. `ctest --output-on-failure` runs the suite. The docker container uses `--network host` so DDS multicast discovery works.
+2. `conan build .` produces the `integration_tests` gtest binary and runs the suite via ctest.
+3. The docker container uses `--network host` so DDS multicast discovery works.
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and the `conan build .` step resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
@@ -61,30 +61,18 @@ conan create pubsub-arrow/.            --build=missing -pr:a=.conan-profiles/Lin
 conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-### Build the integration test
+### Build and run the integration test
 
 ```bash
 cd /workspaces/Fletcher/integration-tests/pubsub-arrow-fastdds
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
-```
-
-### Run the tests
-
-```bash
-ctest --preset conan-release --output-on-failure
-```
+`conan build .` configures, builds the `integration_tests` gtest binary, and runs the suite via ctest. Conan drives the configure/build/test preset that matches the active generator, so the same command works on the Linux single-config and Windows multi-config (MSVC) generators.
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.
+Re-run only the `conan create` for the component you touched, then redo `conan build .` for the integration test. Conan picks up the latest version in the local cache automatically.

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMake, cmake_layout
 
 
 class GatewayEndToEndIntegrationConan(ConanFile):
@@ -41,3 +41,14 @@ class GatewayEndToEndIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def build(self):
+        # `conan build .` configures + builds the gateway exe through the
+        # active profile: Conan picks the generator and the matching
+        # configure/build preset, so the same call works on the Linux
+        # single-config and the Windows multi-config (MSVC) generators.
+        # There are no CMake-level tests here — the cross-language suite
+        # spawns the exe from a separate `npm test` step.
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
