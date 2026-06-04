@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <future>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -29,16 +30,6 @@ std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
         throw std::runtime_error("SubscriberArrow: ImportSchema: " + result.status().ToString());
     }
     return *result;
-}
-
-// A SubscribeResult schema future that is already resolved. B1: providers
-// deliver the schema synchronously, so the Arrow schema is known at Subscribe.
-// B2 fulfils this from the first decoded sample for late-joining subscribers.
-std::shared_future<std::shared_ptr<arrow::Schema>> MakeReadyArrowFuture(
-    std::shared_ptr<arrow::Schema> schema) {
-    std::promise<std::shared_ptr<arrow::Schema>> p;
-    p.set_value(std::move(schema));
-    return p.get_future().share();
 }
 
 }  // anonymous namespace
@@ -288,34 +279,20 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     std::string key = JoinSegments(segments);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
-        segments,
-        [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                              SharedSchema /*schema*/, Attachments att) {
-            Codec* codec;
-            {
-                std::lock_guard lock(mu_);
-                auto it = codecs_.find(key);
-                if (it == codecs_.end()) {
-                    return;
-                }
-                codec = it->second.codec.get();
+        segments, [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data,
+                                                        size_t len, SharedSchema schema,
+                                                        Attachments att) {
+            // Lazy codec acquisition from the per-message schema: in
+            // subscriber-first mode the codec is not registered at Subscribe
+            // time (no prior CreateTopic), and the provider may deliver before
+            // Subscribe returns. AcquireCodec builds + caches it on first use.
+            Codec* codec = AcquireCodec(key, schema);
+            if (!codec) {
+                return;
             }
             ArrowRow row = codec->DecodeRow(data, len);
             cb(std::move(row), std::move(att));
         });
-
-    // B1: the provider's schema future is already resolved (synchronous
-    // providers / publisher-first DDS), so .get() does not block. B2 makes
-    // this non-blocking + lazily codec-acquired for late-joining subscribers.
-    SharedSchema nano = result.schema.get();
-    std::shared_ptr<arrow::Schema> arrow_schema;
-    if (nano) {
-        arrow_schema = ImportFromNano(nano.get());
-        std::lock_guard lock(mu_);
-        if (codecs_.find(key) == codecs_.end()) {
-            codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
-        }
-    }
 
     // Track sub_id -> topic_key so Unsubscribe can release the codec
     // entry when the last subscription for a topic is removed.
@@ -324,7 +301,19 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         sub_topic_[result.subscription_id] = key;
     }
 
-    return {result.subscription_id, MakeReadyArrowFuture(std::move(arrow_schema))};
+    // Subscribe is non-blocking. The SharedSchema -> arrow::Schema conversion is
+    // deferred until the caller reads the future: the deferred task runs on the
+    // caller's thread at .get() time and blocks only then (if at all). The
+    // provider resolves the underlying schema future when the companion
+    // /__schema sample arrives — independent of any data — so this is correct
+    // for subscriber-first (no publisher yet) without ever blocking Subscribe.
+    std::shared_future<std::shared_ptr<arrow::Schema>> schema_future =
+        std::async(std::launch::deferred, [pf = result.schema]() -> std::shared_ptr<arrow::Schema> {
+            SharedSchema nano = pf.get();
+            return nano ? ImportFromNano(nano.get()) : nullptr;
+        }).share();
+
+    return {result.subscription_id, std::move(schema_future)};
 }
 
 // -----------------------------------------------------------------------
@@ -337,20 +326,34 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
 
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
                                                         options.timeout);
+    auto schema_set = std::make_shared<std::once_flag>();
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
-        segments, [this, key, batcher](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                       SharedSchema schema, Attachments att) {
+        segments, [this, key, batcher, schema_set](uint64_t /*sub_id*/, const uint8_t* data,
+                                                   size_t len, SharedSchema schema,
+                                                   Attachments att) {
             // Lazy-init the codec from the per-message schema: in
-            // subscriber-only mode (no prior CreateTopic) the codec isn't
-            // registered yet and the provider can deliver before
-            // subscriber_->Subscribe returns. If no codec can be built,
-            // count the message as dropped so the loss is reported.
+            // subscriber-first mode (no prior CreateTopic) the codec isn't
+            // registered yet and the provider can deliver before Subscribe
+            // returns. If no codec can be built, count the message as dropped
+            // so the loss is reported.
             Codec* codec = AcquireCodec(key, schema);
             if (!codec) {
                 batcher->NoteDropped();
                 return;
             }
+            // Hand the batcher the schema on the first decodable sample so it
+            // can build batches (idempotent; lets the batched path work
+            // subscriber-first without blocking Subscribe on the schema).
+            std::call_once(*schema_set, [&] {
+                std::shared_ptr<arrow::Schema> arrow_schema;
+                {
+                    std::lock_guard lock(mu_);
+                    auto it = codecs_.find(key);
+                    if (it != codecs_.end()) arrow_schema = it->second.arrow_schema;
+                }
+                batcher->SetSchema(std::move(arrow_schema));
+            });
             ArrowRow row;
             try {
                 row = codec->DecodeRow(data, len);
@@ -364,35 +367,23 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             batcher->AddRow(std::move(row), std::move(att));
         });
 
-    // From here on the subscriber may already be delivering to the captured
-    // batcher. If post-setup throws, the lambda keeps the batcher alive via
-    // its shared_ptr capture and the caller never sees an id to unsubscribe
-    // — so we must roll back the subscription.
-    try {
-        // Resolve the Arrow schema (mirrors the ArrowRow overload) and hand
-        // it to the batcher so it can build batches.
-        SharedSchema nano = result.schema.get();  // B1: ready (synchronous providers)
-        std::shared_ptr<arrow::Schema> arrow_schema;
-        if (nano) {
-            arrow_schema = ImportFromNano(nano.get());
-            std::lock_guard lock(mu_);
-            if (codecs_.find(key) == codecs_.end()) {
-                codecs_[key] = TopicCodec{arrow_schema, std::make_unique<Codec>(arrow_schema)};
-            }
-        }
-        batcher->SetSchema(arrow_schema);
-
-        {
-            std::lock_guard lock(mu_);
-            batchers_[result.subscription_id] = std::move(batcher);
-            sub_topic_[result.subscription_id] = key;
-        }
-        return {result.subscription_id, MakeReadyArrowFuture(std::move(arrow_schema))};
-    } catch (...) {
-        batcher->Stop();
-        subscriber_->Unsubscribe(result.subscription_id);
-        throw;
+    {
+        std::lock_guard lock(mu_);
+        batchers_[result.subscription_id] = std::move(batcher);
+        sub_topic_[result.subscription_id] = key;
     }
+
+    // Subscribe is non-blocking (mirrors the ArrowRow overload). The
+    // SharedSchema -> arrow::Schema conversion is deferred to .get() time on the
+    // caller's thread, and the batcher receives the schema lazily from the first
+    // decodable sample above — so this works for subscriber-first without
+    // blocking and without dropping the first window for want of a schema.
+    std::shared_future<std::shared_ptr<arrow::Schema>> schema_future =
+        std::async(std::launch::deferred, [pf = result.schema]() -> std::shared_ptr<arrow::Schema> {
+            SharedSchema nano = pf.get();
+            return nano ? ImportFromNano(nano.get()) : nullptr;
+        }).share();
+    return {result.subscription_id, std::move(schema_future)};
 }
 
 Codec* SubscriberArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
