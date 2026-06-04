@@ -106,7 +106,7 @@ jobs:
       - name: cmake configure
         shell: bash
         working-directory: integration-tests/pubsub-arrow-fastdds
-        run: cmake --preset conan-release
+        run: cmake --preset conan-default
 
       - name: cmake build
         shell: bash

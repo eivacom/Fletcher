@@ -108,7 +108,7 @@ jobs:
         shell: bash
         working-directory: integration-tests/gateway-end-to-end
         run: |
-          cmake --preset conan-release
+          cmake --preset conan-default
           cmake --build --preset conan-release
 
       - name: npm ci

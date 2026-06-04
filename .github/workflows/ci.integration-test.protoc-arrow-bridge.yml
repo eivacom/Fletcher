@@ -104,7 +104,7 @@ jobs:
       - name: cmake configure
         shell: bash
         working-directory: integration-tests/protoc-arrow-bridge
-        run: cmake --preset conan-release
+        run: cmake --preset conan-default
 
       - name: cmake build
         shell: bash

@@ -108,7 +108,7 @@ jobs:
       - name: cmake configure
         shell: bash
         working-directory: integration-tests/fastdds-xrce-interop
-        run: cmake --preset conan-release
+        run: cmake --preset conan-default
 
       - name: cmake build (includes MicroXRCEAgent from source)
         shell: bash
