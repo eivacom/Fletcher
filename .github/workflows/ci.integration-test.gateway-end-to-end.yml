@@ -45,6 +45,11 @@ jobs:
 
       - name: Build components and run integration tests
         run: |
+          # The gateway now always links Fast DDS (shared libs under the
+          # *:shared=True profile), so the spawned gateway exe needs the Conan
+          # run environment (libfastdds/libfastcdr/...) on the loader path —
+          # source conanrun.sh before npm test. A future self-contained gateway
+          # deploy (libs next to the exe + $ORIGIN RPATH) will remove this need.
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
@@ -66,5 +71,6 @@ jobs:
                      npm ci && \
                      echo '::endgroup::' && \
                      echo '::group::npm test' && \
+                     source build/Release/generators/conanrun.sh && \
                      npm test && \
                      echo '::endgroup::'"
