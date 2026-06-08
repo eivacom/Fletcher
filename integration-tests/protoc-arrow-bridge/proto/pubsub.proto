@@ -2,7 +2,12 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 syntax = "proto3";
-package integration;
+// Own package (not bare `integration`) so this fixture's `Telemetry`
+// message does not collide with telemetry.proto's `integration.Telemetry`
+// when both generated headers are linked into the same test binary. Two
+// distinct `fletcher_gen::integration::Telemetry` definitions would be an
+// ODR violation — UB that corrupted the stack on MSVC.
+package integration.pubsub;
 
 import "google/protobuf/empty.proto";
 

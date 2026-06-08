@@ -4,15 +4,17 @@
 cmake_minimum_required(VERSION 3.15)
 project(fletcher-protoc LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(protobuf REQUIRED)
 
 # Core logic as a static library (reusable by tests).
 add_library(fletcher_plugin_core STATIC
     src/type_mapper.cpp
     src/generator.cpp)
+
+# C++ standard comes from the Conan profile (compiler.cppstd) — previously
+# this CMakeLists pinned C++17, which overrode the profile's cppstd=20 and
+# diverged from the protobuf it links. State the minimum at target scope.
+target_compile_features(fletcher_plugin_core PUBLIC cxx_std_20)
 target_include_directories(fletcher_plugin_core PUBLIC include PRIVATE src)
 target_link_libraries(fletcher_plugin_core PUBLIC
     protobuf::libprotoc

@@ -58,7 +58,13 @@ function followRedirects(url: string, depth: number): Promise<Buffer> {
         return;
       }
       if (status !== 200) {
-        reject(new Error(`Download failed (${status}): ${url}`));
+        // 5xx / 429 are transient (GitHub Releases gateway timeouts, rate
+        // limiting); tag them retryable. 4xx (e.g. 404 wrong asset) is fatal.
+        const err: Error & { retryable?: boolean } = new Error(
+          `Download failed (${status}): ${url}`,
+        );
+        err.retryable = status >= 500 || status === 429;
+        reject(err);
         return;
       }
       const chunks: Buffer[] = [];
@@ -67,6 +73,40 @@ function followRedirects(url: string, depth: number): Promise<Buffer> {
       res.on('error', reject);
     }).on('error', reject);
   });
+}
+
+// GitHub Releases occasionally returns a transient 5xx (e.g. the 504 seen
+// in CI) or drops the connection. Retry a few times with exponential
+// backoff so a blip doesn't fail the suite; non-retryable (4xx) errors and
+// the final attempt propagate immediately.
+const MAX_DOWNLOAD_ATTEMPTS: number = 6;
+
+function isRetryable(err: unknown): boolean {
+  // Untagged errors (socket resets, timeouts) are transient; only errors
+  // explicitly tagged retryable=false (4xx responses) are fatal.
+  return !(err instanceof Error && (err as { retryable?: boolean }).retryable === false);
+}
+
+async function downloadWithRetry(url: string): Promise<Buffer> {
+  let lastErr: unknown;
+  for (let attempt: number = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; ++attempt) {
+    try {
+      return await followRedirects(url, 0);
+    } catch (err: unknown) {
+      lastErr = err;
+      if (!isRetryable(err) || attempt === MAX_DOWNLOAD_ATTEMPTS) {
+        break;
+      }
+      const delayMs: number = Math.min(1000 * 2 ** (attempt - 1), 8000); // 1,2,4,8,8s
+      const message: string = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[ensure-protoc] download attempt ${attempt}/${MAX_DOWNLOAD_ATTEMPTS} failed ` +
+          `(${message}); retrying in ${delayMs}ms\n`,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 export async function ensureProtoc(): Promise<string> {
@@ -82,7 +122,7 @@ export async function ensureProtoc(): Promise<string> {
   const root: string = cacheRoot();
   mkdirSync(root, { recursive: true });
 
-  const buf: Buffer = await followRedirects(url, 0);
+  const buf: Buffer = await downloadWithRetry(url);
 
   // Stash zip in a tmp file, then extract. Extraction strategy is chosen
   // per-platform for tools that are guaranteed to be present:

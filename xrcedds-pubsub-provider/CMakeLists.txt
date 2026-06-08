@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(fletcher-xrcedds-pubsub-provider CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 include(FetchContent)
 
 # ── Micro-CDR (dependency of XRCE-DDS Client) ───────────────────────────
@@ -78,6 +75,10 @@ target_link_libraries(fletcher-xrcedds-pubsub-provider
     PUBLIC  fletcher-pubsub::fletcher-pubsub
     PRIVATE fletcher-core::fletcher-core
             microxrcedds_client)
+
+# C++ standard comes from the Conan profile (compiler.cppstd). This only
+# states the public minimum the headers require, propagated to consumers.
+target_compile_features(fletcher-xrcedds-pubsub-provider PUBLIC cxx_std_20)
 
 if(FLETCHER_BUILD_TESTS)
     enable_testing()

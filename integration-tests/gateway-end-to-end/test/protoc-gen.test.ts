@@ -22,12 +22,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FletcherClient, WireTypeId } from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
+import { findBinaryRecursive } from './find-binary.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -40,17 +40,12 @@ function findGatewayBinary(): string {
   if (process.env.GATEWAY_BIN) {
     return process.env.GATEWAY_BIN;
   }
-  const candidates = [
-    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway'),
-    resolve(here, '..', 'build', 'Release', 'gateway_build', 'gateway.exe'),
-    resolve(here, '..', 'build', 'build', 'Release', 'gateway_build', 'gateway'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
+  const buildDir = resolve(here, '..', 'build');
+  const name = process.platform === 'win32' ? 'gateway.exe' : 'gateway';
+  const found = findBinaryRecursive(buildDir, name);
+  if (found) return found;
   throw new Error(
-    `gateway binary not found. Checked: ${candidates.join(', ')}. ` +
-      `Set GATEWAY_BIN to override.`,
+    `gateway binary (${name}) not found under ${buildDir}. ` + `Set GATEWAY_BIN to override.`,
   );
 }
 

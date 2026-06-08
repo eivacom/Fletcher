@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(gateway-end-to-end-integration CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 # Pull gateway's CMakeLists.txt into our build tree. That gives us
 # the `gateway` exe target without duplicating any gateway build
 # configuration here. gateway/ has no Conan recipe, so we build it
