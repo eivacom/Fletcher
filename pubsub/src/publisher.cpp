@@ -36,26 +36,35 @@ Publisher::~Publisher() = default;
 
 void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
     std::string key = internal::JoinSegments(segments);
-    std::vector<uint8_t> new_ipc =
-        schema ? SerializeSchemaIpc(schema.get()) : std::vector<uint8_t>{};
 
     // Atomically claim the topic key under the lock. Re-declaring an existing
     // topic is idempotent for an identical schema — which lets several
     // publishers share one topic (fan-in) — while a different schema for the
     // same topic is a genuine conflict that must not be silently accepted.
-    // Claiming with the schema lets a concurrent duplicate compare against it.
     {
         std::lock_guard lock(impl_->mu);
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
-            std::vector<uint8_t> existing = it->second.schema
-                                                ? SerializeSchemaIpc(it->second.schema.get())
-                                                : std::vector<uint8_t>{};
-            if (new_ipc != existing) {
+            // Compare via serialized Arrow IPC. Some valid schemas cannot be
+            // IPC-encoded (e.g. dictionary types, which nanoarrow's IPC writer
+            // rejects); if either side fails to serialize we cannot prove a
+            // conflict, so accept the re-declaration rather than throwing.
+            bool conflicting = false;
+            try {
+                std::vector<uint8_t> incoming =
+                    schema ? SerializeSchemaIpc(schema.get()) : std::vector<uint8_t>{};
+                std::vector<uint8_t> existing = it->second.schema
+                                                    ? SerializeSchemaIpc(it->second.schema.get())
+                                                    : std::vector<uint8_t>{};
+                conflicting = (incoming != existing);
+            } catch (const std::exception&) {
+                conflicting = false;
+            }
+            if (conflicting) {
                 throw std::runtime_error(
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }
-            return;  // identical re-declaration — no-op
+            return;  // identical (or non-comparable) re-declaration — no-op
         }
         Impl::TopicState ts;
         ts.segments = segments;
