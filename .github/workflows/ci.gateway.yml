@@ -21,9 +21,11 @@ on:
         required: true
         type: string
 
-# Gateway is distributed as a standalone executable (no Conan package,
-# no public headers). On tag-push the gateway binary is packaged per
-# platform and uploaded as a workflow artifact; cd.gateway.yml's
+# Gateway is distributed as a self-contained bundle (no Conan package,
+# no public headers): the executable plus the runtime shared libraries it
+# links (Fast DDS et al.) beside it, so it runs with zero setup. On tag-push
+# the bundle is built and archived per platform (gateway-linux.tar.gz /
+# gateway-windows.zip) and uploaded as a workflow artifact; cd.gateway.yml's
 # upload job consumes those artifacts to create the GitHub Release.
 # End-to-end coverage of the gateway against gateway-client-ts lives
 # in the gateway-end-to-end integration-test workflow.
@@ -75,20 +77,25 @@ jobs:
           conan install . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
           conan build . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
-      # Binary path per gateway/README.md: build/Release/gateway.exe.
-      # Staged at workspace root so the artifact contains just gateway.exe
-      # (upload-artifact preserves any leading directories from the path).
-      - name: Stage gateway.exe
+      # Self-contained bundle: gateway.exe + the runtime DLLs beside it (the
+      # Windows loader searches the exe's own directory first), so it runs with
+      # no PATH / conanrun setup. cmake --install lays down the exe; the Conan
+      # runtime_deploy deployer copies the DLLs next to it; the bundle is zipped.
+      - name: Bundle gateway + runtime libraries
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: cp gateway/build/Release/gateway.exe gateway.exe
+        working-directory: gateway
+        run: |
+          cmake --install build --config Release --prefix dist
+          conan install . --deployer=runtime_deploy --deployer-folder=dist -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          ( cd dist && 7z a -tzip "${GITHUB_WORKSPACE}/gateway-windows.zip" . >/dev/null )
 
-      - name: Upload Windows binary
+      - name: Upload Windows bundle
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-windows
-          path: gateway.exe
+          path: gateway-windows.zip
           retention-days: 5
 
   build-linux:
@@ -131,10 +138,17 @@ jobs:
               conan create ../fastdds-pubsub-provider --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan install . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
               conan build . -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
-              # Binary path per gateway/README.md: build/Release/gateway. Packaged
-              # inside docker so the resulting tarball is readable by the runner user.
+              # Self-contained bundle: the gateway exe (with its $ORIGIN rpath)
+              # plus the runtime shared libraries beside it, so the released
+              # artifact runs with no LD_LIBRARY_PATH / conanrun. cmake --install
+              # lays down the exe; the Conan runtime_deploy deployer copies the
+              # shared deps next to it. Tarred inside docker so the archive is
+              # readable by the runner user.
               if [[ -n "$ARTIFACT_NAME" ]]; then
-                tar -czf "/workspace/$ARTIFACT_NAME" -C build/Release gateway
+                PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+                cmake --install build/Release --prefix dist
+                conan install . --deployer=runtime_deploy --deployer-folder=dist -pr:a="$PROFILE"
+                tar -czf "/workspace/$ARTIFACT_NAME" -C dist .
               fi
             '
 

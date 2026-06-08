@@ -70,5 +70,5 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            "gateway.exe" \
+            "gateway-windows.zip" \
             "gateway-linux.tar.gz"
