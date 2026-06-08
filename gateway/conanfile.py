@@ -11,20 +11,28 @@ from conan.tools.files import load
 class GatewayConan(ConanFile):
     """Conan package for the gateway application.
 
-    The gateway is distributed as a self-contained bundle — the executable plus
-    the runtime shared libraries it links (Fast DDS et al.) beside it, so it
-    runs with zero setup (no LD_LIBRARY_PATH / conanrun). It is an `application`
-    package: no headers, no consumable library.
+    The gateway is distributed as a self-contained deploy that runs with zero
+    setup (no LD_LIBRARY_PATH / conanrun). It is an `application` package: no
+    headers, no consumable library. How self-contained the deploy looks depends
+    on how its dependencies are linked:
 
-    `conan create .` builds and packages the exe with an $ORIGIN rpath; the
-    bundle is then produced entirely with Conan, e.g.
+      * Default (static) build — the Fast DDS chain (pinned static by the
+        fastdds-pubsub-provider recipe) and boost are baked in, so the deploy
+        is a single self-contained executable; ldd shows only system libs.
+      * Shared variant (`-pr:a=shared`) — those deps are shared, so the deploy
+        is the exe plus the runtime libraries beside it, found via the $ORIGIN
+        rpath the install rule sets.
+
+    `conan create .` builds and packages the exe; the deploy is then produced
+    entirely with Conan, e.g.
 
         conan create . -pr:a=<profile>
         conan install --requires=fletcher-gateway/<version> \\
             --deployer=runtime_deploy --deployer-folder=dist -pr:a=<profile>
 
-    which flattens the exe and every runtime dependency into `dist/`. The plain
-    `conan install . && conan build .` dev/test loop still works too.
+    runtime_deploy flattens the exe and any runtime shared libs into `dist/`
+    (just the exe for a static build). The plain `conan install . &&
+    conan build .` dev/test loop still works too.
     """
 
     name = "fletcher-gateway"
@@ -33,7 +41,15 @@ class GatewayConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    default_options = {
+        "run_tests": False,
+        # Pin boost static so no boost shared libs ever land in the
+        # self-contained bundle, independent of the upstream default (boost is
+        # header-only for us — Beast/Asio — so this only affects the few
+        # compiled boost libs). The Fast DDS chain is pinned static by the
+        # fastdds-pubsub-provider recipe and inherited here.
+        "boost/*:shared": False,
+    }
 
     exports_sources = "CMakeLists.txt", "src/*", "cmake/*", "tests/*", "VERSION"
 

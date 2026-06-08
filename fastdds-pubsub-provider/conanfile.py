@@ -16,7 +16,19 @@ class FletcherPubsubConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    default_options = {
+        "run_tests": False,
+        # Link the Fast DDS chain statically by default. This recipe owns the
+        # fast-dds requirement, so the static default lives here rather than in
+        # a blanket *:shared profile option — consumers (notably the gateway)
+        # then bake Fast DDS into a self-contained binary that runs with no
+        # conanrun / LD_LIBRARY_PATH. Opt back into shared by layering the
+        # `shared` profile fragment (a higher-priority profile option wins).
+        "fast-dds/*:shared": False,
+        "fast-cdr/*:shared": False,
+        "foonathan-memory/*:shared": False,
+        "tinyxml2/*:shared": False,
+    }
 
     exports_sources = (
         "CMakeLists.txt",

@@ -8,4 +8,6 @@ compiler.runtime_type=Release
 compiler.version=194
 os=Windows
 [options]
-*:shared=True
+# No blanket *:shared here — shared/static is each recipe's own option/default
+# (see the per-component conanfiles). Opt into an all-shared build by layering
+# the composable `shared` profile fragment: -pr:a=<this> -pr:a=shared.

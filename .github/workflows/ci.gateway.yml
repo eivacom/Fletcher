@@ -21,12 +21,13 @@ on:
         required: true
         type: string
 
-# Gateway is distributed as a self-contained bundle: the executable plus the
-# runtime shared libraries it links (Fast DDS et al.) beside it, so it runs
-# with zero setup (no LD_LIBRARY_PATH / conanrun). It is built and packaged
-# as a Conan `application` package; on tag-push the bundle is produced purely
-# with Conan (`conan install --deployer=runtime_deploy`, which flattens the
-# exe and its runtime deps into one folder), archived per platform
+# Gateway is distributed as a self-contained deploy that runs with zero setup
+# (no LD_LIBRARY_PATH / conanrun). It is built and packaged as a Conan
+# `application` package; on tag-push the deploy is produced purely with Conan
+# (`conan install --deployer=runtime_deploy`, which flattens the exe and any
+# runtime shared libs into one folder). In the default static build that is a
+# single self-contained executable; the shared variant (-pr:a=shared) adds the
+# runtime libraries beside it. The folder is archived per platform
 # (gateway-linux.tar.gz / gateway-windows.zip) and uploaded as a workflow
 # artifact; cd.gateway.yml's upload job consumes those artifacts to create the
 # GitHub Release. End-to-end coverage of the gateway against gateway-client-ts
@@ -90,6 +91,7 @@ jobs:
         working-directory: gateway
         run: |
           conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=runtime_deploy --deployer-folder=dist -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          rm -f dist/conaninfo.txt dist/conanmanifest.txt   # Conan deploy metadata, not release content
           ( cd dist && 7z a -tzip "${GITHUB_WORKSPACE}/gateway-windows.zip" . >/dev/null )
 
       - name: Upload Windows bundle
@@ -151,6 +153,7 @@ jobs:
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
                 conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=runtime_deploy --deployer-folder=dist -pr:a="$PROFILE"
+                rm -f dist/conaninfo.txt dist/conanmanifest.txt   # Conan deploy metadata, not release content
                 tar -czf "/workspace/$ARTIFACT_NAME" -C dist .
               fi
             '

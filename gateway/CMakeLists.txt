@@ -91,19 +91,25 @@ if(WIN32)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────
-# Self-contained deploy (Feature 17811 / Story 17813). The gateway links
-# Fast DDS (and its deps) as shared libraries, so the released binary
-# needs them at runtime. Make it run with ZERO setup — no conanrun,
-# no LD_LIBRARY_PATH — by shipping those libraries beside the executable:
-#   * Linux: an $ORIGIN rpath so the loader looks in the exe's own dir.
-#   * Windows: the loader already searches the exe's directory first.
-# The bundle is produced entirely by Conan: the recipe is an `application`
-# package whose package() runs the install() rule below, and the
-# runtime_deploy deployer then flattens that exe plus every runtime shared
-# library it links into one folder. The release workflow ships that folder.
+# Self-contained deploy (Feature 17811 / Story 17813). The gateway runs with
+# ZERO setup — no conanrun, no LD_LIBRARY_PATH. What the deploy looks like
+# depends on how the dependencies are linked (a Conan option per recipe, not a
+# blanket profile policy):
+#   * Default (static): the Fast DDS chain (pinned static by the
+#     fastdds-pubsub-provider recipe) and boost are baked in, so the deploy is
+#     a single self-contained executable — ldd shows only system libraries.
+#   * Shared variant (-pr:a=shared): those deps are shared and shipped beside
+#     the exe; the rpath set below lets the loader find them at runtime:
+#       - Linux: an $ORIGIN rpath so the loader looks in the exe's own dir.
+#       - Windows: the loader already searches the exe's directory first.
+# The deploy is produced entirely by Conan: the recipe is an `application`
+# package whose package() runs the install() rule below, and the runtime_deploy
+# deployer then flattens the exe plus any runtime shared libraries into one
+# folder (just the exe for a static build). The release workflow ships it.
 # ─────────────────────────────────────────────────────────────────────
 if(NOT WIN32)
-    # Only $ORIGIN on the installed exe — the bundled libraries sit beside it.
+    # $ORIGIN on the installed exe so that, in the shared variant, the bundled
+    # libraries beside it resolve. No-op for the static default (no .so to find).
     set_target_properties(gateway PROPERTIES INSTALL_RPATH "$ORIGIN")
     # Emit DT_RPATH, not the linker default DT_RUNPATH. RUNPATH is NOT
     # transitive — it resolves only the exe's own direct dependencies, so the
@@ -114,11 +120,11 @@ if(NOT WIN32)
 endif()
 
 # Conan's package() invokes this install rule (cmake.install()) to place the
-# executable at the package root. The shared libraries it loads at runtime
-# (Fast DDS et al.) are then placed beside it by the Conan `runtime_deploy`
-# deployer — Conan already knows every transitive runtime dependency and its
-# cache location, which is far more reliable than re-deriving them from the
-# binary. See the conanfile / release workflow.
+# executable at the package root. Any shared libraries it loads at runtime
+# (only in the shared variant — none in the static default) are then placed
+# beside it by the Conan `runtime_deploy` deployer, which already knows every
+# transitive runtime dependency and its cache location — far more reliable than
+# re-deriving them from the binary. See the conanfile / release workflow.
 install(TARGETS gateway RUNTIME DESTINATION .)
 
 # ─────────────────────────────────────────────────────────────────────
