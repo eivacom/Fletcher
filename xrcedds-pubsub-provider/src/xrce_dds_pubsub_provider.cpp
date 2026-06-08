@@ -183,7 +183,15 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         auto& ts = tit->second;
         if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
 
-        OwnedSchema schema = DeserializeSchemaIpc(body, seq_len);
+        // Malformed __schema sample must not throw out of the XRCE session
+        // callback thread (which could terminate the process); ignore it and
+        // let the retained TRANSIENT_LOCAL/KEEP_LAST(1) sample be redelivered.
+        OwnedSchema schema;
+        try {
+            schema = DeserializeSchemaIpc(body, seq_len);
+        } catch (...) {
+            return;
+        }
         if (!schema) return;
         ts.schema = OwnedSchema::DeepCopy(schema.get());
         ts.shared_schema = MakeSharedSchema(std::move(schema));
@@ -646,6 +654,18 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
         impl_->schema_reader_to_topic.erase(ts.schema_reader_id.id);
         ts.schema_reader_id.type = UXR_INVALID_ID;
+    }
+
+    // Delete the companion __schema subscriber + topic that Subscribe created
+    // (from a fresh id base). Without this, repeated subscribe/unsubscribe
+    // cycles leak XRCE entities on the Agent until the session is destroyed.
+    if (ts.schema_subscriber_id.type != UXR_INVALID_ID) {
+        uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_subscriber_id);
+        ts.schema_subscriber_id.type = UXR_INVALID_ID;
+    }
+    if (ts.schema_topic_id.type != UXR_INVALID_ID) {
+        uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_topic_id);
+        ts.schema_topic_id.type = UXR_INVALID_ID;
     }
 
     if (ts.has_reader) {

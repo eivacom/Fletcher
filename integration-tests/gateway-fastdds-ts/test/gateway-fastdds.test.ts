@@ -138,8 +138,8 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<voi
   }
 }
 
-let gateway: ChildProcess;
-let peer: ChildProcess;
+let gateway: ChildProcess | undefined;
+let peer: ChildProcess | undefined;
 // RECV lines collected from the C++ peer's stdout (TS -> C++ deliveries).
 const recvLines: string[] = [];
 

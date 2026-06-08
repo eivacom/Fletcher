@@ -227,11 +227,19 @@ void WsSession::OnSubscribe(const std::string& topic) {
     // the client relies on its own schema (e.g. protoc-generated).
     if (result.schema.valid() &&
         result.schema.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        SharedSchema schema = result.schema.get();
-        if (schema) {
-            auto ipc_bytes = SerializeSchemaIpc(schema.get());
-            response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-            response["schema"] = gateway::ArrowSchemaToJson(schema.get());
+        // A ready future can still hold an exception — e.g. the provider breaks
+        // the promise when a subscription is dropped before the schema arrives.
+        // Omit the schema fields in that case rather than letting get() throw
+        // and tear down the session.
+        try {
+            SharedSchema schema = result.schema.get();
+            if (schema) {
+                auto ipc_bytes = SerializeSchemaIpc(schema.get());
+                response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+                response["schema"] = gateway::ArrowSchemaToJson(schema.get());
+            }
+        } catch (const std::exception&) {
+            // No schema available — fall through with routing-only response.
         }
     }
     SendText(response.dump());

@@ -338,9 +338,20 @@ class SchemaListener : public DataReaderListener {
         SampleInfo info;
         while (reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) continue;
+            if (fired_.load()) continue;
+            // Deserialize before claiming `fired_`. A malformed (or partially
+            // received) schema sample must not throw out of this Fast DDS
+            // listener thread (which could terminate the process), nor mark the
+            // listener fired — that would leave the schema future unresolved
+            // forever. On failure, wait for a subsequent valid sample.
+            OwnedSchema owned;
+            try {
+                owned = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
+            } catch (...) {
+                continue;
+            }
             bool expected = false;
             if (fired_.compare_exchange_strong(expected, true)) {
-                OwnedSchema owned = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
                 on_schema_(MakeSharedSchema(std::move(owned)));
             }
         }
