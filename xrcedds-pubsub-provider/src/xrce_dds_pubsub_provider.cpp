@@ -215,7 +215,15 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     if (tit == impl->topics.end() || !tit->second.callback) return;
     auto& ts = tit->second;
 
-    Envelope envelope = DeserializeEnvelope(body, seq_len);
+    // A malformed/truncated data sample must not throw out of the XRCE session
+    // callback thread (which could terminate the session pump / process);
+    // ignore it, matching the guarded __schema decode above.
+    Envelope envelope;
+    try {
+        envelope = DeserializeEnvelope(body, seq_len);
+    } catch (...) {
+        return;
+    }
     if (!ts.shared_schema) {
         // Subscriber-first: the schema has not arrived yet. Buffer the sample;
         // it is flushed in order when the __schema sample resolves the future.
