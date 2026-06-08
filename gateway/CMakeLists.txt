@@ -12,7 +12,7 @@
 # does not populate per-component INCLUDE_DIRS, so we locate the
 # headers via find_path (the Conan cache is already on
 # CMAKE_PREFIX_PATH for any consumer that ran conan install).
-cmake_minimum_required(VERSION 3.21)  # install(RUNTIME_DEPENDENCY_SET) needs 3.21
+cmake_minimum_required(VERSION 3.15)
 
 # Single source of truth for the gateway version lives in VERSION at the
 # component root. CMake's project(VERSION ...) only accepts strict
@@ -97,9 +97,10 @@ endif()
 # no LD_LIBRARY_PATH — by shipping those libraries beside the executable:
 #   * Linux: an $ORIGIN rpath so the loader looks in the exe's own dir.
 #   * Windows: the loader already searches the exe's directory first.
-# `cmake --install <build> --prefix <dir>` then lays out a directory with
-# gateway(.exe) + its runtime shared libraries side by side. The release
-# packaging ships that directory.
+# The bundle is produced entirely by Conan: the recipe is an `application`
+# package whose package() runs the install() rule below, and the
+# runtime_deploy deployer then flattens that exe plus every runtime shared
+# library it links into one folder. The release workflow ships that folder.
 # ─────────────────────────────────────────────────────────────────────
 if(NOT WIN32)
     # Only $ORIGIN on the installed exe — the bundled libraries sit beside it.
@@ -112,11 +113,12 @@ if(NOT WIN32)
     target_link_options(gateway PRIVATE "-Wl,--disable-new-dtags")
 endif()
 
-# `cmake --install` lays the executable into the bundle root. The shared
-# libraries it loads at runtime (Fast DDS et al.) are placed beside it by the
-# Conan `runtime_deploy` deployer — Conan already knows every transitive
-# runtime dependency and its cache location, which is far more reliable than
-# re-deriving them from the binary. See the conanfile / release workflow.
+# Conan's package() invokes this install rule (cmake.install()) to place the
+# executable at the package root. The shared libraries it loads at runtime
+# (Fast DDS et al.) are then placed beside it by the Conan `runtime_deploy`
+# deployer — Conan already knows every transitive runtime dependency and its
+# cache location, which is far more reliable than re-deriving them from the
+# binary. See the conanfile / release workflow.
 install(TARGETS gateway RUNTIME DESTINATION .)
 
 # ─────────────────────────────────────────────────────────────────────
