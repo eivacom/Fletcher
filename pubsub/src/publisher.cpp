@@ -3,11 +3,14 @@
 //
 #include "fletcher/pubsub/publisher.hpp"
 
+#include <cstdint>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 #include "fletcher/pubsub/internal/segments.hpp"
+#include "fletcher/pubsub/schema_ipc.hpp"
 
 namespace fletcher {
 
@@ -33,23 +36,33 @@ Publisher::~Publisher() = default;
 
 void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
     std::string key = internal::JoinSegments(segments);
+    std::vector<uint8_t> new_ipc =
+        schema ? SerializeSchemaIpc(schema.get()) : std::vector<uint8_t>{};
 
-    // Atomically claim the topic key under the lock so two concurrent
-    // CreateTopic calls for the same topic cannot both pass the
-    // duplicate check and reach provider->CreateTopic.
+    // Atomically claim the topic key under the lock. Re-declaring an existing
+    // topic is idempotent for an identical schema — which lets several
+    // publishers share one topic (fan-in) — while a different schema for the
+    // same topic is a genuine conflict that must not be silently accepted.
+    // Claiming with the schema lets a concurrent duplicate compare against it.
     {
         std::lock_guard lock(impl_->mu);
+        auto it = impl_->topics.find(key);
+        if (it != impl_->topics.end()) {
+            std::vector<uint8_t> existing = it->second.schema
+                                                ? SerializeSchemaIpc(it->second.schema.get())
+                                                : std::vector<uint8_t>{};
+            if (new_ipc != existing) {
+                throw std::runtime_error(
+                    "Publisher: topic already declared with a conflicting schema: " + key);
+            }
+            return;  // identical re-declaration — no-op
+        }
         Impl::TopicState ts;
         ts.segments = segments;
-        auto [it, inserted] = impl_->topics.try_emplace(key, std::move(ts));
-        if (!inserted) {
-            throw std::runtime_error("Publisher: topic already exists: " + key);
+        if (schema) {
+            ts.schema = OwnedSchema::DeepCopy(schema.get());
         }
-    }
-
-    OwnedSchema local_copy;
-    if (schema) {
-        local_copy = OwnedSchema::DeepCopy(schema.get());
+        impl_->topics.emplace(key, std::move(ts));
     }
 
     try {
@@ -60,14 +73,6 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
         std::lock_guard lock(impl_->mu);
         impl_->topics.erase(key);
         throw;
-    }
-
-    {
-        std::lock_guard lock(impl_->mu);
-        auto it = impl_->topics.find(key);
-        if (it != impl_->topics.end()) {
-            it->second.schema = std::move(local_copy);
-        }
     }
 }
 

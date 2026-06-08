@@ -28,6 +28,17 @@ static OwnedSchema MakeSchema() {
     return s;
 }
 
+// A schema that differs from MakeSchema() (different field name + type) so a
+// re-declaration with it is a genuine conflict.
+static OwnedSchema MakeOtherSchema() {
+    OwnedSchema s;
+    ArrowSchemaInit(s.get());
+    ArrowSchemaSetTypeStruct(s.get(), 1);
+    ArrowSchemaSetName(s->children[0], "y");
+    ArrowSchemaSetType(s->children[0], NANOARROW_TYPE_DOUBLE);
+    return s;
+}
+
 static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
     return [x](WriteBuffer& buf) {
         buf.AppendByte(0x00);
@@ -62,6 +73,14 @@ TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     p.CreateTopic({"create", "dup"}, MakeSchema());
     EXPECT_NO_THROW(p.CreateTopic({"create", "dup"}, MakeSchema()));
+}
+
+TEST(FastDDSPubSubProviderTest, CreateTopicRejectsConflictingSchema) {
+    // Idempotent re-declaration is fine, but declaring an existing topic with a
+    // *different* schema is a genuine conflict and must not be silently dropped.
+    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    p.CreateTopic({"create", "conflict"}, MakeSchema());
+    EXPECT_THROW(p.CreateTopic({"create", "conflict"}, MakeOtherSchema()), std::runtime_error);
 }
 
 TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {

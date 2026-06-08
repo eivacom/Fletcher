@@ -94,6 +94,17 @@ static OwnedSchema TestSchema() {
     return schema;
 }
 
+/// A schema that differs from TestSchema() (different field name + type) so a
+/// re-declaration with it is a genuine conflict.
+static OwnedSchema TestSchemaB() {
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "y");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_DOUBLE);
+    return schema;
+}
+
 static const std::vector<std::string> kTopic = {"test", "topic"};
 
 /// Encode a test row as positional format: [null_bitfield(1 byte)] [int32 LE].
@@ -125,12 +136,23 @@ TEST(PublisherTest, CreateTopicDelegatesToProvider) {
     EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST(PublisherTest, CreateTopicRejectsDuplicates) {
+TEST(PublisherTest, CreateTopicIsIdempotentForSameSchema) {
     auto mock = std::make_shared<MockProvider>();
     Publisher publisher(mock);
 
     publisher.CreateTopic(kTopic, TestSchema());
-    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchema()), std::runtime_error);
+    // Re-declaring with an identical schema is a no-op (lets several publishers
+    // share one topic) and does not reach the provider a second time.
+    EXPECT_NO_THROW(publisher.CreateTopic(kTopic, TestSchema()));
+    EXPECT_EQ(mock->topics_created.size(), 1u);
+}
+
+TEST(PublisherTest, CreateTopicRejectsConflictingSchema) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema());
+    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchemaB()), std::runtime_error);
 }
 
 TEST(PublisherTest, ListTopics) {

@@ -492,10 +492,23 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
     // Announce the schema on the companion __schema channel so that
     // late-joining subscribers — and a subscriber-first reader already waiting
-    // on this provider — receive it via TRANSIENT_LOCAL. Done exactly once: a
-    // repeated CreateTopic, or one issued after a Subscribe already opened the
-    // __schema reader, must not create a duplicate writer.
-    if (schema && !ts.schema_writer) {
+    // on this provider — receive it via TRANSIENT_LOCAL.
+    if (schema) {
+        std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
+
+        if (ts.schema_writer) {
+            // A publisher already announced a schema for this topic. Idempotent
+            // for an identical schema (fan-in / re-declaration); a different one
+            // is a genuine conflict that must not be silently dropped.
+            if (ts.schema && ipc != SerializeSchemaIpc(ts.schema.get())) {
+                throw std::runtime_error(
+                    "FastDDS: topic already declared with a conflicting schema: " + name);
+            }
+            return;
+        }
+
+        // First schema announcement (possibly attaching to a topic state a
+        // subscriber-first reader already created).
         ts.schema = OwnedSchema::DeepCopy(schema.get());
 
         std::string schema_name = name + "/__schema";
@@ -520,7 +533,7 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                                      schema_name);
 
         RawBytes raw;
-        raw.data = SerializeSchemaIpc(schema.get());
+        raw.data = std::move(ipc);
         ts.schema_writer->write(&raw);
     }
 }

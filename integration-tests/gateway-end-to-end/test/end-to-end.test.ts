@@ -374,6 +374,29 @@ describe.each(PROVIDERS)('gateway over $name provider', (cfg) => {
   });
 
   // ---------------------------------------------------------------------
+  // createTopic is idempotent for an identical schema but rejects a
+  // genuine conflict — re-declaring a topic with a different schema.
+  // Both providers enforce this, so it runs in both contexts.
+  // ---------------------------------------------------------------------
+  describe('createTopic schema conflict', () => {
+    it('rejects re-declaring a topic with a conflicting schema', async () => {
+      const CONFLICT_TOPIC = 'protocol/conflict';
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+
+      await client.createTopic(CONFLICT_TOPIC, HAND_BUILT_SCHEMA);
+      // Same schema again is idempotent — no error.
+      await client.createTopic(CONFLICT_TOPIC, HAND_BUILT_SCHEMA);
+      // A different schema for the same topic is a genuine conflict.
+      await expect(client.createTopic(CONFLICT_TOPIC, MINIMAL_SCHEMA)).rejects.toThrow(
+        /conflicting schema/,
+      );
+
+      client.close();
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // Binary frame layouts are exactly what the protocol documents:
   //   server -> client:  [SUB_ID :8 LE][ENVELOPE :rest]
   //   client -> server:  [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE :rest]
