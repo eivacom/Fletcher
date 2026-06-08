@@ -160,8 +160,9 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
 
     fletcher_gen::integration::pubsub::Telemetry received;
-    sub.Subscribe(
-        [&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments) { received = std::move(msg); });
+    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments) {
+        received = std::move(msg);
+    });
 
     fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
