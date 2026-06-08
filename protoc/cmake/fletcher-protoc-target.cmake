@@ -15,12 +15,14 @@
 #       DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 #   )
 
-if(TARGET fletcher-protoc::plugin)
-    return()
-endif()
-
 # Resolve the package root (one level up from cmake/).
 get_filename_component(_fletcher_protoc_pkg_root "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
+set(FLETCHER_PROTO_INCLUDE_DIR "${_fletcher_protoc_pkg_root}/include")
+
+if(TARGET fletcher-protoc::plugin)
+    unset(_fletcher_protoc_pkg_root)
+    return()
+endif()
 
 # First look inside the Conan package itself.
 find_program(_fletcher_protoc_plugin

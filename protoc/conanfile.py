@@ -84,12 +84,17 @@ class FletcherProtocPluginConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # Package Fletcher's public proto option definitions for consumers.
+        copy(self, "*.proto",
+             src=os.path.join(self.source_folder, "include"),
+             dst=os.path.join(self.package_folder, "include"),
+             keep_path=True)
 
     def package_info(self):
         # No libraries to link — this package only provides the plugin executable
         # and a CMake module that creates the imported target.
         self.cpp_info.libdirs = []
-        self.cpp_info.includedirs = []
+        self.cpp_info.includedirs = ["include"]
         self.cpp_info.set_property("cmake_build_modules", [
             os.path.join("cmake", "fletcher-protoc-target.cmake"),
         ])
