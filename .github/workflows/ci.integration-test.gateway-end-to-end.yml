@@ -82,6 +82,7 @@ jobs:
             core
             pubsub
             protoc
+            fastdds-pubsub-provider
             gateway
             gateway-client-ts
             integration-tests/gateway-end-to-end
@@ -96,7 +97,9 @@ jobs:
         run: |
           set -e
           PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
-          for COMPONENT in core pubsub protoc; do
+          # fastdds-pubsub-provider is required because the gateway always links
+          # the FastDDS provider (one binary, runtime --provider switch).
+          for COMPONENT in core pubsub protoc fastdds-pubsub-provider; do
             echo "::group::conan create $COMPONENT"
             (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
             echo "::endgroup::"
@@ -113,6 +116,16 @@ jobs:
         run: npm ci
 
       - name: npm test
-        shell: bash
+        shell: pwsh
         working-directory: integration-tests/gateway-end-to-end
-        run: npm test
+        run: |
+          # The gateway always links FastDDS (shared), so its DLLs must be on
+          # PATH before the exe is spawned by the test. `conan build .` emitted a
+          # run-env script; dot-source it so the gateway can load libfastdds /
+          # libfastcdr. The path varies with the MSVC multi-config layout, so
+          # locate the script rather than hard-coding it. (A future
+          # self-contained deploy — libs next to the exe — removes this need.)
+          $rc = Get-ChildItem -Recurse -Filter conanrun.ps1 -Path build -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $rc) { throw "conanrun.ps1 not found under build/ — cannot set the FastDDS DLL path" }
+          . $rc.FullName
+          npm test
