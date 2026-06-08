@@ -16,7 +16,16 @@ class FletcherProtocPluginConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    default_options = {
+        "run_tests": False,
+        # Link protobuf statically so the plugin binary is self-contained.
+        # protoc spawns fletcher-protoc(.exe) as a subprocess with no Conan
+        # environment active, so a shared protobuf would not be found at runtime.
+        # Pinned in the recipe (not a workflow -o flag) so the intent travels
+        # with the package; static is also the default now that the profiles no
+        # longer force *:shared=True.
+        "protobuf/*:shared": False,
+    }
 
     exports_sources = (
         "CMakeLists.txt",

@@ -116,10 +116,10 @@ jobs:
 
   # Static-link builds produce the single-file binaries that ship as raw
   # GitHub Release assets (consumed by the @eiva/protoc-gen-fletcher npm
-  # shim and anyone downloading directly). `-o "*:shared=False"` forces
-  # protobuf, zlib, and any other transitive dependency to be statically
-  # linked into fletcher-protoc[.exe] so the resulting binary has no
-  # runtime DLL dependencies — same way Google ships protoc.exe.
+  # shim and anyone downloading directly). The protoc recipe pins protobuf
+  # static (default_options) and static is the profile default, so
+  # fletcher-protoc[.exe] links protobuf + zlib in and has no runtime DLL
+  # dependencies — same way Google ships protoc.exe.
   #
   # Gated on tag-push only (same pattern as the Conan tarball upload
   # above): the integration-test workflows build their own static
@@ -141,7 +141,7 @@ jobs:
 
       - name: Build static fletcher-protoc
         shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
 
       - name: Extract static binary
         shell: bash
@@ -186,8 +186,7 @@ jobs:
             bash -c '
               set -euo pipefail
               conan create protoc/. --build=missing \
-                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release \
-                -o "*:shared=False"
+                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc" -type f -print -quit)
               if [ -z "$bin" ]; then
                 echo "::error::fletcher-protoc binary not found in Conan cache after static build"
