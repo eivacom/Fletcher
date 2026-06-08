@@ -14,6 +14,18 @@
 # Local caches used by integration tests (e.g. downloaded protoc binaries)
 **/.cache/
 
+# Conan-generated build/run environment scripts (VirtualBuildEnv / VirtualRunEnv).
+# Conan writes these env launchers into the recipe's base folder whenever
+# conan install/build/create runs there directly; transient, never source.
+**/conanbuild.sh
+**/conanbuild.bat
+**/conanrun.sh
+**/conanrun.bat
+**/conanbuildenv-*
+**/conanrunenv-*
+**/deactivate_conanbuild.*
+**/deactivate_conanrun.*
+
 # Log files
 *.log
 debug.log

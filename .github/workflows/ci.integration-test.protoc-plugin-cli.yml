@@ -25,9 +25,10 @@ on:
 jobs:
   # Linux exercises the command-line protoc-plugin flow inside the
   # devcontainer image (the same env every other Fletcher Linux build runs
-  # in). The plugin is built with `-o "*:shared=False"` so the resulting
-  # fletcher-protoc binary statically links protobuf + zlib — matching
-  # what the npm release ships and what end users get from GitHub Releases.
+  # in). The protoc recipe pins protobuf static (default_options) and static
+  # is the profile default, so the fletcher-protoc binary statically links
+  # protobuf + zlib — matching what the npm release ships and what end users
+  # get from GitHub Releases.
   linux:
     runs-on: ubuntu-latest
     steps:
@@ -54,7 +55,7 @@ jobs:
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
                      echo '::group::conan create protoc (static link)' && \
-                       conan create protoc/. --build=missing -pr:a=\$PROFILE -o '*:shared=False' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::' && \
                      cd integration-tests/protoc-plugin-cli && \
                      echo '::group::npm install' && \
@@ -88,7 +89,7 @@ jobs:
 
       - name: Build fletcher-protoc (static link)
         shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
 
       - name: npm install
         shell: bash

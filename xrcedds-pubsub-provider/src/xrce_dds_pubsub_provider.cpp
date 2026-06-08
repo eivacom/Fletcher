@@ -215,7 +215,17 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     if (tit == impl->topics.end() || !tit->second.callback) return;
     auto& ts = tit->second;
 
-    Envelope envelope = DeserializeEnvelope(body, seq_len);
+    // DeserializeEnvelope throws std::invalid_argument on a malformed/truncated
+    // sample. That must not escape the XRCE session callback thread (which could
+    // tear down the session pump / process), so drop the bad sample and keep the
+    // session alive. std::invalid_argument is the only type it throws; anything
+    // else is unexpected and is left to propagate.
+    Envelope envelope;
+    try {
+        envelope = DeserializeEnvelope(body, seq_len);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
     if (!ts.shared_schema) {
         // Subscriber-first: the schema has not arrived yet. Buffer the sample;
         // it is flushed in order when the __schema sample resolves the future.

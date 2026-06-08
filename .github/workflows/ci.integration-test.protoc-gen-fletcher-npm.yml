@@ -51,7 +51,7 @@ jobs:
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
                      echo '::group::conan create protoc (static link, matches npm release)' && \
-                       conan create protoc/. --build=missing -pr:a=\$PROFILE -o '*:shared=False' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::' && \
                      echo '::group::prime shim cache with the just-built binary' && \
                        VERSION=\$(node -p \"require('./protoc/npm/package.json').version\") && \
@@ -97,7 +97,7 @@ jobs:
 
       - name: Build fletcher-protoc (static link, matches npm release)
         shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
 
       - name: Prime shim cache with the just-built binary
         shell: bash

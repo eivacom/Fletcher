@@ -91,6 +91,43 @@ if(WIN32)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────
+# Self-contained deploy (Feature 17811 / Story 17813). The gateway runs with
+# ZERO setup — no conanrun, no LD_LIBRARY_PATH. What the deploy looks like
+# depends on how the dependencies are linked (a Conan option per recipe, not a
+# blanket profile policy):
+#   * Default (static): the Fast DDS chain (pinned static by the
+#     fastdds-pubsub-provider recipe) and boost are baked in, so the deploy is
+#     a single self-contained executable — ldd shows only system libraries.
+#   * Shared variant (-pr:a=shared): those deps are shared and shipped beside
+#     the exe; the rpath set below lets the loader find them at runtime:
+#       - Linux: an $ORIGIN rpath so the loader looks in the exe's own dir.
+#       - Windows: the loader already searches the exe's directory first.
+# The deploy is produced entirely by Conan: the recipe is an `application`
+# package whose package() runs the install() rule below, and the runtime_deploy
+# deployer then flattens the exe plus any runtime shared libraries into one
+# folder (just the exe for a static build). The release workflow ships it.
+# ─────────────────────────────────────────────────────────────────────
+if(NOT WIN32)
+    # $ORIGIN on the installed exe so that, in the shared variant, the bundled
+    # libraries beside it resolve. No-op for the static default (no .so to find).
+    set_target_properties(gateway PROPERTIES INSTALL_RPATH "$ORIGIN")
+    # Emit DT_RPATH, not the linker default DT_RUNPATH. RUNPATH is NOT
+    # transitive — it resolves only the exe's own direct dependencies, so the
+    # libraries those pull in (e.g. libfastcdr behind libfastdds) would not be
+    # found beside the exe. DT_RPATH applies to the whole dependency chain, so
+    # every bundled library resolves from $ORIGIN.
+    target_link_options(gateway PRIVATE "-Wl,--disable-new-dtags")
+endif()
+
+# Conan's package() invokes this install rule (cmake.install()) to place the
+# executable at the package root. Any shared libraries it loads at runtime
+# (only in the shared variant — none in the static default) are then placed
+# beside it by the Conan `runtime_deploy` deployer, which already knows every
+# transitive runtime dependency and its cache location — far more reliable than
+# re-deriving them from the binary. See the conanfile / release workflow.
+install(TARGETS gateway RUNTIME DESTINATION .)
+
+# ─────────────────────────────────────────────────────────────────────
 # Optional unit-test suite. Wired in when FLETCHER_BUILD_TESTS is on,
 # matching the cache-variable name other Fletcher components use.
 # ─────────────────────────────────────────────────────────────────────

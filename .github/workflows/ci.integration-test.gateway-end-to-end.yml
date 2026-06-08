@@ -47,11 +47,9 @@ jobs:
 
       - name: Build components and run integration tests
         run: |
-          # The gateway now always links Fast DDS (shared libs under the
-          # *:shared=True profile), so the spawned gateway exe needs the Conan
-          # run environment (libfastdds/libfastcdr/...) on the loader path —
-          # source conanrun.sh before npm test. A future self-contained gateway
-          # deploy (libs next to the exe + $ORIGIN RPATH) will remove this need.
+          # The gateway links Fast DDS statically (static is the build default),
+          # so the spawned gateway exe is self-contained and starts with no Conan
+          # run environment — npm test runs it as-is, no conanrun needed.
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
             fletcher-build \
             bash -c "set -e && \
@@ -69,7 +67,6 @@ jobs:
                      npm ci && \
                      echo '::endgroup::' && \
                      echo '::group::npm test' && \
-                     source build/Release/generators/conanrun.sh && \
                      npm test && \
                      echo '::endgroup::'"
 
@@ -116,20 +113,9 @@ jobs:
         run: npm ci
 
       - name: npm test
-        shell: cmd
+        shell: bash
         working-directory: integration-tests/gateway-end-to-end
-        run: |
-          @echo off
-          rem The gateway always links FastDDS (shared), so its DLLs must be on
-          rem PATH before the exe is spawned by the test. `conan build .` emits a
-          rem run-env launcher (conanrun.bat) in its generators folder; call it
-          rem to set PATH, then run the tests. The path varies with the MSVC
-          rem multi-config layout, so locate it — but only under a `generators`
-          rem dir, to skip stray same-named files in MSBuild .tlog dirs. (A future
-          rem self-contained deploy — libs next to the exe — removes this need.)
-          set "RC="
-          for /r build %%f in (conanrun.bat) do echo "%%f" | findstr /i "generators" >nul && set "RC=%%f"
-          if not defined RC ( echo ERROR: conanrun.bat not found in a build generators dir & exit /b 1 )
-          echo Using run-env: %RC%
-          call "%RC%"
-          npm test
+        # The gateway links FastDDS statically (static is the build default), so
+        # the spawned gateway.exe is self-contained — no conanrun / DLL setup
+        # needed; npm test spawns it as-is.
+        run: npm test

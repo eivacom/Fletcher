@@ -38,14 +38,6 @@ class GatewayFastddsTsIntegrationConan(ConanFile):
         self.requires("boost/1.83.0")
         self.requires("nlohmann_json/3.11.3")
 
-    def configure(self):
-        # Match the gateway: link the Fast DDS chain statically so the spawned
-        # gateway exe is self-contained and runs without the Conan run env.
-        self.options["fast-dds"].shared = False
-        self.options["fast-cdr"].shared = False
-        self.options["foonathan-memory"].shared = False
-        self.options["tinyxml2"].shared = False
-
     def layout(self):
         cmake_layout(self)
 

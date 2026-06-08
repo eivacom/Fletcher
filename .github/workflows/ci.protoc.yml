@@ -28,6 +28,15 @@ on:
           upload job to verify the tag matches conanfile version.
         value: ${{ jobs.build-windows.outputs.conan-ref }}
 
+# On tag-push each platform's build job emits two release artifacts from a
+# SINGLE build: the Conan package (.tgz, for Conan consumers) and the raw
+# single-file binary (protoc-gen-fletcher-*, for GitHub Release / the
+# @eiva/protoc-gen-fletcher npm shim and direct downloads). protoc links
+# protobuf + zlib statically (the recipe pins protobuf static and static is the
+# profile default), so the raw binary has no runtime DLL dependencies — same
+# way Google ships protoc.exe. cd.protoc.yml's create-release job downloads
+# both artifacts on tag-push.
+
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -71,6 +80,30 @@ jobs:
           path: fletcher-protoc-windows-conan-package.tgz
           retention-days: 5
 
+      # Raw single-file binary for GitHub Release / the npm shim — extracted
+      # from the build above, not rebuilt.
+      - name: Extract static binary
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc.exe" -type f -print -quit)
+          if [ -z "$bin" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            find ~/.conan2 -name "fletcher-protoc*" -type f
+            exit 1
+          fi
+          cp "$bin" protoc-gen-fletcher-windows-x64.exe
+          ls -lah protoc-gen-fletcher-windows-x64.exe
+
+      - name: Upload Windows static binary
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-windows-static
+          path: protoc-gen-fletcher-windows-x64.exe
+          retention-days: 5
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -103,6 +136,16 @@ jobs:
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
                 conan cache save "$REF" --file "/workspace/$ARTIFACT_NAME"
+                # Raw single-file binary for GitHub Release / the npm shim,
+                # extracted from the same build rather than rebuilt.
+                bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc" -type f -print -quit)
+                if [ -z "$bin" ]; then
+                  echo "::error::fletcher-protoc binary not found in Conan cache"
+                  find ~/.conan2 -name "fletcher-protoc*" -type f
+                  exit 1
+                fi
+                cp "$bin" /workspace/protoc-gen-fletcher-linux-x64
+                chmod +x /workspace/protoc-gen-fletcher-linux-x64
               fi
             '
 
@@ -114,92 +157,9 @@ jobs:
           path: fletcher-protoc-linux-conan-package.tgz
           retention-days: 5
 
-  # Static-link builds produce the single-file binaries that ship as raw
-  # GitHub Release assets (consumed by the @eiva/protoc-gen-fletcher npm
-  # shim and anyone downloading directly). `-o "*:shared=False"` forces
-  # protobuf, zlib, and any other transitive dependency to be statically
-  # linked into fletcher-protoc[.exe] so the resulting binary has no
-  # runtime DLL dependencies — same way Google ships protoc.exe.
-  #
-  # Gated on tag-push only (same pattern as the Conan tarball upload
-  # above): the integration-test workflows build their own static
-  # binary on PR runs, so we don't need to duplicate it here. cd.protoc.yml's
-  # create-release job downloads these artifacts on tag-push.
-  build-static-windows:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .github
-            .conan-profiles
-
-      - name: Install Conan
-        uses: ./.github/actions/conan-install
-
-      - name: Build static fletcher-protoc
-        shell: bash
-        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
-
-      - name: Extract static binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc.exe" -type f -print -quit)
-          if [ -z "$bin" ]; then
-            echo "::error::fletcher-protoc.exe not found in Conan cache after static build"
-            find ~/.conan2 -name "fletcher-protoc*" -type f
-            exit 1
-          fi
-          cp "$bin" protoc-gen-fletcher-windows-x64.exe
-          ls -lah protoc-gen-fletcher-windows-x64.exe
-
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: fletcher-protoc-windows-static
-          path: protoc-gen-fletcher-windows-x64.exe
-          retention-days: 5
-
-  build-static-linux:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            protoc
-            .conan-profiles
-            .github
-
-      - name: Pull devcontainer image
-        uses: ./.github/actions/pull-devcontainer-image
-        with:
-          image: ${{ inputs.devcontainer-image }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build static fletcher-protoc and extract binary
-        run: |
-          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace \
-            fletcher-build \
-            bash -c '
-              set -euo pipefail
-              conan create protoc/. --build=missing \
-                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release \
-                -o "*:shared=False"
-              bin=$(find ~/.conan2/p -path "*/p/bin/fletcher-protoc" -type f -print -quit)
-              if [ -z "$bin" ]; then
-                echo "::error::fletcher-protoc binary not found in Conan cache after static build"
-                find ~/.conan2 -name "fletcher-protoc*" -type f
-                exit 1
-              fi
-              cp "$bin" /workspace/protoc-gen-fletcher-linux-x64
-              chmod +x /workspace/protoc-gen-fletcher-linux-x64
-              ls -lah /workspace/protoc-gen-fletcher-linux-x64
-            '
-
-      - uses: actions/upload-artifact@v7.0.1
+      - name: Upload Linux static binary
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-linux-static
           path: protoc-gen-fletcher-linux-x64
