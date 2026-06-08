@@ -9,7 +9,7 @@ import os
 
 class FletcherCoreConan(ConanFile):
     name = "fletcher-core"
-    version = "0.1.0-alpha"
+    version = "0.3.0-alpha"
     description = "Fletcher Core library"
     license = "LGPL-3.0-or-later"
     package_type = "header-library"

@@ -16,12 +16,14 @@ on:
           eivaorg/fletcher-devcontainer:<sha>). The caller is
           responsible for invoking ci.setup-devcontainer-image.yml; this
           workflow only consumes the resulting image. ci.pr.yml passes the
-          image it built once and shares across all callers.
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
         required: true
         type: string
 
 jobs:
-  protoc-arrow-bridge:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,15 +55,39 @@ jobs:
                        echo '::endgroup::'; \
                      done && \
                      cd integration-tests/protoc-arrow-bridge && \
-                     echo '::group::conan install integration test' && \
-                     conan install . --build=missing -pr:a=\$PROFILE && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake configure' && \
-                     cmake --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::cmake build' && \
-                     cmake --build --preset conan-release && \
-                     echo '::endgroup::' && \
-                     echo '::group::ctest' && \
-                     ctest --preset conan-release --output-on-failure && \
+                     echo '::group::conan build integration test (configure + build + ctest)' && \
+                     conan build . --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            arrow-bridge
+            pubsub
+            integration-tests/protoc-arrow-bridge
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build components into local Conan cache
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core arrow-bridge pubsub protoc; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+
+      - name: conan build integration test (configure + build + ctest)
+        shell: bash
+        working-directory: integration-tests/protoc-arrow-bridge
+        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release

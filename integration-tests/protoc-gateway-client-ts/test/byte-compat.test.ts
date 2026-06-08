@@ -3,11 +3,11 @@
 //
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ObjectBackend, encodePositional } from 'fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
+import { findBinaryRecursive } from './find-binary.js';
 
 interface Vector {
   name: string;
@@ -49,18 +49,12 @@ function findEmitVectorsBinary(): string {
   if (process.env.EMIT_VECTORS_BIN) {
     return process.env.EMIT_VECTORS_BIN;
   }
-  // Conan + CMake's `cmake --preset conan-release` puts the binary under
-  // build/Release/. Walk a couple of likely layouts.
-  const candidates = [
-    resolve(here, '..', 'build', 'Release', 'emit_vectors'),
-    resolve(here, '..', 'build', 'Release', 'emit_vectors.exe'),
-    resolve(here, '..', 'build', 'build', 'Release', 'emit_vectors'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
+  const buildDir = resolve(here, '..', 'build');
+  const name = process.platform === 'win32' ? 'emit_vectors.exe' : 'emit_vectors';
+  const found = findBinaryRecursive(buildDir, name);
+  if (found) return found;
   throw new Error(
-    `emit_vectors binary not found. Checked: ${candidates.join(', ')}. ` +
+    `emit_vectors binary (${name}) not found under ${buildDir}. ` +
       `Set EMIT_VECTORS_BIN to override.`,
   );
 }

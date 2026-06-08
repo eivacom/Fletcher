@@ -53,13 +53,15 @@ function followRedirects(url, depth) {
           return resolve(followRedirects(res.headers.location, depth + 1));
         }
         if (res.statusCode !== 200) {
-          return reject(
-            new Error(
-              `Download failed (${res.statusCode}): ${url}\n` +
-                `Check that the release exists at ` +
-                `https://github.com/eivacom/Fletcher/releases/tag/protoc-v${VERSION}`,
-            ),
+          // 5xx / 429 are transient (gateway timeouts, rate limiting); tag
+          // them retryable. 4xx (e.g. 404 missing release) is fatal.
+          const err = new Error(
+            `Download failed (${res.statusCode}): ${url}\n` +
+              `Check that the release exists at ` +
+              `https://github.com/eivacom/Fletcher/releases/tag/protoc-v${VERSION}`,
           );
+          err.retryable = res.statusCode >= 500 || res.statusCode === 429;
+          return reject(err);
         }
         const chunks = [];
         res.on('data', (chunk) => chunks.push(chunk));
@@ -68,6 +70,39 @@ function followRedirects(url, depth) {
       })
       .on('error', reject);
   });
+}
+
+// GitHub Releases occasionally returns a transient 5xx (e.g. a 504 gateway
+// timeout) or drops the connection. Retry a few times with exponential
+// backoff so a blip doesn't fail codegen for a user; non-retryable (4xx)
+// errors and the final attempt propagate immediately.
+const MAX_DOWNLOAD_ATTEMPTS = 6;
+
+function isRetryable(err) {
+  // Untagged errors (socket resets, timeouts) are transient; only errors
+  // explicitly tagged retryable=false (4xx responses) are fatal.
+  return !(err && err.retryable === false);
+}
+
+async function downloadWithRetry(url) {
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; ++attempt) {
+    try {
+      return await followRedirects(url, 0);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryable(err) || attempt === MAX_DOWNLOAD_ATTEMPTS) {
+        break;
+      }
+      const delayMs = Math.min(1000 * 2 ** (attempt - 1), 8000); // 1,2,4,8,8s
+      process.stderr.write(
+        `protoc-gen-fletcher: download attempt ${attempt}/${MAX_DOWNLOAD_ATTEMPTS} failed ` +
+          `(${err.message}); retrying in ${delayMs}ms\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 async function ensureBinary() {
@@ -81,7 +116,7 @@ async function ensureBinary() {
   process.stderr.write(`protoc-gen-fletcher: downloading ${url}\n`);
 
   fs.mkdirSync(cacheDir(), { recursive: true });
-  const buf = await followRedirects(url, 0);
+  const buf = await downloadWithRetry(url);
 
   // Atomic write: write to a unique tmp file in the same dir, then rename.
   // Multiple npm scripts may invoke the shim in parallel; rename within the

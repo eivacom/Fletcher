@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout
+from conan.tools.cmake import CMake, cmake_layout
 
 
 class ProtocGatewayClientTsIntegrationConan(ConanFile):
@@ -32,3 +32,13 @@ class ProtocGatewayClientTsIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def build(self):
+        # `conan build .` configures + builds the emit_vectors exe through
+        # the active profile (Conan picks the generator + matching preset,
+        # so this works the same on Linux single-config and Windows
+        # multi-config). The vitest byte-compat suite spawns the exe from
+        # a separate `npm test` step.
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()

@@ -49,7 +49,7 @@ The gateway is schema-agnostic — there is no `--config` and no topic pre-decla
 The workflow `.github/workflows/ci.integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
 1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`, `fastdds-pubsub-provider`) via `conan create <component>/.` into the local Conan cache. The gateway always links the FastDDS provider, so it is built even though the default provider is `inprocess`.
-2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
+2. Runs `conan build .` in this directory (configure + build) to produce the `gateway` exe.
 3. Sources the Conan run environment (`conanrun.sh`, so the FastDDS-linked gateway finds its shared libs at runtime), then runs `npm ci` + `npm test` to execute the vitest suite — once per provider context — against the binary.
 
 ## Running locally
@@ -81,15 +81,7 @@ cd integration-tests/gateway-end-to-end
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
-```
-
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 ```bash
@@ -100,11 +92,11 @@ npm ci
 source build/Release/generators/conanrun.sh && npm test
 ```
 
-`conanrun.sh` puts the FastDDS shared libs on the loader path so the gateway's `fastdds` provider context can start. The vitest suite spawns `build/Release/gateway_build/gateway` with `--port`, `--bind-address`, and `--provider` (one gateway per provider context), waits for `READY <port>`, runs the scenarios against each, and tears each gateway down via `stop\n` on stdin.
+`conanrun.sh` puts the FastDDS shared libs on the loader path so the gateway's `fastdds` provider context can start. The vitest suite locates the `gateway` exe by searching under `build/` (its exact path depends on the Conan layout — see `test/find-binary.ts`), spawns it with `--port`, `--bind-address`, and `--provider` (one gateway per provider context), waits for `READY <port>`, runs the scenarios against each, and tears each gateway down via `stop\n` on stdin.
 
 ### Overriding the binary location
 
-The test resolves the `gateway` binary from `build/Release/gateway_build/` by default. To point it at a different build, set:
+The test searches for the `gateway` binary under `build/` by default. To point it at a different build, set:
 
 ```bash
 GATEWAY_BIN=/path/to/gateway npm test

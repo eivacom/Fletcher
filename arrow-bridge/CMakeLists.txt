@@ -4,9 +4,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(fletcher-arrow-bridge LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(fletcher-core CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 
@@ -14,6 +11,10 @@ add_library(fletcher-arrow-bridge STATIC
     src/codec.cpp
     src/scalar_codec.cpp
     src/crs_utils.cpp)
+
+# C++ standard comes from the Conan profile (compiler.cppstd). This only
+# states the public minimum the headers require, propagated to consumers.
+target_compile_features(fletcher-arrow-bridge PUBLIC cxx_std_20)
 
 target_include_directories(fletcher-arrow-bridge
     PUBLIC

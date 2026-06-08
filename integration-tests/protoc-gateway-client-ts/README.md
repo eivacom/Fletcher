@@ -21,12 +21,12 @@ The companion test in `integration-tests/protoc-arrow-bridge/` proves the same i
 The workflow `.github/workflows/ci.integration-test.protoc-gateway-client-ts.yml` triggers when any of `core/**`, `protoc/**`, `pubsub/**`, `gateway-client-ts/**`, or this directory changes on a PR. It:
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
-2. `conan install` + `cmake build` produces the `emit_vectors` C++ binary that emits canonical scenario vectors as JSON lines.
+2. `conan build .` produces the `emit_vectors` C++ binary that emits canonical scenario vectors as JSON lines.
 3. `npm ci` + `npm test` runs vitest against the binary — the TS test spawns it, parses the vectors, and asserts both decode-correctness and byte-equality.
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and the `conan build .` step resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
@@ -48,7 +48,7 @@ conan create pubsub/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-R
 conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-Each `conan create` builds the component and registers the branch's version in `~/.conan2/p/`. Subsequent `conan install` calls find them there.
+Each `conan create` builds the component and registers the branch's version in `~/.conan2/p/`. Subsequent `conan build .` calls find them there.
 
 ### Build the C++ side of the integration test
 
@@ -57,18 +57,10 @@ cd /workspaces/Fletcher/integration-tests/protoc-gateway-client-ts
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
-```
-
-The last step produces `build/Release/emit_vectors` plus the protoc-generated headers under `build/Release/generated/<stem>.fletcher.pb.h` (consumed by the C++ binary) and `generated-ts/<stem>.fletcher.ts` (consumed by vitest).
+This produces `emit_vectors` (under the generator's build dir — `build/Release/` on Linux) plus the protoc-generated headers `build/.../generated/<stem>.fletcher.pb.h` (consumed by the C++ binary) and `generated-ts/<stem>.fletcher.ts` (consumed by vitest).
 
 ### Run the TS test
 
@@ -84,4 +76,4 @@ vitest spawns `emit_vectors`, parses the JSON-line output, and asserts both deco
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. Conan picks up the latest version in the local cache automatically.
+Re-run only the `conan create` for the component you touched, then redo `conan build .` for the integration test. Conan picks up the latest version in the local cache automatically.

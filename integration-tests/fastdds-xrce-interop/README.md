@@ -37,7 +37,7 @@ The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` tr
 
 ## Running locally
 
-See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and `conan install` resolves against that cache.
+See the repo root's [Development environment](../../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Conan profiles live in [`.conan-profiles/`](../../.conan-profiles) and are referenced by relative path — no profile-install step is needed. The integration test builds every component from this branch's source into the local Conan cache, and the `conan build .` step resolves against that cache.
 
 ### Build the components from this branch into the local cache
 
@@ -67,34 +67,18 @@ conan create fastdds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Li
 conan create xrcedds-pubsub-provider/.  --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-### Build the integration test (and the Agent)
+### Build and run the integration test (and the Agent)
 
 ```bash
 cd integration-tests/fastdds-xrce-interop
 ```
 
 ```bash
-conan install . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
+conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-```bash
-cmake --preset conan-release
-```
-
-```bash
-cmake --build --preset conan-release
-```
-
-This `cmake --build` is where the Agent gets compiled (one-time cost on a clean build dir).
-
-### Run the tests
-
-```bash
-ctest --preset conan-release --output-on-failure
-```
-
-The test binary spawns the Agent itself; nothing else needs to be running.
+`conan build .` configures, builds the test binary (this is where the Agent gets compiled — a one-time cost on a clean build dir), and runs the suite via ctest. Conan drives the configure/build/test preset that matches the active generator; the test binary spawns the Agent itself, so nothing else needs to be running.
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan install` + `cmake --build` for the integration test. The Agent ExternalProject is incremental — it doesn't rebuild unless you wipe the build directory.
+Re-run only the `conan create` for the component you touched, then redo `conan build .` for the integration test. The Agent ExternalProject is incremental — it doesn't rebuild unless you wipe the build directory.

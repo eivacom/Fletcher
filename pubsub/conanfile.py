@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-pubsub"
-    version = "0.2.0-alpha"
+    version = "0.3.0-alpha"
     description = "Fletcher PubSub library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -28,7 +28,7 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("fletcher-core/0.1.0-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.3.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
