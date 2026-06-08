@@ -41,6 +41,7 @@ jobs:
       xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
       integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
+      integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
@@ -172,6 +173,20 @@ jobs:
               - 'integration-tests/gateway-end-to-end/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.gateway-end-to-end.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-gateway-fastdds-ts:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'gateway/**'
+              - 'gateway-client-ts/**'
+              - 'integration-tests/gateway-fastdds-ts/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-fastdds-ts.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -351,6 +366,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-gateway-fastdds-ts:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-fastdds-ts == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-fastdds-ts.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-arrow-bridge:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-arrow == 'true' }}
@@ -407,6 +430,7 @@ jobs:
       - gateway-client
       - integration-test-fastdds-xrce-interop
       - integration-test-gateway-end-to-end
+      - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
       - integration-test-protoc-gateway-client-ts
       - integration-test-pubsub-arrow-fastdds
@@ -436,6 +460,7 @@ jobs:
             ${{ needs.gateway-client.result }},
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
+            ${{ needs.integration-test-gateway-fastdds-ts.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},

@@ -29,6 +29,9 @@ class GatewayBuildConan(ConanFile):
         # `conan create` step put into the local cache earlier.
         self.requires("fletcher-pubsub/[*, include_prerelease]")
         self.requires("fletcher-core/[*, include_prerelease]")
+        # FastDDS-backed provider (--provider fastdds). Always linked in:
+        # the gateway ships both providers and selects at runtime.
+        self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
         # Boost.Beast / Boost.Asio for WebSocket transport.
         self.requires("boost/1.83.0")
         # nlohmann_json for WS JSON control frames.

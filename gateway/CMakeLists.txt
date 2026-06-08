@@ -34,6 +34,7 @@ project(gateway VERSION ${GATEWAY_VERSION_NUMERIC} LANGUAGES CXX)
 
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-core   CONFIG REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(nlohmann_json        CONFIG REQUIRED)
 find_path(BOOST_INCLUDE_DIR boost/beast.hpp REQUIRED)
 
@@ -66,6 +67,7 @@ target_link_libraries(gateway PRIVATE
     gateway_codec
     fletcher-pubsub::fletcher-pubsub
     fletcher-core::fletcher-core
+    fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
     nlohmann_json::nlohmann_json)
 
 # Compile-time version string consumed by --version. The full string

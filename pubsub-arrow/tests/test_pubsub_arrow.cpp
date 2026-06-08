@@ -56,11 +56,11 @@ class MockProvider : public PubSubProvider {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
-        OwnedSchema schema;
+        SharedSchema schema;
         if (it != schemas_.end()) {
-            schema = OwnedSchema::DeepCopy(it->second.get());
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {std::move(schema)};
+        return {MakeReadySchemaFuture(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -132,12 +132,13 @@ TEST(SubscriberArrowTest, SubscribeReturnsArrowSchema) {
     pub.CreateTopic(kTopic, TestSchema());
     SubscriberArrow::SubscribeResult result = sub.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
-    ASSERT_NE(result.schema, nullptr);
-    EXPECT_EQ(result.schema->num_fields(), 2);
-    EXPECT_EQ(result.schema->field(0)->name(), "x");
-    EXPECT_TRUE(result.schema->field(0)->type()->Equals(*arrow::int32()));
-    EXPECT_EQ(result.schema->field(1)->name(), "name");
-    EXPECT_TRUE(result.schema->field(1)->type()->Equals(*arrow::utf8()));
+    std::shared_ptr<arrow::Schema> sch = result.schema.get();
+    ASSERT_NE(sch, nullptr);
+    EXPECT_EQ(sch->num_fields(), 2);
+    EXPECT_EQ(sch->field(0)->name(), "x");
+    EXPECT_TRUE(sch->field(0)->type()->Equals(*arrow::int32()));
+    EXPECT_EQ(sch->field(1)->name(), "name");
+    EXPECT_TRUE(sch->field(1)->type()->Equals(*arrow::utf8()));
 }
 
 TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {

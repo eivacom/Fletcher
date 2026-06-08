@@ -12,6 +12,7 @@
 
 #include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <fastdds/dds/domain/DomainParticipant.hpp>
@@ -29,6 +30,8 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
+#include <functional>
+#include <future>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -234,21 +237,129 @@ class FletcherTopicType : public TopicDataType {
 class SubscriptionListener : public DataReaderListener {
    public:
     SubscriptionListener(PubSubProvider::SubscribeCallback cb, SharedSchema schema)
-        : callback_(std::move(cb)), schema_(std::move(schema)) {}
+        : callback_(std::move(cb)), schema_(std::move(schema)), schema_ready_(schema_ != nullptr) {}
 
     void on_data_available(DataReader* reader) override {
         TransportData data;
         SampleInfo info;
         while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) continue;
-            callback_(data.decoded_row.data(), data.decoded_row.size(), schema_,
+            bool buffered = false;
+            SharedSchema schema;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                if (!schema_ready_) {
+                    // Hold the sample until the schema arrives, so the callback
+                    // is never invoked with a null schema (subscriber-first
+                    // ordering: a data sample can arrive before the schema does).
+                    pending_.push_back(
+                        {std::move(data.decoded_row), std::move(data.decoded_attachments)});
+                    buffered = true;
+                } else {
+                    schema = schema_;
+                }
+            }
+            if (buffered) continue;
+            callback_(data.decoded_row.data(), data.decoded_row.size(), schema,
                       std::move(data.decoded_attachments));
         }
     }
 
+    // Supplies the schema once known (from the companion __schema channel),
+    // then flushes buffered samples in order. Must run OUTSIDE any provider
+    // lock — it invokes the user callback, which may call back into the
+    // provider.
+    void SetSchema(SharedSchema schema) {
+        std::vector<PendingSample> flush;
+        SharedSchema sch;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (schema_ready_) return;
+            schema_ = std::move(schema);
+            schema_ready_ = true;
+            sch = schema_;
+            flush = std::move(pending_);
+            pending_.clear();
+        }
+        for (auto& s : flush) {
+            callback_(s.row.data(), s.row.size(), sch, std::move(s.att));
+        }
+    }
+
    private:
+    struct PendingSample {
+        std::vector<uint8_t> row;
+        Attachments att;
+    };
     PubSubProvider::SubscribeCallback callback_;
+    std::mutex mu_;
     SharedSchema schema_;
+    bool schema_ready_ = false;
+    std::vector<PendingSample> pending_;
+};
+
+// Per-subscription schema handoff. The promise is resolved by the SchemaListener
+// (on a FastDDS thread) when the companion __schema sample arrives; the caller
+// gets the shared_future. Guarded by its OWN mutex — NEVER the provider mutex —
+// so this FastDDS-thread callback can never contend with the provider lock the
+// application thread holds while inside a FastDDS API (which would invert with
+// FastDDS' internal subscriber mutex and deadlock).
+struct SchemaChannel {
+    std::mutex m;
+    std::promise<SharedSchema> promise;
+    std::shared_future<SharedSchema> future;
+    bool resolved = false;
+
+    void Resolve(SharedSchema schema) {
+        std::lock_guard<std::mutex> lk(m);
+        if (resolved) return;
+        promise.set_value(std::move(schema));
+        resolved = true;
+    }
+    void Break(std::exception_ptr error) {
+        std::lock_guard<std::mutex> lk(m);
+        if (resolved) return;
+        promise.set_exception(std::move(error));
+        resolved = true;
+    }
+};
+
+// DataReaderListener for the companion __schema topic. Fires once when the
+// retained schema sample arrives and forwards the deserialised schema to the
+// callback installed by Subscribe (which resolves the subscription's schema
+// future and flushes buffered data samples).
+class SchemaListener : public DataReaderListener {
+   public:
+    explicit SchemaListener(std::function<void(SharedSchema)> on_schema)
+        : on_schema_(std::move(on_schema)) {}
+
+    void on_data_available(DataReader* reader) override {
+        RawBytes raw;
+        SampleInfo info;
+        while (reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK) {
+            if (!info.valid_data) continue;
+            if (fired_.load()) continue;
+            // Deserialize before claiming `fired_`. A malformed (or partially
+            // received) schema sample must not throw out of this Fast DDS
+            // listener thread (which could terminate the process), nor mark the
+            // listener fired — that would leave the schema future unresolved
+            // forever. On failure, wait for a subsequent valid sample.
+            OwnedSchema owned;
+            try {
+                owned = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
+            } catch (...) {
+                continue;
+            }
+            bool expected = false;
+            if (fired_.compare_exchange_strong(expected, true)) {
+                on_schema_(MakeSharedSchema(std::move(owned)));
+            }
+        }
+    }
+
+   private:
+    std::function<void(SharedSchema)> on_schema_;
+    std::atomic<bool> fired_{false};
 };
 
 }  // anonymous namespace
@@ -266,6 +377,12 @@ struct FastDDSPubSubProvider::Impl {
         // Companion schema topic (publisher side).
         Topic* schema_topic = nullptr;
         DataWriter* schema_writer = nullptr;
+        // Companion schema channel (subscriber side): a persistent reader +
+        // listener that resolves schema_promise asynchronously when the schema
+        // arrives — so Subscribe works subscriber-first (before any publisher).
+        DataReader* schema_reader = nullptr;
+        std::unique_ptr<SchemaListener> schema_listener;
+        std::shared_ptr<SchemaChannel> schema_channel;
         // Schema (nanoarrow ArrowSchema).
         OwnedSchema schema;
         bool is_publisher = false;
@@ -342,6 +459,9 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() {
     if (!impl_ || !impl_->participant) return;
 
     for (auto& [name, ts] : impl_->topics) {
+        // Delete the schema reader first: it stops the schema listener (which
+        // resolves the schema channel) before the rest is torn down.
+        if (ts.schema_reader) impl_->subscriber->delete_datareader(ts.schema_reader);
         if (ts.schema_writer) impl_->publisher->delete_datawriter(ts.schema_writer);
         if (ts.writer) impl_->publisher->delete_datawriter(ts.writer);
         if (ts.reader) impl_->subscriber->delete_datareader(ts.reader);
@@ -365,29 +485,52 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
-    if (impl_->topics.count(name))
-        throw std::runtime_error("FastDDS: topic already exists: " + name);
-
-    // Create the data topic.
-    auto* topic = impl_->participant->create_topic(name, impl_->type_support.get_type_name(),
-                                                   TOPIC_QOS_DEFAULT);
-    if (!topic) throw std::runtime_error("FastDDS: failed to create topic: " + name);
-
+    // Idempotent, mirroring the in-process reference provider
+    // (InProcessProvider::CreateTopic): declaring a topic never fails on an
+    // existing one. The topic state may already exist because a subscriber
+    // joined first (subscriber-first) and lazily created it without a schema,
+    // or because a publisher already declared it. Attach the publisher side
+    // and announce the schema exactly once.
     auto& ts = impl_->topics[name];
-    ts.topic = topic;
     ts.is_publisher = true;
 
-    // Create companion __schema topic and eagerly publish the schema
-    // so that late-joining subscribers receive it via TRANSIENT_LOCAL.
+    // The data topic may already exist (created by a prior Subscribe); reuse it.
+    if (!ts.topic) {
+        ts.topic = impl_->participant->create_topic(name, impl_->type_support.get_type_name(),
+                                                    TOPIC_QOS_DEFAULT);
+        if (!ts.topic) throw std::runtime_error("FastDDS: failed to create topic: " + name);
+    }
+
+    // Announce the schema on the companion __schema channel so that
+    // late-joining subscribers — and a subscriber-first reader already waiting
+    // on this provider — receive it via TRANSIENT_LOCAL.
     if (schema) {
+        std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
+
+        if (ts.schema_writer) {
+            // A publisher already announced a schema for this topic. Idempotent
+            // for an identical schema (fan-in / re-declaration); a different one
+            // is a genuine conflict that must not be silently dropped.
+            if (ts.schema && ipc != SerializeSchemaIpc(ts.schema.get())) {
+                throw std::runtime_error(
+                    "FastDDS: topic already declared with a conflicting schema: " + name);
+            }
+            return;
+        }
+
+        // First schema announcement (possibly attaching to a topic state a
+        // subscriber-first reader already created).
         ts.schema = OwnedSchema::DeepCopy(schema.get());
 
         std::string schema_name = name + "/__schema";
-        auto* stopic = impl_->participant->create_topic(
-            schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
-        if (!stopic)
-            throw std::runtime_error("FastDDS: failed to create schema topic: " + schema_name);
-        ts.schema_topic = stopic;
+        // The __schema topic may already exist (a subscriber-first reader
+        // created it to await the schema); reuse it.
+        if (!ts.schema_topic) {
+            ts.schema_topic = impl_->participant->create_topic(
+                schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+            if (!ts.schema_topic)
+                throw std::runtime_error("FastDDS: failed to create schema topic: " + schema_name);
+        }
 
         DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
         wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -395,13 +538,13 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         wqos.history().depth = 1;
         wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
 
-        ts.schema_writer = impl_->publisher->create_datawriter(stopic, wqos);
+        ts.schema_writer = impl_->publisher->create_datawriter(ts.schema_topic, wqos);
         if (!ts.schema_writer)
             throw std::runtime_error("FastDDS: failed to create schema DataWriter for: " +
                                      schema_name);
 
         RawBytes raw;
-        raw.data = SerializeSchemaIpc(schema.get());
+        raw.data = std::move(ipc);
         ts.schema_writer->write(&raw);
     }
 }
@@ -436,106 +579,117 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback) {
     std::string name = internal::JoinSegments(topic_segments);
-    OwnedSchema schema;
-
-    // --- Phase 1: read schema from companion topic (outside lock) ---
-    {
-        std::lock_guard lock(impl_->mu);
-
-        auto it = impl_->topics.find(name);
-        if (it != impl_->topics.end() && it->second.schema) {
-            // Publisher-side or previously resolved: schema already cached.
-            schema = OwnedSchema::DeepCopy(it->second.schema.get());
-        }
-    }
-
-    if (!schema) {
-        // Subscriber-side: read from the companion __schema topic.
-        std::string schema_name = name + "/__schema";
-
-        // Find or create the DDS topic for the schema channel.
-        auto* stopic = impl_->participant->create_topic(
-            schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
-        if (!stopic)
-            throw std::runtime_error("FastDDS: failed to find/create schema topic: " + schema_name);
-
-        DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
-        rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-        rqos.history().kind = KEEP_LAST_HISTORY_QOS;
-        rqos.history().depth = 1;
-        rqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
-
-        auto* schema_reader = impl_->subscriber->create_datareader(stopic, rqos);
-        if (!schema_reader)
-            throw std::runtime_error("FastDDS: failed to create schema DataReader for: " +
-                                     schema_name);
-
-        // Poll for the retained schema sample (TRANSIENT_LOCAL delivers it
-        // once the DataWriter is matched).
-        RawBytes raw;
-        SampleInfo info;
-        constexpr int kMaxRetries = 50;
-        constexpr int kRetryMs = 100;
-        bool got_schema = false;
-        for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-            if (schema_reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK &&
-                info.valid_data) {
-                schema = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
-                got_schema = true;
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryMs));
-        }
-
-        // Clean up the temporary schema reader.
-        impl_->subscriber->delete_datareader(schema_reader);
-        impl_->participant->delete_topic(stopic);
-
-        if (!got_schema)
-            throw std::runtime_error("FastDDS: timed out waiting for schema on: " + schema_name);
-    }
-
-    // --- Phase 2: register topic and create data DataReader (under lock) ---
     std::lock_guard lock(impl_->mu);
 
     auto& ts = impl_->topics[name];
-    if (!ts.schema && schema) ts.schema = OwnedSchema::DeepCopy(schema.get());
+    if (ts.reader) throw std::runtime_error("FastDDS: already subscribed to: " + name);
 
-    // Create or find the data DDS topic if not already present.
+    // Data DDS topic.
     if (!ts.topic) {
         ts.topic = impl_->participant->create_topic(name, impl_->type_support.get_type_name(),
                                                     TOPIC_QOS_DEFAULT);
         if (!ts.topic) throw std::runtime_error("FastDDS: failed to create topic: " + name);
     }
 
-    if (ts.reader) throw std::runtime_error("FastDDS: already subscribed to: " + name);
+    // Fresh schema channel for this subscription (its own mutex; see SchemaChannel).
+    ts.schema_channel = std::make_shared<SchemaChannel>();
+    ts.schema_channel->future = ts.schema_channel->promise.get_future().share();
 
-    ts.listener = std::make_unique<SubscriptionListener>(
-        std::move(callback),
-        ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())) : nullptr);
+    // Data DataReader. The schema may not be known yet (subscriber-first); the
+    // listener then buffers samples until it arrives, so the callback is never
+    // invoked with a null schema.
+    SharedSchema initial =
+        ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())) : nullptr;
+    ts.listener = std::make_unique<SubscriptionListener>(std::move(callback), std::move(initial));
 
     DataReaderQos rqos = impl_->ResolveReaderQos(name);
-
     ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get());
     if (!ts.reader) throw std::runtime_error("FastDDS: failed to create DataReader for: " + name);
 
-    OwnedSchema result_schema;
-    if (ts.schema) result_schema = OwnedSchema::DeepCopy(ts.schema.get());
-    return {std::move(result_schema)};
+    if (ts.schema) {
+        // Schema already known on this provider (publisher-side / cached):
+        // resolve the future immediately. Non-blocking.
+        ts.schema_channel->Resolve(MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())));
+    } else {
+        // Subscriber-side: acquire the schema asynchronously from the
+        // companion __schema channel via a persistent reader + listener.
+        // Subscribe neither blocks nor throws if no publisher exists yet —
+        // the schema (and any buffered data) is delivered once one appears.
+        std::string schema_name = name + "/__schema";
+        if (!ts.schema_topic) {
+            ts.schema_topic = impl_->participant->create_topic(
+                schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+            if (!ts.schema_topic)
+                throw std::runtime_error("FastDDS: failed to create schema topic: " + schema_name);
+        }
+
+        DataReaderQos sqos = DATAREADER_QOS_DEFAULT;
+        sqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+        sqos.history().kind = KEEP_LAST_HISTORY_QOS;
+        sqos.history().depth = 1;
+        sqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+
+        SubscriptionListener* data_listener = ts.listener.get();
+        // The schema handoff uses the channel's OWN mutex (captured by shared_ptr),
+        // NOT impl_->mu. on_schema runs on a FastDDS listener thread; if it took
+        // impl_->mu it would invert with the application thread that holds
+        // impl_->mu while inside a FastDDS API (create_datareader, etc.), which
+        // holds FastDDS' internal subscriber mutex → deadlock. Keeping it off
+        // impl_->mu means the provider lock can be held safely across FastDDS calls.
+        std::shared_ptr<SchemaChannel> chan = ts.schema_channel;
+        auto on_schema = [chan, data_listener](SharedSchema sch) {
+            chan->Resolve(sch);                        // resolve the future (channel mutex)
+            data_listener->SetSchema(std::move(sch));  // flush buffered samples
+        };
+        ts.schema_listener = std::make_unique<SchemaListener>(std::move(on_schema));
+        ts.schema_reader =
+            impl_->subscriber->create_datareader(ts.schema_topic, sqos, ts.schema_listener.get());
+        if (!ts.schema_reader)
+            throw std::runtime_error("FastDDS: failed to create schema DataReader for: " +
+                                     schema_name);
+    }
+
+    return {ts.schema_channel->future};
 }
 
 void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
     std::string name = internal::JoinSegments(topic_segments);
-    std::lock_guard lock(impl_->mu);
 
-    auto it = impl_->topics.find(name);
-    if (it == impl_->topics.end()) throw std::runtime_error("FastDDS: unknown topic: " + name);
+    DataReader* schema_reader = nullptr;
+    DataReader* data_reader = nullptr;
+    std::shared_ptr<SchemaChannel> chan;
+    {
+        std::lock_guard lock(impl_->mu);
+        auto it = impl_->topics.find(name);
+        if (it == impl_->topics.end()) return;
 
-    auto& ts = it->second;
-    if (ts.reader) {
-        impl_->subscriber->delete_datareader(ts.reader);
+        auto& ts = it->second;
+        schema_reader = ts.schema_reader;
+        ts.schema_reader = nullptr;
+        data_reader = ts.reader;
         ts.reader = nullptr;
-        ts.listener.reset();
+        chan = ts.schema_channel;
+    }
+
+    // If the schema never arrived, break the promise so a waiting get() does
+    // not block forever (channel's own mutex, not the provider lock).
+    if (chan) {
+        chan->Break(std::make_exception_ptr(
+            std::runtime_error("FastDDS: unsubscribed before schema arrived: " + name)));
+    }
+
+    // Delete the readers OUTSIDE the lock: their listener callbacks (the
+    // schema listener in particular) acquire the provider mutex. Deleting the
+    // schema reader first waits for any in-flight schema delivery to finish.
+    if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
+    if (data_reader) impl_->subscriber->delete_datareader(data_reader);
+
+    // No callbacks can be running now; drop the listeners.
+    std::lock_guard lock(impl_->mu);
+    auto it = impl_->topics.find(name);
+    if (it != impl_->topics.end()) {
+        it->second.listener.reset();
+        it->second.schema_listener.reset();
     }
 }
 

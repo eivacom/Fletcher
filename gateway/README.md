@@ -22,9 +22,14 @@ The gateway knows nothing semantically about topic schemas, and nothing about wh
 
 This keeps the gateway as a pure byte router: it forwards row bytes between publishers and subscribers without ever inspecting their structure, while still letting clients that need a schema discover one over the wire.
 
-## Provider note (current limitation)
+## Providers
 
-`gateway` currently always uses an in-process loopback provider. There is no DDS-backed provider yet, so the practical use today is the end-to-end integration test ([integration-tests/gateway-end-to-end](../integration-tests/gateway-end-to-end/README.md)). Once a real provider exists this same exe will gain a `--provider TYPE` switch — the rest of the CLI is designed to stay stable.
+The gateway routes between WebSocket clients and a pub/sub provider chosen with `--provider`:
+
+- **`inprocess`** (default) — an in-process loopback that only connects WebSocket clients on the same gateway process. This is what the [gateway-end-to-end](../integration-tests/gateway-end-to-end/README.md) integration test exercises.
+- **`fastdds`** — a [FastDDS](../fastdds-pubsub-provider/README.md)-backed provider that bridges the gateway to any FastDDS app on the same DDS domain (`--domain-id`). The gateway becomes a DDS subscriber/publisher on behalf of its WebSocket clients, so a TypeScript client can subscribe to — or publish to — data flowing over DDS. The end-to-end coverage lives in [integration-tests/gateway-fastdds-ts](../integration-tests/gateway-fastdds-ts/README.md).
+
+Both providers are always compiled into the exe and the released binary; `--provider` selects between them at runtime. The `fastdds` provider runs on Fletcher's default QoS profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`); per-topic QoS is not configurable from the gateway CLI.
 
 ## Installing
 
@@ -59,6 +64,8 @@ gateway --port 9090 --bind-address 0.0.0.0
 |---|---|---|
 | `--port N` | `9090` | TCP port to listen on. |
 | `--bind-address ADDR` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only deployments. |
+| `--provider TYPE` | `inprocess` | Pub/sub provider: `inprocess` (loopback between WebSocket clients) or `fastdds` (bridge to FastDDS apps on a DDS domain). Both are compiled in; the switch selects at runtime. |
+| `--domain-id N` | `0` | DDS domain id for the `fastdds` provider. Ignored by `inprocess`. |
 | `--version` | — | Print `fletcher-gateway <version>` and exit. The version string is read from `gateway/VERSION` at build time. |
 | `--help`, `-h` | — | Print usage and exit. |
 
@@ -77,6 +84,7 @@ Gateway depends on (resolved via Conan):
 
 - `fletcher-core`
 - `fletcher-pubsub`
+- `fletcher-fastdds-pubsub-provider` (for the `fastdds` provider; pulls in Fast DDS)
 - `boost` (Beast + Asio, header-only)
 - `nlohmann_json`
 
@@ -158,4 +166,4 @@ binary frames:
 
 ## Tracked gaps
 
-- No DDS-backed provider yet — the in-process loopback is the only option. Will gain a `--provider TYPE` selector when a real provider lands.
+- Per-topic QoS is not configurable from the gateway CLI — the `fastdds` provider uses Fletcher's default QoS profile for every topic.

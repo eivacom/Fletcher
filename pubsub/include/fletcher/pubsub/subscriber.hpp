@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,10 +36,13 @@ class Subscriber {
     Subscriber(const Subscriber&) = delete;
     Subscriber& operator=(const Subscriber&) = delete;
 
-    /// Result returned by Subscribe.
+    /// Result returned by Subscribe. `schema` is a future for the topic's
+    /// schema (see SubscriptionResult): non-blocking, resolves with a
+    /// non-null SharedSchema once known. Shared across fan-out subscribers
+    /// to the same topic.
     struct SubscribeResult {
         uint64_t subscription_id;
-        OwnedSchema schema;
+        std::shared_future<SharedSchema> schema;
     };
 
     /// User callback. The first parameter is the subscription_id this

@@ -19,6 +19,7 @@
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -83,8 +84,9 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 
     // Subscribe internally polls until the schema arrives via the companion
     // /__schema topic, so once it returns the subscriber knows the schema.
-    ASSERT_NE(result.schema, nullptr);
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr);
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
     // No sleep before publish. The data-topic DataWriter is RELIABLE +
     // TRANSIENT_LOCAL + KEEP_ALL, so the sample is retained and delivered
@@ -138,7 +140,7 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         cv.notify_all();
     });
 
-    ASSERT_NE(result.schema, nullptr);
+    ASSERT_NE(result.schema.get(), nullptr);
 
     // No sleep before publish. KEEP_ALL durability retains every sample
     // until the reader matches and consumes them in published order.
@@ -214,8 +216,9 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
         },
         opt);
 
-    ASSERT_NE(result.schema, nullptr);
-    EXPECT_TRUE(result.schema->Equals(*schema, /*check_metadata=*/false));
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr);
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
     // Publish exactly max_rows samples — RELIABLE + TRANSIENT_LOCAL + KEEP_ALL
     // guarantees ordered delivery to the matched DataReader. Once the batcher
@@ -261,4 +264,68 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
     EXPECT_EQ(labels->GetString(0), "a");
     EXPECT_EQ(labels->GetString(1), "b");
     EXPECT_EQ(labels->GetString(2), "c");
+}
+
+// ---------------------------------------------------------------------------
+// Subscriber-first over real FastDDS via the Arrow adapter.
+//
+// Subscribe BEFORE any publisher/CreateTopic exists. SubscriberArrow::Subscribe
+// must be non-blocking (the schema future is deferred and not yet ready), and
+// once the publisher comes up the row is delivered and the future resolves to
+// the publisher's schema. Guards the non-blocking SubscriberArrow contract
+// directly over FastDDS (no XRCE Agent) — the companion to the XRCE interop
+// test's XrceSubscribeBeforeFastDDSPublish.
+// ---------------------------------------------------------------------------
+TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
+    FastDDSProviderOptions pub_opts;
+    pub_opts.domain_id = kTestDomain;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
+    FastDDSProviderOptions sub_opts;
+    sub_opts.domain_id = kTestDomain;
+    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool received = false;
+    ArrowRow rx_row;
+
+    PublisherArrow pub(pub_provider);
+    SubscriberArrow sub(sub_provider);
+
+    const auto schema = SensorSchema();
+    const std::vector<std::string> topic{"sensor", "subfirst"};
+
+    // Subscribe with no publisher present — must return immediately.
+    auto result = sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
+        std::lock_guard<std::mutex> lk(mu);
+        rx_row = std::move(row);
+        received = true;
+        cv.notify_all();
+    });
+
+    // The Arrow schema future is deferred and resolves from the publisher's
+    // /__schema; with no publisher yet it must not be ready.
+    EXPECT_NE(result.schema.wait_for(0s), std::future_status::ready);
+
+    // Bring the publisher up now. RELIABLE + TRANSIENT_LOCAL + KEEP_ALL retains
+    // the schema + row for the already-subscribed, late-matching DataReader.
+    pub.CreateTopic(topic, schema);
+    pub.Publish(topic, SensorRow(42, 23.5, "alpha"));
+
+    // The deferred future resolves once /__schema arrives — guaranteed non-null.
+    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    ASSERT_NE(sub_schema, nullptr);
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return received; }))
+            << "subscriber-first callback never fired within 10 s";
+    }
+    sub.Unsubscribe(result.subscription_id);
+
+    ASSERT_EQ(rx_row.size(), 3u);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Scalar>(rx_row[0])->value, 42);
+    EXPECT_EQ(std::static_pointer_cast<arrow::DoubleScalar>(rx_row[1])->value, 23.5);
+    EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(rx_row[2])->ToString(), "alpha");
 }

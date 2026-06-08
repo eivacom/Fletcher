@@ -1,0 +1,17 @@
+{
+  "name": "gateway-fastdds-ts-integration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end integration test: a C++ FastDDS peer and a TypeScript gateway-client both pub/sub through the gateway's FastDDS provider, in both directions.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

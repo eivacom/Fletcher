@@ -53,11 +53,11 @@ class MockProvider : public PubSubProvider {
         std::string key = Join(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
-        OwnedSchema schema;
+        SharedSchema schema;
         if (it != schemas_.end()) {
-            schema = OwnedSchema::DeepCopy(it->second.get());
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {std::move(schema)};
+        return {MakeReadySchemaFuture(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -94,6 +94,17 @@ static OwnedSchema TestSchema() {
     return schema;
 }
 
+/// A schema that differs from TestSchema() (different field name + type) so a
+/// re-declaration with it is a genuine conflict.
+static OwnedSchema TestSchemaB() {
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "y");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_DOUBLE);
+    return schema;
+}
+
 static const std::vector<std::string> kTopic = {"test", "topic"};
 
 /// Encode a test row as positional format: [null_bitfield(1 byte)] [int32 LE].
@@ -125,12 +136,23 @@ TEST(PublisherTest, CreateTopicDelegatesToProvider) {
     EXPECT_EQ(mock->topics_created[0], "test/topic");
 }
 
-TEST(PublisherTest, CreateTopicRejectsDuplicates) {
+TEST(PublisherTest, CreateTopicIsIdempotentForSameSchema) {
     auto mock = std::make_shared<MockProvider>();
     Publisher publisher(mock);
 
     publisher.CreateTopic(kTopic, TestSchema());
-    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchema()), std::runtime_error);
+    // Re-declaring with an identical schema is a no-op (lets several publishers
+    // share one topic) and does not reach the provider a second time.
+    EXPECT_NO_THROW(publisher.CreateTopic(kTopic, TestSchema()));
+    EXPECT_EQ(mock->topics_created.size(), 1u);
+}
+
+TEST(PublisherTest, CreateTopicRejectsConflictingSchema) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema());
+    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchemaB()), std::runtime_error);
 }
 
 TEST(PublisherTest, ListTopics) {
@@ -206,9 +228,11 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
     Subscriber::SubscribeResult result = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
     ASSERT_TRUE(result.schema.valid());
-    EXPECT_EQ(result.schema->n_children, 1);
-    EXPECT_EQ(std::string(result.schema->children[0]->name), "x");
-    EXPECT_EQ(std::string(result.schema->children[0]->format), "i");
+    SharedSchema sch = result.schema.get();
+    ASSERT_TRUE(sch);
+    EXPECT_EQ(sch->n_children, 1);
+    EXPECT_EQ(std::string(sch->children[0]->name), "x");
+    EXPECT_EQ(std::string(sch->children[0]->format), "i");
 }
 
 TEST(SubscriberTest, MultiSubscriberFanOut) {

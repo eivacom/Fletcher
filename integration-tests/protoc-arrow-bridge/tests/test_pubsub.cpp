@@ -87,10 +87,11 @@ class MockPubSubProvider : public PubSubProvider {
         subscribers[segments] = std::move(callback);
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
-                return {OwnedSchema::DeepCopy(ct.schema.get())};
+                return {MakeReadySchemaFuture(
+                    MakeSharedSchema(OwnedSchema::DeepCopy(ct.schema.get())))};
             }
         }
-        return {};
+        return {MakeReadySchemaFuture(nullptr)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {

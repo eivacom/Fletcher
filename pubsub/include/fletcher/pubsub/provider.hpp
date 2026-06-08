@@ -8,6 +8,7 @@
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,11 +17,27 @@
 
 namespace fletcher {
 
-/// Result returned by PubSubProvider::Subscribe, carrying the schema
-/// that the publisher registered when it created the topic.
+/// Result returned by PubSubProvider::Subscribe.
+///
+/// `schema` is a future for the topic's schema. Subscribe never blocks to
+/// obtain it: the future resolves with a non-null SharedSchema once the
+/// schema is known — immediately for providers that already hold it, or
+/// asynchronously when a publisher announces it (late-joining subscribers).
+/// Consumers may ignore the future, or wait on it (`get()`/`wait_for()`) if
+/// they need the schema out-of-band. Either way the per-sample SharedSchema
+/// delivered to the SubscribeCallback carries the schema for each row.
 struct SubscriptionResult {
-    OwnedSchema schema;
+    std::shared_future<SharedSchema> schema;
 };
+
+/// Build a SubscriptionResult schema future that is already resolved with
+/// `schema`. For providers that know the schema synchronously at Subscribe
+/// time (in-process loopback, mocks, and — for now — publisher-first DDS).
+inline std::shared_future<SharedSchema> MakeReadySchemaFuture(SharedSchema schema) {
+    std::promise<SharedSchema> p;
+    p.set_value(std::move(schema));
+    return p.get_future().share();
+}
 
 /// Abstract transport provider for pub/sub.
 ///
@@ -43,9 +60,13 @@ class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;
 
-    /// Called once per topic by the publisher.  The schema describes the
-    /// Arrow structure of rows on this topic.  Ownership of the schema
-    /// is transferred to the provider.
+    /// Declares a topic and its schema; called on the publisher side. The
+    /// schema describes the Arrow structure of rows on this topic and its
+    /// ownership is transferred to the provider. Subscribers do not call this —
+    /// they learn the schema out-of-band (see Subscribe). Re-declaring a topic
+    /// with an identical schema is idempotent (so several publishers may share
+    /// one topic); providers may reject a re-declaration with a conflicting
+    /// schema.
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
                              OwnedSchema schema) = 0;
 
