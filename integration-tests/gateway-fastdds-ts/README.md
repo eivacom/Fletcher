@@ -29,7 +29,11 @@ The C++ peer (`src/fastdds_peer.cpp`) publishes a known set of rows on
 `RECV ...` line. The vitest suite (`test/gateway-fastdds.test.ts`) drives the
 TS side and asserts both directions, plus that the publisher-announced schema
 propagates the whole chain (FastDDS `__schema` → gateway → WebSocket
-`subscribed` response).
+`subscribed` response). A fourth case covers **TS subscriber-first**: a TS
+client subscribes to a fresh topic through the gateway before any publisher
+exists, then a second client declares the topic and publishes — and the first
+client receives it (the subscribe path is non-blocking and the late publisher
+is matched).
 
 QoS is Fletcher's default profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`)
 on both sides, so a late-joining reader still receives previously published

@@ -4,7 +4,7 @@ End-to-end test that verifies the C++ `gateway/` (WebSocket server) and the Type
 
 ## What it covers
 
-Tests are split across two files by whether they need the proto-gen toolchain. Both spawn their own gateway on different TCP ports (19091 / 19092 — overridable via `TEST_PORT`) so vitest can run them in parallel.
+Tests are split across two files by whether they need the proto-gen toolchain. Each file runs its whole suite against **both** providers (`inprocess` and `fastdds`) as separate test contexts (`describe.each`), so a single `npm test` proves the gateway behaves identically regardless of provider. Each context spawns its own gateway on its own TCP port (inprocess `19091` / `19092`, fastdds `19094` / `19095` — base overridable via `TEST_PORT`); the fastdds contexts use isolated DDS domains.
 
 ### `test/end-to-end.test.ts` — protocol coverage, no proto-gen
 
@@ -16,6 +16,7 @@ Tests are split across two files by whether they need the proto-gen toolchain. B
 | `FletcherClient subscribe(topic, cb) uses the gateway-supplied schema` | Round-trip after the publisher announced the schema, with the subscriber calling `subscribe(topic, callback)` and no local schema — verifies the client's fallback decode path uses the server-supplied schema. |
 | `server -> client MESSAGE frame is [SUB_ID :8 LE][ENVELOPE]` | Subscribes on a raw `WebSocket`, publishes on the same socket to trigger a loopback delivery; asserts the binary frame layout byte-for-byte. |
 | `client -> server PUBLISH frame is [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE]` | Built with `buildPublish` from the TS protocol module; raw bytes asserted against the documented format. |
+| `createTopic schema conflict` | Re-declaring a topic with an identical schema is idempotent (fan-in), but a different schema for the same topic is rejected with a `conflicting schema` error. Runs in both provider contexts. |
 
 ### `test/protoc-gen.test.ts` — proto-gen toolchain coverage
 
@@ -36,18 +37,20 @@ The CLI args used at spawn time are minimal:
 
 | Arg | Value | Purpose |
 |---|---|---|
-| `--port N` | `19091` | TCP port; high number to minimise collision with system services. |
+| `--port N` | `19091`–`19095` | TCP port; per provider context (see above). |
 | `--bind-address ADDR` | `127.0.0.1` | Loopback only. |
+| `--provider TYPE` | `inprocess` / `fastdds` | Pub/sub backend; the suite spawns one gateway per provider. |
+| `--domain-id N` | (fastdds only) | Isolated DDS domain for the `fastdds` context. |
 
-The gateway is schema-agnostic — there is no `--config` and no topic pre-declaration. Topics are established when the test client subscribes; schemas live entirely on the test side via the proto-generated `TelemetrySchema` (from [`proto/telemetry.proto`](proto/telemetry.proto)). A real DDS-backed provider for `gateway` is tracked separately; once it exists this same exe will gain a `--provider TYPE` switch.
+The gateway is schema-agnostic — there is no `--config` and no topic pre-declaration. Topics are established when the test client subscribes; schemas live entirely on the test side via the proto-generated `TelemetrySchema` (from [`proto/telemetry.proto`](proto/telemetry.proto)). The gateway selects its pub/sub backend with `--provider {inprocess|fastdds}` and this suite runs against both; the cross-language FastDDS bridge (a real external DDS app ↔ the gateway) is covered by [gateway-fastdds-ts](../gateway-fastdds-ts/README.md).
 
 ## How it runs in CI
 
 The workflow `.github/workflows/ci.integration-test.gateway-end-to-end.yml` triggers on PRs touching `core/`, `pubsub/`, `gateway/`, `gateway-client-ts/`, this directory, or its workflow file. It:
 
-1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`) via `conan create <component>/.` into the local Conan cache.
+1. Builds the required Fletcher components (`core`, `pubsub`, `protoc`, `fastdds-pubsub-provider`) via `conan create <component>/.` into the local Conan cache. The gateway always links the FastDDS provider, so it is built even though the default provider is `inprocess`.
 2. Runs `conan install` + `cmake --preset` + `cmake --build` in this directory to produce `build/Release/gateway_build/gateway`.
-3. Runs `npm ci` + `npm test` to execute the vitest suite against the binary.
+3. Sources the Conan run environment (`conanrun.sh`, so the FastDDS-linked gateway finds its shared libs at runtime), then runs `npm ci` + `npm test` to execute the vitest suite — once per provider context — against the binary.
 
 ## Running locally
 
@@ -65,7 +68,11 @@ conan create pubsub/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-R
 conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-`protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure.
+```bash
+conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+```
+
+`protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure. `fastdds-pubsub-provider` is needed because the gateway always links the FastDDS provider, and the suite runs its `fastdds` provider context.
 
 Then build and run the integration test itself:
 
@@ -90,10 +97,10 @@ npm ci
 ```
 
 ```bash
-npm test
+source build/Release/generators/conanrun.sh && npm test
 ```
 
-The vitest suite spawns `build/Release/gateway_build/gateway` with `--port`, `--bind-address`, and `--config test-config.yml`, waits for `READY <port>`, runs the four scenarios, and tears the gateway down via `stop\n` on stdin.
+`conanrun.sh` puts the FastDDS shared libs on the loader path so the gateway's `fastdds` provider context can start. The vitest suite spawns `build/Release/gateway_build/gateway` with `--port`, `--bind-address`, and `--provider` (one gateway per provider context), waits for `READY <port>`, runs the scenarios against each, and tears each gateway down via `stop\n` on stdin.
 
 ### Overriding the binary location
 

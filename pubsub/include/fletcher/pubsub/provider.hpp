@@ -60,9 +60,13 @@ class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;
 
-    /// Called once per topic by the publisher.  The schema describes the
-    /// Arrow structure of rows on this topic.  Ownership of the schema
-    /// is transferred to the provider.
+    /// Declares a topic and its schema; called on the publisher side. The
+    /// schema describes the Arrow structure of rows on this topic and its
+    /// ownership is transferred to the provider. Subscribers do not call this —
+    /// they learn the schema out-of-band (see Subscribe). Re-declaring a topic
+    /// with an identical schema is idempotent (so several publishers may share
+    /// one topic); providers may reject a re-declaration with a conflicting
+    /// schema.
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
                              OwnedSchema schema) = 0;
 
