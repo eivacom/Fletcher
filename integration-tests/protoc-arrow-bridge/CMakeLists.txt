@@ -76,10 +76,11 @@ foreach(_stem IN LISTS PROTO_STEMS)
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
+                "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${_src}"
         DEPENDS "${_src}" fletcher-protoc::plugin
-                "${PROTO_DIR}/fletcher/options.proto"
+                "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
