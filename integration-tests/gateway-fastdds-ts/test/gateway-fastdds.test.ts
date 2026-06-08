@@ -284,4 +284,40 @@ describe('gateway FastDDS provider — bidirectional', () => {
     await keepAlive.unsubscribe(subId);
     keepAlive.close();
   });
+
+  it('TS subscribe-first: a TS client subscribes before any publisher, then receives', async () => {
+    // The headline subscriber-first contract at the gateway/TS level: a TS
+    // client subscribes to a brand-new topic the C++ peer never touches, so the
+    // gateway's FastDDS provider has no DataWriter for it yet. A second TS
+    // client then declares the topic (createTopic) and publishes. The first
+    // client's reader must match the late writer and deliver the row.
+    //
+    // createTopic-after-subscribe on the same provider works because the
+    // provider's CreateTopic is idempotent (it attaches the publisher side and
+    // announces the schema on the topic state the subscribe already created),
+    // matching the in-process reference provider.
+    const TOPIC = 'gwfastdds/SensorFeed/TsSubFirst';
+
+    const sub = new FletcherClient({ url: TEST_URL });
+    await sub.connect();
+    const received: ISensorReading[] = [];
+    await sub.subscribe(TOPIC, SensorReading, (row) => {
+      received.push(row);
+    });
+
+    const pub = new FletcherClient({ url: TEST_URL });
+    await pub.connect();
+    await pub.createTopic(TOPIC, SensorReading);
+    await pub.publish(TOPIC, SensorReading, { sensor_id: 55, value: 9.5, unit: 'late' });
+
+    await waitFor(() => received.some((r) => r.sensor_id === 55), 15_000);
+
+    const got = received.find((r) => r.sensor_id === 55);
+    expect(got, `received: ${JSON.stringify(received)}`).toBeDefined();
+    expect(got!.value).toBeCloseTo(9.5);
+    expect(got!.unit).toBe('late');
+
+    pub.close();
+    sub.close();
+  });
 });

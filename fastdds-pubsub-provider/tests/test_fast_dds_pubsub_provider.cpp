@@ -54,10 +54,14 @@ TEST(FastDDSPubSubProviderTest, CreateTopicSucceeds) {
     EXPECT_NO_THROW(p.CreateTopic({"create", "ok"}, MakeSchema()));
 }
 
-TEST(FastDDSPubSubProviderTest, CreateTopicRejectsDuplicate) {
+TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
+    // CreateTopic mirrors the in-process reference provider: declaring an
+    // already-existing topic is a no-op, not an error. This lets a publisher
+    // attach to a topic a subscriber created first (subscriber-first) and
+    // makes repeated declarations harmless.
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     p.CreateTopic({"create", "dup"}, MakeSchema());
-    EXPECT_THROW(p.CreateTopic({"create", "dup"}, MakeSchema()), std::runtime_error);
+    EXPECT_NO_THROW(p.CreateTopic({"create", "dup"}, MakeSchema()));
 }
 
 TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {

@@ -474,29 +474,39 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
-    if (impl_->topics.count(name))
-        throw std::runtime_error("FastDDS: topic already exists: " + name);
-
-    // Create the data topic.
-    auto* topic = impl_->participant->create_topic(name, impl_->type_support.get_type_name(),
-                                                   TOPIC_QOS_DEFAULT);
-    if (!topic) throw std::runtime_error("FastDDS: failed to create topic: " + name);
-
+    // Idempotent, mirroring the in-process reference provider
+    // (InProcessProvider::CreateTopic): declaring a topic never fails on an
+    // existing one. The topic state may already exist because a subscriber
+    // joined first (subscriber-first) and lazily created it without a schema,
+    // or because a publisher already declared it. Attach the publisher side
+    // and announce the schema exactly once.
     auto& ts = impl_->topics[name];
-    ts.topic = topic;
     ts.is_publisher = true;
 
-    // Create companion __schema topic and eagerly publish the schema
-    // so that late-joining subscribers receive it via TRANSIENT_LOCAL.
-    if (schema) {
+    // The data topic may already exist (created by a prior Subscribe); reuse it.
+    if (!ts.topic) {
+        ts.topic = impl_->participant->create_topic(name, impl_->type_support.get_type_name(),
+                                                    TOPIC_QOS_DEFAULT);
+        if (!ts.topic) throw std::runtime_error("FastDDS: failed to create topic: " + name);
+    }
+
+    // Announce the schema on the companion __schema channel so that
+    // late-joining subscribers — and a subscriber-first reader already waiting
+    // on this provider — receive it via TRANSIENT_LOCAL. Done exactly once: a
+    // repeated CreateTopic, or one issued after a Subscribe already opened the
+    // __schema reader, must not create a duplicate writer.
+    if (schema && !ts.schema_writer) {
         ts.schema = OwnedSchema::DeepCopy(schema.get());
 
         std::string schema_name = name + "/__schema";
-        auto* stopic = impl_->participant->create_topic(
-            schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
-        if (!stopic)
-            throw std::runtime_error("FastDDS: failed to create schema topic: " + schema_name);
-        ts.schema_topic = stopic;
+        // The __schema topic may already exist (a subscriber-first reader
+        // created it to await the schema); reuse it.
+        if (!ts.schema_topic) {
+            ts.schema_topic = impl_->participant->create_topic(
+                schema_name, impl_->schema_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+            if (!ts.schema_topic)
+                throw std::runtime_error("FastDDS: failed to create schema topic: " + schema_name);
+        }
 
         DataWriterQos wqos = DATAWRITER_QOS_DEFAULT;
         wqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -504,7 +514,7 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         wqos.history().depth = 1;
         wqos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
 
-        ts.schema_writer = impl_->publisher->create_datawriter(stopic, wqos);
+        ts.schema_writer = impl_->publisher->create_datawriter(ts.schema_topic, wqos);
         if (!ts.schema_writer)
             throw std::runtime_error("FastDDS: failed to create schema DataWriter for: " +
                                      schema_name);
