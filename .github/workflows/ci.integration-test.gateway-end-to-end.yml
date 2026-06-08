@@ -116,16 +116,19 @@ jobs:
         run: npm ci
 
       - name: npm test
-        shell: pwsh
+        shell: cmd
         working-directory: integration-tests/gateway-end-to-end
         run: |
-          # The gateway always links FastDDS (shared), so its DLLs must be on
-          # PATH before the exe is spawned by the test. `conan build .` emitted a
-          # run-env script; dot-source it so the gateway can load libfastdds /
-          # libfastcdr. The path varies with the MSVC multi-config layout, so
-          # locate the script rather than hard-coding it. (A future
-          # self-contained deploy — libs next to the exe — removes this need.)
-          $rc = Get-ChildItem -Recurse -Filter conanrun.ps1 -Path build -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $rc) { throw "conanrun.ps1 not found under build/ — cannot set the FastDDS DLL path" }
-          . $rc.FullName
+          @echo off
+          rem The gateway always links FastDDS (shared), so its DLLs must be on
+          rem PATH before the exe is spawned by the test. `conan build .` emits a
+          rem run-env launcher (conanrun.bat on Windows); locate it under build/
+          rem (the path varies with the MSVC multi-config layout), call it to set
+          rem PATH, then run the tests. A future self-contained deploy (libs next
+          rem to the exe) removes this need.
+          set "RC="
+          for /r build %%f in (conanrun.bat) do set "RC=%%f"
+          if not defined RC ( echo ERROR: conanrun.bat not found under build/ & exit /b 1 )
+          echo Using run-env: %RC%
+          call "%RC%"
           npm test
