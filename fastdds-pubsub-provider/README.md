@@ -110,7 +110,7 @@ publisher.CreateTopic({"misc", "events"},       schema_d);    // uses default_wr
 
 ### Constraints
 
-- `CreateTopic` must be called before `Publish` on the publisher side. Re-declaring a topic with an identical schema is idempotent (so several publishers may share one topic); re-declaring it with a _different_ schema throws (a conflict).
+- `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict.
 - On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `std::shared_future<SharedSchema>` that resolves when the schema is known, and the provider buffers incoming data until then so the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.)
 - Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
 - The subscription callback is invoked from a Fast DDS internal listener thread. Shared state accessed from the callback must be protected externally.
