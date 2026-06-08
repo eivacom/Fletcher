@@ -122,13 +122,14 @@ jobs:
           @echo off
           rem The gateway always links FastDDS (shared), so its DLLs must be on
           rem PATH before the exe is spawned by the test. `conan build .` emits a
-          rem run-env launcher (conanrun.bat on Windows); locate it under build/
-          rem (the path varies with the MSVC multi-config layout), call it to set
-          rem PATH, then run the tests. A future self-contained deploy (libs next
-          rem to the exe) removes this need.
+          rem run-env launcher (conanrun.bat) in its generators folder; call it
+          rem to set PATH, then run the tests. The path varies with the MSVC
+          rem multi-config layout, so locate it — but only under a `generators`
+          rem dir, to skip stray same-named files in MSBuild .tlog dirs. (A future
+          rem self-contained deploy — libs next to the exe — removes this need.)
           set "RC="
-          for /r build %%f in (conanrun.bat) do set "RC=%%f"
-          if not defined RC ( echo ERROR: conanrun.bat not found under build/ & exit /b 1 )
+          for /r build %%f in (conanrun.bat) do echo "%%f" | findstr /i "generators" >nul && set "RC=%%f"
+          if not defined RC ( echo ERROR: conanrun.bat not found in a build generators dir & exit /b 1 )
           echo Using run-env: %RC%
           call "%RC%"
           npm test
