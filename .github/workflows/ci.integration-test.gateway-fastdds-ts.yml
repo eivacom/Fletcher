@@ -45,10 +45,9 @@ jobs:
 
       # --network host: the gateway (--provider fastdds) and the C++ FastDDS
       # peer are separate processes that discover each other over DDS, same as
-      # the pubsub-arrow-fastdds suite. The gateway links Fast DDS as shared
-      # libraries (the *:shared=True profile), so the spawned gateway + peer
-      # need the Conan run environment on the loader path — hence sourcing
-      # conanrun.sh before `npm test`.
+      # the pubsub-arrow-fastdds suite. The gateway and peer link Fast DDS
+      # statically (static is the build default), so they are self-contained
+      # and start with no Conan run environment — npm test spawns them as-is.
       - name: Build components and run integration tests
         run: |
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
@@ -72,6 +71,5 @@ jobs:
                      npm ci && \
                      echo '::endgroup::' && \
                      echo '::group::npm test' && \
-                     source build/Release/generators/conanrun.sh && \
                      npm test && \
                      echo '::endgroup::'"
