@@ -28,7 +28,7 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FletcherClient, buildSubscribe } from 'fletcher-gateway-client';
+import { FletcherClient, buildSubscribe } from '@eiva/fletcher-gateway-client';
 import {
   SensorReading,
   SensorFeed_CppToTsTopic,

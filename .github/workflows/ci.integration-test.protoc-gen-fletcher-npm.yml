@@ -34,6 +34,7 @@ jobs:
         with:
           sparse-checkout: |
             protoc
+            gateway-client-ts
             integration-tests/protoc-gen-fletcher-npm
             .conan-profiles
             .github
@@ -62,8 +63,11 @@ jobs:
                        cp \"\$BIN\" ~/.cache/protoc-gen-fletcher/\"\$VERSION\"/protoc-gen-fletcher-linux-x64 && \
                        chmod +x ~/.cache/protoc-gen-fletcher/\"\$VERSION\"/protoc-gen-fletcher-linux-x64 && \
                      echo '::endgroup::' && \
+                     echo '::group::build gateway-client-ts (the local @eiva/fletcher-gateway-client file: dep)' && \
+                       (cd gateway-client-ts && npm ci && npm run build) && \
+                     echo '::endgroup::' && \
                      cd integration-tests/protoc-gen-fletcher-npm && \
-                     echo '::group::npm install (resolves the file path to local plugin + bare-alias gateway-client)' && \
+                     echo '::group::npm install (local file: plugin + gateway-client)' && \
                        npm install && \
                      echo '::endgroup::' && \
                      echo '::group::npm run build (triggers prebuild -> proto:gen -> tsc)' && \
@@ -88,6 +92,7 @@ jobs:
         with:
           sparse-checkout: |
             protoc
+            gateway-client-ts
             integration-tests/protoc-gen-fletcher-npm
             .conan-profiles
             .github
@@ -114,7 +119,14 @@ jobs:
           mkdir -p ~/.cache/protoc-gen-fletcher/"$VERSION"
           cp "$BIN" ~/.cache/protoc-gen-fletcher/"$VERSION"/protoc-gen-fletcher-windows-x64.exe
 
-      - name: npm install (resolves the file path to local plugin + bare-alias gateway-client)
+      - name: Build gateway-client-ts (the local @eiva/fletcher-gateway-client file: dep)
+        shell: bash
+        working-directory: gateway-client-ts
+        run: |
+          npm ci
+          npm run build
+
+      - name: npm install (local file: plugin + gateway-client)
         shell: bash
         working-directory: integration-tests/protoc-gen-fletcher-npm
         run: npm install

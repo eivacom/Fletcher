@@ -21,8 +21,8 @@ import {
   parseBinaryMessage,
   serializeEnvelope,
   encodePositional,
-} from 'fletcher-gateway-client';
-import type { SchemaDescriptor } from 'fletcher-gateway-client';
+} from '@eiva/fletcher-gateway-client';
+import type { SchemaDescriptor } from '@eiva/fletcher-gateway-client';
 import { findBinaryRecursive } from './find-binary.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));

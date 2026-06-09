@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ObjectBackend, encodePositional } from 'fletcher-gateway-client';
+import { ObjectBackend, encodePositional } from '@eiva/fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 import { findBinaryRecursive } from './find-binary.js';
 

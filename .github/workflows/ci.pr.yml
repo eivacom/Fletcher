@@ -230,6 +230,7 @@ jobs:
               - '.devcontainer/**'
             integration-protoc-gen-fletcher-npm:
               - 'protoc/**'
+              - 'gateway-client-ts/**'
               - 'integration-tests/protoc-gen-fletcher-npm/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-gen-fletcher-npm.yml'

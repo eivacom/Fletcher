@@ -12,10 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
-    "paths": {
-      "fletcher-gateway-client": ["node_modules/@eiva/fletcher-gateway-client"]
-    }
+    "baseUrl": "."
   },
   "include": ["src/**/*"]
 }
