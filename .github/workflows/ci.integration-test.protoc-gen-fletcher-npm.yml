@@ -67,8 +67,8 @@ jobs:
                        (cd gateway-client-ts && npm ci && npm run build) && \
                      echo '::endgroup::' && \
                      cd integration-tests/protoc-gen-fletcher-npm && \
-                     echo '::group::npm install (local file: plugin + gateway-client)' && \
-                       npm install && \
+                     echo '::group::npm ci (local file: plugin + gateway-client)' && \
+                       npm ci && \
                      echo '::endgroup::' && \
                      echo '::group::npm run build (triggers prebuild -> proto:gen -> tsc)' && \
                        npm run build && \
@@ -126,10 +126,10 @@ jobs:
           npm ci
           npm run build
 
-      - name: npm install (local file: plugin + gateway-client)
+      - name: npm ci (local file: plugin + gateway-client)
         shell: bash
         working-directory: integration-tests/protoc-gen-fletcher-npm
-        run: npm install
+        run: npm ci
 
       - name: npm run build (triggers prebuild -> proto:gen -> tsc)
         shell: bash
