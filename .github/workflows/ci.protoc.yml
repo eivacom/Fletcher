@@ -53,12 +53,15 @@ jobs:
       - name: Verify conanfile.py and package.json versions match
         run: |
           set -euo pipefail
-          conan_ver=$(python3 -c "
+          conan_ver=$(python3 - <<'PYEOF'
           import re, pathlib
-          m = re.search(r'version\s*=\s*[\"\\'](.*?)[\"\\']',
-                        pathlib.Path('protoc/conanfile.py').read_text())
+          text = pathlib.Path('protoc/conanfile.py').read_text()
+          m = re.search(r'version\s*=\s*["\']([^"\']+)["\']', text)
+          if not m:
+              raise SystemExit('ERROR: version= not found in protoc/conanfile.py')
           print(m.group(1))
-          ")
+          PYEOF
+          )
           npm_ver=$(python3 -c "import json; print(json.load(open('protoc/npm/package.json'))['version'])")
           if [ "$conan_ver" != "$npm_ver" ]; then
             echo "::error::Version mismatch — conanfile.py='$conan_ver' package.json='$npm_ver'. Update both files to the same version before merging."
