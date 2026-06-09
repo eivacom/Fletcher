@@ -38,7 +38,36 @@ on:
 # both artifacts on tag-push.
 
 jobs:
+  # Fast pre-flight: verify that conanfile.py and package.json carry the same
+  # version string. Runs on every PR so a mismatch is caught during code review,
+  # not at release time when the tag-push CD pipeline fires.
+  check-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc/conanfile.py
+            protoc/npm/package.json
+
+      - name: Verify conanfile.py and package.json versions match
+        run: |
+          set -euo pipefail
+          conan_ver=$(python3 -c "
+          import re, pathlib
+          m = re.search(r'version\s*=\s*[\"\\'](.*?)[\"\\']',
+                        pathlib.Path('protoc/conanfile.py').read_text())
+          print(m.group(1))
+          ")
+          npm_ver=$(python3 -c "import json; print(json.load(open('protoc/npm/package.json'))['version'])")
+          if [ "$conan_ver" != "$npm_ver" ]; then
+            echo "::error::Version mismatch — conanfile.py='$conan_ver' package.json='$npm_ver'. Update both files to the same version before merging."
+            exit 1
+          fi
+          echo "Versions consistent: $conan_ver"
+
   build-windows:
+    needs: check-versions
     runs-on: windows-2022
     outputs:
       conan-ref: ${{ steps.get-ref.outputs.conan-ref }}
@@ -105,6 +134,7 @@ jobs:
           retention-days: 5
 
   build-linux:
+    needs: check-versions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
