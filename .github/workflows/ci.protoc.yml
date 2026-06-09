@@ -46,9 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: |
-            protoc/conanfile.py
-            protoc/npm/package.json
+          sparse-checkout: protoc
 
       - name: Verify conanfile.py and package.json versions match
         run: |
