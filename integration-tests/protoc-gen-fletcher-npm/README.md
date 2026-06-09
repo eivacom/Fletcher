@@ -49,7 +49,7 @@ cd integration-tests/protoc-gen-fletcher-npm
 ```
 
 ```bash
-npm install
+npm ci
 ```
 
 ```bash

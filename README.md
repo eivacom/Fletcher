@@ -58,7 +58,7 @@ graph TD
     xrcedds["fletcher-xrcedds-pubsub-provider<br/>static lib"]
     protoc(["fletcher-protoc<br/>plugin exe"])
     gateway(["gateway<br/>standalone exe"])
-    client[("fletcher-gateway-client<br/>npm package")]
+    client[("@eiva/fletcher-gateway-client<br/>npm package")]
 
     pubsub --> core
     arrow_bridge --> core
