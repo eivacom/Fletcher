@@ -49,6 +49,7 @@ jobs:
           sparse-checkout: |
             protoc/conanfile.py
             protoc/npm/package.json
+          sparse-checkout-cone-mode: false
 
       - name: Verify conanfile.py and package.json versions match
         run: |
