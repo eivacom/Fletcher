@@ -119,14 +119,14 @@ jobs:
           mkdir -p ~/.cache/protoc-gen-fletcher/"$VERSION"
           cp "$BIN" ~/.cache/protoc-gen-fletcher/"$VERSION"/protoc-gen-fletcher-windows-x64.exe
 
-      - name: Build gateway-client-ts (the local @eiva/fletcher-gateway-client file: dep)
+      - name: Build gateway-client-ts (local @eiva/fletcher-gateway-client dependency)
         shell: bash
         working-directory: gateway-client-ts
         run: |
           npm ci
           npm run build
 
-      - name: npm ci (local file: plugin + gateway-client)
+      - name: npm ci (local plugin + gateway-client)
         shell: bash
         working-directory: integration-tests/protoc-gen-fletcher-npm
         run: npm ci
