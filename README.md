@@ -255,7 +255,33 @@ Each Conan-package component attaches two archives to its GitHub Release — one
 | `fletcher-<component>-linux-conan-package.tgz` | Linux x86_64, GCC 13, libstdc++ (release) |
 | `fletcher-<component>-windows-conan-package.tgz` | Windows x86_64, MSVC 194 (release) |
 
-Each archive is a `conan cache save` export (recipe revision + built binary). To consume one:
+Each archive is a `conan cache save` export (recipe revision + built binary).
+
+### Install all packages at once
+
+The scripts below download all seven Conan packages from their GitHub Release tags and restore them into the local Conan cache in one step. Both require the [GitHub CLI](https://cli.github.com) (`gh`) and Conan 2.
+
+**Linux / macOS / Git Bash** — [`scripts/install-conan-packages.sh`](scripts/install-conan-packages.sh):
+
+```bash
+# Default version, platform auto-detected
+./scripts/install-conan-packages.sh
+
+# Explicit version
+./scripts/install-conan-packages.sh 0.3.0-alpha
+```
+
+**Windows PowerShell** — [`scripts/install-conan-packages.ps1`](scripts/install-conan-packages.ps1):
+
+```powershell
+# Default version
+.\scripts\install-conan-packages.ps1
+
+# Explicit version
+.\scripts\install-conan-packages.ps1 -Version 0.3.0-alpha
+```
+
+### Install a single package manually
 
 ```bash
 gh release download core-v0.3.0-alpha --repo eivacom/Fletcher \
