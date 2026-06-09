@@ -24,7 +24,7 @@ import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FletcherClient, WireTypeId } from 'fletcher-gateway-client';
+import { FletcherClient, WireTypeId } from '@eiva/fletcher-gateway-client';
 import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
 import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
 import { findBinaryRecursive } from './find-binary.js';

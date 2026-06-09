@@ -16,7 +16,7 @@ export default defineConfig({
       // Resolve protoc-generated TS imports + our test imports to the
       // gateway-client-ts source directly. Avoids needing to build the
       // package's dist/ first.
-      'fletcher-gateway-client': resolve(here, '../../gateway-client-ts/src/index.ts'),
+      '@eiva/fletcher-gateway-client': resolve(here, '../../gateway-client-ts/src/index.ts'),
     },
   },
 });

@@ -58,8 +58,8 @@ jobs:
                        conan create protoc/. --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::' && \
                      cd integration-tests/protoc-plugin-cli && \
-                     echo '::group::npm install' && \
-                       npm install && \
+                     echo '::group::npm ci' && \
+                       npm ci && \
                      echo '::endgroup::' && \
                      echo '::group::npm test (vitest spawns protoc + plugin)' && \
                        npm test && \
@@ -91,10 +91,10 @@ jobs:
         shell: bash
         run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
 
-      - name: npm install
+      - name: npm ci
         shell: bash
         working-directory: integration-tests/protoc-plugin-cli
-        run: npm install
+        run: npm ci
 
       - name: npm test (vitest spawns protoc + plugin)
         shell: bash

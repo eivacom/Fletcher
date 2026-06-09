@@ -17,14 +17,14 @@ npm install --save-dev @protobuf-ts/protoc
 ```
 
 ```bash
-npm install --save-dev fletcher-gateway-client@npm:@eiva/fletcher-gateway-client
+npm install --save-dev @eiva/fletcher-gateway-client
 ```
 
 Three pieces:
 
 - **`@eiva/protoc-gen-fletcher`** — this plugin shim.
 - **`@protobuf-ts/protoc`** — ships the `protoc` compiler binary itself. Declared as a peer dependency; npm 7+ auto-installs it, older npm versions print a warning. Install explicitly above to be safe.
-- **`fletcher-gateway-client`** under the bare alias `npm:@eiva/fletcher-gateway-client` — the generated `.fletcher.ts` files import `WireTypeId` and the `TypedSchema` type from a **bare** `'fletcher-gateway-client'` specifier. Installing under that alias makes the published `@eiva/fletcher-gateway-client` resolve at runtime via standard Node resolution (no tsconfig path-alias trickery needed).
+- **`@eiva/fletcher-gateway-client`** — the gateway runtime. The generated `.fletcher.ts` files import `WireTypeId` and the `TypedSchema` type from `'@eiva/fletcher-gateway-client'`, so a plain install resolves them via standard Node resolution — no bare-alias or tsconfig path trickery needed.
 
 ## Usage
 

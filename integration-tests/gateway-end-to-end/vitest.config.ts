@@ -20,7 +20,7 @@ export default defineConfig({
     alias: {
       // Run against the gateway-client-ts source tree directly so
       // tests pick up local changes without a separate dist/ build.
-      'fletcher-gateway-client': resolve(here, '../../gateway-client-ts/src/index.ts'),
+      '@eiva/fletcher-gateway-client': resolve(here, '../../gateway-client-ts/src/index.ts'),
     },
   },
 });

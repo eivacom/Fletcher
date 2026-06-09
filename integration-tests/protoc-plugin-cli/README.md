@@ -12,7 +12,7 @@ This test exercises the **raw plugin path**:
 - `fletcher-protoc[.exe]` is the binary out of the local Conan cache, built **statically** (no transitive runtime DLLs).
 - The test invokes `protoc --plugin=protoc-gen-fletcher=<path-to-fletcher-protoc> ...` — exactly the command shape used by a developer who downloaded the binary and dropped it somewhere.
 
-The third test case ("runs standalone when copied to a clean directory with no co-located DLLs") is the regression guard against the Windows bug we hit in PR #82: a `shared`-linked plugin failed with `STATUS_ENTRYPOINT_NOT_FOUND` because `libprotobuf.dll` / `libprotoc.dll` / `zlib1.dll` weren't next to the `.exe`. The fix is to build the binary with `-o "*:shared=False"` so all dependencies are linked in — exactly how Google's own `protoc.exe` is shipped.
+The third test case ("runs standalone when copied to a clean directory with no co-located DLLs") is the regression guard against the Windows bug we hit in PR #82: a `shared`-linked plugin failed with `STATUS_ENTRYPOINT_NOT_FOUND` because `libprotobuf.dll` / `libprotoc.dll` / `zlib1.dll` weren't next to the `.exe`. The fix is to link the binary statically (static is the build default, and the `protoc` recipe pins protobuf static) so all dependencies are linked in — exactly how Google's own `protoc.exe` is shipped.
 
 ## What it covers
 
@@ -28,9 +28,9 @@ For one canonical `.proto` (`proto/simple.proto`):
 
 The workflow [`.github/workflows/ci.integration-test.protoc-plugin-cli.yml`](../../.github/workflows/ci.integration-test.protoc-plugin-cli.yml) runs on every PR that touches `protoc/**` or this directory. Each job (Linux + Windows):
 
-1. Builds the plugin **statically** via `conan create protoc/. --build=missing -pr:a=<profile> -o "*:shared=False"`. This forces protobuf, zlib, and any other runtime-DLL-producing transitive deps to be statically linked into `fletcher-protoc[.exe]`.
+1. Builds the plugin **statically** via `conan create protoc/. --build=missing -pr:a=<profile>`. Static is the default (the `protoc` recipe pins protobuf static), so protobuf, zlib, and any other runtime-DLL-producing transitive deps are statically linked into `fletcher-protoc[.exe]`.
 2. `cd integration-tests/protoc-plugin-cli`.
-3. `npm install`.
+3. `npm ci`.
 4. `npm test` — vitest discovers the binary in `~/.conan2/`, downloads Google's `protoc` once into a project-local `.cache/`, then runs the three assertions above.
 
 No environment variables are injected — the test discovers both binaries itself. Step (1) is the only build orchestration the workflow performs.
@@ -46,16 +46,16 @@ From the repo root:
 **Linux (devcontainer):**
 
 ```bash
-conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "*:shared=False"
+conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
 **Windows (native):**
 
 ```powershell
-conan create protoc/. --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release -o "*:shared=False"
+conan create protoc/. --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
 ```
 
-The `-o "*:shared=False"` flag forces every dependency (protobuf, zlib, abseil if present) to be built static. The first time you run this Conan builds protobuf from source, which takes a few minutes; subsequent invocations hit the cache.
+Static is the default (the `protoc` recipe pins protobuf static), so every dependency (protobuf, zlib, abseil if present) is built static. The first time you run this Conan builds protobuf from source, which takes a few minutes; subsequent invocations hit the cache.
 
 ### Run the test
 
@@ -64,7 +64,7 @@ cd integration-tests/protoc-plugin-cli
 ```
 
 ```bash
-npm install
+npm ci
 ```
 
 ```bash

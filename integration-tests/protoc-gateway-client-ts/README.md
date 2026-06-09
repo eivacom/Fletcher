@@ -3,7 +3,7 @@
 End-to-end test that verifies **byte-format compatibility** between the C++ and TypeScript sides of Fletcher:
 
 - C++ side: `protoc-gen-fletcher`-generated row classes (`<stem>.fletcher.pb.h`) + the `Encode()` method.
-- TypeScript side: `protoc-gen-fletcher`-generated bindings (`<stem>.fletcher.ts`) + the codec exported from `fletcher-gateway-client`.
+- TypeScript side: `protoc-gen-fletcher`-generated bindings (`<stem>.fletcher.ts`) + the codec exported from `@eiva/fletcher-gateway-client`.
 
 Both implement the same positional wire format. This test is the proof that they actually agree on every byte across the language boundary, in both directions.
 
