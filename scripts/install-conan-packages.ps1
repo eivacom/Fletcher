@@ -18,6 +18,22 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+foreach ($tool in "gh", "conan") {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "'$tool' is required but not installed."
+    }
+}
+
+gh auth status *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "GitHub CLI is not authenticated. Run 'gh auth login' (or set GH_TOKEN)."
+}
+
+$conanVersion = conan --version
+if ($conanVersion -notmatch '^Conan version 2\.') {
+    throw "Conan 2 is required (found: '$conanVersion')."
+}
+
 $Repo      = "eivacom/Fletcher"
 $Platform  = "windows"
 
