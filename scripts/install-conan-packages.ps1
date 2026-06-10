@@ -56,7 +56,13 @@ foreach ($component in $Components) {
 
     Write-Host ">>>  $tag"
     gh release download $tag --repo $Repo --pattern $file --clobber
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to download $file from release $tag."
+    }
     conan cache restore $file
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to restore $file into the local Conan cache."
+    }
     Remove-Item $file
     Write-Host ""
 }
