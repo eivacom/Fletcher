@@ -15,6 +15,23 @@
 
 set -euo pipefail
 
+for tool in gh conan; do
+  command -v "${tool}" >/dev/null 2>&1 || {
+    echo "Error: '${tool}' is required but not installed." >&2
+    exit 1
+  }
+done
+
+gh auth status >/dev/null 2>&1 || {
+  echo "Error: GitHub CLI is not authenticated. Run 'gh auth login' (or set GH_TOKEN)." >&2
+  exit 1
+}
+
+case "$(conan --version)" in
+  "Conan version 2."*) ;;
+  *) echo "Error: Conan 2 is required (found: '$(conan --version)')." >&2; exit 1 ;;
+esac
+
 VERSION="${1:-0.3.0-alpha}"
 
 case "$(uname -s)" in
