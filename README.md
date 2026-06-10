@@ -261,7 +261,7 @@ Each archive is a `conan cache save` export (recipe revision + built binary).
 
 The scripts below download all seven Conan packages from their GitHub Release tags and restore them into the local Conan cache in one step. Both require the [GitHub CLI](https://cli.github.com) (`gh`) and Conan 2.
 
-**Linux / macOS / Git Bash** — [`scripts/install-conan-packages.sh`](scripts/install-conan-packages.sh):
+**Linux / Git Bash** — [`scripts/install-conan-packages.sh`](scripts/install-conan-packages.sh):
 
 ```bash
 # Default version, platform auto-detected
