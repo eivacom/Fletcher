@@ -5,7 +5,8 @@ syntax = "proto3";
 package integration;
 
 // map<K,V> fields with scalar values.
-// Maps produce arrow::map(K_type, field("value", V_type, false)) columns.
+// Maps produce arrow::map(K_type, field("value", V_type, true)) columns —
+// the key child is implicitly non-nullable (Arrow spec), and value is nullable (matches the nanoarrow schema).
 message Metrics {
     string              resource_id = 1;
     map<string, double> gauges      = 2;   // map(utf8, float64)

@@ -176,21 +176,23 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
             return fi.mapping.scalar.arrow_type_expr;
 
         case FieldKind::REPEATED_SCALAR:
+            // Arrow convention: list "item" child is nullable (matches arrow::list(type) and the
+            // nanoarrow schema emitted by GenerateSchemaFunction). Keep these in sync.
             return "arrow::list(arrow::field(\"item\", " + fi.mapping.element.arrow_type_expr +
-                   ", false))";
+                   ", true))";
 
         case FieldKind::STRUCT:
             return "arrow::struct_(" + fi.mapping.nested_class + "Schema()->fields())";
 
         case FieldKind::REPEATED_STRUCT:
             return "arrow::list(arrow::field(\"item\", arrow::struct_(" + fi.mapping.nested_class +
-                   "Schema()->fields()), false))";
+                   "Schema()->fields()), true))";
 
         case FieldKind::NESTED_LIST: {
             // Build nested arrow::list() from inside out.
             std::string expr = "arrow::struct_(" + fi.mapping.nested_class + "Schema()->fields())";
             for (int d = 0; d < fi.mapping.list_depth; ++d)
-                expr = "arrow::list(arrow::field(\"item\", " + expr + ", false))";
+                expr = "arrow::list(arrow::field(\"item\", " + expr + ", true))";
             return expr;
         }
 
@@ -199,8 +201,9 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
                 fi.mapping.map_value_is_message
                     ? "arrow::struct_(" + fi.mapping.map_value_class + "Schema()->fields())"
                     : fi.mapping.map_value.arrow_type_expr;
+            // Map "value" child is nullable; "key" is non-nullable (Arrow spec).
             return "arrow::map(" + fi.mapping.map_key.arrow_type_expr +
-                   ", arrow::field(\"value\", " + val_type + ", false))";
+                   ", arrow::field(\"value\", " + val_type + ", true))";
         }
     }
     return "/* unknown */";
@@ -426,7 +429,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "        return std::make_shared<arrow::ListScalar>(\n"
               << "            *builder.Finish(),\n"
               << "            arrow::list(arrow::field(\"item\", "
-              << fi.mapping.element.arrow_type_expr << ", false)));\n"
+              << fi.mapping.element.arrow_type_expr << ", true)));\n"
               << "    }\n";
             break;
 
@@ -461,7 +464,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
               << "        }\n"
               << "        return std::make_shared<arrow::ListScalar>(\n"
               << "            *builder->Finish(),\n"
-              << "            arrow::list(arrow::field(\"item\", type, false)));\n"
+              << "            arrow::list(arrow::field(\"item\", type, true)));\n"
               << "    }\n";
             break;
 
@@ -483,7 +486,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             if (fi.mapping.list_depth == 2) {
                 // List<List<Struct>>
                 o << "        auto inner_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", coord_type, false));\n"
+                  << "            arrow::field(\"item\", coord_type, true));\n"
                   << "        auto outer_builder = "
                      "arrow::MakeBuilder(inner_list_type).ValueOrDie();\n"
                   << "        for (const auto& ring : " << data_ref << ") {\n"
@@ -503,9 +506,9 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             } else if (fi.mapping.list_depth == 3) {
                 // List<List<List<Struct>>>
                 o << "        auto ring_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", coord_type, false));\n"
+                  << "            arrow::field(\"item\", coord_type, true));\n"
                   << "        auto poly_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", ring_list_type, false));\n"
+                  << "            arrow::field(\"item\", ring_list_type, true));\n"
                   << "        auto outer_builder = "
                      "arrow::MakeBuilder(poly_list_type).ValueOrDie();\n"
                   << "        for (const auto& poly : " << data_ref << ") {\n"
@@ -561,7 +564,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
             }
 
             if (fi.mapping.map_value_is_message) {
-                o << "        auto val_field = arrow::field(\"value\", val_type, false);\n"
+                o << "        auto val_field = arrow::field(\"value\", val_type, true);\n"
                   << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
                   << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
@@ -572,7 +575,7 @@ void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
                   << ", val_field));\n";
             } else {
                 o << "        auto val_field = arrow::field(\"value\", "
-                  << fi.mapping.map_value.arrow_type_expr << ", false);\n"
+                  << fi.mapping.map_value.arrow_type_expr << ", true);\n"
                   << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
                   << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
@@ -2424,7 +2427,7 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                   << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
                   << "            *builder.Finish(),\n"
                   << "            arrow::list(arrow::field(\"item\", " << el.arrow_type_expr
-                  << ", false))));\n"
+                  << ", true))));\n"
                   << "    }\n";
                 break;
             }
@@ -2445,7 +2448,7 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                   << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
                   << "            *builder->Finish(),\n"
                   << "            arrow::list(arrow::field(\"item\", type,"
-                     " false))));\n"
+                     " true))));\n"
                   << "    }\n";
                 break;
             }
@@ -2462,12 +2465,12 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                 if (fi.mapping.list_depth == 2) {
                     o << "        auto inner_list_type = arrow::list(\n"
                       << "            arrow::field(\"item\", coord_type,"
-                         " false));\n";
+                         " true));\n";
                     if (fi.mapping.nullable) {
                         o << "        if (" << getter << " == nullptr) {\n"
                           << "            row.push_back(arrow::MakeNullScalar(\n"
                           << "                arrow::list(arrow::field(\"item\","
-                             " inner_list_type, false))));\n"
+                             " inner_list_type, true))));\n"
                           << "        } else {\n";
                     }
                     o << "        auto outer_builder = arrow::MakeBuilder"
@@ -2492,15 +2495,15 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                 } else if (fi.mapping.list_depth == 3) {
                     o << "        auto ring_list_type = arrow::list(\n"
                       << "            arrow::field(\"item\", coord_type,"
-                         " false));\n"
+                         " true));\n"
                       << "        auto poly_list_type = arrow::list(\n"
                       << "            arrow::field(\"item\", ring_list_type,"
-                         " false));\n";
+                         " true));\n";
                     if (fi.mapping.nullable) {
                         o << "        if (" << getter << " == nullptr) {\n"
                           << "            row.push_back(arrow::MakeNullScalar(\n"
                           << "                arrow::list(arrow::field(\"item\","
-                             " poly_list_type, false))));\n"
+                             " poly_list_type, true))));\n"
                           << "        } else {\n";
                     }
                     o << "        auto outer_builder = arrow::MakeBuilder"
@@ -2571,10 +2574,10 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
 
                 if (fi.mapping.map_value_is_message) {
                     o << "        auto val_field = arrow::field(\"value\","
-                         " val_type, false);\n";
+                         " val_type, true);\n";
                 } else {
                     o << "        auto val_field = arrow::field(\"value\", "
-                      << fi.mapping.map_value.arrow_type_expr << ", false);\n";
+                      << fi.mapping.map_value.arrow_type_expr << ", true);\n";
                 }
                 o << "        auto kv = *arrow::StructArray::Make(\n"
                   << "            {keys, vals},\n"
