@@ -45,8 +45,7 @@ std::shared_ptr<arrow::Schema> ImportNano(OwnedSchema nano) {
 
 // The core invariant: every scalar produced by ToArrowRow() carries exactly the
 // type the schema declares for that field — including nested child nullability.
-void ExpectRowTypesMatchSchema(const ArrowRow& row,
-                               const std::shared_ptr<arrow::Schema>& schema) {
+void ExpectRowTypesMatchSchema(const ArrowRow& row, const std::shared_ptr<arrow::Schema>& schema) {
     ASSERT_NE(schema, nullptr);
     ASSERT_EQ(static_cast<int>(row.size()), schema->num_fields());
     for (int i = 0; i < schema->num_fields(); ++i) {
