@@ -103,6 +103,7 @@ add_executable(integration_tests
     tests/test_schema_evolution.cpp
     tests/test_flatten.cpp
     tests/test_native_roundtrip.cpp
+    tests/test_nullability_consistency.cpp
     tests/test_arrow_view.cpp)
 add_dependencies(integration_tests generate_headers)
 
