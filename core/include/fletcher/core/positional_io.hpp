@@ -218,9 +218,12 @@ class PositionalReader {
 
     ListHeader ReadListHeader() {
         uint32_t count = Read<uint32_t>();
-        // Reject a corrupt/oversized count before computing the bitfield size
-        // and before the caller loops `count` times.
-        if (count > Remaining())
+        // Reject a corrupt/oversized count before the caller loops `count`
+        // times. List elements can be null, and a null element has no payload
+        // bytes, so a valid all-null list's count can legitimately exceed the
+        // remaining byte count. The only safe lower bound is the element null
+        // bitfield itself: require BitfieldBytes(count) to fit.
+        if (BitfieldBytes(count) > Remaining())
             throw std::invalid_argument("PositionalReader: list count exceeds remaining buffer");
         const uint8_t* bf = ReadBytes(BitfieldBytes(count));
         return ListHeader{count, bf};
@@ -230,6 +233,8 @@ class PositionalReader {
     // Caller reads key payloads, then calls ReadMapValueBitfield().
     uint32_t ReadMapCount() {
         uint32_t count = Read<uint32_t>();
+        // Map keys are non-null, so every entry needs at least one key byte:
+        // count > remaining is a valid (tight) lower bound here, unlike lists.
         if (count > Remaining())
             throw std::invalid_argument("PositionalReader: map count exceeds remaining buffer");
         return count;

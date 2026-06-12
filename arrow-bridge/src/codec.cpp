@@ -80,8 +80,10 @@ void EncodeListElements(std::vector<uint8_t>& buf, const std::shared_ptr<arrow::
                         const arrow::DataType& elem_type) {
     const int64_t count = arr->length();
 
-    // Write null bitfield for elements.
-    size_t nbytes = BitfieldBytes(static_cast<int>(count));
+    // Write null bitfield for elements. Pass the int64_t count directly — a
+    // static_cast<int> would wrap negative for counts > INT_MAX and corrupt
+    // the bitfield size (the very narrowing this hardening removes).
+    size_t nbytes = BitfieldBytes(count);
     size_t start = buf.size();
     buf.resize(start + nbytes, 0);
     for (int64_t i = 0; i < count; ++i) {
@@ -138,8 +140,9 @@ void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scala
                 EncodePositionalValue(buf, *key, *map_type.key_type());
             }
 
-            // Values: null bitfield + payloads.
-            size_t nbytes = BitfieldBytes(static_cast<int>(count));
+            // Values: null bitfield + payloads. Pass int64_t count directly
+            // (no narrowing static_cast<int>).
+            size_t nbytes = BitfieldBytes(count);
             size_t start = buf.size();
             buf.resize(start + nbytes, 0);
             for (int64_t i = 0; i < count; ++i) {
@@ -247,10 +250,12 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::LARGE_LIST: {
             const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
             uint32_t count = r.Read<uint32_t>();
-            // A list cannot have more elements than there are remaining bytes
-            // (every element contributes at least its null bit); reject a
-            // corrupt/oversized count before allocating or looping.
-            if (count > r.remaining())
+            // Reject a corrupt/oversized count before allocating or looping.
+            // List elements can be null, and a null element has no payload
+            // bytes, so a valid all-null list's count can legitimately exceed
+            // the remaining byte count. The only safe lower bound is the
+            // element null bitfield itself: require BitfieldBytes(count) to fit.
+            if (BitfieldBytes(count) > r.remaining())
                 throw std::invalid_argument("Codec: list element count exceeds remaining buffer");
             auto arr = DecodeListElements(r, count, list_type.value_type());
             if (type->id() == T::LIST) return std::make_shared<arrow::ListScalar>(arr, type);
@@ -266,6 +271,9 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::MAP: {
             const auto& map_type = static_cast<const arrow::MapType&>(*type);
             uint32_t count = r.Read<uint32_t>();
+            // Map keys are non-null, so every entry needs at least one key
+            // byte: count > remaining is a valid (tight) lower bound here,
+            // unlike lists (whose elements may be null and payload-free).
             if (count > r.remaining())
                 throw std::invalid_argument("Codec: map entry count exceeds remaining buffer");
 

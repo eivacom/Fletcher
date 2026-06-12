@@ -60,6 +60,17 @@ TEST(PositionalIoTest, OversizedListCountRejected) {
     EXPECT_THROW(r.ReadListHeader(), std::invalid_argument);
 }
 
+TEST(PositionalIoTest, AllNullListAcceptedWhenBitfieldFits) {
+    // Regression (PR #98 review): a list of all-null elements has no payloads,
+    // so its count can legitimately exceed the remaining byte count. The bound
+    // is on the null-bitfield size (ceil(count/8)), not the raw count.
+    // 1-field row: [row bitfield 0x00] [list COUNT=20 LE] [elem bitfield: 3B].
+    std::vector<uint8_t> buf = {0x00, 0x14, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x0F};
+    PositionalReader r(buf.data(), buf.size(), 1);
+    auto hdr = r.ReadListHeader();  // previously threw: count 20 > remaining 3
+    EXPECT_EQ(hdr.count, 20u);
+}
+
 TEST(PositionalIoTest, OversizedMapCountRejected) {
     std::vector<uint8_t> buf = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
     PositionalReader r(buf.data(), buf.size(), 1);

@@ -244,6 +244,25 @@ TEST(CodecTest, ListWithNulls) {
     EXPECT_TRUE(decoded[0]->Equals(*list_scalar));
 }
 
+TEST(CodecTest, ListOfAllNullElementsRoundtrips) {
+    // Regression (PR #98 review): a list whose elements are all null carries no
+    // payload bytes, so its element count legitimately exceeds the remaining
+    // byte count. The decode bound is on the null-bitfield size (ceil(count/8)),
+    // not the raw count — otherwise this valid buffer would be rejected.
+    auto list_type = arrow::list(arrow::int32());
+    auto schema = arrow::schema({arrow::field("nums", list_type)});
+    fletcher::Codec codec(schema);
+
+    auto builder = arrow::Int32Builder();
+    for (int i = 0; i < 20; ++i) ASSERT_TRUE(builder.AppendNull().ok());
+    auto arr = builder.Finish().ValueOrDie();
+    auto list_scalar = std::make_shared<arrow::ListScalar>(arr);
+
+    auto decoded = codec.DecodeRow(codec.EncodeRow({list_scalar}));
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_TRUE(decoded[0]->Equals(*list_scalar));
+}
+
 // ---------------------------------------------------------------------------
 // Fixed-size list
 // ---------------------------------------------------------------------------
