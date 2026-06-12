@@ -7,16 +7,17 @@ Apache Arrow to).
 
 ## Branch strategy
 
-- This branch is temporarily **based on the PR #79 branch**
-  (`feature/pubsub-arrow-batched-subscribe`, the batched-subscribe + dictionary
-  work), so Phase 1's codec hardening stacks cleanly on top of #79's
-  `scalar_codec.cpp` / `codec.cpp` changes instead of conflicting with them.
-- **No PR is opened until PR #79 has merged.** Once #79 lands on `main`
-  (which already contains the flatten feature, PR #73), this branch is rebased
-  onto the updated `main` and PRs are cut from there.
-- Suggested PR split: **PR A** = Phase 1; **PR B** = Phase 3 safety net
-  (generator harness + byte-identity); **PR C** = Phase 2 rewrite + remaining
-  Phase 3. Keeps each reviewable; lands the low-risk, high-value work first.
+- The dictionary / batched-subscribe runtime this work-stream builds on now
+  lives on `main`. This branch is kept **rebased on `main`** (not merged), in
+  line with the repo convention.
+- Suggested PR split, landing low-risk / high-value first, each scoped and
+  independently reviewable:
+  - **PR 1** — Phase 1 codec / positional-I/O hardening.
+  - **PR 2** — Phase 3 safety net (generator compile-and-run harness +
+    byte-identity suite).
+  - **PR 3** — Phase 2 generator IR rewrite + the remaining Phase 3 coverage.
+- The byte-identity suite (PR 2) must precede the Phase 2 rewrite (PR 3) so the
+  rewrite is test-guarded.
 
 ## Three phases
 
