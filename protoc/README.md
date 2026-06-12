@@ -81,21 +81,38 @@ Options combine comma-separated: `--fletcher_opt=ts,ipc`.
 
 ## Conan package (C++ consumers)
 
+The `fletcher-protoc` package ships only the plugin executable (self-contained — protobuf is statically linked into it) and a CMake module. The `protoc` compiler itself is **not** included: it comes from the `protobuf` Conan package, and Conan does not propagate the plugin's protobuf requirement as a CMake target to downstream consumers. So your conanfile needs both:
+
+```python
+def requirements(self):
+    self.requires("fletcher-protoc/<version>")
+    self.requires("protobuf/3.21.12")  # provides protoc; match the plugin's pinned version
+```
+
 When consumed as a Conan package, `fletcher-protoc` provides an imported CMake target:
 
 ```cmake
 find_package(fletcher-protoc REQUIRED)
+find_package(protobuf REQUIRED)
+
+set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# protoc requires the output directory to exist — it does not create it.
+file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
 add_custom_command(
-    OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
+    OUTPUT  "${GENERATED_DIR}/my_service.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
-            "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
+            "${PROTO_DIR}/my_service.proto"
+    DEPENDS "${PROTO_DIR}/my_service.proto" fletcher-protoc::plugin
 )
 ```
+
+See [`test_package/`](test_package/) for a complete, working consumer example — its [`conanfile.py`](test_package/conanfile.py) and [`CMakeLists.txt`](test_package/CMakeLists.txt) exercise exactly this flow (C++ and TypeScript generation) and run on every `conan create`.
 
 ## npm package (TypeScript / JS consumers)
 
