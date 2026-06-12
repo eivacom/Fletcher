@@ -12,6 +12,7 @@ Both implement the same positional wire format documented in `arrow-bridge/inclu
 - Generated `Encode()` produces byte-identical output to `Codec.EncodeRow()` for the same row content + schema.
 - `Codec.DecodeRow()` correctly round-trips bytes produced by generated `Encode()`.
 - The generated row class's `EncodedRow` constructor correctly round-trips bytes produced by `Codec.EncodeRow()`.
+- The `.ipc` schema files emitted by `--fletcher_opt=ipc` are byte-identical to `fletcher::SerializeSchemaIpc` over the generated `<Class>Schema()` — i.e. the plugin's in-process schema builder agrees with the schema code it generates.
 
 Why this matters: an edge device using the typed proto-row classes (no Apache Arrow C++) sends bytes that a server-side codec (with full Apache Arrow C++) must decode without any translation layer. Each component has its own unit tests, but only this integration test verifies their outputs agree.
 

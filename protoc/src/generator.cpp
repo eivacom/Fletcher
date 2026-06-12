@@ -11,9 +11,12 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "schema_builder.hpp"
 #include "type_mapper.hpp"
 
 namespace fletcher {
@@ -55,6 +58,12 @@ std::string StripProtoSuffix(const std::string& proto_name) {
 
 std::string OutputFilename(const std::string& proto_name) {
     return StripProtoSuffix(proto_name) + ".fletcher.pb.h";
+}
+
+// Schemas are per-message while protoc output is per-file, so the message
+// class name is part of the file name: <stem>.<Message>.ipc.
+std::string IpcOutputFilename(const std::string& proto_name, const std::string& cls) {
+    return StripProtoSuffix(proto_name) + "." + cls + ".ipc";
 }
 
 bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out, const std::string& s,
@@ -1105,6 +1114,173 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
     o << "    return schema;\n"
       << "}\n";
     return o.str();
+}
+
+// -----------------------------------------------------------------------
+// In-process schema construction (--fletcher_opt=ipc)
+//
+// Executes the same nanoarrow calls that GenerateSchemaFunction /
+// EmitNanoarrowTypeSetup emit as C++ source, so the schema built here is
+// identical to the one the generated <Class>Schema() builds at runtime.
+// Any change to the emitted schema code must be mirrored here.
+// -----------------------------------------------------------------------
+
+void CheckNa(ArrowErrorCode code, const char* context) {
+    if (code != NANOARROW_OK) {
+        throw std::runtime_error(std::string("BuildMessageSchema: ") + context + " failed");
+    }
+}
+
+// Counterpart of the scalar branches in EmitNanoarrowTypeSetup.
+void SetScalarSchemaType(ArrowSchema* schema, const std::string& expr) {
+    if (expr.find("timestamp") != std::string::npos) {
+        CheckNa(ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP,
+                                           NANOARROW_TIME_UNIT_NANO, nullptr),
+                "set timestamp type");
+        return;
+    }
+    if (expr.find("duration") != std::string::npos) {
+        CheckNa(ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_DURATION,
+                                           NANOARROW_TIME_UNIT_NANO, nullptr),
+                "set duration type");
+        return;
+    }
+
+    ArrowType type;
+    if (expr == "arrow::boolean()") {
+        type = NANOARROW_TYPE_BOOL;
+    } else if (expr == "arrow::int32()") {
+        type = NANOARROW_TYPE_INT32;
+    } else if (expr == "arrow::int64()") {
+        type = NANOARROW_TYPE_INT64;
+    } else if (expr == "arrow::uint32()") {
+        type = NANOARROW_TYPE_UINT32;
+    } else if (expr == "arrow::uint64()") {
+        type = NANOARROW_TYPE_UINT64;
+    } else if (expr == "arrow::float32()") {
+        type = NANOARROW_TYPE_FLOAT;
+    } else if (expr == "arrow::float64()") {
+        type = NANOARROW_TYPE_DOUBLE;
+    } else if (expr == "arrow::utf8()") {
+        type = NANOARROW_TYPE_STRING;
+    } else if (expr == "arrow::binary()") {
+        type = NANOARROW_TYPE_BINARY;
+    } else {
+        throw std::runtime_error("BuildMessageSchema: unsupported scalar type " + expr);
+    }
+    CheckNa(ArrowSchemaSetType(schema, type), "set scalar type");
+}
+
+void SetMetadataPairs(ArrowSchema* schema,
+                      const std::vector<std::pair<std::string, std::string>>& pairs) {
+    ArrowBuffer buf;
+    ArrowBufferInit(&buf);
+    ArrowMetadataBuilderInit(&buf, nullptr);
+    for (const auto& [key, value] : pairs) {
+        ArrowMetadataBuilderAppend(&buf, ArrowCharView(key.c_str()), ArrowCharView(value.c_str()));
+    }
+    ArrowSchemaSetMetadata(schema, reinterpret_cast<const char*>(buf.data));
+    ArrowBufferReset(&buf);
+}
+
+const google::protobuf::Descriptor* RequireNestedMsg(const google::protobuf::Descriptor* nested,
+                                                     const std::string& field_name) {
+    if (!nested) {
+        throw std::runtime_error("BuildMessageSchema: missing nested descriptor for field '" +
+                                 field_name + "'");
+    }
+    return nested;
+}
+
+// Counterpart of GenerateSchemaFunction plus the composite branches of
+// EmitNanoarrowTypeSetup. `schema` must be uninitialized (or released).
+void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema* schema) {
+    ArrowSchemaInit(schema);
+    std::string skipped;
+    const std::vector<FieldInfo> fields = GatherFields(msg, &skipped);
+    CheckNa(ArrowSchemaSetTypeStruct(schema, static_cast<int64_t>(fields.size())),
+            "set struct type");
+
+    SetMetadataPairs(schema,
+                     {{"proto_package", msg->file()->package()}, {"proto_message", msg->name()}});
+
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const FieldInfo& fi = fields[i];
+        ArrowSchema* child = schema->children[i];
+
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR:
+                SetScalarSchemaType(child, fi.mapping.scalar.arrow_type_expr);
+                break;
+
+            case FieldKind::STRUCT: {
+                nanoarrow::UniqueSchema nested;
+                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
+                                       nested.get());
+                CheckNa(ArrowSchemaDeepCopy(nested.get(), child), "copy struct schema");
+                break;
+            }
+
+            case FieldKind::REPEATED_SCALAR:
+                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_LIST), "set list type");
+                SetScalarSchemaType(child->children[0], fi.mapping.element.arrow_type_expr);
+                CheckNa(ArrowSchemaSetName(child->children[0], "item"), "set item name");
+                break;
+
+            case FieldKind::REPEATED_STRUCT: {
+                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_LIST), "set list type");
+                nanoarrow::UniqueSchema nested;
+                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
+                                       nested.get());
+                CheckNa(ArrowSchemaDeepCopy(nested.get(), child->children[0]),
+                        "copy struct schema");
+                CheckNa(ArrowSchemaSetName(child->children[0], "item"), "set item name");
+                break;
+            }
+
+            case FieldKind::NESTED_LIST: {
+                ArrowSchema* cur = child;
+                for (int d = 0; d < fi.mapping.list_depth; ++d) {
+                    CheckNa(ArrowSchemaSetType(cur, NANOARROW_TYPE_LIST), "set list type");
+                    CheckNa(ArrowSchemaSetName(cur->children[0], "item"), "set item name");
+                    cur = cur->children[0];
+                }
+                nanoarrow::UniqueSchema nested;
+                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
+                                       nested.get());
+                CheckNa(ArrowSchemaDeepCopy(nested.get(), cur), "copy struct schema");
+                CheckNa(ArrowSchemaSetName(cur, "item"), "set item name");
+                break;
+            }
+
+            case FieldKind::MAP: {
+                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_MAP), "set map type");
+                ArrowSchema* entries = child->children[0];
+                SetScalarSchemaType(entries->children[0], fi.mapping.map_key.arrow_type_expr);
+                if (fi.mapping.map_value_is_message) {
+                    nanoarrow::UniqueSchema nested;
+                    BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.map_value_msg, fi.name),
+                                           nested.get());
+                    CheckNa(ArrowSchemaDeepCopy(nested.get(), entries->children[1]),
+                            "copy struct schema");
+                    CheckNa(ArrowSchemaSetName(entries->children[1], "value"), "set value name");
+                } else {
+                    SetScalarSchemaType(entries->children[1], fi.mapping.map_value.arrow_type_expr);
+                }
+                break;
+            }
+        }
+
+        CheckNa(ArrowSchemaSetName(child, fi.name.c_str()), "set field name");
+        if (fi.mapping.nullable) {
+            child->flags |= ARROW_FLAG_NULLABLE;
+        } else {
+            child->flags &= ~ARROW_FLAG_NULLABLE;
+        }
+
+        SetMetadataPairs(
+            child, {{"field_number", std::to_string(fi.field_number)}, {"field_id", fi.field_id}});
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -2703,6 +2879,16 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 }  // namespace
 
 // -----------------------------------------------------------------------
+// Public schema builder (declared in schema_builder.hpp)
+// -----------------------------------------------------------------------
+
+nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg) {
+    nanoarrow::UniqueSchema schema;
+    BuildMessageSchemaInto(msg, schema.get());
+    return schema;
+}
+
+// -----------------------------------------------------------------------
 // CodeGenerator interface
 // -----------------------------------------------------------------------
 
@@ -2713,6 +2899,7 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // Parse comma-separated options from --fletcher_opt=...
     bool schema_only = false;
     bool emit_ts = false;
+    bool emit_ipc = false;
     {
         std::istringstream ss(parameter);
         std::string token;
@@ -2721,6 +2908,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                 schema_only = true;
             else if (token == "ts")
                 emit_ts = true;
+            else if (token == "ipc")
+                emit_ipc = true;
         }
     }
 
@@ -2750,6 +2939,32 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));
         if (!WriteToStream(stream.get(), ts_content, error)) return false;
+    }
+
+    // Optionally emit one serialized Arrow IPC schema file per message
+    // (<stem>.<Message>.ipc). Same message set as the generated header's
+    // Schema() functions, and byte-identical to the schema bytes providers
+    // announce at runtime.
+    if (emit_ipc) {
+        for (const auto* msg : OrderedMessages(file)) {
+            if (IsRecursive(msg)) continue;
+            if (IsFlattenedWrapper(msg)) continue;
+
+            std::vector<uint8_t> ipc;
+            try {
+                nanoarrow::UniqueSchema schema = BuildMessageSchema(msg);
+                ipc = SerializeSchemaIpc(schema.get());
+            } catch (const std::exception& e) {
+                *error = "failed to build IPC schema for '" + msg->full_name() + "': " + e.what();
+                return false;
+            }
+
+            const std::string ipc_out_name = IpcOutputFilename(file->name(), ClassName(msg));
+            std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+                context->Open(ipc_out_name));
+            if (!WriteToStream(stream.get(), std::string(ipc.begin(), ipc.end()), error))
+                return false;
+        }
     }
 
     return true;

@@ -49,9 +49,11 @@ set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# Each .proto here is run through protoc-gen-fletcher to produce two headers:
+# Each .proto here is run through protoc-gen-fletcher to produce two headers
+# plus one serialized Arrow IPC schema file per message:
 #   <stem>.fletcher.pb.h        — edge-tier (proto + nanoarrow only)
 #   <stem>.fletcher.arrow.pb.h  — server-tier (Arrow C++ ArrowRowView)
+#   <stem>.<Message>.ipc        — schema-only Arrow IPC stream (--fletcher_opt=ipc)
 set(PROTO_STEMS
     telemetry
     simple
@@ -74,6 +76,7 @@ foreach(_stem IN LISTS PROTO_STEMS)
         OUTPUT  "${_hdr}" "${_vhdr}"
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+                "--fletcher_opt=ipc"
                 "--fletcher_out=${GENERATED_DIR}"
                 "-I" "${PROTO_DIR}"
                 "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
@@ -104,11 +107,16 @@ add_executable(integration_tests
     tests/test_flatten.cpp
     tests/test_native_roundtrip.cpp
     tests/test_nullability_consistency.cpp
-    tests/test_arrow_view.cpp)
+    tests/test_arrow_view.cpp
+    tests/test_ipc_parity.cpp)
 add_dependencies(integration_tests generate_headers)
 
 target_include_directories(integration_tests PRIVATE
     "${GENERATED_DIR}")
+
+# test_ipc_parity.cpp reads the emitted .ipc files back at runtime.
+target_compile_definitions(integration_tests PRIVATE
+    GENERATED_DIR_PATH="${GENERATED_DIR}")
 
 target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main

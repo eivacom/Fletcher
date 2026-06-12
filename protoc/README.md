@@ -75,6 +75,9 @@ protoc \
 ### Options
 
 - `--fletcher_opt=ts` — generate TypeScript schema descriptors (`.fletcher.ts`) instead of C++ headers.
+- `--fletcher_opt=ipc` — additionally write one serialized Arrow IPC schema file per message, named `<stem>.<Message>.ipc`, next to the generated headers. Each file is a schema-only [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format), byte-identical to the schema bytes Fletcher providers announce at runtime, and readable by any Arrow implementation (e.g. `pyarrow.ipc.open_stream`).
+
+Options combine comma-separated: `--fletcher_opt=ts,ipc`.
 
 ## Conan package (C++ consumers)
 

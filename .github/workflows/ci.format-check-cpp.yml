@@ -31,13 +31,14 @@ jobs:
 
       # Build the file list at runtime so the workflow stays in sync with
       # `.prettierignore`-style exclusions without manual maintenance. We
-      # skip vendored third-party code (pubsub/third_party/), generated
-      # protoc output (*.fletcher.pb.h / *.fletcher.arrow.pb.h), and any
-      # /build/ directories that may exist locally.
+      # skip vendored third-party code (pubsub/third_party/,
+      # protoc/third_party/), generated protoc output (*.fletcher.pb.h /
+      # *.fletcher.arrow.pb.h), and any /build/ directories that may exist
+      # locally.
       - name: Run clang-format --dry-run --Werror
         run: |
           files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
-            | grep -v -E '^pubsub/third_party/' \
+            | grep -v -E '^(pubsub|protoc)/third_party/' \
             | grep -v -E '\.fletcher\.(arrow\.)?pb\.h$' \
             | grep -v -E '/build/' \
             | grep -v -E '^integration-tests/.*/generated-ts/')
