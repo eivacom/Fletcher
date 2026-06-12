@@ -67,13 +67,26 @@ set(PROTO_STEMS
     evolution_v2
     flatten)
 
+# The .ipc files test_ipc_parity.cpp reads back, declared as additional
+# outputs of the generation command so it reruns when one is deleted
+# independently of the headers. (Every message gets an .ipc file; only the
+# ones a test consumes need declaring.)
+set(_ipc_messages_pubsub  Telemetry)
+set(_ipc_messages_nested  GeoPoint Address Location)
+
 set(GENERATED_HEADERS)
 foreach(_stem IN LISTS PROTO_STEMS)
     set(_src  "${PROTO_DIR}/${_stem}.proto")
     set(_hdr  "${GENERATED_DIR}/${_stem}.fletcher.pb.h")
     set(_vhdr "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h")
+    set(_ipc_files)
+    if(DEFINED _ipc_messages_${_stem})
+        foreach(_msg IN LISTS _ipc_messages_${_stem})
+            list(APPEND _ipc_files "${GENERATED_DIR}/${_stem}.${_msg}.ipc")
+        endforeach()
+    endif()
     add_custom_command(
-        OUTPUT  "${_hdr}" "${_vhdr}"
+        OUTPUT  "${_hdr}" "${_vhdr}" ${_ipc_files}
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_opt=ipc"
@@ -87,7 +100,7 @@ foreach(_stem IN LISTS PROTO_STEMS)
         COMMENT "protoc-gen-fletcher: ${_stem}.proto"
         VERBATIM
     )
-    list(APPEND GENERATED_HEADERS "${_hdr}" "${_vhdr}")
+    list(APPEND GENERATED_HEADERS "${_hdr}" "${_vhdr}" ${_ipc_files})
 endforeach()
 
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})

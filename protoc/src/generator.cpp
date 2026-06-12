@@ -1175,12 +1175,18 @@ void SetMetadataPairs(ArrowSchema* schema,
                       const std::vector<std::pair<std::string, std::string>>& pairs) {
     ArrowBuffer buf;
     ArrowBufferInit(&buf);
-    ArrowMetadataBuilderInit(&buf, nullptr);
+    // Collect the first failure but always reach ArrowBufferReset, then throw.
+    ArrowErrorCode code = ArrowMetadataBuilderInit(&buf, nullptr);
     for (const auto& [key, value] : pairs) {
-        ArrowMetadataBuilderAppend(&buf, ArrowCharView(key.c_str()), ArrowCharView(value.c_str()));
+        if (code != NANOARROW_OK) break;
+        code = ArrowMetadataBuilderAppend(&buf, ArrowCharView(key.c_str()),
+                                          ArrowCharView(value.c_str()));
     }
-    ArrowSchemaSetMetadata(schema, reinterpret_cast<const char*>(buf.data));
+    if (code == NANOARROW_OK) {
+        code = ArrowSchemaSetMetadata(schema, reinterpret_cast<const char*>(buf.data));
+    }
     ArrowBufferReset(&buf);
+    CheckNa(code, "set metadata");
 }
 
 const google::protobuf::Descriptor* RequireNestedMsg(const google::protobuf::Descriptor* nested,
