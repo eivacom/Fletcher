@@ -26,7 +26,7 @@ on:
 # Exclusions follow a strict denylist — everything tracked is checked
 # unless it matches one of:
 #
-#   * Vendored code we don't own (pubsub/third_party/).
+#   * Vendored code we don't own (pubsub/third_party/, protoc/third_party/).
 #   * License / author docs (LICENSE, AUTHORS) — they ARE the headers.
 #   * .md (project docs) and .gitignore/.gitattributes (small config
 #     files) — we deliberately don't put headers on these.
@@ -59,7 +59,7 @@ jobs:
           # Every tracked file, minus the denylist.
           mapfile -t files < <(
             git ls-files \
-              | grep -v -E '^pubsub/third_party/' \
+              | grep -v -E '^(pubsub|protoc)/third_party/' \
               | grep -v -E '^(LICENSE|AUTHORS)$' \
               | grep -v -E '^\.gitignore$|^\.gitattributes$' \
               | grep -v -E '\.md$' \

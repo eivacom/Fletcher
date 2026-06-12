@@ -47,6 +47,10 @@ struct FieldMapping {
     std::string nested_class;   // C++ type reference (globally qualified when cross-file)
     std::string nested_header;  // non-empty → #include this path (cross-file dependency)
     int list_depth = 0;         // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
+    // Descriptor behind nested_class — the message whose schema the generated
+    // code references via <nested_class>Schema(). Used by the in-process
+    // schema builder (--fletcher_opt=ipc) to build the same schema directly.
+    const google::protobuf::Descriptor* nested_msg = nullptr;
 
     // MAP kind:
     ScalarTypeInfo map_key;
@@ -54,6 +58,8 @@ struct FieldMapping {
     std::string map_value_class;   // C++ type reference (globally qualified when cross-file)
     std::string map_value_header;  // non-empty → #include this path (cross-file dep)
     bool map_value_is_message = false;
+    // Descriptor behind map_value_class (see nested_msg above).
+    const google::protobuf::Descriptor* map_value_msg = nullptr;
 };
 
 // Classify a proto field and return enough information to generate Arrow code.

@@ -9,7 +9,7 @@ import os
 
 class FletcherProtocPluginConan(ConanFile):
     name = "fletcher-protoc"
-    version = "0.3.1-alpha"
+    version = "0.3.2-alpha"
     description = "A protoc plugin that generates C++ and TypeScript code for the Fletcher wire format"
     license = "LGPL-3.0-or-later"
     package_type = "application"
@@ -33,6 +33,7 @@ class FletcherProtocPluginConan(ConanFile):
         "include/*",
         "cmake/*",
         "tests/*",
+        "third_party/*",
     )
 
     def requirements(self):

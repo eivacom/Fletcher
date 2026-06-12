@@ -369,6 +369,7 @@ std::optional<FieldMapping> MapStructField(const FD* field) {
     m.nullable = IsFieldNullable(field);
     m.nested_class = QualifiedClassName(msg, field->file());
     m.nested_header = CrossFileHeader(msg, field->file());
+    m.nested_msg = msg;
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
@@ -391,6 +392,7 @@ std::optional<FieldMapping> MapRepeatedMessage(const FD* field) {
     m.nullable = false;
     m.nested_class = QualifiedClassName(msg, field->file());
     m.nested_header = CrossFileHeader(msg, field->file());
+    m.nested_msg = msg;
 
     int depth = NestingDepth(msg);
     if (depth >= 3)
@@ -424,6 +426,7 @@ std::optional<FieldMapping> MapMapField(const FD* field) {
         m.map_value_is_message = true;
         m.map_value_class = QualifiedClassName(val_msg, field->file());
         m.map_value_header = CrossFileHeader(val_msg, field->file());
+        m.map_value_msg = val_msg;
         m.warning += "; map with message values has fragile Parquet round-trip";
     } else {
         const ScalarTypeInfo* vi = BaseScalar(val_fd->type());
@@ -450,6 +453,7 @@ std::optional<FieldMapping> MapFlattenedSingular(const FD* field) {
         m.nullable = IsFieldNullable(field);
         m.nested_class = QualifiedClassName(msg, field->file());
         m.nested_header = CrossFileHeader(msg, field->file());
+        m.nested_msg = msg;
         m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
                     std::to_string(msg->field_count()) +
                     " fields); apply flatten to individual fields instead";
@@ -492,6 +496,7 @@ std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
         m.nullable = false;
         m.nested_class = QualifiedClassName(msg, field->file());
         m.nested_header = CrossFileHeader(msg, field->file());
+        m.nested_msg = msg;
         m.warning = "(fletcher.flatten) ignored on " + msg->full_name() + " (" +
                     std::to_string(msg->field_count()) +
                     " fields); apply flatten to individual fields instead";
@@ -572,6 +577,7 @@ std::optional<FieldMapping> MapFlattenedRepeated(const FD* field) {
     m.nullable = false;
     m.nested_class = QualifiedClassName(current, field->file());
     m.nested_header = CrossFileHeader(current, field->file());
+    m.nested_msg = current;
 
     if (total <= 1) {
         m.kind = FieldKind::REPEATED_STRUCT;

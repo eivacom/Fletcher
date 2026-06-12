@@ -44,6 +44,7 @@ Two notes:
 
 - The leading `node -e mkdirSync(...)` ensures `src/generated/` exists before `protoc` runs — `protoc` does not auto-create its `--fletcher_out` directory, and `mkdir -p` is not portable to Windows.
 - No `--plugin=` flag is needed. `protoc` searches `PATH` (which npm prepends `node_modules/.bin/` to during script execution) for `protoc-gen-<name>` based on the `--<name>_out` flag, with the OS's executable-extension rules — so the `protoc-gen-fletcher.cmd` wrapper that npm writes alongside the bin shim is found correctly on Windows.
+- `--fletcher_opt=ts` selects TypeScript output. Appending `ipc` (`--fletcher_opt=ts,ipc`) additionally writes one schema-only Arrow IPC stream file per message (`<stem>.<Message>.ipc`) — byte-identical to the schema bytes Fletcher providers announce at runtime, readable by any Arrow implementation.
 
 Then:
 
