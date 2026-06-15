@@ -30,6 +30,15 @@ These three policies together implement "at-least-once" delivery within a single
 
 The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` + `TRANSIENT_LOCAL`. It is a Fletcher-internal implementation detail and not configurable.
 
+### Delivery guarantees
+
+The provider upholds the `PubSubProvider::SubscribeCallback` contract:
+
+- **Schema before data.** The subscription callback is never invoked with a null schema. Because `Subscribe` is non-blocking and may run before any publisher exists, a data sample can arrive before the topic schema does (the schema travels on the separate `__schema` channel). The provider holds such samples until the schema is known, then delivers them.
+- **Per-writer order.** Samples from a single writer reach the callback in the order they were published. DDS delivers a single writer's samples to a `DataReader` in order under `RELIABLE` QoS; the provider preserves that order all the way to the callback — **including across the schema handoff**, where the buffered pre-schema backlog is delivered before, and never interleaved with, samples that arrive live afterwards.
+
+Both guarantees are enforced by routing every sample (buffered backlog and live) through a single ordered FIFO that is drained by one thread at a time (`internal::OrderedDelivery`). The schema handoff is the one moment two threads are active — the schema-listener thread that resolves the schema and flushes the backlog, and the data-reader thread delivering live samples — so a sample offered while a drain is in progress is appended behind the in-flight backlog rather than delivered inline, which is what keeps the two from interleaving.
+
 ## Usage
 
 ```cpp
@@ -111,7 +120,7 @@ publisher.CreateTopic({"misc", "events"},       schema_d);    // uses default_wr
 ### Constraints
 
 - `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict.
-- On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `std::shared_future<SharedSchema>` that resolves when the schema is known, and the provider buffers incoming data until then so the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.)
+- On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `std::shared_future<SharedSchema>` that resolves when the schema is known, and the provider buffers incoming data until then so the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.) Per-writer order is preserved across this handoff — see [Delivery guarantees](#delivery-guarantees).
 - Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
 - The subscription callback is invoked from a Fast DDS internal listener thread. Shared state accessed from the callback must be protected externally.
 - `FastDDSPubSubProvider` is non-copyable and non-movable (DDS entities cannot be transferred).
@@ -196,7 +205,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.1.0-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.3.1-alpha")
 ```
 
 Install dependencies:

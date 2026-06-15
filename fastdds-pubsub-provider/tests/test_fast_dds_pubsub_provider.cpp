@@ -9,8 +9,11 @@
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+
+#include "internal/ordered_delivery.hpp"
 #include <mutex>
 #include <thread>
+#include <vector>
 
 using namespace fletcher;
 using namespace eprosima::fastdds::dds;
@@ -333,4 +336,147 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
     }
 
     sub_provider.Unsubscribe({"subfirst", "x"});
+}
+
+// ---------------------------------------------------------------------------
+// Subscribe-first burst: a real round-trip where the subscriber joins before
+// the publisher, so the first samples are buffered until the schema arrives
+// and then flushed. Functional smoke test that the whole burst is delivered,
+// in order. (A deterministic proof of the handoff-ordering invariant — that a
+// live sample arriving mid-flush cannot overtake the backlog — is the
+// OrderedDelivery unit test below; that race is timing-dependent over real
+// DDS, so it is verified directly on the mechanism instead.)
+// ---------------------------------------------------------------------------
+TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
+    constexpr int32_t kCount = 1000;
+
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<int32_t> received;
+
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"ordering", "burst"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len < 5) return;
+            std::lock_guard<std::mutex> lk(mu);
+            received.push_back(DecodeRow(data));
+            cv.notify_all();
+        });
+
+    pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
+    for (int32_t i = 0; i < kCount; ++i) {
+        pub_provider.Publish({"ordering", "burst"}, MakeEncoder(i));
+    }
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, std::chrono::seconds(15),
+                                [&] { return received.size() == static_cast<size_t>(kCount); }))
+            << "received " << received.size() << " of " << kCount << " samples";
+    }
+    sub_provider.Unsubscribe({"ordering", "burst"});
+
+    std::lock_guard<std::mutex> lk(mu);
+    ASSERT_EQ(received.size(), static_cast<size_t>(kCount));
+    for (int32_t i = 0; i < kCount; ++i) {
+        ASSERT_EQ(received[static_cast<size_t>(i)], i)
+            << "out-of-order delivery at index " << i;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OrderedDelivery — deterministic proof of the schema-handoff invariant.
+//
+// The bug: the buggy listener had two delivery paths — a live sample (data
+// thread) was delivered directly, bypassing the backlog being flushed by the
+// schema thread — so the two ran concurrently and a live sample could
+// overtake the backlog. OrderedDelivery removes the second path: every sample
+// goes through one FIFO drained by a single drainer.
+//
+// The single-drainer guard is what serialises delivery. Its observable,
+// thread-free signature: a sample offered *while a drain is in progress* must
+// NOT be delivered inline (nested inside the current callback) — on the real
+// two-thread path an inline/concurrent delivery is exactly the overtaking
+// race. We trigger it deterministically by re-entering Offer() from inside the
+// callback. With the guard the re-offered sample is queued and delivered after
+// the current callback returns (no nesting); remove the guard and Offer drains
+// reentrantly, invoking a callback nested inside another — which this test
+// catches. Order is asserted too: the late sample lands strictly last.
+// ---------------------------------------------------------------------------
+TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
+    std::vector<int32_t> order;
+    int active = 0;          // callbacks currently on the stack
+    bool nested = false;     // a callback was entered while another was active
+    fletcher::internal::OrderedDelivery* self = nullptr;
+    bool injected = false;
+
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            ASSERT_GE(len, 5u);
+            if (active > 0) {
+                nested = true;
+            }
+            ++active;
+            order.push_back(DecodeRow(data));
+            // While the backlog [0,1,2] is draining, a fresh live sample
+            // arrives. Re-entering Offer here is the deterministic stand-in for
+            // the data-reader thread delivering during the flush.
+            if (!injected) {
+                injected = true;
+                std::vector<uint8_t> row(5);
+                row[0] = 0x00;
+                int32_t v = 99;
+                std::memcpy(row.data() + 1, &v, sizeof(v));
+                self->Offer(std::move(row), {});
+            }
+            --active;
+        });
+    self = &delivery;
+
+    auto row_bytes = [](int32_t v) {
+        std::vector<uint8_t> row(5);
+        row[0] = 0x00;
+        std::memcpy(row.data() + 1, &v, sizeof(v));
+        return row;
+    };
+
+    // Three samples arrive before the schema is known — buffered, not delivered.
+    delivery.Offer(row_bytes(0), {});
+    delivery.Offer(row_bytes(1), {});
+    delivery.Offer(row_bytes(2), {});
+    EXPECT_TRUE(order.empty()) << "samples must be held until the schema is set";
+
+    // Schema resolves: the backlog drains. The sample offered mid-flush must be
+    // delivered after the current callback returns (not nested), and land last.
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+
+    EXPECT_FALSE(nested)
+        << "a sample offered mid-flush was delivered inline — on the real two-thread "
+           "path that is the live-sample-overtakes-backlog race";
+    EXPECT_EQ(order, (std::vector<int32_t>{0, 1, 2, 99}));
+}
+
+// A sample offered before the schema is known must not reach the callback
+// until SetSchema arrives (no null-schema delivery).
+TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
+    std::vector<int32_t> order;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+            ASSERT_GE(len, 5u);
+            EXPECT_TRUE(schema) << "callback invoked with a null schema";
+            order.push_back(DecodeRow(data));
+        });
+
+    std::vector<uint8_t> row(5);
+    row[0] = 0x00;
+    int32_t v = 7;
+    std::memcpy(row.data() + 1, &v, sizeof(v));
+    delivery.Offer(row, {});
+    EXPECT_TRUE(order.empty());
+
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+    ASSERT_EQ(order.size(), 1u);
+    EXPECT_EQ(order[0], 7);
 }
