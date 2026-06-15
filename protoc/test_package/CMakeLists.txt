@@ -68,15 +68,25 @@ endif()
 set(CORPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto/corpus")
 set(CORPUS_PROTOS common/types schemas/sample)
 
+# Per-proto .ipc outputs (one file per non-flattened message; Length is a
+# (fletcher.flatten) wrapper and gets none) and extra import dependencies.
+# Declaring these makes generation rerun when an .ipc is deleted or an
+# imported proto changes — keyed by the proto path with '/' → '_'.
+set(_ipc_common_types  "${GENERATED_DIR}/common/types.GeoPoint.ipc")
+set(_ipc_schemas_sample "${GENERATED_DIR}/schemas/sample.Sample.ipc")
+set(_imports_schemas_sample "${CORPUS_DIR}/common/types.proto")
+
 # ts,ipc covers all four output kinds in one invocation: the edge header is
 # always emitted, the Arrow C++ view header unless schema_only, the .ts
 # descriptor for ts, and the .ipc schema files for ipc.
 set(CORPUS_OUTPUTS)
 foreach(_rel IN LISTS CORPUS_PROTOS)
+    string(REPLACE "/" "_" _key "${_rel}")
     set(_outs
         "${GENERATED_DIR}/${_rel}.fletcher.pb.h"
         "${GENERATED_DIR}/${_rel}.fletcher.arrow.pb.h"
-        "${GENERATED_DIR}/${_rel}.fletcher.ts")
+        "${GENERATED_DIR}/${_rel}.fletcher.ts"
+        ${_ipc_${_key}})
     add_custom_command(
         OUTPUT ${_outs}
         COMMAND "$<TARGET_FILE:protobuf::protoc>"
@@ -88,6 +98,7 @@ foreach(_rel IN LISTS CORPUS_PROTOS)
                 "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${CORPUS_DIR}/${_rel}.proto"
         DEPENDS "${CORPUS_DIR}/${_rel}.proto" fletcher-protoc::plugin
+                ${_imports_${_key}}
         COMMENT "protoc-gen-fletcher (corpus): ${_rel}.proto"
         VERBATIM
     )
@@ -113,14 +124,11 @@ add_test(
     COMMAND "${CMAKE_COMMAND}" -E cat "${GENERATED_DIR}/test.fletcher.ts"
 )
 
-# Corpus generation succeeded: every expected output — edge header, Arrow
+# Corpus generation succeeded: every declared output — edge header, Arrow
 # view header, TypeScript descriptor, and the spot-checked .ipc schema files
 # — exists (md5sum exits non-zero on any missing file, and unlike cat does
 # not dump binary content into the test log).
 add_test(
     NAME fletcher_protoc_generates_corpus
-    COMMAND "${CMAKE_COMMAND}" -E md5sum
-        ${CORPUS_OUTPUTS}
-        "${GENERATED_DIR}/common/types.GeoPoint.ipc"
-        "${GENERATED_DIR}/schemas/sample.Sample.ipc"
+    COMMAND "${CMAKE_COMMAND}" -E md5sum ${CORPUS_OUTPUTS}
 )
