@@ -4,7 +4,8 @@
 find_package(GTest REQUIRED)
 
 add_executable(core_tests
-    test_envelope.cpp)
+    test_envelope.cpp
+    test_positional_io.cpp)
 
 target_link_libraries(core_tests PRIVATE
     GTest::gtest_main
