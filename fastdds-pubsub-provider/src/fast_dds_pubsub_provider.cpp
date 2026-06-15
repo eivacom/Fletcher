@@ -12,8 +12,6 @@
 
 #include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 
-#include "internal/ordered_delivery.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -39,6 +37,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#include "internal/ordered_delivery.hpp"
 
 using namespace eprosima::fastdds::dds;
 

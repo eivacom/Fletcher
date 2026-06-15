@@ -22,13 +22,12 @@
 
 #include <cstdint>
 #include <deque>
-#include <mutex>
-#include <utility>
-#include <vector>
-
 #include <fletcher/core/types.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 namespace fletcher {
 namespace internal {

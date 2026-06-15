@@ -9,11 +9,11 @@
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-
-#include "internal/ordered_delivery.hpp"
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include "internal/ordered_delivery.hpp"
 
 using namespace fletcher;
 using namespace eprosima::fastdds::dds;
@@ -381,8 +381,7 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     std::lock_guard<std::mutex> lk(mu);
     ASSERT_EQ(received.size(), static_cast<size_t>(kCount));
     for (int32_t i = 0; i < kCount; ++i) {
-        ASSERT_EQ(received[static_cast<size_t>(i)], i)
-            << "out-of-order delivery at index " << i;
+        ASSERT_EQ(received[static_cast<size_t>(i)], i) << "out-of-order delivery at index " << i;
     }
 }
 
@@ -407,8 +406,8 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
 // ---------------------------------------------------------------------------
 TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
     std::vector<int32_t> order;
-    int active = 0;          // callbacks currently on the stack
-    bool nested = false;     // a callback was entered while another was active
+    int active = 0;       // callbacks currently on the stack
+    bool nested = false;  // a callback was entered while another was active
     fletcher::internal::OrderedDelivery* self = nullptr;
     bool injected = false;
 
