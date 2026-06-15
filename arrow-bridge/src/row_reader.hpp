@@ -19,9 +19,13 @@ struct Reader {
     size_t size;
     size_t pos{0};
 
+    // Bytes not yet consumed. Invariant: pos <= size, so this never underflows.
+    size_t remaining() const { return size - pos; }
+
     template <typename T>
     T Read() {
-        if (pos + sizeof(T) > size) throw std::invalid_argument("fletcher: buffer underrun");
+        // Overflow-safe form of `pos + sizeof(T) > size` (pos <= size always).
+        if (sizeof(T) > size - pos) throw std::invalid_argument("fletcher: buffer underrun");
         T value;
         std::memcpy(&value, data + pos, sizeof(T));
         pos += sizeof(T);
@@ -29,7 +33,9 @@ struct Reader {
     }
 
     const uint8_t* ReadBytes(size_t n) {
-        if (pos + n > size) throw std::invalid_argument("fletcher: buffer underrun");
+        // Overflow-safe: a wrapping `pos + n` could otherwise pass the check
+        // for an attacker-controlled length and allow an out-of-bounds read.
+        if (n > size - pos) throw std::invalid_argument("fletcher: buffer underrun");
         const uint8_t* ptr = data + pos;
         pos += n;
         return ptr;

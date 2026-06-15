@@ -79,25 +79,36 @@ protoc \
 
 Options combine comma-separated: `--fletcher_opt=ts,ipc`.
 
-### test_package proto corpus
-
-Besides a single-file smoke proto, the Conan `test_package` runs the plugin (with `--fletcher_opt=ipc`) over a small multi-file corpus under [`test_package/proto/corpus/`](test_package/proto/corpus/), so every `conan create` exercises cross-package imports, `(fletcher.flatten)` / `(fletcher.flatten_field)`, a third-party custom option, well-known types, maps, and proto3 `optional`.
-
 ## Conan package (C++ consumers)
+
+The `fletcher-protoc` package ships only the plugin executable (self-contained — protobuf is statically linked into it) and a CMake module. The `protoc` compiler itself is **not** included: it comes from the `protobuf` Conan package, and Conan does not propagate the plugin's protobuf requirement as a CMake target to downstream consumers. So your conanfile needs both:
+
+```python
+def requirements(self):
+    self.requires("fletcher-protoc/<version>")
+    self.requires("protobuf/3.21.12")  # provides protoc; match the plugin's pinned version
+```
 
 When consumed as a Conan package, `fletcher-protoc` provides an imported CMake target:
 
 ```cmake
 find_package(fletcher-protoc REQUIRED)
+find_package(protobuf REQUIRED)
+
+set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# protoc requires the output directory to exist — it does not create it.
+file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
 add_custom_command(
-    OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
+    OUTPUT  "${GENERATED_DIR}/my_service.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
-            "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
+            "${PROTO_DIR}/my_service.proto"
+    DEPENDS "${PROTO_DIR}/my_service.proto" fletcher-protoc::plugin
 )
 ```
 
@@ -134,19 +145,19 @@ Putting all three roots together:
 
 ```cmake
 add_custom_command(
-    OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
+    OUTPUT  "${GENERATED_DIR}/my_service.fletcher.pb.h"
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"   # fletcher/*.proto (options, …)
             "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"     # google/protobuf/*.proto
-            "${PROTO_DIR}/${stem}.proto"
-    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
+            "${PROTO_DIR}/my_service.proto"
+    DEPENDS "${PROTO_DIR}/my_service.proto" fletcher-protoc::plugin
 )
 ```
 
-A complete worked example lives in [`test_package/CMakeLists.txt`](test_package/CMakeLists.txt).
+See [`test_package/`](test_package/) for a complete, working consumer example — its [`conanfile.py`](test_package/conanfile.py) and [`CMakeLists.txt`](test_package/CMakeLists.txt) wire up exactly these import roots and run the plugin (C++, TypeScript, and `.ipc` output) on every `conan create`.
 
 ## npm package (TypeScript / JS consumers)
 
