@@ -79,6 +79,10 @@ protoc \
 
 Options combine comma-separated: `--fletcher_opt=ts,ipc`.
 
+### test_package proto corpus
+
+Besides a single-file smoke proto, the Conan `test_package` runs the plugin (with `--fletcher_opt=ipc`) over a small multi-file corpus under [`test_package/proto/corpus/`](test_package/proto/corpus/), so every `conan create` exercises cross-package imports, `(fletcher.flatten)` / `(fletcher.flatten_field)`, a third-party custom option, well-known types, maps, and proto3 `optional`.
+
 ## Conan package (C++ consumers)
 
 When consumed as a Conan package, `fletcher-protoc` provides an imported CMake target:
@@ -96,6 +100,53 @@ add_custom_command(
     DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
 )
 ```
+
+### Resolving `fletcher/*` and well-known-type imports
+
+The single `-I "${PROTO_DIR}"` above is enough only for self-contained `.proto` files. As soon as a proto imports something that lives **outside** your proto tree, protoc needs an extra import root for it — these imports are resolved against the `-I` roots, not relative to the importing file:
+
+- **The `fletcher/` proto package.** The package's CMake module sets **`FLETCHER_PROTO_INCLUDE_DIR`** to the root under which `fletcher-protoc` ships its public `.proto` files, so adding it as a root resolves any `import "fletcher/<name>.proto"`:
+
+  ```cmake
+  "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+  ```
+
+  Today the package ships only `fletcher/options.proto` (the `(fletcher.flatten)` / `(fletcher.flatten_field)` options), but the same root covers any additional `fletcher/*.proto` the package adds later — consumers need no change.
+
+- **`import "google/protobuf/*.proto"`** (Timestamp, Duration, wrappers — and `descriptor.proto`, which `fletcher/options.proto` imports itself, so this root is needed whenever you use Fletcher options). These ship next to the `protoc` binary; locate that include dir from the `protobuf::protoc` target:
+
+  ```cmake
+  foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO "")
+      if(_cfg)
+          get_target_property(_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+      else()
+          get_target_property(_loc protobuf::protoc IMPORTED_LOCATION)
+      endif()
+      if(_loc AND NOT _loc MATCHES "NOTFOUND")
+          get_filename_component(_bindir "${_loc}" DIRECTORY)
+          get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_bindir}/../include" ABSOLUTE)
+          break()
+      endif()
+  endforeach()
+  ```
+
+Putting all three roots together:
+
+```cmake
+add_custom_command(
+    OUTPUT  "${GENERATED_DIR}/${stem}.fletcher.pb.h"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"   # fletcher/*.proto (options, …)
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"     # google/protobuf/*.proto
+            "${PROTO_DIR}/${stem}.proto"
+    DEPENDS "${PROTO_DIR}/${stem}.proto" fletcher-protoc::plugin
+)
+```
+
+A complete worked example lives in [`test_package/CMakeLists.txt`](test_package/CMakeLists.txt).
 
 ## npm package (TypeScript / JS consumers)
 

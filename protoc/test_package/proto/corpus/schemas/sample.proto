@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// Observation-style message that pulls types across a package boundary and
+// uses well-known types, maps, proto3 optional, nested/repeated structs, and
+// both (fletcher.flatten) (via Length) and (fletcher.flatten_field).
+syntax = "proto3";
+
+package corpus.schemas;
+
+import "common/types.proto";
+import "fletcher/options.proto";
+import "google/protobuf/timestamp.proto";
+
+message Sample {
+    option (corpus.common.corpus_kind) = "sample";
+
+    google.protobuf.Timestamp timestamp     = 1;
+    corpus.common.Length      depth         = 2;  // flattened wrapper
+    corpus.common.GeoPoint    position      = 3;  // nested struct
+    repeated corpus.common.GeoPoint track   = 4;  // list(struct)
+    optional double           heading_deg   = 5
+        [(corpus.common.corpus_role) = "heading"];  // proto3 optional + field option
+    map<string, float>        vendor_fields = 6;  // map
+    corpus.common.GeoPoint    origin        = 7
+        [(fletcher.flatten_field) = true];  // inlined fields (field_id paths)
+}
