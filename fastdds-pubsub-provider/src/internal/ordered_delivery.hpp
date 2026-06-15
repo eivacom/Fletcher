@@ -52,6 +52,11 @@ class OrderedDelivery {
 
     // Supply the schema once known, then drain everything buffered so far.
     void SetSchema(SharedSchema schema) {
+        // A null schema never satisfies the schema-before-data contract: keep
+        // buffering until a real schema arrives rather than draining with null.
+        if (!schema) {
+            return;
+        }
         std::unique_lock<std::mutex> lk(mu_);
         if (schema_ready_) {
             return;

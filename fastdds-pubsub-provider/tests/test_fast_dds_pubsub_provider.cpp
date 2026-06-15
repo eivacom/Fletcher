@@ -357,13 +357,13 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     std::condition_variable cv;
     std::vector<int32_t> received;
 
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"ordering", "burst"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-            if (len < 5) return;
-            std::lock_guard<std::mutex> lk(mu);
-            received.push_back(DecodeRow(data));
-            cv.notify_all();
-        });
+    sub_provider.Subscribe({"ordering", "burst"},
+                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                               if (len < 5) return;
+                               std::lock_guard<std::mutex> lk(mu);
+                               received.push_back(DecodeRow(data));
+                               cv.notify_all();
+                           });
 
     pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
     for (int32_t i = 0; i < kCount; ++i) {
@@ -473,6 +473,32 @@ TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
     int32_t v = 7;
     std::memcpy(row.data() + 1, &v, sizeof(v));
     delivery.Offer(row, {});
+    EXPECT_TRUE(order.empty());
+
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+    ASSERT_EQ(order.size(), 1u);
+    EXPECT_EQ(order[0], 7);
+}
+
+// A null schema must never release buffered samples — that would drain them
+// with a null schema and break schema-before-data. Buffering continues until a
+// real schema arrives.
+TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
+    std::vector<int32_t> order;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+            ASSERT_GE(len, 5u);
+            EXPECT_TRUE(schema) << "callback invoked with a null schema";
+            order.push_back(DecodeRow(data));
+        });
+
+    std::vector<uint8_t> row(5);
+    row[0] = 0x00;
+    int32_t v = 7;
+    std::memcpy(row.data() + 1, &v, sizeof(v));
+    delivery.Offer(row, {});
+
+    delivery.SetSchema(nullptr);  // must not flip schema_ready_ or drain
     EXPECT_TRUE(order.empty());
 
     delivery.SetSchema(MakeSharedSchema(MakeSchema()));
