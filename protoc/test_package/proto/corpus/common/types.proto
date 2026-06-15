@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// Reusable types imported across a package boundary by schemas/sample.proto.
+// Exercises cross-file references, (fletcher.flatten), and a third-party
+// custom option the plugin must parse-and-ignore.
+syntax = "proto3";
+
+package corpus.common;
+
+import "google/protobuf/descriptor.proto";
+import "fletcher/options.proto";
+
+// Custom options the plugin does not interpret (mirrors downstream schemas
+// that annotate messages/fields with their own option sets).
+extend google.protobuf.MessageOptions {
+    string corpus_kind = 60001;
+}
+extend google.protobuf.FieldOptions {
+    string corpus_role = 60001;
+}
+
+// Single-field wrapper → flattened into the parent's Arrow column.
+message Length {
+    option (fletcher.flatten) = true;
+    double meters = 1;
+}
+
+// Plain nested struct.
+message GeoPoint {
+    double latitude  = 1;
+    double longitude = 2;
+}

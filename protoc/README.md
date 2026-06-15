@@ -112,7 +112,52 @@ add_custom_command(
 )
 ```
 
-See [`test_package/`](test_package/) for a complete, working consumer example — its [`conanfile.py`](test_package/conanfile.py) and [`CMakeLists.txt`](test_package/CMakeLists.txt) exercise exactly this flow (C++ and TypeScript generation) and run on every `conan create`.
+### Resolving `fletcher/*` and well-known-type imports
+
+The single `-I "${PROTO_DIR}"` above is enough only for self-contained `.proto` files. As soon as a proto imports something that lives **outside** your proto tree, protoc needs an extra import root for it — these imports are resolved against the `-I` roots, not relative to the importing file:
+
+- **The `fletcher/` proto package.** The package's CMake module sets **`FLETCHER_PROTO_INCLUDE_DIR`** to the root under which `fletcher-protoc` ships its public `.proto` files, so adding it as a root resolves any `import "fletcher/<name>.proto"`:
+
+  ```cmake
+  "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+  ```
+
+  Today the package ships only `fletcher/options.proto` (the `(fletcher.flatten)` / `(fletcher.flatten_field)` options), but the same root covers any additional `fletcher/*.proto` the package adds later — consumers need no change.
+
+- **`import "google/protobuf/*.proto"`** (Timestamp, Duration, wrappers — and `descriptor.proto`, which `fletcher/options.proto` imports itself, so this root is needed whenever you use Fletcher options). These ship next to the `protoc` binary; locate that include dir from the `protobuf::protoc` target:
+
+  ```cmake
+  foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO "")
+      if(_cfg)
+          get_target_property(_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+      else()
+          get_target_property(_loc protobuf::protoc IMPORTED_LOCATION)
+      endif()
+      if(_loc AND NOT _loc MATCHES "NOTFOUND")
+          get_filename_component(_bindir "${_loc}" DIRECTORY)
+          get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_bindir}/../include" ABSOLUTE)
+          break()
+      endif()
+  endforeach()
+  ```
+
+Putting all three roots together:
+
+```cmake
+add_custom_command(
+    OUTPUT  "${GENERATED_DIR}/my_service.fletcher.pb.h"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"   # fletcher/*.proto (options, …)
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"     # google/protobuf/*.proto
+            "${PROTO_DIR}/my_service.proto"
+    DEPENDS "${PROTO_DIR}/my_service.proto" fletcher-protoc::plugin
+)
+```
+
+See [`test_package/`](test_package/) for a complete, working consumer example — its [`conanfile.py`](test_package/conanfile.py) and [`CMakeLists.txt`](test_package/CMakeLists.txt) wire up exactly these import roots and run the plugin (C++, TypeScript, and `.ipc` output) on every `conan create`.
 
 ## npm package (TypeScript / JS consumers)
 
