@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-fastdds-pubsub-provider"
-    version = "0.3.0-alpha"
+    version = "0.3.1-alpha"
     description = "Fletcher FastDDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"

@@ -83,11 +83,23 @@ class PubSubProvider {
     /// the topic's schema, and any sidecar attachments.
     /// The SharedSchema keeps the schema alive as long as any copy exists,
     /// so callbacks may safely store it for later use.
+    ///
+    /// Delivery contract every provider must uphold:
+    ///  - **Schema before data.** The callback is never invoked with a null
+    ///    schema. A subscriber may Subscribe before any publisher exists; the
+    ///    schema then arrives asynchronously, and the provider buffers data
+    ///    that arrives ahead of it and delivers that data only once the schema
+    ///    is known.
+    ///  - **Per-writer order.** Samples from a single writer reach the callback
+    ///    in the order they were published. This holds across the schema
+    ///    handoff too: the buffered pre-schema backlog is delivered before —
+    ///    and never interleaved with — samples that arrive live afterwards.
     using SubscribeCallback = std::function<void(const uint8_t* data, size_t len,
                                                  SharedSchema schema, Attachments attachments)>;
 
     /// Subscribe to a named topic.  Returns the schema that the
-    /// publisher provided when it created the topic.
+    /// publisher provided when it created the topic. Delivery obeys the
+    /// SubscribeCallback contract above (schema-before-data, per-writer order).
     virtual SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
                                          SubscribeCallback callback) = 0;
 

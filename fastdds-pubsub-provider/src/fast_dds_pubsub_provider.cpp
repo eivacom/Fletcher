@@ -38,6 +38,8 @@
 #include <string>
 #include <thread>
 
+#include "internal/ordered_delivery.hpp"
+
 using namespace eprosima::fastdds::dds;
 
 namespace fletcher {
@@ -234,68 +236,30 @@ class FletcherTopicType : public TopicDataType {
 // DataReaderListener — delivers raw row bytes to subscriber callback.
 // -----------------------------------------------------------------------
 
+// Thin adapter: pulls raw samples off the DataReader and hands them to
+// OrderedDelivery, which preserves writer order across the schema handoff
+// (see internal/ordered_delivery.hpp). The schema arrives separately, on the
+// companion __schema channel, via SetSchema.
 class SubscriptionListener : public DataReaderListener {
    public:
     SubscriptionListener(PubSubProvider::SubscribeCallback cb, SharedSchema schema)
-        : callback_(std::move(cb)), schema_(std::move(schema)), schema_ready_(schema_ != nullptr) {}
+        : delivery_(std::move(cb), std::move(schema)) {}
 
     void on_data_available(DataReader* reader) override {
         TransportData data;
         SampleInfo info;
         while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) continue;
-            bool buffered = false;
-            SharedSchema schema;
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                if (!schema_ready_) {
-                    // Hold the sample until the schema arrives, so the callback
-                    // is never invoked with a null schema (subscriber-first
-                    // ordering: a data sample can arrive before the schema does).
-                    pending_.push_back(
-                        {std::move(data.decoded_row), std::move(data.decoded_attachments)});
-                    buffered = true;
-                } else {
-                    schema = schema_;
-                }
-            }
-            if (buffered) continue;
-            callback_(data.decoded_row.data(), data.decoded_row.size(), schema,
-                      std::move(data.decoded_attachments));
+            delivery_.Offer(std::move(data.decoded_row), std::move(data.decoded_attachments));
         }
     }
 
-    // Supplies the schema once known (from the companion __schema channel),
-    // then flushes buffered samples in order. Must run OUTSIDE any provider
-    // lock — it invokes the user callback, which may call back into the
-    // provider.
-    void SetSchema(SharedSchema schema) {
-        std::vector<PendingSample> flush;
-        SharedSchema sch;
-        {
-            std::lock_guard<std::mutex> lk(mu_);
-            if (schema_ready_) return;
-            schema_ = std::move(schema);
-            schema_ready_ = true;
-            sch = schema_;
-            flush = std::move(pending_);
-            pending_.clear();
-        }
-        for (auto& s : flush) {
-            callback_(s.row.data(), s.row.size(), sch, std::move(s.att));
-        }
-    }
+    // Supplies the schema once known. Delivers backlog + live samples in order;
+    // runs the callback OUTSIDE any provider lock (it may call back in).
+    void SetSchema(SharedSchema schema) { delivery_.SetSchema(std::move(schema)); }
 
    private:
-    struct PendingSample {
-        std::vector<uint8_t> row;
-        Attachments att;
-    };
-    PubSubProvider::SubscribeCallback callback_;
-    std::mutex mu_;
-    SharedSchema schema_;
-    bool schema_ready_ = false;
-    std::vector<PendingSample> pending_;
+    internal::OrderedDelivery delivery_;
 };
 
 // Per-subscription schema handoff. The promise is resolved by the SchemaListener
