@@ -52,11 +52,17 @@ endif()
 set(AGENT_BINARY ${AGENT_INSTALL_DIR}/bin/MicroXRCEAgent${CMAKE_EXECUTABLE_SUFFIX})
 set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
 
-# Skip the (slow) superbuild entirely when the Agent binary is already
-# present — restored from the CI cache, or left by a previous local build.
-# An empty stand-in target keeps the add_dependencies() below valid.
-# Delete AGENT_INSTALL_DIR to force a fresh build after a GIT_TAG bump.
-if(EXISTS "${AGENT_BINARY}")
+# Skip the (slow) superbuild entirely when a *complete* Agent install is
+# already present — restored from the CI cache, or left by a previous
+# local build. We require both the executable and a non-empty lib dir:
+# the test injects AGENT_LIB_DIR into the Agent child's loader path
+# (MICRO_XRCE_AGENT_LIB_DIR), so a bare binary from a partial/interrupted
+# install would make us skip the build and then fail at runtime when the
+# Agent can't load its libraries. An empty stand-in target keeps the
+# add_dependencies() below valid. Delete AGENT_INSTALL_DIR to force a
+# fresh build after a GIT_TAG bump.
+file(GLOB _agent_runtime_libs "${AGENT_LIB_DIR}/*")
+if(EXISTS "${AGENT_BINARY}" AND _agent_runtime_libs)
     message(STATUS "MicroXRCEAgent found at ${AGENT_BINARY} — skipping ExternalProject build.")
     add_custom_target(microxrcedds_agent_proj)
 else()
