@@ -205,7 +205,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.3.1-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.3.2-alpha")
 ```
 
 Install dependencies:

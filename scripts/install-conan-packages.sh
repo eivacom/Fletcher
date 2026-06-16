@@ -6,10 +6,14 @@
 # Releases and restore them into the local Conan cache.
 #
 # Usage:
-#   ./scripts/install-conan-packages.sh [VERSION] [PLATFORM]
+#   ./scripts/install-conan-packages.sh [--platform linux|windows] [component=version ...]
 #
-#   VERSION   e.g. 0.3.0-alpha        (default: 0.3.0-alpha)
-#   PLATFORM  linux | windows         (default: auto-detected)
+#   --platform        linux | windows (default: auto-detected)
+#   component=version pin a component, e.g. fastdds-pubsub-provider=0.3.2-alpha.
+#
+# By default each component is fetched at its LATEST release (resolved via the
+# GitHub CLI). Components you don't pin still use their latest release. PATCH
+# floats independently per component (see the versioning section in README.md).
 #
 # Requires: gh (GitHub CLI, https://cli.github.com), conan 2
 
@@ -32,14 +36,6 @@ case "$(conan --version)" in
   *) echo "Error: Conan 2 is required (found: '$(conan --version)')." >&2; exit 1 ;;
 esac
 
-VERSION="${1:-0.3.0-alpha}"
-
-case "$(uname -s)" in
-  Linux*)               PLATFORM="${2:-linux}"   ;;
-  MINGW*|CYGWIN*|MSYS*) PLATFORM="${2:-windows}" ;;
-  *) PLATFORM="${2:?Platform not auto-detected. Pass 'linux' or 'windows' as \$2.}" ;;
-esac
-
 REPO="eivacom/Fletcher"
 
 COMPONENTS=(
@@ -52,11 +48,53 @@ COMPONENTS=(
   protoc
 )
 
-echo "Installing Fletcher ${VERSION} (${PLATFORM}) into the local Conan cache..."
+PLATFORM=""
+declare -A PIN=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --platform)    shift; PLATFORM="${1:?--platform needs a value}" ;;
+    linux|windows) PLATFORM="$1" ;;
+    *=*)           PIN["${1%%=*}"]="${1#*=}" ;;
+    *) echo "Error: unrecognized argument '$1' (expected --platform, a platform, or component=version)." >&2; exit 1 ;;
+  esac
+  shift
+done
+
+# Fail fast on a pin for an unknown component (otherwise a typo would be
+# silently ignored and the latest release installed instead).
+for key in "${!PIN[@]}"; do
+  printf '%s\n' "${COMPONENTS[@]}" | grep -qxF "${key}" || {
+    echo "Error: unknown component '${key}' in pin (valid: ${COMPONENTS[*]})." >&2
+    exit 1
+  }
+done
+
+if [ -z "$PLATFORM" ]; then
+  case "$(uname -s)" in
+    Linux*)               PLATFORM="linux" ;;
+    MINGW*|CYGWIN*|MSYS*) PLATFORM="windows" ;;
+    *) echo "Error: platform not auto-detected; pass --platform linux|windows." >&2; exit 1 ;;
+  esac
+fi
+
+# All release tags, newest first. tr -d '\r' guards against CRLF in the CLI
+# output (Git Bash) leaving a stray carriage return in a tag. The latest release
+# of a component is its most recent tag matching '<component>-v'.
+ALL_TAGS="$(gh release list --repo "${REPO}" --limit 300 --json tagName --jq '.[].tagName' | tr -d '\r')"
+
+echo "Installing Fletcher packages (${PLATFORM}) into the local Conan cache..."
 echo
 
+INSTALLED=()
 for component in "${COMPONENTS[@]}"; do
-  tag="${component}-v${VERSION}"
+  version="${PIN[${component}]:-}"
+  if [ -z "${version}" ]; then
+    tag="$(printf '%s\n' "${ALL_TAGS}" | grep -E "^${component}-v" | head -n1 || true)"
+    [ -n "${tag}" ] || { echo "Error: no release found for '${component}'." >&2; exit 1; }
+    version="${tag#"${component}-v"}"
+  else
+    tag="${component}-v${version}"
+  fi
   file="fletcher-${component}-${PLATFORM}-conan-package.tgz"
 
   echo "▶  ${tag}"
@@ -66,10 +104,11 @@ for component in "${COMPONENTS[@]}"; do
     --clobber
   conan cache restore "${file}"
   rm "${file}"
+  INSTALLED+=("fletcher-${component}/${version}")
   echo
 done
 
 echo "✓  Done. Add to your conanfile.py:"
-for component in "${COMPONENTS[@]}"; do
-  echo "     self.requires(\"fletcher-${component}/${VERSION}\")"
+for ref in "${INSTALLED[@]}"; do
+  echo "     self.requires(\"${ref}\")"
 done

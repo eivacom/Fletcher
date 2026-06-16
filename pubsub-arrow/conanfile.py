@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubArrowConan(ConanFile):
     name = "fletcher-pubsub-arrow"
-    version = "0.3.0-alpha"
+    version = "0.3.1-alpha"
     description = "Arrow C++ wrappers around the fletcher-pubsub Publisher/Subscriber"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -31,8 +31,8 @@ class FletcherPubsubArrowConan(ConanFile):
         # Subscriber, PubSubProvider, Attachments) and arrow-bridge types
         # (Codec, ArrowRow) appear in encode/decode paths, so headers must be
         # transitively visible.
-        self.requires("fletcher-pubsub/0.3.0-alpha", transitive_headers=True)
-        self.requires("fletcher-arrow-bridge/0.3.0-alpha", transitive_headers=True, transitive_libs=True)
+        self.requires("fletcher-pubsub/0.3.1-alpha", transitive_headers=True)
+        self.requires("fletcher-arrow-bridge/0.3.1-alpha", transitive_headers=True, transitive_libs=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
         # Resolve the same zlib conflict that arrow-bridge handles: arrow pins
         # 1.2.13, openssl pulls 1.3.1.
