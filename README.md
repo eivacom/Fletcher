@@ -259,39 +259,46 @@ Each archive is a `conan cache save` export (recipe revision + built binary).
 
 ### Install all packages at once
 
-The scripts below download all seven Conan packages from their GitHub Release tags and restore them into the local Conan cache in one step. Both require the [GitHub CLI](https://cli.github.com) (`gh`) and Conan 2.
+The scripts below download all seven Conan packages from their GitHub Release tags and restore them into the local Conan cache in one step. **If you don't specify a version, each component is fetched at its latest release**; pass one or more `component=version` pins to override individual components — anything you don't pin still uses its latest release. Both require the [GitHub CLI](https://cli.github.com) (`gh`) and Conan 2.
 
 **Linux / Git Bash** — [`scripts/install-conan-packages.sh`](scripts/install-conan-packages.sh):
 
 ```bash
-# Default version, platform auto-detected
+# Each component at its latest release (platform auto-detected)
 ./scripts/install-conan-packages.sh
 
-# Explicit version
-./scripts/install-conan-packages.sh 0.3.0-alpha
+# Pin one or more components (space-separated component=version);
+# any component you don't pin still uses its latest release
+./scripts/install-conan-packages.sh \
+  core=0.3.1-alpha pubsub=0.3.1-alpha fastdds-pubsub-provider=0.3.2-alpha
 ```
 
 **Windows PowerShell** — [`scripts/install-conan-packages.ps1`](scripts/install-conan-packages.ps1):
 
 ```powershell
-# Default version
+# Each component at its latest release
 .\scripts\install-conan-packages.ps1
 
-# Explicit version
-.\scripts\install-conan-packages.ps1 -Version 0.3.0-alpha
+# Pin one or more components (hashtable entries); any component you don't pin
+# still uses its latest release
+.\scripts\install-conan-packages.ps1 -Pin @{
+    "core"                    = "0.3.1-alpha"
+    "pubsub"                  = "0.3.1-alpha"
+    "fastdds-pubsub-provider" = "0.3.2-alpha"
+}
 ```
 
 ### Install a single package manually
 
 ```bash
-gh release download core-v0.3.0-alpha --repo eivacom/Fletcher \
+gh release download core-v0.3.1-alpha --repo eivacom/Fletcher \
   --pattern 'fletcher-core-linux-conan-package.tgz'
 conan cache restore fletcher-core-linux-conan-package.tgz
 ```
 
 ```python
 # In your conanfile.py:
-self.requires("fletcher-core/0.3.0-alpha")
+self.requires("fletcher-core/0.3.1-alpha")
 ```
 
 `conan cache restore` registers the package under the exact profile it was built with. To target a different profile, build from source with `conan create <component>` against a Fletcher checkout.
