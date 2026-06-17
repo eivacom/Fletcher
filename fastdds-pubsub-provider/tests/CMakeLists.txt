@@ -14,7 +14,7 @@ target_include_directories(fastdds_pubsub_tests PRIVATE
 target_link_libraries(fastdds_pubsub_tests PRIVATE
     GTest::gtest_main
     fletcher-fastdds-pubsub-provider
-    fast-dds::fast-dds)
+    fastdds::fastdds)
 
 include(GoogleTest)
 gtest_discover_tests(fastdds_pubsub_tests DISCOVERY_MODE PRE_TEST)

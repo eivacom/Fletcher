@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Targets eProsima Fast DDS 2.14.x (fast-dds/2.14.3 from Conan Center).
+// Targets eProsima Fast DDS 3.x.
 //
 // The custom TopicDataType serialises encoded row bytes + Attachments
 // directly into the DDS payload buffer via WriteBuffer on publish, and
@@ -56,45 +56,52 @@ struct RawBytes {
 class RawBytesTopicType : public TopicDataType {
    public:
     explicit RawBytesTopicType(uint32_t max_payload) {
-        setName("SchemaBytes");
-        m_typeSize = 4 + 4 + max_payload;
-        m_isGetKeyDefined = false;
+        set_name("SchemaBytes");
+        max_serialized_type_size = 4 + 4 + max_payload;
+        is_compute_key_provided = false;
     }
 
-    bool serialize(void* data, eprosima::fastrtps::rtps::SerializedPayload_t* payload) override {
-        auto* d = static_cast<RawBytes*>(data);
-        // CDR LE encapsulation (4) + sequence header (4) + data.
+    bool serialize(const void* const data, eprosima::fastdds::rtps::SerializedPayload_t& payload,
+                   eprosima::fastdds::dds::DataRepresentationId_t) override {
+        const auto* d = static_cast<const RawBytes*>(data);
         uint32_t len = static_cast<uint32_t>(d->data.size());
         uint32_t total = 4 + 4 + len;
-        if (total > payload->max_size) return false;
-        payload->encapsulation = CDR_LE;
+        if (total > payload.max_size) return false;
+        payload.encapsulation = CDR_LE;
         uint8_t hdr[] = {0x00, 0x01, 0x00, 0x00};
-        std::memcpy(payload->data, hdr, 4);
-        std::memcpy(payload->data + 4, &len, 4);
-        std::memcpy(payload->data + 8, d->data.data(), len);
-        payload->length = total;
+        std::memcpy(payload.data, hdr, 4);
+        std::memcpy(payload.data + 4, &len, 4);
+        std::memcpy(payload.data + 8, d->data.data(), len);
+        payload.length = total;
         return true;
     }
 
-    bool deserialize(eprosima::fastrtps::rtps::SerializedPayload_t* payload, void* data) override {
+    bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
         auto* d = static_cast<RawBytes*>(data);
-        if (payload->length < 8) return false;
+        if (payload.length < 8) return false;
         uint32_t len = 0;
-        std::memcpy(&len, payload->data + 4, 4);
-        if (8 + len > payload->length) return false;
-        d->data.assign(payload->data + 8, payload->data + 8 + len);
+        std::memcpy(&len, payload.data + 4, 4);
+        if (8 + len > payload.length) return false;
+        d->data.assign(payload.data + 8, payload.data + 8 + len);
         return true;
     }
 
-    std::function<uint32_t()> getSerializedSizeProvider(void*) override {
-        uint32_t sz = static_cast<uint32_t>(m_typeSize);
-        return [sz]() { return sz; };
+    uint32_t calculate_serialized_size(const void* const,
+                                       eprosima::fastdds::dds::DataRepresentationId_t) override {
+        return max_serialized_type_size;
     }
 
-    void* createData() override { return new RawBytes(); }
-    void deleteData(void* data) override { delete static_cast<RawBytes*>(data); }
+    void* create_data() override { return new RawBytes(); }
+    void delete_data(void* data) override { delete static_cast<RawBytes*>(data); }
 
-    bool getKey(void*, eprosima::fastrtps::rtps::InstanceHandle_t*, bool) override { return false; }
+    bool compute_key(eprosima::fastdds::rtps::SerializedPayload_t&,
+                     eprosima::fastdds::rtps::InstanceHandle_t&, bool) override {
+        return false;
+    }
+    bool compute_key(const void* const, eprosima::fastdds::rtps::InstanceHandle_t&,
+                     bool) override {
+        return false;
+    }
 };
 
 // -----------------------------------------------------------------------
@@ -119,18 +126,19 @@ struct TransportData {
 class FletcherTopicType : public TopicDataType {
    public:
     explicit FletcherTopicType(uint32_t max_payload) {
-        setName("fletcher");
-        m_typeSize = 4 + 4 + max_payload;
-        m_isGetKeyDefined = false;
+        set_name("fletcher");
+        max_serialized_type_size = 4 + 4 + max_payload;
+        is_compute_key_provided = false;
     }
 
-    bool serialize(void* data, eprosima::fastrtps::rtps::SerializedPayload_t* payload) override {
-        auto* d = static_cast<TransportData*>(data);
+    bool serialize(const void* const data, eprosima::fastdds::rtps::SerializedPayload_t& payload,
+                   eprosima::fastdds::dds::DataRepresentationId_t) override {
+        auto* d = static_cast<const TransportData*>(data);
         try {
-            FixedWriteBuffer buf(payload->data, payload->max_size);
+            FixedWriteBuffer buf(payload.data, payload.max_size);
 
             // CDR little-endian encapsulation header.
-            payload->encapsulation = CDR_LE;
+            payload.encapsulation = CDR_LE;
             const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
             buf.Append(cdr_header, 4);
 
@@ -160,24 +168,24 @@ class FletcherTopicType : public TopicDataType {
             // Patch CDR sequence length.
             buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
 
-            payload->length = static_cast<uint32_t>(buf.Position());
+            payload.length = static_cast<uint32_t>(buf.Position());
             return true;
         } catch (...) {
-            payload->length = 0;
+            payload.length = 0;
             return false;
         }
     }
 
-    bool deserialize(eprosima::fastrtps::rtps::SerializedPayload_t* payload, void* data) override {
+    bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
         auto* d = static_cast<TransportData*>(data);
-        if (payload->length < 8) return false;
+        if (payload.length < 8) return false;
 
         // Skip 4-byte CDR encapsulation, read 4-byte sequence length.
         uint32_t data_size = 0;
-        std::memcpy(&data_size, payload->data + 4, sizeof(data_size));
-        if (8 + data_size > payload->length) return false;
+        std::memcpy(&data_size, payload.data + 4, sizeof(data_size));
+        if (8 + data_size > payload.length) return false;
 
-        const uint8_t* ptr = payload->data + 8;
+        const uint8_t* ptr = payload.data + 8;
         size_t total = data_size;
         if (total < 4) return false;
 
@@ -217,17 +225,21 @@ class FletcherTopicType : public TopicDataType {
         return true;
     }
 
-    std::function<uint32_t()> getSerializedSizeProvider(void* /*data*/) override {
-        uint32_t sz = static_cast<uint32_t>(m_typeSize);
-        return [sz]() { return sz; };
+    uint32_t calculate_serialized_size(const void* const,
+                                       eprosima::fastdds::dds::DataRepresentationId_t) override {
+        return max_serialized_type_size;
     }
 
-    void* createData() override { return new TransportData(); }
+    void* create_data() override { return new TransportData(); }
 
-    void deleteData(void* data) override { delete static_cast<TransportData*>(data); }
+    void delete_data(void* data) override { delete static_cast<TransportData*>(data); }
 
-    bool getKey(void* /*data*/, eprosima::fastrtps::rtps::InstanceHandle_t* /*handle*/,
-                bool /*force_md5*/) override {
+    bool compute_key(eprosima::fastdds::rtps::SerializedPayload_t&,
+                     eprosima::fastdds::rtps::InstanceHandle_t&, bool) override {
+        return false;
+    }
+    bool compute_key(const void* const, eprosima::fastdds::rtps::InstanceHandle_t&,
+                     bool) override {
         return false;
     }
 };
@@ -248,7 +260,7 @@ class SubscriptionListener : public DataReaderListener {
     void on_data_available(DataReader* reader) override {
         TransportData data;
         SampleInfo info;
-        while (reader->take_next_sample(&data, &info) == ReturnCode_t::RETCODE_OK) {
+        while (reader->take_next_sample(&data, &info) == RETCODE_OK) {
             if (!info.valid_data) continue;
             delivery_.Offer(std::move(data.decoded_row), std::move(data.decoded_attachments));
         }
@@ -300,7 +312,7 @@ class SchemaListener : public DataReaderListener {
     void on_data_available(DataReader* reader) override {
         RawBytes raw;
         SampleInfo info;
-        while (reader->take_next_sample(&raw, &info) == ReturnCode_t::RETCODE_OK) {
+        while (reader->take_next_sample(&raw, &info) == RETCODE_OK) {
             if (!info.valid_data) continue;
             if (fired_.load()) continue;
             // Deserialize before claiming `fired_`. A malformed (or partially
@@ -406,10 +418,10 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    impl_->type_support.reset(new FletcherTopicType(options.max_payload_bytes));
+    impl_->type_support = TypeSupport(new FletcherTopicType(options.max_payload_bytes));
     impl_->type_support.register_type(impl_->participant);
 
-    impl_->schema_type_support.reset(new RawBytesTopicType(options.max_payload_bytes));
+    impl_->schema_type_support = TypeSupport(new RawBytesTopicType(options.max_payload_bytes));
     impl_->schema_type_support.register_type(impl_->participant);
 
     impl_->publisher = impl_->participant->create_publisher(PUBLISHER_QOS_DEFAULT);
