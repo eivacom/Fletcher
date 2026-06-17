@@ -45,7 +45,7 @@ class FletcherPubsubConan(ConanFile):
         # FastDDS headers are part of this package's public API
         # (FastDDSProviderOptions exposes DataWriterQos / DataReaderQos),
         # so downstream consumers must see them transitively.
-        self.requires("eiva-fast-dds/3.3.0a1", transitive_headers=True)
+        self.requires("eiva-fast-dds/3.3.0a1", transitive_headers=True, transitive_libs=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
