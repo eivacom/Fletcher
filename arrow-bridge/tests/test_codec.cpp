@@ -604,8 +604,8 @@ TEST(IngestOffsetTrailingField, PreservesNullDataFieldUnderSchemaDecode) {
     });
 
     const int64_t ingest_offset = -42;
-    auto registered_bytes = fletcher::AppendTrailingInt64Field(
-        data_bytes, DataSchema()->num_fields(), ingest_offset);
+    auto registered_bytes =
+        fletcher::AppendTrailingInt64Field(data_bytes, DataSchema()->num_fields(), ingest_offset);
 
     fletcher::ArrowRow decoded = fletcher::Codec(RegisteredSchema()).DecodeRow(registered_bytes);
     ASSERT_EQ(decoded.size(), 3u);
