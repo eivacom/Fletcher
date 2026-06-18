@@ -41,7 +41,7 @@ class FletcherPubsubConan(ConanFile):
 
     def requirements(self):
         self.requires("fletcher-pubsub/0.3.1-alpha", transitive_headers=True)
-        self.requires("fletcher-core/0.3.1-alpha", transitive_headers=True)
+        self.requires("fletcher-core/[>=0.3 <0.4, include_prerelease]", transitive_headers=True)
         # FastDDS headers are part of this package's public API
         # (FastDDSProviderOptions exposes DataWriterQos / DataReaderQos),
         # so downstream consumers must see them transitively.
