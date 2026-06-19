@@ -23,10 +23,6 @@ enable_testing()
 # build directory's cache, so iteration is fast.
 include(ExternalProject)
 
-set(AGENT_INSTALL_DIR ${CMAKE_BINARY_DIR}/microxrcedds_agent-install)
-set(AGENT_BINARY ${AGENT_INSTALL_DIR}/bin/MicroXRCEAgent${CMAKE_EXECUTABLE_SUFFIX})
-set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
-
 # UAGENT_SUPERBUILD nests the Agent's own fast-dds / fast-cdr / asio /
 # tinyxml2 / spdlog ExternalProjects several levels under this project's
 # prefix. On Windows the default prefix (deep under the test's build/
@@ -35,26 +31,54 @@ set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
 # superbuild's own configure. A short prefix keeps the nested paths well
 # under the limit. Overridable (cache var) for local builds that prefer a
 # different writable location.
+#
+# The install dir is likewise a fixed path on Windows (not under the
+# per-run CMake build dir) so CI can cache the built Agent across runs —
+# see the "Cache MicroXRCEAgent build" step in
+# ci.integration-test.fastdds-xrce-interop.yml. The cached unit is the
+# install dir; wipe it to force a rebuild after bumping GIT_TAG.
 if(WIN32)
     set(AGENT_PREFIX "C:/fl-uxa" CACHE PATH
         "MicroXRCEAgent ExternalProject prefix (short on Windows to avoid MAX_PATH)")
+    set(AGENT_INSTALL_DIR "C:/fl-uxa-install" CACHE PATH
+        "MicroXRCEAgent install dir (fixed path so CI can cache it across runs)")
 else()
     set(AGENT_PREFIX "${CMAKE_BINARY_DIR}/microxrcedds_agent_proj-prefix" CACHE PATH
         "MicroXRCEAgent ExternalProject prefix")
+    set(AGENT_INSTALL_DIR "${CMAKE_BINARY_DIR}/microxrcedds_agent-install" CACHE PATH
+        "MicroXRCEAgent install dir")
 endif()
 
-ExternalProject_Add(microxrcedds_agent_proj
-    PREFIX         ${AGENT_PREFIX}
-    GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
-    GIT_TAG        v2.4.3
-    CMAKE_ARGS
-        -DCMAKE_INSTALL_PREFIX=${AGENT_INSTALL_DIR}
-        -DCMAKE_BUILD_TYPE=$<CONFIG>
-        -DUAGENT_SUPERBUILD=ON
-        -DUAGENT_BUILD_TESTS=OFF
-        -DUAGENT_BUILD_EXAMPLES=OFF
-    BUILD_BYPRODUCTS ${AGENT_BINARY}
-)
+set(AGENT_BINARY ${AGENT_INSTALL_DIR}/bin/MicroXRCEAgent${CMAKE_EXECUTABLE_SUFFIX})
+set(AGENT_LIB_DIR ${AGENT_INSTALL_DIR}/lib)
+
+# Skip the (slow) superbuild entirely when a *complete* Agent install is
+# already present — restored from the CI cache, or left by a previous
+# local build. We require both the executable and a non-empty lib dir:
+# the test injects AGENT_LIB_DIR into the Agent child's loader path
+# (MICRO_XRCE_AGENT_LIB_DIR), so a bare binary from a partial/interrupted
+# install would make us skip the build and then fail at runtime when the
+# Agent can't load its libraries. An empty stand-in target keeps the
+# add_dependencies() below valid. Delete AGENT_INSTALL_DIR to force a
+# fresh build after a GIT_TAG bump.
+file(GLOB _agent_runtime_libs "${AGENT_LIB_DIR}/*")
+if(EXISTS "${AGENT_BINARY}" AND _agent_runtime_libs)
+    message(STATUS "MicroXRCEAgent found at ${AGENT_BINARY} — skipping ExternalProject build.")
+    add_custom_target(microxrcedds_agent_proj)
+else()
+    ExternalProject_Add(microxrcedds_agent_proj
+        PREFIX         ${AGENT_PREFIX}
+        GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
+        GIT_TAG        v2.4.3
+        CMAKE_ARGS
+            -DCMAKE_INSTALL_PREFIX=${AGENT_INSTALL_DIR}
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
+            -DUAGENT_SUPERBUILD=ON
+            -DUAGENT_BUILD_TESTS=OFF
+            -DUAGENT_BUILD_EXAMPLES=OFF
+        BUILD_BYPRODUCTS ${AGENT_BINARY}
+    )
+endif()
 
 # ── Integration test binary ─────────────────────────────────────────
 add_executable(integration_tests

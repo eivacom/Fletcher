@@ -29,11 +29,11 @@ A gtest `Environment` fixture spawns the Agent (`fork`+`execv` on Linux, `Create
 
 No `MicroXRCEAgent` install, no Docker sidecar, no manual `&`-in-another-terminal step. `cmake build && ctest` is the whole workflow on every platform.
 
-The first build pulls in eProsima's full dependency tree (fast-dds + fast-cdr + asio + tinyxml2 + micro-cdr + the Agent itself) and takes ~10–15 minutes. Subsequent rebuilds reuse the CMake build directory's cache.
+The first build pulls in eProsima's full dependency tree (fast-dds + fast-cdr + asio + tinyxml2 + micro-cdr + the Agent itself) and takes ~10–15 minutes. `CMakeLists.txt` skips the superbuild entirely whenever the installed Agent binary already exists, so subsequent builds are instant. The install dir is a fixed path (`C:/fl-uxa-install` on Windows, `microxrcedds_agent-install/` under the build dir elsewhere) so it survives a fresh build directory — which is what lets CI cache it across runs (see below).
 
 ## How it runs in CI
 
-The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test inside the devcontainer image. The Agent is built and torn down by the test fixture — the workflow does nothing special for it.
+The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test (Linux inside the devcontainer image; Windows natively). The Agent is spawned and torn down by the test fixture. The native Windows job additionally caches the third-party Conan binaries (boost, fast-dds — neither has a prebuilt binary on conancenter) and the Agent install (`C:/fl-uxa-install`) across runs, so a warm run only rebuilds the changed Fletcher components.
 
 ## Running locally
 
@@ -81,4 +81,4 @@ conan build . --build=missing -pr:a=../../.conan-profiles/Linux-gcc13-x86_64-Rel
 
 ### Iterating after a component change
 
-Re-run only the `conan create` for the component you touched, then redo `conan build .` for the integration test. The Agent ExternalProject is incremental — it doesn't rebuild unless you wipe the build directory.
+Re-run only the `conan create` for the component you touched, then redo `conan build .` for the integration test. The Agent build is skipped whenever its installed binary already exists, so it won't rebuild unless you delete the install dir (`C:/fl-uxa-install` on Windows; `microxrcedds_agent-install/` under the build dir elsewhere).

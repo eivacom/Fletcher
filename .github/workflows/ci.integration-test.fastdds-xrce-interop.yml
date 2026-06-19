@@ -63,6 +63,11 @@ jobs:
 
   windows:
     runs-on: windows-2022
+    env:
+      # Short Conan home so deep dependency build paths (notably boost's
+      # source tree) stay under Windows' 260-char MAX_PATH, and so the
+      # Cache Conan path below is deterministic regardless of runner user.
+      CONAN_HOME: C:\cn2
     steps:
       - uses: actions/checkout@v6
         with:
@@ -80,6 +85,41 @@ jobs:
       - name: Install Conan
         uses: ./.github/actions/conan-install
 
+      # Cache the third-party Conan binaries. boost/1.90.0 and fast-dds
+      # have no prebuilt binaries on conancenter, so `--build=missing`
+      # compiles them from source (~14 min combined). The fletcher-*
+      # packages are re-created every run regardless, so a warm-but-stale
+      # restore via the prefix key is harmless; the exact key only governs
+      # when a fresh cache is written. Trimmed before save (see last step).
+      - name: Cache Conan home
+        uses: actions/cache@v5.0.5
+        with:
+          path: C:\cn2
+          key: conan-win-fastdds-xrce-${{ hashFiles('.conan-profiles/Windows-msvc194-x86_64-Release', 'arrow-bridge/conanfile.py', 'fastdds-pubsub-provider/conanfile.py') }}
+          restore-keys: |
+            conan-win-fastdds-xrce-
+            conan-win-
+
+      # Restore the MicroXRCEAgent superbuild. The integration test's
+      # CMakeLists builds eProsima's Agent (and its own fast-dds/asio/...)
+      # from source as an ExternalProject (~10-15 min). It lives outside
+      # the Conan home (C:\fl-uxa-install), so it needs its own cache.
+      # Keyed on the CMakeLists (which pins the agent's GIT_TAG) + profile
+      # so a tag bump invalidates it. No prefix fallback: a stale restore
+      # would make the CMake guard skip rebuilding the wrong version.
+      #
+      # Restore/save are split (not a plain actions/cache) so the install
+      # is saved only on a green run — see "Save MicroXRCEAgent build"
+      # below. A plain cache's post-step would otherwise persist a partial
+      # install from a cancelled/failed run, which the CMake skip-guard
+      # would then trust.
+      - name: Restore MicroXRCEAgent build
+        id: agent-cache
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: C:\fl-uxa-install
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/fastdds-xrce-interop/CMakeLists.txt', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
+
       - name: Build components into local Conan cache
         shell: bash
         run: |
@@ -95,3 +135,21 @@ jobs:
         shell: bash
         working-directory: integration-tests/fastdds-xrce-interop
         run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      # Save the freshly-built Agent install, but only on a green run and
+      # only when the restore missed — so a partial install from a failed
+      # or cancelled run is never cached under the exact key (the CMake
+      # skip-guard would otherwise trust it).
+      - name: Save MicroXRCEAgent build
+        if: success() && steps.agent-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5.0.5
+        with:
+          path: C:\fl-uxa-install
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/fastdds-xrce-interop/CMakeLists.txt', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
+
+      # Strip Conan sources + build folders (keeps the package binaries)
+      # before the actions/cache post-step so the saved home stays small.
+      - name: Trim Conan cache before save
+        if: always()
+        shell: bash
+        run: conan cache clean "*" || true
