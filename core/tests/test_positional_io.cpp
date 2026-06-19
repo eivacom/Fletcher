@@ -84,29 +84,29 @@ TEST(PositionalIoTest, ConstructorRejectsTooShortBitfield) {
     EXPECT_THROW(PositionalReader(buf.data(), buf.size(), 9), std::invalid_argument);
 }
 
-// --- AppendTrailingInt64Field: stamp a trailing system column (e.g. _ingest_offset) ---
+// --- AppendTrailingUint64Field: stamp a trailing system column (e.g. _ingest_offset) ---
 
-TEST(AppendTrailingInt64FieldTest, PureAppendWhenBitfieldDoesNotGrow) {
+TEST(AppendTrailingUint64FieldTest, PureAppendWhenBitfieldDoesNotGrow) {
     auto row = EncodeTwoInts(7, -3);  // 2 fields -> 1-byte bitfield; 2 % 8 != 0
-    const int64_t offset = 0x0102030405060708LL;
+    const uint64_t offset = 0x0102030405060708ULL;
 
-    auto out = AppendTrailingInt64Field(row, /*base_num_fields=*/2, offset);
+    auto out = AppendTrailingUint64Field(row, /*base_num_fields=*/2, offset);
 
     // Bitfield stays 1 byte, so the result is the original row + 8 trailing bytes.
-    ASSERT_EQ(out.size(), row.size() + sizeof(int64_t));
+    ASSERT_EQ(out.size(), row.size() + sizeof(uint64_t));
     EXPECT_TRUE(std::equal(row.begin(), row.end(), out.begin()));
 
-    // Round-trips as a 3-field row: int32, int32, int64.
+    // Round-trips as a 3-field row: int32, int32, uint64.
     PositionalReader r(out.data(), out.size(), 3);
     EXPECT_FALSE(r.IsNull(0));
     EXPECT_EQ(r.ReadInt32(), 7);
     EXPECT_EQ(r.ReadInt32(), -3);
     EXPECT_FALSE(r.IsNull(2));
-    EXPECT_EQ(r.ReadInt64(), offset);
+    EXPECT_EQ(r.ReadUint64(), offset);
     EXPECT_NO_THROW(r.VerifyFullyConsumed());
 }
 
-TEST(AppendTrailingInt64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
+TEST(AppendTrailingUint64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
     std::vector<uint8_t> row;
     {
         VectorWriteBuffer wb(row);
@@ -115,12 +115,12 @@ TEST(AppendTrailingInt64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
     }
     ASSERT_EQ(row.size(), 1u + 8u * sizeof(int32_t));
 
-    const int64_t offset = 42;
-    auto out = AppendTrailingInt64Field(row, /*base_num_fields=*/8, offset);
+    const uint64_t offset = 42;
+    auto out = AppendTrailingUint64Field(row, /*base_num_fields=*/8, offset);
 
     // 8 -> 9 fields grows the bitfield by one byte; that inserted byte is zero
     // (the new field is non-null) and existing bytes are otherwise preserved.
-    ASSERT_EQ(out.size(), row.size() + 1u + sizeof(int64_t));
+    ASSERT_EQ(out.size(), row.size() + 1u + sizeof(uint64_t));
     EXPECT_EQ(out[1], 0u);  // inserted bitfield byte, just after the original 1-byte bitfield
 
     PositionalReader r(out.data(), out.size(), 9);
@@ -129,11 +129,11 @@ TEST(AppendTrailingInt64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
         EXPECT_EQ(r.ReadInt32(), i * 10);
     }
     EXPECT_FALSE(r.IsNull(8));
-    EXPECT_EQ(r.ReadInt64(), offset);
+    EXPECT_EQ(r.ReadUint64(), offset);
     EXPECT_NO_THROW(r.VerifyFullyConsumed());
 }
 
-TEST(AppendTrailingInt64FieldTest, PreservesExistingNullBits) {
+TEST(AppendTrailingUint64FieldTest, PreservesExistingNullBits) {
     std::vector<uint8_t> row;
     {
         VectorWriteBuffer wb(row);
@@ -143,8 +143,8 @@ TEST(AppendTrailingInt64FieldTest, PreservesExistingNullBits) {
         w.WriteInt32(33);  // field 2 (non-null)
     }
 
-    const int64_t offset = -7;
-    auto out = AppendTrailingInt64Field(row, /*base_num_fields=*/3, offset);
+    const uint64_t offset = 0xFEDCBA9876543210ULL;  // high bit set, exercises all 8 bytes
+    auto out = AppendTrailingUint64Field(row, /*base_num_fields=*/3, offset);
 
     PositionalReader r(out.data(), out.size(), 4);
     EXPECT_FALSE(r.IsNull(0));
@@ -153,42 +153,59 @@ TEST(AppendTrailingInt64FieldTest, PreservesExistingNullBits) {
     EXPECT_FALSE(r.IsNull(2));
     EXPECT_EQ(r.ReadInt32(), 33);
     EXPECT_FALSE(r.IsNull(3));
-    EXPECT_EQ(r.ReadInt64(), offset);
+    EXPECT_EQ(r.ReadUint64(), offset);
     EXPECT_NO_THROW(r.VerifyFullyConsumed());
 }
 
-TEST(AppendTrailingInt64FieldTest, RejectsRowShorterThanBitfield) {
+// A stray spare bit in the last bitfield byte (beyond the valid field range) must
+// not leak into the appended field's null bit — the splice clears it explicitly.
+TEST(AppendTrailingUint64FieldTest, ClearsStraySpareBitOnAppendedField) {
+    auto row = EncodeTwoInts(7, -3);          // 2 fields -> 1-byte bitfield; bits 0,1 used
+    row[0] |= static_cast<uint8_t>(1u << 2);  // set the spare bit at position 2 (field index 2)
+
+    const uint64_t offset = 0x1122334455667788ULL;
+    auto out = AppendTrailingUint64Field(row, /*base_num_fields=*/2, offset);
+
+    PositionalReader r(out.data(), out.size(), 3);
+    EXPECT_FALSE(r.IsNull(2));  // appended field decodes as non-null despite the stray bit
+    EXPECT_EQ(r.ReadInt32(), 7);
+    EXPECT_EQ(r.ReadInt32(), -3);
+    EXPECT_EQ(r.ReadUint64(), offset);
+    EXPECT_NO_THROW(r.VerifyFullyConsumed());
+}
+
+TEST(AppendTrailingUint64FieldTest, RejectsRowShorterThanBitfield) {
     std::vector<uint8_t> empty;  // a 9-field base needs a 2-byte bitfield
-    EXPECT_THROW(AppendTrailingInt64Field(empty, 9, int64_t{0}), std::invalid_argument);
+    EXPECT_THROW(AppendTrailingUint64Field(empty, 9, uint64_t{0}), std::invalid_argument);
 }
 
-TEST(AppendTrailingInt64FieldTest, RejectsNegativeBaseFieldCount) {
+TEST(AppendTrailingUint64FieldTest, RejectsNegativeBaseFieldCount) {
     std::vector<uint8_t> row = {0x00};
-    EXPECT_THROW(AppendTrailingInt64Field(row, -1, int64_t{0}), std::invalid_argument);
+    EXPECT_THROW(AppendTrailingUint64Field(row, -1, uint64_t{0}), std::invalid_argument);
 }
 
-// --- ReadTrailingInt64Field: the no-schema fast path (read the last 8 bytes) ---
+// --- ReadTrailingUint64Field: the no-schema fast path (read the last 8 bytes) ---
 
-TEST(ReadTrailingInt64FieldTest, RoundTripsWithoutBitfieldGrowth) {
+TEST(ReadTrailingUint64FieldTest, RoundTripsWithoutBitfieldGrowth) {
     auto row = EncodeTwoInts(7, -3);  // 2 fields, no bitfield growth on append
-    const int64_t offset = 0x0102030405060708LL;
-    auto out = AppendTrailingInt64Field(row, 2, offset);
-    EXPECT_EQ(ReadTrailingInt64Field(out), offset);
+    const uint64_t offset = 0x0102030405060708ULL;
+    auto out = AppendTrailingUint64Field(row, 2, offset);
+    EXPECT_EQ(ReadTrailingUint64Field(out), offset);
 }
 
-TEST(ReadTrailingInt64FieldTest, RoundTripsAcrossBitfieldGrowth) {
+TEST(ReadTrailingUint64FieldTest, RoundTripsAcrossBitfieldGrowth) {
     std::vector<uint8_t> row;
     {
         VectorWriteBuffer wb(row);
         PositionalWriter w(wb, 8);  // append grows the bitfield (8 -> 9 fields)
         for (int32_t i = 0; i < 8; ++i) w.WriteInt32(i * 10);
     }
-    const int64_t offset = -987654321012345LL;
-    auto out = AppendTrailingInt64Field(row, 8, offset);
-    EXPECT_EQ(ReadTrailingInt64Field(out), offset);
+    const uint64_t offset = 0xFFFFFFFFFFFFFFFFULL;  // max uint64 round-trips intact
+    auto out = AppendTrailingUint64Field(row, 8, offset);
+    EXPECT_EQ(ReadTrailingUint64Field(out), offset);
 }
 
-TEST(ReadTrailingInt64FieldTest, RejectsRowShorterThanInt64) {
+TEST(ReadTrailingUint64FieldTest, RejectsRowShorterThanUint64) {
     std::vector<uint8_t> tiny = {0x00, 0x01, 0x02};  // < 8 bytes
-    EXPECT_THROW(ReadTrailingInt64Field(tiny), std::invalid_argument);
+    EXPECT_THROW(ReadTrailingUint64Field(tiny), std::invalid_argument);
 }

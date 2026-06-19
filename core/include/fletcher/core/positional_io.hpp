@@ -145,95 +145,107 @@ class PositionalWriter {
 };
 
 // ---------------------------------------------------------------------------
-// AppendTrailingInt64Field — stamp a reserved Int64 system column (`_ingest_offset`).
+// AppendTrailingUint64Field — stamp a reserved UInt64 system column (`_ingest_offset`).
 // ---------------------------------------------------------------------------
 //
-// Appends one trailing, non-null, **Int64** field to an already-encoded positional
+// Appends one trailing, non-null, **UInt64** field to an already-encoded positional
 // row, returning the bytes re-encoded against the schema that has this one extra
 // field appended at the END (it becomes field index `base_num_fields`).
 //
 // The motivating use is stamping the RowBatcher's reserved monotonic
 // **`_ingest_offset`** system column onto a row whose data fields were produced
-// upstream, WITHOUT decoding and re-encoding. `_ingest_offset` is always Int64
-// (non-nullable), so this is fixed to `int64_t` rather than templated — the wire
-// type must match the column declared in the schema, and there is exactly one such
-// column. It is format-aware so callers never reproduce the wire layout, which
-// carries no version tag (see codec.hpp):
+// upstream, WITHOUT decoding and re-encoding. `_ingest_offset` is a monotonic
+// counter that never goes negative, so it is always UInt64 (non-nullable) and this
+// is fixed to `uint64_t` rather than templated — the wire type must match the column
+// declared in the schema, and there is exactly one such column. It is format-aware
+// so callers never reproduce the wire layout, which carries no version tag (see
+// codec.hpp):
 //
 //   - The leading null bitfield is ceil(num_fields / 8) bytes. Adding a field grows
 //     it by one byte ONLY when `base_num_fields` is a multiple of 8; otherwise the
-//     spare high bit of the last bitfield byte absorbs the new field and the result
-//     is a pure trailing append.
-//   - The new field is always non-null, so its bit stays 0 and NO existing bit
-//     changes; existing field payloads are copied verbatim.
-//   - An Int64 has no length prefix, so its payload is just the 8 little-endian
+//     new field reuses the next unused bit (position `base_num_fields % 8`) of the
+//     last bitfield byte and the result is a pure trailing append.
+//   - The new field is always non-null; its null bit is cleared explicitly, so a
+//     stray spare bit in a foreign encoding cannot make it decode as NULL. NO
+//     existing field's bit changes; existing field payloads are copied verbatim.
+//   - A UInt64 has no length prefix, so its payload is just the 8 little-endian
 //     value bytes, written last (it is the final, non-null field).
 //
 // `row`/`row_len` must be a well-formed positional encoding of `base_num_fields`
 // fields. Decode the result with a Codec built for the schema that has
-// `_ingest_offset` (Int64) appended as its last field.
-inline std::vector<uint8_t> AppendTrailingInt64Field(const uint8_t* row, size_t row_len,
-                                                     int base_num_fields, int64_t ingest_offset) {
+// `_ingest_offset` (UInt64) appended as its last field.
+inline std::vector<uint8_t> AppendTrailingUint64Field(const uint8_t* row, size_t row_len,
+                                                      int base_num_fields, uint64_t ingest_offset) {
     if (base_num_fields < 0)
-        throw std::invalid_argument("AppendTrailingInt64Field: base_num_fields must be >= 0");
+        throw std::invalid_argument("AppendTrailingUint64Field: base_num_fields must be >= 0");
 
     const size_t old_bitfield = (static_cast<size_t>(base_num_fields) + 7) / 8;
     const size_t new_bitfield = (static_cast<size_t>(base_num_fields) + 1 + 7) / 8;
     if (row_len < old_bitfield)
-        throw std::invalid_argument("AppendTrailingInt64Field: row shorter than its null bitfield");
+        throw std::invalid_argument(
+            "AppendTrailingUint64Field: row shorter than its null bitfield");
 
     std::vector<uint8_t> out;
-    out.reserve(row_len + (new_bitfield - old_bitfield) + sizeof(int64_t));
+    out.reserve(row_len + (new_bitfield - old_bitfield) + sizeof(uint64_t));
 
     // Leading bitfield bytes — existing fields keep their bits unchanged.
     out.insert(out.end(), row, row + old_bitfield);
-    // If the bitfield grew, the new field's bit lives in a fresh zero byte
-    // (bit 0 of the appended byte == 0 => non-null).
+    // If the bitfield grew, the new field's bit lives in a fresh zero byte.
     out.insert(out.end(), new_bitfield - old_bitfield, static_cast<uint8_t>(0));
+    // The appended field is non-null: clear its null bit at (base_num_fields % 8)
+    // of byte (base_num_fields / 8). When the bitfield grew that byte is already
+    // zero; when it did not, this defends against a stray spare bit in a foreign
+    // encoding that would otherwise decode as NULL and desynchronise the trailing
+    // 8 bytes under schema decode.
+    out[static_cast<size_t>(base_num_fields) / 8] &=
+        static_cast<uint8_t>(~(1u << (static_cast<size_t>(base_num_fields) % 8)));
     // Existing field payloads, verbatim.
     out.insert(out.end(), row + old_bitfield, row + row_len);
     // The `_ingest_offset` payload: 8 little-endian bytes, written last (non-null).
-    const auto* value_bytes = reinterpret_cast<const uint8_t*>(&ingest_offset);
-    out.insert(out.end(), value_bytes, value_bytes + sizeof(int64_t));
+    // memcpy mirrors WriteBuffer::AppendFixed's object-representation copy, so the
+    // schema-decode path reads these bytes exactly as any other fixed-width field.
+    const size_t value_pos = out.size();
+    out.resize(value_pos + sizeof(uint64_t));
+    std::memcpy(out.data() + value_pos, &ingest_offset, sizeof(uint64_t));
     return out;
 }
 
 // Convenience overload for a byte-vector row (e.g. an EncodedRow).
-inline std::vector<uint8_t> AppendTrailingInt64Field(const std::vector<uint8_t>& row,
-                                                     int base_num_fields, int64_t ingest_offset) {
-    return AppendTrailingInt64Field(row.data(), row.size(), base_num_fields, ingest_offset);
+inline std::vector<uint8_t> AppendTrailingUint64Field(const std::vector<uint8_t>& row,
+                                                      int base_num_fields, uint64_t ingest_offset) {
+    return AppendTrailingUint64Field(row.data(), row.size(), base_num_fields, ingest_offset);
 }
 
 // ---------------------------------------------------------------------------
-// ReadTrailingInt64Field — the read-side counterpart of AppendTrailingInt64Field.
+// ReadTrailingUint64Field — the read-side counterpart of AppendTrailingUint64Field.
 // ---------------------------------------------------------------------------
 //
 // Returns the trailing `_ingest_offset` value of a row produced by
-// AppendTrailingInt64Field. Because that field is the LAST, non-null, fixed-width
+// AppendTrailingUint64Field. Because that field is the LAST, non-null, fixed-width
 // field, its 8 little-endian bytes are exactly the final 8 bytes of the row — so
 // this is an O(1) read with NO schema and NO full decode.
 //
 // This is the **no-schema fast path**, for consumers that need only the offset
 // (dedup key, stream cursor, WAL-offset scan, reconciliation). It is valid ONLY for
-// rows whose schema keeps a non-null Int64 as the last field — the matched
-// counterpart to AppendTrailingInt64Field; do not call it on an arbitrary row.
+// rows whose schema keeps a non-null UInt64 as the last field — the matched
+// counterpart to AppendTrailingUint64Field; do not call it on an arbitrary row.
 //
 // **WITH A SCHEMA in play, prefer the decode path:** `Codec::DecodeRow(row)` against
 // the registered schema yields an `ArrowRow`, and `_ingest_offset` is its last field
-// (read it as an `arrow::Int64Scalar`). Use that whenever you need the row anyway —
+// (read it as an `arrow::UInt64Scalar`). Use that whenever you need the row anyway —
 // it is schema-validated. Both paths return the same value by construction (see the
 // `IngestOffsetTrailingField*` tests in arrow-bridge/tests/test_codec.cpp).
-inline int64_t ReadTrailingInt64Field(const uint8_t* row, size_t row_len) {
-    if (row_len < sizeof(int64_t))
-        throw std::invalid_argument("ReadTrailingInt64Field: row shorter than an int64");
-    int64_t value;
-    std::memcpy(&value, row + row_len - sizeof(int64_t), sizeof(int64_t));
+inline uint64_t ReadTrailingUint64Field(const uint8_t* row, size_t row_len) {
+    if (row_len < sizeof(uint64_t))
+        throw std::invalid_argument("ReadTrailingUint64Field: row shorter than a uint64");
+    uint64_t value;
+    std::memcpy(&value, row + row_len - sizeof(uint64_t), sizeof(uint64_t));
     return value;
 }
 
 // Convenience overload for a byte-vector row (e.g. an EncodedRow).
-inline int64_t ReadTrailingInt64Field(const std::vector<uint8_t>& row) {
-    return ReadTrailingInt64Field(row.data(), row.size());
+inline uint64_t ReadTrailingUint64Field(const std::vector<uint8_t>& row) {
+    return ReadTrailingUint64Field(row.data(), row.size());
 }
 
 // ---------------------------------------------------------------------------
