@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-fastdds-pubsub-provider"
-    version = "0.3.2-alpha"
+    version = "0.3.3-alpha"
     description = "Fletcher FastDDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -40,8 +40,8 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("fletcher-pubsub/0.3.1-alpha", transitive_headers=True)
-        self.requires("fletcher-core/0.3.1-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.3.2-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.3.2-alpha", transitive_headers=True)
         # FastDDS headers are part of this package's public API
         # (FastDDSProviderOptions exposes DataWriterQos / DataReaderQos),
         # so downstream consumers must see them transitively.

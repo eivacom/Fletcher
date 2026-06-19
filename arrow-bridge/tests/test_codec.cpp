@@ -4,7 +4,10 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/core/positional_io.hpp>
+#include <memory>
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -527,4 +530,87 @@ TEST(CodecTest, SparseUnionRoundtripActiveVariant) {
     auto decoded = codec.DecodeRow(codec.EncodeRow({union_scalar}));
     ASSERT_EQ(decoded.size(), 1u);
     EXPECT_TRUE(decoded[0]->Equals(*union_scalar));
+}
+
+// ---------------------------------------------------------------------------
+// Trailing `_ingest_offset` system column — the RowBatcher pattern
+// ---------------------------------------------------------------------------
+//
+// A producer encodes a DATA row, then splices a trailing UInt64 `_ingest_offset`
+// onto it with AppendTrailingUint64Field (no re-encode). A consumer reads the offset
+// back two ways and they agree:
+//   * WITH A SCHEMA — decode the row against the *registered* schema (data fields +
+//     the trailing `_ingest_offset`); the offset is then simply the last field of
+//     the decoded ArrowRow. This is the path a subscriber uses (the registered
+//     schema travels on the provider's companion `__schema` topic).
+//   * No schema — the O(1) fast path ReadTrailingUint64Field (last 8 bytes).
+
+namespace {
+
+std::shared_ptr<arrow::Schema> DataSchema() {
+    return arrow::schema({
+        arrow::field("a", arrow::int32(), /*nullable=*/true),
+        arrow::field("b", arrow::utf8(), /*nullable=*/true),
+    });
+}
+
+// Registered schema = data schema + a trailing, non-null `_ingest_offset` UInt64.
+std::shared_ptr<arrow::Schema> RegisteredSchema() {
+    return arrow::schema({
+        arrow::field("a", arrow::int32(), /*nullable=*/true),
+        arrow::field("b", arrow::utf8(), /*nullable=*/true),
+        arrow::field("_ingest_offset", arrow::uint64(), /*nullable=*/false),
+    });
+}
+
+}  // namespace
+
+TEST(IngestOffsetTrailingField, SchemaDecodeAndFastPathAgree) {
+    // Producer: encode the DATA row, then splice the offset on (no re-encode).
+    fletcher::Codec data_codec(DataSchema());
+    fletcher::EncodedRow data_bytes = data_codec.EncodeRow({
+        std::make_shared<arrow::Int32Scalar>(7),
+        std::make_shared<arrow::StringScalar>("hello positional"),
+    });
+
+    const uint64_t ingest_offset = 1234567890123ULL;
+    auto registered_bytes = fletcher::AppendTrailingUint64Field(
+        data_bytes, /*base_num_fields=*/DataSchema()->num_fields(), ingest_offset);
+
+    // Consumer, WITH A SCHEMA: decode against the registered schema; `_ingest_offset`
+    // is the last field of the ArrowRow.
+    fletcher::ArrowRow decoded = fletcher::Codec(RegisteredSchema()).DecodeRow(registered_bytes);
+    ASSERT_EQ(decoded.size(), 3u);
+    EXPECT_TRUE(decoded[0]->Equals(arrow::Int32Scalar(7)));
+    EXPECT_TRUE(decoded[1]->Equals(arrow::StringScalar("hello positional")));
+    ASSERT_EQ(decoded.back()->type->id(), arrow::Type::UINT64);
+    const uint64_t offset_via_schema =
+        std::static_pointer_cast<arrow::UInt64Scalar>(decoded.back())->value;
+    EXPECT_EQ(offset_via_schema, ingest_offset);
+
+    // Consumer, no schema: O(1) trailing read.
+    const uint64_t offset_via_fast_path = fletcher::ReadTrailingUint64Field(registered_bytes);
+    EXPECT_EQ(offset_via_fast_path, ingest_offset);
+
+    // Both paths agree by construction.
+    EXPECT_EQ(offset_via_schema, offset_via_fast_path);
+}
+
+TEST(IngestOffsetTrailingField, PreservesNullDataFieldUnderSchemaDecode) {
+    fletcher::Codec data_codec(DataSchema());
+    fletcher::EncodedRow data_bytes = data_codec.EncodeRow({
+        arrow::MakeNullScalar(arrow::int32()),             // field "a" = null
+        std::make_shared<arrow::StringScalar>("payload"),  // field "b"
+    });
+
+    const uint64_t ingest_offset = 42;
+    auto registered_bytes =
+        fletcher::AppendTrailingUint64Field(data_bytes, DataSchema()->num_fields(), ingest_offset);
+
+    fletcher::ArrowRow decoded = fletcher::Codec(RegisteredSchema()).DecodeRow(registered_bytes);
+    ASSERT_EQ(decoded.size(), 3u);
+    EXPECT_FALSE(decoded[0]->is_valid);  // the data null survived the splice
+    EXPECT_TRUE(decoded[1]->Equals(arrow::StringScalar("payload")));
+    EXPECT_EQ(std::static_pointer_cast<arrow::UInt64Scalar>(decoded.back())->value, ingest_offset);
+    EXPECT_EQ(fletcher::ReadTrailingUint64Field(registered_bytes), ingest_offset);
 }

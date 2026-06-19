@@ -9,7 +9,7 @@ import os
 
 class FletcherArrowBridgeConan(ConanFile):
     name = "fletcher-arrow-bridge"
-    version = "0.3.1-alpha"
+    version = "0.3.2-alpha"
     description = "Fletcher Arrow C++ bridge — Codec, ArrowRowView, CRS utilities"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -29,7 +29,7 @@ class FletcherArrowBridgeConan(ConanFile):
     def requirements(self):
         # core types appear in arrow-bridge's public interface (codec.hpp →
         # core/types.hpp), so headers must be transitively visible.
-        self.requires("fletcher-core/0.3.1-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.3.2-alpha", transitive_headers=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
         # Resolve a transitive zlib conflict between arrow (pins 1.2.13) and
         # openssl (range >=1.2.11 <2, resolves to 1.3.1). Pin to 1.3.1.
