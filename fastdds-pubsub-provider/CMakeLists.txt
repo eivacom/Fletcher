@@ -21,7 +21,7 @@ target_include_directories(fletcher-fastdds-pubsub-provider PUBLIC include)
 # headers transitively to construct the options.
 target_link_libraries(fletcher-fastdds-pubsub-provider
     PUBLIC  fletcher-pubsub::fletcher-pubsub
-            fast-dds::fast-dds
+            fastdds
     PRIVATE fletcher-core::fletcher-core)
 
 if(FLETCHER_BUILD_TESTS)

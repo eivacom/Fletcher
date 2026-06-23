@@ -2,6 +2,8 @@
 
 Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
+> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.0` from Conan Center). The provider's public API — `FastDDSProviderOptions` and the `eprosima::fastdds::dds` QoS types it exposes — is unchanged from the previous 2.14.x baseline; the v3 upgrade only touched the provider's internal `TopicDataType` implementation. Note v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you include the transitively-exposed Fast DDS headers directly (see [Consuming the package](#consuming-the-package)).
+
 ## How it works
 
 A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
@@ -205,7 +207,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.3.3-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.4.0-alpha")
 ```
 
 Install dependencies:
@@ -227,7 +229,7 @@ target_link_libraries(my_app PRIVATE
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 ```
 
-The `fast-dds::fast-dds` link dependency is **public** to this library
+The `fastdds` link dependency is **public** to this library
 because `FastDDSProviderOptions` exposes `eprosima::fastdds::dds::DataWriterQos`
 and `eprosima::fastdds::dds::DataReaderQos` in its public API. Consumers
 get the FastDDS headers transitively and can include them directly when
