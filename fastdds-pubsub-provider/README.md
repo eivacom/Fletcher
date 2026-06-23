@@ -205,7 +205,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.3.3-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.4.0-alpha")
 ```
 
 Install dependencies:
@@ -227,7 +227,7 @@ target_link_libraries(my_app PRIVATE
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 ```
 
-The `fast-dds::fast-dds` link dependency is **public** to this library
+The `fastdds` link dependency is **public** to this library
 because `FastDDSProviderOptions` exposes `eprosima::fastdds::dds::DataWriterQos`
 and `eprosima::fastdds::dds::DataReaderQos` in its public API. Consumers
 get the FastDDS headers transitively and can include them directly when
