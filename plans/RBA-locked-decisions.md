@@ -42,11 +42,18 @@ these is **STOP-AND-ASK**.
   (struct/map/list) is gated by checking its *shape* + **recursing** into child
   **types** (each child array cached once); it is **never** gated with a blanket
   `DataType::Equals`, which would also compare child names/nullability. It does
-  **not** gate on field **name** or on the **nullable** flag. It returns
+  **not** gate on field **name** or on the batch's **nullable flag**. It **does**,
+  however, enforce **actual** non-nullability: for each field the *proto* declares
+  non-nullable, the factory verifies `null_count == 0` (recursively for non-nullable
+  composite children) and errors otherwise — distinct from the flag (the flag is
+  metadata; `null_count` is data). This is what lets non-nullable getters (scalar
+  **and** struct) return a plain value / `RowView` that is provably null-free.
+  Nullable fields are not null-checked. It returns
   `arrow::Result<Accessor>` (C++) / `Result<Accessor, ArrowError>` (Rust) on
   mismatch — it **never throws / never panics**, and never down-casts a column
   before its type is checked. Names and metadata are *exposed* but never *gating*.
-  Name-gating, nullability-gating, or a throwing/panicking constructor →
+  Name-gating, nullable-*flag* gating, skipping the non-nullable `null_count` check,
+  or a throwing/panicking constructor →
   STOP-AND-ASK.
 
 - **D-RBA-5 — Generic, domain-agnostic metadata (oracle §5).** Schema-level and
@@ -74,17 +81,20 @@ these is **STOP-AND-ASK**.
   explicitly** (C++ `field(i)->Slice`, Rust `column(i).slice`) — it never assumes
   children are pre-rebased — and Rust caches typed handles with the offset-preserving
   `downcast_array` idiom, not a re-`Arc`'d `downcast_ref` clone. A struct **value**
-  (1:1 field, list element, or map value) is read through the inner accessor's
-  **row-bound `RowView`** which **borrows** the accessor (must not outlive it).
-  **No struct value is ever read through a null:** a 1:1 nullable struct field
-  returns `std::optional<RowView>` / `Option<Row>` (None on a null row), and a
-  struct **element** of a list/map/nested-list is likewise returned as an *optional*
-  (None when the Arrow `item`/`value` child is null) — so the dangerous read-through
-  is impossible everywhere, not just for 1:1 fields. The inner accessor exposes
-  `is_null(row)` (false when built from a `RecordBatch`; from the retained struct
-  null bitmap when built from a `StructArray`). Composes **recursively to any
-  depth**. No setter / builder / mutation API. Emitting only one factory, reading a
-  struct value (1:1, element, OR map value) through a null, or skipping the
+  is read through the inner accessor's **row-bound `RowView`** which **borrows** the
+  accessor (must not outlive it). **No struct value is ever read through a null,
+  closed from both ends:** a **non-nullable** 1:1 struct field returns a **plain**
+  `RowView` (safe because D-RBA-4's construction `null_count==0` check guarantees the
+  column has no nulls); a **nullable** 1:1 field and **every collection element**
+  (list element, map message value, and each nullable nested-list level — Arrow
+  `item`/`value` are nullable) return `std::optional<RowView>` / `Option<Row>`, None
+  on a null. The inner accessor exposes `is_null(row)` — **always `false`** when
+  built from a `RecordBatch` (rows always present), from the **retained struct null
+  bitmap** (windowed to the slice) when built from a `StructArray`; this bitmap is
+  the only source-derived state a struct-sourced accessor keeps (the child buffers
+  are still self-owned). Composes **recursively to any depth**. No setter / builder /
+  mutation API. Emitting only one factory, reading any struct value through a null
+  (1:1, element, map value, or intermediate nested-list level), or skipping the
   struct-child slice → STOP-AND-ASK.
 
 - **D-RBA-8 — C++ and Rust parity from one model (oracle §8).** Both languages are
@@ -110,11 +120,18 @@ these is **STOP-AND-ASK**.
   `-`/`.`/path separators and collide across directories): a message's accessor is
   `crate::fletcher_gen::<pkg-path>::<Class>Accessor` (package `a.b.c` →
   `a::b::c`; no-package → directly under `fletcher_gen`), mirroring the C++
-  `fletcher_gen::<pkg>` 1:1. Same-package files share a module; differing packages
-  never collide; non-ident package segments are a generation error, not a silent
-  rename. The Rust Cargo test crate exercises a genuine two-file, two-package
-  import. Changing the mount-point name (`fletcher_gen`) or the package-path scheme
-  after RBA-5 lands → STOP-AND-ASK.
+  `fletcher_gen::<pkg>` 1:1. A generated `.rs` emits **bare accessor items, no
+  `mod <pkg>` wrapper of its own**; an **assembler (the `build.rs`) declares the
+  `fletcher_gen` tree once**, grouping files by package and `include!`-ing every
+  file of a package into that package's single `mod` (prost's group-by-package
+  model) — so same-package multi-file mounting never duplicates a `mod` block.
+  Differing packages never collide. Sanitization (one rule, identical here and in
+  oracle §8.1): keyword segment → `r#<seg>`; otherwise proto segments are valid
+  idents (no rename); a segment invalid even as `r#…` is a generation error. The
+  Rust Cargo test crate exercises a genuine two-file/two-package import **and** a
+  same-package two-file case. Changing the mount-point name (`fletcher_gen`), the
+  package-path scheme, or the no-self-`mod` + build.rs-assembler model after RBA-5
+  lands → STOP-AND-ASK.
 
 **Still-in-force prior locks.** The robustness-hardening invariants (codec /
 positional-I/O decode safety) and the DICT-round invariants are unaffected — RBA

@@ -128,16 +128,22 @@ field, a list element, or a map value:
   `std::optional<RowView>` / `Option<Row>`, None on a null element. Scalar elements
   follow the Arrow norm (`span[j]` → value, with `span.is_null(j)` available).
 
-This is the key closure of the read-through-null hazard: **every** path that yields
-a struct value — 1:1 field, list element, map value, nested-list leaf — is
-optional and `None` on a null, so child fields are never read through a null parent.
-It composes **recursively to any depth** — `fix.position(row).lat()`,
-`outer.mid(row).inner().v()`, `if (auto e = sample.track(row)[j]) e->x()` — every
-struct value being one `<Inner>Accessor` (built once over the flattened struct
-column) read at the right index via its `RowView`. There is no second struct type.
-The inner accessor is built/cached once per struct field (validating its children
-and retaining the struct's null bitmap for `is_null`); the `RowView` **borrows** the
-accessor (a two-word value created per access; it must not outlive the accessor).
+This closes the read-through-null hazard from **both** ends. Wherever a struct value
+*can* be null it is returned as an **optional**, `None` on a null — that covers
+**nullable 1:1 fields** and **every collection element** (Arrow list `item` / map
+`value` are nullable, so list elements, map message values, and nested-list leaves
+are all optional). Wherever a struct value is **non-nullable** (a 1:1 field the
+proto does not mark `optional`), the §4 construction check guarantees the column
+holds no actual nulls, so the getter returns a **plain** `RowView` and is provably
+safe — no per-access guard, no read-through. So `fix.position(row).lat()` is valid
+*because* `position` is non-nullable and validated null-free at construction;
+`if (auto e = sample.track(row)[j]) e->x()` is the form for a (nullable) element.
+It composes **recursively to any depth**, every struct value being one
+`<Inner>Accessor` (built once over the flattened struct column) read at the right
+index via its `RowView`. There is no second struct type. The inner accessor is
+built/cached once per struct field (validating its children and retaining the
+struct's null bitmap for `is_null`); the `RowView` **borrows** the accessor (a
+two-word value created per access; it must not outlive the accessor).
 
 This makes bulk row access cheap and removes the caller's casting boilerplate. The
 existing per-row `<Class>View` is **not** replaced or re-implemented; it remains
@@ -162,8 +168,18 @@ runtime Arrow type is the type the generated cast targets. Validation is therefo
   composite's *shape* + recurse into child **types**.
 - **Do not** gate on the field **name** (a runtime batch may legitimately carry
   different field names — this is the one thing producers are least likely to keep
-  identical) or on the **nullable** flag (a column being non-null where the schema
-  marks it nullable, or vice-versa, does not change the array class).
+  identical) or on the batch's **nullable flag** (a column being non-null where the
+  schema marks it nullable, or vice-versa, does not change the array class).
+- **But do enforce actual non-nullability.** For each field the **proto** declares
+  non-nullable, additionally verify the column holds **no actual nulls** — `null
+  count == 0` (trivially true when there is no validity buffer; otherwise the cached
+  Arrow null count) — recursively for non-nullable composite children. A
+  non-nullable field carrying runtime nulls is a validation **error** (`Result`).
+  This is deliberately distinct from the *flag* (still ignored): the flag is schema
+  metadata; `null_count` is the actual data. It is what makes a non-nullable getter
+  — scalar **or** struct — provably null-free, so it returns a plain value / `RowView`
+  and never reads through a null. Nullable fields are **not** checked (they
+  legitimately contain nulls and surface them via `optional` / `is_null`).
 
 Why type-only positional and not `Schema::Equals`? `Schema::Equals` additionally
 compares names and nullability and (optionally) metadata, so it would **reject
@@ -240,7 +256,7 @@ type.
 | `STRUCT` | the nested `<Inner>Accessor` (built once over the `StructArray` column) | `field(row)` → `<Inner>Accessor::RowView` bound to `row` (`optional<RowView>` if nullable — None on null row) |
 | `REPEATED_STRUCT` | `ListArray` over `StructArray` | `field(row)` → a struct span; `span[j]` → `optional<RowView>` (None on a null element) |
 | `MAP` | `MapArray` (keys + items children) | `field(row)` → a key/value span; scalar `value(j)` (+ `value_is_null(j)`); message `value(j)` → `optional<RowView>` |
-| `NESTED_LIST` | nested `ListArray` (depth 2–3) | `field(row)` → nested list spans; leaf `span[j]` → `optional<RowView>` |
+| `NESTED_LIST` | nested `ListArray` (depth 2–3) | `field(row)` → nested list span; each **inner list level is itself nullable**, so `span[i]` → `optional<inner span>` (None on a null inner list); leaf `span[j]` → `optional<RowView>` |
 
 A `STRUCT` value reuses the **same accessor type** (§3): the parent caches the
 nested `<Inner>Accessor` over the struct column once (validating its children), and
@@ -286,6 +302,16 @@ necessarily baked into the arrays returned by `columns()`/`field()`, so the slic
 is required for correctness, not just convenience.) Per-row getters then index by
 `row` directly. No setter / builder / mutation API exists.
 
+**`is_null` / struct-validity contract.** Each accessor's `is_null(row)` reports
+struct-element validity and has exactly one source, fixed by which factory built it:
+the **`RecordBatch` factory** stores no validity (a batch row is always present) so
+`is_null` is **always `false`**; the **`StructArray` factory** retains that struct's
+null bitmap (windowed to the same `[offset, len)` slice as the children) and
+`is_null(row)` reads it. This retained bitmap is the one piece of the source the
+accessor keeps for a struct source — the cached child *buffers* are still
+self-owned (D-RBA-7); it exists solely to answer `is_null` and to drive the
+optional struct-value getters.
+
 ## §8 — C++ and Rust parity; arrow-rs specifics
 
 Both languages are generated from the shared `FieldInfo` / `type_mapper` model
@@ -322,16 +348,28 @@ accessor lives in that file's generated output. Both languages must resolve it:
     directly under `crate::fletcher_gen`.
   - The package — not the file — is the namespace, so two imported files that share
     a stem but differ in package never collide; two files in the **same** package
-    contribute to the **same** module (their generated `.rs` are mounted together,
-    as `prost` does). Identifiers are sanitized to valid Rust (`raw` idents where a
-    segment is a keyword); a package segment that is not a valid ident is a
-    generation error, not a silent rename.
-  - Mounting: the consuming crate `include!`s/`mod`s the generated files under
-    `fletcher_gen`; the generator emits the package `mod` nesting and the `use`
-    (or fully-qualified path) for each imported message it references. `fletcher_gen`
-    is the default mount point (changing it after RBA-5 → STOP-AND-ASK).
+    contribute to the **same** module.
+  - **A generated `.rs` does NOT emit its own `mod <pkg> { … }` wrapper** — it
+    contains the bare accessor items only. If it did, two files in one package would
+    each declare the same module block and collide. Instead an **assembler** (the
+    `build.rs`, RBA-5) declares the `fletcher_gen` tree **once**: it groups the
+    generated files by proto package and, for each package, emits a single nesting
+    of `pub mod <seg> { … }` that `include!`s **every** file belonging to that
+    package in the innermost module. So a package module is declared exactly once no
+    matter how many files contribute (this is `prost`'s group-by-package model,
+    realized with per-file `include!`s). Cross-file references resolve via the
+    assembled path `crate::fletcher_gen::<pkg-path>::<Class>Accessor`; the generator
+    emits the `use` / fully-qualified path for each imported message it references.
+    `fletcher_gen` is the default mount point (changing it after RBA-5 → STOP-AND-ASK).
+  - **Identifier sanitization (single rule, used in both this spec and D-RBA-10):**
+    a package segment that is a Rust keyword becomes a raw identifier (`r#<seg>`);
+    proto segments are otherwise `[A-Za-z_][A-Za-z0-9_]*`, which are already valid
+    Rust idents, so no renaming occurs; the (proto-illegal) case of a segment that
+    is not a valid ident even as `r#…` is a **generation error**, never a silent
+    rename. Message class names keep `ClassName(msg)` (nested `Outer.Inner` →
+    `Outer_Inner`), so a message can never collide with a package segment.
   - The Cargo test crate (RBA-5) includes a genuine **two-file, two-package** import
-    so the convention is exercised, not just asserted.
+    (and a same-package two-file case) so the convention is exercised, not just asserted.
 
 ## §9 — Testing & the no-drift guarantee
 

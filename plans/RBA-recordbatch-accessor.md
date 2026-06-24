@@ -107,11 +107,19 @@ class TelemetryAccessor {
       std::shared_ptr<const arrow::KeyValueMetadata> meta) {
     if (cols.size() != 3)
       return arrow::Status::Invalid("Telemetry: expected 3 columns, got ", cols.size());
+    // type gate (oracle §4) …
     if (!cols[0]->type()->Equals(*arrow::float64()))
       return arrow::Status::Invalid("Telemetry column 0 'temperature': expected double, got ",
                                     cols[0]->type()->ToString());
     if (!cols[1]->type()->Equals(*arrow::int32())) return arrow::Status::Invalid(/* id */);
     if (!cols[2]->type()->Equals(*arrow::utf8()))  return arrow::Status::Invalid(/* label */);
+    // … plus actual-non-nullability for proto-non-nullable fields (temperature, id):
+    // a runtime null in a non-nullable field is rejected, so the plain getters below
+    // are provably null-free. `label` is proto-`optional` → not checked (its getter
+    // returns std::optional). (null_count() is O(1) when there's no validity buffer.)
+    if (cols[0]->null_count() != 0)
+      return arrow::Status::Invalid("Telemetry column 0 'temperature': non-nullable, found nulls");
+    if (cols[1]->null_count() != 0) return arrow::Status::Invalid(/* id non-nullable */);
     TelemetryAccessor a;
     a.num_rows_ = num_rows;
     a.fields_ = std::move(fields);
@@ -190,6 +198,14 @@ impl TelemetryAccessor {
         if cols.len() != 3 {
             return Err(ArrowError::SchemaError(format!(
                 "Telemetry: expected 3 columns, got {}", cols.len())));
+        }
+        // proto-non-nullable fields must hold no actual nulls (oracle §4) → plain
+        // getters are null-free; `label` is proto-optional, so it is not checked.
+        for (i, name) in [(0usize, "temperature"), (1, "id")] {
+            if cols[i].null_count() != 0 {
+                return Err(ArrowError::SchemaError(format!(
+                    "Telemetry column {i} '{name}': non-nullable, found nulls")));
+            }
         }
         let temperature = downcast_array::<Float64Array>(&cols[0], "Telemetry.temperature", &DataType::Float64)?;
         let id          = downcast_array::<Int32Array>(&cols[1], "Telemetry.id", &DataType::Int32)?;
@@ -394,8 +410,8 @@ message Sample {
 `Ring` is a **flatten-wrapper** (`(fletcher.flatten)`), so the type mapper absorbs
 it: **no `RingAccessor` is generated**, and `repeated Ring` maps to
 `List<List<Coord>>` (`FieldKind::NESTED_LIST`, leaf `Coord`). The accessor only
-ever sees the absorbed Arrow type, so `sample.rings(r)[i][j]` is a `Coord` value
-(`.x()`), never a `Ring`. (This is the general rule — flatten-wrappers never get an
+ever sees the absorbed Arrow type, so the leaf reached through `sample.rings(r)` is
+a `Coord` (with `.x()`), never a `Ring`. (This is the general rule — flatten-wrappers never get an
 accessor or a getter; §1/§2 already skip them from the generated message set.)
 
 #### C++
@@ -447,9 +463,11 @@ template <class KV, class KA, class AccT> struct StructMapSpan {           // ma
 template <class AccT> struct NestedStructSpan {                 // list<list<struct>>
   const arrow::ListArray* mid; const AccT* leaf; int64_t base, len;
   int64_t size() const { return len; }
-  StructSpan<AccT> operator[](int64_t i) const {                // → inner list's slice (elements optional)
-    int64_t r = base + i;
-    return { leaf, mid->value_offset(r), mid->value_length(r) };
+  bool is_null(int64_t i) const { return mid->IsNull(base + i); }       // inner list is nullable too
+  std::optional<StructSpan<AccT>> operator[](int64_t i) const {         // None on a null inner list;
+    int64_t r = base + i;                                               // its elements are then optional too
+    if (mid->IsNull(r)) return std::nullopt;
+    return StructSpan<AccT>{ leaf, mid->value_offset(r), mid->value_length(r) };
   }
 };
 }  // namespace fletcher
@@ -494,7 +512,7 @@ class SampleAccessor {
              waypoints_->value_offset(row), waypoints_->value_length(row) };
   }
   fletcher::NestedStructSpan<CoordAccessor>                                 // NESTED_LIST
-  rings(int64_t row) const {            // if (auto e = rings(r)[i][j]) e->x();  (leaf optional)
+  rings(int64_t row) const {            // rings(r)[i] → optional inner list; (*inner)[j] → optional Coord
     return { rings_mid_, &*rings_leaf_, rings_->value_offset(row), rings_->value_length(row) };
   }
 
@@ -568,7 +586,15 @@ impl<'a, K: ArrayAccessor, Acc: RowAccess> StructMapSpan<'a, K, Acc> {
     }
 }
 pub struct NestedStructSpan<'a, Acc: RowAccess> { mid: &'a ListArray, leaf: &'a Acc, base: usize, len: usize }
-// NestedStructSpan::get(i) -> StructSpan over mid.value_offsets()[base+i].. (its elements optional).
+impl<'a, Acc: RowAccess> NestedStructSpan<'a, Acc> {
+    pub fn len(&self) -> usize { self.len }
+    pub fn get(&self, i: usize) -> Option<StructSpan<'a, Acc>> {        // None on a null inner list
+        let r = self.base + i;
+        if self.mid.is_null(r) { return None; }                        // inner list is nullable too
+        let o = self.mid.value_offsets();
+        Some(StructSpan { inner: self.leaf, base: o[r] as usize, len: (o[r + 1] - o[r]) as usize })
+    }
+}
 // All spans BORROW the cached children/accessor — they (and Rows) must not outlive the SampleAccessor.
 // Construction sites pass the reference, e.g. ScalarSpan { vals: &*self.readings_vals, … }.
 
@@ -645,7 +671,8 @@ Usage: scalar elements read directly (`sample.readings(r)[k]`,
 null element), so:
 - C++ — `if (auto e = sample.track(r)[j]) e->x();`,
   `if (auto v = sample.waypoints(r).value(j)) v->x();`,
-  `if (auto e = sample.rings(r)[i][j]) e->x();`
+  `if (auto inner = sample.rings(r)[i]) if (auto e = (*inner)[j]) e->x();`
+  (the inner list level is itself optional — None on a null inner list)
 - Rust — `if let Some(e) = sample.track(r).get(j) { e.x() }`,
   `if let Some(v) = sample.waypoints(r).value(j) { v.x() }`,
   `sample.rings(r).get(i).and_then(|inner| inner.get(j)).map(|e| e.x())`
@@ -837,8 +864,15 @@ message and read typed scalar columns, mirroring the C++ accessor (D-RBA-8).
   - **plugin discovery** — documented contract for how `build.rs` finds the plugin
     binary (the C++ build/Conan must export its location); no network/download
     (unlike the npm shim).
-  - **`src/lib.rs`** — `include!(concat!(env!("OUT_DIR"), "/…fletcher.rs"))` per
-    fixture; `tests/` holds the `cargo test` cases.
+  - **module assembler (the `build.rs`'s second job — D-RBA-10)** — the generated
+    `.rs` files carry **bare accessor items, no `mod <pkg>` wrapper**. `build.rs`
+    groups the generated files by proto package and writes one aggregator
+    (e.g. `fletcher_gen.rs`) that declares the `fletcher_gen` tree **once** — a
+    single `pub mod <seg> { … }` nesting per package — and `include!`s every file of
+    a package into that package's innermost module (so same-package multi-file
+    mounting never duplicates a `mod`). `src/lib.rs` then `include!`s the aggregator.
+  - **`src/lib.rs`** — `include!`s the generated `fletcher_gen.rs` aggregator;
+    `tests/` holds the `cargo test` cases.
   - **CI wiring** — a new job (or step) that installs the pinned Rust toolchain,
     builds the plugin first, then `cargo test`s this crate. Adding Rust to CI is
     part of RBA-5 (note it in the round's CI notes).
