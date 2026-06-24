@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "generator_internal.hpp"
 #include "recordbatch_accessor_emitter.hpp"
 #include "schema_builder.hpp"
 #include "type_mapper.hpp"
@@ -163,6 +164,15 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
     order.push_back(msg);
 }
 
+}  // namespace
+
+// OrderedMessages, ArrowTypeExpr, and GatherFields (declared in
+// generator_internal.hpp, namespace fletcher) have external linkage so the
+// RecordBatch accessor emitter shares the exact same schema model. RBA-2
+// relocated these definitions out of the anonymous namespace; the logic is
+// unchanged and the emitted bytes are identical (guarded by the RBA-1 no-drift
+// test). FieldInfo is likewise declared in generator_internal.hpp.
+
 std::vector<const google::protobuf::Descriptor*> OrderedMessages(
     const google::protobuf::FileDescriptor* file) {
     std::set<const google::protobuf::Descriptor*> emitted;
@@ -171,20 +181,6 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
         TopologicalVisit(file->message_type(i), file, emitted, order);
     return order;
 }
-
-// -----------------------------------------------------------------------
-// Per-field information gathered before code generation
-// -----------------------------------------------------------------------
-
-struct FieldInfo {
-    std::string name;
-    FieldMapping mapping;
-    int field_number = 0;  // leaf proto field number
-    std::string field_id;  // dotted field-number path, unique even when field-level
-                           // flatten inlines sub-messages (e.g. "2.1"); equals the
-                           // field_number string for non-inlined top-level fields
-    const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
-};
 
 // -----------------------------------------------------------------------
 // Arrow type expression for the schema — constructed from the FieldMapping
@@ -228,6 +224,8 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
     }
     return "/* unknown */";
 }
+
+namespace {
 
 // -----------------------------------------------------------------------
 // Storage member declaration
@@ -873,12 +871,19 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
     }
 }
 
+}  // namespace
+
+// GatherFields has external linkage (declared in generator_internal.hpp,
+// namespace fletcher) so the accessor emitter reuses it; GatherFieldsImpl stays
+// file-local. RBA-2 relocation only — logic and emitted bytes unchanged.
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment) {
     std::vector<FieldInfo> fields;
     GatherFieldsImpl(msg, fields, skipped_comment, "");
     return fields;
 }
+
+namespace {
 
 // -----------------------------------------------------------------------
 // Free schema function for one message

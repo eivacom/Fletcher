@@ -105,6 +105,31 @@ endforeach()
 
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
+# ----------------------------------------------------------------------------
+# RBA-2 accessor fixture: generate the real <Class>Accessor header for the
+# flat scalar fixture (accessor_scalar.proto) so the forcing test can include
+# and compile it. The accessor token is what triggers the .accessor.pb.h
+# emission; the no-drift guard above proves it adds exactly that file.
+# ----------------------------------------------------------------------------
+set(_acc_src "${PROTO_DIR}/accessor_scalar.proto")
+set(_acc_hdr "${GENERATED_DIR}/accessor_scalar.fletcher.accessor.pb.h")
+add_custom_command(
+    OUTPUT  "${_acc_hdr}"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=accessor"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_acc_src}"
+    DEPENDS "${_acc_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+    COMMENT "protoc-gen-fletcher (accessor): accessor_scalar.proto"
+    VERBATIM
+)
+add_custom_target(generate_accessor_headers ALL DEPENDS "${_acc_hdr}")
+
 enable_testing()
 
 add_executable(integration_tests
@@ -146,9 +171,19 @@ gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
 # it needs the protoc + plugin executables and all three -I proto search roots
 # as compile definitions. It does NOT depend on the pre-generated headers above.
 # ----------------------------------------------------------------------------
-add_executable(accessor_tests tests/test_accessor.cpp)
+add_executable(accessor_tests
+    tests/test_accessor.cpp
+    tests/test_accessor_scalar.cpp)
 
-target_link_libraries(accessor_tests PRIVATE GTest::gtest_main)
+# The scalar accessor test #includes the generated accessor header and builds
+# Arrow RecordBatch/StructArray fixtures at runtime.
+add_dependencies(accessor_tests generate_accessor_headers)
+
+target_include_directories(accessor_tests PRIVATE "${GENERATED_DIR}")
+
+target_link_libraries(accessor_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow)
 
 target_compile_definitions(accessor_tests PRIVATE
     GENERATED_DIR_PATH="${GENERATED_DIR}"
