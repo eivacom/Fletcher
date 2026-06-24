@@ -39,6 +39,11 @@ use std::process::Command;
 //                                             also emits a composite getter, so
 //                                             the co-mount collision check (R1)
 //                                             is actually exercised.
+// `transitive_gate` (package `rba.transitive`) exercises the D-RBA-8 transitive
+// support gate: it defines a message with an unsupported (depth-4) nested list and
+// three holders that reference it through STRUCT / REPEATED_STRUCT / message-MAP.
+// With the transitive gate, all of them are skipped (fail-fast comments) and the
+// crate still compiles — the file therefore generates no accessor items.
 const FIXTURES: &[(&str, &str)] = &[
     ("telemetry", "fletcher.rba.telem"),
     ("sensors_a", "fletcher.rba.shared"),
@@ -47,6 +52,7 @@ const FIXTURES: &[(&str, &str)] = &[
     ("nopkg_child", ""),
     ("composite_main", "rba.main"),
     ("composite_aux", "rba.main"),
+    ("transitive_gate", "rba.transitive"),
 ];
 
 // The plugin emits this shared helper module (the `__rba` span/Row helpers) once
@@ -80,6 +86,9 @@ fn main() {
     println!("cargo:rustc-env=FLETCHER_TEST_PROTOC={}", protoc.display());
     println!("cargo:rustc-env=FLETCHER_TEST_PLUGIN={}", plugin.display());
     println!("cargo:rustc-env=FLETCHER_TEST_PROTO_DIR={}", proto_dir.display());
+    // The generated-output dir, so tests can read emitted .fletcher.rs files (the
+    // transitive-gate test inspects the skip/comment path in transitive_gate).
+    println!("cargo:rustc-env=FLETCHER_TEST_OUT_DIR={}", out_dir.display());
     if let Some(wkt) = wkt_include_dir(&protoc) {
         println!("cargo:rustc-env=FLETCHER_TEST_WKT_INCLUDE={}", wkt.display());
     } else if let Ok(inc) = env::var("PROTOBUF_WKT_INCLUDE_DIR") {
@@ -235,6 +244,21 @@ fn wkt_include_dir(protoc: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Derive the Fletcher proto-options include directory from the plugin binary
+/// path: the conan-packaged option protos live at `<plugin_dir>/../include`
+/// (fletcher/options.proto). Returns that path if it actually contains
+/// `fletcher/options.proto`, else None. The composite NESTED_LIST fixture imports
+/// it (the `(fletcher.flatten)` wrapper is the only way to express list<list<…>>).
+fn fletcher_include_dir(plugin: &Path) -> Option<PathBuf> {
+    let bin_dir = plugin.parent()?;
+    let include = bin_dir.parent()?.join("include");
+    if include.join("fletcher").join("options.proto").is_file() {
+        Some(include)
+    } else {
+        None
+    }
+}
+
 /// Run the plugin once for one fixture proto.
 fn run_plugin(
     protoc: &Path,
@@ -264,9 +288,15 @@ fn run_plugin(
     } else if let Some(wkt) = wkt_include_dir(protoc) {
         cmd.arg("-I").arg(wkt);
     }
-    // Optional fletcher options include root (the RBA-5 fixtures do not import it).
+    // Fletcher options include root (composite_main.proto imports
+    // fletcher/options.proto for the NESTED_LIST flatten wrappers). Honour an
+    // explicit FLETCHER_PROTO_INCLUDE_DIR if set, else derive it from the plugin
+    // binary (`<plugin_dir>/../include`, where the conan package ships the option
+    // protos) so the fixture stays hermetic.
     if let Ok(inc) = env::var("FLETCHER_PROTO_INCLUDE_DIR") {
         cmd.arg("-I").arg(inc);
+    } else if let Some(fl) = fletcher_include_dir(plugin) {
+        cmd.arg("-I").arg(fl);
     }
 
     let output = cmd

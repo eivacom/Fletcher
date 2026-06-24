@@ -29,7 +29,7 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, Float64Array, Int32Array, Int64Array, ListArray, StructArray,
+    ArrayRef, Float64Array, Int32Array, Int64Array, ListArray, MapArray, StringArray, StructArray,
 };
 use arrow::buffer::{NullBuffer, OffsetBuffer};
 use arrow::datatypes::{DataType, Field, Fields, Schema};
@@ -139,6 +139,113 @@ fn tag_col() -> ArrayRef {
     Arc::new(StructArray::new(tag_fields(), vec![code], None))
 }
 
+// The entries struct field shape for a map<utf8, V>. Map keys are non-null;
+// the value field carries `value_nullable`.
+fn map_entries_field(value_type: DataType, value_nullable: bool) -> Arc<Field> {
+    Arc::new(Field::new(
+        "entries",
+        DataType::Struct(Fields::from(vec![
+            Field::new("keys", DataType::Utf8, false),
+            Field::new("values", value_type, value_nullable),
+        ])),
+        false,
+    ))
+}
+
+// counts: map<utf8, int32>. row0={"a":1,"b":NULL}, row1={} (empty), row2={"c":3}.
+// Scalar map value nulls are probed via value_is_null(j) (B2).
+fn counts_col() -> ArrayRef {
+    let keys: ArrayRef = Arc::new(StringArray::from(vec!["a", "b", "c"]));
+    let values: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), None, Some(3)]));
+    let entries_field = map_entries_field(DataType::Int32, true);
+    let entries = StructArray::new(
+        match entries_field.data_type() {
+            DataType::Struct(f) => f.clone(),
+            _ => unreachable!(),
+        },
+        vec![keys, values],
+        None,
+    );
+    let offsets = OffsetBuffer::new(vec![0, 2, 2, 3].into());
+    Arc::new(MapArray::new(entries_field, offsets, entries, None, false))
+}
+
+// waypoints: map<utf8, Inner>. row0={"p":leaf=61,"q":NULL value}, row1={} (empty),
+// row2={"r":leaf=63}. The value at flattened index 1 ("q") is a null struct value;
+// StructMapSpan::value(j) -> None for it (B2).
+fn waypoints_col() -> ArrayRef {
+    let keys: ArrayRef = Arc::new(StringArray::from(vec!["p", "q", "r"]));
+    // Inner value array with a struct-level null at index 1.
+    let leaf = make_leaf(vec![61, 0, 63]);
+    let inner = StructArray::new(
+        inner_fields(),
+        vec![Arc::new(leaf)],
+        Some(NullBuffer::from(vec![true, false, true])),
+    );
+    let entries_field = map_entries_field(inner_type(), true);
+    let entries = StructArray::new(
+        match entries_field.data_type() {
+            DataType::Struct(f) => f.clone(),
+            _ => unreachable!(),
+        },
+        vec![keys, Arc::new(inner)],
+        None,
+    );
+    let offsets = OffsetBuffer::new(vec![0, 2, 2, 3].into());
+    Arc::new(MapArray::new(entries_field, offsets, entries, None, false))
+}
+
+fn counts_type() -> DataType {
+    DataType::Map(map_entries_field(DataType::Int32, true), false)
+}
+fn waypoints_type() -> DataType {
+    DataType::Map(map_entries_field(inner_type(), true), false)
+}
+
+// rings: list<list<struct<leaf:struct<value:int32>>>> (NESTED_LIST depth 2).
+//   row0 = [[leaf=71], []]   (two inner lists: one with one element, one empty)
+//   row1 = [NULL inner list] (one inner list that is null -> get(i) None)
+//   row2 = []                (empty outer list)
+// Flattened leaf Inner values: [71] (one element). Inner list offsets carve it.
+fn rings_col() -> ArrayRef {
+    // Leaf Inner values: a single element leaf.value=71.
+    let leaf = make_leaf(vec![71]);
+    let leaf_inner = StructArray::new(inner_fields(), vec![Arc::new(leaf)], None);
+    // Inner list level: 3 inner lists total.
+    //   inner[0] = [71]    (offsets 0..1)
+    //   inner[1] = []      (offsets 1..1)
+    //   inner[2] = NULL    (row1's single inner list is null)
+    let inner_offsets = OffsetBuffer::new(vec![0, 1, 1, 1].into());
+    let inner_item = Arc::new(Field::new("item", inner_type(), true));
+    let inner_list = ListArray::new(
+        inner_item.clone(),
+        inner_offsets,
+        Arc::new(leaf_inner),
+        Some(NullBuffer::from(vec![true, true, false])),
+    );
+    // Outer list level over the inner lists:
+    //   row0 = inner[0..2]  ([ [71], [] ])
+    //   row1 = inner[2..3]  ([ NULL ])
+    //   row2 = inner[3..3]  ([] empty)
+    let outer_offsets = OffsetBuffer::new(vec![0, 2, 3, 3].into());
+    let outer_item = Arc::new(Field::new("item", DataType::List(inner_item), true));
+    Arc::new(ListArray::new(
+        outer_item,
+        outer_offsets,
+        Arc::new(inner_list),
+        None,
+    ))
+}
+
+fn rings_type() -> DataType {
+    let inner_item = Arc::new(Field::new("item", inner_type(), true));
+    DataType::List(Arc::new(Field::new(
+        "item",
+        DataType::List(inner_item),
+        true,
+    )))
+}
+
 fn composite_schema_fields() -> Vec<Field> {
     vec![
         Field::new("outer", outer_type(), false),
@@ -154,6 +261,9 @@ fn composite_schema_fields() -> Vec<Field> {
             false,
         ),
         Field::new("tag", tag_type(), false),
+        Field::new("counts", counts_type(), false),
+        Field::new("waypoints", waypoints_type(), false),
+        Field::new("rings", rings_type(), false),
     ]
 }
 
@@ -164,6 +274,9 @@ fn composite_columns() -> Vec<ArrayRef> {
         readings_col(),
         track_col(),
         tag_col(),
+        counts_col(),
+        waypoints_col(),
+        rings_col(),
     ]
 }
 
@@ -304,40 +417,90 @@ fn composite_and_metadata_read() {
     // Deep cross-package chain + nullable struct + repeated reads.
     assert_reads(&acc, 0, 3);
 
-    // Non-nullable struct field with a RUNTIME null -> Err (D-RBA-4 recursed).
+    // MAP scalar value (counts): key / value / value_is_null, empty map row.
+    // row0={"a":1,"b":NULL}, row1={} empty, row2={"c":3}.
+    {
+        let m0 = acc.counts(0);
+        assert_eq!(m0.len(), 2);
+        assert!(!m0.is_empty());
+        assert_eq!(m0.key(0), "a");
+        assert!(!m0.value_is_null(0));
+        assert_eq!(m0.value(0), 1);
+        assert_eq!(m0.key(1), "b");
+        assert!(m0.value_is_null(1)); // null scalar map value via value_is_null(j)
+
+        let m1 = acc.counts(1);
+        assert_eq!(m1.len(), 0);
+        assert!(m1.is_empty());
+
+        let m2 = acc.counts(2);
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2.key(0), "c");
+        assert_eq!(m2.value(0), 3);
+    }
+
+    // MAP message value (waypoints): value(j) -> Option<Row>, None on a null map
+    // value (B2). row0={"p":leaf=61,"q":NULL}, row1={} empty, row2={"r":leaf=63}.
+    {
+        let w0 = acc.waypoints(0);
+        assert_eq!(w0.len(), 2);
+        assert_eq!(w0.key(0), "p");
+        assert_eq!(
+            w0.value(0).expect("waypoints[0] present").leaf().value(),
+            61
+        );
+        assert_eq!(w0.key(1), "q");
+        assert!(w0.value(1).is_none(), "null map message value -> None");
+
+        let w1 = acc.waypoints(1);
+        assert!(w1.is_empty());
+
+        let w2 = acc.waypoints(2);
+        assert_eq!(w2.len(), 1);
+        assert_eq!(
+            w2.value(0).expect("waypoints[2] present").leaf().value(),
+            63
+        );
+    }
+
+    // NESTED_LIST depth 2 (rings): get(i) -> Option<inner span>, None on a null
+    // inner list (B2). row0=[[71],[]], row1=[NULL inner list], row2=[].
+    {
+        let r0 = acc.rings(0);
+        assert_eq!(r0.len(), 2);
+        assert!(!r0.is_empty());
+        let s00 = r0.get(0).expect("rings[0][0] inner list present");
+        assert_eq!(s00.len(), 1);
+        assert_eq!(s00.get(0).expect("rings[0][0][0]").leaf().value(), 71);
+        let s01 = r0.get(1).expect("rings[0][1] inner list present (empty)");
+        assert_eq!(s01.len(), 0);
+        assert!(s01.is_empty());
+
+        let r1 = acc.rings(1);
+        assert_eq!(r1.len(), 1);
+        assert!(r1.is_null(0)); // the single inner list is null
+        assert!(r1.get(0).is_none(), "null inner list -> None");
+
+        let r2 = acc.rings(2);
+        assert_eq!(r2.len(), 0);
+        assert!(r2.is_empty());
+    }
+
+    // Non-nullable struct field with a RUNTIME null -> Err (D-RBA-4 recursed). The
+    // full (8-column) field set is supplied so the column-count gate passes and the
+    // struct null_count gate is the thing under test. Field 0 ('outer') flag is
+    // flipped to nullable so arrow-rs accepts the injected null at construction.
     {
         let bad_outer = Arc::new(make_outer(
             make_inner(make_leaf(vec![10, 20, 30])),
             Some(vec![true, false, true]), // a null in a proto-non-nullable struct
         )) as ArrayRef;
-        let schema = Arc::new(Schema::new(vec![
-            // flag tolerant so arrow-rs accepts the null at construction; the
-            // accessor's own null_count gate (proto nullability) must reject it.
-            Field::new("outer", outer_type(), true),
-            Field::new("maybe_outer", outer_type(), true),
-            Field::new(
-                "readings",
-                DataType::List(Arc::new(Field::new("item", DataType::Float64, true))),
-                false,
-            ),
-            Field::new(
-                "track",
-                DataType::List(Arc::new(Field::new("item", inner_type(), true))),
-                false,
-            ),
-            Field::new("tag", tag_type(), false),
-        ]));
-        let bad = RecordBatch::try_new(
-            schema,
-            vec![
-                bad_outer,
-                maybe_outer_col(),
-                readings_col(),
-                track_col(),
-                tag_col(),
-            ],
-        )
-        .unwrap();
+        let mut fields = composite_schema_fields();
+        fields[0] = Field::new("outer", outer_type(), true); // flag tolerant
+        let schema = Arc::new(Schema::new(fields));
+        let mut cols = composite_columns();
+        cols[0] = bad_outer;
+        let bad = RecordBatch::try_new(schema, cols).unwrap();
         assert!(
             CompositeMainAccessor::try_new(bad).is_err(),
             "a runtime null in a proto-non-nullable struct must yield Err"
@@ -386,23 +549,71 @@ fn from_struct_sliced_input_reads_correctly() {
     assert!(!RowAccess::is_null(&acc, 0), "no top-level struct null in window");
 }
 
+// cell = struct<n:int32 (non-nullable)>  (composite_aux.proto Cell).
+fn cell_fields() -> Fields {
+    Fields::from(vec![Field::new("n", DataType::Int32, false)])
+}
+fn cell_type() -> DataType {
+    DataType::Struct(cell_fields())
+}
+
+// regions: list<list<list<struct<n:int32>>>> (NESTED_LIST depth 3). 2 rows:
+//   row0 = [ [ [n=1, n=2] ], NULL_mid_list ]
+//          (outer[0] has two mid lists: the first has one inner list [1,2];
+//           the second mid list is null -> NestedStructSpan3::get returns None)
+//   row1 = []  (empty outer)
+// Flattened leaf Cell values: [1, 2].
+fn regions_col() -> ArrayRef {
+    // Leaf Cell values.
+    let n: ArrayRef = Arc::new(Int32Array::from(vec![1, 2]));
+    let leaf = StructArray::new(cell_fields(), vec![n], None);
+    // Inner list level: one inner list = [Cell(1), Cell(2)].
+    let inner_item = Arc::new(Field::new("item", cell_type(), true));
+    let inner_offsets = OffsetBuffer::new(vec![0, 2].into());
+    let inner_list = ListArray::new(inner_item.clone(), inner_offsets, Arc::new(leaf), None);
+    // Mid list level: two mid lists — mid[0]=[inner[0]] , mid[1]=NULL.
+    let mid_item = Arc::new(Field::new("item", DataType::List(inner_item), true));
+    let mid_offsets = OffsetBuffer::new(vec![0, 1, 1].into());
+    let mid_list = ListArray::new(
+        mid_item.clone(),
+        mid_offsets,
+        Arc::new(inner_list),
+        Some(NullBuffer::from(vec![true, false])),
+    );
+    // Outer list level: row0 = mid[0..2], row1 = [] (empty).
+    let outer_item = Arc::new(Field::new("item", DataType::List(mid_item), true));
+    let outer_offsets = OffsetBuffer::new(vec![0, 2, 2].into());
+    Arc::new(ListArray::new(
+        outer_item,
+        outer_offsets,
+        Arc::new(mid_list),
+        None,
+    ))
+}
+
+fn regions_type() -> DataType {
+    let inner_item = Arc::new(Field::new("item", cell_type(), true));
+    let mid_item = Arc::new(Field::new("item", DataType::List(inner_item), true));
+    DataType::List(Arc::new(Field::new("item", DataType::List(mid_item), true)))
+}
+
 #[test]
 fn same_package_two_file_composite_co_mount() {
     // R1: composite_main (CompositeMain) and composite_aux (AuxSamples) both live
     // under `rba::main` and BOTH emit a composite getter. This test compiles only
     // if the fully-qualified `crate::fletcher_gen::__rba::*` helper paths in both
     // co-mounted files do NOT collide (no per-file `use`, no duplicate helper
-    // defs). AuxSamples.samples is a REPEATED_SCALAR -> ScalarSpan.
+    // defs). AuxSamples.samples is a REPEATED_SCALAR -> ScalarSpan; AuxSamples
+    // also carries a NESTED_LIST depth 3 (`regions`) -> NestedStructSpan3.
     let values: ArrayRef = Arc::new(Int64Array::from(vec![7i64, 8, 9, 10]));
     let offsets = OffsetBuffer::new(vec![0, 2, 4].into());
     let field = Arc::new(Field::new("item", DataType::Int64, true));
     let list = Arc::new(ListArray::new(field.clone(), offsets, values, None)) as ArrayRef;
-    let schema = Arc::new(Schema::new(vec![Field::new(
-        "samples",
-        DataType::List(field),
-        false,
-    )]));
-    let batch = RecordBatch::try_new(schema, vec![list]).unwrap();
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("samples", DataType::List(field), false),
+        Field::new("regions", regions_type(), false),
+    ]));
+    let batch = RecordBatch::try_new(schema, vec![list, regions_col()]).unwrap();
     let aux = AuxSamplesAccessor::try_new(batch).expect("AuxSamples accessor");
     assert_eq!(aux.num_rows(), 2);
 
@@ -415,4 +626,21 @@ fn same_package_two_file_composite_co_mount() {
     assert_eq!(s1.len(), 2);
     assert_eq!(s1.value(0), 9);
     assert_eq!(s1.value(1), 10);
+
+    // NESTED_LIST depth 3 (regions): outer -> mid -> inner -> leaf, with a null
+    // mid list yielding None (B2). row0 = [ [ [1,2] ], NULL_mid ], row1 = [].
+    let g0 = aux.regions(0);
+    assert_eq!(g0.len(), 2); // two mid lists in the outer row
+    let mid0 = g0.get(0).expect("regions[0][0] mid list present");
+    assert_eq!(mid0.len(), 1); // one inner list
+    let inner0 = mid0.get(0).expect("regions[0][0][0] inner list present");
+    assert_eq!(inner0.len(), 2);
+    assert_eq!(inner0.get(0).expect("cell 0").n(), 1);
+    assert_eq!(inner0.get(1).expect("cell 1").n(), 2);
+    assert!(g0.is_null(1), "second mid list is null");
+    assert!(g0.get(1).is_none(), "null mid list -> None");
+
+    let g1 = aux.regions(1);
+    assert_eq!(g1.len(), 0);
+    assert!(g1.is_empty());
 }

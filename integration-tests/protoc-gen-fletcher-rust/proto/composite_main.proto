@@ -19,11 +19,20 @@
 //   - NO-PACKAGE cross-file STRUCT: `tag` references Tag (nopkg_child.proto, no
 //     proto package) -> resolves to `crate::fletcher_gen::TagAccessor` directly
 //     under fletcher_gen, with NO empty package segment (D-RBA-10 edge case).
+//
+// RBA-6b completes the composite slice with:
+//   - MAP scalar value: `counts` (map<string,int32>) -> ScalarMapSpan
+//     (key / value / value_is_null), empty map row.
+//   - MAP message value: `waypoints` (map<string,Inner>) -> StructMapSpan;
+//     value(j) -> Option<Row>, None on a null map value (B2).
+//   - NESTED_LIST depth 2: `rings` (list<list<Inner>>) -> NestedStructSpan;
+//     get(i) -> Option<inner span>, None on a null inner list (B2).
 syntax = "proto3";
 package rba.main;
 
 import "geo_child.proto";
 import "nopkg_child.proto";
+import "fletcher/options.proto";
 
 // Innermost same-file struct whose child is the cross-package Leaf (>= 2 levels).
 message Inner {
@@ -33,6 +42,14 @@ message Inner {
 // Outer struct whose child is itself a struct (Outer -> Inner -> Leaf).
 message Outer {
     Inner inner = 1;
+}
+
+// Flatten-wrapper: a single repeated field, so a `repeated InnerRingList rings`
+// field adds one list level on top of the wrapper's own `repeated Inner` -> a
+// list<list<struct>> NESTED_LIST depth 2 (the wrapper is stripped).
+message InnerRingList {
+    option (fletcher.flatten) = true;
+    repeated Inner items = 1;
 }
 
 message CompositeMain {
@@ -51,4 +68,16 @@ message CompositeMain {
 
     // NO-PACKAGE cross-file struct: resolves to crate::fletcher_gen::TagAccessor.
     Tag tag = 5;
+
+    // MAP scalar value: map<string,int32> -> ScalarMapSpan. Keys non-null;
+    // values nullable (probed via value_is_null(j)). Includes an empty map row.
+    map<string, int32> counts = 6;
+
+    // MAP message value: map<string,Inner> -> StructMapSpan. value(j) is
+    // Option<Row> — None on a null map value (B2).
+    map<string, Inner> waypoints = 7;
+
+    // NESTED_LIST depth 2: list<list<Inner>> -> NestedStructSpan. get(i) is
+    // Option<inner span> — None on a null inner list (B2).
+    repeated InnerRingList rings = 8;
 }

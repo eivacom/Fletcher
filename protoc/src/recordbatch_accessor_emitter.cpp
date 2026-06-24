@@ -1202,16 +1202,101 @@ const char* FieldKindName(FieldKind k) {
 }
 
 // ---------------------------------------------------------------------------
-// RBA-6a composite support (STRUCT / REPEATED_SCALAR / REPEATED_STRUCT).
-//
-// MAP and NESTED_LIST remain fail-fast (RBA-6b). The Rust accessor composes
-// nested-message accessors recursively, resolving cross-PACKAGE nested messages
-// through the D-RBA-10 package tree (crate::fletcher_gen::<pkg-path>::<Cls>).
+// RBA-6 composite support (STRUCT / REPEATED_SCALAR / REPEATED_STRUCT in 6a;
+// MAP + NESTED_LIST in 6b). The Rust accessor composes nested-message accessors
+// recursively, resolving cross-PACKAGE nested messages through the D-RBA-10
+// package tree (crate::fletcher_gen::<pkg-path>::<Cls>).
 // ---------------------------------------------------------------------------
 
-// True if a field kind is supported by the RBA-6a Rust accessor. Scalars must be
-// a supported scalar leaf; STRUCT / REPEATED_STRUCT are always shape-validatable;
-// REPEATED_SCALAR needs a supported element leaf. MAP / NESTED_LIST are RBA-6b.
+// Forward declaration: the support gate is TRANSITIVE for composite fields
+// (D-RBA-8). Unlike the C++ emitter — which always emits an accessor *class* for
+// every message (its FromColumns_ fails fast at runtime) so a parent reference
+// always resolves — the Rust planner SKIPS generating an accessor entirely when
+// any field is unsupported. A parent that references a skipped inner accessor
+// would therefore emit a dangling type reference (uncompilable Rust). So a
+// composite field is only "supported" if its inner message's accessor will also
+// be generated, checked recursively.
+bool RustFieldSupported(const FieldInfo& fi);
+
+// True iff the accessor for `msg` will be generated: every field is supported
+// (transitively). `visited` guards against reference cycles (a message reachable
+// from itself); a message on the current visit stack is treated as supported to
+// break the cycle — recursive messages are excluded from generation upstream
+// (IsRecursive), so this only affects benign mutually-referencing shapes.
+bool RustMessageAccessorSupported(const google::protobuf::Descriptor* msg,
+                                  std::set<const google::protobuf::Descriptor*>* visited) {
+    if (msg == nullptr) return false;
+    if (IsRecursive(msg)) return false;  // never generated -> no accessor to reference
+    if (!visited->insert(msg).second) return true;  // already on the stack: break cycle
+    std::string skipped;
+    bool ok = true;
+    for (const auto& fi : GatherFields(msg, &skipped)) {
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                RustScalarInfo tmp;
+                if (!RustScalarFor(fi.mapping.scalar.arrow_type_expr, &tmp)) ok = false;
+                break;
+            }
+            case FieldKind::REPEATED_SCALAR: {
+                RustScalarInfo tmp;
+                if (!RustScalarFor(fi.mapping.element.arrow_type_expr, &tmp)) ok = false;
+                break;
+            }
+            case FieldKind::STRUCT:
+            case FieldKind::REPEATED_STRUCT:
+                if (!RustMessageAccessorSupported(fi.mapping.nested_msg, visited)) ok = false;
+                break;
+            case FieldKind::MAP: {
+                RustScalarInfo tmp;
+                if (!RustScalarFor(fi.mapping.map_key.arrow_type_expr, &tmp)) {
+                    ok = false;
+                } else if (fi.mapping.map_value_is_message) {
+                    if (!RustMessageAccessorSupported(fi.mapping.map_value_msg, visited))
+                        ok = false;
+                } else if (!RustScalarFor(fi.mapping.map_value.arrow_type_expr, &tmp)) {
+                    ok = false;
+                }
+                break;
+            }
+            case FieldKind::NESTED_LIST:
+                if (fi.mapping.list_depth != 2 && fi.mapping.list_depth != 3) {
+                    ok = false;
+                } else if (!RustMessageAccessorSupported(fi.mapping.nested_msg, visited)) {
+                    ok = false;
+                }
+                break;
+        }
+        if (!ok) break;
+    }
+    visited->erase(msg);
+    return ok;
+}
+
+// Convenience wrapper: transitively-supported check for a single inner message.
+bool RustInnerMsgSupported(const google::protobuf::Descriptor* msg) {
+    std::set<const google::protobuf::Descriptor*> visited;
+    return RustMessageAccessorSupported(msg, &visited);
+}
+
+// True if a MAP field is supported by the Rust accessor: the key leaf is a
+// supported scalar and the value is either a TRANSITIVELY-supported message
+// (struct value) or a supported scalar leaf (mirrors the C++ IsSupportedMap +
+// the D-RBA-8 transitive gate).
+bool RustMapSupported(const FieldInfo& fi) {
+    RustScalarInfo tmp;
+    if (!RustScalarFor(fi.mapping.map_key.arrow_type_expr, &tmp)) return false;
+    if (fi.mapping.map_value_is_message)
+        return RustInnerMsgSupported(fi.mapping.map_value_msg);
+    return RustScalarFor(fi.mapping.map_value.arrow_type_expr, &tmp);
+}
+
+// True if a field kind is supported by the RBA-6 Rust accessor. Scalars must be a
+// supported scalar leaf; STRUCT / REPEATED_STRUCT need a transitively-supported
+// inner message; REPEATED_SCALAR needs a supported element leaf; MAP needs
+// supported key/value leaves (value message transitively supported); NESTED_LIST
+// is supported at depth 2 or 3 with a transitively-supported leaf message. The
+// transitive checks (D-RBA-8) prevent a parent from referencing an inner accessor
+// the planner skipped (which would be a dangling, uncompilable reference).
 bool RustFieldSupported(const FieldInfo& fi) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR: {
@@ -1220,14 +1305,16 @@ bool RustFieldSupported(const FieldInfo& fi) {
         }
         case FieldKind::STRUCT:
         case FieldKind::REPEATED_STRUCT:
-            return true;
+            return RustInnerMsgSupported(fi.mapping.nested_msg);
         case FieldKind::REPEATED_SCALAR: {
             RustScalarInfo tmp;
             return RustScalarFor(fi.mapping.element.arrow_type_expr, &tmp);
         }
         case FieldKind::MAP:
+            return RustMapSupported(fi);
         case FieldKind::NESTED_LIST:
-            return false;  // RBA-6b
+            if (fi.mapping.list_depth != 2 && fi.mapping.list_depth != 3) return false;
+            return RustInnerMsgSupported(fi.mapping.nested_msg);
     }
     return false;
 }
@@ -1272,10 +1359,14 @@ std::string RustAccessorPath(const google::protobuf::Descriptor* msg,
     return path;
 }
 
-// The Descriptor behind a composite field's nested message (STRUCT /
-// REPEATED_STRUCT). nullptr if the field is not message-composite.
+// The Descriptor behind a composite field's nested message: STRUCT /
+// REPEATED_STRUCT / NESTED_LIST use nested_msg; a message-value MAP uses
+// map_value_msg. nullptr if the field references no nested message (scalar leaf
+// list / scalar-value map). Used for the cross-package path representability gate.
 const google::protobuf::Descriptor* CompositeMsg(const FieldInfo& fi) {
-    return fi.mapping.nested_msg;
+    if (fi.mapping.kind == FieldKind::MAP)
+        return fi.mapping.map_value_is_message ? fi.mapping.map_value_msg : nullptr;
+    return fi.mapping.nested_msg;  // STRUCT / REPEATED_STRUCT / NESTED_LIST
 }
 
 // Rust storage-member names (kept stable + collision-free per field).
@@ -1286,11 +1377,49 @@ std::string RustStructValidityMember(const FieldInfo& fi) {
 std::string RustListMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_list"; }
 std::string RustListValuesMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_values"; }
 std::string RustListInnerMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_inner"; }
+// MAP members.
+std::string RustMapMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_map"; }
+std::string RustMapKeysMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_keys"; }
+std::string RustMapValuesMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_values"; }
+std::string RustMapInnerMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_inner"; }
+// NESTED_LIST members: outer list (= this column), an optional mid list (depth 3),
+// the inner list level, and the leaf accessor over the flattened leaf StructArray.
+std::string RustNlOuterMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_list"; }
+std::string RustNlMidMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_mid"; }
+std::string RustNlInnerMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_inner_lists"; }
+std::string RustNlLeafMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_leaf"; }
 
 // The ScalarSpan<&'a TArray> type expression for a repeated-scalar leaf. The span
 // holds a borrowed reference to the cached typed array (e.g. &Float64Array).
 std::string RustScalarSpanType(const RustScalarInfo& info) {
     return "crate::fletcher_gen::__rba::ScalarSpan<&arrow::array::" + info.array_type + ">";
+}
+
+// ScalarMapSpan<&KArray, &VArray> type expression (map<scalar, scalar>).
+std::string RustScalarMapSpanType(const FieldInfo& fi) {
+    RustScalarInfo k, v;
+    RustScalarFor(fi.mapping.map_key.arrow_type_expr, &k);
+    RustScalarFor(fi.mapping.map_value.arrow_type_expr, &v);
+    return "crate::fletcher_gen::__rba::ScalarMapSpan<&arrow::array::" + k.array_type +
+           ", &arrow::array::" + v.array_type + ">";
+}
+
+// StructMapSpan<'_, &KArray, <ValAcc>> type expression (map<scalar, message>).
+std::string RustStructMapSpanType(const FieldInfo& fi,
+                                  const google::protobuf::FileDescriptor* file) {
+    RustScalarInfo k;
+    RustScalarFor(fi.mapping.map_key.arrow_type_expr, &k);
+    const std::string acc = RustAccessorPath(fi.mapping.map_value_msg, file);
+    return "crate::fletcher_gen::__rba::StructMapSpan<'_, &arrow::array::" + k.array_type + ", " +
+           acc + ">";
+}
+
+// NestedStructSpan / NestedStructSpan3 type expression by depth.
+std::string RustNestedSpanType(const FieldInfo& fi,
+                               const google::protobuf::FileDescriptor* file) {
+    const std::string acc = RustAccessorPath(fi.mapping.nested_msg, file);
+    const std::string ty = fi.mapping.list_depth == 3 ? "NestedStructSpan3" : "NestedStructSpan";
+    return "crate::fletcher_gen::__rba::" + ty + "<'_, " + acc + ">";
 }
 
 // Emit one field's private storage members (Rust).
@@ -1333,9 +1462,38 @@ void EmitRustFieldStorage(std::ostringstream& o, const FieldInfo& fi,
               << "    " << RustListInnerMember(fi) << ": " << path << ",\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            break;  // RBA-6b — unreachable (fail-fast gates these out)
+        case FieldKind::MAP: {
+            RustScalarInfo k;
+            RustScalarFor(fi.mapping.map_key.arrow_type_expr, &k);
+            o << "    " << RustMapMember(fi) << ": std::sync::Arc<arrow::array::MapArray>,\n"
+              << "    " << RustMapKeysMember(fi) << ": std::sync::Arc<arrow::array::"
+              << k.array_type << ">,\n";
+            if (fi.mapping.map_value_is_message) {
+                const std::string acc = RustAccessorPath(fi.mapping.map_value_msg, file);
+                // The value accessor is built over the flattened map-value
+                // StructArray (offset-0 origin); StructMapSpan::value(j) probes its
+                // retained struct validity for null map values (B2).
+                o << "    " << RustMapInnerMember(fi) << ": " << acc << ",\n";
+            } else {
+                RustScalarInfo v;
+                RustScalarFor(fi.mapping.map_value.arrow_type_expr, &v);
+                o << "    " << RustMapValuesMember(fi) << ": std::sync::Arc<arrow::array::"
+                  << v.array_type << ">,\n";
+            }
+            break;
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string acc = RustAccessorPath(fi.mapping.nested_msg, file);
+            // Outer list (= this column) + (depth-3 only) a mid list level + the
+            // inner list level + the leaf accessor over the flattened leaf struct.
+            o << "    " << RustNlOuterMember(fi) << ": std::sync::Arc<arrow::array::ListArray>,\n";
+            if (fi.mapping.list_depth == 3)
+                o << "    " << RustNlMidMember(fi)
+                  << ": std::sync::Arc<arrow::array::ListArray>,\n";
+            o << "    " << RustNlInnerMember(fi) << ": std::sync::Arc<arrow::array::ListArray>,\n"
+              << "    " << RustNlLeafMember(fi) << ": " << acc << ",\n";
+            break;
+        }
     }
 }
 
@@ -1457,9 +1615,131 @@ void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::s
               << "        };\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            break;  // RBA-6b
+        case FieldKind::MAP: {
+            RustScalarInfo k;
+            RustScalarFor(fi.mapping.map_key.arrow_type_expr, &k);
+            // Shape gate: Map variant (NOT a whole-composite DataType compare).
+            o << "        let " << RustMapMember(fi) << " = {\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&cols[" << i << "]),\n"
+              << "                arrow::datatypes::DataType::Map(_, _)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << ": expected Map, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&cols[" << i << "])\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            std::sync::Arc::new(arrow::array::downcast_array::"
+              << "<arrow::array::MapArray>(cols[" << i << "].as_ref()))\n"
+              << "        };\n";
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            // Keys: exact scalar DataType gate (Arrow map keys are non-null by
+            // spec — no null gate here). value_offsets() index keys/values jointly.
+            o << "        let " << RustMapKeysMember(fi) << " = Self::downcast_array::"
+              << "<arrow::array::" << k.array_type << ">(\n"
+              << "            &" << RustMapMember(fi) << ".keys().clone(),\n"
+              << "            \"" << cls << "." << fi.name << " keys\",\n"
+              << "            &" << k.data_type << ",\n"
+              << "        )?;\n";
+            if (fi.mapping.map_value_is_message) {
+                const std::string acc = RustAccessorPath(fi.mapping.map_value_msg, file);
+                // Message-value map: the flattened value child must be a Struct;
+                // build the value accessor over it (offset-0 origin). Null map
+                // values are surfaced by StructMapSpan::value(j) via is_null (B2).
+                o << "        let " << RustMapInnerMember(fi) << " = {\n"
+                  << "            let values = " << RustMapMember(fi) << ".values().clone();\n"
+                  << "            if !matches!(\n"
+                  << "                arrow::array::Array::data_type(&values),\n"
+                  << "                arrow::datatypes::DataType::Struct(_)\n"
+                  << "            ) {\n"
+                  << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+                  << "                    \"" << where << " values: expected Struct, got {:?}\",\n"
+                  << "                    arrow::array::Array::data_type(&values)\n"
+                  << "                )));\n"
+                  << "            }\n"
+                  << "            let structs = arrow::array::downcast_array::"
+                  << "<arrow::array::StructArray>(values.as_ref());\n"
+                  << "            " << acc << "::from_struct(&structs)?\n"
+                  << "        };\n";
+            } else {
+                RustScalarInfo v;
+                RustScalarFor(fi.mapping.map_value.arrow_type_expr, &v);
+                // Scalar-value map: exact scalar DataType gate on the flattened
+                // value child. Map values are nullable -> probed via value_is_null.
+                o << "        let " << RustMapValuesMember(fi) << " = Self::downcast_array::"
+                  << "<arrow::array::" << v.array_type << ">(\n"
+                  << "            &" << RustMapMember(fi) << ".values().clone(),\n"
+                  << "            \"" << cls << "." << fi.name << " values\",\n"
+                  << "            &" << v.data_type << ",\n"
+                  << "        )?;\n";
+            }
+            break;
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string acc = RustAccessorPath(fi.mapping.nested_msg, file);
+            // Outer list (= this column). Gate the outer null count only when the
+            // field is non-nullable; inner list levels are nullable in the API.
+            o << "        let " << RustNlOuterMember(fi) << " = {\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&cols[" << i << "]),\n"
+              << "                arrow::datatypes::DataType::List(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << ": expected List, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&cols[" << i << "])\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            std::sync::Arc::new(arrow::array::downcast_array::"
+              << "<arrow::array::ListArray>(cols[" << i << "].as_ref()))\n"
+              << "        };\n";
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            // Helper: validate `src` is a List and bind its downcast handle.
+            auto descend_list = [&](const std::string& dst, const std::string& src,
+                                    const std::string& lvl) {
+                o << "        let " << dst << " = {\n"
+                  << "            let level = " << src << ".values().clone();\n"
+                  << "            if !matches!(\n"
+                  << "                arrow::array::Array::data_type(&level),\n"
+                  << "                arrow::datatypes::DataType::List(_)\n"
+                  << "            ) {\n"
+                  << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+                  << "                    \"" << where << " " << lvl << ": expected List, got {:?}\",\n"
+                  << "                    arrow::array::Array::data_type(&level)\n"
+                  << "                )));\n"
+                  << "            }\n"
+                  << "            std::sync::Arc::new(arrow::array::downcast_array::"
+                  << "<arrow::array::ListArray>(level.as_ref()))\n"
+                  << "        };\n";
+            };
+            std::string inner_src = RustNlOuterMember(fi);
+            if (fi.mapping.list_depth == 3) {
+                // outer -> mid (list) -> inner (list) -> leaf (struct).
+                descend_list(RustNlMidMember(fi), RustNlOuterMember(fi), "level 2");
+                descend_list(RustNlInnerMember(fi), RustNlMidMember(fi), "level 3");
+            } else {
+                // outer -> inner (list) -> leaf (struct).
+                descend_list(RustNlInnerMember(fi), RustNlOuterMember(fi), "level 2");
+            }
+            // Leaf: the inner list's flattened values must be a Struct; build the
+            // leaf accessor over it (offset-0 origin).
+            o << "        let " << RustNlLeafMember(fi) << " = {\n"
+              << "            let leaf = " << RustNlInnerMember(fi) << ".values().clone();\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&leaf),\n"
+              << "                arrow::datatypes::DataType::Struct(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << " leaf: expected Struct, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&leaf)\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            let structs = arrow::array::downcast_array::"
+              << "<arrow::array::StructArray>(leaf.as_ref());\n"
+              << "            " << acc << "::from_struct(&structs)?\n"
+              << "        };\n";
+            (void)inner_src;
+            break;
+        }
     }
 }
 
@@ -1483,8 +1763,20 @@ void EmitRustFieldInit(std::ostringstream& o, const FieldInfo& fi) {
               << "            " << RustListInnerMember(fi) << ",\n";
             break;
         case FieldKind::MAP:
+            o << "            " << RustMapMember(fi) << ",\n"
+              << "            " << RustMapKeysMember(fi) << ",\n";
+            if (fi.mapping.map_value_is_message)
+                o << "            " << RustMapInnerMember(fi) << ",\n";
+            else
+                o << "            " << RustMapValuesMember(fi) << ",\n";
+            break;
         case FieldKind::NESTED_LIST:
-            break;  // RBA-6b
+            o << "            " << RustNlOuterMember(fi) << ",\n";
+            if (fi.mapping.list_depth == 3)
+                o << "            " << RustNlMidMember(fi) << ",\n";
+            o << "            " << RustNlInnerMember(fi) << ",\n"
+              << "            " << RustNlLeafMember(fi) << ",\n";
+            break;
     }
 }
 
@@ -1588,9 +1880,70 @@ void EmitRustFieldGetter(std::ostringstream& o, const FieldInfo& fi,
             }
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            break;  // RBA-6b
+        case FieldKind::MAP: {
+            std::string span;
+            std::string body;
+            if (fi.mapping.map_value_is_message) {
+                span = RustStructMapSpanType(fi, file);
+                body = "crate::fletcher_gen::__rba::StructMapSpan::new(self." +
+                       RustMapKeysMember(fi) + ".as_ref(), &self." + RustMapInnerMember(fi) +
+                       ", self." + RustMapMember(fi) + ".value_offsets()[row] as usize, self." +
+                       RustMapMember(fi) + ".value_length(row) as usize)";
+            } else {
+                span = RustScalarMapSpanType(fi);
+                body = "crate::fletcher_gen::__rba::ScalarMapSpan::new(self." +
+                       RustMapKeysMember(fi) + ".as_ref(), self." + RustMapValuesMember(fi) +
+                       ".as_ref(), self." + RustMapMember(fi) +
+                       ".value_offsets()[row] as usize, self." + RustMapMember(fi) +
+                       ".value_length(row) as usize)";
+            }
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << RustMapMember(fi)
+                  << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(" << body << ")\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> " << span << " {\n"
+                  << "        " << body << "\n"
+                  << "    }\n";
+            }
+            break;
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string span = RustNestedSpanType(fi, file);
+            std::string body;
+            if (fi.mapping.list_depth == 3) {
+                body = "crate::fletcher_gen::__rba::NestedStructSpan3::new(&self." +
+                       RustNlMidMember(fi) + ", &self." + RustNlInnerMember(fi) + ", &self." +
+                       RustNlLeafMember(fi) + ", self." + RustNlOuterMember(fi) +
+                       ".value_offsets()[row] as usize, self." + RustNlOuterMember(fi) +
+                       ".value_length(row) as usize)";
+            } else {
+                body = "crate::fletcher_gen::__rba::NestedStructSpan::new(&self." +
+                       RustNlInnerMember(fi) + ", &self." + RustNlLeafMember(fi) + ", self." +
+                       RustNlOuterMember(fi) + ".value_offsets()[row] as usize, self." +
+                       RustNlOuterMember(fi) + ".value_length(row) as usize)";
+            }
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << RustNlOuterMember(fi)
+                  << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(" << body << ")\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> " << span << " {\n"
+                  << "        " << body << "\n"
+                  << "    }\n";
+            }
+            break;
+        }
     }
 }
 
@@ -1639,9 +1992,24 @@ void EmitRustRowForward(std::ostringstream& o, const FieldInfo& fi,
               << "    }\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            break;  // RBA-6b
+        case FieldKind::MAP: {
+            std::string span =
+                fi.mapping.map_value_is_message ? RustStructMapSpanType(fi, file)
+                                                : RustScalarMapSpanType(fi);
+            std::string ret = fi.mapping.nullable ? ("Option<" + span + ">") : span;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
+        case FieldKind::NESTED_LIST: {
+            std::string span = RustNestedSpanType(fi, file);
+            std::string ret = fi.mapping.nullable ? ("Option<" + span + ">") : span;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
     }
 }
 
@@ -1660,9 +2028,10 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
       << "// cargo crate (the authoritative Rust well-formedness check).\n";
 
     // First pass: plan each message. A message whose fields are ALL supported by
-    // the RBA-6a accessor (scalars, STRUCT, REPEATED_SCALAR, REPEATED_STRUCT)
-    // gets a real accessor; the first MAP / NESTED_LIST / unmapped-scalar field
-    // trips the fail-fast (RBA-6b adds map + nested-list).
+    // the RBA-6 accessor (scalars, STRUCT, REPEATED_SCALAR, REPEATED_STRUCT, MAP,
+    // and NESTED_LIST depth 2-3) gets a real accessor; the first field with an
+    // unmapped scalar leaf, an unsupported map key/value leaf, or a nested list at
+    // an unsupported depth trips the fail-fast (D-RBA-6 no silent gap).
     struct MsgPlan {
         const google::protobuf::Descriptor* msg = nullptr;
         std::string cls;
@@ -1691,10 +2060,25 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
             if (!RustFieldSupported(fi)) {
                 plan.all_supported = false;
                 plan.bad_name = fi.name;
-                plan.bad_kind = (fi.mapping.kind == FieldKind::SCALAR ||
-                                 fi.mapping.kind == FieldKind::REPEATED_SCALAR)
-                                    ? "unsupported scalar leaf"
-                                    : FieldKindName(fi.mapping.kind);
+                switch (fi.mapping.kind) {
+                    case FieldKind::STRUCT:
+                    case FieldKind::REPEATED_STRUCT:
+                        // The only way these are unsupported is a transitively
+                        // unsupported inner message (D-RBA-8).
+                        plan.bad_kind = "inner message has an unsupported field";
+                        break;
+                    case FieldKind::NESTED_LIST:
+                        plan.bad_kind = (fi.mapping.list_depth != 2 && fi.mapping.list_depth != 3)
+                                            ? "unsupported nested-list depth"
+                                            : "nested-list leaf message has an unsupported field";
+                        break;
+                    case FieldKind::MAP:
+                        plan.bad_kind = "unsupported map key/value leaf or value message";
+                        break;
+                    default:
+                        plan.bad_kind = "unsupported scalar leaf";
+                        break;
+                }
                 break;
             }
             // Composite fields that resolve to a cross-package accessor must have
@@ -1722,11 +2106,11 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
 
         if (!plan.all_supported) {
             // Fail-fast (§2.6): a clear generation-time comment in place of the
-            // struct — no partial accessor (D-RBA-6 no silent gap). MAP and
-            // NESTED_LIST land in RBA-6b.
+            // struct — no partial accessor (D-RBA-6 no silent gap). An unmapped
+            // scalar leaf, an unsupported map key/value leaf, or a nested list at
+            // an unsupported depth (only depths 2-3 are generated) lands here.
             o << "// fletcher: " << cls << " has field '" << plan.bad_name << "' ("
-              << plan.bad_kind << ") not yet supported by the Rust accessor"
-              << " (MAP / NESTED_LIST land in RBA-6b).\n\n";
+              << plan.bad_kind << ") not supported by the Rust accessor.\n\n";
             continue;
         }
 
@@ -2031,6 +2415,165 @@ std::string EmitRustRbaHelpers() {
       << "            None\n"
       << "        } else {\n"
       << "            Some(self.inner.row(r))\n"
+      << "        }\n"
+      << "    }\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over one row of a map<scalar, scalar> column (Arrow\n"
+      << "/// MapArray). `keys` / `vals` are borrowed flattened key / value array\n"
+      << "/// references owned by the parent accessor; `base == map.value_offsets()[row]`,\n"
+      << "/// `len == map.value_length(row)`. Map keys are non-null (Arrow spec); map\n"
+      << "/// values are nullable — callers probe value_is_null(j) rather than reading\n"
+      << "/// through a null value (B2).\n"
+      << "pub struct ScalarMapSpan<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> {\n"
+      << "    keys: K,\n"
+      << "    vals: V,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> ScalarMapSpan<K, V> {\n"
+      << "    pub(crate) fn new(keys: K, vals: V, base: usize, len: usize) -> Self {\n"
+      << "        Self { keys, vals, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn key(&self, i: usize) -> K::Item {\n"
+      << "        self.keys.value(self.base + i)\n"
+      << "    }\n"
+      << "    pub fn value_is_null(&self, i: usize) -> bool {\n"
+      << "        arrow::array::Array::is_null(&self.vals, self.base + i)\n"
+      << "    }\n"
+      << "    pub fn value(&self, i: usize) -> V::Item {\n"
+      << "        self.vals.value(self.base + i)\n"
+      << "    }\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over one row of a map<scalar, message> column. `vals` is the\n"
+      << "/// nested accessor built over the flattened map-value StructArray (offset-0\n"
+      << "/// origin). value(j) yields None when the message value struct element is null\n"
+      << "/// (B2 no-read-through-null), via the value accessor's retained struct validity.\n"
+      << "pub struct StructMapSpan<'a, K: arrow::array::ArrayAccessor, Acc: RowAccess> {\n"
+      << "    keys: K,\n"
+      << "    vals: &'a Acc,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<'a, K: arrow::array::ArrayAccessor, Acc: RowAccess> StructMapSpan<'a, K, Acc> {\n"
+      << "    pub(crate) fn new(keys: K, vals: &'a Acc, base: usize, len: usize) -> Self {\n"
+      << "        Self { keys, vals, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn key(&self, i: usize) -> K::Item {\n"
+      << "        self.keys.value(self.base + i)\n"
+      << "    }\n"
+      << "    pub fn value(&self, i: usize) -> Option<Acc::Row<'_>> {\n"
+      << "        let r = self.base + i;\n"
+      << "        if self.vals.is_null(r) {\n"
+      << "            None\n"
+      << "        } else {\n"
+      << "            Some(self.vals.row(r))\n"
+      << "        }\n"
+      << "    }\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over a nested list of structs at depth 2:\n"
+      << "/// list<list<struct<...>>>. `inner` is the structural inner ListArray level;\n"
+      << "/// `leaf` is the leaf accessor over the flattened leaf StructArray (offset-0).\n"
+      << "/// Every inner list level is nullable in the API: get(i) yields None on a null\n"
+      << "/// inner list (B2), else a StructSpan over the leaf elements of that inner\n"
+      << "/// list. Leaf struct elements still yield Option<Row> via StructSpan::get(j).\n"
+      << "pub struct NestedStructSpan<'a, Acc: RowAccess> {\n"
+      << "    inner: &'a arrow::array::ListArray,\n"
+      << "    leaf: &'a Acc,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<'a, Acc: RowAccess> NestedStructSpan<'a, Acc> {\n"
+      << "    pub(crate) fn new(\n"
+      << "        inner: &'a arrow::array::ListArray,\n"
+      << "        leaf: &'a Acc,\n"
+      << "        base: usize,\n"
+      << "        len: usize,\n"
+      << "    ) -> Self {\n"
+      << "        Self { inner, leaf, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn is_null(&self, i: usize) -> bool {\n"
+      << "        arrow::array::Array::is_null(self.inner, self.base + i)\n"
+      << "    }\n"
+      << "    pub fn get(&self, i: usize) -> Option<StructSpan<'_, Acc>> {\n"
+      << "        let r = self.base + i;\n"
+      << "        if arrow::array::Array::is_null(self.inner, r) {\n"
+      << "            None\n"
+      << "        } else {\n"
+      << "            Some(StructSpan::new(\n"
+      << "                self.leaf,\n"
+      << "                self.inner.value_offsets()[r] as usize,\n"
+      << "                self.inner.value_length(r) as usize,\n"
+      << "            ))\n"
+      << "        }\n"
+      << "    }\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over a nested list of structs at depth 3:\n"
+      << "/// list<list<list<struct<...>>>>. `mid` and `inner` are the structural mid /\n"
+      << "/// inner ListArray levels; `leaf` is the leaf accessor. get(i) yields None on a\n"
+      << "/// null mid list (B2), else a depth-2 NestedStructSpan over the inner level.\n"
+      << "pub struct NestedStructSpan3<'a, Acc: RowAccess> {\n"
+      << "    mid: &'a arrow::array::ListArray,\n"
+      << "    inner: &'a arrow::array::ListArray,\n"
+      << "    leaf: &'a Acc,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<'a, Acc: RowAccess> NestedStructSpan3<'a, Acc> {\n"
+      << "    pub(crate) fn new(\n"
+      << "        mid: &'a arrow::array::ListArray,\n"
+      << "        inner: &'a arrow::array::ListArray,\n"
+      << "        leaf: &'a Acc,\n"
+      << "        base: usize,\n"
+      << "        len: usize,\n"
+      << "    ) -> Self {\n"
+      << "        Self { mid, inner, leaf, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn is_null(&self, i: usize) -> bool {\n"
+      << "        arrow::array::Array::is_null(self.mid, self.base + i)\n"
+      << "    }\n"
+      << "    pub fn get(&self, i: usize) -> Option<NestedStructSpan<'_, Acc>> {\n"
+      << "        let r = self.base + i;\n"
+      << "        if arrow::array::Array::is_null(self.mid, r) {\n"
+      << "            None\n"
+      << "        } else {\n"
+      << "            Some(NestedStructSpan::new(\n"
+      << "                self.inner,\n"
+      << "                self.leaf,\n"
+      << "                self.mid.value_offsets()[r] as usize,\n"
+      << "                self.mid.value_length(r) as usize,\n"
+      << "            ))\n"
       << "        }\n"
       << "    }\n"
       << "}\n";
