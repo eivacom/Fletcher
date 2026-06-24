@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "recordbatch_accessor_emitter.hpp"
 #include "schema_builder.hpp"
 #include "type_mapper.hpp"
 
@@ -58,6 +59,16 @@ std::string StripProtoSuffix(const std::string& proto_name) {
 
 std::string OutputFilename(const std::string& proto_name) {
     return StripProtoSuffix(proto_name) + ".fletcher.pb.h";
+}
+
+// RecordBatch accessor outputs (RBA-1). Same stem derivation as the other
+// output-name helpers; emitted only when --fletcher_opt=accessor / rust is set.
+std::string AccessorOutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".fletcher.accessor.pb.h";
+}
+
+std::string RustAccessorOutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".fletcher.rs";
 }
 
 // Schemas are per-message while protoc output is per-file, so the message
@@ -2906,6 +2917,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     bool schema_only = false;
     bool emit_ts = false;
     bool emit_ipc = false;
+    bool emit_accessor = false;
+    bool emit_rust = false;
     {
         std::istringstream ss(parameter);
         std::string token;
@@ -2916,6 +2929,10 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                 emit_ts = true;
             else if (token == "ipc")
                 emit_ipc = true;
+            else if (token == "accessor")
+                emit_accessor = true;
+            else if (token == "rust")
+                emit_rust = true;
         }
     }
 
@@ -2971,6 +2988,27 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
             if (!WriteToStream(stream.get(), std::string(ipc.begin(), ipc.end()), error))
                 return false;
         }
+    }
+
+    // Optionally emit the RecordBatch accessor C++ header (RBA-1). Additive
+    // read-side artifact: independent of schema_only, and emitted unconditionally
+    // (one file per token, never content-gated) whenever the option is set.
+    if (emit_accessor) {
+        const std::string content = EmitAccessorHeader(file);
+        const std::string out_name = AccessorOutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error)) return false;
+    }
+
+    // Optionally emit the RecordBatch accessor Rust module (RBA-1). Same
+    // additive, unconditional emission contract as the accessor header above.
+    if (emit_rust) {
+        const std::string content = EmitRustAccessor(file);
+        const std::string out_name = RustAccessorOutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error)) return false;
     }
 
     return true;

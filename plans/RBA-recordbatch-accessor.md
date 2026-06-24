@@ -709,7 +709,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 
 | Item | Title | Forcing test | Status |
 |------|-------|--------------|--------|
-| RBA-1 | Option plumbing + additive no-drift guarantee | `AccessorTest.OptGatedEmissionLeavesExistingOutputsByteIdentical` | ⚪ |
+| RBA-1 | Option plumbing + additive no-drift guarantee | `AccessorTest.OptGatedEmissionLeavesExistingOutputsByteIdentical` | 🟢 |
 | RBA-2 | C++ scalar accessor + positional type-check validation | `AccessorTest.ScalarColumnsReadAndValidatePositionally` | ⚪ |
 | RBA-3 | C++ generic metadata access | `AccessorTest.ExposesSchemaAndFieldMetadataGenerically` | ⚪ |
 | RBA-4 | C++ full type parity (struct/list/map/nested) | `AccessorTest.CompositeColumnsReadColumnOriented` | ⚪ |
@@ -717,9 +717,10 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | RBA-6 | Rust generic metadata + full type parity | `composite_and_metadata_read` | ⚪ |
 | RBA-7 | Docs + cross-language capstone parity | `accessor_cpp_and_rust_agree_on_same_batch` | ⚪ |
 
-Suite shape: `+1` protoc/integration no-drift test; `+N` accessor fixture `.proto`s
-+ C++ gtest TUs in the integration harness; `+1` new Rust Cargo test crate
-(`integration-tests/protoc-gen-fletcher-rust/`).
+Suite shape: `+1` protoc/integration no-drift test ✅ (RBA-1: `AccessorTest.Opt…`
+\+ `AccessorTest.GeneratedRustFileParsesWithRustc`, `accessor_tests` target);
+`+N` accessor fixture `.proto`s + C++ gtest TUs in the integration harness; `+1`
+new Rust Cargo test crate (`integration-tests/protoc-gen-fletcher-rust/`).
 
 ---
 

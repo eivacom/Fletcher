@@ -17,6 +17,7 @@ add_subdirectory(third_party/nanoarrow)
 add_library(fletcher_plugin_core STATIC
     src/type_mapper.cpp
     src/generator.cpp
+    src/recordbatch_accessor_emitter.cpp
     src/schema_ipc.cpp)
 
 # C++ standard comes from the Conan profile (compiler.cppstd) — previously

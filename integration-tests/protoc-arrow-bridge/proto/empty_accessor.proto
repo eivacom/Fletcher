@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+syntax = "proto3";
+package integration.degenerate;
+
+// Degenerate fixture for the RBA-1 no-drift matrix: a proto that declares
+// no Arrow-mappable view/IPC messages of its own. It only references the
+// fletcher options import and a single recursive message (which the
+// generator skips for class/IPC emission). This proves the accessor/rust
+// files are emitted UNCONDITIONALLY — one file per token regardless of
+// whether any view/IPC output exists for the file.
+
+import "fletcher/options.proto";
+
+// Recursive message: the generator skips it for class and IPC emission, so
+// this file produces no view classes and no .ipc files in the baseline runs.
+message Node {
+    string label    = 1;
+    Node   children = 2;
+}

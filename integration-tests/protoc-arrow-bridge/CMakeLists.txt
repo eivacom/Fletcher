@@ -138,3 +138,24 @@ target_link_libraries(integration_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
+
+# ----------------------------------------------------------------------------
+# RBA-1 accessor no-drift test (AccessorTest.*). Scoped by `ctest -R 'Accessor'`.
+#
+# This test invokes the plugin itself at runtime into temporary directories, so
+# it needs the protoc + plugin executables and all three -I proto search roots
+# as compile definitions. It does NOT depend on the pre-generated headers above.
+# ----------------------------------------------------------------------------
+add_executable(accessor_tests tests/test_accessor.cpp)
+
+target_link_libraries(accessor_tests PRIVATE GTest::gtest_main)
+
+target_compile_definitions(accessor_tests PRIVATE
+    GENERATED_DIR_PATH="${GENERATED_DIR}"
+    PROTOC_PATH="$<TARGET_FILE:protobuf::protoc>"
+    PLUGIN_PATH="$<TARGET_FILE:fletcher-protoc::plugin>"
+    PROTO_DIR="${PROTO_DIR}"
+    FLETCHER_PROTO_INCLUDE_DIR="${FLETCHER_PROTO_INCLUDE_DIR}"
+    PROTOBUF_WKT_INCLUDE_DIR="${PROTOBUF_WKT_INCLUDE_DIR}")
+
+gtest_discover_tests(accessor_tests DISCOVERY_MODE PRE_TEST)
