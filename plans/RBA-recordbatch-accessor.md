@@ -779,14 +779,18 @@ schema check (D-RBA-3, D-RBA-4, D-RBA-7).
 
 **Forcing test** (`AccessorTest.ScalarColumnsReadAndValidatePositionally`): build a
 `RecordBatch` for a scalar fixture; assert each getter returns the right per-row
-value (incl. a null → `nullopt`); a **type-mismatched** batch → failed `Result`
-with a precise message; a **name-mismatched but type-compatible** batch →
-**success** (the name-tolerance proof, oracle §4).
+value (incl. a *nullable* field with a null → `nullopt`); a **type-mismatched**
+batch → failed `Result` with a precise message; a **name-mismatched but
+type-compatible** batch → **success** (the name-tolerance proof, oracle §4); and a
+**proto-non-nullable scalar column that carries a runtime null** → failed `Result`
+(the `null_count==0` gate, D-RBA-4 — proven here at the cheapest layer).
 
 **Acceptance.** Wrong column count → error; `Make` never throws; the accessor
 keeps its data alive via the cached column handles (read after the caller drops
 every other ref to the batch); the `Make(StructArray)` factory reads an equivalent
-`StructArray` identically (both factories present and working on a flat message).
+`StructArray` identically (both factories present and working on a flat message);
+a non-nullable column with **no** validity buffer is accepted (the null check is
+`null_count==0`, not "has a validity buffer").
 
 ### RBA-3 — C++ generic metadata access
 
@@ -828,15 +832,26 @@ forwarder + `at(row)` on every accessor (D-RBA-7).
 - May split into RBA-4a (struct + lists, incl. RowView + cross-file) / RBA-4b
   (maps + nested lists) if heavy.
 
-**Forcing test** (`AccessorTest.CompositeColumnsReadColumnOriented`): a fixture with
-a nested struct **whose child is itself a struct** (≥2 levels) **imported from a
-second `.proto`** (exercises cross-file), a repeated scalar, a repeated struct, a
-map, a nested list, **and a nullable struct field**; assert column-oriented reads of
-each over a real `RecordBatch`, including the deep chain `a.outer(row).inner().leaf()`
-through composed `RowView`s, and that a **null struct row yields `std::nullopt`**
-(no read-through-null). Acceptance tests cover empty list/map, element-level nulls
-via the span's `is_null(j)`, and an unsupported construct emitting the documented
-comment.
+**Forcing test** (`AccessorTest.CompositeColumnsReadColumnOriented`): a fixture
+exercising **every composite kind**, read column-oriented over a real `RecordBatch`:
+- a nested struct **whose child is itself a struct, imported from a second `.proto`**
+  (`STRUCT`, ≥2 levels + cross-file), asserting the deep chain
+  `a.outer(row).inner().leaf()` through composed `RowView`s;
+- a `REPEATED_SCALAR`, a `REPEATED_STRUCT`, a `NESTED_LIST`;
+- **both** map value-types — `map<…, scalar>` (`ScalarMapSpan`) **and**
+  `map<…, message>` (`StructMapSpan`).
+
+**Null-safety is part of the gate** (the cycle 2–3 hardening — assert each):
+- a **nullable 1:1 struct field**, null row → `std::nullopt`;
+- a **null struct element** in the repeated-struct → `span[j] == std::nullopt`;
+- a **null map message value** → `value(j) == std::nullopt`;
+- a **null inner list** in the nested list → `span[i] == std::nullopt`;
+- a **non-nullable struct field with a runtime null** → `Make` returns an error
+  `Result` (`null_count` gate recursed into composites, D-RBA-4).
+
+**Acceptance tests** cover empty list/map, scalar element nulls via `is_null(j)`,
+name-tolerance on a nested/cross-file field, and an unsupported construct emitting
+the documented comment.
 
 ### RBA-5 — Rust scalar accessor + Cargo test crate (arrow-rs)
 
@@ -907,14 +922,20 @@ the Rust accessor to struct/list/map/nested-list parity with RBA-4:
   files sharing a module. The Cargo crate gains a **two-file, two-package import
   fixture** that exercises it.
 
-**Forcing test** (`composite_and_metadata_read`, `cargo test`): read a nested struct
-**whose child is itself a struct imported from a second `.proto`** (the
-`a.outer(row).inner().leaf()` chain through `Row`s, exercising cross-file modules),
-a repeated scalar, a repeated struct, a map, a nested list, a **nullable struct row
-→ `None`**, and arbitrary schema/field metadata, via the generated Rust accessor.
+**Forcing test** (`composite_and_metadata_read`, `cargo test`): the Rust mirror of
+RBA-4's strengthened test — every composite kind plus the null-safety paths:
+- a nested struct **whose child is itself a struct imported from a second `.proto`**
+  (the `a.outer(row).inner().leaf()` chain through `Row`s, exercising cross-file
+  **package** modules), a `REPEATED_SCALAR`, a `REPEATED_STRUCT`, a `NESTED_LIST`,
+  and **both** map value-types (`map<…,scalar>` and `map<…,message>`);
+- null-safety: nullable 1:1 struct row → `None`; null struct element
+  (`StructSpan::get(j)` → `None`); null map message value (`value(j)` → `None`);
+  null inner list (`NestedStructSpan::get(i)` → `None`); a non-nullable struct field
+  with a runtime null → `Err`;
+- plus arbitrary schema/field metadata read-back.
 
-**Acceptance.** Matches RBA-3/RBA-4 acceptance, in Rust (incl. no read-through-null
-and the cross-file module path resolving).
+**Acceptance.** Matches RBA-3/RBA-4 acceptance, in Rust (incl. no read-through-null,
+the cross-file **package**-path module resolving, and a same-package two-file case).
 
 ### RBA-7 — Docs + cross-language capstone parity
 
@@ -928,11 +949,15 @@ Rust accessors read the same batch identically (D-RBA-8).
 - Capstone: a comprehensive fixture read through **both** accessors over an
   equivalent RecordBatch, asserting identical values + metadata across languages.
 
-**Forcing test** (`accessor_cpp_and_rust_agree_on_same_batch`): construct
-equivalent RecordBatches in C++ and Rust from one fixture and assert the two
-accessors return identical per-row values and metadata for every field kind. (May
-be realised as paired C++/Rust tests over a shared fixture + a serialized
-expected-values file.)
+**Forcing test** (`accessor_cpp_and_rust_agree_on_same_batch`): construct equivalent
+RecordBatches in C++ and Rust from one comprehensive fixture and assert the two
+accessors return identical results. "Every field kind" is enumerated explicitly:
+scalar (nullable + non-nullable), `STRUCT`, `REPEATED_SCALAR`, `REPEATED_STRUCT`,
+`MAP` scalar-value, `MAP` message-value, and `NESTED_LIST` — **each including a
+representative null in its optional path** (null struct row, null struct element,
+null map message value, null inner list) so both languages agree they yield the
+empty/`None` form, plus schema + field metadata. (May be realised as paired
+C++/Rust tests over a shared fixture + a serialized expected-values file.)
 
 **Acceptance.** Docs build/lint clean; README example compiles; no existing output
 changed (re-run the RBA-1 no-drift test as a regression guard).

@@ -382,12 +382,20 @@ accessor lives in that file's generated output. Both languages must resolve it:
   that build a real `RecordBatch`, construct the accessor, and assert: correct
   values per row; a type-mismatched batch → error `Result`; a **name-mismatched
   but type-compatible** batch → **success** (proving §4's name tolerance); generic
-  metadata read-back; full-type-parity reads.
+  metadata read-back; and full-type-parity reads covering **every composite kind**
+  — `REPEATED_SCALAR`, `STRUCT`, `REPEATED_STRUCT`, `MAP` (scalar value **and**
+  message value), `NESTED_LIST` — **with the null-safety paths asserted**: nullable
+  1:1 struct → `nullopt`, null struct element / null map message value / null inner
+  list → `nullopt`, and a non-nullable field carrying a runtime null → error
+  `Result` (the §4 `null_count` gate).
 - **Rust accessor (RBA-5..6).** A new Cargo test crate runs the plugin
   (`--fletcher_opt=rust`), includes the generated `.rs`, and `cargo test` builds a
-  RecordBatch with arrow-rs and asserts the same behaviours.
+  RecordBatch with arrow-rs and asserts the same behaviours (the same composite
+  kinds, the `None`-on-null paths, the non-nullable rejection, and a same-package
+  two-file cross-file import).
 - **Capstone (RBA-7).** One comprehensive fixture read through both the C++ and
-  Rust accessors over an equivalent batch, asserting identical results, plus docs.
+  Rust accessors over an equivalent batch, asserting identical results for every
+  field kind **and a representative null in each optional path**, plus docs.
 
 Each item is gated by **one** red-first forcing test; the remaining tests in the
 item are green acceptance tests added in the same item.
