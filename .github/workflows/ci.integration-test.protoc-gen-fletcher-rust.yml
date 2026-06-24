@@ -36,6 +36,7 @@ jobs:
           sparse-checkout: |
             protoc
             integration-tests/protoc-gen-fletcher-rust
+            integration-tests/accessor-capstone
             .conan-profiles
             .github
 
@@ -88,6 +89,7 @@ jobs:
           sparse-checkout: |
             protoc
             integration-tests/protoc-gen-fletcher-rust
+            integration-tests/accessor-capstone
             .conan-profiles
             .github
 
