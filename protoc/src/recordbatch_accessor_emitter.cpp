@@ -4,6 +4,8 @@
 #include "recordbatch_accessor_emitter.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstddef>
 #include <set>
 #include <sstream>
 #include <string>
@@ -971,15 +973,487 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
     return o.str();
 }
 
+// ===========================================================================
+// RBA-5 — Rust scalar accessor emitter
+// ===========================================================================
+//
+// The Rust emitter shares the exact same FieldInfo / type_mapper model as the
+// C++ emitter (D-RBA-8). It emits a `<Class>Accessor` Rust struct + impl for
+// every generated message whose fields are all supported scalars; a message
+// with any composite field fails fast (RBA-6 adds composites). Generated files
+// carry BARE items, no `mod <pkg>` wrapper — package mounting is owned by the
+// RBA-5 build.rs assembler (D-RBA-10).
+
+namespace {
+
+// Mirrors the C++ ScalarArrayInfo (LookupScalarArray) one-for-one, but in
+// arrow-rs terms: the concrete arrow-rs array class to cache as `Arc<T>`, the
+// `expected` arrow-rs `DataType` constructor expression (the type-only gate
+// target, D-RBA-4), and the Rust getter return type for non-null vs null.
+struct RustScalarInfo {
+    std::string array_type;  // e.g. "Float64Array", "TimestampNanosecondArray"
+    std::string data_type;   // e.g. "DataType::Float64" — the type-only gate target
+    std::string value_type;  // the non-null getter return, e.g. "f64", "&str", "&[u8]"
+    bool is_view = false;    // utf8/binary: getter borrows (&str / &[u8]) via .value(row)
+};
+
+// Map a C++ TimeUnit enum token ("NANO"/"MICRO"/"MILLI"/"SECOND") to the
+// arrow-rs TimeUnit variant ("Nanosecond"/...). Returns empty on an unknown
+// token (treated as a generation error by the caller).
+std::string RustTimeUnit(const std::string& cpp_unit) {
+    if (cpp_unit == "NANO") return "Nanosecond";
+    if (cpp_unit == "MICRO") return "Microsecond";
+    if (cpp_unit == "MILLI") return "Millisecond";
+    if (cpp_unit == "SECOND") return "Second";
+    return std::string();
+}
+
+// Extract the inner argument list of an `arrow::timestamp(...)` /
+// `arrow::duration(...)` expression: the substring between the first '(' and
+// the matching ')'. The mapper today emits a single `arrow::TimeUnit::<UNIT>`
+// argument (and, if ever present, a quoted timezone), so this parses generically
+// over the unit (and an optional tz) rather than hardcoding NANO.
+std::string TemporalArgs(const std::string& expr) {
+    const auto lp = expr.find('(');
+    const auto rp = expr.rfind(')');
+    if (lp == std::string::npos || rp == std::string::npos || rp <= lp) return std::string();
+    return expr.substr(lp + 1, rp - lp - 1);
+}
+
+// Pull the unit token (NANO/MICRO/MILLI/SECOND) out of a temporal arg list of
+// the form "arrow::TimeUnit::NANO[, \"<tz>\"]".
+std::string TemporalUnitToken(const std::string& args) {
+    constexpr std::string_view kPrefix = "arrow::TimeUnit::";
+    const auto pos = args.find(kPrefix);
+    if (pos == std::string::npos) return std::string();
+    auto start = pos + kPrefix.size();
+    auto end = start;
+    while (end < args.size() &&
+           (std::isalnum(static_cast<unsigned char>(args[end])) || args[end] == '_')) {
+        ++end;
+    }
+    return args.substr(start, end - start);
+}
+
+// Pull an optional timezone literal out of a timestamp arg list. The C++ form
+// would be `arrow::timestamp(arrow::TimeUnit::NANO, "UTC")`; today the mapper
+// emits no timezone, so this returns empty for every current field. When a tz
+// is present, returns its contents WITHOUT the surrounding quotes.
+std::string TemporalTimezone(const std::string& args) {
+    const auto comma = args.find(',');
+    if (comma == std::string::npos) return std::string();
+    const auto q1 = args.find('"', comma);
+    if (q1 == std::string::npos) return std::string();
+    const auto q2 = args.find('"', q1 + 1);
+    if (q2 == std::string::npos) return std::string();
+    return args.substr(q1 + 1, q2 - q1 - 1);
+}
+
+// Fills *out with the RustScalarInfo for a scalar Arrow type expression and
+// returns true, or returns false if the expression is not a supported scalar.
+// Keyed on the same arrow_type_expr the C++ LookupScalarArray consumes, so the
+// C++/Rust scalar sets stay in lockstep (D-RBA-8).
+bool RustScalarFor(const std::string& expr, RustScalarInfo* out) {
+    auto set = [&](const char* arr, const char* dt, const char* vt, bool view) {
+        out->array_type = arr;
+        out->data_type = dt;
+        out->value_type = vt;
+        out->is_view = view;
+        return true;
+    };
+    // `data_type` is emitted as a fully-qualified arrow-rs `DataType` expression
+    // (no `use`), so the generated code stays self-contained when same-package
+    // files are co-mounted into one module (D-RBA-10).
+    if (expr == "arrow::boolean()")
+        return set("BooleanArray", "arrow::datatypes::DataType::Boolean", "bool", false);
+    if (expr == "arrow::int8()")
+        return set("Int8Array", "arrow::datatypes::DataType::Int8", "i8", false);
+    if (expr == "arrow::int16()")
+        return set("Int16Array", "arrow::datatypes::DataType::Int16", "i16", false);
+    if (expr == "arrow::int32()")
+        return set("Int32Array", "arrow::datatypes::DataType::Int32", "i32", false);
+    if (expr == "arrow::int64()")
+        return set("Int64Array", "arrow::datatypes::DataType::Int64", "i64", false);
+    if (expr == "arrow::uint8()")
+        return set("UInt8Array", "arrow::datatypes::DataType::UInt8", "u8", false);
+    if (expr == "arrow::uint16()")
+        return set("UInt16Array", "arrow::datatypes::DataType::UInt16", "u16", false);
+    if (expr == "arrow::uint32()")
+        return set("UInt32Array", "arrow::datatypes::DataType::UInt32", "u32", false);
+    if (expr == "arrow::uint64()")
+        return set("UInt64Array", "arrow::datatypes::DataType::UInt64", "u64", false);
+    if (expr == "arrow::float32()")
+        return set("Float32Array", "arrow::datatypes::DataType::Float32", "f32", false);
+    if (expr == "arrow::float64()")
+        return set("Float64Array", "arrow::datatypes::DataType::Float64", "f64", false);
+    if (expr == "arrow::utf8()")
+        return set("StringArray", "arrow::datatypes::DataType::Utf8", "&str", true);
+    if (expr == "arrow::binary()")
+        return set("BinaryArray", "arrow::datatypes::DataType::Binary", "&[u8]", true);
+
+    // Timestamp / duration: derive the concrete array class + DataType from the
+    // unit (and, for timestamps, an optional timezone) parsed out of the
+    // expression — generic over the unit, never hardcoding NANO. Getter returns
+    // the raw i64 (mirrors the C++ int64_t choice).
+    if (expr.rfind("arrow::timestamp(", 0) == 0) {
+        const std::string args = TemporalArgs(expr);
+        const std::string unit = RustTimeUnit(TemporalUnitToken(args));
+        if (unit.empty()) return false;
+        const std::string tz = TemporalTimezone(args);
+        out->array_type = "Timestamp" + unit + "Array";
+        if (tz.empty()) {
+            out->data_type =
+                "arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::" + unit +
+                ", None)";
+        } else {
+            out->data_type =
+                "arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::" + unit +
+                ", Some(\"" + tz + "\".into()))";
+        }
+        out->value_type = "i64";
+        out->is_view = false;
+        return true;
+    }
+    if (expr.rfind("arrow::duration(", 0) == 0) {
+        const std::string args = TemporalArgs(expr);
+        const std::string unit = RustTimeUnit(TemporalUnitToken(args));
+        if (unit.empty()) return false;
+        out->array_type = "Duration" + unit + "Array";
+        out->data_type =
+            "arrow::datatypes::DataType::Duration(arrow::datatypes::TimeUnit::" + unit + ")";
+        out->value_type = "i64";
+        out->is_view = false;
+        return true;
+    }
+    return false;
+}
+
+// Rust keywords usable as RAW identifiers (`r#<kw>`). A proto field/segment that
+// collides with one of these is emitted as r#<kw> (oracle §8.1 / D-RBA-10).
+bool IsRawableRustKeyword(const std::string& s) {
+    static const std::set<std::string> kKeywords = {
+        "as",     "break",  "const",  "continue", "dyn",     "else",     "enum",
+        "extern", "false",  "fn",     "for",      "if",      "impl",     "in",
+        "let",    "loop",   "match",  "mod",      "move",    "mut",      "pub",
+        "ref",    "return", "static", "struct",   "trait",   "true",     "type",
+        "unsafe", "use",    "where",  "while",    "async",   "await",    "abstract",
+        "become", "box",    "do",     "final",    "macro",   "override", "priv",
+        "typeof", "unsized", "virtual", "yield",  "try",     "union"};
+    return kKeywords.count(s) > 0;
+}
+
+// Rust keywords that CANNOT be raw identifiers (rustc rejects `r#crate` etc.). A
+// proto field/segment equal to one of these is a generation error (D-RBA-10) —
+// it is never silently renamed.
+bool IsNonRawRustKeyword(const std::string& s) {
+    return s == "crate" || s == "self" || s == "Self" || s == "super";
+}
+
+// Sanitize one identifier for Rust: a raw-able keyword becomes r#<id>; an
+// otherwise-valid proto ident is unchanged. Callers MUST have already rejected
+// non-raw keywords (IsNonRawRustKeyword) — this function asserts that contract
+// by leaving such an input unchanged (which would fail to compile), but the
+// per-message emission gates on it first and emits a compile_error! instead.
+std::string RustIdent(const std::string& seg) {
+    if (IsRawableRustKeyword(seg)) return "r#" + seg;
+    return seg;
+}
+
+// Emit the per-impl `downcast_array` associated function (offset-preserving,
+// type-gated). It is a PRIVATE associated fn of each accessor's `impl` (not a
+// file-level free fn) so that co-mounting several same-package files into one
+// module never produces a duplicate-definition error (D-RBA-10). It references
+// arrow types by fully-qualified path so no `use` is needed.
+void EmitRustDowncastAssoc(std::ostringstream& o) {
+    o << "    /// Down-cast `col` to `T`, gating on Arrow type only (not name/nullable).\n"
+      << "    /// Uses arrow-rs's offset-preserving, buffer-sharing `downcast_array`\n"
+      << "    /// (NOT a re-Arc'd `downcast_ref` clone), so the cached handle keeps the\n"
+      << "    /// column's offset/len (D-RBA-3 / D-RBA-7).\n"
+      << "    fn downcast_array<\n"
+      << "        T: From<arrow::array::ArrayData> + arrow::array::Array + 'static,\n"
+      << "    >(\n"
+      << "        col: &arrow::array::ArrayRef,\n"
+      << "        ctx: &str,\n"
+      << "        expected: &arrow::datatypes::DataType,\n"
+      << "    ) -> Result<std::sync::Arc<T>, arrow::error::ArrowError> {\n"
+      << "        if col.data_type() != expected {\n"
+      << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+      << "                \"{ctx}: expected {expected:?}, got {:?}\",\n"
+      << "                col.data_type()\n"
+      << "            )));\n"
+      << "        }\n"
+      << "        // Type checked above; downcast_array shares buffers, preserves offset/len.\n"
+      << "        Ok(std::sync::Arc::new(arrow::array::downcast_array::<T>(col.as_ref())))\n"
+      << "    }\n\n";
+}
+
+// Human label for a FieldKind (used in the composite fail-fast comment).
+const char* FieldKindName(FieldKind k) {
+    switch (k) {
+        case FieldKind::SCALAR: return "SCALAR";
+        case FieldKind::REPEATED_SCALAR: return "REPEATED_SCALAR";
+        case FieldKind::STRUCT: return "STRUCT";
+        case FieldKind::REPEATED_STRUCT: return "REPEATED_STRUCT";
+        case FieldKind::NESTED_LIST: return "NESTED_LIST";
+        case FieldKind::MAP: return "MAP";
+    }
+    return "UNKNOWN";
+}
+
+}  // namespace
+
 std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
     std::ostringstream o;
 
     o << "// Generated by fletcher-protoc. DO NOT EDIT.\n"
       << "// Source: " << file->name() << "\n"
-      << "// RecordBatch accessor module (read-only). Content emitted by RBA-2+.\n"
+      << "// RecordBatch accessor module (read-only). Emitted by --fletcher_opt=rust.\n"
       << "//\n"
-      << "// RBA-1: minimal skeleton. No package wrapper modules — package mounting\n"
-      << "// is owned by the RBA-5 assembler (D-RBA-10).\n";
+      << "// Bare items — no `mod <pkg>` wrapper. Package mounting is owned by the\n"
+      << "// RBA-5 build.rs assembler (D-RBA-10). The arrow-dependent code here is\n"
+      << "// compiled+validated by the integration-tests/protoc-gen-fletcher-rust\n"
+      << "// cargo crate (the authoritative Rust well-formedness check).\n";
+
+    // First pass: plan each message. A message whose fields are all supported
+    // scalars gets a real accessor; any composite (or unmapped scalar) field
+    // trips the fail-fast (RBA-6 adds composites).
+    struct MsgPlan {
+        const google::protobuf::Descriptor* msg = nullptr;
+        std::string cls;
+        std::vector<FieldInfo> fields;
+        std::vector<RustScalarInfo> infos;  // 1:1 with fields when all_scalar
+        bool all_scalar = false;
+        std::string bad_name;  // first composite/unsupported field (fail-fast)
+        std::string bad_kind;
+    };
+
+    std::vector<MsgPlan> plans;
+
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+
+        MsgPlan plan;
+        plan.msg = msg;
+        plan.cls = ClassName(msg);
+        std::string skipped;
+        plan.fields = GatherFields(msg, &skipped);
+
+        plan.all_scalar = true;
+        for (const auto& fi : plan.fields) {
+            if (fi.mapping.kind != FieldKind::SCALAR) {
+                plan.all_scalar = false;
+                plan.bad_name = fi.name;
+                plan.bad_kind = FieldKindName(fi.mapping.kind);
+                break;
+            }
+            RustScalarInfo info;
+            if (!RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info)) {
+                plan.all_scalar = false;
+                plan.bad_name = fi.name;
+                plan.bad_kind = "unsupported scalar";
+                break;
+            }
+            plan.infos.push_back(info);
+        }
+        plans.push_back(std::move(plan));
+    }
+
+    // NOTE: no file-level `use` statements and no file-level free functions are
+    // emitted. The build.rs assembler co-mounts every file of one proto package
+    // into a SINGLE module (D-RBA-10 same-package case), so any file-level `use`
+    // or free `fn` would collide across same-package files. Instead each accessor
+    // is fully self-contained: it references arrow/std types by fully-qualified
+    // path and carries its `downcast_array` cast helper as a PRIVATE ASSOCIATED
+    // function in its own `impl` (unique per struct, never colliding).
+
+    for (const auto& plan : plans) {
+        const std::string& cls = plan.cls;
+        const std::string acc = cls + "Accessor";
+
+        if (!plan.all_scalar) {
+            // Composite fail-fast (§2.6): a clear generation-time comment in
+            // place of the struct — no partial accessor (D-RBA-6 no silent gap).
+            o << "// fletcher: " << cls << " has composite field '" << plan.bad_name << "' ("
+              << plan.bad_kind << ") — Rust accessor support lands in RBA-6.\n\n";
+            continue;
+        }
+
+        // D-RBA-10 keyword rule: a field name that is a Rust keyword which cannot
+        // be a raw identifier (crate/self/Self/super) is a generation error — it
+        // is never silently renamed. Emit a loud compile_error! in place of the
+        // struct (no half-built accessor) naming the offending field.
+        bool has_non_raw = false;
+        std::string bad_field;
+        for (const auto& fi : plan.fields) {
+            if (IsNonRawRustKeyword(fi.name)) {
+                has_non_raw = true;
+                bad_field = fi.name;
+                break;
+            }
+        }
+        if (has_non_raw) {
+            o << "// fletcher: " << cls << " field '" << bad_field
+              << "' is a Rust keyword that cannot be an identifier (even as r#" << bad_field
+              << "); rename the proto field.\n"
+              << "compile_error!(\"" << cls << ": proto field '" << bad_field
+              << "' is a Rust keyword that cannot be used as a Rust identifier; "
+              << "rename the proto field.\");\n\n";
+            continue;
+        }
+
+        const std::size_t n = plan.fields.size();
+
+        o << "/// RecordBatch accessor for " << plan.msg->name() << ".\n"
+          << "/// Validation is positional + type-only (names and the nullable flag are\n"
+          << "/// tolerated); proto-non-nullable columns additionally require null_count()==0.\n"
+          << "pub struct " << acc << " {\n"
+          << "    num_rows: usize,\n"
+          << "    #[allow(dead_code)] // retained for RBA-6 *_metadata()\n"
+          << "    fields: arrow::datatypes::Fields,\n"
+          << "    #[allow(dead_code)] // retained for RBA-6 *_metadata()\n"
+          << "    metadata: std::collections::HashMap<String, String>,\n";
+        for (std::size_t i = 0; i < n; ++i) {
+            o << "    " << RustIdent(plan.fields[i].name) << ": std::sync::Arc<arrow::array::"
+              << plan.infos[i].array_type << ">,\n";
+        }
+        o << "}\n\n";
+
+        o << "impl " << acc << " {\n";
+
+        // Private cast helper (associated fn — unique per struct, no collisions).
+        EmitRustDowncastAssoc(o);
+
+        // try_new(RecordBatch)
+        o << "    /// Construct from a `RecordBatch` (top-level factory).\n"
+          << "    pub fn try_new(\n"
+          << "        batch: arrow::record_batch::RecordBatch,\n"
+          << "    ) -> Result<Self, arrow::error::ArrowError> {\n"
+          << "        let s = batch.schema();\n"
+          << "        Self::from_columns(\n"
+          << "            batch.num_rows(),\n"
+          << "            batch.columns().to_vec(),\n"
+          << "            s.fields().clone(),\n"
+          << "            s.metadata().clone(),\n"
+          << "        )\n"
+          << "    }\n\n";
+
+        // from_struct(&StructArray)
+        o << "    /// Construct from a `StructArray` (struct-source factory). Slices each\n"
+          << "    /// child to the struct's [offset, offset+len) window: arrow-rs\n"
+          << "    /// StructArray::columns() are NOT pre-rebased by the struct's logical\n"
+          << "    /// offset (the OPPOSITE of C++ field(i)), so a sliced struct would\n"
+          << "    /// otherwise misalign every getter (D-RBA-7, §2.4).\n"
+          << "    pub fn from_struct(\n"
+          << "        s: &arrow::array::StructArray,\n"
+          << "    ) -> Result<Self, arrow::error::ArrowError> {\n"
+          << "        // `data_type`/`offset`/`len`/`slice` are `arrow::array::Array` trait\n"
+          << "        // methods; called fully-qualified so no `use` is needed (D-RBA-10).\n"
+          << "        let arrow::datatypes::DataType::Struct(fields) =\n"
+          << "            arrow::array::Array::data_type(s).clone()\n"
+          << "        else {\n"
+          << "            return Err(arrow::error::ArrowError::SchemaError(\n"
+          << "                \"" << cls << "::from_struct: source is not a Struct\".into(),\n"
+          << "            ));\n"
+          << "        };\n"
+          << "        let off = arrow::array::Array::offset(s);\n"
+          << "        let len = arrow::array::Array::len(s);\n"
+          << "        let cols: Vec<arrow::array::ArrayRef> = s\n"
+          << "            .columns()\n"
+          << "            .iter()\n"
+          << "            .map(|c| arrow::array::Array::slice(c, off, len))\n"
+          << "            .collect();\n"
+          << "        // A StructArray carries no schema-level metadata.\n"
+          << "        Self::from_columns(len, cols, fields, std::collections::HashMap::new())\n"
+          << "    }\n\n";
+
+        // from_columns
+        o << "    /// Shared by both factories: column-count + per-column type gate, then\n"
+          << "    /// cache. Never panics — every failure path returns an `Err`.\n"
+          << "    fn from_columns(\n"
+          << "        num_rows: usize,\n"
+          << "        cols: Vec<arrow::array::ArrayRef>,\n"
+          << "        fields: arrow::datatypes::Fields,\n"
+          << "        metadata: std::collections::HashMap<String, String>,\n"
+          << "    ) -> Result<Self, arrow::error::ArrowError> {\n"
+          << "        if cols.len() != " << n << " {\n"
+          << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+          << "                \"" << cls << ": expected " << n << " columns, got {}\",\n"
+          << "                cols.len()\n"
+          << "            )));\n"
+          << "        }\n";
+
+        // null_count gate for proto-non-nullable fields. `use arrow::array::Array`
+        // is avoided; `null_count()` / `is_null()` are inherent or trait methods —
+        // the trait `arrow::array::Array` must be in scope for trait methods, so we
+        // call them through a fully-qualified path where needed. `null_count()` is
+        // available on `&dyn Array` via the ArrayRef Deref, callable directly.
+        for (std::size_t i = 0; i < n; ++i) {
+            if (plan.fields[i].mapping.nullable) continue;
+            o << "        // '" << plan.fields[i].name
+              << "' is proto-non-nullable: it must hold no actual nulls (D-RBA-4).\n"
+              << "        if arrow::array::Array::null_count(&cols[" << i << "]) != 0 {\n"
+              << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                \"" << cls << " column " << i << " '" << plan.fields[i].name
+              << "': non-nullable, found {} nulls\",\n"
+              << "                arrow::array::Array::null_count(&cols[" << i << "])\n"
+              << "            )));\n"
+              << "        }\n";
+        }
+
+        // Per-column type-gated cast (cast only AFTER the type is checked).
+        for (std::size_t i = 0; i < n; ++i) {
+            o << "        let " << RustIdent(plan.fields[i].name)
+              << " = Self::downcast_array::<arrow::array::" << plan.infos[i].array_type << ">(\n"
+              << "            &cols[" << i << "],\n"
+              << "            \"" << cls << "." << plan.fields[i].name << "\",\n"
+              << "            &" << plan.infos[i].data_type << ",\n"
+              << "        )?;\n";
+        }
+
+        o << "        Ok(Self {\n"
+          << "            num_rows,\n"
+          << "            fields,\n"
+          << "            metadata,\n";
+        for (std::size_t i = 0; i < n; ++i) {
+            o << "            " << RustIdent(plan.fields[i].name) << ",\n";
+        }
+        o << "        })\n"
+          << "    }\n\n";
+
+        // num_rows
+        o << "    pub fn num_rows(&self) -> usize {\n"
+          << "        self.num_rows\n"
+          << "    }\n";
+
+        // Getters: non-null scalar -> value; nullable -> Option; utf8 -> &str,
+        // binary -> &[u8] (borrowed from the cached Arc, tied to &self). `value`
+        // is an inherent method on the concrete typed array (reached via Deref on
+        // the cached Arc<T>); `is_null` is a trait method, called fully-qualified
+        // through `arrow::array::Array` so no `use` is needed.
+        for (std::size_t i = 0; i < n; ++i) {
+            const FieldInfo& fi = plan.fields[i];
+            const RustScalarInfo& info = plan.infos[i];
+            const std::string member = RustIdent(fi.name);
+            o << "\n";
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << RustIdent(fi.name) << "(&self, row: usize) -> Option<"
+                  << info.value_type << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << member << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(self." << member << ".value(row))\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << RustIdent(fi.name) << "(&self, row: usize) -> "
+                  << info.value_type << " {\n"
+                  << "        self." << member << ".value(row)\n"
+                  << "    }\n";
+            }
+        }
+
+        o << "}\n\n";
+    }
 
     return o.str();
 }

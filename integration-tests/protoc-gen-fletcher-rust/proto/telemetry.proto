@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-5 flat scalar fixture. Field set covers: non-null scalar, nullable
+// Option<&str>, non-null &[u8], nullable Option<&[u8]>, plus a timestamp and a
+// duration to exercise the generic temporal unit-parsing path (the WKT mappings
+// produce Timestamp*Array / Duration*Array, getter -> i64). Pinned `package`
+// makes the crate::fletcher_gen::fletcher::rba::telem::TelemetryAccessor path
+// testable.
+syntax = "proto3";
+package fletcher.rba.telem;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+message Telemetry {
+    double                    temperature = 1;   // non-nullable scalar  -> f64
+    int32                     id          = 2;   // non-nullable scalar  -> i32
+    optional string           label       = 3;   // nullable scalar      -> Option<&str>
+    bytes                     blob        = 4;   // non-nullable binary  -> &[u8]
+    optional bytes            opt_blob    = 5;   // nullable binary      -> Option<&[u8]>
+    google.protobuf.Timestamp occurred_at = 6;   // timestamp(NANO)      -> i64
+    google.protobuf.Duration  elapsed     = 7;   // duration(NANO)       -> i64
+}

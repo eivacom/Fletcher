@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-5 same-package multi-file fixture (file B). Shares the package
+// `fletcher.rba.shared` with sensors_a.proto. Both files mount into the single
+// `pub mod shared` declared once by the build.rs assembler (D-RBA-10).
+syntax = "proto3";
+package fletcher.rba.shared;
+
+message Humidity {
+    float pct = 1;   // non-nullable scalar -> f32
+}

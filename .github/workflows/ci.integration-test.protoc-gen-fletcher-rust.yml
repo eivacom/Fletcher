@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.protoc-gen-fletcher-rust
+
+concurrency:
+  group: ci.integration-test.protoc-gen-fletcher-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+jobs:
+  # Linux exercises the Rust consumer flow inside the devcontainer image (the
+  # same env every other Fletcher Linux build runs in). The devcontainer does not
+  # ship a Rust toolchain, so we install the pinned toolchain (rust-toolchain.toml
+  # in the crate dir drives the exact version) via rustup inside the container,
+  # then build the plugin, export the discovery env vars, and `cargo test`.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-gen-fletcher-rust
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build plugin, install Rust, export discovery env, cargo test
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     echo '::group::conan create protoc (builds the fletcher-protoc plugin)' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::install pinned Rust toolchain (rust-toolchain.toml drives the version)' && \
+                       export RUSTUP_HOME=/workspace/.rustup CARGO_HOME=/workspace/.cargo && \
+                       export PATH=\$CARGO_HOME/bin:\$PATH && \
+                       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none && \
+                       (cd integration-tests/protoc-gen-fletcher-rust && rustup show) && \
+                     echo '::endgroup::' && \
+                     echo '::group::locate the just-built plugin in the Conan cache' && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
+                       if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
+                       export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" && \
+                       export PROTOC=\$(command -v protoc) && \
+                       echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC\" && \
+                     echo '::endgroup::' && \
+                     echo '::group::cargo test (build.rs generates + assembles, then tests run)' && \
+                       (cd integration-tests/protoc-gen-fletcher-rust && cargo test) && \
+                     echo '::endgroup::'"
+
+  # Windows runs natively on the windows-2022 image (Rust is pre-installed via
+  # rustup on the GitHub-hosted runner; rust-toolchain.toml pins the version).
+  # conan-install brings Python + Conan onto the runner; the rest uses Git Bash
+  # to keep the script symmetric with the Linux job.
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-gen-fletcher-rust
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build fletcher-protoc plugin
+        shell: bash
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: Export discovery env + cargo test
+        shell: bash
+        working-directory: integration-tests/protoc-gen-fletcher-rust
+        run: |
+          set -e
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            find ~/.conan2 -name 'fletcher-protoc*' -type f
+            exit 1
+          fi
+          export FLETCHER_PROTOC_PLUGIN="$BIN"
+          export PROTOC=$(command -v protoc)
+          echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
+          # rust-toolchain.toml in this dir pins the toolchain; rustup auto-installs it.
+          rustup show
+          cargo test

@@ -1,0 +1,5 @@
+# Cargo build artifacts (the generated .fletcher.rs land in target/<...>/out).
+/target
+# Local rustup/cargo homes if a CI-style local run created them here.
+/.rustup
+/.cargo

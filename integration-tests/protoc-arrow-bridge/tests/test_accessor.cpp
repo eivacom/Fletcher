@@ -108,49 +108,17 @@ int RunPlugin(const std::string& opt, const fs::path& proto_file, const fs::path
     return std::system(wrapped.c_str());
 }
 
-// True if a `rustc` toolchain is callable on this machine. Probed once per test.
-bool RustcAvailable() {
-#ifdef _WIN32
-    const int rc = std::system("rustc --version >NUL 2>&1");
-#else
-    const int rc = std::system("rustc --version >/dev/null 2>&1");
-#endif
-    return rc == 0;
-}
-
-// Parse-checks a generated .rs file by compiling it as a library to metadata
-// only (no codegen). A comment/banner-only skeleton is a valid empty Rust
-// module and must succeed. Returns the rustc exit code (0 == well-formed).
-int RustcCheck(const fs::path& rs_file, const fs::path& out_dir) {
-    fs::create_directories(out_dir);
-    // An explicit --crate-name is required: rustc would otherwise derive the
-    // crate name from the filename (e.g. "nested.fletcher.rs" -> "nested.fletcher"),
-    // and the embedded '.' is an invalid crate-name character. The name itself is
-    // irrelevant to the parse check.
-    std::string cmd =
-        "rustc --crate-type lib --edition 2021 --crate-name fletcher_accessor_check"
-        " --emit metadata";
-    cmd += " --out-dir " + Quote(out_dir.string());
-    cmd += " " + Quote(rs_file.string());
-    const std::string wrapped =
-#ifdef _WIN32
-        "\"" + cmd + "\"";
-#else
-        cmd;
-#endif
-    return std::system(wrapped.c_str());
-}
-
 fs::path ScratchRoot() {
     return fs::path(GENERATED_DIR_PATH) / "accessor_nodrift";
 }
 
 // Runs one (baseline vs baseline+accessor,rust) comparison for a fixture stem
-// and asserts the no-drift + exactly-+2 contract. When `rustc_available` is
-// true, the generated .rs is parse-checked with rustc; otherwise the per-file
-// non-empty check stands and the visible skip is reported once by the caller.
+// and asserts the no-drift + exactly-+2 contract. The generated .fletcher.rs is
+// asserted emitted + non-empty; its compilation against arrow-rs is the job of
+// the integration-tests/protoc-gen-fletcher-rust cargo crate (RBA-5), not a
+// bare-rustc parse here (which cannot resolve `use arrow::...`).
 void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_opt,
-                         const std::string& case_label, bool rustc_available) {
+                         const std::string& case_label) {
     SCOPED_TRACE("fixture=" + stem + " baseline_opt=[" + baseline_opt + "]");
 
     const fs::path proto_file = fs::path(PROTO_DIR) / (stem + ".proto");
@@ -209,18 +177,17 @@ void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_op
         EXPECT_FALSE(ReadFileBytes(acc_dir / accessor_hdr).empty()) << accessor_hdr << " is empty";
     }
 
-    // Rust well-formedness: when rustc is available, parse-check the generated
-    // .rs (compile to metadata only). A comment/banner-only skeleton is a valid
-    // empty module and must succeed. When rustc is absent the check is deferred
-    // to RBA-5 (reported as a visible, counted GTEST_SKIP by the caller); the
-    // non-empty file check below keeps a minimal guard in that case.
+    // Rust well-formedness: the generated .fletcher.rs is asserted emitted and
+    // non-empty here, but it is NOT bare-rustc parse-checked. As of RBA-5 the
+    // emitter produces real arrow-rs accessors (`use arrow::...`), which a bare
+    // `rustc --emit metadata` (no `--extern arrow`) cannot resolve. The
+    // authoritative Rust compile/validation now lives in the
+    // integration-tests/protoc-gen-fletcher-rust cargo crate, which compiles ALL
+    // generated Rust against the pinned `arrow`. The RBA-1 protected guarantee
+    // (byte-identity of existing outputs + exactly-+2 new files) is unaffected
+    // and fully retained above.
     if (acc_files.count(rust_file) > 0) {
         EXPECT_FALSE(ReadFileBytes(acc_dir / rust_file).empty()) << rust_file << " is empty";
-        if (rustc_available) {
-            const fs::path rustc_out = acc_dir / "rustc_meta";
-            EXPECT_EQ(RustcCheck(acc_dir / rust_file, rustc_out), 0)
-                << "rustc rejected generated Rust file: " << rust_file;
-        }
     }
 }
 
@@ -241,46 +208,29 @@ TEST(AccessorTest, OptGatedEmissionLeavesExistingOutputsByteIdentical) {
     // (recursive-only, no view/IPC) — the +2 must hold for both.
     const std::array<std::string, 2> kFixtures = {{"nested", "empty_accessor"}};
 
-    // Probe rustc once; when available, every generated .rs in the matrix is
-    // parse-checked inline (rustc --crate-type lib --emit metadata). When absent,
-    // the Rust parse is deferred to RBA-5 and reported by the visible, counted
-    // skip in AccessorTest.GeneratedRustFileParsesWithRustc below — never a
-    // silent "file exists" pass.
-    const bool rustc_available = RustcAvailable();
-
     for (const std::string& stem : kFixtures) {
         for (const auto& [opt, label] : kBaselines) {
-            CheckNoDriftForCase(stem, opt, label, rustc_available);
+            CheckNoDriftForCase(stem, opt, label);
         }
     }
 }
 
-// Dedicated, visible record of the Rust well-formedness decision so the harness
-// maintainer sees it in the ctest report rather than a silent downgrade. When
-// rustc is present this re-affirms the generated .rs parses; when absent it is a
-// counted GTEST_SKIP that explicitly defers the Rust parse to RBA-5.
+// Dedicated, visible record that the generated Rust's well-formedness check is
+// authoritatively owned by the RBA-5 cargo crate. RBA-1 carried a bare-rustc
+// parse here as a stopgap explicitly "deferred to RBA-5"; now that RBA-5 emits
+// real arrow-rs accessors (`use arrow::...`) — which a bare `rustc --emit
+// metadata` cannot resolve without `--extern arrow` — the real Rust compile is
+// performed by integration-tests/protoc-gen-fletcher-rust (`cargo test`), which
+// builds ALL generated Rust against the pinned `arrow`. This test stays as a
+// counted, documented GTEST_SKIP pointing at that crate so the decision is
+// visible in the ctest report. The no-drift test above still asserts the .rs is
+// emitted + non-empty and preserves byte-identity + exactly-+2-files.
 TEST(AccessorTest, GeneratedRustFileParsesWithRustc) {
-    if (!RustcAvailable()) {
-        GTEST_SKIP() << "rustc not available on this machine; Rust well-formedness "
-                        "parse is deferred to the RBA-5 Rust crate (pinned toolchain). "
-                        "The inline no-drift test still asserts the .rs is emitted and "
-                        "non-empty.";
-    }
-
-    // Generate the Rust file for a representative fixture and parse-check it.
-    const fs::path proto_file = fs::path(PROTO_DIR) / "nested.proto";
-    ASSERT_TRUE(fs::exists(proto_file)) << proto_file;
-
-    const fs::path out_dir = ScratchRoot() / "rust_parse" / "gen";
-    fs::remove_all(ScratchRoot() / "rust_parse");
-    fs::create_directories(out_dir);
-
-    ASSERT_EQ(RunPlugin("rust", proto_file, out_dir), 0) << "plugin run (rust) failed";
-
-    const fs::path rs_file = out_dir / "nested.fletcher.rs";
-    ASSERT_TRUE(fs::exists(rs_file)) << rs_file;
-
-    const fs::path rustc_out = ScratchRoot() / "rust_parse" / "meta";
-    EXPECT_EQ(RustcCheck(rs_file, rustc_out), 0)
-        << "rustc rejected the generated Rust skeleton: " << rs_file;
+    GTEST_SKIP() << "Generated-Rust compilation is owned by the RBA-5 cargo crate "
+                    "integration-tests/protoc-gen-fletcher-rust (it compiles all "
+                    "generated .fletcher.rs against the pinned arrow-rs). A bare "
+                    "`rustc --emit metadata` here cannot resolve `use arrow::...`. "
+                    "The no-drift test still asserts the .rs is emitted + non-empty "
+                    "and preserves byte-identity + exactly-+2-files.";
 }
+

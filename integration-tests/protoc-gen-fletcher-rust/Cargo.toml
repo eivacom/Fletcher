@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+[package]
+name = "protoc-gen-fletcher-rust"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LGPL-3.0-or-later"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Exact pin: the generated code commits to this arrow-rs API surface
+# (downcast_array, From<ArrayData>, Fields, StructArray, RecordBatch,
+# ArrowError::SchemaError, DataType::Timestamp(TimeUnit, Option<Arc<str>>)).
+# VERIFIED against 59.0.0 (RBA-5): the version exists on crates.io and the full
+# API surface the emitter uses compiles unchanged — no repin needed.
+arrow = "=59.0.0"
+
+# arrow is in scope for tests (the [dependencies] entry above), so the test
+# suite builds RecordBatch/StructArray fixtures without a separate dev-dep.
+[dev-dependencies]

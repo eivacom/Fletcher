@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Pinned Rust toolchain for the protoc-gen-fletcher-rust integration crate so
+# local + CI builds are reproducible. 1.96 is the toolchain RBA-5 was validated
+# against; the pinned `arrow = "=59.0.0"` resolves under it. Bump deliberately.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt"]
+profile = "minimal"

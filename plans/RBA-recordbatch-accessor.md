@@ -713,14 +713,16 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | RBA-2 | C++ scalar accessor + positional type-check validation | `AccessorTest.ScalarColumnsReadAndValidatePositionally` | 🟢 |
 | RBA-3 | C++ generic metadata access | `AccessorTest.ExposesSchemaAndFieldMetadataGenerically` | 🟢 |
 | RBA-4 | C++ full type parity (struct/list/map/nested) | `AccessorTest.CompositeColumnsReadColumnOriented` | 🟢 |
-| RBA-5 | Rust scalar accessor + Cargo test crate (arrow-rs) | `scalar_columns_read_and_validate_positionally` | ⚪ |
+| RBA-5 | Rust scalar accessor + Cargo test crate (arrow-rs) | `scalar_columns_read_and_validate_positionally` | 🟢 |
 | RBA-6 | Rust generic metadata + full type parity | `composite_and_metadata_read` | ⚪ |
 | RBA-7 | Docs + cross-language capstone parity | `accessor_cpp_and_rust_agree_on_same_batch` | ⚪ |
 
 Suite shape: `+1` protoc/integration no-drift test ✅ (RBA-1: `AccessorTest.Opt…`
 \+ `AccessorTest.GeneratedRustFileParsesWithRustc`, `accessor_tests` target);
-`+N` accessor fixture `.proto`s + C++ gtest TUs in the integration harness; `+1`
-new Rust Cargo test crate (`integration-tests/protoc-gen-fletcher-rust/`).
+`+N` accessor fixture `.proto`s + C++ gtest TUs in the integration harness ✅
+(RBA-2/3/4: `test_accessor_scalar.cpp`, `test_accessor_composite.cpp`); `+1`
+new Rust Cargo test crate ✅ (`integration-tests/protoc-gen-fletcher-rust/`,
+RBA-5) + Rust CI job.
 
 ---
 
