@@ -4,33 +4,23 @@
     "capstone": "rba-7",
     "owner": "accessor"
   },
-  "field_metadata": [
-    {"role": "id"},
-    {},
-    {},
-    {"role": "samples"},
-    {},
-    {},
-    {},
-    {}
-  ],
+  "field_metadata": [{ "role": "id" }, {}, {}, { "role": "samples" }, {}, {}, {}, {}],
   "rows": [
     {
       "id": 1,
       "label": "alpha",
-      "maybe_child": {"score": 11, "name": "a"},
+      "maybe_child": { "score": 11, "name": "a" },
       "samples": [7, null, 9],
-      "children": [{"score": 21, "name": "c0"}, null],
-      "scores": [{"key": "x", "value": 10}, {"key": "y", "value": null}],
-      "child_by_key": [
-        {"key": "left", "value": {"score": 51, "name": "l"}},
-        {"key": "mid", "value": null}
+      "children": [{ "score": 21, "name": "c0" }, null],
+      "scores": [
+        { "key": "x", "value": 10 },
+        { "key": "y", "value": null }
       ],
-      "nested_children": [
-        [{"score": 31, "name": "n0"}],
-        null,
-        [{"score": 32, "name": "n1"}]
-      ]
+      "child_by_key": [
+        { "key": "left", "value": { "score": 51, "name": "l" } },
+        { "key": "mid", "value": null }
+      ],
+      "nested_children": [[{ "score": 31, "name": "n0" }], null, [{ "score": 32, "name": "n1" }]]
     },
     {
       "id": 2,
@@ -45,14 +35,12 @@
     {
       "id": 3,
       "label": "gamma",
-      "maybe_child": {"score": 13, "name": "c"},
+      "maybe_child": { "score": 13, "name": "c" },
       "samples": [5],
-      "children": [{"score": 23, "name": "c2"}],
-      "scores": [{"key": "z", "value": 30}],
-      "child_by_key": [{"key": "right", "value": {"score": 63, "name": "r"}}],
-      "nested_children": [
-        [{"score": 33, "name": "n2"}]
-      ]
+      "children": [{ "score": 23, "name": "c2" }],
+      "scores": [{ "key": "z", "value": 30 }],
+      "child_by_key": [{ "key": "right", "value": { "score": 63, "name": "r" } }],
+      "nested_children": [[{ "score": 33, "name": "n2" }]]
     }
   ]
 }

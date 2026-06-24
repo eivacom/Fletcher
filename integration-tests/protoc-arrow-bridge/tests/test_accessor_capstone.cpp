@@ -32,13 +32,12 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 #include "accessor_capstone.fletcher.accessor.pb.h"
 
@@ -330,8 +329,8 @@ std::shared_ptr<arrow::Array> BuildNestedChildren(const json& rows) {
     EXPECT_TRUE(iob.AppendValues(inner_offsets).ok());
     std::shared_ptr<arrow::Array> inner_off_arr;
     EXPECT_TRUE(iob.Finish(&inner_off_arr).ok());
-    auto inner_res = arrow::ListArray::FromArrays(*inner_off_arr, *leaf, arrow::default_memory_pool(),
-                                                  MakeValidityBuffer(inner_valid));
+    auto inner_res = arrow::ListArray::FromArrays(
+        *inner_off_arr, *leaf, arrow::default_memory_pool(), MakeValidityBuffer(inner_valid));
     EXPECT_TRUE(inner_res.ok()) << inner_res.status().ToString();
 
     // Outer list array.
@@ -545,7 +544,8 @@ TEST(AccessorCapstoneTest, AccessorCppAndRustAgreeOnSameBatch) {
 
     const Columns cols = BuildColumns(rows);
     const auto schema = BuildSchema(fixture, cols);
-    auto batch = arrow::RecordBatch::Make(schema, static_cast<int64_t>(rows.size()), cols.AsVector());
+    auto batch =
+        arrow::RecordBatch::Make(schema, static_cast<int64_t>(rows.size()), cols.AsVector());
 
     auto res = CapstoneBatchAccessor::Make(batch);
     ASSERT_TRUE(res.ok()) << res.status().ToString();
@@ -562,11 +562,11 @@ TEST(AccessorCapstoneTest, AccessorCppAndRustAgreeOnSameBatch) {
 
     // Explicit null-path spot checks (per the design: not only implied by the
     // snapshot). These read the fixture's documented null placements directly.
-    EXPECT_FALSE(a.maybe_child(1).has_value());   // null 1:1 struct row
-    EXPECT_FALSE(a.label(1).has_value());         // null scalar row
-    EXPECT_TRUE(a.samples(0).is_null(1));         // null scalar element
-    EXPECT_FALSE(a.children(0)[1].has_value());   // null struct element
-    EXPECT_TRUE(a.scores(0).value_is_null(1));    // null scalar map value
+    EXPECT_FALSE(a.maybe_child(1).has_value());            // null 1:1 struct row
+    EXPECT_FALSE(a.label(1).has_value());                  // null scalar row
+    EXPECT_TRUE(a.samples(0).is_null(1));                  // null scalar element
+    EXPECT_FALSE(a.children(0)[1].has_value());            // null struct element
+    EXPECT_TRUE(a.scores(0).value_is_null(1));             // null scalar map value
     EXPECT_FALSE(a.child_by_key(0).value(1).has_value());  // null map message value
     EXPECT_FALSE(a.nested_children(0)[1].has_value());     // null inner list
 

@@ -3007,8 +3007,7 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     if (emit_accessor) {
         const std::string content = EmitAccessorHeader(file);
         const std::string out_name = AccessorOutputFilename(file->name());
-        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
-            context->Open(out_name));
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
         if (!WriteToStream(stream.get(), content, error)) return false;
     }
 
@@ -3017,8 +3016,7 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     if (emit_rust) {
         const std::string content = EmitRustAccessor(file);
         const std::string out_name = RustAccessorOutputFilename(file->name());
-        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
-            context->Open(out_name));
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
         if (!WriteToStream(stream.get(), content, error)) return false;
         // NB: the shared `__rba.fletcher.rs` span/Row helper module is NOT emitted
         // here. Generate() runs once per input .proto, so emitting __rba here would
@@ -3031,9 +3029,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
 }
 
 bool ArrowRowGenerator::GenerateAll(
-    const std::vector<const google::protobuf::FileDescriptor*>& files,
-    const std::string& parameter, google::protobuf::compiler::GeneratorContext* context,
-    std::string* error) const {
+    const std::vector<const google::protobuf::FileDescriptor*>& files, const std::string& parameter,
+    google::protobuf::compiler::GeneratorContext* context, std::string* error) const {
     // Per-file artifacts: identical to the default GenerateAll loop. Each file's
     // outputs (C++ header / view / ts / ipc / accessor / rust accessor) are
     // emitted by Generate().

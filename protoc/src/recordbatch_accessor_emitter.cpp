@@ -484,7 +484,8 @@ void EmitFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::size_
             const std::string acc = AccessorRef(fi.mapping.nested_class);
             o << "      if (col->type_id() != arrow::Type::STRUCT)\n"
               << "        return arrow::Status::Invalid(\n"
-              << "            \"" << where << ": expected struct, got \", col->type()->ToString());\n"
+              << "            \"" << where
+              << ": expected struct, got \", col->type()->ToString());\n"
               << "      auto struct_col = std::static_pointer_cast<arrow::StructArray>(col);\n";
             if (!fi.mapping.nullable) {
                 o << "      if (struct_col->null_count() != 0)\n"
@@ -580,7 +581,8 @@ void EmitFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::size_
                   << "        return arrow::Status::Invalid(\n"
                   << "            \"" << where << " values: expected struct, got \", "
                   << "items->type()->ToString());\n"
-                  << "      auto item_structs = std::static_pointer_cast<arrow::StructArray>(items);"
+                  << "      auto item_structs = "
+                     "std::static_pointer_cast<arrow::StructArray>(items);"
                   << "\n"
                   << "      ARROW_ASSIGN_OR_RAISE(auto inner, " << acc << "::Make(item_structs));\n"
                   << "      self." << MapMember(fi) << " = map;\n"
@@ -861,7 +863,8 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
           << "    for (const auto& field : fields_) {\n"
           << "      // See field_metadata(int): the returned pointer is kept alive by\n"
           << "      // 'field' (co-owned by fields_), not by the by-value metadata copy.\n"
-          << "      if (field != nullptr && field->name() == name) return field->metadata().get();\n"
+          << "      if (field != nullptr && field->name() == name) return "
+             "field->metadata().get();\n"
           << "    }\n"
           << "    return nullptr;\n"
           << "  }\n\n";
@@ -1132,13 +1135,12 @@ bool RustScalarFor(const std::string& expr, RustScalarInfo* out) {
 // collides with one of these is emitted as r#<kw> (oracle §8.1 / D-RBA-10).
 bool IsRawableRustKeyword(const std::string& s) {
     static const std::set<std::string> kKeywords = {
-        "as",     "break",  "const",  "continue", "dyn",     "else",     "enum",
-        "extern", "false",  "fn",     "for",      "if",      "impl",     "in",
-        "let",    "loop",   "match",  "mod",      "move",    "mut",      "pub",
-        "ref",    "return", "static", "struct",   "trait",   "true",     "type",
-        "unsafe", "use",    "where",  "while",    "async",   "await",    "abstract",
-        "become", "box",    "do",     "final",    "macro",   "override", "priv",
-        "typeof", "unsized", "virtual", "yield",  "try",     "union"};
+        "as",       "break", "const",    "continue", "dyn",     "else",  "enum",   "extern",
+        "false",    "fn",    "for",      "if",       "impl",    "in",    "let",    "loop",
+        "match",    "mod",   "move",     "mut",      "pub",     "ref",   "return", "static",
+        "struct",   "trait", "true",     "type",     "unsafe",  "use",   "where",  "while",
+        "async",    "await", "abstract", "become",   "box",     "do",    "final",  "macro",
+        "override", "priv",  "typeof",   "unsized",  "virtual", "yield", "try",    "union"};
     return kKeywords.count(s) > 0;
 }
 
@@ -1191,12 +1193,18 @@ void EmitRustDowncastAssoc(std::ostringstream& o) {
 // Human label for a FieldKind (used in the composite fail-fast comment).
 const char* FieldKindName(FieldKind k) {
     switch (k) {
-        case FieldKind::SCALAR: return "SCALAR";
-        case FieldKind::REPEATED_SCALAR: return "REPEATED_SCALAR";
-        case FieldKind::STRUCT: return "STRUCT";
-        case FieldKind::REPEATED_STRUCT: return "REPEATED_STRUCT";
-        case FieldKind::NESTED_LIST: return "NESTED_LIST";
-        case FieldKind::MAP: return "MAP";
+        case FieldKind::SCALAR:
+            return "SCALAR";
+        case FieldKind::REPEATED_SCALAR:
+            return "REPEATED_SCALAR";
+        case FieldKind::STRUCT:
+            return "STRUCT";
+        case FieldKind::REPEATED_STRUCT:
+            return "REPEATED_STRUCT";
+        case FieldKind::NESTED_LIST:
+            return "NESTED_LIST";
+        case FieldKind::MAP:
+            return "MAP";
     }
     return "UNKNOWN";
 }
@@ -1226,7 +1234,7 @@ bool RustFieldSupported(const FieldInfo& fi);
 bool RustMessageAccessorSupported(const google::protobuf::Descriptor* msg,
                                   std::set<const google::protobuf::Descriptor*>* visited) {
     if (msg == nullptr) return false;
-    if (IsRecursive(msg)) return false;  // never generated -> no accessor to reference
+    if (IsRecursive(msg)) return false;             // never generated -> no accessor to reference
     if (!visited->insert(msg).second) return true;  // already on the stack: break cycle
     std::string skipped;
     bool ok = true;
@@ -1285,8 +1293,7 @@ bool RustInnerMsgSupported(const google::protobuf::Descriptor* msg) {
 bool RustMapSupported(const FieldInfo& fi) {
     RustScalarInfo tmp;
     if (!RustScalarFor(fi.mapping.map_key.arrow_type_expr, &tmp)) return false;
-    if (fi.mapping.map_value_is_message)
-        return RustInnerMsgSupported(fi.mapping.map_value_msg);
+    if (fi.mapping.map_value_is_message) return RustInnerMsgSupported(fi.mapping.map_value_msg);
     return RustScalarFor(fi.mapping.map_value.arrow_type_expr, &tmp);
 }
 
@@ -1371,9 +1378,7 @@ const google::protobuf::Descriptor* CompositeMsg(const FieldInfo& fi) {
 
 // Rust storage-member names (kept stable + collision-free per field).
 std::string RustStructAccMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_acc"; }
-std::string RustStructValidityMember(const FieldInfo& fi) {
-    return RustIdent(fi.name) + "_struct";
-}
+std::string RustStructValidityMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_struct"; }
 std::string RustListMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_list"; }
 std::string RustListValuesMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_values"; }
 std::string RustListInnerMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_inner"; }
@@ -1415,8 +1420,7 @@ std::string RustStructMapSpanType(const FieldInfo& fi,
 }
 
 // NestedStructSpan / NestedStructSpan3 type expression by depth.
-std::string RustNestedSpanType(const FieldInfo& fi,
-                               const google::protobuf::FileDescriptor* file) {
+std::string RustNestedSpanType(const FieldInfo& fi, const google::protobuf::FileDescriptor* file) {
     const std::string acc = RustAccessorPath(fi.mapping.nested_msg, file);
     const std::string ty = fi.mapping.list_depth == 3 ? "NestedStructSpan3" : "NestedStructSpan";
     return "crate::fletcher_gen::__rba::" + ty + "<'_, " + acc + ">";
@@ -1429,16 +1433,16 @@ void EmitRustFieldStorage(std::ostringstream& o, const FieldInfo& fi,
         case FieldKind::SCALAR: {
             RustScalarInfo info;
             RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
-            o << "    " << RustIdent(fi.name) << ": std::sync::Arc<arrow::array::"
-              << info.array_type << ">,\n";
+            o << "    " << RustIdent(fi.name)
+              << ": std::sync::Arc<arrow::array::" << info.array_type << ">,\n";
             break;
         }
         case FieldKind::REPEATED_SCALAR: {
             RustScalarInfo info;
             RustScalarFor(fi.mapping.element.arrow_type_expr, &info);
             o << "    " << RustListMember(fi) << ": std::sync::Arc<arrow::array::ListArray>,\n"
-              << "    " << RustListValuesMember(fi) << ": std::sync::Arc<arrow::array::"
-              << info.array_type << ">,\n";
+              << "    " << RustListValuesMember(fi)
+              << ": std::sync::Arc<arrow::array::" << info.array_type << ">,\n";
             break;
         }
         case FieldKind::STRUCT: {
@@ -1466,8 +1470,8 @@ void EmitRustFieldStorage(std::ostringstream& o, const FieldInfo& fi,
             RustScalarInfo k;
             RustScalarFor(fi.mapping.map_key.arrow_type_expr, &k);
             o << "    " << RustMapMember(fi) << ": std::sync::Arc<arrow::array::MapArray>,\n"
-              << "    " << RustMapKeysMember(fi) << ": std::sync::Arc<arrow::array::"
-              << k.array_type << ">,\n";
+              << "    " << RustMapKeysMember(fi)
+              << ": std::sync::Arc<arrow::array::" << k.array_type << ">,\n";
             if (fi.mapping.map_value_is_message) {
                 const std::string acc = RustAccessorPath(fi.mapping.map_value_msg, file);
                 // The value accessor is built over the flattened map-value
@@ -1477,8 +1481,8 @@ void EmitRustFieldStorage(std::ostringstream& o, const FieldInfo& fi,
             } else {
                 RustScalarInfo v;
                 RustScalarFor(fi.mapping.map_value.arrow_type_expr, &v);
-                o << "    " << RustMapValuesMember(fi) << ": std::sync::Arc<arrow::array::"
-                  << v.array_type << ">,\n";
+                o << "    " << RustMapValuesMember(fi)
+                  << ": std::sync::Arc<arrow::array::" << v.array_type << ">,\n";
             }
             break;
         }
@@ -1703,7 +1707,8 @@ void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::s
                   << "                arrow::datatypes::DataType::List(_)\n"
                   << "            ) {\n"
                   << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
-                  << "                    \"" << where << " " << lvl << ": expected List, got {:?}\",\n"
+                  << "                    \"" << where << " " << lvl
+                  << ": expected List, got {:?}\",\n"
                   << "                    arrow::array::Array::data_type(&level)\n"
                   << "                )));\n"
                   << "            }\n"
@@ -1772,8 +1777,7 @@ void EmitRustFieldInit(std::ostringstream& o, const FieldInfo& fi) {
             break;
         case FieldKind::NESTED_LIST:
             o << "            " << RustNlOuterMember(fi) << ",\n";
-            if (fi.mapping.list_depth == 3)
-                o << "            " << RustNlMidMember(fi) << ",\n";
+            if (fi.mapping.list_depth == 3) o << "            " << RustNlMidMember(fi) << ",\n";
             o << "            " << RustNlInnerMember(fi) << ",\n"
               << "            " << RustNlLeafMember(fi) << ",\n";
             break;
@@ -1812,10 +1816,10 @@ void EmitRustFieldGetter(std::ostringstream& o, const FieldInfo& fi,
             // Turbofish form for the call expression (`Type::<Args>::new(...)`).
             const std::string span_call =
                 "crate::fletcher_gen::__rba::ScalarSpan::<&arrow::array::" + info.array_type + ">";
-            const std::string body =
-                span_call + "::new(self." + RustListValuesMember(fi) + ".as_ref(), self." +
-                RustListMember(fi) + ".value_offsets()[row] as usize, self." +
-                RustListMember(fi) + ".value_length(row) as usize)";
+            const std::string body = span_call + "::new(self." + RustListValuesMember(fi) +
+                                     ".as_ref(), self." + RustListMember(fi) +
+                                     ".value_offsets()[row] as usize, self." + RustListMember(fi) +
+                                     ".value_length(row) as usize)";
             if (fi.mapping.nullable) {
                 o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
                   << "        if arrow::array::Array::is_null(&*self." << RustListMember(fi)
@@ -1836,8 +1840,7 @@ void EmitRustFieldGetter(std::ostringstream& o, const FieldInfo& fi,
             const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
             const std::string row_t = path;  // <Path>::Row via RowAccess
             if (fi.mapping.nullable) {
-                o << "    pub fn " << member
-                  << "(&self, row: usize) -> Option<<" << path
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<<" << path
                   << " as crate::fletcher_gen::__rba::RowAccess>::Row<'_>> {\n"
                   << "        if arrow::array::Array::is_null(self." << RustStructValidityMember(fi)
                   << ".as_ref(), row) {\n"
@@ -1860,10 +1863,10 @@ void EmitRustFieldGetter(std::ostringstream& o, const FieldInfo& fi,
         case FieldKind::REPEATED_STRUCT: {
             const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
             const std::string span = "crate::fletcher_gen::__rba::StructSpan<'_, " + path + ">";
-            const std::string body =
-                "crate::fletcher_gen::__rba::StructSpan::new(&self." + RustListInnerMember(fi) +
-                ", self." + RustListMember(fi) + ".value_offsets()[row] as usize, self." +
-                RustListMember(fi) + ".value_length(row) as usize)";
+            const std::string body = "crate::fletcher_gen::__rba::StructSpan::new(&self." +
+                                     RustListInnerMember(fi) + ", self." + RustListMember(fi) +
+                                     ".value_offsets()[row] as usize, self." + RustListMember(fi) +
+                                     ".value_length(row) as usize)";
             if (fi.mapping.nullable) {
                 o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
                   << "        if arrow::array::Array::is_null(&*self." << RustListMember(fi)
@@ -1956,8 +1959,8 @@ void EmitRustRowForward(std::ostringstream& o, const FieldInfo& fi,
         case FieldKind::SCALAR: {
             RustScalarInfo info;
             RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
-            std::string ret = fi.mapping.nullable ? ("Option<" + info.value_type + ">")
-                                                  : info.value_type;
+            std::string ret =
+                fi.mapping.nullable ? ("Option<" + info.value_type + ">") : info.value_type;
             o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
               << "        self.a." << member << "(self.row)\n"
               << "    }\n";
@@ -1975,8 +1978,7 @@ void EmitRustRowForward(std::ostringstream& o, const FieldInfo& fi,
         }
         case FieldKind::STRUCT: {
             const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
-            std::string row = "<" + path +
-                              " as crate::fletcher_gen::__rba::RowAccess>::Row<'_>";
+            std::string row = "<" + path + " as crate::fletcher_gen::__rba::RowAccess>::Row<'_>";
             std::string ret = fi.mapping.nullable ? ("Option<" + row + ">") : row;
             o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
               << "        self.a." << member << "(self.row)\n"
@@ -1993,9 +1995,8 @@ void EmitRustRowForward(std::ostringstream& o, const FieldInfo& fi,
             break;
         }
         case FieldKind::MAP: {
-            std::string span =
-                fi.mapping.map_value_is_message ? RustStructMapSpanType(fi, file)
-                                                : RustScalarMapSpanType(fi);
+            std::string span = fi.mapping.map_value_is_message ? RustStructMapSpanType(fi, file)
+                                                               : RustScalarMapSpanType(fi);
             std::string ret = fi.mapping.nullable ? ("Option<" + span + ">") : span;
             o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
               << "        self.a." << member << "(self.row)\n"
@@ -2109,8 +2110,8 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
             // struct — no partial accessor (D-RBA-6 no silent gap). An unmapped
             // scalar leaf, an unsupported map key/value leaf, or a nested list at
             // an unsupported depth (only depths 2-3 are generated) lands here.
-            o << "// fletcher: " << cls << " has field '" << plan.bad_name << "' ("
-              << plan.bad_kind << ") not supported by the Rust accessor.\n\n";
+            o << "// fletcher: " << cls << " has field '" << plan.bad_name << "' (" << plan.bad_kind
+              << ") not supported by the Rust accessor.\n\n";
             continue;
         }
 
@@ -2177,7 +2178,8 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
         o << "    /// A shared empty metadata map for absent/out-of-bounds field metadata\n"
           << "    /// (D-RBA-5: absent metadata is NOT an error). OnceLock-initialised.\n"
           << "    fn empty_metadata() -> &'static std::collections::HashMap<String, String> {\n"
-          << "        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, String>> =\n"
+          << "        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, String>> "
+             "=\n"
           << "            std::sync::OnceLock::new();\n"
           << "        EMPTY.get_or_init(std::collections::HashMap::new)\n"
           << "    }\n\n";
@@ -2289,7 +2291,8 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
         o << "    /// Field metadata by positional index (aligns with positional\n"
           << "    /// validation; does not depend on field names). Out-of-bounds or absent\n"
           << "    /// metadata -> an empty map, never a panic (D-RBA-5).\n"
-          << "    pub fn field_metadata(&self, i: usize) -> &std::collections::HashMap<String, String> {\n"
+          << "    pub fn field_metadata(&self, i: usize) -> &std::collections::HashMap<String, "
+             "String> {\n"
           << "        match self.fields.get(i) {\n"
           << "            Some(f) => f.metadata(),\n"
           << "            None => Self::empty_metadata(),\n"
@@ -2425,14 +2428,16 @@ std::string EmitRustRbaHelpers() {
       << "/// `len == map.value_length(row)`. Map keys are non-null (Arrow spec); map\n"
       << "/// values are nullable — callers probe value_is_null(j) rather than reading\n"
       << "/// through a null value (B2).\n"
-      << "pub struct ScalarMapSpan<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> {\n"
+      << "pub struct ScalarMapSpan<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> "
+         "{\n"
       << "    keys: K,\n"
       << "    vals: V,\n"
       << "    base: usize,\n"
       << "    len: usize,\n"
       << "}\n"
       << "\n"
-      << "impl<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> ScalarMapSpan<K, V> {\n"
+      << "impl<K: arrow::array::ArrayAccessor, V: arrow::array::ArrayAccessor> ScalarMapSpan<K, V> "
+         "{\n"
       << "    pub(crate) fn new(keys: K, vals: V, base: usize, len: usize) -> Self {\n"
       << "        Self { keys, vals, base, len }\n"
       << "    }\n"

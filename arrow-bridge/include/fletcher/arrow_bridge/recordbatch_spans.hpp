@@ -113,8 +113,7 @@ struct StructSpan {
 //   VV, VA — value C++ value type / concrete Arrow value-array type.
 //   KeyGetView / ValGetView — true for utf8/binary key/value (zero-copy
 //             GetView), false for numeric/bool/temporal (Value).
-template <class KV, class KA, class VV, class VA, bool KeyGetView = false,
-          bool ValGetView = false>
+template <class KV, class KA, class VV, class VA, bool KeyGetView = false, bool ValGetView = false>
 struct ScalarMapSpan {
     const KA* keys = nullptr;
     const VA* values = nullptr;

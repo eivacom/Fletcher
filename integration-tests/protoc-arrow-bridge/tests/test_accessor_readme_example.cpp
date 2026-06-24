@@ -151,10 +151,9 @@ std::shared_ptr<arrow::RecordBatch> MakeReadmeBatch() {
         arrow::field("opt_text", arrow::utf8(), true),
         arrow::field("opt_i64", arrow::int64(), true),
     });
-    return arrow::RecordBatch::Make(
-        schema, 3,
-        {b_arr, i32_arr, i64(), u32(), u64(), f32(), f64(), text(), blob(), ts(), dur(), opt_arr,
-         opt_text(), opt_i64()});
+    return arrow::RecordBatch::Make(schema, 3,
+                                    {b_arr, i32_arr, i64(), u32(), u64(), f32(), f64(), text(),
+                                     blob(), ts(), dur(), opt_arr, opt_text(), opt_i64()});
 }
 
 }  // namespace

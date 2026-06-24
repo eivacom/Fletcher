@@ -109,9 +109,7 @@ int RunPlugin(const std::string& opt, const fs::path& proto_file, const fs::path
     return std::system(wrapped.c_str());
 }
 
-fs::path ScratchRoot() {
-    return fs::path(GENERATED_DIR_PATH) / "accessor_nodrift";
-}
+fs::path ScratchRoot() { return fs::path(GENERATED_DIR_PATH) / "accessor_nodrift"; }
 
 // Runs one (baseline vs baseline+accessor,rust) comparison for a fixture stem
 // and asserts the no-drift + exactly-+2 contract. The generated .fletcher.rs is
@@ -135,8 +133,8 @@ void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_op
     ASSERT_EQ(RunPlugin(baseline_opt, proto_file, base_dir), 0)
         << "baseline protoc run failed for opt=[" << baseline_opt << "]";
 
-    const std::string accessor_opt = baseline_opt.empty() ? "accessor,rust"
-                                                          : baseline_opt + ",accessor,rust";
+    const std::string accessor_opt =
+        baseline_opt.empty() ? "accessor,rust" : baseline_opt + ",accessor,rust";
     ASSERT_EQ(RunPlugin(accessor_opt, proto_file, acc_dir), 0)
         << "accessor protoc run failed for opt=[" << accessor_opt << "]";
 
@@ -247,4 +245,3 @@ TEST(AccessorTest, GeneratedRustFileParsesWithRustc) {
                     "The no-drift test still asserts the .rs is emitted + non-empty "
                     "and preserves byte-identity + exactly-+2-files.";
 }
-

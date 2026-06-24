@@ -84,9 +84,8 @@ std::shared_ptr<arrow::StructArray> MakeOuterArray(const std::shared_ptr<arrow::
 }
 
 // list<double> from per-row offsets and a (possibly null-bearing) values child.
-std::shared_ptr<arrow::ListArray> MakeDoubleList(
-    const std::vector<int32_t>& offsets,
-    const std::vector<std::optional<double>>& values) {
+std::shared_ptr<arrow::ListArray> MakeDoubleList(const std::vector<int32_t>& offsets,
+                                                 const std::vector<std::optional<double>>& values) {
     arrow::DoubleBuilder vb;
     for (const auto& v : values) {
         if (v.has_value()) {
@@ -278,8 +277,8 @@ struct Cols {
     std::shared_ptr<arrow::Array> outer, maybe_outer, readings, track, opt_readings, opt_track,
         counts, waypoints, rings, regions;
     arrow::ArrayVector AsVector() const {
-        return {outer, maybe_outer, readings,      track, opt_readings,
-                opt_track, counts, waypoints, rings, regions};
+        return {outer,     maybe_outer, readings,  track, opt_readings,
+                opt_track, counts,      waypoints, rings, regions};
     }
 };
 
@@ -334,8 +333,8 @@ Cols MakeFixtureCols() {
     // row2=[]. Exercises the depth-3 emit/span path to a leaf RowView.
     {
         auto leaf = MakeInnerArray({81});
-        auto inner = WrapList(/*offsets=*/{0, 1}, leaf);  // inner[0] = [81]
-        auto mid = WrapList(/*offsets=*/{0, 1}, inner);   // mid[0]   = [[81]]
+        auto inner = WrapList(/*offsets=*/{0, 1}, leaf);      // inner[0] = [81]
+        auto mid = WrapList(/*offsets=*/{0, 1}, inner);       // mid[0]   = [[81]]
         c.regions = WrapList(/*offsets=*/{0, 1, 1, 1}, mid);  // row0 = [[[81]]]
     }
     return c;
@@ -507,10 +506,10 @@ void CheckHappyPath(const CompositeRowAccessor& a) {
     ASSERT_EQ(rg0.size(), 1);
     ASSERT_TRUE(rg0[0].has_value());
     {
-        auto mid = *rg0[0];          // NestedStructSpan<Inner,2>
+        auto mid = *rg0[0];  // NestedStructSpan<Inner,2>
         ASSERT_EQ(mid.size(), 1);
         ASSERT_TRUE(mid[0].has_value());
-        auto inner = *mid[0];        // StructSpan<Inner>
+        auto inner = *mid[0];  // StructSpan<Inner>
         ASSERT_EQ(inner.size(), 1);
         ASSERT_TRUE(inner[0].has_value());
         EXPECT_EQ(inner[0]->leaf(), 81);
@@ -581,7 +580,7 @@ TEST(AccessorTest, CompositeColumnsReadColumnOriented) {
         EXPECT_EQ(r->outer(0).inner().leaf(), 10);
         EXPECT_FALSE(r->opt_readings(1).has_value());  // null list row tolerant of rename
         EXPECT_EQ(r->counts(0).value(0), 1);           // map tolerant of top-level rename
-        EXPECT_EQ((*r->rings(0)[0])[0]->leaf(), 71);    // nested list tolerant of rename
+        EXPECT_EQ((*r->rings(0)[0])[0]->leaf(), 71);   // nested list tolerant of rename
     }
 
     // (4) non-nullable struct with a runtime null element -> Make() error.

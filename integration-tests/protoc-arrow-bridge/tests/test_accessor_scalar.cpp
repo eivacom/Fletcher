@@ -70,8 +70,8 @@ struct Columns {
         elapsed, opt_i32, opt_text, opt_i64;
 
     arrow::ArrayVector AsVector() const {
-        return {b_flag,  i32,         i64,     u32,      u64,     f32,      f64,
-                text,    blob,        occurred_at, elapsed, opt_i32, opt_text, opt_i64};
+        return {b_flag, i32,  i64,         u32,     u64,     f32,      f64,
+                text,   blob, occurred_at, elapsed, opt_i32, opt_text, opt_i64};
     }
 };
 
@@ -98,8 +98,7 @@ Columns MakeFixtureColumns() {
         EXPECT_TRUE(bb.Finish(&c.blob).ok());
     }
 
-    c.occurred_at = BuildInt64Typed(arrow::timestamp(arrow::TimeUnit::NANO),
-                                    {100, 200, 300});
+    c.occurred_at = BuildInt64Typed(arrow::timestamp(arrow::TimeUnit::NANO), {100, 200, 300});
     c.elapsed = BuildInt64Typed(arrow::duration(arrow::TimeUnit::NANO), {5, 6, 7});
 
     // Nullable columns: row index 1 is null.
@@ -243,8 +242,8 @@ TEST(AccessorTest, ScalarColumnsReadAndValidatePositionally) {
         std::vector<std::shared_ptr<arrow::Field>> renamed;
         auto base = MakeFixtureSchema()->fields();
         for (size_t i = 0; i < base.size(); ++i) {
-            renamed.push_back(arrow::field("renamed_" + std::to_string(i), base[i]->type(),
-                                           base[i]->nullable()));
+            renamed.push_back(
+                arrow::field("renamed_" + std::to_string(i), base[i]->type(), base[i]->nullable()));
         }
         auto batch = arrow::RecordBatch::Make(arrow::schema(renamed), kNumRows, cols);
         auto r = ScalarRowAccessor::Make(batch);
@@ -260,8 +259,7 @@ TEST(AccessorTest, ScalarColumnsReadAndValidatePositionally) {
         ASSERT_TRUE(ib.AppendNull().ok());  // runtime null in a non-nullable column
         ASSERT_TRUE(ib.Append(3).ok());
         ASSERT_TRUE(ib.Finish(&cols.i32).ok());
-        auto batch =
-            arrow::RecordBatch::Make(MakeFixtureSchema(), kNumRows, cols.AsVector());
+        auto batch = arrow::RecordBatch::Make(MakeFixtureSchema(), kNumRows, cols.AsVector());
         auto r = ScalarRowAccessor::Make(batch);
         ASSERT_FALSE(r.ok());
         const std::string msg = r.status().message();
@@ -300,8 +298,7 @@ TEST(AccessorTest, ScalarColumnsReadAndValidatePositionally) {
         cols.i32 = with_null->Slice(1, kNumRows);
         ASSERT_NE(cols.i32->data()->buffers[0], nullptr)
             << "sliced column should still carry a validity buffer";
-        ASSERT_EQ(cols.i32->null_count(), 0)
-            << "sliced window has no actual nulls";
+        ASSERT_EQ(cols.i32->null_count(), 0) << "sliced window has no actual nulls";
         auto batch = arrow::RecordBatch::Make(MakeFixtureSchema(), kNumRows, cols.AsVector());
         auto r = ScalarRowAccessor::Make(batch);
         EXPECT_TRUE(r.ok()) << r.status().ToString();
@@ -367,8 +364,8 @@ TEST(AccessorTest, ExposesSchemaAndFieldMetadataGenerically) {
     // metadata on field 0 only (every other field carries none).
     auto base = MakeFixtureSchema();
     std::vector<std::shared_ptr<arrow::Field>> fields = base->fields();
-    fields[0] = fields[0]->WithMetadata(
-        arrow::KeyValueMetadata::Make({"field_key_0"}, {"field_val_0"}));
+    fields[0] =
+        fields[0]->WithMetadata(arrow::KeyValueMetadata::Make({"field_key_0"}, {"field_val_0"}));
     auto schema_md = arrow::KeyValueMetadata::Make({"schema_key_0"}, {"schema_val_0"});
     auto schema = arrow::schema(fields, schema_md);
     auto batch = arrow::RecordBatch::Make(schema, kNumRows, cols);
@@ -450,7 +447,7 @@ TEST(AccessorTest, ScalarAccessorFromStructArrayReadsIdentically) {
     auto rs = ScalarRowAccessor::Make(sliced);
     ASSERT_TRUE(rs.ok()) << rs.status().ToString();
     EXPECT_EQ(rs->num_rows(), 2);
-    EXPECT_EQ(rs->i32(0), 0);            // original row 1
-    EXPECT_EQ(rs->i32(1), 2147483647);  // original row 2
+    EXPECT_EQ(rs->i32(0), 0);                  // original row 1
+    EXPECT_EQ(rs->i32(1), 2147483647);         // original row 2
     EXPECT_FALSE(rs->opt_i32(0).has_value());  // original row 1 was null
 }

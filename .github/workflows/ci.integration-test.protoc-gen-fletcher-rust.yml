@@ -105,7 +105,8 @@ jobs:
             exit 1
           fi
           export FLETCHER_PROTOC_PLUGIN="$BIN"
-          export PROTOC=$(command -v protoc)
+          PROTOC=$(command -v protoc)
+          export PROTOC
           echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
           # rust-toolchain.toml in this dir pins the toolchain; rustup auto-installs it.
           rustup show

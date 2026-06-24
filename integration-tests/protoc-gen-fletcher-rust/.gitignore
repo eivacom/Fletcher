@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
 # Cargo build artifacts (the generated .fletcher.rs land in target/<...>/out).
 /target
 # Local rustup/cargo homes if a CI-style local run created them here.
