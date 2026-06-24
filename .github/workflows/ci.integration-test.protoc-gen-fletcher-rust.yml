@@ -64,9 +64,12 @@ jobs:
                        BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
                        if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
                        export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" && \
-                       PROTOC=\$(find ~/.conan2/p -path '*/p/bin/protoc' -type f -print -quit) && \
-                       if [ -z \"\$PROTOC\" ]; then PROTOC=\$(command -v protoc); fi && \
+                       PROTOC=\$(find ~/.conan2 -type f -name protoc -print -quit 2>/dev/null || true) && \
+                       if [ -z \"\$PROTOC\" ]; then PROTOC=\$(command -v protoc 2>/dev/null || true); fi && \
                        if [ -n \"\$PROTOC\" ]; then export PROTOC; fi && \
+                       echo \"protoc=\${PROTOC:-<unset; build.rs will fall back>}\" && \
+                       echo '--- protoc candidates in conan cache ---' && \
+                       (find ~/.conan2 -name 'protoc*' -type f 2>/dev/null | head -n 10 || true) && \
                        echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC\" && \
                      echo '::endgroup::' && \
                      echo '::group::cargo test (build.rs generates + assembles, then tests run)' && \
@@ -107,9 +110,12 @@ jobs:
             exit 1
           fi
           export FLETCHER_PROTOC_PLUGIN="$BIN"
-          PROTOC=$(find ~/.conan2/p -path '*/p/bin/protoc.exe' -type f -print -quit)
-          if [ -z "$PROTOC" ]; then PROTOC=$(command -v protoc); fi
+          PROTOC=$(find ~/.conan2 -type f -name protoc.exe -print -quit 2>/dev/null || true)
+          if [ -z "$PROTOC" ]; then PROTOC=$(command -v protoc 2>/dev/null || true); fi
           if [ -n "$PROTOC" ]; then export PROTOC; fi
+          echo "protoc=${PROTOC:-<unset; build.rs will fall back>}"
+          echo '--- protoc candidates in conan cache ---'
+          find ~/.conan2 -name 'protoc*' -type f 2>/dev/null | head -n 10 || true
           echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
           # rust-toolchain.toml in this dir pins the toolchain; rustup auto-installs it.
           rustup show

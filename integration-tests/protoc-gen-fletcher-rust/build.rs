@@ -237,41 +237,83 @@ fn warn_fallback(var: &str, source: &str, path: &Path) {
     );
 }
 
-/// Search the local Conan cache (~/.conan2/p/.../p/bin/<name>[.exe]) for a built
-/// binary. Used ONLY as a loud local-dev fallback when the authoritative env var
-/// is unset (see locate_protoc / locate_plugin). Returns the newest match (by
-/// mtime) or None. Scans both Conan-cache layouts:
-///   * package layout: ~/.conan2/p/<pkg>/p/bin/<name>[.exe]
-///   * build layout:    ~/.conan2/p/b/<pkg>/p/bin/<name>[.exe]
+/// Search the local Conan cache for a built binary. Used ONLY as a loud
+/// local-dev fallback (and as the reliable CI safety net) when the authoritative
+/// env var is unset (see locate_protoc / locate_plugin). Returns the NEWEST
+/// match by mtime, or None.
+///
+/// CI revealed that the binary is NOT always at the strict
+/// `~/.conan2/p/.../p/bin/<name>[.exe]` layout the prior version assumed (the
+/// exact subpath differs across runners), so this recursively walks the Conan
+/// home and matches ANY file named exactly `<name>`/`<name>.exe` wherever it
+/// sits. The Conan home is resolved robustly: `CONAN_HOME` if set, else
+/// `~/.conan2`.
+///
+/// Candidates are RANKED so we never regress on a binary that happens to be
+/// newest but unusable: a copy whose parent directory is `bin` (the Conan
+/// PACKAGE layout `.../p/bin/<name>`) is preferred over one that is not (the
+/// in-tree BUILD layout `.../b/build/Release/<name>`), because the package
+/// layout carries the sibling `../include` tree (WKT protos for protoc; fletcher
+/// option protos for the plugin) that the build layout lacks. Within the same
+/// rank, the newest by mtime wins.
 fn find_in_conan_cache(name: &str) -> Option<PathBuf> {
-    let home = env::var("USERPROFILE").or_else(|_| env::var("HOME")).ok()?;
-    let root = Path::new(&home).join(".conan2").join("p");
+    let root = conan_home()?;
     if !root.exists() {
         return None;
     }
     let target = exe_name(name);
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut consider = |bin: PathBuf| {
-        if bin.is_file() {
-            let mtime = bin
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            if newest.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
-                newest = Some((mtime, bin));
-            }
-        }
-    };
-    // Roots to scan: the package root and the build subdir (b/).
-    let roots = [root.clone(), root.join("b")];
-    for r in roots {
-        if let Ok(pkgs) = fs::read_dir(&r) {
-            for pkg in pkgs.flatten() {
-                consider(pkg.path().join("p").join("bin").join(&target));
-            }
+    let mut matches: Vec<PathBuf> = Vec::new();
+    find_named_recursive(&root, &target, &mut matches);
+    matches.into_iter().max_by_key(|p| {
+        let in_bin_dir = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .map(|n| n == "bin")
+            .unwrap_or(false);
+        let mtime = p
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        // bin-dir copies outrank non-bin ones; newest breaks ties.
+        (in_bin_dir, mtime)
+    })
+}
+
+/// Resolve the Conan home directory: honour `CONAN_HOME` if set (and
+/// non-empty), else fall back to `<USERPROFILE|HOME>/.conan2`.
+fn conan_home() -> Option<PathBuf> {
+    if let Ok(h) = env::var("CONAN_HOME") {
+        if !h.trim().is_empty() {
+            return Some(PathBuf::from(h));
         }
     }
-    newest.map(|(_, p)| p)
+    let home = env::var("USERPROFILE").or_else(|_| env::var("HOME")).ok()?;
+    Some(Path::new(&home).join(".conan2"))
+}
+
+/// Recursively walk `dir`, collecting every file whose file name equals
+/// `target` into `matches`. Skips paths it cannot read (best-effort) and does
+/// not follow symlinked directories (cycle / escape guard).
+fn find_named_recursive(dir: &Path, target: &str, matches: &mut Vec<PathBuf>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if file_type.is_dir() {
+            // Don't follow symlinked directories (cycle / escape guard).
+            find_named_recursive(&path, target, matches);
+        } else if file_type.is_file()
+            && path.file_name().map(|n| n == target).unwrap_or(false)
+        {
+            matches.push(path);
+        }
+    }
 }
 
 /// Derive the well-known-types include directory from the protoc binary path:
