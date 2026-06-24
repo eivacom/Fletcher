@@ -245,9 +245,15 @@ fn warn_fallback(var: &str, source: &str, path: &Path) {
 /// CI revealed that the binary is NOT always at the strict
 /// `~/.conan2/p/.../p/bin/<name>[.exe]` layout the prior version assumed (the
 /// exact subpath differs across runners), so this recursively walks the Conan
-/// home and matches ANY file named exactly `<name>`/`<name>.exe` wherever it
-/// sits. The Conan home is resolved robustly: `CONAN_HOME` if set, else
-/// `~/.conan2`.
+/// home and matches the tool wherever it sits. The Conan home is resolved
+/// robustly: `CONAN_HOME` if set, else `~/.conan2`.
+///
+/// Name matching: the plugin (`fletcher-protoc`) keeps an EXACT match, but the
+/// Linux Conan protobuf package installs protoc under a VERSIONED file name
+/// (e.g. `protoc-3.21.12.0`, not plain `protoc`). So for `protoc` we accept
+/// either the exact `protoc`(`.exe`) OR a versioned `protoc-<digit>…`(`.exe`),
+/// while deliberately NOT matching the `protoc-gen-*` plugins (the `-<digit>`
+/// requirement excludes `protoc-gen-fletcher`).
 ///
 /// Candidates are RANKED so we never regress on a binary that happens to be
 /// newest but unusable: a copy whose parent directory is `bin` (the Conan
@@ -263,7 +269,7 @@ fn find_in_conan_cache(name: &str) -> Option<PathBuf> {
     }
     let target = exe_name(name);
     let mut matches: Vec<PathBuf> = Vec::new();
-    find_named_recursive(&root, &target, &mut matches);
+    find_named_recursive(&root, &|fname| tool_name_matches(name, &target, fname), &mut matches);
     matches.into_iter().max_by_key(|p| {
         let in_bin_dir = p
             .parent()
@@ -279,6 +285,41 @@ fn find_in_conan_cache(name: &str) -> Option<PathBuf> {
     })
 }
 
+/// Decide whether a directory-entry file name `fname` is the tool we're after.
+///
+/// `tool` is the logical tool (e.g. `"protoc"` / `"fletcher-protoc"`); `target`
+/// is its platform exe name (`exe_name(tool)`). For every tool an EXACT `target`
+/// match counts. For `protoc` ONLY we ALSO accept a versioned variant
+/// `protoc-<digit>…` (with the `.exe` suffix on Windows), since the Linux Conan
+/// protobuf package ships `protoc-3.21.12.0`. The leading-digit requirement
+/// after the dash means `protoc-gen-fletcher` (and any other `protoc-gen-*`
+/// plugin) is NOT matched.
+fn tool_name_matches(tool: &str, target: &str, fname: &std::ffi::OsStr) -> bool {
+    let name = match fname.to_str() {
+        Some(s) => s,
+        None => return false,
+    };
+    if name == target {
+        return true;
+    }
+    if tool == "protoc" {
+        // Strip the platform exe suffix before testing the version shape, so the
+        // check is identical on Linux (`protoc-3.21.12.0`) and Windows
+        // (`protoc-3.21.12.0.exe`).
+        let stem = if cfg!(windows) {
+            name.strip_suffix(".exe").unwrap_or(name)
+        } else {
+            name
+        };
+        if let Some(rest) = stem.strip_prefix("protoc-") {
+            // First char after the dash must be a digit → versioned protoc, not
+            // a `protoc-gen-*` plugin.
+            return rest.chars().next().is_some_and(|c| c.is_ascii_digit());
+        }
+    }
+    false
+}
+
 /// Resolve the Conan home directory: honour `CONAN_HOME` if set (and
 /// non-empty), else fall back to `<USERPROFILE|HOME>/.conan2`.
 fn conan_home() -> Option<PathBuf> {
@@ -291,10 +332,18 @@ fn conan_home() -> Option<PathBuf> {
     Some(Path::new(&home).join(".conan2"))
 }
 
-/// Recursively walk `dir`, collecting every file whose file name equals
-/// `target` into `matches`. Skips paths it cannot read (best-effort) and does
-/// not follow symlinked directories (cycle / escape guard).
-fn find_named_recursive(dir: &Path, target: &str, matches: &mut Vec<PathBuf>) {
+/// Recursively walk `dir`, collecting every entry whose file name satisfies the
+/// `is_match` predicate into `matches`. Skips paths it cannot read (best-effort)
+/// and does NOT follow symlinked directories (cycle / escape guard) — note
+/// `DirEntry::file_type` does not traverse symlinks, so a symlinked dir reports
+/// as a symlink (not a dir) and is therefore not descended into. A matching
+/// entry that is a regular file OR a symlink (the Conan protoc may be a symlink)
+/// is collected.
+fn find_named_recursive(
+    dir: &Path,
+    is_match: &dyn Fn(&std::ffi::OsStr) -> bool,
+    matches: &mut Vec<PathBuf>,
+) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -306,10 +355,10 @@ fn find_named_recursive(dir: &Path, target: &str, matches: &mut Vec<PathBuf>) {
             Err(_) => continue,
         };
         if file_type.is_dir() {
-            // Don't follow symlinked directories (cycle / escape guard).
-            find_named_recursive(&path, target, matches);
-        } else if file_type.is_file()
-            && path.file_name().map(|n| n == target).unwrap_or(false)
+            // Real directory only (symlinked dirs report as symlink → skipped).
+            find_named_recursive(&path, is_match, matches);
+        } else if (file_type.is_file() || file_type.is_symlink())
+            && path.file_name().map(is_match).unwrap_or(false)
         {
             matches.push(path);
         }

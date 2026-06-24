@@ -64,7 +64,7 @@ jobs:
                        BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
                        if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
                        export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" && \
-                       PROTOC=\$(find ~/.conan2 -type f -name protoc -print -quit 2>/dev/null || true) && \
+                       PROTOC=\$(find ~/.conan2 \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
                        if [ -z \"\$PROTOC\" ]; then PROTOC=\$(command -v protoc 2>/dev/null || true); fi && \
                        if [ -n \"\$PROTOC\" ]; then export PROTOC; fi && \
                        echo \"protoc=\${PROTOC:-<unset; build.rs will fall back>}\" && \
@@ -110,7 +110,7 @@ jobs:
             exit 1
           fi
           export FLETCHER_PROTOC_PLUGIN="$BIN"
-          PROTOC=$(find ~/.conan2 -type f -name protoc.exe -print -quit 2>/dev/null || true)
+          PROTOC=$(find ~/.conan2 \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
           if [ -z "$PROTOC" ]; then PROTOC=$(command -v protoc 2>/dev/null || true); fi
           if [ -n "$PROTOC" ]; then export PROTOC; fi
           echo "protoc=${PROTOC:-<unset; build.rs will fall back>}"
