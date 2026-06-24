@@ -111,24 +111,39 @@ add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 # and compile it. The accessor token is what triggers the .accessor.pb.h
 # emission; the no-drift guard above proves it adds exactly that file.
 # ----------------------------------------------------------------------------
-set(_acc_src "${PROTO_DIR}/accessor_scalar.proto")
-set(_acc_hdr "${GENERATED_DIR}/accessor_scalar.fletcher.accessor.pb.h")
-add_custom_command(
-    OUTPUT  "${_acc_hdr}"
-    COMMAND "$<TARGET_FILE:protobuf::protoc>"
-            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
-            "--fletcher_opt=accessor"
-            "--fletcher_out=${GENERATED_DIR}"
-            "-I" "${PROTO_DIR}"
-            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
-            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
-            "${_acc_src}"
-    DEPENDS "${_acc_src}" fletcher-protoc::plugin
-            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
-    COMMENT "protoc-gen-fletcher (accessor): accessor_scalar.proto"
-    VERBATIM
-)
-add_custom_target(generate_accessor_headers ALL DEPENDS "${_acc_hdr}")
+# Each accessor fixture stem generates <stem>.fletcher.accessor.pb.h. The RBA-4a
+# composite fixture (accessor_composite.proto) imports accessor_geo.proto, so its
+# emitted accessor header #includes accessor_geo.fletcher.accessor.pb.h — both
+# stems must be generated. The cross-file include is proven by the no-drift test
+# above (existing outputs byte-identical) plus the composite forcing test, which
+# only compiles if the cross-file accessor include is correct.
+set(_ACCESSOR_STEMS
+    accessor_scalar
+    accessor_geo
+    accessor_composite)
+
+set(_ACCESSOR_HEADERS)
+foreach(_acc_stem IN LISTS _ACCESSOR_STEMS)
+    set(_acc_src "${PROTO_DIR}/${_acc_stem}.proto")
+    set(_acc_hdr "${GENERATED_DIR}/${_acc_stem}.fletcher.accessor.pb.h")
+    add_custom_command(
+        OUTPUT  "${_acc_hdr}"
+        COMMAND "$<TARGET_FILE:protobuf::protoc>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+                "--fletcher_opt=accessor"
+                "--fletcher_out=${GENERATED_DIR}"
+                "-I" "${PROTO_DIR}"
+                "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+                "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+                "${_acc_src}"
+        DEPENDS "${_acc_src}" fletcher-protoc::plugin
+                "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+        COMMENT "protoc-gen-fletcher (accessor): ${_acc_stem}.proto"
+        VERBATIM
+    )
+    list(APPEND _ACCESSOR_HEADERS "${_acc_hdr}")
+endforeach()
+add_custom_target(generate_accessor_headers ALL DEPENDS ${_ACCESSOR_HEADERS})
 
 enable_testing()
 
@@ -173,7 +188,8 @@ gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
 # ----------------------------------------------------------------------------
 add_executable(accessor_tests
     tests/test_accessor.cpp
-    tests/test_accessor_scalar.cpp)
+    tests/test_accessor_scalar.cpp
+    tests/test_accessor_composite.cpp)
 
 # The scalar accessor test #includes the generated accessor header and builds
 # Arrow RecordBatch/StructArray fixtures at runtime.
@@ -183,7 +199,8 @@ target_include_directories(accessor_tests PRIVATE "${GENERATED_DIR}")
 
 target_link_libraries(accessor_tests PRIVATE
     GTest::gtest_main
-    arrow::arrow)
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge)
 
 target_compile_definitions(accessor_tests PRIVATE
     GENERATED_DIR_PATH="${GENERATED_DIR}"

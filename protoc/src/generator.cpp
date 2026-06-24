@@ -117,13 +117,6 @@ void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg
         CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
 }
 
-std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
-    std::set<std::string> headers;
-    for (int mi = 0; mi < file->message_type_count(); ++mi)
-        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
-    return headers;
-}
-
 // -----------------------------------------------------------------------
 // Topological ordering of messages
 // -----------------------------------------------------------------------
@@ -180,6 +173,19 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
     for (int i = 0; i < file->message_type_count(); ++i)
         TopologicalVisit(file->message_type(i), file, emitted, order);
     return order;
+}
+
+// Relocated out of the anonymous namespace (declaration in
+// generator_internal.hpp) so the accessor emitter reuses the SAME cross-file
+// include discovery (D-RBA-10 single source of truth). The recursive walk helper
+// (CollectCrossFileIncludesFromMessage) stays file-local above; only this public
+// entry point gains external linkage. Pure linkage move — emitted bytes are
+// unchanged, guarded by the RBA-1 no-drift test.
+std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
+    std::set<std::string> headers;
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
+    return headers;
 }
 
 // -----------------------------------------------------------------------

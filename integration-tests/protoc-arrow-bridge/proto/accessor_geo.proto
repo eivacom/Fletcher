@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-4a forcing fixture (cross-file dependency).
+//
+// Defines a two-level struct hierarchy (Outer -> Inner -> leaf) in its own
+// .proto so that a message in accessor_composite.proto referencing `Outer`
+// becomes a CROSS-FILE struct field. The composite accessor header must then
+// emit `#include "accessor_geo.fletcher.accessor.pb.h"` (D-RBA-10/B5) and
+// compose `OuterAccessor` / `InnerAccessor` recursively.
+syntax = "proto3";
+package integration;
+
+// Innermost struct — a single scalar leaf.
+message Inner {
+    int32 leaf = 1;  // arrow::int32()
+}
+
+// Outer struct whose child is itself a struct (>= 2 levels). The singular
+// (no `optional` keyword) message field maps to a NON-NULLABLE struct child.
+message Outer {
+    Inner inner = 1;  // struct< struct<int32> >
+}
