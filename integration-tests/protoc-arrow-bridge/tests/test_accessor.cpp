@@ -112,7 +112,9 @@ int RunPlugin(const std::string& opt, const fs::path& proto_file, const fs::path
 fs::path ScratchRoot() { return fs::path(GENERATED_DIR_PATH) / "accessor_nodrift"; }
 
 // Runs one (baseline vs baseline+accessor,rust) comparison for a fixture stem
-// and asserts the no-drift + exactly-+2 contract. The generated .fletcher.rs is
+// and asserts the no-drift + exactly-+3 contract (the accessor,rust run adds
+// ONLY <stem>.fletcher.accessor.pb.h, <stem>.fletcher.rs, and the shared
+// __rba.fletcher.rs). The generated .fletcher.rs is
 // asserted emitted + non-empty; its compilation against arrow-rs is the job of
 // the integration-tests/protoc-gen-fletcher-rust cargo crate (RBA-5), not a
 // bare-rustc parse here (which cannot resolve `use arrow::...`).
@@ -192,8 +194,9 @@ void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_op
     // authoritative Rust compile/validation now lives in the
     // integration-tests/protoc-gen-fletcher-rust cargo crate, which compiles ALL
     // generated Rust against the pinned `arrow`. The RBA-1 protected guarantee
-    // (byte-identity of existing outputs + exactly-+2 new files) is unaffected
-    // and fully retained above.
+    // (byte-identity of existing outputs + exactly-+3 new files:
+    // <stem>.fletcher.accessor.pb.h, <stem>.fletcher.rs, and the shared
+    // __rba.fletcher.rs) is unaffected and fully retained above.
     if (acc_files.count(rust_file) > 0) {
         EXPECT_FALSE(ReadFileBytes(acc_dir / rust_file).empty()) << rust_file << " is empty";
     }
@@ -217,7 +220,8 @@ TEST(AccessorTest, OptGatedEmissionLeavesExistingOutputsByteIdentical) {
     }};
 
     // Typical fixture (multiple messages, view + IPC) and degenerate fixture
-    // (recursive-only, no view/IPC) — the +2 must hold for both.
+    // (recursive-only, no view/IPC) — the +3 (<stem>.fletcher.accessor.pb.h,
+    // <stem>.fletcher.rs, __rba.fletcher.rs) must hold for both.
     const std::array<std::string, 2> kFixtures = {{"nested", "empty_accessor"}};
 
     for (const std::string& stem : kFixtures) {
@@ -236,12 +240,15 @@ TEST(AccessorTest, OptGatedEmissionLeavesExistingOutputsByteIdentical) {
 // builds ALL generated Rust against the pinned `arrow`. This test stays as a
 // counted, documented GTEST_SKIP pointing at that crate so the decision is
 // visible in the ctest report. The no-drift test above still asserts the .rs is
-// emitted + non-empty and preserves byte-identity + exactly-+2-files.
+// emitted + non-empty and preserves byte-identity + exactly-+3-files
+// (<stem>.fletcher.accessor.pb.h, <stem>.fletcher.rs, __rba.fletcher.rs).
 TEST(AccessorTest, GeneratedRustFileParsesWithRustc) {
     GTEST_SKIP() << "Generated-Rust compilation is owned by the RBA-5 cargo crate "
                     "integration-tests/protoc-gen-fletcher-rust (it compiles all "
                     "generated .fletcher.rs against the pinned arrow-rs). A bare "
                     "`rustc --emit metadata` here cannot resolve `use arrow::...`. "
                     "The no-drift test still asserts the .rs is emitted + non-empty "
-                    "and preserves byte-identity + exactly-+2-files.";
+                    "and preserves byte-identity + exactly-+3-files "
+                    "(<stem>.fletcher.accessor.pb.h, <stem>.fletcher.rs, "
+                    "__rba.fletcher.rs).";
 }

@@ -164,8 +164,7 @@ TEST(AccessorReadmeExampleTest, DocumentedCppSnippetCompilesAndReads) {
     // --- BEGIN protoc/README.md "RecordBatch accessors" snippet (mirror) ---
     // Construct the accessor from a RecordBatch (read-only, validated once).
     auto result = ScalarRowAccessor::Make(batch);
-    if (!result.ok()) { /* handle result.status() */
-    }
+    ASSERT_TRUE(result.ok()) << result.status();  // README: `if (!result.ok()) { ...; return; }`
     const ScalarRowAccessor& accessor = *result;
 
     // Read a non-nullable scalar by row, and an optional scalar (None on null).

@@ -64,7 +64,9 @@ jobs:
                        BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
                        if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
                        export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" && \
-                       export PROTOC=\$(command -v protoc) && \
+                       PROTOC=\$(find ~/.conan2/p -path '*/p/bin/protoc' -type f -print -quit) && \
+                       if [ -z \"\$PROTOC\" ]; then PROTOC=\$(command -v protoc); fi && \
+                       if [ -n \"\$PROTOC\" ]; then export PROTOC; fi && \
                        echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC\" && \
                      echo '::endgroup::' && \
                      echo '::group::cargo test (build.rs generates + assembles, then tests run)' && \
@@ -105,8 +107,9 @@ jobs:
             exit 1
           fi
           export FLETCHER_PROTOC_PLUGIN="$BIN"
-          PROTOC=$(command -v protoc)
-          export PROTOC
+          PROTOC=$(find ~/.conan2/p -path '*/p/bin/protoc.exe' -type f -print -quit)
+          if [ -z "$PROTOC" ]; then PROTOC=$(command -v protoc); fi
+          if [ -n "$PROTOC" ]; then export PROTOC; fi
           echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
           # rust-toolchain.toml in this dir pins the toolchain; rustup auto-installs it.
           rustup show

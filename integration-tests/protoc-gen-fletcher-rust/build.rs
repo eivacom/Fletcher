@@ -155,16 +155,23 @@ fn main() {
 /// naming the resolved path and that it is a fallback (never silent). CI always
 /// sets `PROTOC`, so CI never takes the fallback.
 fn locate_protoc() -> PathBuf {
+    // An empty / whitespace-only PROTOC is treated the SAME as unset: it is the
+    // common `export PROTOC=$(command -v protoc)` idiom misfiring when protoc is
+    // not on PATH (e.g. Conan-provided in CI). Fall through to the loud local-dev
+    // fallback instead of panicking. A NON-empty but nonexistent path is still a
+    // real misconfiguration and still panics clearly.
     if let Ok(p) = env::var("PROTOC") {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return path;
+        if !p.trim().is_empty() {
+            let path = PathBuf::from(&p);
+            if path.exists() {
+                return path;
+            }
+            panic!(
+                "error: PROTOC is set to '{p}' but that path does not exist. \
+                 Point it at a real protoc executable, or unset PROTOC to use the \
+                 local-dev fallback (see README)."
+            );
         }
-        panic!(
-            "error: PROTOC is set to '{p}' but that path does not exist. \
-             Point it at a real protoc executable, or unset PROTOC to use the \
-             local-dev fallback (see README)."
-        );
     }
     if let Some(found) = find_in_conan_cache("protoc") {
         warn_fallback("PROTOC", "Conan cache", &found);
@@ -188,17 +195,23 @@ fn locate_protoc() -> PathBuf {
 /// naming the resolved path; if that finds nothing, the build fails clearly.
 /// Never a silent fallback (a stale binary must not mask a generator regression).
 fn locate_plugin() -> PathBuf {
+    // An empty / whitespace-only FLETCHER_PROTOC_PLUGIN is treated the SAME as
+    // unset (the `export VAR=$(command -v ...)`-when-not-on-PATH idiom), falling
+    // through to the loud local-dev Conan-cache fallback rather than panicking. A
+    // NON-empty but nonexistent path is still a real misconfiguration and panics.
     if let Ok(p) = env::var("FLETCHER_PROTOC_PLUGIN") {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return path;
+        if !p.trim().is_empty() {
+            let path = PathBuf::from(&p);
+            if path.exists() {
+                return path;
+            }
+            panic!(
+                "error: FLETCHER_PROTOC_PLUGIN is set to '{p}' but that path does not \
+                 exist. Build the plugin first (conan create protoc/.) and point \
+                 FLETCHER_PROTOC_PLUGIN at the resulting fletcher-protoc binary, or \
+                 unset it to use the local-dev fallback (see README)."
+            );
         }
-        panic!(
-            "error: FLETCHER_PROTOC_PLUGIN is set to '{p}' but that path does not \
-             exist. Build the plugin first (conan create protoc/.) and point \
-             FLETCHER_PROTOC_PLUGIN at the resulting fletcher-protoc binary, or \
-             unset it to use the local-dev fallback (see README)."
-        );
     }
     if let Some(found) = find_in_conan_cache("fletcher-protoc") {
         warn_fallback("FLETCHER_PROTOC_PLUGIN", "Conan cache", &found);

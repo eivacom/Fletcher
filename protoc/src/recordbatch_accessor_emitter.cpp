@@ -1554,8 +1554,8 @@ void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::s
             null_gate(("&cols[" + std::to_string(i) + "]").c_str());
             // Leaf values: exact scalar DataType gate (D-RBA-4) + offset-preserving
             // typed cache.
-            o << "        let " << RustListValuesMember(fi) << " = Self::downcast_array::"
-              << "<arrow::array::" << info.array_type << ">(\n"
+            o << "        let " << RustListValuesMember(fi)
+              << " = Self::downcast_array::" << "<arrow::array::" << info.array_type << ">(\n"
               << "            &" << RustListMember(fi) << ".values().clone(),\n"
               << "            \"" << cls << "." << fi.name << " values\",\n"
               << "            &" << info.data_type << ",\n"
@@ -1639,8 +1639,8 @@ void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::s
             null_gate(("&cols[" + std::to_string(i) + "]").c_str());
             // Keys: exact scalar DataType gate (Arrow map keys are non-null by
             // spec — no null gate here). value_offsets() index keys/values jointly.
-            o << "        let " << RustMapKeysMember(fi) << " = Self::downcast_array::"
-              << "<arrow::array::" << k.array_type << ">(\n"
+            o << "        let " << RustMapKeysMember(fi)
+              << " = Self::downcast_array::" << "<arrow::array::" << k.array_type << ">(\n"
               << "            &" << RustMapMember(fi) << ".keys().clone(),\n"
               << "            \"" << cls << "." << fi.name << " keys\",\n"
               << "            &" << k.data_type << ",\n"
@@ -1670,8 +1670,8 @@ void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::s
                 RustScalarFor(fi.mapping.map_value.arrow_type_expr, &v);
                 // Scalar-value map: exact scalar DataType gate on the flattened
                 // value child. Map values are nullable -> probed via value_is_null.
-                o << "        let " << RustMapValuesMember(fi) << " = Self::downcast_array::"
-                  << "<arrow::array::" << v.array_type << ">(\n"
+                o << "        let " << RustMapValuesMember(fi)
+                  << " = Self::downcast_array::" << "<arrow::array::" << v.array_type << ">(\n"
                   << "            &" << RustMapMember(fi) << ".values().clone(),\n"
                   << "            \"" << cls << "." << fi.name << " values\",\n"
                   << "            &" << v.data_type << ",\n"
