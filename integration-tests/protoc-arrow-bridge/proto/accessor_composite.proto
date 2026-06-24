@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// RBA-4a forcing fixture: the struct + repeated-scalar + repeated-struct slice
-// of AccessorTest.CompositeColumnsReadColumnOriented.
+// RBA-4 forcing fixture: the full composite slice of
+// AccessorTest.CompositeColumnsReadColumnOriented. RBA-4a added struct +
+// repeated-scalar + repeated-struct (+ row-nullable variants); RBA-4b completes
+// it with MAP (scalar-value + message-value) and NESTED_LIST (depth 2 and 3).
 //
-// Covered RBA-4a constructs (maps + nested lists are RBA-4b and intentionally
-// absent here):
+// Covered constructs:
 //   - STRUCT, cross-file, >= 2 levels: `outer` references Outer (Outer->Inner->
 //     leaf) from accessor_geo.proto, so the deep chain a.outer(row).inner().leaf()
 //     exercises recursive RowView composition AND a cross-file accessor include.
@@ -22,6 +23,14 @@
 //     MapFlattenedSingular) to a REPEATED_SCALAR/REPEATED_STRUCT with nullable=
 //     true, so the getter returns std::optional<Span> and a null list row yields
 //     std::nullopt (B2 no-read-through-null at the list-row level).
+//   - MAP scalar value: `counts` (map<string,int32>) — key(j)/value(j)/
+//     value_is_null(j), empty map.
+//   - MAP message value: `waypoints` (map<string,Inner>) — value(j) ->
+//     std::optional<RowView>, std::nullopt on a null map value (B2).
+//   - NESTED_LIST depth 2: `rings` (list<list<Inner>>) — span[i] ->
+//     std::optional<inner span>, std::nullopt on a null inner list (B2).
+//   - NESTED_LIST depth 3: `regions` (list<list<list<Inner>>>) — exercises the
+//     depth-3 emit/span path (spec §6).
 syntax = "proto3";
 package integration;
 
@@ -38,6 +47,19 @@ message ReadingList {
 message TrackList {
     option (fletcher.flatten) = true;
     repeated Inner points = 1;  // -> REPEATED_STRUCT list<struct<leaf:int32>>
+}
+
+// Nested-list flatten-wrappers. A `repeated InnerRingList` field adds one list
+// level on top of the wrapper's own `repeated Inner` -> depth 2. A
+// `repeated RegionList` (wrapping `repeated InnerRingList`) -> depth 3.
+message InnerRingList {
+    option (fletcher.flatten) = true;
+    repeated Inner items = 1;
+}
+
+message RegionList {
+    option (fletcher.flatten) = true;
+    repeated InnerRingList items = 1;
 }
 
 message CompositeRow {
@@ -60,4 +82,17 @@ message CompositeRow {
     // Row-nullable REPEATED_STRUCT via optional flatten-wrapper: null row ->
     // std::optional<StructSpan> == std::nullopt.
     optional TrackList opt_track = 6;
+
+    // MAP with a scalar value: map(utf8, int32). Keys non-null; values nullable.
+    map<string, int32> counts = 7;
+
+    // MAP with a message value: map(utf8, struct<leaf:int32>). value(j) is
+    // std::optional<RowView> — std::nullopt on a null map value (B2).
+    map<string, Inner> waypoints = 8;
+
+    // NESTED_LIST depth 2: list<list<struct<leaf:int32>>>.
+    repeated InnerRingList rings = 9;
+
+    // NESTED_LIST depth 3: list<list<list<struct<leaf:int32>>>>.
+    repeated RegionList regions = 10;
 }

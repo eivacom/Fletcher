@@ -37,7 +37,8 @@
 //     is coordinate-consistent with the outer ListArray's value_offset(row).
 //
 // RBA-4a defines ScalarSpan and StructSpan (repeated scalar / repeated struct).
-// The map and nested-list span types are added in RBA-4b.
+// RBA-4b adds ScalarMapSpan / StructMapSpan (map<scalar,scalar|message>) and
+// NestedStructSpan<AccT, Depth> (list-of-list-...-of-struct, depth 2 and 3).
 // ---------------------------------------------------------------------------
 
 namespace fletcher {
@@ -98,6 +99,123 @@ struct StructSpan {
         const int64_t r = base + i;
         if (values->is_null(r)) return std::nullopt;
         return values->at(r);
+    }
+};
+
+// Borrowed window over one row of a map<scalar, scalar> column (Arrow MapArray).
+// `keys` / `values` point at the flattened key / item children owned by the
+// parent accessor; `base == map->value_offset(row)`, `len == value_length(row)`.
+// Map keys are non-nullable (Arrow spec); map values are nullable — callers
+// probe value_is_null(j) rather than reading through a null value (B2).
+//
+// Template parameters:
+//   KV, KA — key C++ value type / concrete Arrow key-array type.
+//   VV, VA — value C++ value type / concrete Arrow value-array type.
+//   KeyGetView / ValGetView — true for utf8/binary key/value (zero-copy
+//             GetView), false for numeric/bool/temporal (Value).
+template <class KV, class KA, class VV, class VA, bool KeyGetView = false,
+          bool ValGetView = false>
+struct ScalarMapSpan {
+    const KA* keys = nullptr;
+    const VA* values = nullptr;
+    int64_t base = 0;
+    int64_t len = 0;
+
+    int64_t size() const { return len; }
+    bool empty() const { return len == 0; }
+
+    KV key(int64_t i) const {
+        if constexpr (KeyGetView) {
+            return keys->GetView(base + i);
+        } else {
+            return keys->Value(base + i);
+        }
+    }
+    bool value_is_null(int64_t i) const { return values->IsNull(base + i); }
+    VV value(int64_t i) const {
+        if constexpr (ValGetView) {
+            return values->GetView(base + i);
+        } else {
+            return values->Value(base + i);
+        }
+    }
+};
+
+// Borrowed window over one row of a map<scalar, message> column. `values` points
+// at the nested <Inner>Accessor built over the flattened item StructArray
+// (offset-0 origin). value(j) returns std::nullopt when the message value struct
+// element is null (B2 no-read-through-null), proven via the inner accessor's
+// is_null() against the retained struct validity bitmap.
+template <class KV, class KA, class AccT, bool KeyGetView = false>
+struct StructMapSpan {
+    const KA* keys = nullptr;
+    const AccT* values = nullptr;
+    int64_t base = 0;
+    int64_t len = 0;
+
+    int64_t size() const { return len; }
+    bool empty() const { return len == 0; }
+
+    KV key(int64_t i) const {
+        if constexpr (KeyGetView) {
+            return keys->GetView(base + i);
+        } else {
+            return keys->Value(base + i);
+        }
+    }
+    std::optional<typename AccT::RowView> value(int64_t i) const {
+        const int64_t r = base + i;
+        if (values->is_null(r)) return std::nullopt;
+        return values->at(r);
+    }
+};
+
+// Borrowed window over a nested list of structs (List<List<...<Struct>>>) at a
+// fixed nesting Depth. Depth 2 = List<List<Struct>>, Depth 3 = List<List<List<
+// Struct>>>. Each structural list level is cached by the parent accessor; the
+// leaf struct accessor is built over the flattened leaf StructArray (offset-0).
+//
+// Every inner list level is exposed as nullable in the access API regardless of
+// schema flags: operator[](i) returns std::optional<inner-span> and yields
+// std::nullopt on a null inner list (B2 no-read-through-null), and the leaf
+// StructSpan yields std::optional<RowView> per element.
+template <class AccT, int Depth = 2>
+struct NestedStructSpan;
+
+template <class AccT>
+struct NestedStructSpan<AccT, 2> {
+    const arrow::ListArray* inner_lists = nullptr;
+    const AccT* leaf_values = nullptr;
+    int64_t base = 0;
+    int64_t len = 0;
+
+    int64_t size() const { return len; }
+    bool empty() const { return len == 0; }
+    bool is_null(int64_t i) const { return inner_lists->IsNull(base + i); }
+    std::optional<StructSpan<AccT>> operator[](int64_t i) const {
+        const int64_t r = base + i;
+        if (inner_lists->IsNull(r)) return std::nullopt;
+        return StructSpan<AccT>{leaf_values, inner_lists->value_offset(r),
+                                inner_lists->value_length(r)};
+    }
+};
+
+template <class AccT>
+struct NestedStructSpan<AccT, 3> {
+    const arrow::ListArray* mid_lists = nullptr;
+    const arrow::ListArray* inner_lists = nullptr;
+    const AccT* leaf_values = nullptr;
+    int64_t base = 0;
+    int64_t len = 0;
+
+    int64_t size() const { return len; }
+    bool empty() const { return len == 0; }
+    bool is_null(int64_t i) const { return mid_lists->IsNull(base + i); }
+    std::optional<NestedStructSpan<AccT, 2>> operator[](int64_t i) const {
+        const int64_t r = base + i;
+        if (mid_lists->IsNull(r)) return std::nullopt;
+        return NestedStructSpan<AccT, 2>{inner_lists, leaf_values, mid_lists->value_offset(r),
+                                         mid_lists->value_length(r)};
     }
 };
 

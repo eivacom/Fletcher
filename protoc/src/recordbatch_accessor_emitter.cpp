@@ -109,10 +109,26 @@ bool IsSupportedRepeatedScalar(const FieldInfo& fi) {
     return LookupScalarArray(fi.mapping.element.arrow_type_expr) != nullptr;
 }
 
-// True if RBA-4a generates real storage/getters for this field. RBA-4a covers
-// scalars (RBA-2), STRUCT, REPEATED_SCALAR (supported leaf), and REPEATED_STRUCT.
-// MAP and NESTED_LIST remain RBA-4b and are NOT supported here.
-bool IsRba4aSupported(const FieldInfo& fi) {
+// True if the MAP field is supported: key leaf is a supported scalar and the
+// value is either a message (struct value) or a supported scalar leaf.
+bool IsSupportedMap(const FieldInfo& fi) {
+    if (fi.mapping.kind != FieldKind::MAP) return false;
+    if (LookupScalarArray(fi.mapping.map_key.arrow_type_expr) == nullptr) return false;
+    if (fi.mapping.map_value_is_message) return true;
+    return LookupScalarArray(fi.mapping.map_value.arrow_type_expr) != nullptr;
+}
+
+// True if the NESTED_LIST field is a supported depth (2 or 3 per spec §6). The
+// leaf is always a struct (nested_class set by the type-mapper).
+bool IsSupportedNestedList(const FieldInfo& fi) {
+    if (fi.mapping.kind != FieldKind::NESTED_LIST) return false;
+    return fi.mapping.list_depth == 2 || fi.mapping.list_depth == 3;
+}
+
+// True if the accessor generates real storage/getters for this field. RBA-4
+// covers scalars (RBA-2), STRUCT, REPEATED_SCALAR (supported leaf),
+// REPEATED_STRUCT (RBA-4a), MAP, and NESTED_LIST depth 2-3 (RBA-4b).
+bool IsSupportedField(const FieldInfo& fi) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR:
             return IsSupportedScalar(fi);
@@ -123,8 +139,9 @@ bool IsRba4aSupported(const FieldInfo& fi) {
         case FieldKind::REPEATED_STRUCT:
             return true;
         case FieldKind::MAP:
+            return IsSupportedMap(fi);
         case FieldKind::NESTED_LIST:
-            return false;
+            return IsSupportedNestedList(fi);
     }
     return false;
 }
@@ -140,6 +157,41 @@ std::string StructAccMember(const FieldInfo& fi) { return fi.name + "_acc_"; }
 std::string ListMember(const FieldInfo& fi) { return fi.name + "_list_"; }
 std::string ListValuesMember(const FieldInfo& fi) { return fi.name + "_values_"; }
 std::string ListInnerMember(const FieldInfo& fi) { return fi.name + "_inner_"; }
+// MAP members.
+std::string MapMember(const FieldInfo& fi) { return fi.name + "_map_"; }
+std::string MapKeysMember(const FieldInfo& fi) { return fi.name + "_keys_"; }
+std::string MapValuesMember(const FieldInfo& fi) { return fi.name + "_values_"; }
+std::string MapInnerMember(const FieldInfo& fi) { return fi.name + "_inner_"; }
+// NESTED_LIST members (outer list + intermediate list levels + explicit leaf
+// StructArray handle + leaf accessor).
+std::string NlOuterMember(const FieldInfo& fi) { return fi.name + "_list_"; }
+std::string NlMidMember(const FieldInfo& fi) { return fi.name + "_mid_"; }
+std::string NlInnerMember(const FieldInfo& fi) { return fi.name + "_inner_lists_"; }
+std::string NlLeafValuesMember(const FieldInfo& fi) { return fi.name + "_leaf_values_"; }
+std::string NlLeafMember(const FieldInfo& fi) { return fi.name + "_leaf_"; }
+
+// The fletcher::ScalarMapSpan<...> type expression for a scalar-value map field.
+std::string ScalarMapSpanType(const FieldInfo& fi) {
+    const ScalarArrayInfo* k = LookupScalarArray(fi.mapping.map_key.arrow_type_expr);
+    const ScalarArrayInfo* v = LookupScalarArray(fi.mapping.map_value.arrow_type_expr);
+    return "fletcher::ScalarMapSpan<" + k->value_type + ", " + k->concrete_array + ", " +
+           v->value_type + ", " + v->concrete_array + ", " + (k->use_get_view ? "true" : "false") +
+           ", " + (v->use_get_view ? "true" : "false") + ">";
+}
+
+// The fletcher::StructMapSpan<...> type expression for a message-value map field.
+std::string StructMapSpanType(const FieldInfo& fi) {
+    const ScalarArrayInfo* k = LookupScalarArray(fi.mapping.map_key.arrow_type_expr);
+    const std::string acc = AccessorRef(fi.mapping.map_value_class);
+    return "fletcher::StructMapSpan<" + k->value_type + ", " + k->concrete_array + ", " + acc +
+           ", " + (k->use_get_view ? "true" : "false") + ">";
+}
+
+// The fletcher::NestedStructSpan<AccT, Depth> type expression.
+std::string NestedSpanType(const FieldInfo& fi) {
+    const std::string acc = AccessorRef(fi.mapping.nested_class);
+    return "fletcher::NestedStructSpan<" + acc + ", " + std::to_string(fi.mapping.list_depth) + ">";
+}
 
 // Emit one field's private storage members.
 void EmitFieldStorage(std::ostringstream& o, const FieldInfo& fi) {
@@ -167,15 +219,41 @@ void EmitFieldStorage(std::ostringstream& o, const FieldInfo& fi) {
         }
         case FieldKind::REPEATED_STRUCT: {
             const std::string acc = AccessorRef(fi.mapping.nested_class);
+            // Cache the list, an explicit handle on the flattened values
+            // StructArray (design's explicit-handle model), and the inner accessor.
             o << "  std::shared_ptr<arrow::ListArray> " << ListMember(fi) << ";\n"
+              << "  std::shared_ptr<arrow::StructArray> " << ListValuesMember(fi) << ";\n"
               << "  std::optional<" << acc << "> " << ListInnerMember(fi) << ";\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            // RBA-4b: no storage emitted (getter is comment-only; FromColumns_
-            // fails fast for the message).
+        case FieldKind::MAP: {
+            const ScalarArrayInfo* k = LookupScalarArray(fi.mapping.map_key.arrow_type_expr);
+            o << "  std::shared_ptr<arrow::MapArray> " << MapMember(fi) << ";\n"
+              << "  std::shared_ptr<" << k->concrete_array << "> " << MapKeysMember(fi) << ";\n";
+            if (fi.mapping.map_value_is_message) {
+                const std::string acc = AccessorRef(fi.mapping.map_value_class);
+                // Explicit handle on the flattened item StructArray + inner accessor.
+                o << "  std::shared_ptr<arrow::StructArray> " << MapValuesMember(fi) << ";\n"
+                  << "  std::optional<" << acc << "> " << MapInnerMember(fi) << ";\n";
+            } else {
+                const ScalarArrayInfo* v = LookupScalarArray(fi.mapping.map_value.arrow_type_expr);
+                o << "  std::shared_ptr<" << v->concrete_array << "> " << MapValuesMember(fi)
+                  << ";\n";
+            }
             break;
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string acc = AccessorRef(fi.mapping.nested_class);
+            // Outer list + (depth-1) intermediate list levels + an explicit handle
+            // on the flattened leaf StructArray + leaf accessor.
+            o << "  std::shared_ptr<arrow::ListArray> " << NlOuterMember(fi) << ";\n";
+            if (fi.mapping.list_depth == 3)
+                o << "  std::shared_ptr<arrow::ListArray> " << NlMidMember(fi) << ";\n";
+            o << "  std::shared_ptr<arrow::ListArray> " << NlInnerMember(fi) << ";\n"
+              << "  std::shared_ptr<arrow::StructArray> " << NlLeafValuesMember(fi) << ";\n"
+              << "  std::optional<" << acc << "> " << NlLeafMember(fi) << ";\n";
+            break;
+        }
     }
 }
 
@@ -256,14 +334,56 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
             }
             break;
         }
-        case FieldKind::MAP:
-            o << "  // Field '" << fi.name
-              << "' (map) — RBA-4b: map accessor support not yet emitted.\n";
+        case FieldKind::MAP: {
+            std::string span;
+            std::string body;
+            if (fi.mapping.map_value_is_message) {
+                span = StructMapSpanType(fi);
+                body = "{" + MapKeysMember(fi) + ".get(), &*" + MapInnerMember(fi) + ", " +
+                       MapMember(fi) + "->value_offset(row), " + MapMember(fi) +
+                       "->value_length(row)}";
+            } else {
+                span = ScalarMapSpanType(fi);
+                body = "{" + MapKeysMember(fi) + ".get(), " + MapValuesMember(fi) + ".get(), " +
+                       MapMember(fi) + "->value_offset(row), " + MapMember(fi) +
+                       "->value_length(row)}";
+            }
+            if (fi.mapping.nullable) {
+                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
+                  << "    if (" << MapMember(fi) << "->IsNull(row)) return std::nullopt;\n"
+                  << "    return " << span << body << ";\n"
+                  << "  }\n";
+            } else {
+                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
+                  << "    return " << body << ";\n"
+                  << "  }\n";
+            }
             break;
-        case FieldKind::NESTED_LIST:
-            o << "  // Field '" << fi.name
-              << "' (nested list) — RBA-4b: nested-list accessor support not yet emitted.\n";
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string span = NestedSpanType(fi);
+            std::string body;
+            if (fi.mapping.list_depth == 3) {
+                body = "{" + NlMidMember(fi) + ".get(), " + NlInnerMember(fi) + ".get(), &*" +
+                       NlLeafMember(fi) + ", " + NlOuterMember(fi) + "->value_offset(row), " +
+                       NlOuterMember(fi) + "->value_length(row)}";
+            } else {
+                body = "{" + NlInnerMember(fi) + ".get(), &*" + NlLeafMember(fi) + ", " +
+                       NlOuterMember(fi) + "->value_offset(row), " + NlOuterMember(fi) +
+                       "->value_length(row)}";
+            }
+            if (fi.mapping.nullable) {
+                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
+                  << "    if (" << NlOuterMember(fi) << "->IsNull(row)) return std::nullopt;\n"
+                  << "    return " << span << body << ";\n"
+                  << "  }\n";
+            } else {
+                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
+                  << "    return " << body << ";\n"
+                  << "  }\n";
+            }
             break;
+        }
     }
 }
 
@@ -310,10 +430,21 @@ void EmitRowViewForward(std::ostringstream& o, const FieldInfo& fi) {
               << "(row); }\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            // RBA-4b: no forwarder (no getter to forward to).
+        case FieldKind::MAP: {
+            std::string ret =
+                fi.mapping.map_value_is_message ? StructMapSpanType(fi) : ScalarMapSpanType(fi);
+            if (fi.mapping.nullable) ret = "std::optional<" + ret + ">";
+            o << "    " << ret << " " << fi.name << "() const { return a->" << fi.name
+              << "(row); }\n";
             break;
+        }
+        case FieldKind::NESTED_LIST: {
+            std::string ret = NestedSpanType(fi);
+            if (fi.mapping.nullable) ret = "std::optional<" + ret + ">";
+            o << "    " << ret << " " << fi.name << "() const { return a->" << fi.name
+              << "(row); }\n";
+            break;
+        }
     }
 }
 
@@ -415,13 +546,122 @@ void EmitFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::size_
               << "      auto structs = std::static_pointer_cast<arrow::StructArray>(values);\n"
               << "      ARROW_ASSIGN_OR_RAISE(auto inner, " << acc << "::Make(structs));\n"
               << "      self." << ListMember(fi) << " = list;\n"
+              << "      self." << ListValuesMember(fi) << " = structs;\n"
               << "      self." << ListInnerMember(fi) << " = std::move(inner);\n";
             break;
         }
-        case FieldKind::MAP:
-        case FieldKind::NESTED_LIST:
-            // Never reached: messages with these kinds fail fast before the loop.
+        case FieldKind::MAP: {
+            const ScalarArrayInfo* k = LookupScalarArray(fi.mapping.map_key.arrow_type_expr);
+            o << "      if (col->type_id() != arrow::Type::MAP)\n"
+              << "        return arrow::Status::Invalid(\n"
+              << "            \"" << where << ": expected map, got \", col->type()->ToString());\n"
+              << "      auto map = std::static_pointer_cast<arrow::MapArray>(col);\n";
+            if (!fi.mapping.nullable) {
+                o << "      if (map->null_count() != 0)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << ": non-nullable, found \", map->null_count(), "
+                  << "\" nulls\");\n";
+            }
+            // Validate the flattened key leaf type (Arrow map keys are
+            // non-nullable by spec — no null gate here).
+            o << "      const auto expected_key_type = " << fi.mapping.map_key.arrow_type_expr
+              << ";\n"
+              << "      auto keys = map->keys();\n"
+              << "      if (!keys->type()->Equals(*expected_key_type, /*check_metadata=*/false))\n"
+              << "        return arrow::Status::Invalid(\n"
+              << "            \"" << where << " keys: expected \", expected_key_type->ToString(),\n"
+              << "            \", got \", keys->type()->ToString());\n"
+              << "      auto items = map->items();\n";
+            if (fi.mapping.map_value_is_message) {
+                const std::string acc = AccessorRef(fi.mapping.map_value_class);
+                o << "      if (items->type_id() != arrow::Type::STRUCT)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << " values: expected struct, got \", "
+                  << "items->type()->ToString());\n"
+                  << "      auto item_structs = std::static_pointer_cast<arrow::StructArray>(items);"
+                  << "\n"
+                  << "      ARROW_ASSIGN_OR_RAISE(auto inner, " << acc << "::Make(item_structs));\n"
+                  << "      self." << MapMember(fi) << " = map;\n"
+                  << "      self." << MapKeysMember(fi) << " = std::static_pointer_cast<"
+                  << k->concrete_array << ">(keys);\n"
+                  << "      self." << MapValuesMember(fi) << " = item_structs;\n"
+                  << "      self." << MapInnerMember(fi) << " = std::move(inner);\n";
+            } else {
+                const ScalarArrayInfo* v = LookupScalarArray(fi.mapping.map_value.arrow_type_expr);
+                o << "      const auto expected_value_type = "
+                  << fi.mapping.map_value.arrow_type_expr << ";\n"
+                  << "      if (!items->type()->Equals(*expected_value_type, /*check_metadata=*/"
+                  << "false))\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << " values: expected \", "
+                  << "expected_value_type->ToString(),\n"
+                  << "            \", got \", items->type()->ToString());\n"
+                  << "      self." << MapMember(fi) << " = map;\n"
+                  << "      self." << MapKeysMember(fi) << " = std::static_pointer_cast<"
+                  << k->concrete_array << ">(keys);\n"
+                  << "      self." << MapValuesMember(fi) << " = std::static_pointer_cast<"
+                  << v->concrete_array << ">(items);\n";
+            }
             break;
+        }
+        case FieldKind::NESTED_LIST: {
+            const std::string acc = AccessorRef(fi.mapping.nested_class);
+            // Outer list level (= this column). Gate the outer null count only;
+            // inner list levels are exposed as nullable in the access API.
+            o << "      if (col->type_id() != arrow::Type::LIST)\n"
+              << "        return arrow::Status::Invalid(\n"
+              << "            \"" << where << ": expected list, got \", col->type()->ToString());\n"
+              << "      auto outer_list = std::static_pointer_cast<arrow::ListArray>(col);\n";
+            if (!fi.mapping.nullable) {
+                o << "      if (outer_list->null_count() != 0)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << ": non-nullable, found \", "
+                  << "outer_list->null_count(), \" nulls\");\n";
+            }
+            o << "      self." << NlOuterMember(fi) << " = outer_list;\n";
+            if (fi.mapping.list_depth == 3) {
+                // outer -> mid (list) -> inner (list) -> leaf (struct)
+                o << "      auto mid_vals = outer_list->values();\n"
+                  << "      if (mid_vals->type_id() != arrow::Type::LIST)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << " level 2: expected list, got \", "
+                  << "mid_vals->type()->ToString());\n"
+                  << "      auto mid_list = std::static_pointer_cast<arrow::ListArray>(mid_vals);\n"
+                  << "      self." << NlMidMember(fi) << " = mid_list;\n"
+                  << "      auto inner_vals = mid_list->values();\n"
+                  << "      if (inner_vals->type_id() != arrow::Type::LIST)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << " level 3: expected list, got \", "
+                  << "inner_vals->type()->ToString());\n"
+                  << "      auto inner_list = std::static_pointer_cast<arrow::ListArray>("
+                  << "inner_vals);\n"
+                  << "      self." << NlInnerMember(fi) << " = inner_list;\n"
+                  << "      auto leaf_vals = inner_list->values();\n";
+            } else {
+                // outer -> inner (list) -> leaf (struct)
+                o << "      auto inner_vals = outer_list->values();\n"
+                  << "      if (inner_vals->type_id() != arrow::Type::LIST)\n"
+                  << "        return arrow::Status::Invalid(\n"
+                  << "            \"" << where << " level 2: expected list, got \", "
+                  << "inner_vals->type()->ToString());\n"
+                  << "      auto inner_list = std::static_pointer_cast<arrow::ListArray>("
+                  << "inner_vals);\n"
+                  << "      self." << NlInnerMember(fi) << " = inner_list;\n"
+                  << "      auto leaf_vals = inner_list->values();\n";
+            }
+            // Explicit handle on the fully flattened leaf StructArray + the leaf
+            // accessor built over that same member (design's explicit-handle model).
+            o << "      if (leaf_vals->type_id() != arrow::Type::STRUCT)\n"
+              << "        return arrow::Status::Invalid(\n"
+              << "            \"" << where << " leaf: expected struct, got \", "
+              << "leaf_vals->type()->ToString());\n"
+              << "      auto leaf_structs = std::static_pointer_cast<arrow::StructArray>("
+              << "leaf_vals);\n"
+              << "      ARROW_ASSIGN_OR_RAISE(auto leaf, " << acc << "::Make(leaf_structs));\n"
+              << "      self." << NlLeafValuesMember(fi) << " = leaf_structs;\n"
+              << "      self." << NlLeafMember(fi) << " = std::move(leaf);\n";
+            break;
+        }
     }
     o << "    }\n";
 }
@@ -468,9 +708,15 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
         if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
         std::string skipped;
         for (const auto& fi : GatherFields(msg, &skipped)) {
-            if (fi.mapping.kind == FieldKind::REPEATED_SCALAR ||
-                fi.mapping.kind == FieldKind::REPEATED_STRUCT) {
-                needs_spans = true;
+            switch (fi.mapping.kind) {
+                case FieldKind::REPEATED_SCALAR:
+                case FieldKind::REPEATED_STRUCT:
+                case FieldKind::MAP:
+                case FieldKind::NESTED_LIST:
+                    needs_spans = true;
+                    break;
+                default:
+                    break;
             }
         }
     }
@@ -505,13 +751,16 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
         const std::string cls = ClassName(msg);
         const std::string acc = cls + "Accessor";
 
-        // RBA-4b: a message with any MAP / NESTED_LIST field cannot be type-
-        // validated yet; FromColumns_ fails fast at the first such column so
-        // Make() never exposes a bypassable validation gate (D-RBA-4). The 4a
-        // getters before it still compile; they are simply unreachable.
+        // A message with any field the accessor still cannot type-validate (an
+        // unmapped scalar leaf, an unsupported map key/value leaf, or a nested
+        // list at an unsupported depth) cannot be safely constructed; FromColumns_
+        // fails fast at the first such column so Make() never exposes a bypassable
+        // validation gate (D-RBA-4). Supported getters before it still compile;
+        // they are simply unreachable. RBA-4 supports STRUCT / REPEATED_SCALAR /
+        // REPEATED_STRUCT / MAP / NESTED_LIST (depth 2-3).
         std::size_t first_unsupported = fields.size();
         for (std::size_t i = 0; i < fields.size(); ++i) {
-            if (!IsRba4aSupported(fields[i])) {
+            if (!IsSupportedField(fields[i])) {
                 first_unsupported = i;
                 break;
             }
@@ -625,16 +874,15 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
 
         // Getters.
         for (const auto& fi : fields) {
-            if (IsRba4aSupported(fi)) {
+            if (IsSupportedField(fi)) {
                 EmitFieldGetter(o, fi);
-            } else if (fi.mapping.kind == FieldKind::MAP ||
-                       fi.mapping.kind == FieldKind::NESTED_LIST) {
-                EmitFieldGetter(o, fi);  // emits the RBA-4b comment
             } else {
-                // An as-yet unmapped/unsupported construct: keep an explicit
-                // generation-time comment (D-RBA-6 no silent gap).
+                // An as-yet unmapped/unsupported construct (unsupported scalar
+                // leaf, unsupported map key/value leaf, or a nested list at an
+                // unsupported depth): keep an explicit generation-time comment
+                // (D-RBA-6 no silent gap) and emit no getter.
                 o << "  // Field '" << fi.name
-                  << "' is not supported by the RBA accessor yet; no getter emitted.\n";
+                  << "' is not supported by the RBA accessor; no getter emitted.\n";
             }
         }
         o << "\n";
@@ -648,7 +896,7 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
           << "    const " << acc << "* a = nullptr;\n"
           << "    int64_t row = 0;\n\n";
         for (const auto& fi : fields) {
-            if (IsRba4aSupported(fi)) EmitRowViewForward(o, fi);
+            if (IsSupportedField(fi)) EmitRowViewForward(o, fi);
         }
         o << "  };\n\n";
 
@@ -664,13 +912,14 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
 
         if (has_unsupported) {
             const auto& bad = fields[first_unsupported];
-            const char* kind_word =
-                bad.mapping.kind == FieldKind::MAP ? "map" : "nested-list";
-            o << "    // RBA-4b: " << kind_word << " columns not yet supported — fail fast so\n"
+            // The accessor cannot type-validate this column's leaf/shape, so it
+            // refuses to construct rather than expose a bypassable gate (D-RBA-4).
+            o << "    // Field '" << bad.name << "' has a construct the RBA accessor cannot\n"
+              << "    // type-validate (unsupported leaf type or list depth) — fail fast so\n"
               << "    // Make() never exposes a bypassable validation gate (D-RBA-4).\n"
               << "    return arrow::Status::Invalid(\n"
               << "        \"" << cls << " column " << first_unsupported << " '" << bad.name
-              << "': " << kind_word << " columns not supported until RBA-4b\");\n"
+              << "': unsupported column construct for the RBA accessor\");\n"
               << "  }\n\n";
             // Emit storage (incl. struct_validity_) so the class is well-formed.
             o << "  int64_t num_rows_ = 0;\n"
@@ -678,7 +927,7 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
               << "  std::shared_ptr<const arrow::KeyValueMetadata> schema_metadata_;\n"
               << "  std::shared_ptr<arrow::StructArray> struct_validity_;\n";
             for (const auto& fi : fields) {
-                if (IsRba4aSupported(fi)) EmitFieldStorage(o, fi);
+                if (IsSupportedField(fi)) EmitFieldStorage(o, fi);
             }
             o << "};\n\n";
             continue;
