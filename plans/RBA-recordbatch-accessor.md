@@ -402,8 +402,14 @@ accessor or a getter; §1/§2 already skip them from the generated message set.)
 
 ```cpp
 // --- fletcher runtime span helpers (added in RBA-4) -------------------------
-// Each span is {cached typed child(ren) + this row's [base,len)} — indexes the
-// cached arrays directly. A struct element is AccT::RowView (accessor + row).
+// Each span is {cached typed child(ren) + this row's [base,len)} and indexes the
+// cached arrays directly. INVARIANT: base/len come from the structural column's
+// offset buffer for `row`, and the cached children are the *flattened* values, so
+// `child->Value(base+i)` addresses element i of row `row`. STRUCT elements are
+// nullable (Arrow list `item` / map `value` are nullable), so they are returned as
+// std::optional<RowView> — None when the element is null (no read-through-null,
+// closing B2). Scalar elements follow the Arrow norm: `[i]` returns the value and
+// `is_null(i)` is available for the caller.
 namespace fletcher {
 template <class V, class ArrayT> struct ScalarSpan {           // list<scalar>
   const ArrayT* vals; int64_t base, len;
@@ -414,24 +420,34 @@ template <class V, class ArrayT> struct ScalarSpan {           // list<scalar>
 template <class AccT> struct StructSpan {                       // list<struct>
   const AccT* inner; int64_t base, len;          // inner = accessor over flattened values
   int64_t size() const { return len; }
-  typename AccT::RowView operator[](int64_t i) const { return inner->at(base + i); }
+  bool is_null(int64_t i) const { return inner->is_null(base + i); }
+  std::optional<typename AccT::RowView> operator[](int64_t i) const {     // None on a null element
+    int64_t r = base + i;
+    if (inner->is_null(r)) return std::nullopt;
+    return inner->at(r);
+  }
 };
 template <class KV, class KA, class VV, class VA> struct ScalarMapSpan {   // map<scalar,scalar>
-  const KA* keys; const VA* vals; int64_t base, len;
+  const KA* keys; const VA* vals; int64_t base, len;          // keys non-null; value nullable
   int64_t size() const { return len; }
   KV key(int64_t i)   const { return keys->Value(base + i); }
+  bool value_is_null(int64_t i) const { return vals->IsNull(base + i); }
   VV value(int64_t i) const { return vals->Value(base + i); }
 };
 template <class KV, class KA, class AccT> struct StructMapSpan {           // map<scalar,message>
   const KA* keys; const AccT* vals; int64_t base, len;
   int64_t size() const { return len; }
   KV key(int64_t i) const { return keys->Value(base + i); }
-  typename AccT::RowView value(int64_t i) const { return vals->at(base + i); }
+  std::optional<typename AccT::RowView> value(int64_t i) const {          // None on a null value
+    int64_t r = base + i;
+    if (vals->is_null(r)) return std::nullopt;
+    return vals->at(r);
+  }
 };
 template <class AccT> struct NestedStructSpan {                 // list<list<struct>>
   const arrow::ListArray* mid; const AccT* leaf; int64_t base, len;
   int64_t size() const { return len; }
-  StructSpan<AccT> operator[](int64_t i) const {                // → inner list's slice
+  StructSpan<AccT> operator[](int64_t i) const {                // → inner list's slice (elements optional)
     int64_t r = base + i;
     return { leaf, mid->value_offset(r), mid->value_length(r) };
   }
@@ -439,13 +455,21 @@ template <class AccT> struct NestedStructSpan {                 // list<list<str
 }  // namespace fletcher
 
 // --- the inner reusable struct accessor gains a row-bound forwarder ---------
+// RowView BORROWS the accessor — it must not outlive the <Inner>Accessor it points
+// at (the accessor owns the cached column buffers). Spans likewise borrow.
 class CoordAccessor {                 // dual-factory column accessor (x_/y_ as before)
  public:
-  // Make(RecordBatch&) / Make(StructArray&) / num_rows() / x(row) / y(row) … as established
+  // Make(RecordBatch&) / Make(StructArray&) / num_rows() / x(row) / y(row) … as established.
+  // is_null(row): struct-element validity — false when built from a RecordBatch (a
+  // batch row is always present); from the StructArray's null bitmap when built via
+  // Make(StructArray&), which retains that bitmap (windowed to the struct's slice).
+  bool is_null(int64_t row) const { return struct_validity_ && struct_validity_->IsNull(row); }
   struct RowView { const CoordAccessor* a; int64_t row;       // returned for list/map elements
                    double x() const { return a->x(row); }
                    double y() const { return a->y(row); } };
   RowView at(int64_t row) const { return {this, row}; }
+ private:
+  std::shared_ptr<arrow::StructArray> struct_validity_;   // null when built from a RecordBatch
 };
 
 class SampleAccessor {
@@ -457,7 +481,7 @@ class SampleAccessor {
     return { readings_vals_, readings_->value_offset(row), readings_->value_length(row) };
   }
   fletcher::StructSpan<CoordAccessor>                                       // REPEATED_STRUCT
-  track(int64_t row) const {            // track(r)[j].x()
+  track(int64_t row) const {            // if (auto e = track(r)[j]) e->x();   (optional element)
     return { &*track_inner_, track_->value_offset(row), track_->value_length(row) };
   }
   fletcher::ScalarMapSpan<std::string_view, arrow::StringArray, int32_t, arrow::Int32Array>
@@ -465,12 +489,12 @@ class SampleAccessor {
     return { counts_keys_, counts_vals_, counts_->value_offset(row), counts_->value_length(row) };
   }
   fletcher::StructMapSpan<std::string_view, arrow::StringArray, CoordAccessor>
-  waypoints(int64_t row) const {        // MAP scalar→message : waypoints(r).value(j).x()
+  waypoints(int64_t row) const {        // if (auto v = waypoints(r).value(j)) v->x();  (optional value)
     return { waypoints_keys_, &*waypoints_inner_,
              waypoints_->value_offset(row), waypoints_->value_length(row) };
   }
   fletcher::NestedStructSpan<CoordAccessor>                                 // NESTED_LIST
-  rings(int64_t row) const {            // rings(r)[i][j].x()
+  rings(int64_t row) const {            // if (auto e = rings(r)[i][j]) e->x();  (leaf optional)
     return { rings_mid_, &*rings_leaf_, rings_->value_offset(row), rings_->value_length(row) };
   }
 
@@ -518,24 +542,51 @@ impl<A: ArrayAccessor> ScalarSpan<A> {
     pub fn is_null(&self, i: usize) -> bool { self.vals.is_null(self.base + i) }
     pub fn value(&self, i: usize) -> A::Item { self.vals.value(self.base + i) }   // f64, &str, …
 }
-pub struct StructSpan<'a, Acc> { inner: &'a Acc, base: usize, len: usize }        // list<struct>
+// STRUCT elements are nullable, so get(i)/value(i) return Option<Acc::Row> — None
+// on a null element (no read-through-null, closing B2). `Acc` exposes is_null(row)
+// and row(i)->Row (e.g. CoordAccessor below).
+pub struct StructSpan<'a, Acc: RowAccess> { inner: &'a Acc, base: usize, len: usize }   // list<struct>
+impl<'a, Acc: RowAccess> StructSpan<'a, Acc> {
+    pub fn len(&self) -> usize { self.len }
+    pub fn is_null(&self, i: usize) -> bool { self.inner.is_null(self.base + i) }
+    pub fn get(&self, i: usize) -> Option<Acc::Row<'_>> {
+        let r = self.base + i;
+        if self.inner.is_null(r) { None } else { Some(self.inner.row(r)) }
+    }
+}
 pub struct ScalarMapSpan<K: ArrayAccessor, V: ArrayAccessor> {                    // map<scalar,scalar>
     keys: K, vals: V, base: usize, len: usize,                                    // K=&'a StringArray, V=&'a Int32Array
-}
-pub struct StructMapSpan<'a, K: ArrayAccessor, Acc> {                             // map<scalar,message>
+}                                                                                 // keys non-null; value nullable
+pub struct StructMapSpan<'a, K: ArrayAccessor, Acc: RowAccess> {                  // map<scalar,message>
     keys: K, vals: &'a Acc, base: usize, len: usize,
 }
-pub struct NestedStructSpan<'a, Acc> { mid: &'a ListArray, leaf: &'a Acc, base: usize, len: usize }
-// StructSpan::get(i) -> Acc::Row{a, base+i}; *MapSpan::value(i) likewise; NestedStructSpan::get(i)
-// -> StructSpan over mid.value_offsets()[base+i]..; (impls index the cached children — no copies).
+impl<'a, K: ArrayAccessor, Acc: RowAccess> StructMapSpan<'a, K, Acc> {
+    pub fn key(&self, i: usize) -> K::Item { self.keys.value(self.base + i) }
+    pub fn value(&self, i: usize) -> Option<Acc::Row<'_>> {                       // None on a null value
+        let r = self.base + i;
+        if self.vals.is_null(r) { None } else { Some(self.vals.row(r)) }
+    }
+}
+pub struct NestedStructSpan<'a, Acc: RowAccess> { mid: &'a ListArray, leaf: &'a Acc, base: usize, len: usize }
+// NestedStructSpan::get(i) -> StructSpan over mid.value_offsets()[base+i].. (its elements optional).
+// All spans BORROW the cached children/accessor — they (and Rows) must not outlive the SampleAccessor.
 // Construction sites pass the reference, e.g. ScalarSpan { vals: &*self.readings_vals, … }.
 
-// --- the inner reusable struct accessor gains a row-bound forwarder ---------
+// --- the inner reusable struct accessor: row-bound forwarder + null/validity ----
+// RowAccess lets the generic spans get a Row and test element validity uniformly.
+pub trait RowAccess { type Row<'a> where Self: 'a; fn row(&self, i: usize) -> Self::Row<'_>;
+                      fn is_null(&self, row: usize) -> bool; }
 pub struct CoordRow<'a> { a: &'a CoordAccessor, row: usize }
 impl CoordRow<'_> { pub fn x(&self) -> f64 { self.a.x(self.row) }
                     pub fn y(&self) -> f64 { self.a.y(self.row) } }
-impl CoordAccessor {                  // dual-ctor column accessor (x/y as before)
-    pub fn row(&self, i: usize) -> CoordRow<'_> { CoordRow { a: self, row: i } }
+impl RowAccess for CoordAccessor {    // dual-ctor column accessor (x/y as before)
+    type Row<'a> = CoordRow<'a>;
+    fn row(&self, i: usize) -> CoordRow<'_> { CoordRow { a: self, row: i } }
+    // false when built from a RecordBatch; from the StructArray's null bitmap (kept,
+    // windowed to the struct slice) when built via from_struct.
+    fn is_null(&self, row: usize) -> bool {
+        self.struct_validity.as_ref().map_or(false, |s| s.is_null(row))
+    }
 }
 
 pub struct SampleAccessor {
@@ -554,41 +605,54 @@ impl SampleAccessor {
     //   counts: map → keys Utf8, values Int32;       waypoints: map → keys Utf8, CoordAccessor on values
     //   rings: list<list<struct>> → descend two levels → CoordAccessor on the leaf values
 
-    fn span_bounds(list: &ListArray, row: usize) -> (usize, usize) {     // [base, len)
-        let o = list.value_offsets();                                    // &[i32], monotonic ≥ 0
-        // list() uses 32-bit, non-negative, monotonic offsets (large_list is out of
-        // scope, §10), so i32 → usize cannot wrap; `as usize` is sound here.
+    // list() and map both use 32-bit, non-negative, monotonic offsets (large_list /
+    // large_utf8 out of scope, §10), so i32 → usize cannot wrap. MapArray is NOT a
+    // ListArray in arrow-rs, so it gets its own bounds helper over MapArray::value_offsets().
+    fn list_bounds(l: &ListArray, row: usize) -> (usize, usize) {
+        let o = l.value_offsets();
+        (o[row] as usize, (o[row + 1] - o[row]) as usize)
+    }
+    fn map_bounds(m: &MapArray, row: usize) -> (usize, usize) {           // entry [base, len)
+        let o = m.value_offsets();
         (o[row] as usize, (o[row + 1] - o[row]) as usize)
     }
 
     pub fn readings(&self, row: usize) -> ScalarSpan<&'_ Float64Array> {
-        let (base, len) = Self::span_bounds(&self.readings, row);
+        let (base, len) = Self::list_bounds(&self.readings, row);
         ScalarSpan { vals: &*self.readings_vals, base, len }            // &Float64Array: ArrayAccessor
     }
-    pub fn track(&self, row: usize) -> StructSpan<'_, CoordAccessor> {    // track(r).get(j).x()
-        let (base, len) = Self::span_bounds(&self.track, row);
+    pub fn track(&self, row: usize) -> StructSpan<'_, CoordAccessor> {    // if let Some(e)=track(r).get(j) { e.x() }
+        let (base, len) = Self::list_bounds(&self.track, row);
         StructSpan { inner: &self.track_inner, base, len }
     }
     pub fn counts(&self, row: usize) -> ScalarMapSpan<&'_ StringArray, &'_ Int32Array> {
-        let (base, len) = Self::span_bounds(&self.counts, row);          // MapArray is a ListArray
+        let (base, len) = Self::map_bounds(&self.counts, row);           // MapArray bounds, not list
         ScalarMapSpan { keys: &*self.counts_keys, vals: &*self.counts_vals, base, len }
     }
     pub fn waypoints(&self, row: usize) -> StructMapSpan<'_, &'_ StringArray, CoordAccessor> {
-        let (base, len) = Self::span_bounds(&self.waypoints, row);       // waypoints(r).value(j).x()
+        let (base, len) = Self::map_bounds(&self.waypoints, row);        // if let Some(v)=…value(j) { v.x() }
         StructMapSpan { keys: &*self.wp_keys, vals: &self.wp_inner, base, len }
     }
-    pub fn rings(&self, row: usize) -> NestedStructSpan<'_, CoordAccessor> {   // rings(r).get(i).get(j).x()
-        let (base, len) = Self::span_bounds(&self.rings, row);
+    pub fn rings(&self, row: usize) -> NestedStructSpan<'_, CoordAccessor> {   // rings(r).get(i)?.get(j)?.x()
+        let (base, len) = Self::list_bounds(&self.rings, row);
         NestedStructSpan { mid: &self.rings_mid, leaf: &self.rings_leaf, base, len }
     }
 }
 ```
 
-Usage reads naturally: `sample.readings(r)[k]`, `sample.track(r)[j].x()` (C++) /
-`sample.track(r).get(j).x()` (Rust), `sample.counts(r).value(j)`,
-`sample.waypoints(r).value(j).x()`, `sample.rings(r)[i][j].x()`. Every struct
-element (`track`, `waypoints` value, `rings` leaf) reuses the one `CoordAccessor`
-read at a flattened index — never a second struct type, never a `GetScalar`.
+Usage: scalar elements read directly (`sample.readings(r)[k]`,
+`sample.counts(r).value(j)`); struct elements come back as **optionals** (None on a
+null element), so:
+- C++ — `if (auto e = sample.track(r)[j]) e->x();`,
+  `if (auto v = sample.waypoints(r).value(j)) v->x();`,
+  `if (auto e = sample.rings(r)[i][j]) e->x();`
+- Rust — `if let Some(e) = sample.track(r).get(j) { e.x() }`,
+  `if let Some(v) = sample.waypoints(r).value(j) { v.x() }`,
+  `sample.rings(r).get(i).and_then(|inner| inner.get(j)).map(|e| e.x())`
+
+Every struct element (`track`, `waypoints` value, `rings` leaf) reuses the one
+`CoordAccessor` read at a flattened index — never a second struct type, never a
+`GetScalar`, and never read through a null.
 
 > The samples above are illustrative of the **shape**, not final text. Exact
 > arrow-rs API spellings (the downcast helpers, `value`/`is_null`, offset/metadata
@@ -753,11 +817,13 @@ comment.
 message and read typed scalar columns, mirroring the C++ accessor (D-RBA-8).
 
 **Scope.**
-- Emit the Rust accessor per the §3/§8 shape (arrow-rs: `as_any().downcast_ref`,
-  `DataType` gate, `ArrowError` Result; cached `Arc<T>` column handles that own
-  their buffers; `try_new(RecordBatch)` + `from_struct(&StructArray)` sharing one
-  `from_columns` — the `from_struct` path is the basis for nested composition in
-  RBA-6).
+- Emit the Rust accessor per the §3/§8 shape (arrow-rs: scalar columns cached via
+  the offset-preserving `arrow::array::downcast_array::<T>` — *not* a re-`Arc`'d
+  `downcast_ref` clone; `DataType` gate; `ArrowError` Result; `try_new(RecordBatch)`
+  + `from_struct(&StructArray)` sharing one `from_columns`, where `from_struct`
+  slices each child to the struct window — the `from_struct` path is the basis for
+  nested composition in RBA-6). (`downcast_ref` is still used only to *test* a
+  column is a `StructArray` before recursing, not to cache scalar columns.)
 - Stand up `integration-tests/protoc-gen-fletcher-rust/` as a **complete, buildable
   Cargo crate** (the repo has no Rust today, so every piece is new and must be
   spelled out):
@@ -799,11 +865,13 @@ the Rust accessor to struct/list/map/nested-list parity with RBA-4:
   `downcast_array` idiom (B4)); the getter is **row-bound** — `position(row)` →
   `<Inner>Accessor::Row` (or `Option<Row>` when nullable, None on a null row);
 - collection getters return spans (`Option<Span>` when row-nullable); struct
-  elements are `<Inner>Accessor::Row`;
-- **cross-file (B5/D-RBA-10):** implement the Rust module convention — each
-  `<stem>.fletcher.rs` is a module under `fletcher_gen`; cross-file nested accessors
-  are referenced as `crate::fletcher_gen::<stem>::<Class>Accessor`. The Cargo crate
-  gains a **two-file import fixture** that exercises it.
+  elements come back as `Option<<Inner>Accessor::Row>` (None on a null element — no
+  read-through-null), via the `RowAccess` trait;
+- **cross-file (B5/D-RBA-10):** implement the **package-keyed** Rust module
+  convention — a message's accessor is `crate::fletcher_gen::<pkg-path>::<Class>Accessor`
+  (proto package `a.b.c` → `a::b::c`; stems are never module names), with same-package
+  files sharing a module. The Cargo crate gains a **two-file, two-package import
+  fixture** that exercises it.
 
 **Forcing test** (`composite_and_metadata_read`, `cargo test`): read a nested struct
 **whose child is itself a struct imported from a second `.proto`** (the

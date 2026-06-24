@@ -75,11 +75,17 @@ these is **STOP-AND-ASK**.
   children are pre-rebased — and Rust caches typed handles with the offset-preserving
   `downcast_array` idiom, not a re-`Arc`'d `downcast_ref` clone. A struct **value**
   (1:1 field, list element, or map value) is read through the inner accessor's
-  **row-bound `RowView`** — `acc.struct_field(row)` returns `RowView` (or
-  `std::optional<RowView>` / `Option<Row>` when nullable, **None on a null row** so
-  reads never go through a null), composing **recursively to any depth**. No setter
-  / builder / mutation API. Emitting only one factory, reading through a null
-  composite row, or skipping the struct-child slice → STOP-AND-ASK.
+  **row-bound `RowView`** which **borrows** the accessor (must not outlive it).
+  **No struct value is ever read through a null:** a 1:1 nullable struct field
+  returns `std::optional<RowView>` / `Option<Row>` (None on a null row), and a
+  struct **element** of a list/map/nested-list is likewise returned as an *optional*
+  (None when the Arrow `item`/`value` child is null) — so the dangerous read-through
+  is impossible everywhere, not just for 1:1 fields. The inner accessor exposes
+  `is_null(row)` (false when built from a `RecordBatch`; from the retained struct
+  null bitmap when built from a `StructArray`). Composes **recursively to any
+  depth**. No setter / builder / mutation API. Emitting only one factory, reading a
+  struct value (1:1, element, OR map value) through a null, or skipping the
+  struct-child slice → STOP-AND-ASK.
 
 - **D-RBA-8 — C++ and Rust parity from one model (oracle §8).** Both languages are
   generated from the shared `FieldInfo` / `type_mapper` model. Rust targets the
@@ -99,12 +105,16 @@ these is **STOP-AND-ASK**.
   §8.1).** A nested field whose message comes from an imported `.proto` resolves to
   that file's generated accessor. **C++** reuses the existing cross-file include
   mechanism (`CollectCrossFileIncludes`), mapping `.fletcher.pb.h` →
-  `.fletcher.accessor.pb.h`. **Rust** uses a fixed module convention: each
-  `<stem>.fletcher.rs` is a module named by the proto stem, mounted under a single
-  parent (`fletcher_gen` by default), and cross-file references use the qualified
-  path `crate::fletcher_gen::<stem>::<Class>Accessor`. The Rust Cargo test crate
-  exercises a genuine two-file import. Changing the mount-point name or the
-  qualified-path scheme after RBA-5 lands → STOP-AND-ASK.
+  `.fletcher.accessor.pb.h`. **Rust** keys its module convention on the proto
+  **package** (prost/tonic-style), **not** the file stem (stems can contain
+  `-`/`.`/path separators and collide across directories): a message's accessor is
+  `crate::fletcher_gen::<pkg-path>::<Class>Accessor` (package `a.b.c` →
+  `a::b::c`; no-package → directly under `fletcher_gen`), mirroring the C++
+  `fletcher_gen::<pkg>` 1:1. Same-package files share a module; differing packages
+  never collide; non-ident package segments are a generation error, not a silent
+  rename. The Rust Cargo test crate exercises a genuine two-file, two-package
+  import. Changing the mount-point name (`fletcher_gen`) or the package-path scheme
+  after RBA-5 lands → STOP-AND-ASK.
 
 **Still-in-force prior locks.** The robustness-hardening invariants (codec /
 positional-I/O decode safety) and the DICT-round invariants are unaffected — RBA

@@ -122,15 +122,22 @@ field, a list element, or a map value:
 - nullable struct field → `std::optional<…RowView>` / `Option<…Row>`, **None when
   the struct column is null at `row`** (so you can never read through a null);
 - nullable list/map/nested-list field → the span getter returns
-  `std::optional<Span>` / `Option<Span>`, None on a null row; element-level nulls
-  inside a present row are exposed via the span's `is_null(j)`.
+  `std::optional<Span>` / `Option<Span>`, None on a null row;
+- a **struct element** of a list/map/nested-list (the Arrow `item`/`value` child is
+  nullable) is returned as an **optional** too — `span[j]` / `map.value(j)` →
+  `std::optional<RowView>` / `Option<Row>`, None on a null element. Scalar elements
+  follow the Arrow norm (`span[j]` → value, with `span.is_null(j)` available).
 
-This composes **recursively to any depth** — `fix.position(row).lat()`,
-`outer.mid(row).inner().v()`, `sample.track(row)[j].x()` — every struct value being
-one `<Inner>Accessor` (built once over the flattened struct column) read at the
-right index via its `RowView`. There is no second struct type and no read-through-
-null. The inner column accessor is built and cached once per struct field
-(validating its children); the `RowView` is a two-word value created per access.
+This is the key closure of the read-through-null hazard: **every** path that yields
+a struct value — 1:1 field, list element, map value, nested-list leaf — is
+optional and `None` on a null, so child fields are never read through a null parent.
+It composes **recursively to any depth** — `fix.position(row).lat()`,
+`outer.mid(row).inner().v()`, `if (auto e = sample.track(row)[j]) e->x()` — every
+struct value being one `<Inner>Accessor` (built once over the flattened struct
+column) read at the right index via its `RowView`. There is no second struct type.
+The inner accessor is built/cached once per struct field (validating its children
+and retaining the struct's null bitmap for `is_null`); the `RowView` **borrows** the
+accessor (a two-word value created per access; it must not outlive the accessor).
 
 This makes bulk row access cheap and removes the caller's casting boilerplate. The
 existing per-row `<Class>View` is **not** replaced or re-implemented; it remains
@@ -231,9 +238,9 @@ type.
 | `SCALAR` | `Int32Array` / `DoubleArray` / `StringArray` / `TimestampArray` … | `field(row)` → value or `optional`; string/binary → `string_view` / `&str` |
 | `REPEATED_SCALAR` | `ListArray` (+ typed values child) | `field(row)` → a list span over the row's slice (`optional<Span>` if the field is row-nullable) |
 | `STRUCT` | the nested `<Inner>Accessor` (built once over the `StructArray` column) | `field(row)` → `<Inner>Accessor::RowView` bound to `row` (`optional<RowView>` if nullable — None on null row) |
-| `REPEATED_STRUCT` | `ListArray` over `StructArray` | `field(row)` → a struct span whose elements are `<Inner>Accessor::RowView` |
-| `MAP` | `MapArray` (keys + items children) | `field(row)` → a key/value span; message values are `<Inner>Accessor::RowView` |
-| `NESTED_LIST` | nested `ListArray` (depth 2–3) | `field(row)` → nested list spans; leaf elements are `<Inner>Accessor::RowView` |
+| `REPEATED_STRUCT` | `ListArray` over `StructArray` | `field(row)` → a struct span; `span[j]` → `optional<RowView>` (None on a null element) |
+| `MAP` | `MapArray` (keys + items children) | `field(row)` → a key/value span; scalar `value(j)` (+ `value_is_null(j)`); message `value(j)` → `optional<RowView>` |
+| `NESTED_LIST` | nested `ListArray` (depth 2–3) | `field(row)` → nested list spans; leaf `span[j]` → `optional<RowView>` |
 
 A `STRUCT` value reuses the **same accessor type** (§3): the parent caches the
 nested `<Inner>Accessor` over the struct column once (validating its children), and
@@ -303,19 +310,28 @@ accessor lives in that file's generated output. Both languages must resolve it:
   `.fletcher.pb.h` → `.fletcher.accessor.pb.h` (exactly as the view header already
   maps to `.fletcher.arrow.pb.h`). Mechanical; no new convention.
 
-- **Rust** — Rust has no `#include`, so a **module convention** is fixed now:
-  each generated `<stem>.fletcher.rs` is a Rust **module named after the proto
-  stem**, and all generated modules are mounted under one parent module
-  (`fletcher_gen` by default; the consuming crate's `lib.rs` `include!`s/`mod`s
-  them as siblings). A cross-file nested accessor is referenced by the fully
-  qualified path `crate::fletcher_gen::<stem>::<Class>Accessor` (the package
-  namespace, if any, nests below the stem module, mirroring the C++
-  `fletcher_gen::<pkg>` namespacing). The generator emits the needed `use` (or
-  fully-qualified references) for each imported stem. The Cargo test crate (RBA-5)
-  demonstrates a two-file import so the convention is exercised, not just asserted.
-  The exact mount-point name is the one degree of freedom; `fletcher_gen` is the
-  default and may be made configurable later without changing call sites that use
-  the qualified path.
+- **Rust** — Rust has no `#include`, and a proto **file stem** is not a usable
+  module identifier (stems may contain `-`, `.`, or path separators, and two files
+  in different directories can share a stem). So the module convention is keyed on
+  the **proto package**, exactly as `prost`/`tonic` generate modules — robust and
+  conventional:
+  - A message's accessor lives at `crate::fletcher_gen::<pkg-path>::<Class>Accessor`,
+    where `<pkg-path>` is the proto `package` split on `.` into nested modules
+    (`navisuite.sensors` → `navisuite::sensors`). This matches the C++
+    `fletcher_gen::<pkg>` namespacing 1:1. A message with **no** package sits
+    directly under `crate::fletcher_gen`.
+  - The package — not the file — is the namespace, so two imported files that share
+    a stem but differ in package never collide; two files in the **same** package
+    contribute to the **same** module (their generated `.rs` are mounted together,
+    as `prost` does). Identifiers are sanitized to valid Rust (`raw` idents where a
+    segment is a keyword); a package segment that is not a valid ident is a
+    generation error, not a silent rename.
+  - Mounting: the consuming crate `include!`s/`mod`s the generated files under
+    `fletcher_gen`; the generator emits the package `mod` nesting and the `use`
+    (or fully-qualified path) for each imported message it references. `fletcher_gen`
+    is the default mount point (changing it after RBA-5 → STOP-AND-ASK).
+  - The Cargo test crate (RBA-5) includes a genuine **two-file, two-package** import
+    so the convention is exercised, not just asserted.
 
 ## §9 — Testing & the no-drift guarantee
 
