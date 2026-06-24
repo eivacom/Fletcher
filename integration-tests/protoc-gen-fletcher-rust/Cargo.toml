@@ -22,3 +22,6 @@ arrow = "=59.0.0"
 # arrow is in scope for tests (the [dependencies] entry above), so the test
 # suite builds RecordBatch/StructArray fixtures without a separate dev-dep.
 [dev-dependencies]
+# RBA-7 capstone (accessor_capstone.rs) parses the SAME committed fixture/expected
+# JSON the C++ gtest reads (single source of truth, D-RBA-8) — test-only.
+serde_json = "1"

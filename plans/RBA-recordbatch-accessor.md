@@ -715,7 +715,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | RBA-4 | C++ full type parity (struct/list/map/nested) | `AccessorTest.CompositeColumnsReadColumnOriented` | 🟢 |
 | RBA-5 | Rust scalar accessor + Cargo test crate (arrow-rs) | `scalar_columns_read_and_validate_positionally` | 🟢 |
 | RBA-6 | Rust generic metadata + full type parity | `composite_and_metadata_read` | 🟢 |
-| RBA-7 | Docs + cross-language capstone parity | `accessor_cpp_and_rust_agree_on_same_batch` | ⚪ |
+| RBA-7 | Docs + cross-language capstone parity | `accessor_cpp_and_rust_agree_on_same_batch` | 🟢 |
 
 Suite shape: `+1` protoc/integration no-drift test ✅ (RBA-1: `AccessorTest.Opt…`
 \+ `AccessorTest.GeneratedRustFileParsesWithRustc`, `accessor_tests` target);
@@ -973,3 +973,16 @@ All seven forcing tests 🟢; the RBA-1 no-drift test green at round close (exis
 outputs byte-identical); the C++ integration suite and the new Rust crate green in
 CI; `protoc/README.md` + docs updated; nothing in spec §10 (out of scope) touched;
 no existing emitter behaviour changed (D-RBA-1).
+
+### ✅ Round complete — 2026-06-24
+
+All seven forcing tests 🟢 (RBA-1…RBA-7). Round-wide full suite green (DoD gate):
+core 25/25 · arrow-bridge 30/30 · pubsub 16/16 · pubsub-arrow 15/15 · protoc 3/3 ·
+full integration ctest **72/72** (1 documented skip — the bare-`rustc` parse check
+superseded by the Rust crate) · Rust crate **10/10**. RBA-1 no-drift green at close
+(existing outputs byte-identical). Docs updated (`protoc/README.md` + accessor
+section); spec §7 + locked decision **D-RBA-7** corrected (user-authorized: Arrow
+C++ `field(i)` is already windowed — no re-`Slice`; arrow-rs `columns()` is not —
+Rust slices). Nothing in §10 touched; no existing emitter behaviour changed.
+Branch `feature/recordbatchaccessor` pushed through RBA-7. PR/merge is the user's
+step (rebase onto `main` per repo convention — see [[pr-branch-rebase-convention]]).

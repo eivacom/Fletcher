@@ -1,0 +1,58 @@
+{
+  "_comment": "RBA-7 capstone shared logical fixture. Both the C++ gtest and the Rust cargo test build an in-memory Arrow batch from THIS file (native Arrow builders, not IPC) so null placement is reviewable and cross-language IPC reader differences are out of the picture. Maps are ordered {key,value} arrays so key order/duplicates stay explicit and Arrow-compatible. field_metadata is keyed by POSITIONAL field index (canonical, RBA spec section 5): index 0 is populated, indices 1.. are intentionally absent ({}) except index 3 which carries a second populated map. The absent entries prove C++ nullptr == Rust empty-map normalization.",
+  "schema_metadata": {
+    "capstone": "rba-7",
+    "owner": "accessor"
+  },
+  "field_metadata": [
+    {"role": "id"},
+    {},
+    {},
+    {"role": "samples"},
+    {},
+    {},
+    {},
+    {}
+  ],
+  "rows": [
+    {
+      "id": 1,
+      "label": "alpha",
+      "maybe_child": {"score": 11, "name": "a"},
+      "samples": [7, null, 9],
+      "children": [{"score": 21, "name": "c0"}, null],
+      "scores": [{"key": "x", "value": 10}, {"key": "y", "value": null}],
+      "child_by_key": [
+        {"key": "left", "value": {"score": 51, "name": "l"}},
+        {"key": "mid", "value": null}
+      ],
+      "nested_children": [
+        [{"score": 31, "name": "n0"}],
+        null,
+        [{"score": 32, "name": "n1"}]
+      ]
+    },
+    {
+      "id": 2,
+      "label": null,
+      "maybe_child": null,
+      "samples": [],
+      "children": [],
+      "scores": [],
+      "child_by_key": [],
+      "nested_children": []
+    },
+    {
+      "id": 3,
+      "label": "gamma",
+      "maybe_child": {"score": 13, "name": "c"},
+      "samples": [5],
+      "children": [{"score": 23, "name": "c2"}],
+      "scores": [{"key": "z", "value": 30}],
+      "child_by_key": [{"key": "right", "value": {"score": 63, "name": "r"}}],
+      "nested_children": [
+        [{"score": 33, "name": "n2"}]
+      ]
+    }
+  ]
+}

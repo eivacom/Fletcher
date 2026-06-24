@@ -76,8 +76,12 @@ protoc \
 
 - `--fletcher_opt=ts` — generate TypeScript schema descriptors (`.fletcher.ts`) instead of C++ headers.
 - `--fletcher_opt=ipc` — additionally write one serialized Arrow IPC schema file per message, named `<stem>.<Message>.ipc`, next to the generated headers. Each file is a schema-only [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format), byte-identical to the schema bytes Fletcher providers announce at runtime, and readable by any Arrow implementation (e.g. `pyarrow.ipc.open_stream`).
+- `--fletcher_opt=accessor` — additionally generate the read-only C++ **RecordBatch accessor** header `<stem>.fletcher.accessor.pb.h` (one `<Class>Accessor` per message). See [RecordBatch accessors](#recordbatch-accessors) below.
+- `--fletcher_opt=rust` — additionally generate the read-only **Rust** RecordBatch accessor module `<stem>.fletcher.rs` (the Rust counterpart of `accessor`, targeting the official [`arrow`](https://crates.io/crates/arrow) crate). See [RecordBatch accessors](#recordbatch-accessors) below.
 
-Options combine comma-separated: `--fletcher_opt=ts,ipc`.
+The `accessor` and `rust` tokens are purely additive: they emit only their own new files and never change the bytes of the C++ / TypeScript / IPC outputs, with or without the other options.
+
+Options combine comma-separated: `--fletcher_opt=ts,ipc` or `--fletcher_opt=accessor,rust,ipc`.
 
 ## Conan package (C++ consumers)
 
@@ -158,6 +162,39 @@ add_custom_command(
 ```
 
 See [`test_package/`](test_package/) for a complete, working consumer example — its [`conanfile.py`](test_package/conanfile.py) and [`CMakeLists.txt`](test_package/CMakeLists.txt) wire up exactly these import roots and run the plugin (C++, TypeScript, and `.ipc` output) on every `conan create`.
+
+## RecordBatch accessors
+
+With `--fletcher_opt=accessor` (C++) and/or `--fletcher_opt=rust` (Rust), the plugin additionally generates a **read-only, column-oriented accessor** per message — `<Class>Accessor` — for reading whole Arrow `RecordBatch`es without the usual cast-and-index boilerplate. Each accessor:
+
+- is **read-only** (no setters, builders, or writer API);
+- is **opt-gated** — emitted only when its token is passed, into its own new file (`<stem>.fletcher.accessor.pb.h` / `<stem>.fletcher.rs`), never altering existing outputs;
+- **constructs from a `RecordBatch` or an `arrow::StructArray`** (the struct factory is what nested fields use, and is also a public entry point);
+- **validates positionally** at construction (column count + each column's Arrow type) and returns a `Result` on mismatch — it never throws/panics. Field names and the schema's nullable *flag* are tolerated; columns the proto marks non-nullable are additionally checked to hold no actual nulls;
+- caches the type-checked down-casts **once**, so per-row getters index the concrete arrays directly (no per-cell allocation);
+- exposes **generic** schema- and per-field metadata (`schema_metadata()` / `field_metadata(i)`) verbatim, with no built-in knowledge of any key;
+- nullable scalars return `std::optional` / `Option`, and struct values that can be null (nullable 1:1 fields, list/map elements, nested-list levels) are returned as optionals — you can never read through a null.
+
+It does **not** add `Table` / `ChunkedArray` input, a mutable accessor, dictionary columns, or any third language. The full contract is the oracle spec [`docs/recordbatch-accessor-spec.md`](../docs/recordbatch-accessor-spec.md).
+
+A minimal C++ read (generate with `--fletcher_opt=accessor`, include `<stem>.fletcher.accessor.pb.h`):
+
+```cpp
+#include "my_service.fletcher.accessor.pb.h"
+
+using fletcher_gen::my_pkg::MyRowAccessor;
+
+void Read(const std::shared_ptr<arrow::RecordBatch>& batch) {
+    auto result = MyRowAccessor::Make(batch);  // validated once; returns arrow::Result
+    if (!result.ok()) { /* handle result.status() */ return; }
+    const MyRowAccessor& accessor = *result;
+
+    int32_t first_id = accessor.id(0);                       // non-nullable scalar
+    std::optional<int32_t> maybe = accessor.opt_count(1);    // nullable -> std::nullopt if null
+}
+```
+
+> The exact getter names mirror your proto field names; replace `id` / `opt_count` with your own. This snippet is mirrored by a compile-checked integration test (`integration-tests/protoc-arrow-bridge/tests/test_accessor_readme_example.cpp`), and the cross-language C++/Rust parity is proven by the capstone in [`integration-tests/accessor-capstone/`](../integration-tests/accessor-capstone/).
 
 ## npm package (TypeScript / JS consumers)
 

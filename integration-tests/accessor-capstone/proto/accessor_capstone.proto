@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-7 capstone fixture — the SINGLE shared schema both the C++ gtest
+// (test_accessor_capstone.cpp) and the Rust cargo test (accessor_capstone.rs)
+// generate their accessor from. Generating both accessors from ONE proto is
+// what proves D-RBA-8 parity ("C++ and Rust from one model") rather than
+// hand-aligned per-language schemas.
+//
+// CapstoneBatch enumerates EVERY accessor field kind explicitly, each with a
+// representative null in its optional path:
+//   - non-nullable scalar          : `id`
+//   - nullable scalar              : `label`            (a null scalar row)
+//   - nullable 1:1 STRUCT          : `maybe_child`      (a null struct row)
+//   - REPEATED_SCALAR              : `samples`          (a null scalar element)
+//   - REPEATED_STRUCT              : `children`         (a null struct element)
+//   - MAP scalar value             : `scores`          (a null scalar value)
+//   - MAP message value            : `child_by_key`    (a null map message value)
+//   - NESTED_LIST (depth 2)        : `nested_children` (a null inner list)
+//
+// NESTED_LIST is expressed via the `(fletcher.flatten)` single-repeated wrapper
+// (`InnerList`) — the only way the proto->Arrow mapping yields list<list<...>>
+// (matching the as-built RBA-4/RBA-6 classifier the existing composite fixtures
+// use). The wrapper is stripped, so `repeated InnerList nested_children` becomes
+// list<list<struct<Child>>>.
+syntax = "proto3";
+package rba.capstone;
+
+import "fletcher/options.proto";
+
+// Leaf-ish struct value used by the 1:1 struct, repeated-struct, map message
+// value, and nested-list leaf paths.
+message Child {
+    int32 score = 1;   // arrow::int32() (non-nullable leaf)
+    string name = 2;   // arrow::utf8()  (non-nullable leaf)
+}
+
+// Flatten-wrapper: a single repeated field, so `repeated InnerList` adds one
+// list level on top of the wrapper's own `repeated Child` -> NESTED_LIST depth 2
+// (list<list<struct<Child>>>). The wrapper message is stripped from the schema.
+message InnerList {
+    option (fletcher.flatten) = true;
+    repeated Child items = 1;
+}
+
+message CapstoneBatch {
+    // non-nullable scalar.
+    int32 id = 1;
+
+    // nullable scalar (proto3 optional) — a null row -> std::nullopt / None.
+    optional string label = 2;
+
+    // nullable 1:1 STRUCT (proto3 optional) — a null row -> std::nullopt / None.
+    optional Child maybe_child = 3;
+
+    // REPEATED_SCALAR (list<int32>) — element null via is_null(j).
+    repeated int32 samples = 4;
+
+    // REPEATED_STRUCT (list<struct<Child>>) — a null struct element.
+    repeated Child children = 5;
+
+    // MAP scalar value (map<string,int32>) — a null scalar value via
+    // value_is_null(j). Keys non-null; values nullable.
+    map<string, int32> scores = 6;
+
+    // MAP message value (map<string,Child>) — value(j) -> optional/Option,
+    // None on a null map message value.
+    map<string, Child> child_by_key = 7;
+
+    // NESTED_LIST depth 2 (list<list<struct<Child>>>) — a null inner list.
+    repeated InnerList nested_children = 8;
+}

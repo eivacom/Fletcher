@@ -294,13 +294,23 @@ source `RecordBatch` / `StructArray`, and is identical whichever factory built i
   `*_metadata()`.
 
 **Struct-source offset handling (both languages, explicit).** Constructing from a
-`StructArray` does **not** assume children are pre-rebased: each child is sliced to
-the struct's `[offset, offset+len)` window before caching — C++
-`field(i)->Slice(s->offset(), s->length())`, Rust
-`s.column(i).slice(s.offset(), s.len())`. (A `StructArray`'s logical offset is not
-necessarily baked into the arrays returned by `columns()`/`field()`, so the slice
-is required for correctness, not just convenience.) Per-row getters then index by
-`row` directly. No setter / builder / mutation API exists.
+`StructArray` reads each child in the struct's logical `[offset, offset+len)`
+window — but the two Arrow implementations differ in **where** that windowing is
+applied, and the accessor must respect each:
+
+- **C++** — `arrow::StructArray::field(i)` **already returns each child windowed**
+  to `[offset, offset+len)` (offset, length, and null count adjusted to the
+  struct's slice). The C++ accessor therefore uses `field(i)` **directly** and must
+  **not** re-`Slice` it: a re-slice double-applies the offset and reads the wrong
+  row (proven by the RBA-2/RBA-4 struct-array tests).
+- **Rust (arrow-rs)** — `StructArray::columns()` is **NOT** pre-windowed by the
+  struct's logical offset (the opposite of C++ `field(i)`). The Rust `from_struct`
+  path **must** `.slice()` each child by the struct's offset —
+  `s.column(i).slice(s.offset(), s.len())` — or every getter on a sliced struct
+  would misalign.
+
+Per-row getters then index by `row` directly. No setter / builder / mutation API
+exists.
 
 **`is_null` / struct-validity contract.** Each accessor's `is_null(row)` reports
 struct-element validity and has exactly one source, fixed by which factory built it:

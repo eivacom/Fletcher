@@ -77,10 +77,17 @@ these is **STOP-AND-ASK**.
   unconditionally** — never gated on whether a message is used as a nested field;
   a message may be read as a top-level batch in one place and as a struct column in
   another, so the generator emits both for every accessor. **Struct-source
-  construction slices each child to the struct's `[offset, offset+len)` window
-  explicitly** (C++ `field(i)->Slice`, Rust `column(i).slice`) — it never assumes
-  children are pre-rebased — and Rust caches typed handles with the offset-preserving
-  `downcast_array` idiom, not a re-`Arc`'d `downcast_ref` clone. A struct **value**
+  construction reads each child in the struct's `[offset, offset+len)` window**,
+  respecting where each Arrow implementation applies that windowing: Arrow C++
+  `StructArray::field(i)` **already returns each child windowed** to
+  `[offset, offset+len)`, so the C++ accessor uses `field(i)` **directly and must
+  NOT re-`Slice`** (a re-slice double-applies the offset and reads the wrong row);
+  arrow-rs `StructArray::columns()` is **NOT** pre-windowed, so the Rust
+  `from_struct` path **must** `.slice()` each child by the struct offset
+  (`column(i).slice`). Neither path assumes children are pre-rebased to the
+  caller's needs — each just matches its Arrow library's actual semantics — and
+  Rust caches typed handles with the offset-preserving `downcast_array` idiom, not
+  a re-`Arc`'d `downcast_ref` clone. A struct **value**
   is read through the inner accessor's **row-bound `RowView`** which **borrows** the
   accessor (must not outlive it). **No struct value is ever read through a null,
   closed from both ends:** a **non-nullable** 1:1 struct field returns a **plain**
@@ -94,8 +101,10 @@ these is **STOP-AND-ASK**.
   the only source-derived state a struct-sourced accessor keeps (the child buffers
   are still self-owned). Composes **recursively to any depth**. No setter / builder /
   mutation API. Emitting only one factory, reading any struct value through a null
-  (1:1, element, map value, or intermediate nested-list level), or skipping the
-  struct-child slice → STOP-AND-ASK.
+  (1:1, element, map value, or intermediate nested-list level), or reading a
+  struct child **outside** the struct's logical `[offset, offset+len)` window (in
+  C++, re-`Slice`-ing the already-windowed `field(i)`; in Rust, **not** slicing the
+  un-windowed `columns()`) → STOP-AND-ASK.
 
 - **D-RBA-8 — C++ and Rust parity from one model (oracle §8).** Both languages are
   generated from the shared `FieldInfo` / `type_mapper` model. Rust targets the

@@ -55,6 +55,17 @@ const FIXTURES: &[(&str, &str)] = &[
     ("transitive_gate", "rba.transitive"),
 ];
 
+// RBA-7 capstone (D-RBA-8). The SHARED capstone proto lives OUTSIDE this crate,
+// in integration-tests/accessor-capstone/proto/, and is the SAME schema the C++
+// gtest generates from. (stem, package, source-dir-relative-to-manifest). The
+// Rust accessor_capstone.rs test builds an arrow-rs batch from the SAME committed
+// fixture/expected JSON the C++ side reads, proving cross-language parity.
+const SHARED_FIXTURES: &[(&str, &str, &str)] = &[(
+    "accessor_capstone",
+    "rba.capstone",
+    "../accessor-capstone/proto",
+)];
+
 // The plugin emits this shared helper module (the `__rba` span/Row helpers) once
 // per protoc run. Because it carries ZERO per-file/per-message content, every
 // copy written into OUT_DIR is byte-identical, and the assembler include!s it
@@ -73,6 +84,12 @@ fn main() {
             stem = stem
         );
     }
+    // Shared (cross-crate) capstone proto + its committed fixture/expected JSON.
+    for (stem, _pkg, src) in SHARED_FIXTURES {
+        println!("cargo:rerun-if-changed={src}/{stem}.proto");
+    }
+    println!("cargo:rerun-if-changed=../accessor-capstone/fixtures/accessor_capstone_fixture.json");
+    println!("cargo:rerun-if-changed=../accessor-capstone/fixtures/accessor_capstone_expected.json");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=FLETCHER_PROTOC_PLUGIN");
     println!("cargo:rerun-if-env-changed=PROTOC");
@@ -89,6 +106,13 @@ fn main() {
     // The generated-output dir, so tests can read emitted .fletcher.rs files (the
     // transitive-gate test inspects the skip/comment path in transitive_gate).
     println!("cargo:rustc-env=FLETCHER_TEST_OUT_DIR={}", out_dir.display());
+    // The SHARED capstone fixtures dir, so accessor_capstone.rs reads the SAME
+    // committed fixture/expected JSON the C++ gtest reads (single source of truth).
+    let capstone_fixtures = manifest_dir.join("../accessor-capstone/fixtures");
+    println!(
+        "cargo:rustc-env=FLETCHER_TEST_CAPSTONE_FIXTURES={}",
+        capstone_fixtures.display()
+    );
     if let Some(wkt) = wkt_include_dir(&protoc) {
         println!("cargo:rustc-env=FLETCHER_TEST_WKT_INCLUDE={}", wkt.display());
     } else if let Ok(inc) = env::var("PROTOBUF_WKT_INCLUDE_DIR") {
@@ -104,6 +128,17 @@ fn main() {
             panic!("fixture proto missing: {}", proto_file.display());
         }
         run_plugin(&protoc, &plugin, &proto_dir, &proto_file, &out_dir);
+    }
+    // Job 1b: run the plugin on each SHARED (cross-crate) fixture. Its `-I` root
+    // is the shared proto dir (so its own imports resolve), and the WKT/fletcher
+    // option roots are added by run_plugin as usual.
+    for (stem, _pkg, src) in SHARED_FIXTURES {
+        let shared_dir = manifest_dir.join(src);
+        let proto_file = shared_dir.join(format!("{stem}.proto"));
+        if !proto_file.exists() {
+            panic!("shared fixture proto missing: {}", proto_file.display());
+        }
+        run_plugin(&protoc, &plugin, &shared_dir, &proto_file, &out_dir);
     }
 
     // Job 2: assemble fletcher_gen.rs from the generated bare-item files.
@@ -324,6 +359,19 @@ fn assemble_module_tree(out_dir: &Path) -> String {
         if !gen.exists() {
             panic!(
                 "expected generated file missing: {} (plugin did not emit it?)",
+                gen.display()
+            );
+        }
+        by_pkg.entry(pkg).or_default().push(gen);
+    }
+    // Shared (cross-crate) fixtures mount into their proto package exactly like
+    // the crate-local ones (the capstone's `rba.capstone` accessor is reached at
+    // crate::fletcher_gen::rba::capstone::CapstoneBatchAccessor).
+    for (stem, pkg, _src) in SHARED_FIXTURES {
+        let gen = out_dir.join(format!("{stem}.fletcher.rs"));
+        if !gen.exists() {
+            panic!(
+                "expected generated shared file missing: {} (plugin did not emit it?)",
                 gen.display()
             );
         }

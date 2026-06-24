@@ -1,0 +1,58 @@
+{
+  "_comment": "RBA-7 capstone ORACLE — the canonical normalized accessor readout. Both the C++ gtest and the Rust cargo test normalize what their generated accessor reads from the shared batch into THIS exact shape and assert observed == expected against this ONE committed file. Because both compare to the same oracle, observed_cpp == expected AND observed_rust == expected transitively proves observed_cpp == observed_rust (D-RBA-8). Normalization rules: scalars -> value|null; struct -> {score,name}|null; repeated scalar -> [value|null,...]; repeated struct -> [{...}|null,...]; map -> [{key,value},...] (value scalar|null or {...}|null); nested list -> [[{...},...]|null,...]. Metadata maps are emitted sorted by key; absent metadata (C++ nullptr / Rust empty-map) normalizes to {}. The _comment key is stripped before comparison.",
+  "schema_metadata": {
+    "capstone": "rba-7",
+    "owner": "accessor"
+  },
+  "field_metadata": [
+    {"role": "id"},
+    {},
+    {},
+    {"role": "samples"},
+    {},
+    {},
+    {},
+    {}
+  ],
+  "rows": [
+    {
+      "id": 1,
+      "label": "alpha",
+      "maybe_child": {"score": 11, "name": "a"},
+      "samples": [7, null, 9],
+      "children": [{"score": 21, "name": "c0"}, null],
+      "scores": [{"key": "x", "value": 10}, {"key": "y", "value": null}],
+      "child_by_key": [
+        {"key": "left", "value": {"score": 51, "name": "l"}},
+        {"key": "mid", "value": null}
+      ],
+      "nested_children": [
+        [{"score": 31, "name": "n0"}],
+        null,
+        [{"score": 32, "name": "n1"}]
+      ]
+    },
+    {
+      "id": 2,
+      "label": null,
+      "maybe_child": null,
+      "samples": [],
+      "children": [],
+      "scores": [],
+      "child_by_key": [],
+      "nested_children": []
+    },
+    {
+      "id": 3,
+      "label": "gamma",
+      "maybe_child": {"score": 13, "name": "c"},
+      "samples": [5],
+      "children": [{"score": 23, "name": "c2"}],
+      "scores": [{"key": "z", "value": 30}],
+      "child_by_key": [{"key": "right", "value": {"score": 63, "name": "r"}}],
+      "nested_children": [
+        [{"score": 33, "name": "n2"}]
+      ]
+    }
+  ]
+}
