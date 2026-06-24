@@ -711,7 +711,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 |------|-------|--------------|--------|
 | RBA-1 | Option plumbing + additive no-drift guarantee | `AccessorTest.OptGatedEmissionLeavesExistingOutputsByteIdentical` | 🟢 |
 | RBA-2 | C++ scalar accessor + positional type-check validation | `AccessorTest.ScalarColumnsReadAndValidatePositionally` | 🟢 |
-| RBA-3 | C++ generic metadata access | `AccessorTest.ExposesSchemaAndFieldMetadataGenerically` | ⚪ |
+| RBA-3 | C++ generic metadata access | `AccessorTest.ExposesSchemaAndFieldMetadataGenerically` | 🟢 |
 | RBA-4 | C++ full type parity (struct/list/map/nested) | `AccessorTest.CompositeColumnsReadColumnOriented` | ⚪ |
 | RBA-5 | Rust scalar accessor + Cargo test crate (arrow-rs) | `scalar_columns_read_and_validate_positionally` | ⚪ |
 | RBA-6 | Rust generic metadata + full type parity | `composite_and_metadata_read` | ⚪ |

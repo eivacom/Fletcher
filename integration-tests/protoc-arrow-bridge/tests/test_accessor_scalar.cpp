@@ -347,6 +347,90 @@ TEST(AccessorTest, ScalarAccessorKeepsDataAliveAfterBatchDropped) {
     CheckAllGetters(*acc);
 }
 
+// RBA-3 forcing test — generic schema/field metadata access.
+//
+// The metadata keys/values below ("schema_key_0"=>"schema_val_0",
+// "field_key_0"=>"field_val_0") are ARBITRARY, OPAQUE strings the generator
+// never references — that is the whole point: the accessor returns Arrow's
+// stored metadata objects verbatim without interpreting any key.
+//
+// Builds a batch whose schema carries that arbitrary metadata and proves the
+// generated accessor reads it back verbatim through schema_metadata() and
+// field_metadata(i)/field_metadata(name). Also proves the absent/unknown paths
+// are graceful (null, never throw/UB): absent field metadata, out-of-bounds
+// index, unknown name, and a struct-sourced accessor (no schema) -> nullptr.
+// The schema-level read does not depend on field-name matching.
+TEST(AccessorTest, ExposesSchemaAndFieldMetadataGenerically) {
+    auto cols = MakeFixtureColumns().AsVector();
+
+    // Decorate the fixture schema: arbitrary schema metadata, plus arbitrary
+    // metadata on field 0 only (every other field carries none).
+    auto base = MakeFixtureSchema();
+    std::vector<std::shared_ptr<arrow::Field>> fields = base->fields();
+    fields[0] = fields[0]->WithMetadata(
+        arrow::KeyValueMetadata::Make({"field_key_0"}, {"field_val_0"}));
+    auto schema_md = arrow::KeyValueMetadata::Make({"schema_key_0"}, {"schema_val_0"});
+    auto schema = arrow::schema(fields, schema_md);
+    auto batch = arrow::RecordBatch::Make(schema, kNumRows, cols);
+
+    auto r = ScalarRowAccessor::Make(batch);
+    ASSERT_TRUE(r.ok()) << r.status().ToString();
+    const auto& a = *r;
+
+    // Schema metadata: present, read back verbatim, independent of field names.
+    const arrow::KeyValueMetadata* sm = a.schema_metadata();
+    ASSERT_NE(sm, nullptr);
+    ASSERT_TRUE(sm->Contains("schema_key_0"));
+    EXPECT_EQ(sm->Get("schema_key_0").ValueOrDie(), "schema_val_0");
+
+    // Field metadata by index (canonical): field 0 carries the arbitrary pair.
+    const arrow::KeyValueMetadata* fm0 = a.field_metadata(0);
+    ASSERT_NE(fm0, nullptr);
+    ASSERT_TRUE(fm0->Contains("field_key_0"));
+    EXPECT_EQ(fm0->Get("field_key_0").ValueOrDie(), "field_val_0");
+
+    // Field metadata by name resolves the live Arrow field name to the same md.
+    const arrow::KeyValueMetadata* fm0_by_name = a.field_metadata("b_flag");
+    ASSERT_NE(fm0_by_name, nullptr);
+    EXPECT_EQ(fm0_by_name->Get("field_key_0").ValueOrDie(), "field_val_0");
+
+    // Absent field metadata is not an error: field 1 ("i32") carries none.
+    EXPECT_EQ(a.field_metadata(1), nullptr);
+    EXPECT_EQ(a.field_metadata("i32"), nullptr);
+
+    // Out-of-bounds index -> nullptr, no throw/UB.
+    EXPECT_EQ(a.field_metadata(-1), nullptr);
+    EXPECT_EQ(a.field_metadata(static_cast<int>(fields.size())), nullptr);
+    EXPECT_EQ(a.field_metadata(99999), nullptr);
+
+    // Unknown name -> nullptr, no throw.
+    EXPECT_EQ(a.field_metadata("no_such_field"), nullptr);
+
+    // A batch whose schema carries NO metadata -> schema_metadata() is nullptr
+    // (absent, not an error). field_metadata still works off the live fields.
+    {
+        auto plain_batch = MakeFixtureBatch();  // schema built without metadata
+        auto pr = ScalarRowAccessor::Make(plain_batch);
+        ASSERT_TRUE(pr.ok()) << pr.status().ToString();
+        EXPECT_EQ(pr->schema_metadata(), nullptr);
+        EXPECT_EQ(pr->field_metadata(0), nullptr);  // no field metadata either
+    }
+
+    // A struct-sourced accessor has no top-level schema -> schema_metadata() is
+    // nullptr, but per-field metadata is still readable off the struct fields.
+    {
+        auto struct_res = arrow::StructArray::Make(cols, fields);
+        ASSERT_TRUE(struct_res.ok()) << struct_res.status().ToString();
+        auto sa = std::static_pointer_cast<arrow::StructArray>(*struct_res);
+        auto sr = ScalarRowAccessor::Make(sa);
+        ASSERT_TRUE(sr.ok()) << sr.status().ToString();
+        EXPECT_EQ(sr->schema_metadata(), nullptr);
+        const arrow::KeyValueMetadata* sfm = sr->field_metadata(0);
+        ASSERT_NE(sfm, nullptr);
+        EXPECT_EQ(sfm->Get("field_key_0").ValueOrDie(), "field_val_0");
+    }
+}
+
 TEST(AccessorTest, ScalarAccessorFromStructArrayReadsIdentically) {
     auto cols = MakeFixtureColumns().AsVector();
     auto schema = MakeFixtureSchema();

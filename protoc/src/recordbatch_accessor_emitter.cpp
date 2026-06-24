@@ -128,6 +128,7 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
       << "#include <cstdint>\n"
       << "#include <memory>\n"
       << "#include <optional>\n"
+      << "#include <string>\n"
       << "#include <string_view>\n"
       << "#include <utility>\n"
       << "#include <vector>\n\n";
@@ -182,6 +183,55 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
 
         // num_rows.
         o << "  int64_t num_rows() const { return num_rows_; }\n\n";
+
+        // RBA-3 generic metadata getters. These return the live Arrow
+        // KeyValueMetadata objects carried by the schema/fields used to build
+        // this accessor, verbatim — no key is interpreted, filtered, generated
+        // or validated, and metadata is never a construction gate.
+        //
+        // All three return a NON-OWNING pointer valid only while this accessor
+        // is alive. Callers that need the metadata to outlive the accessor must
+        // copy the values they need.
+        o << "  // Schema-level metadata, borrowed for the accessor's lifetime.\n"
+          << "  // Returns nullptr when absent — this is NOT an error. Absent means\n"
+          << "  // either a struct-sourced accessor (no top-level arrow::Schema) or a\n"
+          << "  // RecordBatch whose schema carries no metadata. Callers MUST null-check\n"
+          << "  // before ->Contains(...)/->Get(...) rather than dereferencing.\n"
+          << "  const arrow::KeyValueMetadata* schema_metadata() const {\n"
+          << "    return schema_metadata_.get();\n"
+          << "  }\n\n";
+
+        o << "  // Canonical field-metadata getter, by positional index (aligns with\n"
+          << "  // the positional validation contract; does not depend on field names).\n"
+          << "  // Returns nullptr on out-of-bounds index, a null stored field, or a\n"
+          << "  // field that simply carries no metadata — none of which is an error.\n"
+          << "  const arrow::KeyValueMetadata* field_metadata(int i) const {\n"
+          << "    if (i < 0 || static_cast<std::size_t>(i) >= fields_.size()) return nullptr;\n"
+          << "    if (fields_[i] == nullptr) return nullptr;\n"
+          << "    // arrow::Field::metadata() returns a *copy* of the field's member\n"
+          << "    // shared_ptr (by value). The KeyValueMetadata it points to survives\n"
+          << "    // this full expression only because fields_[i] (a shared_ptr<Field>\n"
+          << "    // kept by this accessor) co-owns it via the field's own member — NOT\n"
+          << "    // because the returned temporary survives. Do not 'simplify' by\n"
+          << "    // storing the temporary's .get() past end-of-expression: that would\n"
+          << "    // dangle.\n"
+          << "    return fields_[i]->metadata().get();\n"
+          << "  }\n\n";
+
+        o << "  // Convenience field-metadata getter, by LIVE Arrow field name. This is\n"
+          << "  // a best-effort linear scan over the stored fields: because RBA\n"
+          << "  // construction is name-tolerant, the runtime names may differ from the\n"
+          << "  // generated proto names. Code that must be robust to name drift should\n"
+          << "  // use field_metadata(int). Unknown name -> nullptr (not an error); on\n"
+          << "  // duplicate live names the first match in field order wins.\n"
+          << "  const arrow::KeyValueMetadata* field_metadata(const std::string& name) const {\n"
+          << "    for (const auto& field : fields_) {\n"
+          << "      // See field_metadata(int): the returned pointer is kept alive by\n"
+          << "      // 'field' (co-owned by fields_), not by the by-value metadata copy.\n"
+          << "      if (field != nullptr && field->name() == name) return field->metadata().get();\n"
+          << "    }\n"
+          << "    return nullptr;\n"
+          << "  }\n\n";
 
         // Lifetime note for callers (string/binary getters).
         o << "  // NOTE: utf8/binary getters return std::string_view that borrows the\n"
