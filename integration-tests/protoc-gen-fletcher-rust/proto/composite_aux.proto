@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6a same-package second file (file B', package `rba.main`). Shares the
+// package `rba.main` with composite_main.proto so the build.rs assembler
+// co-mounts BOTH files into the single `pub mod rba::main` via per-package
+// `include!` (D-RBA-10 same-package case). Per Step-2 review R1, this file ALSO
+// emits a *composite* accessor (a REPEATED_SCALAR getter) so the fully-qualified
+// `crate::fletcher_gen::__rba::ScalarSpan` helper paths in BOTH co-mounted files
+// are exercised and prove there is NO E0252/E0428 collision (no per-file `use`,
+// no per-file helper definitions).
+syntax = "proto3";
+package rba.main;
+
+message AuxSamples {
+    // Repeated scalar (non-nullable list): list<int64> -> ScalarSpan. This is the
+    // composite getter that, when co-mounted with composite_main.proto into one
+    // module, must not collide with that file's __rba references.
+    repeated int64 samples = 1;
+}

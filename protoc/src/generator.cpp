@@ -3020,6 +3020,45 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(out_name));
         if (!WriteToStream(stream.get(), content, error)) return false;
+        // NB: the shared `__rba.fletcher.rs` span/Row helper module is NOT emitted
+        // here. Generate() runs once per input .proto, so emitting __rba here would
+        // write it N times in a single multi-file protoc invocation
+        // (`protoc a.proto b.proto …`) and protoc rejects the duplicate filename.
+        // It is emitted EXACTLY ONCE from GenerateAll() instead (code-review P1).
+    }
+
+    return true;
+}
+
+bool ArrowRowGenerator::GenerateAll(
+    const std::vector<const google::protobuf::FileDescriptor*>& files,
+    const std::string& parameter, google::protobuf::compiler::GeneratorContext* context,
+    std::string* error) const {
+    // Per-file artifacts: identical to the default GenerateAll loop. Each file's
+    // outputs (C++ header / view / ts / ipc / accessor / rust accessor) are
+    // emitted by Generate().
+    for (const auto* file : files) {
+        if (!Generate(file, parameter, context, error)) return false;
+    }
+
+    // The shared `__rba` span/Row helper module is emitted EXACTLY ONCE per protoc
+    // invocation, regardless of how many .proto files were passed (code-review
+    // P1). It carries zero per-file/per-message content; the build.rs assembler
+    // include!s it once directly under crate::fletcher_gen::__rba (N1). Only emit
+    // when the `rust` opt is set.
+    bool emit_rust = false;
+    {
+        std::istringstream ss(parameter);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            if (token == "rust") emit_rust = true;
+        }
+    }
+    if (emit_rust) {
+        const std::string rba_content = EmitRustRbaHelpers();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> rba_stream(
+            context->Open("__rba.fletcher.rs"));
+        if (!WriteToStream(rba_stream.get(), rba_content, error)) return false;
     }
 
     return true;

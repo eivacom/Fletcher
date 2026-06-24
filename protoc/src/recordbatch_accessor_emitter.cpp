@@ -1169,6 +1169,7 @@ void EmitRustDowncastAssoc(std::ostringstream& o) {
       << "    /// Uses arrow-rs's offset-preserving, buffer-sharing `downcast_array`\n"
       << "    /// (NOT a re-Arc'd `downcast_ref` clone), so the cached handle keeps the\n"
       << "    /// column's offset/len (D-RBA-3 / D-RBA-7).\n"
+      << "    #[allow(dead_code)] // unused for accessors with no scalar / repeated-scalar leaf\n"
       << "    fn downcast_array<\n"
       << "        T: From<arrow::array::ArrayData> + arrow::array::Array + 'static,\n"
       << "    >(\n"
@@ -1200,6 +1201,450 @@ const char* FieldKindName(FieldKind k) {
     return "UNKNOWN";
 }
 
+// ---------------------------------------------------------------------------
+// RBA-6a composite support (STRUCT / REPEATED_SCALAR / REPEATED_STRUCT).
+//
+// MAP and NESTED_LIST remain fail-fast (RBA-6b). The Rust accessor composes
+// nested-message accessors recursively, resolving cross-PACKAGE nested messages
+// through the D-RBA-10 package tree (crate::fletcher_gen::<pkg-path>::<Cls>).
+// ---------------------------------------------------------------------------
+
+// True if a field kind is supported by the RBA-6a Rust accessor. Scalars must be
+// a supported scalar leaf; STRUCT / REPEATED_STRUCT are always shape-validatable;
+// REPEATED_SCALAR needs a supported element leaf. MAP / NESTED_LIST are RBA-6b.
+bool RustFieldSupported(const FieldInfo& fi) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            RustScalarInfo tmp;
+            return RustScalarFor(fi.mapping.scalar.arrow_type_expr, &tmp);
+        }
+        case FieldKind::STRUCT:
+        case FieldKind::REPEATED_STRUCT:
+            return true;
+        case FieldKind::REPEATED_SCALAR: {
+            RustScalarInfo tmp;
+            return RustScalarFor(fi.mapping.element.arrow_type_expr, &tmp);
+        }
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            return false;  // RBA-6b
+    }
+    return false;
+}
+
+// The fully-qualified Rust accessor path for a nested message `msg`, as seen from
+// `context_file` (D-RBA-10). Same proto package -> the bare local
+// `<Class>Accessor` (the assembler co-mounts same-package files into one module).
+// A different package -> crate::fletcher_gen::<pkg-path>::<Class>Accessor, with
+// each package segment sanitized (keyword -> r#seg). A NO-package message in a
+// different file resolves DIRECTLY under fletcher_gen as
+// crate::fletcher_gen::<Class>Accessor (no empty segment, no double `::`). A
+// non-raw-able keyword segment (crate/self/Self/super) is a generation error ->
+// empty string, which the caller turns into a loud compile_error!.
+std::string RustAccessorPath(const google::protobuf::Descriptor* msg,
+                             const google::protobuf::FileDescriptor* context_file) {
+    const std::string cls = ClassName(msg) + "Accessor";
+    if (msg->file()->package() == context_file->package()) return cls;  // same module
+    const std::string& pkg = msg->file()->package();
+    // No-package message (different file, empty proto package): mount directly
+    // under fletcher_gen — DO NOT emit an empty segment (that yields `::::`).
+    if (pkg.empty()) return "crate::fletcher_gen::" + cls;
+    std::string path = "crate::fletcher_gen::";
+    bool first = true;
+    std::string seg;
+    auto flush = [&](const std::string& s) -> bool {
+        if (IsNonRawRustKeyword(s)) return false;  // generation error
+        if (!first) path += "::";
+        path += RustIdent(s);
+        first = false;
+        return true;
+    };
+    for (char c : pkg) {
+        if (c == '.') {
+            if (!flush(seg)) return std::string();
+            seg.clear();
+        } else {
+            seg += c;
+        }
+    }
+    if (!seg.empty() && !flush(seg)) return std::string();
+    path += "::" + cls;
+    return path;
+}
+
+// The Descriptor behind a composite field's nested message (STRUCT /
+// REPEATED_STRUCT). nullptr if the field is not message-composite.
+const google::protobuf::Descriptor* CompositeMsg(const FieldInfo& fi) {
+    return fi.mapping.nested_msg;
+}
+
+// Rust storage-member names (kept stable + collision-free per field).
+std::string RustStructAccMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_acc"; }
+std::string RustStructValidityMember(const FieldInfo& fi) {
+    return RustIdent(fi.name) + "_struct";
+}
+std::string RustListMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_list"; }
+std::string RustListValuesMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_values"; }
+std::string RustListInnerMember(const FieldInfo& fi) { return RustIdent(fi.name) + "_inner"; }
+
+// The ScalarSpan<&'a TArray> type expression for a repeated-scalar leaf. The span
+// holds a borrowed reference to the cached typed array (e.g. &Float64Array).
+std::string RustScalarSpanType(const RustScalarInfo& info) {
+    return "crate::fletcher_gen::__rba::ScalarSpan<&arrow::array::" + info.array_type + ">";
+}
+
+// Emit one field's private storage members (Rust).
+void EmitRustFieldStorage(std::ostringstream& o, const FieldInfo& fi,
+                          const google::protobuf::FileDescriptor* file) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
+            o << "    " << RustIdent(fi.name) << ": std::sync::Arc<arrow::array::"
+              << info.array_type << ">,\n";
+            break;
+        }
+        case FieldKind::REPEATED_SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.element.arrow_type_expr, &info);
+            o << "    " << RustListMember(fi) << ": std::sync::Arc<arrow::array::ListArray>,\n"
+              << "    " << RustListValuesMember(fi) << ": std::sync::Arc<arrow::array::"
+              << info.array_type << ">,\n";
+            break;
+        }
+        case FieldKind::STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            // Cache the struct column (row-level validity for the nullable getter)
+            // AND the composed inner accessor (owns the sliced child columns). The
+            // validity handle is only read by the nullable getter, so suppress the
+            // dead-code warning for a non-nullable struct field.
+            o << "    #[allow(dead_code)]\n"
+              << "    " << RustStructValidityMember(fi)
+              << ": std::sync::Arc<arrow::array::StructArray>,\n"
+              << "    " << RustStructAccMember(fi) << ": " << path << ",\n";
+            break;
+        }
+        case FieldKind::REPEATED_STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            // Cache the list + the inner accessor built over the FLATTENED values
+            // StructArray (offset-0 origin); per-row windows are addressed via
+            // value_offsets()[row] + j by the StructSpan getter.
+            o << "    " << RustListMember(fi) << ": std::sync::Arc<arrow::array::ListArray>,\n"
+              << "    " << RustListInnerMember(fi) << ": " << path << ",\n";
+            break;
+        }
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            break;  // RBA-6b — unreachable (fail-fast gates these out)
+    }
+}
+
+// Emit one field's validate + cache block in from_columns. Produces local
+// bindings named after the storage members (moved into Self by EmitRustFieldInit).
+void EmitRustFieldFromColumns(std::ostringstream& o, const FieldInfo& fi, std::size_t i,
+                              const std::string& cls,
+                              const google::protobuf::FileDescriptor* file) {
+    const std::string where = cls + " column " + std::to_string(i) + " '" + fi.name + "'";
+
+    // Non-nullable proto fields must hold no actual nulls (D-RBA-4). For composite
+    // fields this recurses: the inner accessor gates its own non-nullable children.
+    auto null_gate = [&](const char* arr_expr) {
+        if (fi.mapping.nullable) return;
+        o << "        if arrow::array::Array::null_count(" << arr_expr << ") != 0 {\n"
+          << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+          << "                \"" << where << ": non-nullable, found {} nulls\",\n"
+          << "                arrow::array::Array::null_count(" << arr_expr << ")\n"
+          << "            )));\n"
+          << "        }\n";
+    };
+
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            o << "        let " << RustIdent(fi.name)
+              << " = Self::downcast_array::<arrow::array::" << info.array_type << ">(\n"
+              << "            &cols[" << i << "],\n"
+              << "            \"" << cls << "." << fi.name << "\",\n"
+              << "            &" << info.data_type << ",\n"
+              << "        )?;\n";
+            break;
+        }
+        case FieldKind::REPEATED_SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.element.arrow_type_expr, &info);
+            // Shape gate: List variant (NOT a whole-composite DataType compare —
+            // that would gate on child names/nullable flags).
+            o << "        let " << RustListMember(fi) << " = {\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&cols[" << i << "]),\n"
+              << "                arrow::datatypes::DataType::List(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << ": expected List, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&cols[" << i << "])\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            std::sync::Arc::new(arrow::array::downcast_array::"
+              << "<arrow::array::ListArray>(cols[" << i << "].as_ref()))\n"
+              << "        };\n";
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            // Leaf values: exact scalar DataType gate (D-RBA-4) + offset-preserving
+            // typed cache.
+            o << "        let " << RustListValuesMember(fi) << " = Self::downcast_array::"
+              << "<arrow::array::" << info.array_type << ">(\n"
+              << "            &" << RustListMember(fi) << ".values().clone(),\n"
+              << "            \"" << cls << "." << fi.name << " values\",\n"
+              << "            &" << info.data_type << ",\n"
+              << "        )?;\n";
+            break;
+        }
+        case FieldKind::STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            o << "        let " << RustStructValidityMember(fi) << " = {\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&cols[" << i << "]),\n"
+              << "                arrow::datatypes::DataType::Struct(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << ": expected Struct, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&cols[" << i << "])\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            std::sync::Arc::new(arrow::array::downcast_array::"
+              << "<arrow::array::StructArray>(cols[" << i << "].as_ref()))\n"
+              << "        };\n";
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            // Recurse: from_struct validates the struct's children positionally and
+            // recurses the non-null gate (D-RBA-4).
+            o << "        let " << RustStructAccMember(fi) << " = " << path << "::from_struct(&"
+              << RustStructValidityMember(fi) << ")?;\n";
+            break;
+        }
+        case FieldKind::REPEATED_STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            o << "        let " << RustListMember(fi) << " = {\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&cols[" << i << "]),\n"
+              << "                arrow::datatypes::DataType::List(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << ": expected List, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&cols[" << i << "])\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            std::sync::Arc::new(arrow::array::downcast_array::"
+              << "<arrow::array::ListArray>(cols[" << i << "].as_ref()))\n"
+              << "        };\n";
+            null_gate(("&cols[" + std::to_string(i) + "]").c_str());
+            // The inner accessor is built over the FULL flattened values
+            // StructArray (offset-0 origin). The values child must be a Struct.
+            o << "        let " << RustListInnerMember(fi) << " = {\n"
+              << "            let values = " << RustListMember(fi) << ".values().clone();\n"
+              << "            if !matches!(\n"
+              << "                arrow::array::Array::data_type(&values),\n"
+              << "                arrow::datatypes::DataType::Struct(_)\n"
+              << "            ) {\n"
+              << "                return Err(arrow::error::ArrowError::SchemaError(format!(\n"
+              << "                    \"" << where << " values: expected Struct, got {:?}\",\n"
+              << "                    arrow::array::Array::data_type(&values)\n"
+              << "                )));\n"
+              << "            }\n"
+              << "            let structs = arrow::array::downcast_array::"
+              << "<arrow::array::StructArray>(values.as_ref());\n"
+              << "            " << path << "::from_struct(&structs)?\n"
+              << "        };\n";
+            break;
+        }
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            break;  // RBA-6b
+    }
+}
+
+// Emit the Self { ... } field initializers for one field (after from_columns has
+// bound locals of the same names).
+void EmitRustFieldInit(std::ostringstream& o, const FieldInfo& fi) {
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR:
+            o << "            " << RustIdent(fi.name) << ",\n";
+            break;
+        case FieldKind::REPEATED_SCALAR:
+            o << "            " << RustListMember(fi) << ",\n"
+              << "            " << RustListValuesMember(fi) << ",\n";
+            break;
+        case FieldKind::STRUCT:
+            o << "            " << RustStructValidityMember(fi) << ",\n"
+              << "            " << RustStructAccMember(fi) << ",\n";
+            break;
+        case FieldKind::REPEATED_STRUCT:
+            o << "            " << RustListMember(fi) << ",\n"
+              << "            " << RustListInnerMember(fi) << ",\n";
+            break;
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            break;  // RBA-6b
+    }
+}
+
+// Emit the public getter for one field.
+void EmitRustFieldGetter(std::ostringstream& o, const FieldInfo& fi,
+                         const google::protobuf::FileDescriptor* file) {
+    const std::string member = RustIdent(fi.name);
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<" << info.value_type
+                  << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << member << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(self." << member << ".value(row))\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> " << info.value_type
+                  << " {\n"
+                  << "        self." << member << ".value(row)\n"
+                  << "    }\n";
+            }
+            break;
+        }
+        case FieldKind::REPEATED_SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.element.arrow_type_expr, &info);
+            const std::string span = RustScalarSpanType(info);
+            // Turbofish form for the call expression (`Type::<Args>::new(...)`).
+            const std::string span_call =
+                "crate::fletcher_gen::__rba::ScalarSpan::<&arrow::array::" + info.array_type + ">";
+            const std::string body =
+                span_call + "::new(self." + RustListValuesMember(fi) + ".as_ref(), self." +
+                RustListMember(fi) + ".value_offsets()[row] as usize, self." +
+                RustListMember(fi) + ".value_length(row) as usize)";
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << RustListMember(fi)
+                  << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(" << body << ")\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> " << span << " {\n"
+                  << "        " << body << "\n"
+                  << "    }\n";
+            }
+            break;
+        }
+        case FieldKind::STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            const std::string row_t = path;  // <Path>::Row via RowAccess
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member
+                  << "(&self, row: usize) -> Option<<" << path
+                  << " as crate::fletcher_gen::__rba::RowAccess>::Row<'_>> {\n"
+                  << "        if arrow::array::Array::is_null(self." << RustStructValidityMember(fi)
+                  << ".as_ref(), row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(crate::fletcher_gen::__rba::RowAccess::row(&self."
+                  << RustStructAccMember(fi) << ", row))\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> <" << path
+                  << " as crate::fletcher_gen::__rba::RowAccess>::Row<'_> {\n"
+                  << "        crate::fletcher_gen::__rba::RowAccess::row(&self."
+                  << RustStructAccMember(fi) << ", row)\n"
+                  << "    }\n";
+            }
+            (void)row_t;
+            break;
+        }
+        case FieldKind::REPEATED_STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            const std::string span = "crate::fletcher_gen::__rba::StructSpan<'_, " + path + ">";
+            const std::string body =
+                "crate::fletcher_gen::__rba::StructSpan::new(&self." + RustListInnerMember(fi) +
+                ", self." + RustListMember(fi) + ".value_offsets()[row] as usize, self." +
+                RustListMember(fi) + ".value_length(row) as usize)";
+            if (fi.mapping.nullable) {
+                o << "    pub fn " << member << "(&self, row: usize) -> Option<" << span << "> {\n"
+                  << "        if arrow::array::Array::is_null(&*self." << RustListMember(fi)
+                  << ", row) {\n"
+                  << "            None\n"
+                  << "        } else {\n"
+                  << "            Some(" << body << ")\n"
+                  << "        }\n"
+                  << "    }\n";
+            } else {
+                o << "    pub fn " << member << "(&self, row: usize) -> " << span << " {\n"
+                  << "        " << body << "\n"
+                  << "    }\n";
+            }
+            break;
+        }
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            break;  // RBA-6b
+    }
+}
+
+// Emit the Row forwarder method for one field (no row argument; forwards to the
+// parent accessor getter at this->row).
+void EmitRustRowForward(std::ostringstream& o, const FieldInfo& fi,
+                        const google::protobuf::FileDescriptor* file) {
+    const std::string member = RustIdent(fi.name);
+    switch (fi.mapping.kind) {
+        case FieldKind::SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info);
+            std::string ret = fi.mapping.nullable ? ("Option<" + info.value_type + ">")
+                                                  : info.value_type;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
+        case FieldKind::REPEATED_SCALAR: {
+            RustScalarInfo info;
+            RustScalarFor(fi.mapping.element.arrow_type_expr, &info);
+            std::string span = RustScalarSpanType(info);
+            std::string ret = fi.mapping.nullable ? ("Option<" + span + ">") : span;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
+        case FieldKind::STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            std::string row = "<" + path +
+                              " as crate::fletcher_gen::__rba::RowAccess>::Row<'_>";
+            std::string ret = fi.mapping.nullable ? ("Option<" + row + ">") : row;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
+        case FieldKind::REPEATED_STRUCT: {
+            const std::string path = RustAccessorPath(fi.mapping.nested_msg, file);
+            std::string span = "crate::fletcher_gen::__rba::StructSpan<'_, " + path + ">";
+            std::string ret = fi.mapping.nullable ? ("Option<" + span + ">") : span;
+            o << "    pub fn " << member << "(&self) -> " << ret << " {\n"
+              << "        self.a." << member << "(self.row)\n"
+              << "    }\n";
+            break;
+        }
+        case FieldKind::MAP:
+        case FieldKind::NESTED_LIST:
+            break;  // RBA-6b
+    }
+}
+
 }  // namespace
 
 std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
@@ -1214,17 +1659,20 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
       << "// compiled+validated by the integration-tests/protoc-gen-fletcher-rust\n"
       << "// cargo crate (the authoritative Rust well-formedness check).\n";
 
-    // First pass: plan each message. A message whose fields are all supported
-    // scalars gets a real accessor; any composite (or unmapped scalar) field
-    // trips the fail-fast (RBA-6 adds composites).
+    // First pass: plan each message. A message whose fields are ALL supported by
+    // the RBA-6a accessor (scalars, STRUCT, REPEATED_SCALAR, REPEATED_STRUCT)
+    // gets a real accessor; the first MAP / NESTED_LIST / unmapped-scalar field
+    // trips the fail-fast (RBA-6b adds map + nested-list).
     struct MsgPlan {
         const google::protobuf::Descriptor* msg = nullptr;
         std::string cls;
         std::vector<FieldInfo> fields;
-        std::vector<RustScalarInfo> infos;  // 1:1 with fields when all_scalar
-        bool all_scalar = false;
-        std::string bad_name;  // first composite/unsupported field (fail-fast)
+        bool all_supported = false;
+        std::string bad_name;  // first unsupported field (fail-fast)
         std::string bad_kind;
+        // First message-composite field that resolves to a non-raw-able keyword
+        // package segment (generation error). Empty when none.
+        std::string bad_pkg_field;
     };
 
     std::vector<MsgPlan> plans;
@@ -1238,22 +1686,23 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
         std::string skipped;
         plan.fields = GatherFields(msg, &skipped);
 
-        plan.all_scalar = true;
+        plan.all_supported = true;
         for (const auto& fi : plan.fields) {
-            if (fi.mapping.kind != FieldKind::SCALAR) {
-                plan.all_scalar = false;
+            if (!RustFieldSupported(fi)) {
+                plan.all_supported = false;
                 plan.bad_name = fi.name;
-                plan.bad_kind = FieldKindName(fi.mapping.kind);
+                plan.bad_kind = (fi.mapping.kind == FieldKind::SCALAR ||
+                                 fi.mapping.kind == FieldKind::REPEATED_SCALAR)
+                                    ? "unsupported scalar leaf"
+                                    : FieldKindName(fi.mapping.kind);
                 break;
             }
-            RustScalarInfo info;
-            if (!RustScalarFor(fi.mapping.scalar.arrow_type_expr, &info)) {
-                plan.all_scalar = false;
-                plan.bad_name = fi.name;
-                plan.bad_kind = "unsupported scalar";
-                break;
+            // Composite fields that resolve to a cross-package accessor must have
+            // a representable package path; a non-raw-able keyword segment is a
+            // generation error (loud compile_error!, no half-built accessor).
+            if (const auto* nm = CompositeMsg(fi)) {
+                if (RustAccessorPath(nm, file).empty()) plan.bad_pkg_field = fi.name;
             }
-            plan.infos.push_back(info);
         }
         plans.push_back(std::move(plan));
     }
@@ -1262,19 +1711,22 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
     // emitted. The build.rs assembler co-mounts every file of one proto package
     // into a SINGLE module (D-RBA-10 same-package case), so any file-level `use`
     // or free `fn` would collide across same-package files. Instead each accessor
-    // is fully self-contained: it references arrow/std types by fully-qualified
-    // path and carries its `downcast_array` cast helper as a PRIVATE ASSOCIATED
-    // function in its own `impl` (unique per struct, never colliding).
+    // is fully self-contained: it references arrow/std types AND the shared
+    // crate::fletcher_gen::__rba helpers by fully-qualified path, and carries its
+    // `downcast_array` cast helper as a PRIVATE ASSOCIATED function in its own
+    // `impl` (unique per struct, never colliding).
 
     for (const auto& plan : plans) {
         const std::string& cls = plan.cls;
         const std::string acc = cls + "Accessor";
 
-        if (!plan.all_scalar) {
-            // Composite fail-fast (§2.6): a clear generation-time comment in
-            // place of the struct — no partial accessor (D-RBA-6 no silent gap).
-            o << "// fletcher: " << cls << " has composite field '" << plan.bad_name << "' ("
-              << plan.bad_kind << ") — Rust accessor support lands in RBA-6.\n\n";
+        if (!plan.all_supported) {
+            // Fail-fast (§2.6): a clear generation-time comment in place of the
+            // struct — no partial accessor (D-RBA-6 no silent gap). MAP and
+            // NESTED_LIST land in RBA-6b.
+            o << "// fletcher: " << cls << " has field '" << plan.bad_name << "' ("
+              << plan.bad_kind << ") not yet supported by the Rust accessor"
+              << " (MAP / NESTED_LIST land in RBA-6b).\n\n";
             continue;
         }
 
@@ -1301,20 +1753,33 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
             continue;
         }
 
+        // D-RBA-10 package-segment rule: a cross-package nested message whose
+        // package path contains a non-raw-able keyword segment cannot be named.
+        if (!plan.bad_pkg_field.empty()) {
+            o << "// fletcher: " << cls << " composite field '" << plan.bad_pkg_field
+              << "' references a message in a package whose path contains a Rust\n"
+              << "// keyword segment that cannot be an identifier; rename the proto package.\n"
+              << "compile_error!(\"" << cls << ": composite field '" << plan.bad_pkg_field
+              << "' references a cross-package message whose package path cannot be a "
+              << "Rust module path; rename the proto package segment.\");\n\n";
+            continue;
+        }
+
         const std::size_t n = plan.fields.size();
 
+        // -- struct definition + storage -------------------------------------
         o << "/// RecordBatch accessor for " << plan.msg->name() << ".\n"
           << "/// Validation is positional + type-only (names and the nullable flag are\n"
           << "/// tolerated); proto-non-nullable columns additionally require null_count()==0.\n"
           << "pub struct " << acc << " {\n"
           << "    num_rows: usize,\n"
-          << "    #[allow(dead_code)] // retained for RBA-6 *_metadata()\n"
           << "    fields: arrow::datatypes::Fields,\n"
-          << "    #[allow(dead_code)] // retained for RBA-6 *_metadata()\n"
-          << "    metadata: std::collections::HashMap<String, String>,\n";
+          << "    metadata: std::collections::HashMap<String, String>,\n"
+          << "    // Set only by from_struct: the sliced (0-based-window) StructArray whose\n"
+          << "    // validity backs is_null(row). None for a RecordBatch source (D-RBA-7).\n"
+          << "    struct_validity: Option<std::sync::Arc<arrow::array::StructArray>>,\n";
         for (std::size_t i = 0; i < n; ++i) {
-            o << "    " << RustIdent(plan.fields[i].name) << ": std::sync::Arc<arrow::array::"
-              << plan.infos[i].array_type << ">,\n";
+            EmitRustFieldStorage(o, plan.fields[i], file);
         }
         o << "}\n\n";
 
@@ -1322,6 +1787,16 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
 
         // Private cast helper (associated fn — unique per struct, no collisions).
         EmitRustDowncastAssoc(o);
+
+        // empty_metadata() — a process-wide empty map for absent field metadata
+        // (total, never panics; mirrors C++ field_metadata nullptr-on-absent).
+        o << "    /// A shared empty metadata map for absent/out-of-bounds field metadata\n"
+          << "    /// (D-RBA-5: absent metadata is NOT an error). OnceLock-initialised.\n"
+          << "    fn empty_metadata() -> &'static std::collections::HashMap<String, String> {\n"
+          << "        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, String>> =\n"
+          << "            std::sync::OnceLock::new();\n"
+          << "        EMPTY.get_or_init(std::collections::HashMap::new)\n"
+          << "    }\n\n";
 
         // try_new(RecordBatch)
         o << "    /// Construct from a `RecordBatch` (top-level factory).\n"
@@ -1334,6 +1809,7 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
           << "            batch.columns().to_vec(),\n"
           << "            s.fields().clone(),\n"
           << "            s.metadata().clone(),\n"
+          << "            None,\n"
           << "        )\n"
           << "    }\n\n";
 
@@ -1342,7 +1818,9 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
           << "    /// child to the struct's [offset, offset+len) window: arrow-rs\n"
           << "    /// StructArray::columns() are NOT pre-rebased by the struct's logical\n"
           << "    /// offset (the OPPOSITE of C++ field(i)), so a sliced struct would\n"
-          << "    /// otherwise misalign every getter (D-RBA-7, §2.4).\n"
+          << "    /// otherwise misalign every getter (D-RBA-7, §2.4). The retained\n"
+          << "    /// struct_validity is the SLICED struct, so its is_null(row) shares the\n"
+          << "    /// same 0-based origin as the sliced children (R4).\n"
           << "    pub fn from_struct(\n"
           << "        s: &arrow::array::StructArray,\n"
           << "    ) -> Result<Self, arrow::error::ArrowError> {\n"
@@ -1362,8 +1840,20 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
           << "            .iter()\n"
           << "            .map(|c| arrow::array::Array::slice(c, off, len))\n"
           << "            .collect();\n"
+          << "        // Retain the SLICED struct for is_null(row): a windowed validity\n"
+          << "        // handle sharing the 0-based origin of the sliced children (R4).\n"
+          << "        let sliced = arrow::array::Array::slice(s, off, len);\n"
+          << "        let validity = arrow::array::downcast_array::<arrow::array::StructArray>(\n"
+          << "            sliced.as_ref(),\n"
+          << "        );\n"
           << "        // A StructArray carries no schema-level metadata.\n"
-          << "        Self::from_columns(len, cols, fields, std::collections::HashMap::new())\n"
+          << "        Self::from_columns(\n"
+          << "            len,\n"
+          << "            cols,\n"
+          << "            fields,\n"
+          << "            std::collections::HashMap::new(),\n"
+          << "            Some(std::sync::Arc::new(validity)),\n"
+          << "        )\n"
           << "    }\n\n";
 
         // from_columns
@@ -1374,6 +1864,7 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
           << "        cols: Vec<arrow::array::ArrayRef>,\n"
           << "        fields: arrow::datatypes::Fields,\n"
           << "        metadata: std::collections::HashMap<String, String>,\n"
+          << "        struct_validity: Option<std::sync::Arc<arrow::array::StructArray>>,\n"
           << "    ) -> Result<Self, arrow::error::ArrowError> {\n"
           << "        if cols.len() != " << n << " {\n"
           << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
@@ -1382,40 +1873,18 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
           << "            )));\n"
           << "        }\n";
 
-        // null_count gate for proto-non-nullable fields. `use arrow::array::Array`
-        // is avoided; `null_count()` / `is_null()` are inherent or trait methods —
-        // the trait `arrow::array::Array` must be in scope for trait methods, so we
-        // call them through a fully-qualified path where needed. `null_count()` is
-        // available on `&dyn Array` via the ArrayRef Deref, callable directly.
+        // Per-column validate + cache (type gate, non-null gate, recurse).
         for (std::size_t i = 0; i < n; ++i) {
-            if (plan.fields[i].mapping.nullable) continue;
-            o << "        // '" << plan.fields[i].name
-              << "' is proto-non-nullable: it must hold no actual nulls (D-RBA-4).\n"
-              << "        if arrow::array::Array::null_count(&cols[" << i << "]) != 0 {\n"
-              << "            return Err(arrow::error::ArrowError::SchemaError(format!(\n"
-              << "                \"" << cls << " column " << i << " '" << plan.fields[i].name
-              << "': non-nullable, found {} nulls\",\n"
-              << "                arrow::array::Array::null_count(&cols[" << i << "])\n"
-              << "            )));\n"
-              << "        }\n";
-        }
-
-        // Per-column type-gated cast (cast only AFTER the type is checked).
-        for (std::size_t i = 0; i < n; ++i) {
-            o << "        let " << RustIdent(plan.fields[i].name)
-              << " = Self::downcast_array::<arrow::array::" << plan.infos[i].array_type << ">(\n"
-              << "            &cols[" << i << "],\n"
-              << "            \"" << cls << "." << plan.fields[i].name << "\",\n"
-              << "            &" << plan.infos[i].data_type << ",\n"
-              << "        )?;\n";
+            EmitRustFieldFromColumns(o, plan.fields[i], i, cls, file);
         }
 
         o << "        Ok(Self {\n"
           << "            num_rows,\n"
           << "            fields,\n"
-          << "            metadata,\n";
+          << "            metadata,\n"
+          << "            struct_validity,\n";
         for (std::size_t i = 0; i < n; ++i) {
-            o << "            " << RustIdent(plan.fields[i].name) << ",\n";
+            EmitRustFieldInit(o, plan.fields[i]);
         }
         o << "        })\n"
           << "    }\n\n";
@@ -1423,38 +1892,148 @@ std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file) {
         // num_rows
         o << "    pub fn num_rows(&self) -> usize {\n"
           << "        self.num_rows\n"
+          << "    }\n\n";
+
+        // Metadata getters (RBA-3 parity; generic, absent -> empty, D-RBA-5).
+        o << "    /// Schema-level metadata, borrowed for the accessor's lifetime. Absent\n"
+          << "    /// metadata is an EMPTY map, never an error (D-RBA-5). Struct-sourced\n"
+          << "    /// accessors always return empty (a StructArray has no schema metadata).\n"
+          << "    pub fn schema_metadata(&self) -> &std::collections::HashMap<String, String> {\n"
+          << "        &self.metadata\n"
+          << "    }\n\n";
+
+        o << "    /// Field metadata by positional index (aligns with positional\n"
+          << "    /// validation; does not depend on field names). Out-of-bounds or absent\n"
+          << "    /// metadata -> an empty map, never a panic (D-RBA-5).\n"
+          << "    pub fn field_metadata(&self, i: usize) -> &std::collections::HashMap<String, String> {\n"
+          << "        match self.fields.get(i) {\n"
+          << "            Some(f) => f.metadata(),\n"
+          << "            None => Self::empty_metadata(),\n"
+          << "        }\n"
           << "    }\n";
 
-        // Getters: non-null scalar -> value; nullable -> Option; utf8 -> &str,
-        // binary -> &[u8] (borrowed from the cached Arc, tied to &self). `value`
-        // is an inherent method on the concrete typed array (reached via Deref on
-        // the cached Arc<T>); `is_null` is a trait method, called fully-qualified
-        // through `arrow::array::Array` so no `use` is needed.
+        // Field getters (scalar / struct / repeated-scalar / repeated-struct).
         for (std::size_t i = 0; i < n; ++i) {
-            const FieldInfo& fi = plan.fields[i];
-            const RustScalarInfo& info = plan.infos[i];
-            const std::string member = RustIdent(fi.name);
             o << "\n";
-            if (fi.mapping.nullable) {
-                o << "    pub fn " << RustIdent(fi.name) << "(&self, row: usize) -> Option<"
-                  << info.value_type << "> {\n"
-                  << "        if arrow::array::Array::is_null(&*self." << member << ", row) {\n"
-                  << "            None\n"
-                  << "        } else {\n"
-                  << "            Some(self." << member << ".value(row))\n"
-                  << "        }\n"
-                  << "    }\n";
-            } else {
-                o << "    pub fn " << RustIdent(fi.name) << "(&self, row: usize) -> "
-                  << info.value_type << " {\n"
-                  << "        self." << member << ".value(row)\n"
-                  << "    }\n";
-            }
+            EmitRustFieldGetter(o, plan.fields[i], file);
         }
 
         o << "}\n\n";
+
+        // Row forwarder + RowAccess impl (composability + struct null probing).
+        o << "/// Borrowed per-row view over " << acc << ": a forwarder {accessor, row}.\n"
+          << "/// Valid only while the accessor is alive. Struct getters compose into the\n"
+          << "/// inner accessor's Row.\n"
+          << "pub struct " << cls << "Row<'a> {\n"
+          << "    a: &'a " << acc << ",\n"
+          << "    row: usize,\n"
+          << "}\n\n";
+
+        o << "impl<'a> " << cls << "Row<'a> {\n";
+        for (std::size_t i = 0; i < n; ++i) {
+            EmitRustRowForward(o, plan.fields[i], file);
+        }
+        o << "}\n\n";
+
+        o << "impl crate::fletcher_gen::__rba::RowAccess for " << acc << " {\n"
+          << "    type Row<'a> = " << cls << "Row<'a>;\n"
+          << "    fn row(&self, row: usize) -> " << cls << "Row<'_> {\n"
+          << "        " << cls << "Row { a: self, row }\n"
+          << "    }\n"
+          << "    fn is_null(&self, row: usize) -> bool {\n"
+          << "        self.struct_validity\n"
+          << "            .as_ref()\n"
+          << "            .map_or(false, |s| arrow::array::Array::is_null(s.as_ref(), row))\n"
+          << "    }\n"
+          << "}\n\n";
     }
 
+    return o.str();
+}
+
+std::string EmitRustRbaHelpers() {
+    std::ostringstream o;
+    o << "// Generated by fletcher-protoc. DO NOT EDIT.\n"
+      << "// Shared RecordBatch-accessor span/Row helpers (RBA-6). Emitted by\n"
+      << "// --fletcher_opt=rust, ONCE per protoc run (byte-identical every copy: no\n"
+      << "// per-file/per-message content). The build.rs assembler include!s this file\n"
+      << "// exactly once under crate::fletcher_gen::__rba (D-RBA-10 / N1).\n"
+      << "//\n"
+      << "// Versioned with arrow =59.0.0 (the same pin the generated getters commit\n"
+      << "// to). All items are referenced from generated accessors by fully-qualified\n"
+      << "// path (crate::fletcher_gen::__rba::*) — never via a per-file `use`.\n"
+      << "\n"
+      << "/// A type that can yield a borrowed per-row view and probe per-row struct\n"
+      << "/// validity. Implemented by every generated accessor so spans can compose.\n"
+      << "pub trait RowAccess {\n"
+      << "    type Row<'a>\n"
+      << "    where\n"
+      << "        Self: 'a;\n"
+      << "    fn row(&self, row: usize) -> Self::Row<'_>;\n"
+      << "    fn is_null(&self, row: usize) -> bool;\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over a repeated-scalar (Arrow list<T>) element range. `A`\n"
+      << "/// is held BY VALUE and is a borrowed array reference (e.g. &Float64Array),\n"
+      << "/// so one span covers primitive / string / binary scalar leaves. Scalar\n"
+      << "/// element nulls are probed via is_null(i) (no read-through-null collapse).\n"
+      << "pub struct ScalarSpan<A: arrow::array::ArrayAccessor> {\n"
+      << "    vals: A,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<A: arrow::array::ArrayAccessor> ScalarSpan<A> {\n"
+      << "    pub(crate) fn new(vals: A, base: usize, len: usize) -> Self {\n"
+      << "        Self { vals, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn is_null(&self, i: usize) -> bool {\n"
+      << "        arrow::array::Array::is_null(&self.vals, self.base + i)\n"
+      << "    }\n"
+      << "    pub fn value(&self, i: usize) -> A::Item {\n"
+      << "        self.vals.value(self.base + i)\n"
+      << "    }\n"
+      << "}\n"
+      << "\n"
+      << "/// Borrowed window over a repeated-struct (Arrow list<struct<...>>) element\n"
+      << "/// range. `inner` is the nested accessor (owned by the parent), built over\n"
+      << "/// the list's FLATTENED values StructArray (offset-0 origin); element j of a\n"
+      << "/// row lives at the absolute index base + j. get(j) yields None on a null\n"
+      << "/// struct element (element-level no-read-through-null).\n"
+      << "pub struct StructSpan<'a, Acc: RowAccess> {\n"
+      << "    inner: &'a Acc,\n"
+      << "    base: usize,\n"
+      << "    len: usize,\n"
+      << "}\n"
+      << "\n"
+      << "impl<'a, Acc: RowAccess> StructSpan<'a, Acc> {\n"
+      << "    pub(crate) fn new(inner: &'a Acc, base: usize, len: usize) -> Self {\n"
+      << "        Self { inner, base, len }\n"
+      << "    }\n"
+      << "    pub fn len(&self) -> usize {\n"
+      << "        self.len\n"
+      << "    }\n"
+      << "    pub fn is_empty(&self) -> bool {\n"
+      << "        self.len == 0\n"
+      << "    }\n"
+      << "    pub fn is_null(&self, i: usize) -> bool {\n"
+      << "        self.inner.is_null(self.base + i)\n"
+      << "    }\n"
+      << "    pub fn get(&self, i: usize) -> Option<Acc::Row<'_>> {\n"
+      << "        let r = self.base + i;\n"
+      << "        if self.inner.is_null(r) {\n"
+      << "            None\n"
+      << "        } else {\n"
+      << "            Some(self.inner.row(r))\n"
+      << "        }\n"
+      << "    }\n"
+      << "}\n";
     return o.str();
 }
 

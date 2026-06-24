@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6a composite forcing fixture (file A, package `rba.main`). Exercises the
+// RBA-6a slice of `composite_and_metadata_read`:
+//
+//   - STRUCT, cross-file + cross-PACKAGE, >= 2 levels deep: `outer` references
+//     Outer (this file) -> Inner (this file) -> rba.child.Leaf (geo_child.proto,
+//     a SECOND package). The deep row chain a.outer(row).inner().leaf().value()
+//     therefore composes recursive Rows AND resolves the grandchild through
+//     `crate::fletcher_gen::rba::child::LeafAccessor` (D-RBA-10 cross-package).
+//   - nullable 1:1 STRUCT: `maybe_outer` (proto3 optional) -> nullable struct;
+//     a null row must yield `None` (B2 no-read-through-null).
+//   - non-nullable STRUCT: `outer` (singular) -> non-nullable struct; a runtime
+//     null element makes try_new return `Err` (D-RBA-4 recursed).
+//   - REPEATED_SCALAR: `readings` (list<double>) -> ScalarSpan.
+//   - REPEATED_STRUCT: `track` (list<Inner>) -> StructSpan; a null struct element
+//     yields `None` via StructSpan::get(j).
+//   - NO-PACKAGE cross-file STRUCT: `tag` references Tag (nopkg_child.proto, no
+//     proto package) -> resolves to `crate::fletcher_gen::TagAccessor` directly
+//     under fletcher_gen, with NO empty package segment (D-RBA-10 edge case).
+syntax = "proto3";
+package rba.main;
+
+import "geo_child.proto";
+import "nopkg_child.proto";
+
+// Innermost same-file struct whose child is the cross-package Leaf (>= 2 levels).
+message Inner {
+    rba.child.Leaf leaf = 1;  // struct< struct<int32> > across a package boundary
+}
+
+// Outer struct whose child is itself a struct (Outer -> Inner -> Leaf).
+message Outer {
+    Inner inner = 1;
+}
+
+message CompositeMain {
+    // Non-nullable cross-file + cross-package struct, >= 2 levels deep.
+    Outer outer = 1;
+
+    // Nullable 1:1 struct (proto3 optional) — a null row -> None.
+    optional Outer maybe_outer = 2;
+
+    // Repeated scalar (non-nullable list): list<double> -> ScalarSpan.
+    repeated double readings = 3;
+
+    // Repeated struct (non-nullable list): list<Inner> -> StructSpan; a null
+    // struct element -> None via StructSpan::get(j).
+    repeated Inner track = 4;
+
+    // NO-PACKAGE cross-file struct: resolves to crate::fletcher_gen::TagAccessor.
+    Tag tag = 5;
+}

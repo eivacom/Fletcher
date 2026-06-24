@@ -11,12 +11,13 @@
 // and assert:
 //   - every file the baseline produced exists in the accessor/rust run,
 //   - every baseline file is byte-identical in both runs,
-//   - the accessor/rust run added ONLY the two new files
-//       <stem>.fletcher.accessor.pb.h and <stem>.fletcher.rs.
+//   - the accessor/rust run added ONLY the three new files
+//       <stem>.fletcher.accessor.pb.h, <stem>.fletcher.rs, and the shared
+//       __rba.fletcher.rs span/Row helper module (RBA-6a; emitted once per run).
 //
 // The matrix runs over a typical fixture (nested.proto — multiple messages,
 // IPC, view classes) AND a degenerate fixture (empty_accessor.proto —
-// recursive-only, no view/IPC output) to prove the +2 emission is
+// recursive-only, no view/IPC output) to prove the +3 emission is
 // unconditional, not content-gated.
 //
 // This within-build test proves the "with flags == without flags" half of
@@ -152,24 +153,33 @@ void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_op
             << "baseline file is not byte-identical between runs: " << name;
     }
 
-    // (3) the accessor run added ONLY the two new files.
+    // (3) the accessor run added ONLY the new files. RBA-6a: the `rust` token now
+    // emits THREE files — the C++ accessor header, the per-file Rust accessor
+    // module, and the shared `__rba.fletcher.rs` span/Row helper module (emitted
+    // once per protoc run; byte-identical across runs, mounted once by the
+    // build.rs assembler). The shared helper is fixed-named (not stem-derived).
     const std::string accessor_hdr = stem + ".fletcher.accessor.pb.h";
     const std::string rust_file = stem + ".fletcher.rs";
+    const std::string rba_helper = "__rba.fletcher.rs";
 
     std::set<std::string> expected = base_files;
     expected.insert(accessor_hdr);
     expected.insert(rust_file);
+    expected.insert(rba_helper);
     EXPECT_EQ(acc_files, expected)
         << "accessor run file set must equal baseline + exactly {" << accessor_hdr << ", "
-        << rust_file << "}";
+        << rust_file << ", " << rba_helper << "}";
 
-    // Spell out the +2 explicitly for a clear failure message.
+    // Spell out the +3 explicitly for a clear failure message.
     EXPECT_TRUE(acc_files.count(accessor_hdr) > 0) << "missing " << accessor_hdr;
     EXPECT_TRUE(acc_files.count(rust_file) > 0) << "missing " << rust_file;
+    EXPECT_TRUE(acc_files.count(rba_helper) > 0) << "missing " << rba_helper;
     EXPECT_EQ(base_files.count(accessor_hdr), 0u)
         << accessor_hdr << " must not appear without the accessor token";
     EXPECT_EQ(base_files.count(rust_file), 0u)
         << rust_file << " must not appear without the rust token";
+    EXPECT_EQ(base_files.count(rba_helper), 0u)
+        << rba_helper << " must not appear without the rust token";
 
     // The emitted C++ accessor header must be non-empty (minimal-but-valid
     // skeleton). Its compilability is covered by the harness include target.
@@ -188,6 +198,10 @@ void CheckNoDriftForCase(const std::string& stem, const std::string& baseline_op
     // and fully retained above.
     if (acc_files.count(rust_file) > 0) {
         EXPECT_FALSE(ReadFileBytes(acc_dir / rust_file).empty()) << rust_file << " is empty";
+    }
+    // The shared __rba helper module must also be non-empty.
+    if (acc_files.count(rba_helper) > 0) {
+        EXPECT_FALSE(ReadFileBytes(acc_dir / rba_helper).empty()) << rba_helper << " is empty";
     }
 }
 

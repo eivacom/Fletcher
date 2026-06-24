@@ -27,4 +27,15 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file);
 // package mounting is owned by the RBA-5 assembler (D-RBA-10).
 std::string EmitRustAccessor(const google::protobuf::FileDescriptor* file);
 
+// Emits the shared `__rba` helper module text (RBA-6): the span / Row helper
+// types (ScalarSpan, StructSpan, the RowAccess trait) that the generated Rust
+// accessors reference by the fully-qualified path crate::fletcher_gen::__rba::*.
+//
+// The plugin owns this text so the helper arrow-API spellings stay in lock-step
+// with the per-impl getters that instantiate them (versioned with arrow
+// =59.0.0). It carries ZERO per-file / per-message content, so every copy the
+// plugin writes per protoc run is byte-identical and the build.rs assembler
+// include!s it EXACTLY ONCE under crate::fletcher_gen::__rba (N1).
+std::string EmitRustRbaHelpers();
+
 }  // namespace fletcher

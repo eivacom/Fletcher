@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6a cross-file / cross-PACKAGE import fixture (the second package). Defines
+// the Leaf message in package `rba.child`; it is imported by composite_main.proto
+// (package `rba.main`) as the grandchild of a >=2-level struct chain
+// (Outer -> Inner -> Leaf). Because Leaf lives in a DIFFERENT proto package than
+// the importer, the Rust accessor must resolve it through the D-RBA-10 package
+// tree as `crate::fletcher_gen::rba::child::LeafAccessor` (NOT a bare local name).
+syntax = "proto3";
+package rba.child;
+
+// Innermost cross-package struct — a single scalar leaf.
+message Leaf {
+    int32 value = 1;  // arrow::int32()
+}
