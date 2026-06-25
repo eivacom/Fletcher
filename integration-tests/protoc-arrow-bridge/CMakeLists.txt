@@ -10,6 +10,9 @@ find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(GTest REQUIRED)
+# RBA-7 capstone (test_accessor_capstone.cpp) parses the shared committed
+# expected/fixture JSON with nlohmann_json — a test-only dependency.
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # fletcher-protoc-target.cmake only WARNs (not FATALs) when the plugin
 # executable cannot be located — find_package above will succeed regardless.
@@ -105,6 +108,74 @@ endforeach()
 
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
+# ----------------------------------------------------------------------------
+# RBA-2 accessor fixture: generate the real <Class>Accessor header for the
+# flat scalar fixture (accessor_scalar.proto) so the forcing test can include
+# and compile it. The accessor token is what triggers the .accessor.pb.h
+# emission; the no-drift guard above proves it adds exactly that file.
+# ----------------------------------------------------------------------------
+# Each accessor fixture stem generates <stem>.fletcher.accessor.pb.h. The RBA-4a
+# composite fixture (accessor_composite.proto) imports accessor_geo.proto, so its
+# emitted accessor header #includes accessor_geo.fletcher.accessor.pb.h — both
+# stems must be generated. The cross-file include is proven by the no-drift test
+# above (existing outputs byte-identical) plus the composite forcing test, which
+# only compiles if the cross-file accessor include is correct.
+set(_ACCESSOR_STEMS
+    accessor_scalar
+    accessor_geo
+    accessor_composite)
+
+set(_ACCESSOR_HEADERS)
+foreach(_acc_stem IN LISTS _ACCESSOR_STEMS)
+    set(_acc_src "${PROTO_DIR}/${_acc_stem}.proto")
+    set(_acc_hdr "${GENERATED_DIR}/${_acc_stem}.fletcher.accessor.pb.h")
+    add_custom_command(
+        OUTPUT  "${_acc_hdr}"
+        COMMAND "$<TARGET_FILE:protobuf::protoc>"
+                "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+                "--fletcher_opt=accessor"
+                "--fletcher_out=${GENERATED_DIR}"
+                "-I" "${PROTO_DIR}"
+                "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+                "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+                "${_acc_src}"
+        DEPENDS "${_acc_src}" fletcher-protoc::plugin
+                "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+        COMMENT "protoc-gen-fletcher (accessor): ${_acc_stem}.proto"
+        VERBATIM
+    )
+    list(APPEND _ACCESSOR_HEADERS "${_acc_hdr}")
+endforeach()
+add_custom_target(generate_accessor_headers ALL DEPENDS ${_ACCESSOR_HEADERS})
+
+# ----------------------------------------------------------------------------
+# RBA-7 capstone: generate the C++ accessor header for the SHARED capstone proto
+# that the Rust crate also consumes (integration-tests/accessor-capstone/). It is
+# a NEW protoc input in a NEW directory, so it is outside every existing fixture's
+# generation set and does not affect the RBA-1 no-drift guard. The proto imports
+# fletcher/options.proto for the NESTED_LIST flatten wrapper.
+# ----------------------------------------------------------------------------
+set(CAPSTONE_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/../accessor-capstone")
+set(CAPSTONE_PROTO_DIR "${CAPSTONE_DIR}/proto")
+set(_capstone_src "${CAPSTONE_PROTO_DIR}/accessor_capstone.proto")
+set(_capstone_hdr "${GENERATED_DIR}/accessor_capstone.fletcher.accessor.pb.h")
+add_custom_command(
+    OUTPUT  "${_capstone_hdr}"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=accessor"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${CAPSTONE_PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_capstone_src}"
+    DEPENDS "${_capstone_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+    COMMENT "protoc-gen-fletcher (accessor): accessor_capstone.proto"
+    VERBATIM
+)
+add_custom_target(generate_capstone_header ALL DEPENDS "${_capstone_hdr}")
+
 enable_testing()
 
 add_executable(integration_tests
@@ -138,3 +209,44 @@ target_link_libraries(integration_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
+
+# ----------------------------------------------------------------------------
+# RBA-1 accessor no-drift test (AccessorTest.*). Scoped by `ctest -R 'Accessor'`.
+#
+# This test invokes the plugin itself at runtime into temporary directories, so
+# it needs the protoc + plugin executables and all three -I proto search roots
+# as compile definitions. It does NOT depend on the pre-generated headers above.
+# ----------------------------------------------------------------------------
+add_executable(accessor_tests
+    tests/test_accessor.cpp
+    tests/test_accessor_scalar.cpp
+    tests/test_accessor_composite.cpp
+    tests/test_accessor_capstone.cpp
+    tests/test_accessor_readme_example.cpp)
+
+# The scalar accessor test #includes the generated accessor header and builds
+# Arrow RecordBatch/StructArray fixtures at runtime. The capstone test
+# additionally #includes the shared accessor_capstone accessor header and reads
+# the shared committed fixture/expected JSON at runtime.
+add_dependencies(accessor_tests generate_accessor_headers generate_capstone_header)
+
+target_include_directories(accessor_tests PRIVATE "${GENERATED_DIR}")
+
+target_link_libraries(accessor_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    nlohmann_json::nlohmann_json)
+
+target_compile_definitions(accessor_tests PRIVATE
+    GENERATED_DIR_PATH="${GENERATED_DIR}"
+    PROTOC_PATH="$<TARGET_FILE:protobuf::protoc>"
+    PLUGIN_PATH="$<TARGET_FILE:fletcher-protoc::plugin>"
+    PROTO_DIR="${PROTO_DIR}"
+    FLETCHER_PROTO_INCLUDE_DIR="${FLETCHER_PROTO_INCLUDE_DIR}"
+    PROTOBUF_WKT_INCLUDE_DIR="${PROTOBUF_WKT_INCLUDE_DIR}"
+    # The capstone gtest reads the ONE committed shared fixture/expected JSON
+    # from the source tree (NOT a copy), so it stays the single source of truth.
+    CAPSTONE_FIXTURES_DIR="${CAPSTONE_DIR}/fixtures")
+
+gtest_discover_tests(accessor_tests DISCOVERY_MODE PRE_TEST)

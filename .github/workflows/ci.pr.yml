@@ -46,6 +46,7 @@ jobs:
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
       integration-protoc-gen-fletcher-npm: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-npm }}
+      integration-protoc-gen-fletcher-rust: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-rust }}
       integration-protoc-plugin-cli: ${{ steps.filter.outputs.integration-protoc-plugin-cli }}
     steps:
       - uses: actions/checkout@v6
@@ -239,6 +240,16 @@ jobs:
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            integration-protoc-gen-fletcher-rust:
+              - 'protoc/**'
+              - 'integration-tests/protoc-gen-fletcher-rust/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-gen-fletcher-rust.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/actions/conan-install/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
             integration-protoc-plugin-cli:
               - 'protoc/**'
               - 'integration-tests/protoc-plugin-cli/**'
@@ -407,6 +418,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-protoc-gen-fletcher-rust:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-gen-fletcher-rust == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-gen-fletcher-rust.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-plugin-cli:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-plugin-cli == 'true' }}
@@ -436,6 +455,7 @@ jobs:
       - integration-test-protoc-gateway-client-ts
       - integration-test-pubsub-arrow-fastdds
       - integration-test-protoc-gen-fletcher-npm
+      - integration-test-protoc-gen-fletcher-rust
       - integration-test-protoc-plugin-cli
     runs-on: ubuntu-latest
     if: always()
@@ -466,4 +486,5 @@ jobs:
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
+            ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-plugin-cli.result }}

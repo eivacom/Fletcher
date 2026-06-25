@@ -40,6 +40,10 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
         # as a CMake target to downstream consumers.
         self.requires("protobuf/3.21.12")
         self.requires("gtest/1.17.0")
+        # RBA-7 capstone test-only JSON parser: the C++ capstone test parses the
+        # SAME committed expected/fixture JSON the Rust side reads (single source
+        # of truth, D-RBA-8), so it must not hand-transcribe expected values.
+        self.requires("nlohmann_json/3.11.3")
         # arrow pins zlib/1.2.13, openssl pulls 1.3.1 — same conflict
         # arrow-bridge handles in its own conanfile.
         self.requires("zlib/1.3.1", override=True)

@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-4 forcing fixture: the full composite slice of
+// AccessorTest.CompositeColumnsReadColumnOriented. RBA-4a added struct +
+// repeated-scalar + repeated-struct (+ row-nullable variants); RBA-4b completes
+// it with MAP (scalar-value + message-value) and NESTED_LIST (depth 2 and 3).
+//
+// Covered constructs:
+//   - STRUCT, cross-file, >= 2 levels: `outer` references Outer (Outer->Inner->
+//     leaf) from accessor_geo.proto, so the deep chain a.outer(row).inner().leaf()
+//     exercises recursive RowView composition AND a cross-file accessor include.
+//   - nullable 1:1 STRUCT: `maybe_outer` (proto3 `optional`) maps to a nullable
+//     struct field; a null row must yield std::nullopt (B2 no-read-through-null).
+//   - non-nullable STRUCT: `outer` (singular) maps to a non-nullable struct field;
+//     a runtime null element must make Make() return an error (D-RBA-4 recursed).
+//   - REPEATED_SCALAR: `readings` (list<double>) — size / empty / element reads /
+//     per-element is_null(j).
+//   - REPEATED_STRUCT: `track` (list<Inner>) — span[j]==std::nullopt for a null
+//     struct element (element-level no-read-through-null via the inner accessor).
+//   - ROW-NULLABLE REPEATED collections via optional flatten-wrappers: an
+//     `optional <flatten-wrapper-of-repeated>` field resolves (type_mapper
+//     MapFlattenedSingular) to a REPEATED_SCALAR/REPEATED_STRUCT with nullable=
+//     true, so the getter returns std::optional<Span> and a null list row yields
+//     std::nullopt (B2 no-read-through-null at the list-row level).
+//   - MAP scalar value: `counts` (map<string,int32>) — key(j)/value(j)/
+//     value_is_null(j), empty map.
+//   - MAP message value: `waypoints` (map<string,Inner>) — value(j) ->
+//     std::optional<RowView>, std::nullopt on a null map value (B2).
+//   - NESTED_LIST depth 2: `rings` (list<list<Inner>>) — span[i] ->
+//     std::optional<inner span>, std::nullopt on a null inner list (B2).
+//   - NESTED_LIST depth 3: `regions` (list<list<list<Inner>>>) — exercises the
+//     depth-3 emit/span path (spec §6).
+syntax = "proto3";
+package integration;
+
+import "accessor_geo.proto";
+import "fletcher/options.proto";
+
+// Flatten-wrappers: a single repeated field, so an `optional <Wrapper>` field
+// resolves to a row-nullable repeated collection (the wrapper is stripped).
+message ReadingList {
+    option (fletcher.flatten) = true;
+    repeated double values = 1;  // -> REPEATED_SCALAR list<double>
+}
+
+message TrackList {
+    option (fletcher.flatten) = true;
+    repeated Inner points = 1;  // -> REPEATED_STRUCT list<struct<leaf:int32>>
+}
+
+// Nested-list flatten-wrappers. A `repeated InnerRingList` field adds one list
+// level on top of the wrapper's own `repeated Inner` -> depth 2. A
+// `repeated RegionList` (wrapping `repeated InnerRingList`) -> depth 3.
+message InnerRingList {
+    option (fletcher.flatten) = true;
+    repeated Inner items = 1;
+}
+
+message RegionList {
+    option (fletcher.flatten) = true;
+    repeated InnerRingList items = 1;
+}
+
+message CompositeRow {
+    // Non-nullable cross-file struct, >= 2 levels deep (Outer -> Inner -> leaf).
+    Outer outer = 1;
+
+    // Nullable 1:1 struct (proto3 optional) — null row -> std::nullopt.
+    optional Outer maybe_outer = 2;
+
+    // Repeated scalar (non-nullable list): list<double>.
+    repeated double readings = 3;
+
+    // Repeated struct (non-nullable list): list<Inner>.
+    repeated Inner track = 4;
+
+    // Row-nullable REPEATED_SCALAR via optional flatten-wrapper: null row ->
+    // std::optional<ScalarSpan> == std::nullopt.
+    optional ReadingList opt_readings = 5;
+
+    // Row-nullable REPEATED_STRUCT via optional flatten-wrapper: null row ->
+    // std::optional<StructSpan> == std::nullopt.
+    optional TrackList opt_track = 6;
+
+    // MAP with a scalar value: map(utf8, int32). Keys non-null; values nullable.
+    map<string, int32> counts = 7;
+
+    // MAP with a message value: map(utf8, struct<leaf:int32>). value(j) is
+    // std::optional<RowView> — std::nullopt on a null map value (B2).
+    map<string, Inner> waypoints = 8;
+
+    // NESTED_LIST depth 2: list<list<struct<leaf:int32>>>.
+    repeated InnerRingList rings = 9;
+
+    // NESTED_LIST depth 3: list<list<list<struct<leaf:int32>>>>.
+    repeated RegionList regions = 10;
+}

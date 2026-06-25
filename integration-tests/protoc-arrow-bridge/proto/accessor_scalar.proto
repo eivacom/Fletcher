@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-2 forcing fixture: a flat, scalar-only message covering every Arrow scalar
+// type the type-mapper produces, plus nullable variants. Used by
+// AccessorTest.ScalarColumnsReadAndValidatePositionally.
+syntax = "proto3";
+package integration;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+// Each non-optional field maps to a non-nullable Arrow column; each `optional`
+// field and each WKT *Value wrapper maps to a nullable Arrow column.
+message ScalarRow {
+    bool                      b_flag       = 1;   // arrow::boolean()
+    int32                     i32          = 2;   // arrow::int32()
+    int64                     i64          = 3;   // arrow::int64()
+    uint32                    u32          = 4;   // arrow::uint32()
+    uint64                    u64          = 5;   // arrow::uint64()
+    float                     f32          = 6;   // arrow::float32()
+    double                    f64          = 7;   // arrow::float64()
+    string                    text         = 8;   // arrow::utf8()
+    bytes                     blob         = 9;   // arrow::binary()
+    google.protobuf.Timestamp occurred_at  = 10;  // arrow::timestamp(NANO), non-nullable
+    google.protobuf.Duration  elapsed      = 11;  // arrow::duration(NANO), non-nullable
+
+    optional int32            opt_i32      = 12;  // nullable arrow::int32()
+    optional string           opt_text     = 13;  // nullable arrow::utf8()
+    google.protobuf.Int64Value opt_i64     = 14;  // nullable arrow::int64() (WKT wrapper)
+}

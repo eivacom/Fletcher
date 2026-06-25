@@ -34,6 +34,7 @@ jobs:
             arrow-bridge
             pubsub
             integration-tests/protoc-arrow-bridge
+            integration-tests/accessor-capstone
             .conan-profiles
             .github
 
@@ -70,6 +71,7 @@ jobs:
             arrow-bridge
             pubsub
             integration-tests/protoc-arrow-bridge
+            integration-tests/accessor-capstone
             .conan-profiles
             .github
 

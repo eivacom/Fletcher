@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "generator_internal.hpp"
+#include "recordbatch_accessor_emitter.hpp"
 #include "schema_builder.hpp"
 #include "type_mapper.hpp"
 
@@ -36,18 +38,6 @@ std::string ReplaceAll(std::string s, const std::string& from, const std::string
     return s;
 }
 
-std::string DotToColons(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
-    for (char c : s) {
-        if (c == '.')
-            out += "::";
-        else
-            out += c;
-    }
-    return out;
-}
-
 std::string StripProtoSuffix(const std::string& proto_name) {
     constexpr std::string_view kSuffix = ".proto";
     std::string base = proto_name;
@@ -58,6 +48,16 @@ std::string StripProtoSuffix(const std::string& proto_name) {
 
 std::string OutputFilename(const std::string& proto_name) {
     return StripProtoSuffix(proto_name) + ".fletcher.pb.h";
+}
+
+// RecordBatch accessor outputs (RBA-1). Same stem derivation as the other
+// output-name helpers; emitted only when --fletcher_opt=accessor / rust is set.
+std::string AccessorOutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".fletcher.accessor.pb.h";
+}
+
+std::string RustAccessorOutputFilename(const std::string& proto_name) {
+    return StripProtoSuffix(proto_name) + ".fletcher.rs";
 }
 
 // Schemas are per-message while protoc output is per-file, so the message
@@ -105,13 +105,6 @@ void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg
         CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
 }
 
-std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
-    std::set<std::string> headers;
-    for (int mi = 0; mi < file->message_type_count(); ++mi)
-        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
-    return headers;
-}
-
 // -----------------------------------------------------------------------
 // Topological ordering of messages
 // -----------------------------------------------------------------------
@@ -152,6 +145,15 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
     order.push_back(msg);
 }
 
+}  // namespace
+
+// OrderedMessages, ArrowTypeExpr, and GatherFields (declared in
+// generator_internal.hpp, namespace fletcher) have external linkage so the
+// RecordBatch accessor emitter shares the exact same schema model. RBA-2
+// relocated these definitions out of the anonymous namespace; the logic is
+// unchanged and the emitted bytes are identical (guarded by the RBA-1 no-drift
+// test). FieldInfo is likewise declared in generator_internal.hpp.
+
 std::vector<const google::protobuf::Descriptor*> OrderedMessages(
     const google::protobuf::FileDescriptor* file) {
     std::set<const google::protobuf::Descriptor*> emitted;
@@ -161,19 +163,18 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
     return order;
 }
 
-// -----------------------------------------------------------------------
-// Per-field information gathered before code generation
-// -----------------------------------------------------------------------
-
-struct FieldInfo {
-    std::string name;
-    FieldMapping mapping;
-    int field_number = 0;  // leaf proto field number
-    std::string field_id;  // dotted field-number path, unique even when field-level
-                           // flatten inlines sub-messages (e.g. "2.1"); equals the
-                           // field_number string for non-inlined top-level fields
-    const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
-};
+// Relocated out of the anonymous namespace (declaration in
+// generator_internal.hpp) so the accessor emitter reuses the SAME cross-file
+// include discovery (D-RBA-10 single source of truth). The recursive walk helper
+// (CollectCrossFileIncludesFromMessage) stays file-local above; only this public
+// entry point gains external linkage. Pure linkage move — emitted bytes are
+// unchanged, guarded by the RBA-1 no-drift test.
+std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
+    std::set<std::string> headers;
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
+    return headers;
+}
 
 // -----------------------------------------------------------------------
 // Arrow type expression for the schema — constructed from the FieldMapping
@@ -217,6 +218,8 @@ std::string ArrowTypeExpr(const FieldInfo& fi) {
     }
     return "/* unknown */";
 }
+
+namespace {
 
 // -----------------------------------------------------------------------
 // Storage member declaration
@@ -862,12 +865,19 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
     }
 }
 
+}  // namespace
+
+// GatherFields has external linkage (declared in generator_internal.hpp,
+// namespace fletcher) so the accessor emitter reuses it; GatherFieldsImpl stays
+// file-local. RBA-2 relocation only — logic and emitted bytes unchanged.
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment) {
     std::vector<FieldInfo> fields;
     GatherFieldsImpl(msg, fields, skipped_comment, "");
     return fields;
 }
+
+namespace {
 
 // -----------------------------------------------------------------------
 // Free schema function for one message
@@ -2906,6 +2916,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     bool schema_only = false;
     bool emit_ts = false;
     bool emit_ipc = false;
+    bool emit_accessor = false;
+    bool emit_rust = false;
     {
         std::istringstream ss(parameter);
         std::string token;
@@ -2916,6 +2928,10 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                 emit_ts = true;
             else if (token == "ipc")
                 emit_ipc = true;
+            else if (token == "accessor")
+                emit_accessor = true;
+            else if (token == "rust")
+                emit_rust = true;
         }
     }
 
@@ -2971,6 +2987,63 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
             if (!WriteToStream(stream.get(), std::string(ipc.begin(), ipc.end()), error))
                 return false;
         }
+    }
+
+    // Optionally emit the RecordBatch accessor C++ header (RBA-1). Additive
+    // read-side artifact: independent of schema_only, and emitted unconditionally
+    // (one file per token, never content-gated) whenever the option is set.
+    if (emit_accessor) {
+        const std::string content = EmitAccessorHeader(file);
+        const std::string out_name = AccessorOutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error)) return false;
+    }
+
+    // Optionally emit the RecordBatch accessor Rust module (RBA-1). Same
+    // additive, unconditional emission contract as the accessor header above.
+    if (emit_rust) {
+        const std::string content = EmitRustAccessor(file);
+        const std::string out_name = RustAccessorOutputFilename(file->name());
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
+        if (!WriteToStream(stream.get(), content, error)) return false;
+        // NB: the shared `__rba.fletcher.rs` span/Row helper module is NOT emitted
+        // here. Generate() runs once per input .proto, so emitting __rba here would
+        // write it N times in a single multi-file protoc invocation
+        // (`protoc a.proto b.proto …`) and protoc rejects the duplicate filename.
+        // It is emitted EXACTLY ONCE from GenerateAll() instead (code-review P1).
+    }
+
+    return true;
+}
+
+bool ArrowRowGenerator::GenerateAll(
+    const std::vector<const google::protobuf::FileDescriptor*>& files, const std::string& parameter,
+    google::protobuf::compiler::GeneratorContext* context, std::string* error) const {
+    // Per-file artifacts: identical to the default GenerateAll loop. Each file's
+    // outputs (C++ header / view / ts / ipc / accessor / rust accessor) are
+    // emitted by Generate().
+    for (const auto* file : files) {
+        if (!Generate(file, parameter, context, error)) return false;
+    }
+
+    // The shared `__rba` span/Row helper module is emitted EXACTLY ONCE per protoc
+    // invocation, regardless of how many .proto files were passed (code-review
+    // P1). It carries zero per-file/per-message content; the build.rs assembler
+    // include!s it once directly under crate::fletcher_gen::__rba (N1). Only emit
+    // when the `rust` opt is set.
+    bool emit_rust = false;
+    {
+        std::istringstream ss(parameter);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            if (token == "rust") emit_rust = true;
+        }
+    }
+    if (emit_rust) {
+        const std::string rba_content = EmitRustRbaHelpers();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> rba_stream(
+            context->Open("__rba.fletcher.rs"));
+        if (!WriteToStream(rba_stream.get(), rba_content, error)) return false;
     }
 
     return true;

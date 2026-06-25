@@ -110,8 +110,10 @@ service SensorFeed {
 | `telemetry.fletcher.pb.h` | nanoarrow only | Arrow schema function, typed row class, publisher/subscriber |
 | `telemetry.fletcher.arrow.pb.h` | Apache Arrow C++ | Immutable view class with typed getters, `ToArrowRow()` |
 | `telemetry.fletcher.ts` | — | TypeScript interface, schema descriptor, topic constant |
+| `telemetry.fletcher.accessor.pb.h` | Apache Arrow C++ | Column-oriented `RecordBatch` accessor (C++) — opt-gated by `--fletcher_opt=accessor` |
+| `telemetry.fletcher.rs` | `arrow` crate | Column-oriented `RecordBatch` accessor (Rust) — opt-gated by `--fletcher_opt=rust` |
 
-See [`protoc/README.md`](protoc/README.md) for wiring the plugin into your build.
+The last two are emitted only when their `--fletcher_opt` token is passed; they are a read-side, column-oriented way to consume a whole `RecordBatch` (validate once, cast once, then typed zero-copy getters). See the [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) for the full contract and [`protoc/README.md`](protoc/README.md) for wiring the plugin into your build.
 
 ### 3. Encode and decode (edge tier — no Arrow C++)
 
@@ -206,6 +208,7 @@ The [`docs/`](docs/README.md) directory holds the full architecture documentatio
 | [Component & Dependency Diagram](docs/component-diagram.md) | System context, component detail, dependency graph |
 | [Data Flow Diagrams](docs/data-flow-diagrams.md) | Encode/decode, publish/subscribe, schema transport, browser delivery |
 | [Wire Format Specification](docs/wire-format-specification.md) | Positional wire format, proto→Arrow type mapping, nullability, envelope |
+| [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) | Column-oriented C++/Rust accessors (`--fletcher_opt=accessor` / `rust`): validation, getters, parity |
 | [Technology Decision Log](docs/technology-decisions.md) | Rationale for the key technology choices (TD-001 … TD-007) |
 
 The proto→Arrow type mapping and the `(fletcher.flatten)` schema-flattening option are documented in [`docs/fletcher-options.md`](docs/fletcher-options.md) and the wire-format spec.

@@ -40,10 +40,14 @@ graph TB
         GEN_EDGE[".fletcher.pb.h<br/><i>Message class + schema<br/>(nanoarrow only)</i>"]
         GEN_SERVER[".fletcher.arrow.pb.h<br/><i>View class + ToArrowRow<br/>(Arrow C++)</i>"]
         GEN_TS[".fletcher.ts<br/><i>TypeScript interface +<br/>SchemaDescriptor</i>"]
+        GEN_ACCESSOR[".fletcher.accessor.pb.h<br/><i>RecordBatch accessor (C++)<br/>opt: accessor (Arrow C++)</i>"]
+        GEN_RUST[".fletcher.rs<br/><i>RecordBatch accessor (Rust)<br/>opt: rust (arrow crate)</i>"]
 
         PROTOC --> GEN_EDGE
         PROTOC --> GEN_SERVER
         PROTOC --> GEN_TS
+        PROTOC --> GEN_ACCESSOR
+        PROTOC --> GEN_RUST
     end
 
     subgraph edge_tier ["Edge Tier (nanoarrow only, ~100 KB)"]

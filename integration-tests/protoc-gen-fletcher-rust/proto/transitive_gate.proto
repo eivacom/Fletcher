@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6b transitive-support-gate fixture (D-RBA-8). Exercises the code-review
+// should-fix: the Rust composite support gate must be TRANSITIVE — a composite
+// field is only "supported" (and its accessor generated) if the inner message's
+// accessor will ALSO be generated. Otherwise the parent would emit a reference to
+// an accessor type the planner skipped -> dangling, uncompilable Rust.
+//
+// `Unsupported` holds a depth-4 NESTED_LIST (list<list<list<list<struct>>>>),
+// which is IN-SCOPE representable but BEYOND the supported depth 2/3 -> a clean
+// "unsupported leaf". Three holders reference it through the three composite paths
+// that compose an inner message accessor:
+//   - HolderStruct: a non-nullable STRUCT field of Unsupported;
+//   - HolderRepeated: a REPEATED_STRUCT (list<Unsupported>);
+//   - HolderMap: a map<string, Unsupported> (message-value MAP).
+// With the transitive gate, ALL of Unsupported + the three holders are SKIPPED
+// (emitted as fail-fast comments, no accessor), and the generated crate compiles.
+// Without it, the holders would dangle on UnsupportedAccessor.
+syntax = "proto3";
+package rba.transitive;
+
+import "fletcher/options.proto";
+
+// Leaf struct for the depth-4 nested list.
+message Pixel {
+    int32 v = 1;
+}
+
+// Depth-4 flatten wrappers: L1 wraps repeated Pixel; L2 wraps repeated L1; L3
+// wraps repeated L2. `repeated L3` in Unsupported yields list<list<list<list<
+// struct>>>> = depth 4 (> supported 2/3).
+message L1 {
+    option (fletcher.flatten) = true;
+    repeated Pixel pixels = 1;
+}
+message L2 {
+    option (fletcher.flatten) = true;
+    repeated L1 rows = 1;
+}
+message L3 {
+    option (fletcher.flatten) = true;
+    repeated L2 planes = 1;
+}
+
+// The inner message that itself contains an UNSUPPORTED construct (depth-4 list).
+// Its accessor must NOT be generated -> any parent referencing it must also skip.
+message Unsupported {
+    int32 ok_scalar = 1;          // supported on its own ...
+    repeated L3 deep = 2;         // ... but this depth-4 nested list is unsupported
+}
+
+// Parent via STRUCT: with the transitive gate, skipped (no dangling reference).
+message HolderStruct {
+    Unsupported child = 1;
+}
+
+// Parent via REPEATED_STRUCT.
+message HolderRepeated {
+    repeated Unsupported children = 1;
+}
+
+// Parent via message-value MAP.
+message HolderMap {
+    map<string, Unsupported> by_name = 1;
+}

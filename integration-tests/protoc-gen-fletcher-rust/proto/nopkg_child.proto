@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6a no-package import fixture (D-RBA-10 edge case). Defines Tag with NO
+// proto `package`. It is imported by composite_main.proto (package `rba.main`)
+// as a nested struct, so the Rust accessor must resolve it DIRECTLY under
+// fletcher_gen as `crate::fletcher_gen::TagAccessor` — NOT with an empty package
+// segment (`crate::fletcher_gen::::TagAccessor`, which is invalid Rust).
+syntax = "proto3";
+// (no `package` declaration on purpose)
+
+message Tag {
+    int32 code = 1;  // arrow::int32()
+}

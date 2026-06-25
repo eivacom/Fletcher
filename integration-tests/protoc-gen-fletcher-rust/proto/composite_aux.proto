@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// RBA-6a same-package second file (file B', package `rba.main`). Shares the
+// package `rba.main` with composite_main.proto so the build.rs assembler
+// co-mounts BOTH files into the single `pub mod rba::main` via per-package
+// `include!` (D-RBA-10 same-package case). Per Step-2 review R1, this file ALSO
+// emits a *composite* accessor (a REPEATED_SCALAR getter) so the fully-qualified
+// `crate::fletcher_gen::__rba::ScalarSpan` helper paths in BOTH co-mounted files
+// are exercised and prove there is NO E0252/E0428 collision (no per-file `use`,
+// no per-file helper definitions).
+//
+// RBA-6b also adds a NESTED_LIST DEPTH 3 here (list<list<list<struct>>>) to
+// exercise the depth-3 emit/span path (NestedStructSpan3) — kept off the main
+// forcing fixture so that test stays focused on depth 2.
+syntax = "proto3";
+package rba.main;
+
+import "fletcher/options.proto";
+
+// Leaf struct for the depth-3 nested list (same-file, same-package).
+message Cell {
+    int32 n = 1;
+}
+
+// Depth-3 flatten wrappers: RegionList wraps a repeated InnerCellList, which
+// wraps a repeated Cell -> repeated RegionList yields list<list<list<struct>>>.
+message InnerCellList {
+    option (fletcher.flatten) = true;
+    repeated Cell cells = 1;
+}
+
+message RegionList {
+    option (fletcher.flatten) = true;
+    repeated InnerCellList rows = 1;
+}
+
+message AuxSamples {
+    // Repeated scalar (non-nullable list): list<int64> -> ScalarSpan. This is the
+    // composite getter that, when co-mounted with composite_main.proto into one
+    // module, must not collide with that file's __rba references.
+    repeated int64 samples = 1;
+
+    // NESTED_LIST depth 3: list<list<list<struct<n:int32>>>> -> NestedStructSpan3.
+    repeated RegionList regions = 2;
+}

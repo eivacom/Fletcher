@@ -50,7 +50,7 @@ The system is organized into two deployment tiers that share the same wire forma
 
 The **edge tier** depends only on nanoarrow (~100 KB). It includes the generated message classes (`.fletcher.pb.h`), the `PubSub` interface, the `PositionalWriter`/`PositionalReader` pair, the `Driver` (fan-out, subscription IDs), transport providers (FastDDS, XRCE-DDS), and the gateway. An edge binary can publish and subscribe to Arrow-typed data streams without linking the full Arrow C++ library.
 
-The **server tier** adds the full Apache Arrow C++ library. It includes the `Codec` (Arrow scalar encode/decode), the `pubsub-arrow` adapter (Arrow C++ convenience types over the nanoarrow provider), and the generated Arrow classes (`.fletcher.arrow.pb.h`) for zero-copy view access into `RecordBatch` and `Table`, and `ToArrowRow()` converters.
+The **server tier** adds the full Apache Arrow C++ library. It includes the `Codec` (Arrow scalar encode/decode), the `pubsub-arrow` adapter (Arrow C++ convenience types over the nanoarrow provider), the generated Arrow view classes (`.fletcher.arrow.pb.h`) for zero-copy view access into `RecordBatch` and `Table` plus `ToArrowRow()` converters, and the optional generated column-oriented `RecordBatch` accessors (`.fletcher.accessor.pb.h`) for batched, cast-once reads.
 
 Both tiers produce byte-identical wire format. A row encoded via `PositionalWriter` on an edge device can be decoded by `Codec` on a server, and vice versa.
 
@@ -60,7 +60,7 @@ The system provides seven composable layers:
 
 1. **core** — a header-only library with `PositionalWriter`/`PositionalReader` for direct serialization, `WriteBuffer`, `Envelope`, and `EncodedRow` type aliases. No dependencies beyond the standard library.
 2. **arrow-bridge** — the `Codec` class for server-side ArrowRow encode/decode (Arrow C++), plus `ArrowRowView` helpers and CRS utilities.
-3. **protoc** — the `protoc-gen-fletcher` plugin. Generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), and TypeScript interfaces with schema descriptors.
+3. **protoc** — the `protoc-gen-fletcher` plugin. Generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), optional column-oriented `RecordBatch` accessors for C++ (`.fletcher.accessor.pb.h`, `--fletcher_opt=accessor`) and Rust (`.fletcher.rs`, `--fletcher_opt=rust`), and TypeScript interfaces with schema descriptors.
 4. **pubsub** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
 5. **pubsub-arrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
 6. **gateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol. (Migrated from the prototype's `WebGateway`.)
@@ -85,6 +85,8 @@ For schema delivery, the flow is:
 2. The transport provider stores the schema alongside the data topic (e.g., via a companion DDS topic with TRANSIENT_LOCAL durability).
 3. When a subscriber joins, the provider returns the schema automatically in the `SubscriptionResult`.
 4. Both sides now share the same schema, enabling the compact positional wire format.
+
+For **batched, column-oriented reads** — once rows have been assembled into an Arrow `RecordBatch` for analytics, storage, or forwarding — the optional generated `<Class>Accessor` (C++ `.fletcher.accessor.pb.h`, Rust `.fletcher.rs`) takes a whole `RecordBatch` (or `StructArray`), validates it against the message's schema **once**, down-casts every column **once** up front, and then exposes typed, zero-copy getters that index straight into the cached concrete arrays — no per-cell scalar allocation and no hand-written `static_pointer_cast` boilerplate. This is the read-side counterpart to the row-at-a-time encode path above; the C++ and Rust accessors are proven to read the same batch identically. See [RecordBatch Accessor Specification](recordbatch-accessor-spec.md).
 
 ### 3.4 Component Diagram
 
@@ -224,6 +226,10 @@ The `protoc-gen-fletcher` plugin runs during your CMake build. For each `.proto`
 | `.fletcher.pb.h` | nanoarrow only | Schema function, typed row class, publisher/subscriber |
 | `.fletcher.arrow.pb.h` | Arrow C++ | Immutable view class with typed getters, `ToArrowRow()` converter |
 | `.fletcher.ts` | — | TypeScript interface, SchemaDescriptor, topic constant |
+| `.fletcher.accessor.pb.h` | Arrow C++ | Column-oriented `RecordBatch` accessor (C++) — opt-gated by `--fletcher_opt=accessor` |
+| `.fletcher.rs` | `arrow` crate | Column-oriented `RecordBatch` accessor (Rust) — opt-gated by `--fletcher_opt=rust` |
+
+The last two are emitted only when their `--fletcher_opt` token is passed. See the [RecordBatch Accessor Specification](recordbatch-accessor-spec.md) for the full contract.
 
 ### 7.3 Encode and decode
 
