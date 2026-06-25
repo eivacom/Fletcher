@@ -38,18 +38,6 @@ std::string ReplaceAll(std::string s, const std::string& from, const std::string
     return s;
 }
 
-std::string DotToColons(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
-    for (char c : s) {
-        if (c == '.')
-            out += "::";
-        else
-            out += c;
-    }
-    return out;
-}
-
 std::string StripProtoSuffix(const std::string& proto_name) {
     constexpr std::string_view kSuffix = ".proto";
     std::string base = proto_name;

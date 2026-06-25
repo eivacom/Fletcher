@@ -6,9 +6,28 @@
 #include <google/protobuf/descriptor.pb.h>
 #include <google/protobuf/unknown_field_set.h>
 
+#include <algorithm>
 #include <set>
+#include <string>
 
 namespace fletcher {
+
+// Single source of truth for the dotted-path → C++ namespace-path transform
+// (declared in type_mapper.hpp). Shared by the row generator and the accessor
+// emitter; replaces the former per-TU DotToColons / DotToColonsTM /
+// PackageToNamespace copies.
+std::string DotToColons(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() +
+                2 * static_cast<std::string::size_type>(std::count(s.begin(), s.end(), '.')));
+    for (char c : s) {
+        if (c == '.')
+            out += "::";
+        else
+            out += c;
+    }
+    return out;
+}
 
 // -----------------------------------------------------------------------
 // Custom option helpers (visible to both anonymous namespace and public API)
@@ -38,18 +57,6 @@ namespace {
 // Cross-file reference helpers
 // -----------------------------------------------------------------------
 
-static std::string DotToColonsTM(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 2 * std::count(s.begin(), s.end(), '.'));
-    for (char c : s) {
-        if (c == '.')
-            out += "::";
-        else
-            out += c;
-    }
-    return out;
-}
-
 // Compute the bare (unqualified) generated class name for a message.
 // Handles nested messages: Outer.Inner → "Outer_Inner".
 // (Mirrors the public ClassName() function below; defined here so the
@@ -76,7 +83,7 @@ static std::string QualifiedClassName(const google::protobuf::Descriptor* msg,
     if (msg->file()->package() == context_file->package()) return bare;
     const std::string& pkg = msg->file()->package();
     if (pkg.empty()) return "::fletcher_gen::" + bare;
-    return "::fletcher_gen::" + DotToColonsTM(pkg) + "::" + bare;
+    return "::fletcher_gen::" + DotToColons(pkg) + "::" + bare;
 }
 
 // Include path for the generated header of msg's file, relative to the proto root.

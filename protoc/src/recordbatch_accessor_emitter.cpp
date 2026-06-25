@@ -4,6 +4,7 @@
 #include "recordbatch_accessor_emitter.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cstddef>
 #include <set>
@@ -18,22 +19,6 @@
 namespace fletcher {
 
 namespace {
-
-// Convert a proto package "foo.bar" to a C++ nested-namespace path "foo::bar".
-// Mirrors the package -> namespace derivation used by the existing generated
-// headers (fletcher_gen::<package>); kept local to avoid touching generator.cpp.
-std::string PackageToNamespace(const std::string& package) {
-    std::string out;
-    out.reserve(package.size() + 2 * static_cast<std::string::size_type>(
-                                         std::count(package.begin(), package.end(), '.')));
-    for (char c : package) {
-        if (c == '.')
-            out += "::";
-        else
-            out += c;
-    }
-    return out;
-}
 
 // Concrete-array derivation for a scalar field, keyed by the Arrow type
 // expression produced by the type-mapper (ScalarTypeInfo.arrow_type_expr). The
@@ -176,6 +161,11 @@ std::string NlLeafMember(const FieldInfo& fi) { return fi.name + "_leaf_"; }
 std::string ScalarMapSpanType(const FieldInfo& fi) {
     const ScalarArrayInfo* k = LookupScalarArray(fi.mapping.map_key.arrow_type_expr);
     const ScalarArrayInfo* v = LookupScalarArray(fi.mapping.map_value.arrow_type_expr);
+    // Callers gate on IsSupportedMap(), which itself resolves both leaves via
+    // LookupScalarArray — so k/v are non-null here. Assert to make that contract
+    // explicit and fail loudly in debug builds if a future caller bypasses the gate.
+    assert(k != nullptr && v != nullptr &&
+           "ScalarMapSpanType requires supported scalar key/value leaves (gate on IsSupportedMap)");
     return "fletcher::ScalarMapSpan<" + k->value_type + ", " + k->concrete_array + ", " +
            v->value_type + ", " + v->concrete_array + ", " + (k->use_get_view ? "true" : "false") +
            ", " + (v->use_get_view ? "true" : "false") + ">";
@@ -259,21 +249,46 @@ void EmitFieldStorage(std::ostringstream& o, const FieldInfo& fi) {
     }
 }
 
+// Emit a collection getter that returns a borrowed span. Single point of truth
+// for the no-read-through-null shape shared by REPEATED_SCALAR / REPEATED_STRUCT
+// / MAP / NESTED_LIST: a row-nullable field guards on `null_member`->IsNull(row)
+// and returns std::nullopt (distinct from an empty collection, B2); a
+// non-nullable field returns the span directly. `body` is the brace-init for the
+// span's borrowed fields; `null_member` is the list/map array checked for the
+// row null.
+void EmitSpanGetter(std::ostringstream& o, const std::string& span, const std::string& name,
+                    bool nullable, const std::string& null_member, const std::string& body) {
+    if (nullable) {
+        o << "  std::optional<" << span << "> " << name
+          << "(int64_t row) const FLETCHER_RBA_LIFETIMEBOUND {\n"
+          << "    if (" << null_member << "->IsNull(row)) return std::nullopt;\n"
+          << "    return " << span << body << ";\n"
+          << "  }\n";
+    } else {
+        o << "  " << span << " " << name << "(int64_t row) const FLETCHER_RBA_LIFETIMEBOUND {\n"
+          << "    return " << body << ";\n"
+          << "  }\n";
+    }
+}
+
 // Emit the public getter(s) for one supported field.
 void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
     switch (fi.mapping.kind) {
         case FieldKind::SCALAR: {
             const ScalarArrayInfo* sa = LookupScalarArray(fi.mapping.scalar.arrow_type_expr);
             const std::string read = sa->use_get_view ? "GetView(row)" : "Value(row)";
+            // string_view getters borrow the column buffer; numeric/bool/temporal
+            // return by value (no borrow → no lifetime binding).
+            const std::string lb = sa->use_get_view ? " FLETCHER_RBA_LIFETIMEBOUND" : "";
             if (fi.mapping.nullable) {
                 o << "  std::optional<" << sa->value_type << "> " << fi.name
-                  << "(int64_t row) const {\n"
+                  << "(int64_t row) const" << lb << " {\n"
                   << "    if (" << fi.name << "_->IsNull(row)) return std::nullopt;\n"
                   << "    return " << fi.name << "_->" << read << ";\n"
                   << "  }\n";
             } else {
-                o << "  " << sa->value_type << " " << fi.name << "(int64_t row) const { return "
-                  << fi.name << "_->" << read << "; }\n";
+                o << "  " << sa->value_type << " " << fi.name << "(int64_t row) const" << lb
+                  << " { return " << fi.name << "_->" << read << "; }\n";
             }
             break;
         }
@@ -283,12 +298,13 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
                 // B2 no-read-through-null: check the parent struct column's
                 // validity before returning the inner row view.
                 o << "  std::optional<" << acc << "::RowView> " << fi.name
-                  << "(int64_t row) const {\n"
+                  << "(int64_t row) const FLETCHER_RBA_LIFETIMEBOUND {\n"
                   << "    if (" << StructMember(fi) << "->IsNull(row)) return std::nullopt;\n"
                   << "    return " << StructAccMember(fi) << "->at(row);\n"
                   << "  }\n";
             } else {
-                o << "  " << acc << "::RowView " << fi.name << "(int64_t row) const {\n"
+                o << "  " << acc << "::RowView " << fi.name
+                  << "(int64_t row) const FLETCHER_RBA_LIFETIMEBOUND {\n"
                   << "    return " << StructAccMember(fi) << "->at(row);\n"
                   << "  }\n";
             }
@@ -302,18 +318,9 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
             const std::string body = "{" + ListValuesMember(fi) + ".get(), " + ListMember(fi) +
                                      "->value_offset(row), " + ListMember(fi) +
                                      "->value_length(row)}";
-            if (fi.mapping.nullable) {
-                // Row-nullable list: a null list row is distinct from an empty
-                // list — return std::nullopt, never read through the null (B2).
-                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
-                  << "    if (" << ListMember(fi) << "->IsNull(row)) return std::nullopt;\n"
-                  << "    return " << span << body << ";\n"
-                  << "  }\n";
-            } else {
-                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
-                  << "    return " << body << ";\n"
-                  << "  }\n";
-            }
+            // Row-nullable list: a null list row is distinct from an empty list —
+            // return std::nullopt, never read through the null (B2).
+            EmitSpanGetter(o, span, fi.name, fi.mapping.nullable, ListMember(fi), body);
             break;
         }
         case FieldKind::REPEATED_STRUCT: {
@@ -322,18 +329,9 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
             const std::string body = "{&*" + ListInnerMember(fi) + ", " + ListMember(fi) +
                                      "->value_offset(row), " + ListMember(fi) +
                                      "->value_length(row)}";
-            if (fi.mapping.nullable) {
-                // Row-nullable list: null list row -> std::nullopt (B2). Distinct
-                // from an empty (size 0) list.
-                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
-                  << "    if (" << ListMember(fi) << "->IsNull(row)) return std::nullopt;\n"
-                  << "    return " << span << body << ";\n"
-                  << "  }\n";
-            } else {
-                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
-                  << "    return " << body << ";\n"
-                  << "  }\n";
-            }
+            // Row-nullable list: null list row -> std::nullopt (B2). Distinct from
+            // an empty (size 0) list.
+            EmitSpanGetter(o, span, fi.name, fi.mapping.nullable, ListMember(fi), body);
             break;
         }
         case FieldKind::MAP: {
@@ -350,16 +348,7 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
                        MapMember(fi) + "->value_offset(row), " + MapMember(fi) +
                        "->value_length(row)}";
             }
-            if (fi.mapping.nullable) {
-                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
-                  << "    if (" << MapMember(fi) << "->IsNull(row)) return std::nullopt;\n"
-                  << "    return " << span << body << ";\n"
-                  << "  }\n";
-            } else {
-                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
-                  << "    return " << body << ";\n"
-                  << "  }\n";
-            }
+            EmitSpanGetter(o, span, fi.name, fi.mapping.nullable, MapMember(fi), body);
             break;
         }
         case FieldKind::NESTED_LIST: {
@@ -374,16 +363,7 @@ void EmitFieldGetter(std::ostringstream& o, const FieldInfo& fi) {
                        NlOuterMember(fi) + "->value_offset(row), " + NlOuterMember(fi) +
                        "->value_length(row)}";
             }
-            if (fi.mapping.nullable) {
-                o << "  std::optional<" << span << "> " << fi.name << "(int64_t row) const {\n"
-                  << "    if (" << NlOuterMember(fi) << "->IsNull(row)) return std::nullopt;\n"
-                  << "    return " << span << body << ";\n"
-                  << "  }\n";
-            } else {
-                o << "  " << span << " " << fi.name << "(int64_t row) const {\n"
-                  << "    return " << body << ";\n"
-                  << "  }\n";
-            }
+            EmitSpanGetter(o, span, fi.name, fi.mapping.nullable, NlOuterMember(fi), body);
             break;
         }
     }
@@ -742,8 +722,23 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
     }
     o << "\n";
 
+    // Lifetime-binding attribute for the borrowed getters / RowView entry: on
+    // Clang, ties the returned string_view / span / RowView to the accessor it
+    // borrows from, so binding one to a temporary (or otherwise about-to-die)
+    // accessor is diagnosed at compile time (-Wdangling). A no-op on GCC/MSVC.
+    // Note: this catches the temporary-accessor case; moving a live accessor while
+    // a borrow is outstanding (see the lifetime note below) is still UB and not
+    // statically detectable here.
+    o << "#ifndef FLETCHER_RBA_LIFETIMEBOUND\n"
+      << "#if defined(__clang__)\n"
+      << "#define FLETCHER_RBA_LIFETIMEBOUND [[clang::lifetimebound]]\n"
+      << "#else\n"
+      << "#define FLETCHER_RBA_LIFETIMEBOUND\n"
+      << "#endif\n"
+      << "#endif\n\n";
+
     o << "namespace fletcher_gen {\n";
-    const std::string ns = PackageToNamespace(file->package());
+    const std::string ns = DotToColons(file->package());
     if (!ns.empty()) o << "namespace " << ns << " {\n";
     o << "\n";
 
@@ -873,9 +868,15 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
         o << "  // NOTE: utf8/binary getters return std::string_view, and collection\n"
           << "  // getters return small span objects (ScalarSpan/StructSpan) that borrow\n"
           << "  // the cached column buffers / inner accessors owned by this accessor.\n"
-          << "  // Spans and RowViews are valid only while this accessor is alive; copy\n"
-          << "  // out anything that must outlive it. Numeric/bool/temporal scalar\n"
-          << "  // getters return by value (no borrow).\n";
+          << "  // Spans and RowViews are valid only while this accessor is alive AND\n"
+          << "  // unmoved; copy out anything that must outlive it. In particular, moving\n"
+          << "  // this accessor (e.g. `auto a2 = std::move(a);`) while a span/RowView\n"
+          << "  // obtained from it is still in use leaves that borrow dangling — re-fetch\n"
+          << "  // from the moved-to accessor. The borrowing getters carry\n"
+          << "  // [[clang::lifetimebound]] (Clang) so binding a borrow to a temporary\n"
+          << "  // accessor is caught at compile time; the move case is not statically\n"
+          << "  // detectable. Numeric/bool/temporal scalar getters return by value (no\n"
+          << "  // borrow).\n";
 
         // Getters.
         for (const auto& fi : fields) {
@@ -905,7 +906,8 @@ std::string EmitAccessorHeader(const google::protobuf::FileDescriptor* file) {
         }
         o << "  };\n\n";
 
-        o << "  RowView at(int64_t row) const { return RowView{this, row}; }\n\n";
+        o << "  RowView at(int64_t row) const FLETCHER_RBA_LIFETIMEBOUND { return RowView{this, "
+             "row}; }\n\n";
 
         // Private section: default ctor, FromColumns_, storage.
         o << " private:\n";

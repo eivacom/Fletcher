@@ -92,6 +92,13 @@ std::string ClassName(const google::protobuf::Descriptor* msg);
 // Handles nested messages: Outer.Inner → "Outer_InnerView".
 std::string ViewClassName(const google::protobuf::Descriptor* msg);
 
+// Convert a dotted proto path ("foo.bar") to a C++ nested-namespace path
+// ("foo::bar"). Single source of truth for the package→namespace transform,
+// shared by the row generator, the type-mapper's cross-file references, and the
+// RecordBatch accessor emitter (replaces the former DotToColons / DotToColonsTM /
+// PackageToNamespace copies).
+std::string DotToColons(const std::string& s);
+
 // -----------------------------------------------------------------------
 // C++ wire format helpers (for EncodeTo code generation)
 // -----------------------------------------------------------------------
