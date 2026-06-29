@@ -111,6 +111,9 @@ jobs:
               - 'gateway-client-ts/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.gateway-client.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.devcontainer/**'
             protoc:
               - 'protoc/**'
               - '.github/workflows/ci.pr.yml'
@@ -342,9 +345,11 @@ jobs:
     secrets: inherit
 
   gateway-client:
-    needs: detect-changes
+    needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.gateway-client == 'true' }}
     uses: ./.github/workflows/ci.gateway-client.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
   # format-check-cpp, format-check-ts, license-headers, and action-lint

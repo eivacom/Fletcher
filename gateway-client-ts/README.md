@@ -15,6 +15,22 @@ npm install @eiva/fletcher-gateway-client
 npm install @eiva/fletcher-gateway-client@alpha
 ```
 
+## Building from source
+
+The build toolchain (pinned Node.js + npm) lives in the repo's devcontainer at
+[`.devcontainer/`](../.devcontainer), so the client builds the same way locally and in CI.
+In VS Code, *Reopen in Container*; for a plain Docker shell see
+[CONTRIBUTING.md](../CONTRIBUTING.md#development-environment). Inside the container:
+
+```bash
+cd gateway-client-ts
+npm ci         # clean install from package-lock.json
+npm run build  # tsc -> dist/
+npm test       # vitest run
+```
+
+`ci.gateway-client` runs these exact steps inside the shared devcontainer image.
+
 ## Usage
 
 ```ts

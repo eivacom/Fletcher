@@ -9,34 +9,52 @@ concurrency:
 
 on:
   workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers; the
+          cd.gateway-client.yml wrapper does the same for tag-push releases.
+        required: true
+        type: string
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: gateway-client-ts
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             gateway-client-ts
-            .github/workflows
+            .github
 
-      - uses: actions/setup-node@v6.4.0
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
         with:
-          node-version: 24.15.0
-          cache: npm
-          cache-dependency-path: gateway-client-ts/package-lock.json
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test
+      # The devcontainer ships the same pinned Node + npm as the image CI
+      # builds for the C++ components, so a clean install/build/test here
+      # matches exactly what a developer gets locally via "Reopen in
+      # Container". dist/ is written into the volume-mounted workspace, so
+      # it is visible on the host for the upload step below.
+      - name: Build and test
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/gateway-client-ts \
+            fletcher-build \
+            bash -c '
+              set -e
+              npm ci
+              npm run build
+              npm test
+            '
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.1
