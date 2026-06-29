@@ -16,8 +16,15 @@ on:
       - 'gateway-client-v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
+    secrets: inherit
+
   build-and-test:
+    needs: setup-devcontainer
     uses: ./.github/workflows/ci.gateway-client.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
   publish:
