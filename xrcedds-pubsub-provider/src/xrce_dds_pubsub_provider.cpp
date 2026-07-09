@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Targets eProsima Micro XRCE-DDS Client 2.4.x.
+// Targets eProsima Micro XRCE-DDS Client 3.0.x.
 //
 // Unlike the FastDDS provider which has per-subscription listeners, the
 // XRCE-DDS client provides a single global on_topic callback per session.

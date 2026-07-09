@@ -1,6 +1,6 @@
 # xrcedds-pubsub-provider
 
-Implements `fletcher::PubSubProvider` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v2.4.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP, TCP, or serial.
+Implements `fletcher::PubSubProvider` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v3.0.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP, TCP, or serial.
 
 ## How it works
 
@@ -178,7 +178,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-xrcedds-pubsub-provider/0.4.0-alpha")
+    self.requires("fletcher-xrcedds-pubsub-provider/0.5.0-alpha")
 ```
 
 Install dependencies:
@@ -200,7 +200,7 @@ target_link_libraries(my_app PRIVATE
 target_link_libraries(my_app PRIVATE fletcher::xrcedds-pubsub-provider)
 ```
 
-Micro XRCE-DDS Client and Micro-CDR are built from source as part of this package via CMake `FetchContent`; consumers do not need to declare them separately.
+Micro XRCE-DDS Client (v3.0.1) and Micro-CDR (v2.0.2) are built from source as part of this package via CMake `FetchContent`; consumers do not need to declare them separately.
 
 ## CI pipeline
 

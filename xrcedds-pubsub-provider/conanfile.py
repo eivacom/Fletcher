@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-xrcedds-pubsub-provider"
-    version = "0.4.0-alpha"
+    version = "0.5.0-alpha"
     description = "Fletcher XRCE-DDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
