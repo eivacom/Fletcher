@@ -37,6 +37,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef FLETCHER_BUILD_TESTS
+#include "internal/xrce_test_hook.hpp"
+#endif
+
 namespace fletcher {
 
 // The CDR `sequence<octet>` length field we prepend before
@@ -149,6 +153,18 @@ struct XrceDDSPubSubProvider::Impl {
     static void OnTopic(uxrSession* /*session*/, uxrObjectId object_id, uint16_t /*request_id*/,
                         uxrStreamId /*stream_id*/, struct ucdrBuffer* ub, uint16_t length,
                         void* args);
+
+#ifdef FLETCHER_BUILD_TESTS
+    // Test seam (issue #62 residual, HARD-4). Builds a real re-entrant-Unsubscribe
+    // scenario and drives the real OnTopic() above. Defined out-of-line so it has
+    // full access to Impl / TopicState / OnTopic. The free hook declared in
+    // xrce_test_hook.hpp (namespace fletcher::xrce::test) cannot name this private
+    // pimpl type, so it forwards here through a file-scope trampoline that
+    // test_hook_registered_ wires up at static-init time (see end of file). This
+    // keeps the installed public header byte-for-byte untouched.
+    static xrce::test::ReentrantUnsubscribeResult RunReentrantUnsubscribeScenario();
+    static const bool test_hook_registered_;
+#endif
 };
 
 void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId object_id,
@@ -178,33 +194,53 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     // safely — there are no separate listener threads as in the FastDDS path.
     auto sit = impl->schema_reader_to_topic.find(object_id.id);
     if (sit != impl->schema_reader_to_topic.end()) {
-        auto tit = impl->topics.find(sit->second);
-        if (tit == impl->topics.end()) return;
-        auto& ts = tit->second;
-        if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
+        // Snapshot everything the callbacks need into locals BEFORE invoking any
+        // user code (issue #62 residual). A callback that re-enters Unsubscribe()
+        // on this topic performs an in-place TopicState reset — ts.callback =
+        // nullptr; ts.pending.clear() — while leaving the map node live. The old
+        // code kept iterating the live ts.pending and calling the live ts.callback
+        // across that reset: the second iteration read a destroyed Envelope and
+        // then invoked the now-null ts.callback (std::bad_function_call). Copying
+        // to locals makes the in-flight flush independent of the live TopicState.
+        // Dispatch stays under impl->mu (single recursive-mutex pump model).
+        PubSubProvider::SubscribeCallback callback;
+        SharedSchema schema_for_callbacks;
+        std::vector<Envelope> pending;
+        {
+            auto tit = impl->topics.find(sit->second);
+            if (tit == impl->topics.end()) return;
+            auto& ts = tit->second;
+            if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
 
-        // Malformed __schema sample must not throw out of the XRCE session
-        // callback thread (which could terminate the process); ignore it and
-        // let the retained TRANSIENT_LOCAL/KEEP_LAST(1) sample be redelivered.
-        OwnedSchema schema;
-        try {
-            schema = DeserializeSchemaIpc(body, seq_len);
-        } catch (...) {
-            return;
+            // Malformed __schema sample must not throw out of the XRCE session
+            // callback thread (which could terminate the process); ignore it and
+            // let the retained TRANSIENT_LOCAL/KEEP_LAST(1) sample be redelivered.
+            OwnedSchema schema;
+            try {
+                schema = DeserializeSchemaIpc(body, seq_len);
+            } catch (...) {
+                return;
+            }
+            if (!schema) return;
+            ts.schema = OwnedSchema::DeepCopy(schema.get());
+            ts.shared_schema = MakeSharedSchema(std::move(schema));
+            ts.schema_promise.set_value(ts.shared_schema);
+            ts.schema_resolved = true;
+
+            callback = ts.callback;
+            schema_for_callbacks = ts.shared_schema;
+            pending = std::move(ts.pending);
+            ts.pending.clear();
         }
-        if (!schema) return;
-        ts.schema = OwnedSchema::DeepCopy(schema.get());
-        ts.shared_schema = MakeSharedSchema(std::move(schema));
-        ts.schema_promise.set_value(ts.shared_schema);
-        ts.schema_resolved = true;
 
-        if (ts.callback) {
-            for (auto& env : ts.pending) {
-                ts.callback(env.row.data(), env.row.size(), ts.shared_schema,
-                            std::move(env.attachments));
+        // Deliver from locals only — do NOT read or write ts / ts.* past this
+        // point; a re-entrant Unsubscribe may reset the live TopicState.
+        if (callback) {
+            for (auto& env : pending) {
+                callback(env.row.data(), env.row.size(), schema_for_callbacks,
+                         std::move(env.attachments));
             }
         }
-        ts.pending.clear();
         return;
     }
 
@@ -213,27 +249,43 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     if (rit == impl->reader_to_topic.end()) return;
     auto tit = impl->topics.find(rit->second);
     if (tit == impl->topics.end() || !tit->second.callback) return;
-    auto& ts = tit->second;
 
-    // DeserializeEnvelope throws std::invalid_argument on a malformed/truncated
-    // sample. That must not escape the XRCE session callback thread (which could
-    // tear down the session pump / process), so drop the bad sample and keep the
-    // session alive. std::invalid_argument is the only type it throws; anything
-    // else is unexpected and is left to propagate.
+    // Snapshot the callback and schema into locals before invoking user code
+    // (issue #62 residual): a callback that re-enters Unsubscribe() resets the
+    // live TopicState (ts.callback = nullptr) in place, which would otherwise
+    // self-destruct the executing std::function. `envelope` is already a local.
+    // Dispatch stays under impl->mu (single recursive-mutex pump model).
+    PubSubProvider::SubscribeCallback callback;
+    SharedSchema schema_for_callback;
     Envelope envelope;
-    try {
-        envelope = DeserializeEnvelope(body, seq_len);
-    } catch (const std::invalid_argument&) {
-        return;
+    {
+        auto& ts = tit->second;
+
+        // DeserializeEnvelope throws std::invalid_argument on a malformed/truncated
+        // sample. That must not escape the XRCE session callback thread (which could
+        // tear down the session pump / process), so drop the bad sample and keep the
+        // session alive. std::invalid_argument is the only type it throws; anything
+        // else is unexpected and is left to propagate.
+        try {
+            envelope = DeserializeEnvelope(body, seq_len);
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+        if (!ts.shared_schema) {
+            // Subscriber-first: the schema has not arrived yet. Buffer the sample;
+            // it is flushed in order when the __schema sample resolves the future.
+            ts.pending.push_back(std::move(envelope));
+            return;
+        }
+        callback = ts.callback;
+        schema_for_callback = ts.shared_schema;
     }
-    if (!ts.shared_schema) {
-        // Subscriber-first: the schema has not arrived yet. Buffer the sample;
-        // it is flushed in order when the __schema sample resolves the future.
-        ts.pending.push_back(std::move(envelope));
-        return;
+
+    // Deliver from locals only — do NOT read or write ts / ts.* past this point.
+    if (callback) {
+        callback(envelope.row.data(), envelope.row.size(), schema_for_callback,
+                 std::move(envelope.attachments));
     }
-    ts.callback(envelope.row.data(), envelope.row.size(), ts.shared_schema,
-                std::move(envelope.attachments));
 }
 
 // -----------------------------------------------------------------------
@@ -683,9 +735,117 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.reader_id);
         impl_->reader_to_topic.erase(ts.reader_id.id);
         ts.has_reader = false;
+        // In-place reset — the map node stays live; OnTopic must not depend on
+        // these fields across a user callback (see the copy-to-locals fix above).
         ts.callback = nullptr;
         ts.pending.clear();
     }
 }
+
+// -----------------------------------------------------------------------
+// Test seam (issue #62 residual, HARD-4) — compiled only under
+// FLETCHER_BUILD_TESTS. Drives the real Impl::OnTopic() schema-flush path
+// through a re-entrant-Unsubscribe scenario. See src/internal/xrce_test_hook.hpp.
+// -----------------------------------------------------------------------
+#ifdef FLETCHER_BUILD_TESTS
+
+namespace xrce::test {
+namespace {
+// File-scope trampoline. The free hook forwards through this pointer, which the
+// non-inline static data member Impl::test_hook_registered_ wires to the
+// Impl-scoped scenario at static-init (a non-inline non-local static's dynamic
+// init strongly-happens-before the first odr-use of any non-inline function in
+// this TU — i.e. before the hook can run).
+ReentrantUnsubscribeResult (*g_run_reentrant_scenario)() = nullptr;
+}  // namespace
+}  // namespace xrce::test
+
+const bool XrceDDSPubSubProvider::Impl::test_hook_registered_ = [] {
+    xrce::test::g_run_reentrant_scenario =
+        &XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario;
+    return true;
+}();
+
+xrce::test::ReentrantUnsubscribeResult
+XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
+    xrce::test::ReentrantUnsubscribeResult result;
+
+    // Default-constructed Impl: no transport/session/run-loop is started, so no
+    // network or Agent is involved. We populate internal state by hand and drive
+    // the real OnTopic() directly.
+    Impl impl;
+
+    const std::string topic_name = "reentrant/topic";
+    const uint16_t schema_reader_id = 7;
+
+    // Route a schema sample carrying this reader id to `topic_name`'s
+    // schema-flush path.
+    impl.schema_reader_to_topic[schema_reader_id] = topic_name;
+
+    auto& ts = impl.topics[topic_name];
+    ts.schema_resolved = false;
+
+    // Two buffered pending envelopes (subscriber-first backlog). No attachments.
+    auto make_env = [](uint8_t tag) {
+        Envelope env;
+        env.row = {tag, 0x00, 0x00, 0x00};
+        return env;
+    };
+    ts.pending.push_back(make_env(0x01));
+    ts.pending.push_back(make_env(0x02));
+
+    // Callback: count deliveries and, on the FIRST delivery, reproduce EXACTLY
+    // what the real Unsubscribe() does to a live TopicState — an in-place reset
+    // (ts.callback = nullptr; ts.pending.clear()) with the map node left live.
+    // Pre-fix this self-nulls the executing std::function and invalidates the
+    // pending iteration; post-fix the flush runs off local copies and is immune.
+    Impl* impl_ptr = &impl;
+    ts.callback = [impl_ptr, topic_name, &result](const uint8_t*, size_t, SharedSchema,
+                                                  Attachments) {
+        result.delivery_count += 1;
+        if (result.delivery_count == 1) {
+            auto& live = impl_ptr->topics[topic_name];
+            live.callback = nullptr;  // real Unsubscribe in-place reset
+            live.pending.clear();     // real Unsubscribe in-place reset
+        }
+    };
+
+    // Synthesize a schema sample exactly as the wire path presents it to
+    // OnTopic: IPC schema bytes wrapped in the CDR sequence<octet> length prefix
+    // (the Agent has already stripped the CDR encapsulation header).
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "x");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32);
+
+    std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
+    const uint32_t ipc_len = static_cast<uint32_t>(ipc.size());
+    std::vector<uint8_t> wire;
+    wire.resize(sizeof(ipc_len));
+    std::memcpy(wire.data(), &ipc_len, sizeof(ipc_len));
+    wire.insert(wire.end(), ipc.begin(), ipc.end());
+
+    ucdrBuffer ub;
+    ucdr_init_buffer(&ub, wire.data(), wire.size());
+
+    uxrObjectId object_id = uxr_object_id(schema_reader_id, UXR_DATAREADER_ID);
+
+    // Drive the REAL schema-flush path. Pre-fix: throws std::bad_function_call on
+    // the 2nd pending iteration (ts.callback nulled by the re-entrant reset).
+    // Post-fix: delivers both envelopes from local copies (delivery_count == 2).
+    Impl::OnTopic(nullptr, object_id, /*request_id=*/0, impl.reliable_in, &ub,
+                  static_cast<uint16_t>(wire.size()), &impl);
+
+    return result;
+}
+
+namespace xrce::test {
+ReentrantUnsubscribeResult RunReentrantUnsubscribeSchemaFlushScenario() {
+    return g_run_reentrant_scenario();
+}
+}  // namespace xrce::test
+
+#endif  // FLETCHER_BUILD_TESTS
 
 }  // namespace fletcher

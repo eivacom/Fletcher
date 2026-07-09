@@ -81,6 +81,12 @@ target_link_libraries(fletcher-xrcedds-pubsub-provider
 target_compile_features(fletcher-xrcedds-pubsub-provider PUBLIC cxx_std_20)
 
 if(FLETCHER_BUILD_TESTS)
+    # The test-only hook bodies (issue #62 residual, HARD-4) live inside
+    # xrce_dds_pubsub_provider.cpp under a FLETCHER_BUILD_TESTS guard so they
+    # can drive the real Impl::OnTopic(). The define must reach the provider
+    # library's own compilation (not just the test executable), otherwise the
+    # guarded bodies are elided and the test fails to link.
+    target_compile_definitions(fletcher-xrcedds-pubsub-provider PRIVATE FLETCHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

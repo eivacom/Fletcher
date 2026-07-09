@@ -99,6 +99,33 @@ TEST(FastDDSPubSubProviderTest, ConstructDestruct) {
     EXPECT_NO_THROW({ FastDDSPubSubProvider p(FastDDSProviderOptions{}); });
 }
 
+// #63 (HARD-4) — Destruction is a documented quiescence contract, not a
+// synchronization boundary: callers must ensure no public API call is in flight
+// and no re-entrant provider callback is pending when the provider is destroyed
+// (see ~FastDDSPubSubProvider). This exercises the SUPPORTED teardown — quiescent
+// use, then destruction with no concurrent activity — and documents that
+// contract. It is intentionally NOT a race test: a destruction-during-use race
+// would be flaky and would not make that usage supported (HARD-4 design).
+TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
+    EXPECT_NO_THROW({
+        FastDDSPubSubProvider provider(FastDDSProviderOptions{});
+        provider.CreateTopic({"quiescent", "teardown"}, MakeSchema());
+
+        std::atomic<int32_t> received{-1};
+        provider.Subscribe({"quiescent", "teardown"},
+                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                               if (len >= 5) received.store(DecodeRow(data));
+                           });
+        provider.Publish({"quiescent", "teardown"}, MakeEncoder(1));
+
+        // Reach a quiescent point before teardown: Unsubscribe deletes the
+        // readers outside the provider lock, draining any in-flight listener
+        // callback, so no callback can be running when `provider` is destroyed
+        // at end of scope with no concurrent API calls.
+        provider.Unsubscribe({"quiescent", "teardown"});
+    });
+}
+
 TEST(FastDDSPubSubProviderTest, CreateTopicSucceeds) {
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     EXPECT_NO_THROW(p.CreateTopic({"create", "ok"}, MakeSchema()));

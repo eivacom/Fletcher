@@ -65,6 +65,12 @@ struct FastDDSProviderOptions {
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(FastDDSProviderOptions options);
+
+    /// Destruction precondition: the caller must ensure the provider is
+    /// quiescent — no thread executing or about to enter a public API on this
+    /// instance, and no provider callback still in flight that can re-enter it.
+    /// The destructor tears down DDS entities and invalidates all internal
+    /// state; it is not a synchronization boundary for concurrent use.
     ~FastDDSPubSubProvider() override;
 
     FastDDSPubSubProvider(const FastDDSPubSubProvider&) = delete;

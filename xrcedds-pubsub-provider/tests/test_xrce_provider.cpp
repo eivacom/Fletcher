@@ -11,8 +11,34 @@
 #include <vector>
 
 #include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
+#include "internal/xrce_test_hook.hpp"
 
 using namespace fletcher;
+
+// ---------------------------------------------------------------------------
+// #62 residual (HARD-4) — re-entrant Unsubscribe from inside a callback must
+// not use-after-free / throw std::bad_function_call in OnTopic.
+//
+// The scenario (built and driven by the internal test hook against the real
+// Impl::OnTopic schema-flush path): a topic has a callback and two buffered
+// pending envelopes; a synthesized schema sample triggers the flush; the first
+// delivery re-enters Unsubscribe on the same topic, which performs the real
+// in-place TopicState reset (ts.callback = nullptr; ts.pending.clear()) leaving
+// the map node live.
+//
+// PRE-fix: the flush loop keeps reading the live ts.pending / ts.callback across
+// the reset — the second iteration reads a destroyed Envelope and then invokes
+// the now-null ts.callback, throwing std::bad_function_call (delivery_count < 2,
+// never returned). POST-fix: OnTopic snapshots callback, schema, and pending
+// into locals before invoking user code, so both envelopes are delivered from
+// local copies (delivery_count == 2, no throw).
+// ---------------------------------------------------------------------------
+TEST(XrceProviderTest, ReentrantUnsubscribeNoUseAfterFree) {
+    EXPECT_NO_THROW({
+        auto result = fletcher::xrce::test::RunReentrantUnsubscribeSchemaFlushScenario();
+        EXPECT_EQ(result.delivery_count, 2);
+    });
+}
 
 // ---------------------------------------------------------------------------
 // JoinSegments — mirrors the internal helper; tested via public API behavior
