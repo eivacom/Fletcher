@@ -13,6 +13,7 @@ target_include_directories(fastdds_pubsub_tests PRIVATE
 
 target_link_libraries(fastdds_pubsub_tests PRIVATE
     GTest::gtest_main
+    GTest::gmock
     fletcher-fastdds-pubsub-provider
     fastdds)
 
