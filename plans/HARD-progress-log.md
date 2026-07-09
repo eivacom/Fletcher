@@ -50,3 +50,14 @@ tracker.
 **Verification:** inner-loop `PASS — xrce 10/10, fastdds 18/18`; full suite `deferred to HARD-6 checkpoint`. Red-for-the-right-reason: reverting the `OnTopic` fix makes `ReentrantUnsubscribeNoUseAfterFree` crash with heap corruption (0xC0000374) — the UAF — deterministic in Release, no sanitizer; post-fix `EXPECT_NO_THROW` + `delivery_count==2`.
 **Commit / push:** `hard/4-provider-lifetime` → `origin hard/4-provider-lifetime` (draft PR, base `hard/3-surface-errors`)
 **Carry-forwards / stop-and-asks:** none. Two design deviations accepted (both within the design contract): pre-fix manifests as a heap-corruption crash rather than the predicted catchable `bad_function_call` (stronger form of the same UB); the test seam is a `FLETCHER_BUILD_TESTS`-guarded static-init trampoline (a free hook fn cannot name the private pimpl `Impl` — C2248) driving the real `OnTopic`, production build unaffected, public header untouched.
+
+## HARD-5 — Document last-callback-after-Unsubscribe (2026-07-09)
+
+**Forcing test:** *(docs-only — review-verified, not test-gated)* → 🟢
+**Design:** spec §HARD-5 (no separate design doc — one doc comment)
+**What landed:** Extended the `Subscriber::Unsubscribe` doc comment (`pubsub/include/fletcher/pubsub/subscriber.hpp`) to document the intentional "one final in-flight message after Unsubscribe" behaviour and why: the fan-out (`subscriber.cpp:52-74`) snapshots `(id, callback)` under `mu`, releases the lock, then invokes outside it, so an unsubscribe landing in that window still gets one final delivery. Framed as by-design, not a bug. No code/behaviour change.
+**Files touched:** `pubsub/include/fletcher/pubsub/subscriber.hpp` (comment only)
+**Reviews:** accuracy review `ACCURATE` (verified against the fan-out code) · docs-only confirmed
+**Verification:** none (docs-only); no build/test run
+**Commit / push:** `hard/5-doc-unsubscribe` → `origin hard/5-doc-unsubscribe` (draft PR, base `hard/4-provider-lifetime`)
+**Carry-forwards / stop-and-asks:** none.
