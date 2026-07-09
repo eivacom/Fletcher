@@ -39,7 +39,7 @@ class Publisher {
                  const Attachments& attachments = {});
 
     /// List all registered topic names (segments joined with "/").
-    std::vector<std::string> ListTopics() const;
+    [[nodiscard]] std::vector<std::string> ListTopics() const;
 
    private:
     struct Impl;

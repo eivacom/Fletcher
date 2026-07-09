@@ -100,8 +100,8 @@ class PubSubProvider {
     /// Subscribe to a named topic.  Returns the schema that the
     /// publisher provided when it created the topic. Delivery obeys the
     /// SubscribeCallback contract above (schema-before-data, per-writer order).
-    virtual SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                         SubscribeCallback callback) = 0;
+    [[nodiscard]] virtual SubscriptionResult Subscribe(
+        const std::vector<std::string>& topic_segments, SubscribeCallback callback) = 0;
 
     /// Remove a previously registered subscription.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;

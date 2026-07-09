@@ -45,10 +45,10 @@ class Codec {
    public:
     explicit Codec(std::shared_ptr<arrow::Schema> schema);
 
-    EncodedRow EncodeRow(const ArrowRow& values) const;
+    [[nodiscard]] EncodedRow EncodeRow(const ArrowRow& values) const;
 
-    ArrowRow DecodeRow(const EncodedRow& buf) const;
-    ArrowRow DecodeRow(const uint8_t* data, size_t len) const;
+    [[nodiscard]] ArrowRow DecodeRow(const EncodedRow& buf) const;
+    [[nodiscard]] ArrowRow DecodeRow(const uint8_t* data, size_t len) const;
 
     const arrow::Schema& schema() const noexcept { return *schema_; }
 

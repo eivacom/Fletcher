@@ -109,14 +109,14 @@ TEST(EnvelopeTest, CompletelyEmptyEnvelope) {
 
 TEST(EnvelopeTest, ThrowsOnTruncatedBuffer) {
     std::vector<uint8_t> tiny = {0x01, 0x02};
-    EXPECT_THROW(DeserializeEnvelope(tiny), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(DeserializeEnvelope(tiny)), std::invalid_argument);
 }
 
 TEST(EnvelopeTest, ThrowsOnTruncatedRowData) {
     // Claim row_len=100 but only provide 4 bytes.
     std::vector<uint8_t> buf = {0x64, 0x00, 0x00, 0x00,   // row_len = 100
                                 0x01, 0x02, 0x03, 0x04};  // only 4 bytes
-    EXPECT_THROW(DeserializeEnvelope(buf), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(DeserializeEnvelope(buf)), std::invalid_argument);
 }
 
 TEST(EnvelopeTest, ThrowsOnTruncatedAttachmentKey) {
@@ -125,5 +125,5 @@ TEST(EnvelopeTest, ThrowsOnTruncatedAttachmentKey) {
                                 0xFF,                     // row data
                                 0x01, 0x00, 0x00, 0x00,   // attach_count = 1
                                 0x64, 0x00, 0x00, 0x00};  // key_len = 100 (truncated)
-    EXPECT_THROW(DeserializeEnvelope(buf), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(DeserializeEnvelope(buf)), std::invalid_argument);
 }
