@@ -299,6 +299,21 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     if (!impl_->subscriber) throw std::runtime_error("FastDDS: failed to create Subscriber");
 }
 
+// Destruction precondition (issue #63): no thread may be executing or about to
+// enter a public provider API on this instance, and no provider callback may
+// still be in flight if that callback can re-enter this provider. The destructor
+// tears down DDS entities and invalidates all TopicState pointers; it is NOT a
+// synchronization boundary for concurrent use of the provider object.
+//
+// The destructor deliberately does NOT take impl_->mu (HARD-4 locked decision
+// #4). impl_->mu is a non-recursive std::mutex, and DDS deletion calls such as
+// delete_datareader() may block waiting for in-flight listener callbacks to
+// finish. If the destructor held impl_->mu while such a deletion waits, and a
+// callback that re-enters the provider tried to take impl_->mu, the destructor
+// and the callback would deadlock (hold-and-wait). This mirrors Unsubscribe(),
+// which extracts state under the lock and deletes readers OUTSIDE it. A lock
+// cannot cure use-*during*-destruction UB; the quiescence precondition above is
+// the real contract.
 FastDDSPubSubProvider::~FastDDSPubSubProvider() {
     if (!impl_ || !impl_->participant) return;
 
