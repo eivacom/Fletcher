@@ -55,7 +55,8 @@ class Subscriber {
 
     /// Subscribe to a topic. Returns a per-subscription ID for targeted
     /// unsubscribe and the schema that the publisher registered.
-    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback cb);
+    [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                            SubscribeCallback cb);
 
     /// Remove a subscription by ID. Calls provider->Unsubscribe if this
     /// was the last subscription on the topic.

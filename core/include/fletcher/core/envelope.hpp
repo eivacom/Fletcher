@@ -36,7 +36,7 @@ struct Envelope {
 //     [BLOB         : BLOB_LEN bytes]
 // ---------------------------------------------------------------------------
 
-inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
+[[nodiscard]] inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
     // Pre-compute total size.
     size_t total = 4 + env.row.size() + 4;
     for (const auto& [key, blob] : env.attachments)
@@ -71,7 +71,7 @@ inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
     return buf;
 }
 
-inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
+[[nodiscard]] inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
     if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
 
     size_t pos = 0;
@@ -114,7 +114,7 @@ inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
     return Envelope{std::move(row), std::move(attachments)};
 }
 
-inline Envelope DeserializeEnvelope(const std::vector<uint8_t>& buf) {
+[[nodiscard]] inline Envelope DeserializeEnvelope(const std::vector<uint8_t>& buf) {
     return DeserializeEnvelope(buf.data(), buf.size());
 }
 

@@ -606,7 +606,7 @@ TEST(CodecTest, DictionaryNestedValueTypeRejected) {
 
     // One field, marked non-null (0x00 bitfield): decode reaches the guard.
     const std::vector<uint8_t> buf = {0x00};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------
@@ -618,7 +618,7 @@ TEST(CodecTest, DecodeRejectsTrailingBytes) {
     fletcher::Codec codec(schema);
     auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(7)});
     row.push_back(0xAB);  // padding / corruption after a valid row
-    EXPECT_THROW(codec.DecodeRow(row), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(row)), std::invalid_argument);
 }
 
 TEST(CodecTest, DecodeRejectsTruncatedBuffer) {
@@ -627,7 +627,7 @@ TEST(CodecTest, DecodeRejectsTruncatedBuffer) {
     auto row = codec.EncodeRow({std::make_shared<arrow::Int32Scalar>(7)});
     ASSERT_GT(row.size(), 1u);
     row.pop_back();  // one byte short
-    EXPECT_THROW(codec.DecodeRow(row), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(row)), std::invalid_argument);
 }
 
 TEST(CodecTest, DecodeRejectsOversizedListCount) {
@@ -635,14 +635,14 @@ TEST(CodecTest, DecodeRejectsOversizedListCount) {
     fletcher::Codec codec(schema);
     // [row bitfield = 0x00 (field present)] [list COUNT = 0xFFFFFFFF] and nothing else.
     const std::vector<uint8_t> buf = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 TEST(CodecTest, DecodeRejectsOversizedMapCount) {
     auto schema = arrow::schema({arrow::field("v", arrow::map(arrow::utf8(), arrow::int32()))});
     fletcher::Codec codec(schema);
     const std::vector<uint8_t> buf = {0x00, 0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------
