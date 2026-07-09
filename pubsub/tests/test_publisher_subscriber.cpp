@@ -186,8 +186,10 @@ TEST(SubscriberTest, PublishDelegatesToProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     int32_t received_value = 0;
-    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema,
-                                     Attachments) { received_value = DecodeTestRow(data, len); });
+    (void)subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            received_value = DecodeTestRow(data, len);
+        });
 
     publisher.Publish(kTopic, MakeTestEncoder(42));
 
@@ -243,9 +245,9 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
@@ -268,7 +270,7 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
     int count_b = 0;
     Subscriber::SubscribeResult ra = subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
@@ -303,8 +305,8 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
-    subscriber.Subscribe(kTopic,
-                         [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+    (void)subscriber.Subscribe(kTopic,
+                               [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
@@ -329,7 +331,7 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments att) {
             received_value = DecodeTestRow(data, len);
             received_att = std::move(att);

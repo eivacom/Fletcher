@@ -51,7 +51,7 @@ class OwnedSchema {
     explicit operator bool() const noexcept { return valid(); }
 
     /// Create a deep copy of src.
-    static OwnedSchema DeepCopy(const ArrowSchema* src) {
+    [[nodiscard]] static OwnedSchema DeepCopy(const ArrowSchema* src) {
         OwnedSchema copy;
         ArrowErrorCode code = ArrowSchemaDeepCopy(src, copy.get());
         if (code != NANOARROW_OK) {

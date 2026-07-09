@@ -264,7 +264,7 @@ class PositionalReader {
         pos_ += nbytes;
     }
 
-    bool IsNull(int field_index) const {
+    [[nodiscard]] bool IsNull(int field_index) const {
         if (field_index < 0 || field_index >= num_fields_)
             throw std::out_of_range("PositionalReader::IsNull: field_index out of range");
         return (bitfield_[field_index / 8] >> (field_index % 8)) & 1u;

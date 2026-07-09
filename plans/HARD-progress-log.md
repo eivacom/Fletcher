@@ -61,3 +61,14 @@ tracker.
 **Verification:** none (docs-only); no build/test run
 **Commit / push:** `hard/5-doc-unsubscribe` → `origin hard/5-doc-unsubscribe` (draft PR, base `hard/4-provider-lifetime`)
 **Carry-forwards / stop-and-asks:** none.
+
+## HARD-6 — `[[nodiscard]]` on public API (2026-07-09)
+
+**Forcing test:** `NodiscardTest.CompileFailsOnDiscard` (negative-compile) → 🟢   (⚪ → 🔴 → 🟢)
+**Design:** `plans/HARD-6-nodiscard.md`  ·  Step-2: APPROVE (cycle 2, last item corrected inline)
+**What landed:** `[[nodiscard]]` added to 11 base/public decls — `IsNull`, `Subscriber::Subscribe`, `PubSubProvider::Subscribe` (base), `Publisher::ListTopics`, `Codec::EncodeRow` + 2×`DecodeRow`, `SerializeEnvelope` + 2×`DeserializeEnvelope`, `OwnedSchema::DeepCopy`. Additive only (decision #5); provider `Subscribe` overrides and `SubscriberArrow::Subscribe` deliberately NOT annotated (no attribute inheritance). 14 test discards wrapped with `(void)`/`static_cast<void>` (6 `Subscribe`, 5 `DecodeRow`, 3 `DeserializeEnvelope`); build warning-clean.
+**Files touched:** `core/include/.../positional_io.hpp`, `core/include/.../envelope.hpp`, `core/tests/test_envelope.cpp`, `arrow-bridge/include/.../codec.hpp`, `arrow-bridge/tests/test_codec.cpp`, `pubsub/include/.../{subscriber,provider,publisher,owned_schema}.hpp`, `pubsub/tests/test_publisher_subscriber.cpp`, `pubsub-arrow/tests/discard_probe.cpp` (new negative-compile TU), `pubsub-arrow/tests/CMakeLists.txt`
+**Reviews:** compliance `CONFORMS` · code-review `blocking 1 (HIGH, fixed) / nit 0` — the `NodiscardTest` regex could false-pass on Linux/gcc by matching the echoed `-Werror=unused-result` flag; fixed to diagnostic-specific `"C4834|ignoring return value"`, re-review `RESOLVED`.
+**Verification:** inner-loop `PASS — core 25/25, arrow-bridge 35/35, pubsub 17/17, pubsub-arrow 16/16`; **FULL-SUITE CHECKPOINT 🟢** — all 6 components + integration `72/72` (1 rustc skip), **C4834 count = 0** across every build (no missed discard in fastdds/xrce/gateway/integration). Red-first: annotations removed → `discard_probe` compiles clean → regex no-match → RED; present → 11× `error C4834` → GREEN.
+**Commit / push:** `hard/6-nodiscard` → `origin hard/6-nodiscard` (draft PR, base `hard/5-doc-unsubscribe`)
+**Carry-forwards / stop-and-asks:** none. Two false-pass traps caught & fixed during the item: (1) TU filename `nodiscard_discard.cpp` self-matched `cl.exe`'s filename echo → renamed `discard_probe.cpp`; (2) regex `unused-result` matched the gcc flag echo → tightened to diagnostic-only. Checkpoint script's configure preset also corrected (`conan-default`, not `conan-release`) for the close checkpoint.
