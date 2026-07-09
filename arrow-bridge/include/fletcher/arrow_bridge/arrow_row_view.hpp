@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "fletcher/arrow_bridge/detail/arrow_result.hpp"
+
 namespace fletcher {
 
 // ---------------------------------------------------------------------------
@@ -71,7 +73,10 @@ class ArrowRowViewList {
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }
 
-    ViewT operator[](int64_t i) const { return ViewT(array_->GetScalar(i).ValueOrDie()); }
+    ViewT operator[](int64_t i) const {
+        return ViewT(
+            detail::ValueOrThrow(array_->GetScalar(i), "ArrowRowViewList: GetScalar failed"));
+    }
 
     struct Iterator {
         const ArrowRowViewList* list;
@@ -105,7 +110,8 @@ class ArrowNestedList {
     bool empty() const { return size() == 0; }
 
     ArrowRowViewList<ViewT> operator[](int64_t i) const {
-        auto scalar = array_->GetScalar(i).ValueOrDie();
+        auto scalar =
+            detail::ValueOrThrow(array_->GetScalar(i), "ArrowNestedList: GetScalar failed");
         const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
         return ArrowRowViewList<ViewT>(ls.value);
     }
@@ -142,7 +148,8 @@ class ArrowNestedList2 {
     bool empty() const { return size() == 0; }
 
     ArrowNestedList<ViewT> operator[](int64_t i) const {
-        auto scalar = array_->GetScalar(i).ValueOrDie();
+        auto scalar =
+            detail::ValueOrThrow(array_->GetScalar(i), "ArrowNestedList2: GetScalar failed");
         const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
         return ArrowNestedList<ViewT>(ls.value);
     }
@@ -235,7 +242,10 @@ class ArrowRowViewMap {
     bool empty() const { return size() == 0; }
 
     KV key(int64_t i) const { return static_cast<const KA&>(*keys_).Value(i); }
-    ViewT value(int64_t i) const { return ViewT(vals_->GetScalar(i).ValueOrDie()); }
+    ViewT value(int64_t i) const {
+        return ViewT(
+            detail::ValueOrThrow(vals_->GetScalar(i), "ArrowRowViewMap: GetScalar failed"));
+    }
 
     struct Entry {
         KV key;

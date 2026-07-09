@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "fletcher/arrow_bridge/detail/arrow_result.hpp"
 #include "row_reader.hpp"
 #include "scalar_codec.hpp"
 
@@ -93,7 +94,7 @@ void EncodeListElements(std::vector<uint8_t>& buf, const std::shared_ptr<arrow::
     // Write non-null element payloads.
     for (int64_t i = 0; i < count; ++i) {
         if (arr->IsNull(i)) continue;
-        auto elem = arr->GetScalar(i).ValueOrDie();
+        auto elem = detail::ValueOrThrow(arr->GetScalar(i), "Codec: list GetScalar failed");
         EncodePositionalValue(buf, *elem, elem_type);
     }
 }
@@ -136,7 +137,8 @@ void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scala
 
             // Keys: no null bitfield (keys are never null).
             for (int64_t i = 0; i < count; ++i) {
-                auto key = key_arr->GetScalar(i).ValueOrDie();
+                auto key =
+                    detail::ValueOrThrow(key_arr->GetScalar(i), "Codec: map key GetScalar failed");
                 EncodePositionalValue(buf, *key, *map_type.key_type());
             }
 
@@ -150,7 +152,8 @@ void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scala
             }
             for (int64_t i = 0; i < count; ++i) {
                 if (val_arr->IsNull(i)) continue;
-                auto val = val_arr->GetScalar(i).ValueOrDie();
+                auto val = detail::ValueOrThrow(val_arr->GetScalar(i),
+                                                "Codec: map value GetScalar failed");
                 EncodePositionalValue(buf, *val, *map_type.item_type());
             }
             return;
@@ -222,7 +225,8 @@ std::shared_ptr<arrow::Array> DecodeListElements(
     detail::Reader& r, int64_t count, const std::shared_ptr<arrow::DataType>& elem_type) {
     const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
 
-    auto builder = arrow::MakeBuilder(elem_type).ValueOrDie();
+    auto builder =
+        detail::ValueOrThrow(arrow::MakeBuilder(elem_type), "Codec: list MakeBuilder failed");
     for (int64_t i = 0; i < count; ++i) {
         if (ReadNullBit(bitfield, static_cast<int>(i))) {
             auto st = builder->AppendNull();
@@ -235,7 +239,7 @@ std::shared_ptr<arrow::Array> DecodeListElements(
                 throw std::invalid_argument("Codec: builder AppendScalar failed: " + st.ToString());
         }
     }
-    return builder->Finish().ValueOrDie();
+    return detail::ValueOrThrow(builder->Finish(), "Codec: list builder Finish failed");
 }
 
 std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
@@ -278,7 +282,8 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
                 throw std::invalid_argument("Codec: map entry count exceeds remaining buffer");
 
             // Keys: no null bitfield.
-            auto key_builder = arrow::MakeBuilder(map_type.key_type()).ValueOrDie();
+            auto key_builder = detail::ValueOrThrow(arrow::MakeBuilder(map_type.key_type()),
+                                                    "Codec: map key MakeBuilder failed");
             for (uint32_t i = 0; i < count; ++i) {
                 auto key = DecodePositionalValue(r, map_type.key_type());
                 auto st = key_builder->AppendScalar(*key);
@@ -288,7 +293,8 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
 
             // Values: null bitfield + payloads.
             const uint8_t* val_bitfield = r.ReadBytes(BitfieldBytes(count));
-            auto val_builder = arrow::MakeBuilder(map_type.item_type()).ValueOrDie();
+            auto val_builder = detail::ValueOrThrow(arrow::MakeBuilder(map_type.item_type()),
+                                                    "Codec: map value MakeBuilder failed");
             for (uint32_t i = 0; i < count; ++i) {
                 if (ReadNullBit(val_bitfield, static_cast<int>(i))) {
                     auto st = val_builder->AppendNull();
@@ -303,8 +309,10 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
                 }
             }
 
-            auto key_arr = key_builder->Finish().ValueOrDie();
-            auto val_arr = val_builder->Finish().ValueOrDie();
+            auto key_arr =
+                detail::ValueOrThrow(key_builder->Finish(), "Codec: map key builder Finish failed");
+            auto val_arr = detail::ValueOrThrow(val_builder->Finish(),
+                                                "Codec: map value builder Finish failed");
             // Build the entries struct and the MapScalar from the schema's own
             // types (map_type.value_type() is the entries struct), and return a
             // scalar typed as the original field type — preserving the schema's
