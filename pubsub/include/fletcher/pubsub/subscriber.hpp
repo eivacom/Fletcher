@@ -59,6 +59,16 @@ class Subscriber {
 
     /// Remove a subscription by ID. Calls provider->Unsubscribe if this
     /// was the last subscription on the topic.
+    ///
+    /// Unsubscribing does NOT guarantee that no further callbacks fire.
+    /// A subscriber may still receive one final in-flight message after
+    /// Unsubscribe returns. The fan-out path snapshots the topic's
+    /// (id, callback) pairs under the lock, releases the lock, then
+    /// invokes the callbacks (see subscriber.cpp). If Unsubscribe runs
+    /// in the window between that snapshot and the invocation, this
+    /// subscription's callback is already captured in the snapshot and
+    /// will be called one last time. This is intentional and by design
+    /// (copy-then-release-then-call fan-out), not a bug.
     void Unsubscribe(uint64_t subscription_id);
 
    private:
