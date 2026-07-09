@@ -48,7 +48,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | HARD-1 | `DecodeScalarFromReader` decode correctness | #52, #58 | `FixedSizeBinaryOwnsBytesAfterSourceFreed` | 🟢 |
 | HARD-2 | Checked Arrow `Result<T>` access (runtime) | #53 (rt) | `CodecTest.BadResultThrowsInsteadOfAbort` | 🟢 |
 | HARD-3 | Surface discarded / swallowed errors | #54, #60 | `OwnedSchemaTest.DeepCopyFailureThrows` (+ serialize diag) | 🟢 |
-| HARD-4 | Provider lifetime & callback re-entrancy | #63, #62-res | `XrceProviderTest.ReentrantUnsubscribeNoUseAfterFree` | ⚪ |
+| HARD-4 | Provider lifetime & callback re-entrancy | #63, #62-res | `ReentrantUnsubscribeNoUseAfterFree` | 🟢 |
 | HARD-5 | Document last-callback-after-Unsubscribe | #65 | *(docs — review-verified, not test-gated)* | ⚪ |
 | HARD-6 | `[[nodiscard]]` on public API | #56 | `NodiscardTest` (compile-fails-on-discard TU) | ⚪ |
 | HARD-7 | Consolidate duplicated helpers | #57 | existing suites green + single-definition check | ⚪ |

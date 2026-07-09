@@ -144,11 +144,19 @@ leave a diagnostic):
   holds `auto& ts = tit->second` ([xrce_dds_pubsub_provider.cpp:216](../xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp#L216))
   and invokes the user callback (`:235` data path; `:201-207` schema-flush path,
   which then touches `ts.pending` at `:207`). A callback that `Unsubscribe`s its
-  own delivering topic erases that `TopicState`, dangling `ts` → use-after-free.
-  Fix (narrow): copy the fields needed after the callback (or otherwise avoid
-  holding a `TopicState&` across the callback invocation) so a re-entrant erase
-  is safe. **Do NOT** re-architect XRCE to run callbacks outside the lock — the
-  deadlock is gone and that is a larger change (locked decision H-10).
+  own delivering topic does an **in-place reset** of that `TopicState`
+  (`ts.callback = nullptr` + `ts.pending.clear()`; the map node is retained, it is
+  **not** erased) — which self-destructs the `std::function` still executing,
+  invalidates the `ts.pending` iteration, and makes a subsequent pending delivery
+  call the now-null `ts.callback` → `std::bad_function_call` / heap corruption
+  (object-lifetime UB). Fix (narrow): copy the callback, shared schema, and
+  pending envelopes into locals **before** invoking, so a re-entrant in-place
+  reset cannot affect the in-flight delivery (do not hold a `TopicState&` across
+  the callback invocation). **Do NOT** re-architect XRCE to run callbacks outside
+  the lock — the deadlock is gone and that is a larger change (locked decision
+  H-10). *(Corrected 2026-07-09: the original "erases the TopicState → dangling
+  ts" wording was imprecise; `Unsubscribe` resets in place, but the residual UAF
+  is real via the mechanism above.)*
 
 **Acceptance.** #63: the destructor's contract is documented and any added lock
 is shown deadlock-free; a test exercises destruction with the documented
