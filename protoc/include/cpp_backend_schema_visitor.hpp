@@ -46,6 +46,12 @@ struct SchemaFieldRecord {
     int32_t field_number = 0;
     std::string field_id;  // dotted path, e.g. "2.1"
     std::shared_ptr<const ir::IrNode> node;
+    // GIR-7: the source proto field for a non-flattened top-level field (nullptr
+    // for field-level-flatten inlined fields). The TS backend consults this to
+    // recover the declared wrapper name of a singular flatten-wrapper list field
+    // (Descriptor::name(), a language-neutral proto fact — no type string on the
+    // IR node). Unused by the schema paths.
+    const google::protobuf::FieldDescriptor* source_field = nullptr;
 };
 
 // Walk `msg` applying field-level flatten and building the flattened field list

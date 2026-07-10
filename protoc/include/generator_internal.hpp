@@ -29,6 +29,16 @@
 
 namespace fletcher {
 
+// True if `method` is eligible to become a pub/sub topic (client-streaming
+// request, no server streaming, google.protobuf.Empty reply, input message
+// generated in this file). On failure, `*reason` is set to the user-facing skip
+// text. Single source of truth for both the C++ pub/sub generator and the TS
+// backend's topic-constant emission (GIR-7). Relocated to external linkage from
+// generator.cpp's anonymous namespace (RBA-2 pattern) — no behavioural change.
+bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
+                           const std::set<const google::protobuf::Descriptor*>& generated_msgs,
+                           std::string* reason);
+
 // Per-field information gathered before code generation. Mirrors the schema
 // model produced by GatherFields: one entry per supported (mapped) field, with
 // field-level-flatten sub-messages inlined.

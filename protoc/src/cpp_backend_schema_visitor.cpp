@@ -83,6 +83,11 @@ void BuildFlattenedFieldListImpl(const google::protobuf::Descriptor* msg,
         rec.field_number = fd->number();
         rec.field_id = path;
         rec.node = std::make_shared<const IrNode>(std::move(node));
+        // GIR-7: this is a non-flattened top-level field (field-level-flatten
+        // inlining `continue`s above without recording), so its source field is
+        // this fd. The TS backend uses it to recover a singular flatten-wrapper's
+        // declared name; the schema paths ignore it.
+        rec.source_field = fd;
         out.push_back(std::move(rec));
     }
 }
