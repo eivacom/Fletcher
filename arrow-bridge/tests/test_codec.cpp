@@ -4,10 +4,18 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/positional_io.hpp>
 #include <memory>
+#include <vector>
+
+// Internal headers (arrow-bridge/src) — exercised directly by the HARD-1
+// scalar-level forcing tests below.
+#include "row_reader.hpp"
+#include "scalar_codec.hpp"
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -86,6 +94,73 @@ TEST(CodecTest, DecimalRoundtrip) {
     auto dec128_type = arrow::decimal128(10, 2);
     CHECK_POS_RT(dec128_type,
                  std::make_shared<arrow::Decimal128Scalar>(arrow::Decimal128(12345), dec128_type));
+}
+
+// ---------------------------------------------------------------------------
+// HARD-1: DecodeScalarFromReader defects (#52 owned copy, #58 dead tail throw)
+// ---------------------------------------------------------------------------
+
+// #52 forcing test (red-first). A decoded FixedSizeBinary scalar must OWN its
+// bytes. Decode from a test-owned mutable buffer, then OVERWRITE that exact
+// source region with a different pattern and confirm the scalar still reads the
+// ORIGINAL bytes. Overwriting (not freeing) is deliberate: freeing then reading
+// a dangling alias is UB that commonly returns stale-correct bytes, which would
+// false-green the pre-fix aliasing bug (locked decision #9).
+TEST(CodecTest, FixedSizeBinaryOwnsBytesAfterSourceFreed) {
+    constexpr int kWidth = 4;
+    auto type = arrow::fixed_size_binary(kWidth);
+
+    std::vector<uint8_t> src = {0x01, 0x02, 0x03, 0x04};
+    const std::vector<uint8_t> original = src;
+
+    fletcher::detail::Reader r{src.data(), src.size()};
+    auto scalar = fletcher::detail::DecodeScalarFromReader(r, type);
+    ASSERT_NE(scalar, nullptr);
+    ASSERT_EQ(scalar->type->id(), arrow::Type::FIXED_SIZE_BINARY);
+    const auto& fsb = static_cast<const arrow::FixedSizeBinaryScalar&>(*scalar);
+    ASSERT_NE(fsb.value, nullptr);
+    ASSERT_EQ(fsb.value->size(), static_cast<int64_t>(kWidth));
+
+    // Overwrite the exact backing bytes with a different pattern post-decode.
+    std::fill(src.begin(), src.end(), static_cast<uint8_t>(0xAA));
+
+    // The scalar must still expose the original bytes (owned copy), not 0xAA.
+    EXPECT_EQ(0, std::memcmp(fsb.value->data(), original.data(), kWidth));
+}
+
+// #52 + #58: round-trip every string/binary/fixed-size-binary variant. This
+// covers the FixedSizeBinary owned-copy path and all six string/binary inner
+// switch return arms, and confirms H-INV-1 (bytes unchanged) for these families.
+TEST(CodecTest, StringBinaryFixedSizeVariantRoundtrip) {
+    CHECK_POS_RT(arrow::utf8(),
+                 std::make_shared<arrow::StringScalar>(arrow::Buffer::FromString("utf8-value")));
+    CHECK_POS_RT(arrow::large_utf8(), std::make_shared<arrow::LargeStringScalar>(
+                                          arrow::Buffer::FromString("large-utf8-value")));
+    CHECK_POS_RT(arrow::binary(), std::make_shared<arrow::BinaryScalar>(arrow::Buffer::FromString(
+                                      std::string("\x00\x01\x02\xFF", 4))));
+    CHECK_POS_RT(arrow::large_binary(), std::make_shared<arrow::LargeBinaryScalar>(
+                                            arrow::Buffer::FromString("large-binary-value")));
+    CHECK_POS_RT(arrow::utf8_view(), std::make_shared<arrow::StringViewScalar>(
+                                         arrow::Buffer::FromString("string-view-value")));
+    CHECK_POS_RT(arrow::binary_view(), std::make_shared<arrow::BinaryViewScalar>(
+                                           arrow::Buffer::FromString("binary-view-value")));
+    {
+        constexpr int kWidth = 6;
+        auto fsb_type = arrow::fixed_size_binary(kWidth);
+        CHECK_POS_RT(fsb_type, std::make_shared<arrow::FixedSizeBinaryScalar>(
+                                   arrow::Buffer::FromString("abcdef"), fsb_type));
+    }
+}
+
+// #58 green regression guard. arrow::list(int32) has type id LIST, which is not
+// handled by DecodeScalarFromReader, so it reaches the reachable outer `default`
+// throw. This confirms that deleting the duplicate unreachable tail throw does
+// not let the unsupported-type path fall off the function without throwing.
+TEST(CodecTest, DecodeScalarUnsupportedTypeThrowsInvalidArgument) {
+    std::vector<uint8_t> src(32, 0x00);
+    fletcher::detail::Reader r{src.data(), src.size()};
+    EXPECT_THROW(fletcher::detail::DecodeScalarFromReader(r, arrow::list(arrow::int32())),
+                 std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------

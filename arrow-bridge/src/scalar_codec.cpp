@@ -244,9 +244,9 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
                 case T::BINARY_VIEW:
                     return std::make_shared<arrow::BinaryViewScalar>(ibuf);
                 default:
-                    break;
+                    throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " +
+                                                type->ToString());
             }
-            break;
         }
 
         case T::DATE32:
@@ -273,7 +273,8 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*type).byte_width();
             const uint8_t* ptr = r.ReadBytes(byte_width);
-            auto ibuf = std::make_shared<arrow::Buffer>(ptr, byte_width);
+            auto ibuf = arrow::Buffer::FromString(
+                std::string(reinterpret_cast<const char*>(ptr), byte_width));
             return std::make_shared<arrow::FixedSizeBinaryScalar>(ibuf, type);
         }
         case T::HALF_FLOAT:
@@ -314,7 +315,6 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
             throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " +
                                         type->ToString());
     }
-    throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " + type->ToString());
 }
 
 }  // namespace detail
