@@ -20,8 +20,10 @@
 #include <google/protobuf/wrappers.pb.h>
 #include <gtest/gtest.h>
 
+#include <sstream>
 #include <string>
 
+#include "cpp_backend_decode_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "ir.hpp"
 #include "type_mapper.hpp"
@@ -452,4 +454,173 @@ TEST(IrTest, MapFieldEqualsProjectionOfBuildFieldIr) {
     EXPECT_EQ(via_mapfield->kind, via_projection->kind);
     EXPECT_EQ(via_mapfield->nullable, via_projection->nullable);
     ExpectSameScalar(via_mapfield->scalar, via_projection->scalar);
+}
+
+// ===========================================================================
+// (9) GIR-4 edge DECODE visitor: IR-driven positional reads. These are focused
+// SHAPE assertions on cpp_backend::EmitFieldDecodeFromIr (byte/behaviour-
+// identical migration of the former FieldMapping-switch EmitFieldDecode); the
+// cross-fixture value oracle lives in the coverage harness, not here.
+// ===========================================================================
+
+namespace {
+
+std::string DecodeOf(const ir::IrNode& node, const std::string& member, size_t idx,
+                     const FileDescriptor* ctx) {
+    std::ostringstream o;
+    cpp_backend::EmitFieldDecodeFromIr(o, node, member, idx, ctx);
+    return o.str();
+}
+
+bool Contains(const std::string& hay, const std::string& needle) {
+    return hay.find(needle) != std::string::npos;
+}
+
+}  // namespace
+
+TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
+    DescriptorPool pool;
+    FileDescriptorProto fp;
+    fp.set_name("ir_decode.proto");
+    fp.set_syntax("proto3");
+
+    auto* inner = fp.add_message_type();
+    inner->set_name("Inner");
+    AddField(inner, "value", 1, FieldDescriptorProto::TYPE_STRING);
+
+    // Flatten wrapper (repeated Inner) → List<List<Struct>> when used repeated.
+    auto* wrap = fp.add_message_type();
+    wrap->set_name("StructListWrapper");
+    SetMessageFlatten(wrap);
+    AddField(wrap, "values", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".Inner");
+
+    auto* host = fp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "i32", 1, FieldDescriptorProto::TYPE_INT32);
+    AddField(host, "s", 2, FieldDescriptorProto::TYPE_STRING);
+    AddField(host, "by", 3, FieldDescriptorProto::TYPE_BYTES);
+    AddField(host, "inner", 4, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".Inner");
+    AddField(host, "rep_inner", 5, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".Inner");
+    AddField(host, "rep_i32", 6, FieldDescriptorProto::TYPE_INT32,
+             FieldDescriptorProto::LABEL_REPEATED);
+    auto* e_si = host->add_nested_type();
+    e_si->set_name("MapScalarEntry");
+    e_si->mutable_options()->set_map_entry(true);
+    AddField(e_si, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(e_si, "value", 2, FieldDescriptorProto::TYPE_INT32);
+    AddField(host, "map_scalar", 7, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".Host.MapScalarEntry");
+    auto* e_ss = host->add_nested_type();
+    e_ss->set_name("MapStructEntry");
+    e_ss->mutable_options()->set_map_entry(true);
+    AddField(e_ss, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(e_ss, "value", 2, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".Inner");
+    AddField(host, "map_struct", 8, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".Host.MapStructEntry");
+    AddField(host, "flat_nested", 9, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".StructListWrapper");
+
+    const FileDescriptor* file = pool.BuildFile(fp);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* h = file->message_type(2);
+    const FileDescriptor* ctx = file;
+
+    const ir::IrNode i32 = ir::BuildFieldIr(h->field(0));
+    const ir::IrNode str = ir::BuildFieldIr(h->field(1));
+    const ir::IrNode by = ir::BuildFieldIr(h->field(2));
+    const ir::IrNode inner_ir = ir::BuildFieldIr(h->field(3));
+    const ir::IrNode rep_inner = ir::BuildFieldIr(h->field(4));
+    const ir::IrNode map_scalar = ir::BuildFieldIr(h->field(6));
+    const ir::IrNode map_struct = ir::BuildFieldIr(h->field(7));
+    const ir::IrNode flat_nested = ir::BuildFieldIr(h->field(8));
+
+    // (a) non-nullable scalar: direct read, no null check; uses backend lookup.
+    EXPECT_EQ(DecodeOf(i32, "i32_", 1, ctx), "        i32_ = r.ReadInt32();\n");
+    EXPECT_FALSE(Contains(DecodeOf(i32, "i32_", 1, ctx), "IsNull"));
+    EXPECT_TRUE(Contains(
+        DecodeOf(i32, "i32_", 1, ctx),
+        cpp_backend::LookupScalar(std::get<ir::ScalarNode>(i32.node).logical_type, std::nullopt)
+            .positional_read));
+
+    // (b) nullable scalar: gated on IsNull(idx) (facts.nullable is the source).
+    ir::IrNode i32_null = ir::BuildFieldIr(h->field(0));
+    i32_null.facts.nullable = true;
+    EXPECT_EQ(DecodeOf(i32_null, "opt_", 2, ctx),
+              "        if (!r.IsNull(2)) opt_ = r.ReadInt32();\n");
+
+    // (c) string is COPIED into an owned std::string, not borrowed.
+    EXPECT_EQ(DecodeOf(str, "s_", 2, ctx), "        s_ = std::string(r.ReadString());\n");
+
+    // (d) binary is COPIED (reinterpret_cast into owned string), not borrowed.
+    EXPECT_EQ(DecodeOf(by, "by_", 3, ctx),
+              "        { auto [p, n] = r.ReadBinary();\n"
+              "          by_.emplace(reinterpret_cast<const char*>(p), n); }\n");
+
+    // (e) non-nullable struct: block, ReadStruct(<Class>Schema()->n_children), emplace.
+    EXPECT_EQ(DecodeOf(inner_ir, "inner_", 4, ctx),
+              "        { auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "          inner_.emplace(sr); }\n");
+
+    // (f) nullable struct: IsNull gate, then ReadStruct, then optional::emplace.
+    ir::IrNode inner_null = ir::BuildFieldIr(h->field(3));
+    inner_null.facts.nullable = true;
+    EXPECT_EQ(DecodeOf(inner_null, "oi_", 6, ctx),
+              "        if (!r.IsNull(6)) {\n"
+              "            auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "            oi_.emplace(sr);\n"
+              "        }\n");
+
+    // (g) single-level repeated struct: inline emplace_back(sr), and NO null gate
+    //     (REPEATED_STRUCT never gates on the null bit — APPROVE-note invariant).
+    const std::string rs = DecodeOf(rep_inner, "rs_", 5, ctx);
+    EXPECT_EQ(rs,
+              "        { auto lh = r.ReadListHeader();\n"
+              "          rs_.clear();\n"
+              "          rs_.reserve(lh.count);\n"
+              "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
+              "            auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "            rs_.emplace_back(sr);\n"
+              "          } }\n");
+    EXPECT_FALSE(Contains(rs, "IsNull"));
+
+    // (h) map: key pass, then ReadMapValueBitfield (MUST NOT be skipped), then
+    //     value pass; key-first/value-second; moved key into vector-of-pairs.
+    const std::string ms = DecodeOf(map_scalar, "ms_", 7, ctx);
+    EXPECT_TRUE(Contains(ms, "auto vbf = r.ReadMapValueBitfield(count);"));
+    EXPECT_TRUE(Contains(ms, "keys_.emplace_back(r.ReadString());"));
+    EXPECT_TRUE(Contains(ms, "ms_.emplace_back(std::move(keys_[mi_]), r.ReadInt32());"));
+    // key extraction precedes the value bitfield, which precedes value extraction.
+    EXPECT_LT(ms.find("keys_.emplace_back"), ms.find("ReadMapValueBitfield"));
+    EXPECT_LT(ms.find("ReadMapValueBitfield"), ms.find("ms_.emplace_back"));
+
+    const std::string mst = DecodeOf(map_struct, "mst_", 8, ctx);
+    EXPECT_TRUE(Contains(mst, "auto vbf = r.ReadMapValueBitfield(count);"));
+    EXPECT_TRUE(Contains(mst, "mst_.emplace_back(std::move(keys_[mi_]), Inner(sr));"));
+
+    // (i) nested list (List<List<Struct>>): resize + indexed assignment with
+    //     FRESH loop vars at each depth; struct innermost; no null gate.
+    const std::string nl = DecodeOf(flat_nested, "nl_", 9, ctx);
+    EXPECT_TRUE(Contains(nl, "auto lh_0 = r.ReadListHeader();"));
+    EXPECT_TRUE(Contains(nl, "nl_.resize(lh_0.count);"));
+    EXPECT_TRUE(Contains(nl, "auto lh_1 = r.ReadListHeader();"));
+    EXPECT_TRUE(Contains(nl, "nl_[i_0].resize(lh_1.count);"));
+    EXPECT_TRUE(Contains(nl, "nl_[i_0][i_1] = Inner(sr);"));
+    EXPECT_FALSE(Contains(nl, "push_back"));  // nested list uses resize, not push_back
+    EXPECT_FALSE(Contains(nl, "IsNull"));
+
+    // (j) Unsupported node: a diagnostic comment, never a silent decode body.
+    ir::IrNode un;
+    un.kind = ir::NodeKind::UNSUPPORTED;
+    un.node = ir::UnsupportedNode{"map value type unsupported"};
+    const std::string uo = DecodeOf(un, "x_", 0, ctx);
+    EXPECT_TRUE(Contains(uo, "unsupported field skipped: map value type unsupported"));
+    EXPECT_FALSE(Contains(uo, "ReadStruct"));
+    EXPECT_FALSE(Contains(uo, "ReadInt32"));
 }
