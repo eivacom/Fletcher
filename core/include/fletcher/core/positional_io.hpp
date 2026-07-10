@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fletcher/core/detail/bitfield.hpp>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -42,7 +43,7 @@ class PositionalWriter {
         : buf_(buf), num_fields_(num_fields), bitfield_offset_(buf.Position()) {
         if (num_fields < 0)
             throw std::invalid_argument("PositionalWriter: num_fields must be >= 0");
-        size_t nbytes = BitfieldBytes(num_fields);
+        size_t nbytes = detail::BitfieldBytes(num_fields);
         for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
     }
 
@@ -109,7 +110,7 @@ class PositionalWriter {
     ListContext BeginList(uint32_t count) {
         buf_.AppendFixed(count);
         size_t bf_offset = buf_.Position();
-        size_t nbytes = BitfieldBytes(count);
+        size_t nbytes = detail::BitfieldBytes(static_cast<int64_t>(count));
         for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
         return ListContext{buf_, bf_offset, count};
     }
@@ -123,7 +124,7 @@ class PositionalWriter {
         // Call after writing all key payloads.  Writes value null bitfield.
         ListContext BeginValues() {
             size_t bf_offset = buf.Position();
-            size_t nbytes = (count + 7) / 8;
+            size_t nbytes = detail::BitfieldBytes(static_cast<int64_t>(count));
             for (size_t i = 0; i < nbytes; ++i) buf.AppendByte(0);
             return ListContext{buf, bf_offset, count};
         }
@@ -137,8 +138,6 @@ class PositionalWriter {
     WriteBuffer& buf() { return buf_; }
 
    private:
-    static size_t BitfieldBytes(size_t n) { return (n + 7) / 8; }
-
     WriteBuffer& buf_;
     int num_fields_;
     size_t bitfield_offset_;
@@ -257,7 +256,7 @@ class PositionalReader {
     PositionalReader(const uint8_t* data, size_t len, int num_fields)
         : data_(data), len_(len), pos_(0), num_fields_(num_fields) {
         // Read the null bitfield.
-        size_t nbytes = BitfieldBytes(static_cast<size_t>(num_fields));
+        size_t nbytes = detail::BitfieldBytes(num_fields);
         if (nbytes > len_ - pos_)
             throw std::invalid_argument("PositionalReader: buffer underrun (bitfield)");
         bitfield_ = data_ + pos_;
@@ -328,9 +327,9 @@ class PositionalReader {
         // bytes, so a valid all-null list's count can legitimately exceed the
         // remaining byte count. The only safe lower bound is the element null
         // bitfield itself: require BitfieldBytes(count) to fit.
-        if (BitfieldBytes(count) > Remaining())
+        if (detail::BitfieldBytes(static_cast<int64_t>(count)) > Remaining())
             throw std::invalid_argument("PositionalReader: list count exceeds remaining buffer");
-        const uint8_t* bf = ReadBytes(BitfieldBytes(count));
+        const uint8_t* bf = ReadBytes(detail::BitfieldBytes(static_cast<int64_t>(count)));
         return ListHeader{count, bf};
     }
 
@@ -345,7 +344,9 @@ class PositionalReader {
         return count;
     }
 
-    const uint8_t* ReadMapValueBitfield(uint32_t count) { return ReadBytes(BitfieldBytes(count)); }
+    const uint8_t* ReadMapValueBitfield(uint32_t count) {
+        return ReadBytes(detail::BitfieldBytes(static_cast<int64_t>(count)));
+    }
 
     // Bytes consumed so far.
     size_t BytesConsumed() const { return pos_; }
@@ -386,7 +387,7 @@ class PositionalReader {
     // Sub-reader constructor (tracks parent for position advance).
     PositionalReader(const uint8_t* data, size_t len, int num_fields, PositionalReader* parent)
         : data_(data), len_(len), pos_(0), num_fields_(num_fields), parent_(parent) {
-        size_t nbytes = BitfieldBytes(static_cast<size_t>(num_fields));
+        size_t nbytes = detail::BitfieldBytes(num_fields);
         if (nbytes > len_ - pos_)
             throw std::invalid_argument("PositionalReader: buffer underrun (struct bitfield)");
         bitfield_ = data_ + pos_;
@@ -412,10 +413,6 @@ class PositionalReader {
         pos_ += n;
         return ptr;
     }
-
-    // size_t param so a wire-supplied uint32_t count never narrows to a
-    // negative int before the (n + 7) / 8 arithmetic.
-    static size_t BitfieldBytes(size_t n) { return (n + 7) / 8; }
 
     const uint8_t* data_;
     size_t len_;

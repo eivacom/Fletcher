@@ -56,8 +56,6 @@ class PublisherArrow {
         std::unique_ptr<Codec> codec;
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
-
-    static std::string JoinSegments(const std::vector<std::string>& segs);
 };
 
 }  // namespace fletcher
