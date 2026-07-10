@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <memory>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -17,8 +16,9 @@
 #include <utility>
 #include <vector>
 
+#include "cpp_backend_type_table.hpp"
 #include "generator_internal.hpp"
-#include "option_metadata.hpp"
+#include "ir.hpp"
 #include "recordbatch_accessor_emitter.hpp"
 #include "schema_builder.hpp"
 #include "type_mapper.hpp"
@@ -843,13 +843,8 @@ void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx)
 // sub-message's fields keep their own (inner) proto `field_number`, which can
 // collide with the enclosing message's numbers, so `field_id` carries the full
 // path (e.g. "2.1") to disambiguate them in the schema metadata.
-// `chain` is the descriptor-level counterpart of `id_prefix`: the same wrappers,
-// as FieldDescriptors rather than numbers. Inlining drops the outer field from
-// the result, so this is the only surviving handle on an annotation declared on
-// it (see FieldInfo::flatten_chain).
 void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<FieldInfo>& fields,
-                      std::string* skipped_comment, const std::string& id_prefix,
-                      const std::vector<const google::protobuf::FieldDescriptor*>& chain) {
+                      std::string* skipped_comment, const std::string& id_prefix) {
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
 
@@ -860,14 +855,16 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
         // this field's number into the path so inlined field_ids stay unique.
         if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
             HasFieldFlatten(fd)) {
-            std::vector<const google::protobuf::FieldDescriptor*> inner = chain;
-            inner.push_back(fd);
-            GatherFieldsImpl(fd->message_type(), fields, skipped_comment, path, inner);
+            GatherFieldsImpl(fd->message_type(), fields, skipped_comment, path);
             continue;
         }
 
-        if (auto m = MapField(fd)) {
-            fields.push_back({fd->name(), std::move(*m), fd->number(), path, fd, chain});
+        // Build the canonical IR once; the projection feeds the bridge mapping
+        // and the same IR node is stored for the edge ENCODE visitor to walk.
+        auto ir_node = ir::BuildFieldIr(fd);
+        if (auto m = ProjectIrToFieldMapping(ir_node, fd->file())) {
+            fields.push_back({fd->name(), std::move(*m), fd->number(), path, fd,
+                              std::make_shared<const ir::IrNode>(std::move(ir_node))});
         } else {
             *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
@@ -882,32 +879,8 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment) {
     std::vector<FieldInfo> fields;
-    GatherFieldsImpl(msg, fields, skipped_comment, "", {});
+    GatherFieldsImpl(msg, fields, skipped_comment, "");
     return fields;
-}
-
-std::vector<std::pair<std::string, std::string>> SchemaMetadataPairs(
-    const google::protobuf::Descriptor* msg, const OptionMetadataResolver* resolver) {
-    std::vector<std::pair<std::string, std::string>> pairs{
-        {"proto_package", msg->file()->package()}, {"proto_message", msg->name()}};
-    if (resolver != nullptr) {
-        // Appended, never replacing: the four builtin keys are rejected as rule
-        // targets at parse time, so a mapped key can never collide with them.
-        const auto extra = resolver->ForMessage(msg);
-        pairs.insert(pairs.end(), extra.begin(), extra.end());
-    }
-    return pairs;
-}
-
-std::vector<std::pair<std::string, std::string>> FieldMetadataPairs(
-    const FieldInfo& fi, const OptionMetadataResolver* resolver) {
-    std::vector<std::pair<std::string, std::string>> pairs{
-        {"field_number", std::to_string(fi.field_number)}, {"field_id", fi.field_id}};
-    if (resolver != nullptr) {
-        const auto extra = resolver->ForField(fi.descriptor, fi.flatten_chain);
-        pairs.insert(pairs.end(), extra.begin(), extra.end());
-    }
-    return pairs;
 }
 
 namespace {
@@ -1090,30 +1063,8 @@ void EmitNanoarrowTypeSetup(std::ostringstream& o, const std::string& child_expr
     }  // switch
 }
 
-// Emit the ArrowMetadataBuilder block that stamps `pairs` onto `target`.
-// Mirrors SetMetadataPairs, which executes the same sequence in-process for
-// --fletcher_opt=ipc; both consume the identical pair vector, so key order and
-// content cannot drift between the two paths.
-void EmitMetadataBlock(std::ostringstream& o, const std::string& target,
-                       const std::vector<std::pair<std::string, std::string>>& pairs) {
-    o << "    {\n"
-      << "        struct ArrowBuffer buf;\n"
-      << "        ArrowBufferInit(&buf);\n"
-      << "        ArrowMetadataBuilderInit(&buf, nullptr);\n";
-    for (const auto& [key, value] : pairs) {
-        o << "        ArrowMetadataBuilderAppend(&buf,\n"
-          << "            ArrowCharView(\"" << EscapeCppStringLiteral(key) << "\"),\n"
-          << "            ArrowCharView(\"" << EscapeCppStringLiteral(value) << "\"));\n";
-    }
-    o << "        ArrowSchemaSetMetadata(" << target << ",\n"
-      << "            reinterpret_cast<const char*>(buf.data));\n"
-      << "        ArrowBufferReset(&buf);\n"
-      << "    }\n\n";
-}
-
 std::string GenerateSchemaFunction(const std::string& cls, const std::vector<FieldInfo>& fields,
-                                   const google::protobuf::Descriptor* msg,
-                                   const OptionMetadataResolver* resolver) {
+                                   const google::protobuf::Descriptor* msg) {
     std::ostringstream o;
 
     o << "/// Returns the nanoarrow schema describing this message's wire layout.\n"
@@ -1124,7 +1075,21 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
       << "    ArrowSchemaInit(schema.get());\n"
       << "    ArrowSchemaSetTypeStruct(schema.get(), " << fields.size() << ");\n\n";
 
-    EmitMetadataBlock(o, "schema.get()", SchemaMetadataPairs(msg, resolver));
+    // Schema-level metadata: proto_package + proto_message
+    o << "    {\n"
+      << "        struct ArrowBuffer buf;\n"
+      << "        ArrowBufferInit(&buf);\n"
+      << "        ArrowMetadataBuilderInit(&buf, nullptr);\n"
+      << "        ArrowMetadataBuilderAppend(&buf,\n"
+      << "            ArrowCharView(\"proto_package\"),\n"
+      << "            ArrowCharView(\"" << msg->file()->package() << "\"));\n"
+      << "        ArrowMetadataBuilderAppend(&buf,\n"
+      << "            ArrowCharView(\"proto_message\"),\n"
+      << "            ArrowCharView(\"" << msg->name() << "\"));\n"
+      << "        ArrowSchemaSetMetadata(schema.get(),\n"
+      << "            reinterpret_cast<const char*>(buf.data));\n"
+      << "        ArrowBufferReset(&buf);\n"
+      << "    }\n\n";
 
     for (size_t i = 0; i < fields.size(); ++i) {
         const auto& fi = fields[i];
@@ -1144,7 +1109,22 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
         else
             o << "    " << ci << "->flags &= ~ARROW_FLAG_NULLABLE;\n";
 
-        EmitMetadataBlock(o, ci, FieldMetadataPairs(fi, resolver));
+        // Per-field metadata: field_number + field_id
+        o << "    {\n"
+          << "        struct ArrowBuffer buf;\n"
+          << "        ArrowBufferInit(&buf);\n"
+          << "        ArrowMetadataBuilderInit(&buf, nullptr);\n"
+          << "        ArrowMetadataBuilderAppend(&buf,\n"
+          << "            ArrowCharView(\"field_number\"),\n"
+          << "            ArrowCharView(\"" << fi.field_number << "\"));\n"
+          << "        ArrowMetadataBuilderAppend(&buf,\n"
+          << "            ArrowCharView(\"field_id\"),\n"
+          << "            ArrowCharView(\"" << fi.field_id << "\"));\n";
+
+        o << "        ArrowSchemaSetMetadata(" << ci << ",\n"
+          << "            reinterpret_cast<const char*>(buf.data));\n"
+          << "        ArrowBufferReset(&buf);\n"
+          << "    }\n\n";
     }
 
     o << "    return schema;\n"
@@ -1159,10 +1139,6 @@ std::string GenerateSchemaFunction(const std::string& cls, const std::vector<Fie
 // EmitNanoarrowTypeSetup emit as C++ source, so the schema built here is
 // identical to the one the generated <Class>Schema() builds at runtime.
 // Any change to the emitted schema code must be mirrored here.
-//
-// Metadata is the exception: both paths consume SchemaMetadataPairs /
-// FieldMetadataPairs, so keys, values and ordering are single-sourced and
-// cannot drift. Only the type/name/nullability calls still need hand-mirroring.
 // -----------------------------------------------------------------------
 
 void CheckNa(ArrowErrorCode code, const char* context) {
@@ -1240,15 +1216,15 @@ const google::protobuf::Descriptor* RequireNestedMsg(const google::protobuf::Des
 
 // Counterpart of GenerateSchemaFunction plus the composite branches of
 // EmitNanoarrowTypeSetup. `schema` must be uninitialized (or released).
-void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema* schema,
-                            const OptionMetadataResolver* resolver) {
+void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema* schema) {
     ArrowSchemaInit(schema);
     std::string skipped;
     const std::vector<FieldInfo> fields = GatherFields(msg, &skipped);
     CheckNa(ArrowSchemaSetTypeStruct(schema, static_cast<int64_t>(fields.size())),
             "set struct type");
 
-    SetMetadataPairs(schema, SchemaMetadataPairs(msg, resolver));
+    SetMetadataPairs(schema,
+                     {{"proto_package", msg->file()->package()}, {"proto_message", msg->name()}});
 
     for (size_t i = 0; i < fields.size(); ++i) {
         const FieldInfo& fi = fields[i];
@@ -1262,7 +1238,7 @@ void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema
             case FieldKind::STRUCT: {
                 nanoarrow::UniqueSchema nested;
                 BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get(), resolver);
+                                       nested.get());
                 CheckNa(ArrowSchemaDeepCopy(nested.get(), child), "copy struct schema");
                 break;
             }
@@ -1277,7 +1253,7 @@ void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema
                 CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_LIST), "set list type");
                 nanoarrow::UniqueSchema nested;
                 BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get(), resolver);
+                                       nested.get());
                 CheckNa(ArrowSchemaDeepCopy(nested.get(), child->children[0]),
                         "copy struct schema");
                 CheckNa(ArrowSchemaSetName(child->children[0], "item"), "set item name");
@@ -1293,7 +1269,7 @@ void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema
                 }
                 nanoarrow::UniqueSchema nested;
                 BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get(), resolver);
+                                       nested.get());
                 CheckNa(ArrowSchemaDeepCopy(nested.get(), cur), "copy struct schema");
                 CheckNa(ArrowSchemaSetName(cur, "item"), "set item name");
                 break;
@@ -1306,7 +1282,7 @@ void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema
                 if (fi.mapping.map_value_is_message) {
                     nanoarrow::UniqueSchema nested;
                     BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.map_value_msg, fi.name),
-                                           nested.get(), resolver);
+                                           nested.get());
                     CheckNa(ArrowSchemaDeepCopy(nested.get(), entries->children[1]),
                             "copy struct schema");
                     CheckNa(ArrowSchemaSetName(entries->children[1], "value"), "set value name");
@@ -1324,7 +1300,8 @@ void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema
             child->flags &= ~ARROW_FLAG_NULLABLE;
         }
 
-        SetMetadataPairs(child, FieldMetadataPairs(fi, resolver));
+        SetMetadataPairs(
+            child, {{"field_number", std::to_string(fi.field_number)}, {"field_id", fi.field_id}});
     }
 }
 
@@ -1551,25 +1528,11 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
 // EncodeTo / EncodeStructTo_ — direct encoding to WriteBuffer
 // -----------------------------------------------------------------------
 
-// Helper: return the PositionalWriter method name for a scalar storage type.
-std::string PositionalWriteCall(const ScalarTypeInfo& info) {
-    const auto& st = info.storage_type;
-    const auto& expr = info.arrow_type_expr;
-    if (expr.find("timestamp") != std::string::npos) return "WriteTimestamp";
-    if (expr.find("duration") != std::string::npos) return "WriteDuration";
-    if (st == "bool") return "WriteBool";
-    if (st == "int32_t") return "WriteInt32";
-    if (st == "int64_t") return "WriteInt64";
-    if (st == "uint32_t") return "WriteUint32";
-    if (st == "uint64_t") return "WriteUint64";
-    if (st == "float") return "WriteFloat";
-    if (st == "double") return "WriteDouble";
-    if (st == "std::string") {
-        if (expr == "arrow::binary()") return "WriteBinary";
-        return "WriteString";
-    }
-    return "/* unknown write */";
-}
+// NOTE: the edge ENCODE emitter is now the IR-driven recursive visitor in
+// cpp_backend::EmitFieldEncodeFromIr (see cpp_backend_type_table.cpp). The old
+// FieldMapping-switch EmitFieldEncode / EmitScalarWrite / PositionalWriteCall
+// were retired in GIR-3. PositionalReadCall stays for the still-bespoke DECODE
+// path (migrated in GIR-4).
 
 // Helper: return the PositionalReader method name for a scalar storage type.
 std::string PositionalReadCall(const ScalarTypeInfo& info) {
@@ -1591,150 +1554,6 @@ std::string PositionalReadCall(const ScalarTypeInfo& info) {
     return "/* unknown read */";
 }
 
-// Emit the scalar write expression for a value through a PositionalWriter.
-void EmitScalarWrite(std::ostringstream& o, const ScalarTypeInfo& info, const std::string& val_expr,
-                     const std::string& indent) {
-    std::string method = PositionalWriteCall(info);
-    if (method == "WriteBinary") {
-        o << indent << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << val_expr << ".data()), "
-          << val_expr << ".size());\n";
-    } else {
-        o << indent << "w." << method << "(" << val_expr << ");\n";
-    }
-}
-
-// Emit positional-format encoding for a single field.
-void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
-    const std::string n = fi.name + "_";
-    const std::string si = std::to_string(idx);
-
-    switch (fi.mapping.kind) {
-        case FieldKind::SCALAR: {
-            const auto& s = fi.mapping.scalar;
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else ";
-                std::string method = PositionalWriteCall(s);
-                if (method == "WriteBinary") {
-                    // `n->data()` is (*opt).data() on the contained std::string.
-                    // A leading `*` here would deref the char* to a char and cast
-                    // that byte value to a pointer — a wire-corrupting bug for a
-                    // SET optional/wrapped bytes field (matches the non-nullable
-                    // branch below, which correctly uses val.data()).
-                    o << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << n
-                      << "->data()), " << n << "->size());\n";
-                } else {
-                    o << "w." << method << "(*" << n << ");\n";
-                }
-            } else {
-                // Non-nullable: write default if not set
-                std::string method = PositionalWriteCall(s);
-                if (method == "WriteBinary") {
-                    o << "        { const auto& val = " << n << ".value_or(" << s.default_value
-                      << ");\n"
-                      << "          w.WriteBinary(reinterpret_cast<const uint8_t*>(val.data()), "
-                         "val.size()); }\n";
-                } else {
-                    o << "        w." << method << "(" << n << ".value_or(" << s.default_value
-                      << "));\n";
-                }
-            }
-            break;
-        }
-
-        case FieldKind::STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else { auto sw = w.BeginStruct(" << nc << "Schema()->n_children); "
-                  << n << "->EncodeStructTo_(sw); }\n";
-            } else {
-                o << "        { auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-                  << "          if (" << n << ".has_value()) " << n << "->EncodeStructTo_(sw);\n"
-                  << "          else " << nc << "().EncodeStructTo_(sw); }\n";
-            }
-            break;
-        }
-
-        case FieldKind::REPEATED_SCALAR: {
-            const auto& e = fi.mapping.element;
-            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-              << "            ";
-            EmitScalarWrite(o, e, n + "[li_]", "");
-            o << "          } }\n";
-            break;
-        }
-
-        case FieldKind::REPEATED_STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-              << "            auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-              << "            " << n << "[li_].EncodeStructTo_(sw);\n"
-              << "          } }\n";
-            break;
-        }
-
-        case FieldKind::NESTED_LIST: {
-            int depth = fi.mapping.list_depth;
-            const auto& nc = fi.mapping.nested_class;
-
-            // For nullable, check the optional
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else {\n";
-            } else {
-                o << "        {\n";
-            }
-
-            std::string src = fi.mapping.nullable ? ("(*" + n + ")") : n;
-
-            // Nested loops for each list depth
-            for (int d = 0; d < depth; ++d) {
-                std::string var = "nl_" + std::to_string(d);
-                o << "            auto lc_" << d << " = w.BeginList(static_cast<uint32_t>(" << src
-                  << ".size()));\n";
-                o << "            for (const auto& " << var << " : " << src << ") {\n";
-                src = var;
-            }
-            // Innermost: encode struct
-            o << "                auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-              << "                " << src << ".EncodeStructTo_(sw);\n";
-            // Close loops
-            for (int d = 0; d < depth; ++d) o << "            }\n";
-
-            o << "        }\n";
-            break;
-        }
-
-        case FieldKind::MAP: {
-            const auto& mk = fi.mapping.map_key;
-            bool val_is_msg = fi.mapping.map_value_is_message;
-
-            o << "        { auto mc = w.BeginMap(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (const auto& [k, v] : " << n << ") {\n"
-              << "            ";
-            EmitScalarWrite(o, mk, "k", "");
-            o << "          }\n"
-              << "          auto vc = mc.BeginValues();\n"
-              << "          for (const auto& [k, v] : " << n << ") {\n";
-
-            if (val_is_msg) {
-                const auto& mvc = fi.mapping.map_value_class;
-                o << "            auto sw = w.BeginStruct(" << mvc << "Schema()->n_children);\n"
-                  << "            v.EncodeStructTo_(sw);\n";
-            } else {
-                o << "            ";
-                EmitScalarWrite(o, fi.mapping.map_value, "v", "");
-            }
-
-            o << "          } }\n";
-            break;
-        }
-    }  // switch
-}
-
 // Emit EncodeTo, EncodeStructTo_, and Encode methods for a message class.
 void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
                   const std::vector<FieldInfo>& fields) {
@@ -1744,7 +1563,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
     o << "    /// Internal: writes this message's fields into a parent writer\n"
       << "    /// when the message is nested as a struct field inside another row.\n";
     o << "    void EncodeStructTo_(fletcher::PositionalWriter& w) const {\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldEncodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // EncodeTo — creates a PositionalWriter and writes fields positionally.
@@ -1753,7 +1574,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// transport buffer without an intermediate copy.\n";
     o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
       << "        fletcher::PositionalWriter w(buf, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldEncodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // Encode() — convenience returning EncodedRow.
@@ -2186,8 +2009,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
 // File generation
 // -----------------------------------------------------------------------
 
-std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool schema_only,
-                         const OptionMetadataResolver* resolver) {
+std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool schema_only) {
     std::ostringstream o;
 
     o << "// Generated by fletcher-protoc. DO NOT EDIT.\n"
@@ -2264,7 +2086,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
         }
 
         // Always emit the free schema function.
-        o << GenerateSchemaFunction(cls, fields, msg, resolver) << "\n";
+        o << GenerateSchemaFunction(cls, fields, msg) << "\n";
 
         // Optionally emit the row class.
         // View class omitted — generated separately in .fletcher.arrow.pb.h.
@@ -2933,36 +2755,10 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
 // Public schema builder (declared in schema_builder.hpp)
 // -----------------------------------------------------------------------
 
-nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg,
-                                           const OptionMetadataResolver* resolver) {
+nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg) {
     nanoarrow::UniqueSchema schema;
-    BuildMessageSchemaInto(msg, schema.get(), resolver);
+    BuildMessageSchemaInto(msg, schema.get());
     return schema;
-}
-
-// -----------------------------------------------------------------------
-// Plugin parameter parsing (declared in generator_internal.hpp)
-// -----------------------------------------------------------------------
-
-bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error) {
-    std::istringstream ss(parameter);
-    std::string token;
-    while (std::getline(ss, token, ',')) {
-        if (token == "schema_only")
-            out->schema_only = true;
-        else if (token == "ts")
-            out->ts = true;
-        else if (token == "ipc")
-            out->ipc = true;
-        else if (token == "accessor")
-            out->accessor = true;
-        else if (token == "rust")
-            out->rust = true;
-        // Unknown tokens are ignored, unchanged from the pre-existing behaviour
-        // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
-        // are claimed below and MUST parse.
-    }
-    return ParseMetadataRules(parameter, &out->metadata_rules, error);
 }
 
 // -----------------------------------------------------------------------
@@ -2974,26 +2770,31 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                                  google::protobuf::compiler::GeneratorContext* context,
                                  std::string* error) const {
     // Parse comma-separated options from --fletcher_opt=...
-    PluginOptions opts;
-    if (!ParsePluginParameter(parameter, &opts, error)) return false;
-    const bool schema_only = opts.schema_only;
-    const bool emit_ts = opts.ts;
-    const bool emit_ipc = opts.ipc;
-    const bool emit_accessor = opts.accessor;
-    const bool emit_rust = opts.rust;
-
-    // Compile the metadata_from_option rules against the pool protoc built from
-    // the CodeGeneratorRequest — it holds every transitive dependency, so the
-    // declaring .proto is present whenever the option is actually in use.
-    std::unique_ptr<OptionMetadataResolver> resolver;
-    if (!opts.metadata_rules.empty()) {
-        resolver = OptionMetadataResolver::Create(opts.metadata_rules, file->pool(), error);
-        if (!resolver) return false;
+    bool schema_only = false;
+    bool emit_ts = false;
+    bool emit_ipc = false;
+    bool emit_accessor = false;
+    bool emit_rust = false;
+    {
+        std::istringstream ss(parameter);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            if (token == "schema_only")
+                schema_only = true;
+            else if (token == "ts")
+                emit_ts = true;
+            else if (token == "ipc")
+                emit_ipc = true;
+            else if (token == "accessor")
+                emit_accessor = true;
+            else if (token == "rust")
+                emit_rust = true;
+        }
     }
 
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
-        const std::string content = GenerateFile(file, schema_only, resolver.get());
+        const std::string content = GenerateFile(file, schema_only);
         const std::string out_name = OutputFilename(file->name());
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(context->Open(out_name));
         if (!WriteToStream(stream.get(), content, error)) return false;
@@ -3030,7 +2831,7 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
 
             std::vector<uint8_t> ipc;
             try {
-                nanoarrow::UniqueSchema schema = BuildMessageSchema(msg, resolver.get());
+                nanoarrow::UniqueSchema schema = BuildMessageSchema(msg);
                 ipc = SerializeSchemaIpc(schema.get());
             } catch (const std::exception& e) {
                 *error = "failed to build IPC schema for '" + msg->full_name() + "': " + e.what();
@@ -3087,9 +2888,15 @@ bool ArrowRowGenerator::GenerateAll(
     // P1). It carries zero per-file/per-message content; the build.rs assembler
     // include!s it once directly under crate::fletcher_gen::__rba (N1). Only emit
     // when the `rust` opt is set.
-    PluginOptions opts;
-    if (!ParsePluginParameter(parameter, &opts, error)) return false;
-    if (opts.rust) {
+    bool emit_rust = false;
+    {
+        std::istringstream ss(parameter);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            if (token == "rust") emit_rust = true;
+        }
+    }
+    if (emit_rust) {
         const std::string rba_content = EmitRustRbaHelpers();
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> rba_stream(
             context->Open("__rba.fletcher.rs"));

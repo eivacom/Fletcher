@@ -10,6 +10,10 @@
 
 namespace fletcher {
 
+namespace ir {
+struct IrNode;
+}  // namespace ir
+
 // Describes a scalar (or scalar-like) Arrow type: enough information for the
 // code generator to emit setters, builders, and scalar constructors.
 struct ScalarTypeInfo {
@@ -64,10 +68,28 @@ struct FieldMapping {
 
 // Classify a proto field and return enough information to generate Arrow code.
 // Returns nullopt for unsupported constructs (oneof, recursive, etc.).
+//
+// GIR-3: MapField() is now a thin bridge over the canonical IR — it is
+// ProjectIrToFieldMapping(ir::BuildFieldIr(field), field->file()). There is no
+// second, independent classifier: RBA / decode / schema / view / TS all consume
+// FieldMapping derived from the same BuildFieldIr() source, so they cannot drift.
 std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* field);
 
-// Human-readable explanation of why MapField returned nullopt.
+// Canonical projection of a language-neutral IR node onto the (temporary) flat
+// FieldMapping bridge that the not-yet-migrated emitters consume. Returns nullopt
+// for Unsupported nodes and for IR shapes the flat model cannot represent
+// (e.g. List<List<Scalar>>). Edge ENCODE does NOT use this — it walks the IR.
+std::optional<FieldMapping> ProjectIrToFieldMapping(
+    const ir::IrNode& node, const google::protobuf::FileDescriptor* context_file);
+
+// Human-readable explanation of why a field is unsupported (legacy boundary text).
 std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
+
+// True if the field is nullable (proto3 `optional` keyword, or proto2 optional).
+bool IsFieldNullable(const google::protobuf::FieldDescriptor* field);
+
+// True if the message carries the (fletcher.flatten) message option.
+bool HasMessageFlatten(const google::protobuf::Descriptor* msg);
 
 // True if the message (directly or transitively) references itself.
 bool IsRecursive(const google::protobuf::Descriptor* msg);
