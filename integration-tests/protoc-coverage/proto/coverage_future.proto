@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-1 "future coverage" holding pen. COMMITTED BUT UNWIRED: this proto is
+// deliberately NOT part of the CMake generation set and is NOT compiled or
+// executed by the coverage harness. A later round (GIR-10, which owns
+// List<List<scalar>>) will move these shapes back into coverage.proto and
+// wire them once the generator can emit faithful, compilable scalar-leaf
+// nested lists.
+//
+// Decision-rule record (GIR-1 design "coverage_future.proto population"):
+//   The current fletcher-protoc generator does NOT produce faithful output for
+//   the SCALAR-LEAF flatten family (everything rooted in ScalarListWrapper):
+//     * `ScalarListWrapper` as a SINGULAR message-flatten field (and its
+//       `optional` variant) — C++ compiles fine (std::vector<int32_t>), but the
+//       TS emitter produces a SYNTAX ERROR: it emits the list element as
+//       `wireType: ,` (empty value) and the interface field as `[]` (empty
+//       tuple) instead of `number[]`. The generated TS would not type-check.
+//     * `repeated ScalarListWrapper` (depth-2 List<List<int32>>) SILENTLY
+//       COLLAPSES to a flat std::vector<int32_t> in the edge header and to
+//       ArrowScalarList<int32_t>/ScalarSpan<int32_t> in the view/accessor
+//       headers — i.e. the second list level is lost. It compiles, but the
+//       shape is wrong, so it is not a faithful fixture.
+//     * `repeated NestedScalarListWrapper` (depth-3) emits references to an
+//       undefined `NestedScalarListWrapper` class (plus its View / Accessor /
+//       Schema) across all three generated headers — genuinely non-compiling
+//       C++ (decision rule case 2).
+//   All three are therefore parked here until GIR-10. The struct-leaf
+//   equivalents (StructListWrapper and its nestings) generate cleanly on every
+//   surface and stay in coverage.proto.
+syntax = "proto3";
+package integration.coverage.future;
+
+import "fletcher/options.proto";
+
+// Scalar-leaf flatten wrapper (depth-1). Kept self-contained here so this
+// file is standalone-enable-able in GIR-10 without depending on coverage.proto.
+message ScalarListWrapper {
+  option (fletcher.flatten) = true;
+  repeated int32 values = 1;
+}
+
+// Depth-2 scalar-leaf nesting: repeated ScalarListWrapper. When enabled this
+// must generate List<List<int32>> (currently collapses to a flat list).
+message NestedScalarListWrapper {
+  option (fletcher.flatten) = true;
+  repeated ScalarListWrapper values = 1;
+}
+
+// Mirror of the CompositeCoverage fields deferred out of coverage.proto,
+// preserving their original field numbers (11/13/15/17) for when they return.
+message CompositeCoverageFuture {
+  ScalarListWrapper flattened_scalar_list = 11;                     // -> List<int32> (TS syntax error today)
+  repeated ScalarListWrapper nested_scalar_lists = 13;              // -> List<List<int32>>
+  repeated NestedScalarListWrapper depth3_scalar_lists = 15;        // -> List<List<List<int32>>>
+  optional ScalarListWrapper optional_flattened_scalar_list = 17;   // -> nullable List<int32> (TS syntax error today)
+}

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Cargo build artifacts. The CTest wrapper points CARGO_TARGET_DIR at the CMake
+# build tree, but a bare local `cargo check` would create ./target here.
+/target

@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.protoc-coverage
+
+concurrency:
+  group: ci.integration-test.protoc-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            arrow-bridge
+            pubsub
+            integration-tests/protoc-coverage
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build components and run integration tests
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     for COMPONENT in core arrow-bridge pubsub protoc; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/protoc-coverage && \
+                     echo '::group::conan build integration test (configure + build + ctest)' && \
+                     conan build . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            protoc
+            arrow-bridge
+            pubsub
+            integration-tests/protoc-coverage
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build components into local Conan cache
+        shell: bash
+        run: |
+          set -e
+          # Absolute profile path: each `conan create` runs from a different cwd
+          # (a per-component subdir), so a relative profile would resolve
+          # differently per component / break if a tool changed the cwd.
+          PROFILE="${{ github.workspace }}/.conan-profiles/Windows-msvc194-x86_64-Release"
+          for COMPONENT in core arrow-bridge pubsub protoc; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="$PROFILE")
+            echo "::endgroup::"
+          done
+
+      - name: conan build integration test (configure + build + ctest)
+        shell: bash
+        working-directory: integration-tests/protoc-coverage
+        run: conan build . --build=missing -pr:a="${{ github.workspace }}/.conan-profiles/Windows-msvc194-x86_64-Release"

@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-1 coverage fixture. One broad proto that exercises every generated
+// surface (edge row, Arrow view / ToArrowRow, IPC schema, RBA C++ accessor,
+// TS, Rust) as a compile-and-run refactor guard before the IR rewrite.
+//
+// This is a HARNESS fixture. It does NOT assert wire-byte identity (GIR-2) and
+// it must not bake single-language type strings into anything the IR will own.
+syntax = "proto3";
+package integration.coverage;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/empty.proto";
+import "fletcher/options.proto";
+
+enum TopLevelStatus {
+  TOP_LEVEL_STATUS_UNSPECIFIED = 0;
+  TOP_LEVEL_STATUS_OK = 1;
+  TOP_LEVEL_STATUS_WARN = 2;
+  TOP_LEVEL_STATUS_ERROR = 3;
+}
+
+message NestedEnums {
+  enum InnerStatus {
+    INNER_STATUS_UNSPECIFIED = 0;
+    INNER_STATUS_ACTIVE = 1;
+    INNER_STATUS_DISABLED = 2;
+  }
+
+  InnerStatus state = 1;
+}
+
+message ScalarCoverage {
+  bool bool_value = 1;
+  int32 int32_value = 2;
+  int64 int64_value = 3;
+  uint32 uint32_value = 4;
+  uint64 uint64_value = 5;
+  sint32 sint32_value = 6;
+  sint64 sint64_value = 7;
+  fixed32 fixed32_value = 8;
+  fixed64 fixed64_value = 9;
+  sfixed32 sfixed32_value = 10;
+  sfixed64 sfixed64_value = 11;
+  float float_value = 12;
+  double double_value = 13;
+  string string_value = 14;
+  bytes bytes_value = 15;
+
+  optional bool optional_bool = 16;
+  optional int32 optional_int32 = 17;
+  optional string optional_string = 18;
+  optional bytes optional_bytes = 19;
+
+  google.protobuf.BoolValue wrapped_bool = 20;
+  google.protobuf.Int32Value wrapped_int32 = 21;
+  google.protobuf.Int64Value wrapped_int64 = 22;
+  google.protobuf.UInt32Value wrapped_uint32 = 23;
+  google.protobuf.UInt64Value wrapped_uint64 = 24;
+  google.protobuf.FloatValue wrapped_float = 25;
+  google.protobuf.DoubleValue wrapped_double = 26;
+  google.protobuf.StringValue wrapped_string = 27;
+  google.protobuf.BytesValue wrapped_bytes = 28;
+
+  google.protobuf.Timestamp timestamp_value = 29;
+  google.protobuf.Duration duration_value = 30;
+
+  TopLevelStatus status = 31;
+  NestedEnums.InnerStatus nested_status = 32;
+}
+
+message Leaf {
+  int32 id = 1;
+  string label = 2;
+  TopLevelStatus status = 3;
+}
+
+message Branch {
+  Leaf leaf = 1;
+  optional Leaf optional_leaf = 2;
+  repeated Leaf leaves = 3;
+}
+
+// NOTE: ScalarListWrapper (flatten wrapper of `repeated int32`) lives in
+// coverage_future.proto. Its C++ compiles, but the current TS emitter produces
+// a syntax error for a scalar flatten-wrapper used as a singular list field
+// (it emits `wireType: ,` with an empty value and an `[]` interface type), so
+// the generated TS would not type-check. Deferred with the scalar-leaf flatten
+// family until the emitter is fixed. See coverage_future.proto.
+
+message StructListWrapper {
+  option (fletcher.flatten) = true;
+  repeated Leaf values = 1;
+}
+
+// NOTE: NestedScalarListWrapper (repeated ScalarListWrapper -> scalar-leaf
+// depth-3 nested list) lives in coverage_future.proto: the current generator
+// cannot emit compilable scalar-leaf nested lists (it references an undefined
+// NestedScalarListWrapper{,View,Accessor,Schema} symbol). GIR-10 owns
+// List<List<scalar>>. See coverage_future.proto for the decision-rule record.
+
+message NestedStructListWrapper {
+  option (fletcher.flatten) = true;
+  repeated StructListWrapper values = 1;
+}
+
+message FlattenedPoint {
+  option (fletcher.flatten) = true;
+  double x = 1;
+  double y = 2;
+}
+
+message FieldFlattenedPosition {
+  FlattenedPoint point = 1 [(fletcher.flatten_field) = true];
+}
+
+message CompositeCoverage {
+  ScalarCoverage scalars = 1;
+  optional ScalarCoverage optional_scalars = 2;
+
+  Branch branch = 3;
+  optional Branch optional_branch = 4;
+
+  repeated int32 repeated_scalar = 5;
+  repeated string repeated_string = 6;
+  repeated bytes repeated_bytes = 7;
+  repeated Leaf repeated_struct = 8;
+
+  map<string, int32> map_scalar = 9;
+  map<string, Leaf> map_struct = 10;
+
+  // Scalar flatten-wrapper fields 11 (flattened_scalar_list), 13
+  // (nested_scalar_lists) and 15 (depth3_scalar_lists) — all rooted in the
+  // scalar-leaf ScalarListWrapper — plus optional field 17
+  // (optional_flattened_scalar_list) live in coverage_future.proto: the
+  // current generator does not emit them faithfully across every surface
+  // (field 13 silently collapses to a flat list<int32>; field 15 references an
+  // undefined wrapper class in C++; fields 11/17 emit a TS syntax error). Per
+  // the GIR-1 decision rule they are deferred until GIR-10. Field numbers
+  // 11/13/15/17 are intentionally left as gaps. The struct-leaf equivalents
+  // (12/14/16/18, rooted in StructListWrapper) generate cleanly and stay.
+  StructListWrapper flattened_struct_list = 12;
+  repeated StructListWrapper nested_struct_lists = 14;
+  repeated NestedStructListWrapper depth3_struct_lists = 16;
+
+  optional StructListWrapper optional_flattened_struct_list = 18;
+
+  FlattenedPoint message_flattened_point = 19;
+  FieldFlattenedPosition field_flattened_position = 20;
+}
+
+message ServiceRequest {
+  // Field named `payload` (not `row`): the RBA accessor emitter names its
+  // internal per-row index identifier `row`, so a proto field literally named
+  // `row` collides with it (the generated RowView would carry both an
+  // `int64_t row` member and a `row()` getter) and the accessor header fails to
+  // compile. Renaming is a fixture-only workaround (field number 1 and type are
+  // unchanged, so wire bytes are unaffected); GIR-1 is harness-only and does
+  // not modify the read-only RBA emitter.
+  CompositeCoverage payload = 1;
+}
+
+message ServiceReply {
+  bool accepted = 1;
+  string message = 2;
+}
+
+service CoverageService {
+  rpc Submit(ServiceRequest) returns (ServiceReply);
+}
