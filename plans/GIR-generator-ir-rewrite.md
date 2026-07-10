@@ -183,6 +183,18 @@ do not block the round on it.
 
 ---
 
+## Downstream (out of this round)
+
+The generator's forward roadmap after GIR: **GIR → BIND-C# → BIND-Rust → RIR**.
+- **BIND-C#** (first binding round) — C# row/service emitters on the IR; the first
+  non-C++ IR backend, which proves the IR's language-neutrality (decision #1).
+- **BIND-Rust** (second) — Rust row/service emitters on the IR; establishes the
+  Rust logical-type table.
+- **RIR (RBA↔IR)** — [RIR-rba-onto-ir.md](RIR-rba-onto-ir.md): migrate the RBA
+  accessor emitter (left read-only here per decision #3) onto the IR, reusing
+  GIR's C++ table + BIND-Rust's Rust table, and **retire `FieldKind`**. Gated
+  after BIND-Rust.
+
 ## Definition of done (round)
 
 GIR-1..GIR-11 forcing tests 🟢 (GIR-12 optional); the full protoc unit suite +
