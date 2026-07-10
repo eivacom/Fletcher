@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "cpp_backend_decode_visitor.hpp"
+#include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
@@ -1064,73 +1065,19 @@ void EmitNanoarrowTypeSetup(std::ostringstream& o, const std::string& child_expr
     }  // switch
 }
 
+// GIR-5: the C++ <Class>Schema() source is now emitted by the ONE IR-driven
+// schema visitor (cpp_backend::GenerateSchemaFunctionFromIr), the same visitor
+// that BuildMessageSchemaInto executes in-process — the two paths cannot drift
+// (locked decision #5). `fields` is retained for signature compatibility with
+// the generation loop but is no longer read here (the visitor rebuilds the
+// flattened field list from the IR). The emitted source may differ cosmetically
+// from the pre-GIR-5 output (nanoarrow-call ordering for nested lists, dropped
+// per-field warning comments), but the runtime schema — and therefore the .ipc
+// bytes — is byte-identical.
 std::string GenerateSchemaFunction(const std::string& cls, const std::vector<FieldInfo>& fields,
                                    const google::protobuf::Descriptor* msg) {
-    std::ostringstream o;
-
-    o << "/// Returns the nanoarrow schema describing this message's wire layout.\n"
-      << "/// Providers publish this schema on companion topics so that subscribers\n"
-      << "/// can decode rows without prior knowledge of the message definition.\n";
-    o << "inline fletcher::OwnedSchema " << cls << "Schema() {\n"
-      << "    fletcher::OwnedSchema schema;\n"
-      << "    ArrowSchemaInit(schema.get());\n"
-      << "    ArrowSchemaSetTypeStruct(schema.get(), " << fields.size() << ");\n\n";
-
-    // Schema-level metadata: proto_package + proto_message
-    o << "    {\n"
-      << "        struct ArrowBuffer buf;\n"
-      << "        ArrowBufferInit(&buf);\n"
-      << "        ArrowMetadataBuilderInit(&buf, nullptr);\n"
-      << "        ArrowMetadataBuilderAppend(&buf,\n"
-      << "            ArrowCharView(\"proto_package\"),\n"
-      << "            ArrowCharView(\"" << msg->file()->package() << "\"));\n"
-      << "        ArrowMetadataBuilderAppend(&buf,\n"
-      << "            ArrowCharView(\"proto_message\"),\n"
-      << "            ArrowCharView(\"" << msg->name() << "\"));\n"
-      << "        ArrowSchemaSetMetadata(schema.get(),\n"
-      << "            reinterpret_cast<const char*>(buf.data));\n"
-      << "        ArrowBufferReset(&buf);\n"
-      << "    }\n\n";
-
-    for (size_t i = 0; i < fields.size(); ++i) {
-        const auto& fi = fields[i];
-        std::string ci = "schema->children[" + std::to_string(i) + "]";
-
-        if (!fi.mapping.warning.empty()) o << "    // Warning: " << fi.mapping.warning << "\n";
-
-        // Set field type
-        EmitNanoarrowTypeSetup(o, ci, fi, "    ");
-
-        // Set field name
-        o << "    ArrowSchemaSetName(" << ci << ", \"" << fi.name << "\");\n";
-
-        // Set nullable flag
-        if (fi.mapping.nullable)
-            o << "    " << ci << "->flags |= ARROW_FLAG_NULLABLE;\n";
-        else
-            o << "    " << ci << "->flags &= ~ARROW_FLAG_NULLABLE;\n";
-
-        // Per-field metadata: field_number + field_id
-        o << "    {\n"
-          << "        struct ArrowBuffer buf;\n"
-          << "        ArrowBufferInit(&buf);\n"
-          << "        ArrowMetadataBuilderInit(&buf, nullptr);\n"
-          << "        ArrowMetadataBuilderAppend(&buf,\n"
-          << "            ArrowCharView(\"field_number\"),\n"
-          << "            ArrowCharView(\"" << fi.field_number << "\"));\n"
-          << "        ArrowMetadataBuilderAppend(&buf,\n"
-          << "            ArrowCharView(\"field_id\"),\n"
-          << "            ArrowCharView(\"" << fi.field_id << "\"));\n";
-
-        o << "        ArrowSchemaSetMetadata(" << ci << ",\n"
-          << "            reinterpret_cast<const char*>(buf.data));\n"
-          << "        ArrowBufferReset(&buf);\n"
-          << "    }\n\n";
-    }
-
-    o << "    return schema;\n"
-      << "}\n";
-    return o.str();
+    (void)fields;
+    return cpp_backend::GenerateSchemaFunctionFromIr(cls, msg, msg->file());
 }
 
 // -----------------------------------------------------------------------
@@ -1215,95 +1162,12 @@ const google::protobuf::Descriptor* RequireNestedMsg(const google::protobuf::Des
     return nested;
 }
 
-// Counterpart of GenerateSchemaFunction plus the composite branches of
-// EmitNanoarrowTypeSetup. `schema` must be uninitialized (or released).
+// GIR-5: the in-process ArrowSchema is now built by the SAME IR-driven schema
+// visitor that emits the generated <Class>Schema() source
+// (cpp_backend::BuildMessageSchemaIntoFromIr) — one visitor, both paths (locked
+// decision #5). `schema` must be uninitialized (or released) on entry.
 void BuildMessageSchemaInto(const google::protobuf::Descriptor* msg, ArrowSchema* schema) {
-    ArrowSchemaInit(schema);
-    std::string skipped;
-    const std::vector<FieldInfo> fields = GatherFields(msg, &skipped);
-    CheckNa(ArrowSchemaSetTypeStruct(schema, static_cast<int64_t>(fields.size())),
-            "set struct type");
-
-    SetMetadataPairs(schema,
-                     {{"proto_package", msg->file()->package()}, {"proto_message", msg->name()}});
-
-    for (size_t i = 0; i < fields.size(); ++i) {
-        const FieldInfo& fi = fields[i];
-        ArrowSchema* child = schema->children[i];
-
-        switch (fi.mapping.kind) {
-            case FieldKind::SCALAR:
-                SetScalarSchemaType(child, fi.mapping.scalar.arrow_type_expr);
-                break;
-
-            case FieldKind::STRUCT: {
-                nanoarrow::UniqueSchema nested;
-                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get());
-                CheckNa(ArrowSchemaDeepCopy(nested.get(), child), "copy struct schema");
-                break;
-            }
-
-            case FieldKind::REPEATED_SCALAR:
-                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_LIST), "set list type");
-                SetScalarSchemaType(child->children[0], fi.mapping.element.arrow_type_expr);
-                CheckNa(ArrowSchemaSetName(child->children[0], "item"), "set item name");
-                break;
-
-            case FieldKind::REPEATED_STRUCT: {
-                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_LIST), "set list type");
-                nanoarrow::UniqueSchema nested;
-                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get());
-                CheckNa(ArrowSchemaDeepCopy(nested.get(), child->children[0]),
-                        "copy struct schema");
-                CheckNa(ArrowSchemaSetName(child->children[0], "item"), "set item name");
-                break;
-            }
-
-            case FieldKind::NESTED_LIST: {
-                ArrowSchema* cur = child;
-                for (int d = 0; d < fi.mapping.list_depth; ++d) {
-                    CheckNa(ArrowSchemaSetType(cur, NANOARROW_TYPE_LIST), "set list type");
-                    CheckNa(ArrowSchemaSetName(cur->children[0], "item"), "set item name");
-                    cur = cur->children[0];
-                }
-                nanoarrow::UniqueSchema nested;
-                BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.nested_msg, fi.name),
-                                       nested.get());
-                CheckNa(ArrowSchemaDeepCopy(nested.get(), cur), "copy struct schema");
-                CheckNa(ArrowSchemaSetName(cur, "item"), "set item name");
-                break;
-            }
-
-            case FieldKind::MAP: {
-                CheckNa(ArrowSchemaSetType(child, NANOARROW_TYPE_MAP), "set map type");
-                ArrowSchema* entries = child->children[0];
-                SetScalarSchemaType(entries->children[0], fi.mapping.map_key.arrow_type_expr);
-                if (fi.mapping.map_value_is_message) {
-                    nanoarrow::UniqueSchema nested;
-                    BuildMessageSchemaInto(RequireNestedMsg(fi.mapping.map_value_msg, fi.name),
-                                           nested.get());
-                    CheckNa(ArrowSchemaDeepCopy(nested.get(), entries->children[1]),
-                            "copy struct schema");
-                    CheckNa(ArrowSchemaSetName(entries->children[1], "value"), "set value name");
-                } else {
-                    SetScalarSchemaType(entries->children[1], fi.mapping.map_value.arrow_type_expr);
-                }
-                break;
-            }
-        }
-
-        CheckNa(ArrowSchemaSetName(child, fi.name.c_str()), "set field name");
-        if (fi.mapping.nullable) {
-            child->flags |= ARROW_FLAG_NULLABLE;
-        } else {
-            child->flags &= ~ARROW_FLAG_NULLABLE;
-        }
-
-        SetMetadataPairs(
-            child, {{"field_number", std::to_string(fi.field_number)}, {"field_id", fi.field_id}});
-    }
+    cpp_backend::BuildMessageSchemaIntoFromIr(msg, schema);
 }
 
 // -----------------------------------------------------------------------
