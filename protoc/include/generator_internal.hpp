@@ -19,10 +19,12 @@
 
 #include <google/protobuf/descriptor.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "ir.hpp"
 #include "type_mapper.hpp"
 
 namespace fletcher {
@@ -32,12 +34,17 @@ namespace fletcher {
 // field-level-flatten sub-messages inlined.
 struct FieldInfo {
     std::string name;
-    FieldMapping mapping;
+    FieldMapping mapping;  // temporary bridge for the not-yet-migrated emitters
     int field_number = 0;  // leaf proto field number
     std::string field_id;  // dotted field-number path, unique even when field-level
                            // flatten inlines sub-messages (e.g. "2.1"); equals the
                            // field_number string for non-inlined top-level fields
     const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
+    // GIR-3: the canonical language-neutral IR for this field — the source of
+    // truth the edge ENCODE visitor walks. shared_ptr keeps FieldInfo copyable
+    // despite IrNode owning unique_ptr children. `mapping` is a projection of
+    // this same IR (single source), consumed by the other emitters for now.
+    std::shared_ptr<const ir::IrNode> ir;
 };
 
 // Topologically ordered, generatable messages of `file` (dependencies first,

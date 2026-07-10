@@ -16,7 +16,9 @@
 #include <utility>
 #include <vector>
 
+#include "cpp_backend_type_table.hpp"
 #include "generator_internal.hpp"
+#include "ir.hpp"
 #include "recordbatch_accessor_emitter.hpp"
 #include "schema_builder.hpp"
 #include "type_mapper.hpp"
@@ -857,8 +859,12 @@ void GatherFieldsImpl(const google::protobuf::Descriptor* msg, std::vector<Field
             continue;
         }
 
-        if (auto m = MapField(fd)) {
-            fields.push_back({fd->name(), std::move(*m), fd->number(), path, fd});
+        // Build the canonical IR once; the projection feeds the bridge mapping
+        // and the same IR node is stored for the edge ENCODE visitor to walk.
+        auto ir_node = ir::BuildFieldIr(fd);
+        if (auto m = ProjectIrToFieldMapping(ir_node, fd->file())) {
+            fields.push_back({fd->name(), std::move(*m), fd->number(), path, fd,
+                              std::make_shared<const ir::IrNode>(std::move(ir_node))});
         } else {
             *skipped_comment += "//   " + fd->name() + ": " + UnsupportedReason(fd) + "\n";
         }
@@ -1522,25 +1528,11 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
 // EncodeTo / EncodeStructTo_ — direct encoding to WriteBuffer
 // -----------------------------------------------------------------------
 
-// Helper: return the PositionalWriter method name for a scalar storage type.
-std::string PositionalWriteCall(const ScalarTypeInfo& info) {
-    const auto& st = info.storage_type;
-    const auto& expr = info.arrow_type_expr;
-    if (expr.find("timestamp") != std::string::npos) return "WriteTimestamp";
-    if (expr.find("duration") != std::string::npos) return "WriteDuration";
-    if (st == "bool") return "WriteBool";
-    if (st == "int32_t") return "WriteInt32";
-    if (st == "int64_t") return "WriteInt64";
-    if (st == "uint32_t") return "WriteUint32";
-    if (st == "uint64_t") return "WriteUint64";
-    if (st == "float") return "WriteFloat";
-    if (st == "double") return "WriteDouble";
-    if (st == "std::string") {
-        if (expr == "arrow::binary()") return "WriteBinary";
-        return "WriteString";
-    }
-    return "/* unknown write */";
-}
+// NOTE: the edge ENCODE emitter is now the IR-driven recursive visitor in
+// cpp_backend::EmitFieldEncodeFromIr (see cpp_backend_type_table.cpp). The old
+// FieldMapping-switch EmitFieldEncode / EmitScalarWrite / PositionalWriteCall
+// were retired in GIR-3. PositionalReadCall stays for the still-bespoke DECODE
+// path (migrated in GIR-4).
 
 // Helper: return the PositionalReader method name for a scalar storage type.
 std::string PositionalReadCall(const ScalarTypeInfo& info) {
@@ -1562,150 +1554,6 @@ std::string PositionalReadCall(const ScalarTypeInfo& info) {
     return "/* unknown read */";
 }
 
-// Emit the scalar write expression for a value through a PositionalWriter.
-void EmitScalarWrite(std::ostringstream& o, const ScalarTypeInfo& info, const std::string& val_expr,
-                     const std::string& indent) {
-    std::string method = PositionalWriteCall(info);
-    if (method == "WriteBinary") {
-        o << indent << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << val_expr << ".data()), "
-          << val_expr << ".size());\n";
-    } else {
-        o << indent << "w." << method << "(" << val_expr << ");\n";
-    }
-}
-
-// Emit positional-format encoding for a single field.
-void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
-    const std::string n = fi.name + "_";
-    const std::string si = std::to_string(idx);
-
-    switch (fi.mapping.kind) {
-        case FieldKind::SCALAR: {
-            const auto& s = fi.mapping.scalar;
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else ";
-                std::string method = PositionalWriteCall(s);
-                if (method == "WriteBinary") {
-                    // `n->data()` is (*opt).data() on the contained std::string.
-                    // A leading `*` here would deref the char* to a char and cast
-                    // that byte value to a pointer — a wire-corrupting bug for a
-                    // SET optional/wrapped bytes field (matches the non-nullable
-                    // branch below, which correctly uses val.data()).
-                    o << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << n
-                      << "->data()), " << n << "->size());\n";
-                } else {
-                    o << "w." << method << "(*" << n << ");\n";
-                }
-            } else {
-                // Non-nullable: write default if not set
-                std::string method = PositionalWriteCall(s);
-                if (method == "WriteBinary") {
-                    o << "        { const auto& val = " << n << ".value_or(" << s.default_value
-                      << ");\n"
-                      << "          w.WriteBinary(reinterpret_cast<const uint8_t*>(val.data()), "
-                         "val.size()); }\n";
-                } else {
-                    o << "        w." << method << "(" << n << ".value_or(" << s.default_value
-                      << "));\n";
-                }
-            }
-            break;
-        }
-
-        case FieldKind::STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else { auto sw = w.BeginStruct(" << nc << "Schema()->n_children); "
-                  << n << "->EncodeStructTo_(sw); }\n";
-            } else {
-                o << "        { auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-                  << "          if (" << n << ".has_value()) " << n << "->EncodeStructTo_(sw);\n"
-                  << "          else " << nc << "().EncodeStructTo_(sw); }\n";
-            }
-            break;
-        }
-
-        case FieldKind::REPEATED_SCALAR: {
-            const auto& e = fi.mapping.element;
-            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-              << "            ";
-            EmitScalarWrite(o, e, n + "[li_]", "");
-            o << "          } }\n";
-            break;
-        }
-
-        case FieldKind::REPEATED_STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-              << "            auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-              << "            " << n << "[li_].EncodeStructTo_(sw);\n"
-              << "          } }\n";
-            break;
-        }
-
-        case FieldKind::NESTED_LIST: {
-            int depth = fi.mapping.list_depth;
-            const auto& nc = fi.mapping.nested_class;
-
-            // For nullable, check the optional
-            if (fi.mapping.nullable) {
-                o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else {\n";
-            } else {
-                o << "        {\n";
-            }
-
-            std::string src = fi.mapping.nullable ? ("(*" + n + ")") : n;
-
-            // Nested loops for each list depth
-            for (int d = 0; d < depth; ++d) {
-                std::string var = "nl_" + std::to_string(d);
-                o << "            auto lc_" << d << " = w.BeginList(static_cast<uint32_t>(" << src
-                  << ".size()));\n";
-                o << "            for (const auto& " << var << " : " << src << ") {\n";
-                src = var;
-            }
-            // Innermost: encode struct
-            o << "                auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
-              << "                " << src << ".EncodeStructTo_(sw);\n";
-            // Close loops
-            for (int d = 0; d < depth; ++d) o << "            }\n";
-
-            o << "        }\n";
-            break;
-        }
-
-        case FieldKind::MAP: {
-            const auto& mk = fi.mapping.map_key;
-            bool val_is_msg = fi.mapping.map_value_is_message;
-
-            o << "        { auto mc = w.BeginMap(static_cast<uint32_t>(" << n << ".size()));\n"
-              << "          for (const auto& [k, v] : " << n << ") {\n"
-              << "            ";
-            EmitScalarWrite(o, mk, "k", "");
-            o << "          }\n"
-              << "          auto vc = mc.BeginValues();\n"
-              << "          for (const auto& [k, v] : " << n << ") {\n";
-
-            if (val_is_msg) {
-                const auto& mvc = fi.mapping.map_value_class;
-                o << "            auto sw = w.BeginStruct(" << mvc << "Schema()->n_children);\n"
-                  << "            v.EncodeStructTo_(sw);\n";
-            } else {
-                o << "            ";
-                EmitScalarWrite(o, fi.mapping.map_value, "v", "");
-            }
-
-            o << "          } }\n";
-            break;
-        }
-    }  // switch
-}
-
 // Emit EncodeTo, EncodeStructTo_, and Encode methods for a message class.
 void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
                   const std::vector<FieldInfo>& fields) {
@@ -1715,7 +1563,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
     o << "    /// Internal: writes this message's fields into a parent writer\n"
       << "    /// when the message is nested as a struct field inside another row.\n";
     o << "    void EncodeStructTo_(fletcher::PositionalWriter& w) const {\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldEncodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // EncodeTo — creates a PositionalWriter and writes fields positionally.
@@ -1724,7 +1574,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// transport buffer without an intermediate copy.\n";
     o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
       << "        fletcher::PositionalWriter w(buf, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldEncode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldEncodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // Encode() — convenience returning EncodedRow.
