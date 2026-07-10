@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
@@ -25,7 +26,7 @@ using namespace fletcher;
 class MockProvider : public PubSubProvider {
    public:
     void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         topics_created.push_back(key);
         if (schema) {
             schemas_[key] = OwnedSchema::DeepCopy(schema.get());
@@ -34,7 +35,7 @@ class MockProvider : public PubSubProvider {
 
     void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
 
         std::vector<uint8_t> buf;
         VectorWriteBuffer wb(buf);
@@ -53,7 +54,7 @@ class MockProvider : public PubSubProvider {
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                  SubscribeCallback callback) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         SharedSchema schema;
@@ -64,7 +65,7 @@ class MockProvider : public PubSubProvider {
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
-        callbacks_.erase(Join(segments));
+        callbacks_.erase(fletcher::internal::JoinSegments(segments));
     }
 
     std::vector<std::string> topics_created;
@@ -72,17 +73,6 @@ class MockProvider : public PubSubProvider {
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
-
-    static std::string Join(const std::vector<std::string>& segs) {
-        std::string out;
-        for (size_t i = 0; i < segs.size(); ++i) {
-            if (i > 0) {
-                out += '/';
-            }
-            out += segs[i];
-        }
-        return out;
-    }
 };
 
 static auto TestSchema() {

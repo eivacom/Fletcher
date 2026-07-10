@@ -42,6 +42,7 @@
 #include <cstdlib>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
@@ -73,7 +74,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
     void CreateTopic(const std::vector<std::string>& segments,
                      fletcher::OwnedSchema schema) override {
         std::lock_guard lock(mu_);
-        auto& slot = topics_[Join(segments)];
+        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
         if (schema) {
             slot.schema = fletcher::OwnedSchema::DeepCopy(schema.get());
         }
@@ -88,7 +89,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
         SubscribeCallback cb;
         {
             std::lock_guard lock(mu_);
-            auto [it, _] = topics_.try_emplace(Join(segments));
+            auto [it, _] = topics_.try_emplace(fletcher::internal::JoinSegments(segments));
             cb = it->second.callback;
         }
         if (cb) {
@@ -99,7 +100,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
     fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                            SubscribeCallback callback) override {
         std::lock_guard lock(mu_);
-        auto& slot = topics_[Join(segments)];
+        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
         slot.callback = std::move(callback);
         fletcher::SharedSchema schema;
         if (slot.schema) {
@@ -110,7 +111,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
         std::lock_guard lock(mu_);
-        auto it = topics_.find(Join(segments));
+        auto it = topics_.find(fletcher::internal::JoinSegments(segments));
         if (it != topics_.end()) {
             it->second.callback = nullptr;
         }
@@ -123,17 +124,6 @@ class InProcessProvider : public fletcher::PubSubProvider {
     };
     std::mutex mu_;
     std::unordered_map<std::string, TopicState> topics_;
-
-    static std::string Join(const std::vector<std::string>& segs) {
-        std::string out;
-        for (size_t i = 0; i < segs.size(); ++i) {
-            if (i > 0) {
-                out += '/';
-            }
-            out += segs[i];
-        }
-        return out;
-    }
 };
 
 struct Args {

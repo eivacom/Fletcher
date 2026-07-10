@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <fletcher/core/detail/bitfield.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,20 +24,9 @@ namespace fletcher {
 
 namespace {
 
-template <typename T>
-void AppendFixed(std::vector<uint8_t>& buf, T value) {
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
-    buf.insert(buf.end(), bytes, bytes + sizeof(T));
-}
-
-// Number of bytes needed for a null bitfield covering `n` items.
-// Takes int64_t so a wire-supplied uint32_t count never narrows to a negative
-// int (which would make the (n + 7) / 8 arithmetic produce garbage).
-size_t BitfieldBytes(int64_t n) { return static_cast<size_t>((n + 7) / 8); }
-
 // Write a null bitfield: bit i is 1 if the i-th item is null.
 void WriteNullBitfield(std::vector<uint8_t>& buf, const arrow::ScalarVector& scalars, int count) {
-    size_t nbytes = BitfieldBytes(count);
+    size_t nbytes = detail::BitfieldBytes(count);
     size_t start = buf.size();
     buf.resize(start + nbytes, 0);
     for (int i = 0; i < count; ++i) {
@@ -84,7 +74,7 @@ void EncodeListElements(std::vector<uint8_t>& buf, const std::shared_ptr<arrow::
     // Write null bitfield for elements. Pass the int64_t count directly — a
     // static_cast<int> would wrap negative for counts > INT_MAX and corrupt
     // the bitfield size (the very narrowing this hardening removes).
-    size_t nbytes = BitfieldBytes(count);
+    size_t nbytes = detail::BitfieldBytes(count);
     size_t start = buf.size();
     buf.resize(start + nbytes, 0);
     for (int64_t i = 0; i < count; ++i) {
@@ -144,7 +134,7 @@ void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scala
 
             // Values: null bitfield + payloads. Pass int64_t count directly
             // (no narrowing static_cast<int>).
-            size_t nbytes = BitfieldBytes(count);
+            size_t nbytes = detail::BitfieldBytes(count);
             size_t start = buf.size();
             buf.resize(start + nbytes, 0);
             for (int64_t i = 0; i < count; ++i) {
@@ -208,7 +198,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalStruct(
     const auto& stype = static_cast<const arrow::StructType&>(*type);
     const int n = stype.num_fields();
 
-    const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(n));
+    const uint8_t* bitfield = r.ReadBytes(detail::BitfieldBytes(n));
 
     arrow::ScalarVector children(n);
     for (int i = 0; i < n; ++i) {
@@ -223,7 +213,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalStruct(
 
 std::shared_ptr<arrow::Array> DecodeListElements(
     detail::Reader& r, int64_t count, const std::shared_ptr<arrow::DataType>& elem_type) {
-    const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
+    const uint8_t* bitfield = r.ReadBytes(detail::BitfieldBytes(count));
 
     auto builder =
         detail::ValueOrThrow(arrow::MakeBuilder(elem_type), "Codec: list MakeBuilder failed");
@@ -259,7 +249,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
             // bytes, so a valid all-null list's count can legitimately exceed
             // the remaining byte count. The only safe lower bound is the
             // element null bitfield itself: require BitfieldBytes(count) to fit.
-            if (BitfieldBytes(count) > r.remaining())
+            if (detail::BitfieldBytes(count) > r.remaining())
                 throw std::invalid_argument("Codec: list element count exceeds remaining buffer");
             auto arr = DecodeListElements(r, count, list_type.value_type());
             if (type->id() == T::LIST) return std::make_shared<arrow::ListScalar>(arr, type);
@@ -292,7 +282,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
             }
 
             // Values: null bitfield + payloads.
-            const uint8_t* val_bitfield = r.ReadBytes(BitfieldBytes(count));
+            const uint8_t* val_bitfield = r.ReadBytes(detail::BitfieldBytes(count));
             auto val_builder = detail::ValueOrThrow(arrow::MakeBuilder(map_type.item_type()),
                                                     "Codec: map value MakeBuilder failed");
             for (uint32_t i = 0; i < count; ++i) {
@@ -418,7 +408,7 @@ ArrowRow Codec::DecodeRow(const uint8_t* data, size_t len) const {
     detail::Reader r{data, len};
     const int num_fields = schema_->num_fields();
 
-    const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(num_fields));
+    const uint8_t* bitfield = r.ReadBytes(detail::BitfieldBytes(num_fields));
 
     ArrowRow values(num_fields);
     for (int i = 0; i < num_fields; ++i) {

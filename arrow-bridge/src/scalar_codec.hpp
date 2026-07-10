@@ -19,6 +19,16 @@
 #include "row_reader.hpp"
 
 namespace fletcher {
+
+// Append value's raw object representation to buf (sizeof(T) little-endian
+// bytes on a little-endian host). Single source of truth shared by codec.cpp
+// and scalar_codec.cpp.
+template <typename T>
+inline void AppendFixed(std::vector<uint8_t>& buf, T value) {
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
+    buf.insert(buf.end(), bytes, bytes + sizeof(T));
+}
+
 namespace detail {
 
 // Append the binary encoding of scalar to buf.

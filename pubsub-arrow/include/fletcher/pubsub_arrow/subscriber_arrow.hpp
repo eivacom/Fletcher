@@ -119,8 +119,6 @@ class SubscriberArrow {
     // path so a subscriber-only process can still decode rows that
     // arrive before subscriber_->Subscribe returns.
     Codec* AcquireCodec(const std::string& key, const SharedSchema& schema);
-
-    static std::string JoinSegments(const std::vector<std::string>& segs);
 };
 
 }  // namespace fletcher
