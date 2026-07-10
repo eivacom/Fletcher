@@ -43,6 +43,7 @@ jobs:
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
       integration-protoc-gen-fletcher-npm: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-npm }}
@@ -203,6 +204,19 @@ jobs:
               - 'integration-tests/protoc-arrow-bridge/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-arrow-bridge.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-protoc-coverage:
+              - 'core/**'
+              - 'protoc/**'
+              - 'arrow-bridge/**'
+              - 'pubsub/**'
+              - 'integration-tests/protoc-coverage/**'
+              - 'integration-tests/protoc-arrow-bridge/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-coverage.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -399,6 +413,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-protoc-coverage:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-coverage == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-coverage.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-gateway-client-ts:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-gateway-ts == 'true' }}
@@ -457,6 +479,7 @@ jobs:
       - integration-test-gateway-end-to-end
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
+      - integration-test-protoc-coverage
       - integration-test-protoc-gateway-client-ts
       - integration-test-pubsub-arrow-fastdds
       - integration-test-protoc-gen-fletcher-npm
@@ -488,6 +511,7 @@ jobs:
             ${{ needs.integration-test-gateway-end-to-end.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
+            ${{ needs.integration-test-protoc-coverage.result }},
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
