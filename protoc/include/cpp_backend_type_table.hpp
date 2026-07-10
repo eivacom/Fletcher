@@ -34,6 +34,14 @@ struct CppScalarInfo {
     bool value_is_buffer = false;  // true for string/binary
     std::string positional_write;  // PositionalWriter method — e.g. "WriteInt32"
     std::string positional_read;   // PositionalReader method — e.g. "ReadInt32"
+    // GIR-6 view/ToArrowRow spelling, derived here so no Arrow array name or
+    // getter type leaks onto an IR node (locked decision #1). `array_type` is the
+    // scalar's companion Arrow array class ("arrow::Int32Array"); `getter_type` is
+    // the view getter return type (std::string_view for buffers, storage_type
+    // otherwise). These reproduce the former generator.cpp ArrayTypeFromScalar /
+    // GetterType helpers exactly.
+    std::string array_type;   // e.g. "arrow::Int32Array"
+    std::string getter_type;  // view getter return type — e.g. "int32_t"
 };
 
 // Map a language-neutral scalar logical identity to its C++ backend strings.
