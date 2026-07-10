@@ -28,6 +28,12 @@ proposed deviation is a **stop-and-ask**. Full rationale in
    and DICT-6 still patches the flat accessor. **`FieldKind` is NOT deleted at
    Phase-2 parity** — it survives as a thin IR projection through a long
    transition. Rewriting the RBA emitter is out of scope / stop-and-ask.
+   **Its concrete home:** the reconciliation (migrate the RBA C++/Rust accessor
+   onto the IR, kill the Rust emitter's `arrow::…()` string-parsing, and retire
+   `FieldKind`) is a dedicated follow-up round — **RIR (RBA↔IR)**, see
+   [RIR-rba-onto-ir.md](RIR-rba-onto-ir.md) — sequenced **after BIND-Rust**,
+   which builds the Rust logical-type table RIR reuses (GIR builds the C++ one).
+   Downstream chain: **GIR → BIND-C# → BIND-Rust → RIR**.
 
 4. **Migrate emitter-by-emitter behind per-emitter oracles.** The old path is kept
    until each new emitter passes its oracle (encode → Encode==EncodeRow; decode →
