@@ -28,6 +28,7 @@
 #include <exception>
 #include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <future>
 #include <map>
@@ -53,20 +54,6 @@ static_assert(std::endian::native == std::endian::little,
               "xrcedds-pubsub-provider requires a little-endian host: "
               "the CDR sequence<octet> length prefix is encoded by "
               "raw memcpy and the Agent's CDR-LE framing assumes LE.");
-
-namespace {
-
-std::string JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) return {};
-    std::string out = segs[0];
-    for (size_t i = 1; i < segs.size(); ++i) {
-        out += '/';
-        out += segs[i];
-    }
-    return out;
-}
-
-}  // anonymous namespace
 
 // -----------------------------------------------------------------------
 // Impl — hides all XRCE-DDS types behind the pimpl wall.
@@ -424,7 +411,7 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     if (impl_->topics.count(name)) throw std::runtime_error("XRCE: topic already exists: " + name);
@@ -523,7 +510,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
 void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
                                     RowEncoder encoder, const Attachments& attachments) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     auto it = impl_->topics.find(name);
@@ -560,7 +547,7 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
 SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     auto& ts = impl_->topics[name];
@@ -690,7 +677,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 }
 
 void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
-    std::string name = JoinSegments(topic_segments);
+    std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
     auto it = impl_->topics.find(name);

@@ -15,12 +15,6 @@
 namespace fletcher {
 namespace {
 
-template <typename T>
-void AppendFixed(std::vector<uint8_t>& buf, T value) {
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
-    buf.insert(buf.end(), bytes, bytes + sizeof(T));
-}
-
 void AppendVariableLength(std::vector<uint8_t>& buf, const uint8_t* data, uint32_t len) {
     AppendFixed(buf, len);
     buf.insert(buf.end(), data, data + len);
