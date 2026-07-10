@@ -50,8 +50,10 @@ proposed deviation is a **stop-and-ask**. Full rationale in
 6. **Fold generator-behaviour fixes into the rewrite; do not do them on the flat
    model first.** #55 becomes the `Unsupported{reason}` node → build error;
    #53-generated becomes a checked-result helper in the new emitter conventions;
-   #75 becomes the `Enum` IR node + typed emission; #59 becomes IR **metadata**
-   (implementation deferrable). Any GEN fix that corrupts **wire bytes shipping
+   #75 becomes the `Enum` IR node + typed emission. (GeoArrow CRS / #59 is **out
+   of scope** — a domain concern owned by the Datamodel repo; Fletcher is
+   domain-unaware and the IR carries **no** CRS/geospatial metadata.) Any GEN fix
+   that corrupts **wire bytes shipping
    today** lands **with the GIR-2 baseline** (so the oracle captures correct
    bytes), not after.
 

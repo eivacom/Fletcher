@@ -116,9 +116,9 @@ repeat that anti-pattern unless the IR is abstract.
   nested `List(List(Struct))`; arbitrary **struct** depth falls out).
 - **Folds in GEN/#75 by construction:** #55 (silent `// TODO`/`nullopt` for
   unsupported types) becomes the explicit `Unsupported{reason}` node → a clean
-  build error; #75 becomes the `Enum` node; #59 (GeoArrow CRS) becomes part of the
-  IR **metadata** model (implementation may follow, but do not hard-code CRS into
-  old string paths first).
+  build error; #75 becomes the `Enum` node. (GeoArrow CRS / #59 is **not** folded
+  in — it is a **domain concern** owned by the Datamodel repo; Fletcher stays
+  domain-unaware and the IR carries no CRS/geospatial metadata.)
 
 ### 2b. Emitters as recursive visitors over the IR
 
@@ -229,7 +229,7 @@ test-guarded. **Critical path: 3a → 3b → Phase 2.**
    7 stacked PRs). It neither blocks nor is blocked by Phase 2.
 2. **Phase 3a harness → 3b oracles.** Land any GEN fix that is a **wire-format**
    defect here (so the byte-identity baseline captures the *correct* bytes, not
-   buggy ones). Triage each GEN item (#55, #59, #53-generated) by the deciding
+   buggy ones). Triage each GEN item (#55, #53-generated) by the deciding
    question: *does it corrupt bytes that ship today?* If yes → fix before/with 3b.
    If it is structural/schema/source-only and reachable via code Phase 2 rewrites
    → fold into Phase 2 (fix-by-construction).
