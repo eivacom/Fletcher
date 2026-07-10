@@ -57,6 +57,12 @@ std::string ArrowTypeExpr(const FieldInfo& fi);
 
 // Gather the supported fields of `msg` (flatten-inlining applied). Unsupported
 // fields are appended to `*skipped_comment` and omitted from the result.
+//
+// GIR-5: the schema paths no longer consume this — schema construction is driven
+// by cpp_backend::BuildFlattenedFieldList (a language-neutral IR walk). Gather
+// Fields remains the FieldMapping-bridge source for the not-yet-migrated
+// emitters (row class, RBA accessors, TS) and for the skipped-field comment;
+// the schema visitor reads it read-only via that shared field-order model.
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment);
 
