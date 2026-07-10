@@ -57,6 +57,7 @@ The `license-headers` CI job checks every tracked file on each PR and will block
 - All first-party code lives under `namespace fletcher { ... }`.
 - Public headers go under `include/fletcher/<component_snake>/` and are consumed as `#include <fletcher/<component_snake>/<header>.hpp>`.
 - CMake targets follow the `<conan-name>::<conan-name>` pattern (e.g. `fletcher-core::fletcher-core`).
+- Public-API functions whose return value is always meaningful to use are marked `[[nodiscard]]` (encode/decode results, subscription IDs, schema copies, serialized buffers, query results). Silently discarding such a return is a bug.
 
 ### Naming
 
