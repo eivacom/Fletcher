@@ -28,7 +28,9 @@ namespace gen = fletcher_gen::integration::coverage;
 // enum-as-int32 expected values (mirror the proto enum numbers).
 inline constexpr int32_t kTopLevelStatusOk = 1;
 inline constexpr int32_t kTopLevelStatusWarn = 2;
+inline constexpr int32_t kTopLevelStatusError = 3;
 inline constexpr int32_t kInnerStatusActive = 1;
+inline constexpr int32_t kInnerStatusDisabled = 2;
 
 // Representative scalar expected values.
 inline constexpr int32_t kInt32 = -42;
@@ -77,10 +79,84 @@ inline gen::ScalarCoverage MakeScalars() {
     return s;
 }
 
+// SET complement to MakeScalars(): every optional/wrapper field is populated
+// EXCEPT optional_int32 and wrapped_int32, which MakeScalars() already sets.
+// Leaving those two unset here means the base fixture is their SET state and
+// this fixture is their UNSET state, so the union covers BOTH the set and the
+// unset axis for every nullable field (Step-2 re-review minor-tightening note).
+inline gen::ScalarCoverage MakeScalarsAllSet() {
+    gen::ScalarCoverage s;
+    s.set_bool_value(false)
+        .set_int32_value(100)
+        .set_int64_value(200LL)
+        .set_uint32_value(3u)
+        .set_uint64_value(4ull)
+        .set_sint32_value(-5)
+        .set_sint64_value(-6)
+        .set_fixed32_value(7u)
+        .set_fixed64_value(8ull)
+        .set_sfixed32_value(-9)
+        .set_sfixed64_value(-10)
+        .set_float_value(0.5f)
+        .set_double_value(0.25)
+        .set_string_value("all-set")
+        .set_bytes_value(std::string("\x0A\x0B\x0C\x0D", 4))
+        // optional axis: set every optional EXCEPT optional_int32 (see note).
+        .set_optional_bool(true)
+        .set_optional_string("opt-str")
+        .set_optional_bytes(std::string("\x01\x02", 2))
+        // WKT wrapper axis: set every wrapper EXCEPT wrapped_int32 (see note).
+        .set_wrapped_bool(true)
+        .set_wrapped_int64(123'456'789'012LL)
+        .set_wrapped_uint32(4'000'000'000u)
+        .set_wrapped_uint64(9'000'000'000'000'000'000ull)
+        .set_wrapped_float(1.5f)
+        .set_wrapped_double(2.5)
+        .set_wrapped_string("wrapped-str")
+        .set_wrapped_bytes(std::string("\x03\x04\x05", 3))
+        .set_timestamp_value(kTimestampNs)
+        .set_duration_value(kDurationNs)
+        .set_status(kTopLevelStatusError)
+        .set_nested_status(kInnerStatusDisabled);
+    return s;
+}
+
 inline gen::Leaf MakeLeaf(int32_t id, std::string_view label, int32_t status) {
     gen::Leaf l;
     l.set_id(id).set_label(label).set_status(status);
     return l;
+}
+
+inline gen::NestedEnums MakeNestedEnums() {
+    gen::NestedEnums n;
+    n.set_state(kInnerStatusDisabled);
+    return n;
+}
+
+inline gen::Branch MakeBranch() {
+    gen::Branch b;
+    b.set_leaf(MakeLeaf(1, "root", kTopLevelStatusOk));
+    b.set_optional_leaf(MakeLeaf(2, "opt", kTopLevelStatusWarn));
+    b.set_leaves({MakeLeaf(3, "a", kTopLevelStatusOk), MakeLeaf(4, "b", kTopLevelStatusWarn)});
+    return b;
+}
+
+inline gen::FlattenedPoint MakeFlattenedPoint() {
+    gen::FlattenedPoint p;
+    p.set_x(1.25).set_y(2.5);
+    return p;
+}
+
+inline gen::FieldFlattenedPosition MakeFieldFlattenedPosition() {
+    gen::FieldFlattenedPosition fp;
+    fp.set_x(3.75).set_y(4.5);
+    return fp;
+}
+
+inline gen::ServiceReply MakeServiceReply() {
+    gen::ServiceReply r;
+    r.set_accepted(true).set_message("ok");
+    return r;
 }
 
 // One broad row touching every construct that stays in coverage.proto for
@@ -93,11 +169,7 @@ inline gen::CompositeCoverage MakeComposite() {
     c.set_optional_scalars(MakeScalars());  // set optional message
     // optional_branch intentionally left UNSET -> null after decode.
 
-    gen::Branch b;
-    b.set_leaf(MakeLeaf(1, "root", kTopLevelStatusOk));
-    b.set_optional_leaf(MakeLeaf(2, "opt", kTopLevelStatusWarn));
-    b.set_leaves({MakeLeaf(3, "a", kTopLevelStatusOk), MakeLeaf(4, "b", kTopLevelStatusWarn)});
-    c.set_branch(b);
+    c.set_branch(MakeBranch());
 
     c.set_repeated_scalar({10, 20, 30});
     c.set_repeated_string({"x", "y"});
@@ -117,15 +189,57 @@ inline gen::CompositeCoverage MakeComposite() {
     c.set_optional_flattened_struct_list({MakeLeaf(11, "of", kTopLevelStatusOk)});
 
     // Multi-field message flatten -> struct<x,y> (flatten ignored for >1 field).
-    gen::FlattenedPoint p;
-    p.set_x(1.25).set_y(2.5);
-    c.set_message_flattened_point(p);
-
+    c.set_message_flattened_point(MakeFlattenedPoint());
     // Field-level flatten: FieldFlattenedPosition inlines x,y directly.
-    gen::FieldFlattenedPosition fp;
-    fp.set_x(3.75).set_y(4.5);
-    c.set_field_flattened_position(fp);
+    c.set_field_flattened_position(MakeFieldFlattenedPosition());
     return c;
+}
+
+// Variant that flips the important null / empty-container axes relative to
+// MakeComposite(): optional_scalars UNSET (base sets it), optional_branch SET
+// (base leaves it unset), the repeated_scalar/string/struct containers and both
+// maps EMPTY (base non-empty), and repeated_bytes NON-empty (base empty). Its
+// scalars use MakeScalarsAllSet() so the nullable-set axis is exercised inside a
+// composite too.
+inline gen::CompositeCoverage MakeCompositeWithAlternateNullsAndEmpties() {
+    gen::CompositeCoverage c;
+    c.set_scalars(MakeScalarsAllSet());
+    // optional_scalars intentionally UNSET -> null after decode.
+    c.set_branch(MakeBranch());
+    c.set_optional_branch(MakeBranch());  // base leaves this UNSET
+    c.set_repeated_scalar({});
+    c.set_repeated_string({});
+    c.set_repeated_bytes({std::string("\x09\x08", 2), std::string("\x07", 1)});
+    c.set_repeated_struct({});
+    c.set_map_scalar({});
+    c.set_map_struct({});
+    c.set_flattened_struct_list({});
+    c.set_nested_struct_lists({});
+    c.set_depth3_struct_lists({});
+    c.set_optional_flattened_struct_list({MakeLeaf(30, "alt", kTopLevelStatusError)});
+    c.set_message_flattened_point(MakeFlattenedPoint());
+    c.set_field_flattened_position(MakeFieldFlattenedPosition());
+    return c;
+}
+
+// Variant with multi-entry, deliberately NON-sorted maps so that a change in
+// wire emission order (e.g. a future implementation sorting map entries) alters
+// the encoded bytes and is caught by the golden byte-identity oracle. The base
+// fixture's single-entry map_struct cannot catch a struct-map reorder; this
+// closes that. map_scalar keys {"z","a","m"} and map_struct keys {"y","b"} are
+// both intentionally out of alphabetical order.
+inline gen::CompositeCoverage MakeCompositeWithMapsNonSorted() {
+    gen::CompositeCoverage c = MakeComposite();
+    c.set_map_scalar({{"z", 26}, {"a", 1}, {"m", 13}});
+    c.set_map_struct({{"y", MakeLeaf(25, "y-leaf", kTopLevelStatusWarn)},
+                      {"b", MakeLeaf(2, "b-leaf", kTopLevelStatusOk)}});
+    return c;
+}
+
+inline gen::ServiceRequest MakeServiceRequest() {
+    gen::ServiceRequest req;
+    req.set_payload(MakeComposite());
+    return req;
 }
 
 }  // namespace coverage_fixture

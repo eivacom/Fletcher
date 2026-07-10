@@ -1587,7 +1587,12 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
                   << "        else ";
                 std::string method = PositionalWriteCall(s);
                 if (method == "WriteBinary") {
-                    o << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << "*" << n
+                    // `n->data()` is (*opt).data() on the contained std::string.
+                    // A leading `*` here would deref the char* to a char and cast
+                    // that byte value to a pointer — a wire-corrupting bug for a
+                    // SET optional/wrapped bytes field (matches the non-nullable
+                    // branch below, which correctly uses val.data()).
+                    o << "w.WriteBinary(reinterpret_cast<const uint8_t*>(" << n
                       << "->data()), " << n << "->size());\n";
                 } else {
                     o << "w." << method << "(*" << n << ");\n";
