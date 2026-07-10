@@ -238,11 +238,25 @@ target_link_libraries(coverage_view_visitor_tests PRIVATE
     fletcher-arrow-bridge::fletcher-arrow-bridge
     fletcher-pubsub::fletcher-pubsub)
 
+# ---------------------------------------------------------------------------
+# GIR-7 forcing test: TsVisitor.DescriptorByteIdentical. The IR-driven TS
+# interface + TypedSchema/SchemaDescriptor the plugin emits for coverage.proto
+# must be byte-identical to the committed frozen golden (golden/coverage.fletcher.ts).
+# No Arrow/pubsub linkage — it only diffs two files.
+# ---------------------------------------------------------------------------
+add_executable(coverage_ts_visitor_tests tests/test_ts_visitor.cpp)
+add_dependencies(coverage_ts_visitor_tests generate_coverage_outputs)
+target_compile_definitions(coverage_ts_visitor_tests PRIVATE
+    GENERATED_TS_PATH="${GENERATED_DIR}/${_stem}.fletcher.ts"
+    TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_stem}.fletcher.ts")
+target_link_libraries(coverage_ts_visitor_tests PRIVATE GTest::gtest_main)
+
 include(GoogleTest)
 gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Optional toolchain checks (graceful skip). tsc / cargo+rustc are found at

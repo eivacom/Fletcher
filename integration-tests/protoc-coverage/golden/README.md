@@ -30,3 +30,22 @@ generator output, run the gated mode explicitly and review the resulting diff:
 FLETCHER_REGEN_PARITY_GOLDENS=1 \
   ./coverage_parity_oracle_tests --gtest_filter=ParityOracle.RegenerateGoldens
 ```
+
+## `coverage.fletcher.ts` — TypeScript byte golden (GIR-7)
+
+`coverage.fletcher.ts` is the frozen TypeScript interface + runtime
+`TypedSchema`/`SchemaDescriptor` output, captured from the pre-migration emitter.
+The forcing test `TsVisitor.DescriptorByteIdentical`
+(`tests/test_ts_visitor.cpp`) diffs the plugin's freshly generated
+`.fletcher.ts` against it byte-for-byte, proving the GIR-7 IR-driven
+`ts_backend::TsVisitor` cutover changed no output for any active input. A byte
+change for an already-supported input is a **stop-and-ask** (locked decision
+#1/#2), not a routine rebaseline.
+
+Normal `ctest` never rewrites it. To (re)baseline after a reviewed
+semantic-parity change:
+
+```
+FLETCHER_REGEN_GOLDEN=1 ./coverage_ts_visitor_tests \
+  --gtest_filter=TsVisitor.DescriptorByteIdentical
+```
