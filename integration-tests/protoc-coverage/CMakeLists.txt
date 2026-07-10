@@ -187,6 +187,24 @@ target_link_libraries(coverage_harness_tests PRIVATE
     fletcher-pubsub::fletcher-pubsub)
 
 # ---------------------------------------------------------------------------
+# GIR-2 parity oracle: encode byte-identity (Encode()==EncodeRow()==golden) plus
+# decode round-trip / golden-decode value equality for every active message. The
+# golden/ .bin files are the source-controlled wire-contract baseline; the test
+# reads them from PARITY_GOLDEN_DIR_PATH (never from the build tree) so they are
+# reviewed as source, not regenerated on every build.
+# ---------------------------------------------------------------------------
+add_executable(coverage_parity_oracle_tests tests/test_parity_oracle.cpp)
+add_dependencies(coverage_parity_oracle_tests generate_coverage_outputs)
+target_include_directories(coverage_parity_oracle_tests PRIVATE "${GENERATED_DIR}")
+target_compile_definitions(coverage_parity_oracle_tests PRIVATE
+    PARITY_GOLDEN_DIR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+target_link_libraries(coverage_parity_oracle_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
 # RBA C++ accessor: build an Arrow RecordBatch matching CompositeCoverage and
 # read representative values through the generated accessor (read-only guard).
 # ---------------------------------------------------------------------------
@@ -204,6 +222,7 @@ target_link_libraries(coverage_accessor_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
