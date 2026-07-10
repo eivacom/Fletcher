@@ -224,10 +224,25 @@ target_link_libraries(coverage_accessor_tests PRIVATE
     fletcher-arrow-bridge::fletcher-arrow-bridge
     fletcher-pubsub::fletcher-pubsub)
 
+# ---------------------------------------------------------------------------
+# GIR-6 view-visitor forcing test: message -> ToArrowRow -> Codec -> View ->
+# reconstruct -> Equals. Exercises the IR-driven ToArrowRow() + `<Class>View`
+# getters end to end through the real Codec on the CompositeCoverage fixture.
+# ---------------------------------------------------------------------------
+add_executable(coverage_view_visitor_tests tests/test_view_visitor.cpp)
+add_dependencies(coverage_view_visitor_tests generate_coverage_outputs)
+target_include_directories(coverage_view_visitor_tests PRIVATE "${GENERATED_DIR}")
+target_link_libraries(coverage_view_visitor_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
 include(GoogleTest)
 gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Optional toolchain checks (graceful skip). tsc / cargo+rustc are found at

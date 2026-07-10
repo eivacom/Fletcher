@@ -24,57 +24,68 @@ const CppScalarInfo& LookupScalar(const ir::LogicalType& type,
     static const CppScalarInfo kBool{
         "arrow::boolean()", "bool", "bool",
         "std::make_shared<arrow::BooleanScalar>({val})", "false",
-        "arrow::BooleanBuilder", "arrow::BooleanScalar", false, "WriteBool", "ReadBool"};
+        "arrow::BooleanBuilder", "arrow::BooleanScalar", false, "WriteBool", "ReadBool",
+        "arrow::BooleanArray", "bool"};
     static const CppScalarInfo kInt32{
         "arrow::int32()", "int32_t", "int32_t",
         "std::make_shared<arrow::Int32Scalar>({val})", "0",
-        "arrow::Int32Builder", "arrow::Int32Scalar", false, "WriteInt32", "ReadInt32"};
+        "arrow::Int32Builder", "arrow::Int32Scalar", false, "WriteInt32", "ReadInt32",
+        "arrow::Int32Array", "int32_t"};
     static const CppScalarInfo kInt64{
         "arrow::int64()", "int64_t", "int64_t",
         "std::make_shared<arrow::Int64Scalar>({val})", "INT64_C(0)",
-        "arrow::Int64Builder", "arrow::Int64Scalar", false, "WriteInt64", "ReadInt64"};
+        "arrow::Int64Builder", "arrow::Int64Scalar", false, "WriteInt64", "ReadInt64",
+        "arrow::Int64Array", "int64_t"};
     static const CppScalarInfo kUInt32{
         "arrow::uint32()", "uint32_t", "uint32_t",
         "std::make_shared<arrow::UInt32Scalar>({val})", "0u",
-        "arrow::UInt32Builder", "arrow::UInt32Scalar", false, "WriteUint32", "ReadUint32"};
+        "arrow::UInt32Builder", "arrow::UInt32Scalar", false, "WriteUint32", "ReadUint32",
+        "arrow::UInt32Array", "uint32_t"};
     static const CppScalarInfo kUInt64{
         "arrow::uint64()", "uint64_t", "uint64_t",
         "std::make_shared<arrow::UInt64Scalar>({val})", "UINT64_C(0)",
-        "arrow::UInt64Builder", "arrow::UInt64Scalar", false, "WriteUint64", "ReadUint64"};
+        "arrow::UInt64Builder", "arrow::UInt64Scalar", false, "WriteUint64", "ReadUint64",
+        "arrow::UInt64Array", "uint64_t"};
     static const CppScalarInfo kFloat{
         "arrow::float32()", "float", "float",
         "std::make_shared<arrow::FloatScalar>({val})", "0.0f",
-        "arrow::FloatBuilder", "arrow::FloatScalar", false, "WriteFloat", "ReadFloat"};
+        "arrow::FloatBuilder", "arrow::FloatScalar", false, "WriteFloat", "ReadFloat",
+        "arrow::FloatArray", "float"};
     static const CppScalarInfo kDouble{
         "arrow::float64()", "double", "double",
         "std::make_shared<arrow::DoubleScalar>({val})", "0.0",
-        "arrow::DoubleBuilder", "arrow::DoubleScalar", false, "WriteDouble", "ReadDouble"};
+        "arrow::DoubleBuilder", "arrow::DoubleScalar", false, "WriteDouble", "ReadDouble",
+        "arrow::DoubleArray", "double"};
     static const CppScalarInfo kString{
         "arrow::utf8()", "std::string", "std::string_view",
         "std::make_shared<arrow::StringScalar>({val})", "\"\"",
-        "arrow::StringBuilder", "arrow::StringScalar", true, "WriteString", "ReadString"};
+        "arrow::StringBuilder", "arrow::StringScalar", true, "WriteString", "ReadString",
+        "arrow::StringArray", "std::string_view"};
     static const CppScalarInfo kBytes{
         "arrow::binary()", "std::string", "std::string_view",
         "std::make_shared<arrow::BinaryScalar>({val})", "\"\"",
-        "arrow::BinaryBuilder", "arrow::BinaryScalar", true, "WriteBinary", "ReadBinary"};
+        "arrow::BinaryBuilder", "arrow::BinaryScalar", true, "WriteBinary", "ReadBinary",
+        "arrow::BinaryArray", "std::string_view"};
     static const CppScalarInfo kEnum{
         "arrow::int32()", "int32_t", "int32_t",
         "std::make_shared<arrow::Int32Scalar>(static_cast<int32_t>({val}))", "0",
-        "arrow::Int32Builder", "arrow::Int32Scalar", false, "WriteInt32", "ReadInt32"};
+        "arrow::Int32Builder", "arrow::Int32Scalar", false, "WriteInt32", "ReadInt32",
+        "arrow::Int32Array", "int32_t"};
     static const CppScalarInfo kTimestamp{
         "arrow::timestamp(arrow::TimeUnit::NANO)", "int64_t", "int64_t",
         "std::make_shared<arrow::TimestampScalar>"
         "({val}, arrow::timestamp(arrow::TimeUnit::NANO))",
         "INT64_C(0)", "arrow::TimestampBuilder", "arrow::TimestampScalar", false,
-        "WriteTimestamp", "ReadTimestamp"};
+        "WriteTimestamp", "ReadTimestamp", "arrow::TimestampArray", "int64_t"};
     static const CppScalarInfo kDuration{
         "arrow::duration(arrow::TimeUnit::NANO)", "int64_t", "int64_t",
         "std::make_shared<arrow::DurationScalar>"
         "({val}, arrow::duration(arrow::TimeUnit::NANO))",
         "INT64_C(0)", "arrow::DurationBuilder", "arrow::DurationScalar", false,
-        "WriteDuration", "ReadDuration"};
+        "WriteDuration", "ReadDuration", "arrow::DurationArray", "int64_t"};
     static const CppScalarInfo kUnknown{
-        "", "", "", "", "", "", "", false, "/* unknown write */", "/* unknown read */"};
+        "", "", "", "", "", "", "", false, "/* unknown write */", "/* unknown read */",
+        "", ""};
     // clang-format on
 
     using LK = ir::LogicalKind;
