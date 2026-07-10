@@ -179,7 +179,11 @@ add_executable(coverage_harness_tests tests/test_coverage_harness.cpp)
 add_dependencies(coverage_harness_tests generate_coverage_outputs)
 target_include_directories(coverage_harness_tests PRIVATE "${GENERATED_DIR}")
 target_compile_definitions(coverage_harness_tests PRIVATE
-    GENERATED_DIR_PATH="${GENERATED_DIR}")
+    GENERATED_DIR_PATH="${GENERATED_DIR}"
+    # GIR-4: the harness now reconstructs the committed goldens through the
+    # generated edge constructor, so it reads the same source-controlled golden/
+    # dir as the parity oracle (never the build tree).
+    PARITY_GOLDEN_DIR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 target_link_libraries(coverage_harness_tests PRIVATE
     GTest::gtest_main
     arrow::arrow

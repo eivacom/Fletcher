@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "cpp_backend_decode_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
@@ -1528,31 +1529,13 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
 // EncodeTo / EncodeStructTo_ — direct encoding to WriteBuffer
 // -----------------------------------------------------------------------
 
-// NOTE: the edge ENCODE emitter is now the IR-driven recursive visitor in
-// cpp_backend::EmitFieldEncodeFromIr (see cpp_backend_type_table.cpp). The old
-// FieldMapping-switch EmitFieldEncode / EmitScalarWrite / PositionalWriteCall
-// were retired in GIR-3. PositionalReadCall stays for the still-bespoke DECODE
-// path (migrated in GIR-4).
-
-// Helper: return the PositionalReader method name for a scalar storage type.
-std::string PositionalReadCall(const ScalarTypeInfo& info) {
-    const auto& st = info.storage_type;
-    const auto& expr = info.arrow_type_expr;
-    if (expr.find("timestamp") != std::string::npos) return "ReadTimestamp";
-    if (expr.find("duration") != std::string::npos) return "ReadDuration";
-    if (st == "bool") return "ReadBool";
-    if (st == "int32_t") return "ReadInt32";
-    if (st == "int64_t") return "ReadInt64";
-    if (st == "uint32_t") return "ReadUint32";
-    if (st == "uint64_t") return "ReadUint64";
-    if (st == "float") return "ReadFloat";
-    if (st == "double") return "ReadDouble";
-    if (st == "std::string") {
-        if (expr == "arrow::binary()") return "ReadBinary";
-        return "ReadString";
-    }
-    return "/* unknown read */";
-}
+// NOTE: the edge ENCODE and DECODE emitters are now IR-driven recursive
+// visitors — cpp_backend::EmitFieldEncodeFromIr (cpp_backend_type_table.cpp)
+// and cpp_backend::EmitFieldDecodeFromIr (cpp_backend_decode_visitor.cpp). The
+// old FieldMapping-switch EmitFieldEncode/EmitScalarWrite/PositionalWriteCall
+// (GIR-3) and EmitFieldDecode/PositionalReadCall (GIR-4) were retired; the
+// PositionalReader method-name derivation now lives in the C++ backend table
+// (CppScalarInfo::positional_read).
 
 // Emit EncodeTo, EncodeStructTo_, and Encode methods for a message class.
 void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
@@ -1595,183 +1578,6 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
 // Full class generation for one message
 // -----------------------------------------------------------------------
 
-// Emit positional decode for a single field from a PositionalReader.
-void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
-    const std::string n = fi.name + "_";
-    const std::string si = std::to_string(idx);
-
-    switch (fi.mapping.kind) {
-        case FieldKind::SCALAR: {
-            const auto& s = fi.mapping.scalar;
-            std::string method = PositionalReadCall(s);
-            if (method == "ReadBinary") {
-                // Binary: returns pair<const uint8_t*, size_t>
-                if (fi.mapping.nullable) {
-                    o << "        if (!r.IsNull(" << si << ")) {\n"
-                      << "            auto [p, n] = r.ReadBinary();\n"
-                      << "            " << n << ".emplace(reinterpret_cast<const char*>(p), n);\n"
-                      << "        }\n";
-                } else {
-                    o << "        { auto [p, n] = r.ReadBinary();\n"
-                      << "          " << n << ".emplace(reinterpret_cast<const char*>(p), n); }\n";
-                }
-            } else if (method == "ReadString") {
-                if (fi.mapping.nullable) {
-                    o << "        if (!r.IsNull(" << si << ")) " << n << " = std::string(r."
-                      << method << "());\n";
-                } else {
-                    o << "        " << n << " = std::string(r." << method << "());\n";
-                }
-            } else {
-                if (fi.mapping.nullable) {
-                    o << "        if (!r.IsNull(" << si << ")) " << n << " = r." << method
-                      << "();\n";
-                } else {
-                    o << "        " << n << " = r." << method << "();\n";
-                }
-            }
-            break;
-        }
-
-        case FieldKind::STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            if (fi.mapping.nullable) {
-                o << "        if (!r.IsNull(" << si << ")) {\n"
-                  << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
-                  << "            " << n << ".emplace(sr);\n"
-                  << "        }\n";
-            } else {
-                o << "        { auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
-                  << "          " << n << ".emplace(sr); }\n";
-            }
-            break;
-        }
-
-        case FieldKind::REPEATED_SCALAR: {
-            const auto& e = fi.mapping.element;
-            std::string method = PositionalReadCall(e);
-            o << "        { auto lh = r.ReadListHeader();\n"
-              << "          " << n << ".clear();\n"
-              << "          " << n << ".reserve(lh.count);\n"
-              << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n";
-            if (method == "ReadBinary") {
-                o << "            auto [p, n] = r.ReadBinary();\n"
-                  << "            " << n << ".emplace_back(reinterpret_cast<const char*>(p), n);\n";
-            } else if (method == "ReadString") {
-                o << "            " << n << ".emplace_back(r." << method << "());\n";
-            } else {
-                o << "            " << n << ".push_back(r." << method << "());\n";
-            }
-            o << "          } }\n";
-            break;
-        }
-
-        case FieldKind::REPEATED_STRUCT: {
-            const auto& nc = fi.mapping.nested_class;
-            o << "        { auto lh = r.ReadListHeader();\n"
-              << "          " << n << ".clear();\n"
-              << "          " << n << ".reserve(lh.count);\n"
-              << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
-              << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
-              << "            " << n << ".emplace_back(sr);\n"
-              << "          } }\n";
-            break;
-        }
-
-        case FieldKind::NESTED_LIST: {
-            int depth = fi.mapping.list_depth;
-            const auto& nc = fi.mapping.nested_class;
-
-            if (fi.mapping.nullable) {
-                o << "        if (!r.IsNull(" << si << ")) {\n";
-            } else {
-                o << "        {\n";
-            }
-
-            std::string target = fi.mapping.nullable ? (n + ".emplace()") : n;
-            std::string ref = fi.mapping.nullable ? ("(*" + n + ")") : n;
-            std::string indent = "            ";
-
-            if (fi.mapping.nullable) {
-                o << indent << target << ";\n";
-            }
-
-            // Generate nested loops
-            // depth 2: List<List<Struct>>
-            // depth 3: List<List<List<Struct>>>
-            std::string cur_ref = ref;
-            for (int d = 0; d < depth; ++d) {
-                std::string var = "lh_" + std::to_string(d);
-                std::string idx_var = "i_" + std::to_string(d);
-                o << indent << "auto " << var << " = r.ReadListHeader();\n"
-                  << indent << cur_ref << ".resize(" << var << ".count);\n"
-                  << indent << "for (uint32_t " << idx_var << " = 0; " << idx_var << " < " << var
-                  << ".count; ++" << idx_var << ") {\n";
-                cur_ref = cur_ref + "[" + idx_var + "]";
-                indent += "    ";
-            }
-            // Innermost: decode struct
-            o << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
-              << indent << cur_ref << " = " << nc << "(sr);\n";
-            // Close loops
-            for (int d = 0; d < depth; ++d) {
-                indent = indent.substr(4);
-                o << indent << "}\n";
-            }
-
-            o << "        }\n";
-            break;
-        }
-
-        case FieldKind::MAP: {
-            const auto& mk = fi.mapping.map_key;
-            bool val_is_msg = fi.mapping.map_value_is_message;
-            std::string key_read = PositionalReadCall(mk);
-            std::string key_type = mk.storage_type;
-            std::string val_type =
-                val_is_msg ? fi.mapping.map_value_class : fi.mapping.map_value.storage_type;
-
-            o << "        { auto count = r.ReadMapCount();\n"
-              << "          std::vector<" << key_type << "> keys_;\n"
-              << "          keys_.reserve(count);\n"
-              << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
-            if (key_read == "ReadString") {
-                o << "            keys_.emplace_back(r." << key_read << "());\n";
-            } else {
-                o << "            keys_.push_back(r." << key_read << "());\n";
-            }
-            o << "          }\n"
-              << "          auto vbf = r.ReadMapValueBitfield(count);\n"
-              << "          " << n << ".clear();\n"
-              << "          " << n << ".reserve(count);\n"
-              << "          for (uint32_t mi_ = 0; mi_ < count; ++mi_) {\n";
-
-            if (val_is_msg) {
-                const auto& mvc = fi.mapping.map_value_class;
-                o << "            auto sr = r.ReadStruct(" << mvc << "Schema()->n_children);\n"
-                  << "            " << n << ".emplace_back(std::move(keys_[mi_]), " << mvc
-                  << "(sr));\n";
-            } else {
-                std::string val_read = PositionalReadCall(fi.mapping.map_value);
-                if (val_read == "ReadString") {
-                    o << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-                      << "std::string(r." << val_read << "()));\n";
-                } else if (val_read == "ReadBinary") {
-                    o << "            auto [p, n] = r.ReadBinary();\n"
-                      << "            " << n << ".emplace_back(std::move(keys_[mi_]), "
-                      << "std::string(reinterpret_cast<const char*>(p), n));\n";
-                } else {
-                    o << "            " << n << ".emplace_back(std::move(keys_[mi_]), " << "r."
-                      << val_read << "());\n";
-                }
-            }
-
-            o << "          } }\n";
-            break;
-        }
-    }  // switch
-}
-
 std::string GenerateMessageClass(const std::string& cls, const std::vector<FieldInfo>& fields) {
     std::ostringstream o;
     std::string fc = std::to_string(fields.size());
@@ -1789,7 +1595,9 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
       << "    /// received from a Subscriber callback or read from a WAL.\n";
     o << "    explicit " << cls << "(const uint8_t* data, size_t len) {\n"
       << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldDecodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // Constructor from EncodedRow
@@ -1803,7 +1611,9 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
       << "    /// field inside another message — the parent reader is passed\n"
       << "    /// through so nested fields are decoded in position.\n";
     o << "    explicit " << cls << "(fletcher::PositionalReader& r) {\n";
-    for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldDecodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
     o << "    }\n\n";
 
     // Setters

@@ -18,6 +18,7 @@ add_library(fletcher_plugin_core STATIC
     src/type_mapper.cpp
     src/ir.cpp
     src/cpp_backend_type_table.cpp
+    src/cpp_backend_decode_visitor.cpp
     src/generator.cpp
     src/option_metadata.cpp
     src/recordbatch_accessor_emitter.cpp
