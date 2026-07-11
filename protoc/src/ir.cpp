@@ -296,13 +296,20 @@ IrNode BuildFlattenedRepeated(const FD* field) {
         if (inner->is_repeated()) {
             if (!IsSupportedScalarType(inner->type()))
                 return MakeUnsupported(field, "map value type unsupported");
-            // depth-0 -> List<Scalar>; depth>0 -> List<List<...Scalar>> (projects
-            // to Unsupported on the flat bridge, matching current behavior).
+            // The wrapper's own `repeated <scalar>` is ONE list level; the caller's
+            // `repeated` (the field being classified) is ANOTHER; each intermediate
+            // repeated-message flatten hop counted in `depth` adds one more. So the
+            // faithful shape is (depth + 2) list levels: e.g. `repeated
+            // ScalarListWrapper` (depth 0) -> List<List<Scalar>>, `repeated
+            // NestedScalarListWrapper` (depth 1) -> List<List<List<Scalar>>>. GIR-10
+            // enables these scalar-leaf nested lists (they previously COLLAPSED —
+            // the caller's `repeated` level was dropped to a flat List<Scalar> — and
+            // were parked in coverage_future.proto).
             IrNode leaf = MakeNode(NodeKind::SCALAR);
             leaf.facts = BaseFacts(field);
             leaf.node = ScalarVariantFor(inner);
             IrNode node = MakeListOf(std::move(leaf));
-            for (int d = 0; d < depth; ++d) node = MakeListOf(std::move(node));
+            for (int d = 0; d < depth + 1; ++d) node = MakeListOf(std::move(node));
             node.facts = BaseFacts(field);
             node.facts.nullable = false;
             return node;

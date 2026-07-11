@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-10 §3d scalar-leaf nested-list coverage. A NEW top-level message
+// (ScalarNestedCoverage) carrying the scalar-leaf flatten / nested-list shapes
+// that GIR-1 parked in coverage_future.proto. These previously either COLLAPSED
+// (repeated ScalarListWrapper silently degraded to a flat list<int32>) or were
+// dropped from every emitter surface; GIR-10 makes them faithful end to end:
+// storage (std::vector<std::vector<int32_t>>), edge encode/decode, Arrow
+// view/ToArrowRow, nanoarrow schema/IPC (list<list<int32>>), and TS (number[][]).
+//
+// This fixture is generated in its OWN unit with --fletcher_opt=ipc,ts and NO
+// accessor / rust (locked decision #3): the read-only RBA accessor assumes a
+// struct leaf and must never be fed a scalar-leaf nested list. CompositeCoverage
+// and every other existing fixture are untouched and keep byte-identical goldens.
+syntax = "proto3";
+package integration.coverage.scalar_nested;
+
+import "fletcher/options.proto";
+
+// Scalar-leaf flatten wrapper (depth-1). A singular ScalarListWrapper field
+// flattens to List<int32>; a `repeated ScalarListWrapper` field is
+// List<List<int32>>.
+message ScalarListWrapper {
+  option (fletcher.flatten) = true;
+  repeated int32 values = 1;
+}
+
+// Depth-2 scalar-leaf nesting wrapper: a `repeated NestedScalarListWrapper`
+// field is List<List<List<int32>>>.
+message NestedScalarListWrapper {
+  option (fletcher.flatten) = true;
+  repeated ScalarListWrapper values = 1;
+}
+
+message ScalarNestedCoverage {
+  // Scalar-leaf flatten (singular wrapper) -> List<int32>.
+  ScalarListWrapper flattened_scalar_list = 1;
+
+  // Nullable scalar-leaf flatten -> nullable List<int32>.
+  optional ScalarListWrapper optional_flattened_scalar_list = 3;
+
+  // Primary forcing shape: repeated scalar-leaf flatten wrapper ->
+  // List<List<int32>> (must NOT collapse to List<int32>).
+  repeated ScalarListWrapper nested_scalar_lists = 5;
+
+  // Depth-3 scalar recursion -> List<List<List<int32>>>.
+  repeated NestedScalarListWrapper depth3_scalar_lists = 7;
+}

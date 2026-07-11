@@ -167,21 +167,22 @@ class EdgeDecodeVisitor {
     void EmitNestedList(const ir::IrNode& list_node) {
         const bool nullable = list_node.facts.nullable;
 
-        // Depth = number of list levels (List<List<Struct>> = 2). Matches the
-        // IR->FieldMapping projection's NESTED_LIST depth computation. Innermost
-        // is a struct (the only nested-list shape the generator emits today).
+        // Depth = number of list levels (List<List<leaf>> = 2). Matches the
+        // IR->FieldMapping projection's NESTED_LIST depth computation. The
+        // innermost leaf is a struct (List<List<...<Struct>>>) or, GIR-10, a
+        // scalar (List<List<...<Scalar>>>).
         int depth = 1;
         const ir::IrNode* cur = std::get<ir::ListNode>(list_node.node).element.get();
         while (cur->kind == ir::NodeKind::LIST) {
             depth += 1;
             cur = std::get<ir::ListNode>(cur->node).element.get();
         }
-        if (cur->kind != ir::NodeKind::STRUCT) {
+        const bool struct_leaf = cur->kind == ir::NodeKind::STRUCT;
+        const bool scalar_leaf = cur->kind == ir::NodeKind::SCALAR;
+        if (!struct_leaf && !scalar_leaf) {
             EmitUnsupported(list_node);
             return;
         }
-        const std::string nc =
-            CppClassName(std::get<ir::StructNode>(cur->node).identity.descriptor, context_file_);
 
         if (nullable) {
             out_ << "        if (!r.IsNull(" << si_ << ")) {\n";
@@ -208,8 +209,26 @@ class EdgeDecodeVisitor {
             cur_ref = cur_ref + "[" + idx_var + "]";
             indent += "    ";
         }
-        out_ << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
-             << indent << cur_ref << " = " << nc << "(sr);\n";
+        if (struct_leaf) {
+            const std::string nc = CppClassName(
+                std::get<ir::StructNode>(cur->node).identity.descriptor, context_file_);
+            out_ << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+                 << indent << cur_ref << " = " << nc << "(sr);\n";
+        } else {
+            // Scalar leaf: read the innermost element through the C++ backend's
+            // positional read method, with owned-copy string/binary handling that
+            // mirrors EmitRepeatedScalar's leaf extraction.
+            const std::string& method = ReadMethod(std::get<ir::ScalarNode>(cur->node));
+            if (method == "ReadBinary") {
+                out_ << indent << "{ auto [p, n] = r.ReadBinary();\n"
+                     << indent << "  " << cur_ref
+                     << ".assign(reinterpret_cast<const char*>(p), n); }\n";
+            } else if (method == "ReadString") {
+                out_ << indent << cur_ref << " = std::string(r." << method << "());\n";
+            } else {
+                out_ << indent << cur_ref << " = r." << method << "();\n";
+            }
+        }
         for (int d = 0; d < depth; ++d) {
             indent = indent.substr(4);
             out_ << indent << "}\n";

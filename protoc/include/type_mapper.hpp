@@ -50,7 +50,14 @@ struct FieldMapping {
     // STRUCT / REPEATED_STRUCT / NESTED_LIST kind:
     std::string nested_class;   // C++ type reference (globally qualified when cross-file)
     std::string nested_header;  // non-empty → #include this path (cross-file dependency)
-    int list_depth = 0;         // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
+    int list_depth = 0;         // NESTED_LIST: 2 = List<List<leaf>>, 3 = List<List<List<leaf>>>
+    // NESTED_LIST kind, GIR-10: when true the innermost leaf is a SCALAR (the
+    // scalar type is carried in `element`, like REPEATED_SCALAR), not a message
+    // struct (`nested_class`). This scalar-leaf nested-list shape is NEVER fed to
+    // the read-only RBA accessor emitter (locked #3): the fixture that carries it
+    // (ScalarNestedCoverage) is generated without the accessor/rust opts, so RBA
+    // only ever sees struct-leaf nested lists and its behaviour is unchanged.
+    bool nested_leaf_is_scalar = false;
     // Descriptor behind nested_class — the message whose schema the generated
     // code references via <nested_class>Schema(). Used by the in-process
     // schema builder (--fletcher_opt=ipc) to build the same schema directly.
