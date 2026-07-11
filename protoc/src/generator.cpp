@@ -1359,12 +1359,12 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
           << "#endif\n\n";
     }
 
-    // GIR-8 (#53): checked Arrow Result<T> unwrap helper. Replaces .ValueOrDie()
-    // in generated view code: value-identical to .ValueOrDie() on ok() (returns
-    // ValueUnsafe()), but throws a descriptive std::runtime_error carrying the
-    // call-site context and the failing status instead of aborting. Guarded like
-    // ImportSchema above so including several same-package view headers in one
-    // translation unit does not redefine it.
+    // GIR-8 (#53): checked Arrow Result<T> unwrap helper. Replaces the raw
+    // unchecked-unwrap calls in generated view code: value-identical on ok()
+    // (returns ValueUnsafe()), but throws a descriptive std::runtime_error
+    // carrying the call-site context and the failing status instead of aborting.
+    // Guarded like ImportSchema above so including several same-package view
+    // headers in one translation unit does not redefine it.
     {
         std::string guard = "FLETCHER_DETAIL_VALUE_OR_THROW_";
         for (char c : file->package()) guard += (c == '.' ? '_' : std::toupper(c));
