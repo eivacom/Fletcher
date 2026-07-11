@@ -159,6 +159,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}"
             "-DGENERATED_DIR=${GENERATED_DIR}"
             "-DEXPECTED_IPC_NAMES=${_expected_ipc_arg}"
+            "-DIPC_STEM=${_stem}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
     DEPENDS "${_src}" fletcher-protoc::plugin
             "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
@@ -167,7 +168,79 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_target(generate_coverage_outputs ALL DEPENDS ${GENERATED_OUTPUTS})
+# ---------------------------------------------------------------------------
+# GIR-9 (#75) enum-emission generation unit. A SECOND, independent protoc
+# invocation for proto/enum_coverage.proto, emitting into the SAME GENERATED_DIR
+# but validated only for its own stem (IPC_STEM=enum_coverage). It imports
+# coverage.proto (for the top-level enum TopLevelStatus), so coverage.proto is a
+# DEPENDS input. Crucially it does NOT request `rust`: the coverage unit's
+# `rust` opt already emits the fixed-name shared __rba.fletcher.rs helper, and a
+# second producer of that same file would be a duplicate-output / Windows
+# parallel-write hazard (and enum_coverage.fletcher.rs would be dead output —
+# the Rust cargo harness compiles only its fixed entry set). The enum forcing
+# test needs only the C++ row/view headers (+ the .ipc guard); ipc,accessor,ts
+# is sufficient.
+# ---------------------------------------------------------------------------
+set(_enum_stem enum_coverage)
+set(_enum_src  "${PROTO_DIR}/${_enum_stem}.proto")
+
+set(GENERATED_ENUM_CPP_HEADERS
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.pb.h"
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.arrow.pb.h"
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.accessor.pb.h")
+set(GENERATED_ENUM_TS
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.ts")
+
+# Every top-level message enum_coverage.proto emits an .ipc schema stream for
+# (single source of truth for the stem-scoped guard below). Excludes the
+# non-emittable owners FlattenedEnumOwner (flatten wrapper) and RecursiveEnumOwner
+# (recursive), which emit no class and no .ipc.
+set(_enum_ipc_all_messages
+    EnumCoverage
+    EnumOwner
+    FieldFlattenedEnum
+    FlattenedEnumRef
+    ImportedEnumCarrier
+    RecursiveEnumRef)
+
+set(GENERATED_ENUM_IPC "")
+foreach(_m IN LISTS _enum_ipc_all_messages)
+    list(APPEND GENERATED_ENUM_IPC "${GENERATED_DIR}/${_enum_stem}.${_m}.ipc")
+endforeach()
+
+set(_enum_expected_ipc_names "")
+foreach(_m IN LISTS _enum_ipc_all_messages)
+    list(APPEND _enum_expected_ipc_names "${_enum_stem}.${_m}.ipc")
+endforeach()
+string(REPLACE ";" "|" _enum_expected_ipc_arg "${_enum_expected_ipc_names}")
+
+set(GENERATED_ENUM_OUTPUTS
+    ${GENERATED_ENUM_CPP_HEADERS} ${GENERATED_ENUM_TS} ${GENERATED_ENUM_IPC})
+
+add_custom_command(
+    OUTPUT  ${GENERATED_ENUM_OUTPUTS}
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=ipc,accessor,ts"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_enum_src}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DGENERATED_DIR=${GENERATED_DIR}"
+            "-DEXPECTED_IPC_NAMES=${_enum_expected_ipc_arg}"
+            "-DIPC_STEM=${_enum_stem}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    DEPENDS "${_enum_src}" "${_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    COMMENT "protoc-gen-fletcher (ipc,accessor,ts): ${_enum_stem}.proto"
+    VERBATIM
+)
+
+add_custom_target(generate_coverage_outputs ALL
+    DEPENDS ${GENERATED_OUTPUTS} ${GENERATED_ENUM_OUTPUTS})
 
 enable_testing()
 
@@ -251,12 +324,43 @@ target_compile_definitions(coverage_ts_visitor_tests PRIVATE
     TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_stem}.fletcher.ts")
 target_link_libraries(coverage_ts_visitor_tests PRIVATE GTest::gtest_main)
 
+# ---------------------------------------------------------------------------
+# GIR-9 (#75) forcing test: EnumEmit.GeneratedEnumSymbolsRoundTrip. Compiles and
+# runs the generated enum classes + typed accessors for enum_coverage.proto
+# (and the additive typed accessors on the existing coverage.proto enum fields).
+# ---------------------------------------------------------------------------
+add_executable(coverage_enum_emit_tests tests/test_enum_emit.cpp)
+add_dependencies(coverage_enum_emit_tests generate_coverage_outputs)
+target_include_directories(coverage_enum_emit_tests PRIVATE "${GENERATED_DIR}")
+target_link_libraries(coverage_enum_emit_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-9 TS byte-identity guard for the new generation unit: the enum_coverage
+# .fletcher.ts the plugin emits must be byte-identical to the committed golden
+# (enum lowering stays int32 on the TS surface). Reuses the parameterised
+# test_ts_visitor.cpp with the enum_coverage paths; the test is discovered as
+# TsVisitor.DescriptorByteIdentical from a separate binary.
+# ---------------------------------------------------------------------------
+add_executable(coverage_enum_ts_visitor_tests tests/test_ts_visitor.cpp)
+add_dependencies(coverage_enum_ts_visitor_tests generate_coverage_outputs)
+target_compile_definitions(coverage_enum_ts_visitor_tests PRIVATE
+    GENERATED_TS_PATH="${GENERATED_DIR}/${_enum_stem}.fletcher.ts"
+    TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_enum_stem}.fletcher.ts")
+target_link_libraries(coverage_enum_ts_visitor_tests PRIVATE GTest::gtest_main)
+
 include(GoogleTest)
 gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_enum_ts_visitor_tests DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX "enum.")
 
 # ---------------------------------------------------------------------------
 # GIR-8 forcing tests (negative generation + zero-ValueOrDie assertion).

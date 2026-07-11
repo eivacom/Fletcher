@@ -125,6 +125,25 @@ class EdgeViewGetterVisitor {
             }
             out_ << "    }\n";
         }
+
+        // GIR-9 (#75): additive typed view getter for an enum scalar (a cast
+        // over the retained raw int32 getter). References the row-header enum
+        // declaration via the shared CppEnumName — the view header never
+        // re-declares enums.
+        if (s.enum_identity.has_value() && CppEnumTypeEmittable(s.enum_identity->descriptor)) {
+            const std::string en = CppEnumName(s.enum_identity->descriptor, context_file_);
+            if (nullable) {
+                out_ << "    std::optional<" << en << "> " << name_ << "_typed() const {\n"
+                     << "        auto v = " << name_ << "();\n"
+                     << "        if (!v.has_value()) return std::nullopt;\n"
+                     << "        return static_cast<" << en << ">(*v);\n"
+                     << "    }\n";
+            } else {
+                out_ << "    " << en << " " << name_ << "_typed() const {\n"
+                     << "        return static_cast<" << en << ">(" << name_ << "());\n"
+                     << "    }\n";
+            }
+        }
     }
 
     void EmitStruct(const ir::StructNode& st, bool nullable) {
@@ -170,6 +189,19 @@ class EdgeViewGetterVisitor {
              << "        return fletcher::ArrowScalarList<" << vt << ", " << at
              << ">(ls.value);\n"
              << "    }\n";
+
+        // GIR-9 (#75): additive typed view getter for a repeated enum (casts the
+        // value side of the retained raw ArrowScalarList).
+        if (e.enum_identity.has_value() && CppEnumTypeEmittable(e.enum_identity->descriptor)) {
+            const std::string en = CppEnumName(e.enum_identity->descriptor, context_file_);
+            out_ << "    std::vector<" << en << "> " << name_ << "_typed() const {\n"
+                 << "        std::vector<" << en << "> out;\n"
+                 << "        auto raw = " << name_ << "();\n"
+                 << "        out.reserve(static_cast<size_t>(raw.size()));\n"
+                 << "        for (int32_t v : raw) out.push_back(static_cast<" << en << ">(v));\n"
+                 << "        return out;\n"
+                 << "    }\n";
+        }
     }
 
     void EmitRepeatedStruct(const ir::StructNode& st) {
@@ -228,6 +260,24 @@ class EdgeViewGetterVisitor {
                  << "        return fletcher::ArrowScalarMap<" << kv << ", " << ka << ", "
                  << vv << ", " << va << ">(ms.value);\n"
                  << "    }\n";
+
+            // GIR-9 (#75): additive typed view getter for an enum-valued map
+            // (casts the value side; the key is copied into its storage type).
+            if (val.enum_identity.has_value() &&
+                CppEnumTypeEmittable(val.enum_identity->descriptor)) {
+                const std::string en = CppEnumName(val.enum_identity->descriptor, context_file_);
+                const std::string& kt = ki.storage_type;
+                out_ << "    std::vector<std::pair<" << kt << ", " << en << ">> " << name_
+                     << "_typed() const {\n"
+                     << "        std::vector<std::pair<" << kt << ", " << en << ">> out;\n"
+                     << "        auto raw = " << name_ << "();\n"
+                     << "        out.reserve(static_cast<size_t>(raw.size()));\n"
+                     << "        for (const auto& e : raw)\n"
+                     << "            out.emplace_back(" << kt << "(e.key), static_cast<" << en
+                     << ">(e.value));\n"
+                     << "        return out;\n"
+                     << "    }\n";
+            }
         }
     }
 

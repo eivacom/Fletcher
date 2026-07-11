@@ -142,6 +142,27 @@ std::string CppCrossFileHeader(const google::protobuf::Descriptor* msg,
     return name + ".fletcher.pb.h";
 }
 
+std::string CppEnumName(const google::protobuf::EnumDescriptor* enum_descriptor,
+                        const google::protobuf::FileDescriptor* context_file) {
+    const auto* owner = enum_descriptor->containing_type();
+    // The generated class name already flattens nested owners (Outer.Inner ->
+    // "Outer_Inner"), so a nested enum spells as "<OwnerClass>::<EnumName>".
+    const std::string bare = (owner == nullptr) ? enum_descriptor->name()
+                                                : ClassName(owner) + "::" + enum_descriptor->name();
+    if (enum_descriptor->file()->package() == context_file->package()) return bare;
+    const std::string& pkg = enum_descriptor->file()->package();
+    if (pkg.empty()) return "::fletcher_gen::" + bare;
+    return "::fletcher_gen::" + DotToColons(pkg) + "::" + bare;
+}
+
+bool CppEnumTypeEmittable(const google::protobuf::EnumDescriptor* enum_descriptor) {
+    const auto* owner = enum_descriptor->containing_type();
+    if (owner == nullptr) return true;  // top-level enum: always at package scope
+    // Mirror the emit-loop skip predicate: a nested enum's class is emitted only
+    // when its owning message class is generated.
+    return !IsRecursive(owner) && !IsFlattenedWrapper(owner);
+}
+
 // ---------------------------------------------------------------------------
 // Edge ENCODE recursive visitor (encode only). Maps IR recursion to generated
 // code recursion, preserving GIR-2's exact wire behavior (field order, null-bit

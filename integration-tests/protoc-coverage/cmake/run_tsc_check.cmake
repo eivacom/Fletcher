@@ -45,6 +45,21 @@ if(NOT EXISTS "${TS_DIR}/generated/${_gen_ts_name}")
         "failing rather than skipping")
 endif()
 
+# GIR-9: also type-check the enum_coverage generation unit's .ts when present
+# (tsconfig includes generated/**/*.ts, so a self-contained module is checked
+# standalone). Same hard-fail-on-broken-copy contract as above.
+set(_gen_enum_ts "${GENERATED_DIR}/enum_coverage.fletcher.ts")
+if(EXISTS "${_gen_enum_ts}")
+    file(COPY "${_gen_enum_ts}" DESTINATION "${TS_DIR}/generated")
+    get_filename_component(_gen_enum_ts_name "${_gen_enum_ts}" NAME)
+    if(NOT EXISTS "${TS_DIR}/generated/${_gen_enum_ts_name}")
+        message(FATAL_ERROR
+            "failed to stage generated TypeScript into "
+            "${TS_DIR}/generated/${_gen_enum_ts_name} (broken/partial copy) — "
+            "failing rather than skipping")
+    endif()
+endif()
+
 execute_process(
     COMMAND "${TSC_EXECUTABLE}" --noEmit -p "${TS_DIR}/tsconfig.json"
     WORKING_DIRECTORY "${TS_DIR}"
