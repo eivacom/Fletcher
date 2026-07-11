@@ -259,6 +259,54 @@ gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
 gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# GIR-8 forcing tests (negative generation + zero-ValueOrDie assertion).
+#
+# GenErrors.{,Repeated,Map}UnsupportedTypeFailsBuild: run the plugin on the
+# unwired coverage_unsupported*.proto fixtures (singular / repeated / map
+# google.protobuf.Any) and require a non-zero exit whose error names that
+# shape's offending field and carries the UnsupportedNode reason. The fixtures
+# are NOT part of the coverage generation set — each is invoked only by its test
+# via a dedicated protoc call.
+#
+# NoValueOrDieInIrGeneratedCode: assert the IR-emitted generated files
+# (*.fletcher.pb.h / *.fletcher.arrow.pb.h / *.fletcher.ts) carry zero
+# .ValueOrDie(); RBA outputs (*.accessor.pb.h / *.fletcher.rs / __rba.fletcher.rs)
+# and binary .ipc are excluded — RBA is read-only and reconciled in round RIR.
+# This proves the real generated OUTPUT of the coverage harness is clean; the
+# companion full-surface guard that greps the EMITTER SOURCES for every harness
+# at once lives in the protoc unit suite (GenErrors.NoValueOrDieInEmitterSources).
+# ---------------------------------------------------------------------------
+# Singular, repeated, and map google.protobuf.Any (review 4b) each in their own
+# single-message fixture so one protoc invocation isolates one shape and the
+# error must name that shape's field. All three carry the same Any reason.
+foreach(_variant
+        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload"
+        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads"
+        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map")
+    string(REPLACE "|" ";" _parts "${_variant}")
+    list(GET _parts 0 _test_name)
+    list(GET _parts 1 _proto_file)
+    list(GET _parts 2 _expect_field)
+    add_test(NAME GenErrors.${_test_name}
+        COMMAND "${CMAKE_COMMAND}"
+            -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+            -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+            -DPROTO_DIR=${PROTO_DIR}
+            -DPROTO_FILE=${_proto_file}
+            -DEXPECT_FIELD=${_expect_field}
+            "-DEXPECT_REASON=google.protobuf.Any is dynamically typed"
+            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/unsupported-generated
+            -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+            -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_unsupported_generation_check.cmake)
+endforeach()
+
+add_test(NAME GenErrors.NoValueOrDieInIrGeneratedCode
+    COMMAND "${CMAKE_COMMAND}"
+        -DGENERATED_DIR=${GENERATED_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_no_value_or_die.cmake)
+
+# ---------------------------------------------------------------------------
 # Optional toolchain checks (graceful skip). tsc / cargo+rustc are found at
 # configure time; the wrapper scripts print SKIP_MARKER and exit 0 when the
 # tool is absent, and SKIP_REGULAR_EXPRESSION reports the test as Skipped

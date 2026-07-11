@@ -9,11 +9,13 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "cpp_backend_decode_visitor.hpp"
@@ -808,8 +810,8 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
       << "    " << view_cls << "(const arrow::RecordBatch& batch, int64_t row) {\n"
       << "        scalars_.reserve(batch.num_columns());\n"
       << "        for (int i = 0; i < batch.num_columns(); ++i)\n"
-      << "            scalars_.push_back(\n"
-      << "                batch.column(i)->GetScalar(row).ValueOrDie());\n"
+      << "            scalars_.push_back(detail::FletcherValueOrThrow(\n"
+      << "                batch.column(i)->GetScalar(row), \"RecordBatch::GetScalar\"));\n"
       << "    }\n\n";
 
     // Constructor from Table + row index
@@ -822,8 +824,8 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
       << "            int64_t offset = row;\n"
       << "            for (const auto& chunk : chunked.chunks()) {\n"
       << "                if (offset < chunk->length()) {\n"
-      << "                    scalars_.push_back(\n"
-      << "                        chunk->GetScalar(offset).ValueOrDie());\n"
+      << "                    scalars_.push_back(detail::FletcherValueOrThrow(\n"
+      << "                        chunk->GetScalar(offset), \"Array::GetScalar\"));\n"
       << "                    break;\n"
       << "                }\n"
       << "                offset -= chunk->length();\n"
@@ -1326,6 +1328,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <cstdint>\n"
       << "#include <memory>\n"
       << "#include <optional>\n"
+      << "#include <stdexcept>\n"
       << "#include <string>\n"
       << "#include <string_view>\n"
       << "#include <vector>\n\n";
@@ -1356,6 +1359,36 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
           << "#endif\n\n";
     }
 
+    // GIR-8 (#53): checked Arrow Result<T> unwrap helper. Replaces .ValueOrDie()
+    // in generated view code: value-identical to .ValueOrDie() on ok() (returns
+    // ValueUnsafe()), but throws a descriptive std::runtime_error carrying the
+    // call-site context and the failing status instead of aborting. Guarded like
+    // ImportSchema above so including several same-package view headers in one
+    // translation unit does not redefine it.
+    {
+        std::string guard = "FLETCHER_DETAIL_VALUE_OR_THROW_";
+        for (char c : file->package()) guard += (c == '.' ? '_' : std::toupper(c));
+        guard += "_DEFINED";
+        o << "#ifndef " << guard << "\n"
+          << "#define " << guard << "\n"
+          << "namespace detail {\n"
+          << "/// Returns the value of an arrow::Result on success, or throws a\n"
+          << "/// std::runtime_error carrying `context` and the failing status on\n"
+          << "/// error. Used by generated view code to unwrap Arrow results so a\n"
+          << "/// failed Arrow call surfaces a descriptive exception rather than\n"
+          << "/// aborting the process.\n"
+          << "template <typename T>\n"
+          << "T FletcherValueOrThrow(arrow::Result<T>&& result, const char* context) {\n"
+          << "    if (!result.ok()) {\n"
+          << "        throw std::runtime_error(\n"
+          << "            std::string(context) + \": \" + result.status().ToString());\n"
+          << "    }\n"
+          << "    return std::move(result).ValueUnsafe();\n"
+          << "}\n"
+          << "}  // namespace detail\n"
+          << "#endif\n\n";
+    }
+
     for (const auto* msg : messages) {
         if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
 
@@ -1372,6 +1405,84 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
     o << "}  // namespace fletcher_gen\n";
 
     return o.str();
+}
+
+// -----------------------------------------------------------------------
+// Generation-front validation: fail fatally on genuinely-unsupported types
+// (GIR-8, #55)
+//
+// Today GatherFieldsImpl() silently drops fields whose IR is
+// NodeKind::UNSUPPORTED (a comment in the header is the only trace). GIR-8 turns
+// those into a fatal protoc error BEFORE any artifact is written, but ONLY for
+// messages that would actually be generated: recursive messages and flattened
+// wrappers are skipped here with the SAME predicate the emit loops use
+// (GenerateFile / GenerateViewFile / IPC: IsRecursive(msg) ||
+// IsFlattenedWrapper(msg)), so recursion stays skipped/non-fatal exactly as
+// today. Only genuinely-unsupported TYPES reached inside a generated message —
+// google.protobuf.Any / Struct, real oneof, unsupported map key/value, and
+// unsupported flatten-wrapper leaves — are fatal. Proto2 groups map to INT32
+// via BuildFieldIr and never produce UNSUPPORTED.
+// -----------------------------------------------------------------------
+
+// Recursively locate the first NodeKind::UNSUPPORTED leaf reachable from `node`,
+// returning a human-readable "unsupported field '<name>': <reason>" message.
+// Exhaustive over every child-bearing IR node kind (LIST / FIXED_SIZE_LIST / MAP
+// key+value / STRUCT fields); SCALAR carries no IR children. FIXED_SIZE_LIST is
+// defensive/future-proofing — BuildFieldIr does not currently emit it — but any
+// future child-bearing node kind MUST be added here.
+std::optional<std::string> FindUnsupportedIr(const ir::IrNode& node) {
+    if (node.kind == ir::NodeKind::UNSUPPORTED) {
+        const auto& u = std::get<ir::UnsupportedNode>(node.node);
+        return "unsupported field '" + node.facts.proto_full_name + "': " + u.reason;
+    }
+
+    if (node.kind == ir::NodeKind::LIST) {
+        return FindUnsupportedIr(*std::get<ir::ListNode>(node.node).element);
+    }
+
+    if (node.kind == ir::NodeKind::FIXED_SIZE_LIST) {
+        return FindUnsupportedIr(*std::get<ir::FixedSizeListNode>(node.node).element);
+    }
+
+    if (node.kind == ir::NodeKind::MAP) {
+        const auto& m = std::get<ir::MapNode>(node.node);
+        if (auto e = FindUnsupportedIr(*m.key)) return e;
+        return FindUnsupportedIr(*m.value);
+    }
+
+    if (node.kind == ir::NodeKind::STRUCT) {
+        for (const auto& f : std::get<ir::StructNode>(node.node).fields) {
+            if (auto e = FindUnsupportedIr(*f.type)) return e;
+        }
+    }
+
+    return std::nullopt;
+}
+
+bool ValidateNoUnsupportedIr(const google::protobuf::FileDescriptor* file, std::string* error) {
+    for (const auto* msg : OrderedMessages(file)) {
+        // Mirror the skip predicate from GenerateFile, GenerateViewFile, and the
+        // IPC emission loop: skip recursive messages and flattened wrappers so
+        // validation fires ONLY on messages that would actually be generated.
+        // (OrderedMessages already excludes recursive messages; the IsRecursive
+        // term is a harmless defensive mirror. IsFlattenedWrapper IS load-bearing
+        // — wrappers appear in OrderedMessages and are skipped at emit.)
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+
+        // BuildFieldIr(field) is used directly rather than replicating
+        // GatherFieldsImpl's field-level-flatten inlining: for a field-flattened
+        // field BuildFieldIr yields a STRUCT that FindUnsupportedIr recurses
+        // into, so the same descendant fields are still checked — equivalent
+        // detection.
+        for (int i = 0; i < msg->field_count(); ++i) {
+            auto node = ir::BuildFieldIr(msg->field(i));
+            if (auto e = FindUnsupportedIr(node)) {
+                *error = *e;
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -1423,6 +1534,10 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                                  const std::string& parameter,
                                  google::protobuf::compiler::GeneratorContext* context,
                                  std::string* error) const {
+    // GIR-8 (#55): fail fatally on genuinely-unsupported types before writing any
+    // artifact (C++ header / view / TS / IPC / RBA). Recursion stays skipped.
+    if (!ValidateNoUnsupportedIr(file, error)) return false;
+
     // Parse comma-separated options from --fletcher_opt=...
     bool schema_only = false;
     bool emit_ts = false;

@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-8 negative fixture (review 4b variant). COMMITTED BUT NOT WIRED into the
+// coverage generation set: invoked ONLY by GenErrors.MapUnsupportedTypeFailsBuild.
+//
+// A map whose VALUE is google.protobuf.Any must be rejected exactly like a
+// singular Any field. Before the 4b root fix, BuildMapNode() built a MAP with a
+// STRUCT value from Any's (mappable) leaf fields, so #55 missed it and the build
+// failed later with an unclear error. The fix classifies the map-value Any as
+// NodeKind::UNSUPPORTED, so ValidateNoUnsupportedIr() fails fatally here with
+// the Any reason.
+syntax = "proto3";
+package integration.coverage.unsupported;
+
+import "google/protobuf/any.proto";
+
+message MapUnsupportedCoverage {
+  map<string, google.protobuf.Any> payload_map = 1;
+}
