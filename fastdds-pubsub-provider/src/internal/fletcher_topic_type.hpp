@@ -63,6 +63,10 @@ class FletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
         const void* const data, eprosima::fastdds::rtps::SerializedPayload_t& payload,
         eprosima::fastdds::dds::DataRepresentationId_t /*data_representation*/) override {
         const auto* d = static_cast<const TransportData*>(data);
+        // Reset the per-call diagnostic so LastSerializeError() reflects only THIS
+        // serialize. The publish site reads it right after write() returns and must
+        // not see a stale error from an earlier failed publish on this writer.
+        SetLastSerializeError("");
         try {
             FixedWriteBuffer buf(payload.data, payload.max_size);
 
