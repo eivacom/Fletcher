@@ -128,6 +128,26 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
     EXPECT_NO_THROW(p.Publish({"pub", "nosub"}, MakeEncoder(1)));
 }
 
+// #60 (production half): a failing row encoder makes serialize() fail (captured in
+// LastSerializeError); Publish must SURFACE it as a throw carrying the diagnostic,
+// not drop the row silently. Paired with PublishWithoutSubscriberDoesNotThrow above,
+// which proves a benign no-reader write()==false (no serialize error) does NOT throw
+// — so the signal is the serialize diagnostic, not the write() return.
+TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
+    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    p.CreateTopic({"pub", "encfail"}, MakeSchema());
+    PubSubProvider::RowEncoder bad = [](WriteBuffer&) {
+        throw std::runtime_error("encoder boom");
+    };
+    try {
+        p.Publish({"pub", "encfail"}, bad);
+        FAIL() << "Publish must throw when the row encoder fails to serialize";
+    } catch (const std::runtime_error& e) {
+        EXPECT_THAT(e.what(), testing::HasSubstr("failed to publish"));
+        EXPECT_THAT(e.what(), testing::HasSubstr("encoder boom"));
+    }
+}
+
 TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
     FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
     FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});

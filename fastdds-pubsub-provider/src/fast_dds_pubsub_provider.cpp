@@ -417,7 +417,19 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     internal::TransportData transport;
     transport.encoder = std::move(encoder);
     transport.attachments = &attachments;
+    // #60: surface a swallowed SERIALIZE failure to the caller. write() serializes
+    // into the (TRANSIENT_LOCAL) history synchronously, so a throwing/ failing row
+    // encoder is captured in LastSerializeError() during this call — but FastDDS
+    // does NOT propagate that into write()'s return (and write()==false is itself a
+    // benign no-matched-reader outcome, not an error). So the reliable signal is the
+    // diagnostic sink, checked unconditionally: serialize() resets it per call, so a
+    // non-empty value here means THIS publish's encoder failed.
     ts.writer->write(&transport);
+    auto* fletcher_type = static_cast<internal::FletcherTopicType*>(impl_->type_support.get());
+    const std::string serialize_error = fletcher_type->LastSerializeError();
+    if (!serialize_error.empty())
+        throw std::runtime_error("FastDDS: failed to publish to '" + name +
+                                 "': " + serialize_error);
 }
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
