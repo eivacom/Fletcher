@@ -148,3 +148,17 @@ logged, and pushed. See
 - **§3c found NO codec bug** — the Phase-1 hardening (#98) holds across the edge/boundary matrix. All 23 are standing regression guards.
 - **RIR must extend the RBA accessor/Rust emitters to scalar-leaf nested lists** (currently guarded off with a clean error). Until then, `List<List<scalar>>` protos must omit `--fletcher_opt=accessor,rust`.
 - **clang-format 18.1.3 env gotcha** (per memory): local clang-format disagrees with the committed baseline; kept committed style, surgical diff — do not machine-reformat.
+
+## GIR-11 — Property + fuzz (3e) (2026-07-11)
+
+**Forcing test:** `Fuzz.DecodeRowSurvivesRandomTruncatedBuffers` + `Property.EncodeDecodeRoundTrip` → both 🟢   (⚪ → 🔴 → 🟢) — final round item; COVERAGE (may-find-bugs).
+**Design:** `plans/GIR-11-property-fuzz.md`  ·  Step-2: APPROVE (1 rework cycle — omit unions from the property corpus to avoid a false Equals-failure; terminal `catch(...)`; portability/hex-repro note; honest type-coverage scope)
+**What landed:** A new deterministic, bounded codec-robustness TU `arrow-bridge/tests/test_codec_property_fuzz.cpp` — two standing guards over the Phase-1-hardened (#98) `EncodeRow`/`DecodeRow`. **Property** (`EncodeDecodeRoundTrip`, seed `GIR11_PR`, 128 iters × 2 schemas, recursive ~20% nullability, finite floats, decimal precision ≤18, NO unions): random valid rows satisfy `encode→decode→Equals` field-by-field + encode/decode/encode byte-determinism. **Fuzz** (seed `GIR11_FZ`, 32 seed rows/schema × {256 garbage, every truncated prefix, 256 corruptions}): `DecodeRow` over malformed buffers accepts ONLY success or `std::invalid_argument`; a dedicated `attempt_valid()` path strictly REQUIRES success on the exact-valid seed (any throw = FAIL — catches a decode regression); shared `ctx()`+`SCOPED_TRACE` (seed/schema/variant/case/hex) on every branch; terminal `catch(...)` fails on any other outcome.
+**Result:** the fuzz found **NO crash/UB/unexpected-outcome** — Phase-1 decode hardening HOLDS across all strategies. **No production-code change** (codec.cpp/row_reader.hpp untouched); both tests stand as regression guards.
+**Files touched:** `arrow-bridge/tests/test_codec_property_fuzz.cpp` (new) + `arrow-bridge/tests/CMakeLists.txt`. RBA untouched.
+**Reviews:** compliance initially DEVIATES (valid-variant permissively accepted a rejection → masks a codec regression; size-check lacked repro context) → fixed (`attempt_valid()` strict-success + shared `SCOPED_TRACE`) → re-review CONFORMS. code-review `0/0/0` (confirmed the fuzz is TOOTHED — corruption strategies reach the guarded decode paths; property generator genuine; harness memory-safe).  (full: `plans/reviews/GIR-11-conformance.md`, `plans/reviews/GIR-11-codereview.md`)
+**Verification:** arrow-bridge **55/55** (incl. #54 Property + #55 Fuzz); protoc 53/53 sanity (generator unaffected); format-clean. §3e met. NOT a mandated full-suite item; the round-close full suite is the final gate.
+**Commit / push:** `feature/generator-ir-rewrite` → `origin feature/generator-ir-rewrite`
+**Carry-forwards / stop-and-asks:**
+- **The GIR round is functionally complete (GIR-1..GIR-11 all 🟢).** The Phase-1 hardening (#98) survived the fuzz — no robustness gap.
+- Property corpus deliberately excludes unions + several exotic types (decimal256/FSB/intervals/time/large/view) — covered by GIR-10 `CodecEdge.*`; the property test focuses on the common round-trippable type space.
