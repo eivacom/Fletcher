@@ -7,11 +7,19 @@
 # generation custom command with:
 #   -DGENERATED_DIR       dir protoc emitted the .ipc schema streams into
 #   -DEXPECTED_IPC_NAMES  '|'-joined list of every .ipc basename the harness
-#                         expects protoc-gen-fletcher to emit for coverage.proto
+#                         expects protoc-gen-fletcher to emit for the proto stem
+#   -DIPC_STEM            (optional) the proto stem (e.g. "coverage") whose .ipc
+#                         set this call validates. When set, only
+#                         `${GENERATED_DIR}/${IPC_STEM}.*.ipc` is globbed, so
+#                         multiple generation units emitting into the SAME
+#                         GENERATED_DIR (coverage.proto + enum_coverage.proto,
+#                         GIR-9) each validate only their own stem's .ipc set
+#                         instead of the whole directory. Omit to glob every
+#                         `*.ipc` (legacy single-unit behaviour).
 #
 # Fails loudly if the set of actually-emitted .ipc files differs from the
 # expected set in EITHER direction, so adding / removing / renaming a top-level
-# message in coverage.proto (which changes the emitted .ipc set) can't silently
+# message in the proto (which changes the emitted .ipc set) can't silently
 # drift the fixture out of sync with CMakeLists.txt's declared list. The
 # expected list, not a glob, is authoritative — a glob alone would happily
 # accept an under-generated set as "whatever was produced".
@@ -23,7 +31,11 @@ endif()
 
 string(REPLACE "|" ";" _expected "${EXPECTED_IPC_NAMES}")
 
-file(GLOB _actual_paths "${GENERATED_DIR}/*.ipc")
+if(IPC_STEM)
+    file(GLOB _actual_paths "${GENERATED_DIR}/${IPC_STEM}.*.ipc")
+else()
+    file(GLOB _actual_paths "${GENERATED_DIR}/*.ipc")
+endif()
 set(_actual "")
 foreach(_p IN LISTS _actual_paths)
     get_filename_component(_n "${_p}" NAME)

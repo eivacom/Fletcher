@@ -104,15 +104,69 @@ void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg
         CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
 }
 
+// GIR-9 (#75): the EnumDescriptor a field's generated C++ typed accessors
+// reference, or nullptr when the field is not enum-typed. Singular / nullable /
+// repeated enum fields expose the field's own enum; an enum-valued map exposes
+// its value's enum. Descriptor-based (FieldDescriptor::enum_type /
+// EnumDescriptor::containing_type) — never a stored C++ string (locked #1/#7).
+const google::protobuf::EnumDescriptor* FieldEnumType(const google::protobuf::FieldDescriptor* fd) {
+    if (fd->is_map()) {
+        const auto* val = fd->message_type()->field(1);
+        return val->type() == google::protobuf::FieldDescriptor::TYPE_ENUM ? val->enum_type()
+                                                                           : nullptr;
+    }
+    return fd->type() == google::protobuf::FieldDescriptor::TYPE_ENUM ? fd->enum_type() : nullptr;
+}
+
+// GIR-9 (#75): generated-header includes for enum types referenced from OTHER
+// files. Message references already contribute a cross-file header through the
+// FieldMapping (nested_header / map_value_header), but enum references do not —
+// the imported enum's typed C++ accessors need its owning file's generated
+// header visible. Same `<stem>.fletcher.pb.h` path shape as the message-include
+// path, so the shared include set dedupes cleanly.
+void CollectCrossFileEnumIncludesFromMessage(const google::protobuf::Descriptor* msg,
+                                             const google::protobuf::FileDescriptor* file,
+                                             std::set<std::string>& headers) {
+    for (int i = 0; i < msg->field_count(); ++i) {
+        const auto* fd = msg->field(i);
+        // Field-level flatten inlines the referenced message's fields into this
+        // message (see GatherFieldsImpl), so an inlined imported enum field's
+        // typed accessor lands HERE and needs the enum's defining-file header.
+        // Descend exactly as the field walk does so that path is covered.
+        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
+            HasFieldFlatten(fd)) {
+            CollectCrossFileEnumIncludesFromMessage(fd->message_type(), file, headers);
+            continue;
+        }
+        const auto* ed = FieldEnumType(fd);
+        if (ed != nullptr && ed->file() != file)
+            headers.insert(StripProtoSuffix(ed->file()->name()) + ".fletcher.pb.h");
+    }
+    for (int ni = 0; ni < msg->nested_type_count(); ++ni)
+        CollectCrossFileEnumIncludesFromMessage(msg->nested_type(ni), file, headers);
+}
+
 // -----------------------------------------------------------------------
 // Topological ordering of messages
 // -----------------------------------------------------------------------
 
 void TopologicalVisit(const google::protobuf::Descriptor* msg,
                       const google::protobuf::FileDescriptor* file,
+                      std::set<const google::protobuf::Descriptor*>& visiting,
                       std::set<const google::protobuf::Descriptor*>& emitted,
                       std::vector<const google::protobuf::Descriptor*>& order) {
     if (emitted.count(msg)) return;
+    // GIR-9 (#75): shared in-progress cycle guard. `emitted` only marks COMPLETED
+    // messages, so a dependency edge that points back into a message currently on
+    // the recursion stack would loop forever. Message-type cycles are caught by
+    // IsRecursive below, but the enum-owner edge can form a cycle among
+    // NON-recursive messages (M's field names O's nested enum and O's field names
+    // M's nested enum); this guard makes every edge (message-type AND enum-owner)
+    // terminate on such a cycle instead of overflowing the stack. On a genuine
+    // enum-owner cycle the emitted order cannot satisfy both references (a nested
+    // enum can't be forward-declared), but the generator now finishes
+    // deterministically rather than crashing.
+    if (visiting.count(msg)) return;
     // Skip synthetic map-entry messages.
     if (msg->options().map_entry()) return;
     // Only generate classes for messages in this file.
@@ -123,9 +177,11 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
         return;
     }
 
+    visiting.insert(msg);
+
     // Visit nested types first.
     for (int i = 0; i < msg->nested_type_count(); ++i)
-        TopologicalVisit(msg->nested_type(i), file, emitted, order);
+        TopologicalVisit(msg->nested_type(i), file, visiting, emitted, order);
 
     // Visit message-type dependencies.
     for (int i = 0; i < msg->field_count(); ++i) {
@@ -134,12 +190,31 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
         if (f->is_map()) {
             const auto* val = f->message_type()->field(1);
             if (val->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE)
-                TopologicalVisit(val->message_type(), file, emitted, order);
+                TopologicalVisit(val->message_type(), file, visiting, emitted, order);
         } else {
-            TopologicalVisit(f->message_type(), file, emitted, order);
+            TopologicalVisit(f->message_type(), file, visiting, emitted, order);
         }
     }
 
+    // GIR-9 (#75): enum-owner dependencies. A typed enum accessor names the
+    // enum's owning generated class (e.g. `EnumOwner::InnerStatus`), and a
+    // nested enum cannot be forward-declared apart from its owner, so the owner
+    // must be emitted before this message — even though there is no TYPE_MESSAGE
+    // field between them. Only added when the enum class is actually emittable
+    // (CppEnumTypeEmittable): a nested enum whose owner is recursive or a
+    // flattened wrapper is never declared, so no typed accessor (and no edge) is
+    // produced for it. Skipped for top-level enums (no owner) and self-owned
+    // enums (owner == msg). Cross-file owners are handled by the recursive call's
+    // own in-file guard.
+    for (int i = 0; i < msg->field_count(); ++i) {
+        const auto* ed = FieldEnumType(msg->field(i));
+        if (ed == nullptr || !cpp_backend::CppEnumTypeEmittable(ed)) continue;
+        const auto* owner = ed->containing_type();
+        if (owner != nullptr && owner != msg && owner->file() == file)
+            TopologicalVisit(owner, file, visiting, emitted, order);
+    }
+
+    visiting.erase(msg);
     emitted.insert(msg);
     order.push_back(msg);
 }
@@ -155,10 +230,11 @@ void TopologicalVisit(const google::protobuf::Descriptor* msg,
 
 std::vector<const google::protobuf::Descriptor*> OrderedMessages(
     const google::protobuf::FileDescriptor* file) {
+    std::set<const google::protobuf::Descriptor*> visiting;
     std::set<const google::protobuf::Descriptor*> emitted;
     std::vector<const google::protobuf::Descriptor*> order;
     for (int i = 0; i < file->message_type_count(); ++i)
-        TopologicalVisit(file->message_type(i), file, emitted, order);
+        TopologicalVisit(file->message_type(i), file, visiting, emitted, order);
     return order;
 }
 
@@ -257,6 +333,23 @@ std::string StorageDecl(const FieldInfo& fi) {
 }
 
 // -----------------------------------------------------------------------
+// Enum class emission (GIR-9, #75)
+// -----------------------------------------------------------------------
+
+// Emit a scoped `enum class <Name> : int32_t { SYMBOL = number, ... };`. Storage
+// stays int32 (locked #2): the fixed-width base is int32_t and every enumerator
+// carries its proto number verbatim (open proto3 enums round-trip unchanged).
+// `indent` is "" for a top-level enum (package-namespace scope) or "    " for a
+// nested enum (inside the owning generated class's public section).
+void EmitEnumClass(std::ostringstream& o, const google::protobuf::EnumDescriptor* ed,
+                   const std::string& indent) {
+    o << indent << "enum class " << ed->name() << " : int32_t {\n";
+    for (int i = 0; i < ed->value_count(); ++i)
+        o << indent << "    " << ed->value(i)->name() << " = " << ed->value(i)->number() << ",\n";
+    o << indent << "};\n";
+}
+
+// -----------------------------------------------------------------------
 // Setter generation
 // -----------------------------------------------------------------------
 
@@ -277,6 +370,16 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
                     o << "    " << cls << "& clear_" << fi.name << "() {\n"
                       << "        " << fi.name << "_.reset();\n"
                       << "        return *this;\n    }\n";
+                }
+                // GIR-9: additive fluent typed setter for a singular/nullable
+                // enum field, delegating to the raw int32 setter (storage stays
+                // int32; the raw int32 overload is retained for compatibility).
+                if (const auto* ed = FieldEnumType(fi.descriptor);
+                    ed && cpp_backend::CppEnumTypeEmittable(ed)) {
+                    const std::string en = cpp_backend::CppEnumName(ed, fi.descriptor->file());
+                    o << "    " << cls << "& set_" << fi.name << "(" << en << " v) {\n"
+                      << "        return set_" << fi.name << "(static_cast<int32_t>(v));\n"
+                      << "    }\n";
                 }
                 break;
             }
@@ -367,6 +470,24 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
                           << fi.name << "_.value_or(" << sc.default_value << "); }\n";
                     }
                 }
+                // GIR-9: additive typed getter for a singular/nullable enum
+                // field (a cast over the retained raw int32 getter; no
+                // validation — open proto3 values round-trip).
+                if (const auto* ed = FieldEnumType(fi.descriptor);
+                    ed && cpp_backend::CppEnumTypeEmittable(ed)) {
+                    const std::string en = cpp_backend::CppEnumName(ed, fi.descriptor->file());
+                    if (fi.mapping.nullable) {
+                        o << "    std::optional<" << en << "> " << fi.name << "_typed() const {\n"
+                          << "        auto v = " << fi.name << "();\n"
+                          << "        if (!v.has_value()) return std::nullopt;\n"
+                          << "        return static_cast<" << en << ">(*v);\n"
+                          << "    }\n";
+                    } else {
+                        o << "    " << en << " " << fi.name << "_typed() const {\n"
+                          << "        return static_cast<" << en << ">(" << fi.name << "());\n"
+                          << "    }\n";
+                    }
+                }
                 break;
             }
 
@@ -390,6 +511,20 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
             case FieldKind::REPEATED_SCALAR:
                 o << "    const std::vector<" << fi.mapping.element.storage_type << ">& " << fi.name
                   << "() const { return " << fi.name << "_; }\n";
+                // GIR-9: additive typed getter for a repeated enum field. Casts
+                // the value side only; the raw int32-container setter/getter are
+                // retained (no typed repeated setter this round).
+                if (const auto* ed = FieldEnumType(fi.descriptor);
+                    ed && cpp_backend::CppEnumTypeEmittable(ed)) {
+                    const std::string en = cpp_backend::CppEnumName(ed, fi.descriptor->file());
+                    o << "    std::vector<" << en << "> " << fi.name << "_typed() const {\n"
+                      << "        std::vector<" << en << "> out;\n"
+                      << "        out.reserve(" << fi.name << "().size());\n"
+                      << "        for (int32_t v : " << fi.name << "()) out.push_back(static_cast<"
+                      << en << ">(v));\n"
+                      << "        return out;\n"
+                      << "    }\n";
+                }
                 break;
 
             case FieldKind::REPEATED_STRUCT:
@@ -418,6 +553,23 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
                                            : fi.mapping.map_value.storage_type;
                 o << "    const std::vector<std::pair<" << fi.mapping.map_key.storage_type << ", "
                   << val_type << ">>& " << fi.name << "() const { return " << fi.name << "_; }\n";
+                // GIR-9: additive typed getter for an enum-valued map. Casts the
+                // value side only and preserves the raw map container shape (no
+                // typed map setter this round).
+                if (const auto* ed = FieldEnumType(fi.descriptor);
+                    ed && cpp_backend::CppEnumTypeEmittable(ed)) {
+                    const std::string en = cpp_backend::CppEnumName(ed, fi.descriptor->file());
+                    const std::string& kt = fi.mapping.map_key.storage_type;
+                    o << "    std::vector<std::pair<" << kt << ", " << en << ">> " << fi.name
+                      << "_typed() const {\n"
+                      << "        std::vector<std::pair<" << kt << ", " << en << ">> out;\n"
+                      << "        out.reserve(" << fi.name << "().size());\n"
+                      << "        for (const auto& e : " << fi.name << "())\n"
+                      << "            out.emplace_back(e.first, static_cast<" << en
+                      << ">(e.second));\n"
+                      << "        return out;\n"
+                      << "    }\n";
+                }
                 break;
             }
         }
@@ -897,12 +1049,22 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
 // Full class generation for one message
 // -----------------------------------------------------------------------
 
-std::string GenerateMessageClass(const std::string& cls, const std::vector<FieldInfo>& fields) {
+std::string GenerateMessageClass(const std::string& cls, const std::vector<FieldInfo>& fields,
+                                 const google::protobuf::Descriptor* msg) {
     std::ostringstream o;
     std::string fc = std::to_string(fields.size());
 
     // ---- class header ---------------------------------------------------
     o << "class " << cls << " {\n public:\n";
+
+    // GIR-9 (#75): nested enums are emitted once, inside their owning class's
+    // public section, before any accessor that may name them. A nested enum
+    // cannot be forward-declared apart from its owner, so this is its only
+    // declaration site.
+    for (int i = 0; i < msg->enum_type_count(); ++i) {
+        EmitEnumClass(o, msg->enum_type(i), "    ");
+        o << "\n";
+    }
 
     // Default constructor
     o << "    /// Constructs an empty row. Use the setters to populate fields\n"
@@ -1147,8 +1309,12 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
 
     // TODO: CRS utilities — will be restored in a later phase.
 
-    // Cross-file generated headers (for referenced messages from other .proto files).
-    const auto cross_includes = CollectCrossFileIncludes(file);
+    // Cross-file generated headers (for referenced messages from other .proto
+    // files) plus GIR-9 imported-enum headers (an imported enum's typed C++
+    // accessors need its owning file's generated header visible).
+    auto cross_includes = CollectCrossFileIncludes(file);
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileEnumIncludesFromMessage(file->message_type(mi), file, cross_includes);
     if (!cross_includes.empty()) {
         o << "\n";
         for (const auto& h : cross_includes) o << "#include \"" << h << "\"\n";
@@ -1159,6 +1325,14 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
     const std::string ns = DotToColons(file->package());
     if (!ns.empty()) o << "namespace " << ns << " {\n";
     o << "\n";
+
+    // GIR-9 (#75): emit every file-level enum (referenced AND standalone) as a
+    // scoped `enum class : int32_t` at package-namespace scope, before the
+    // message classes that may name them.
+    for (int i = 0; i < file->enum_type_count(); ++i) {
+        EmitEnumClass(o, file->enum_type(i), "");
+        o << "\n";
+    }
 
     // Emit messages in dependency order.
     auto messages = OrderedMessages(file);
@@ -1193,7 +1367,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
         // Optionally emit the row class.
         // View class omitted — generated separately in .fletcher.arrow.pb.h.
         if (!schema_only) {
-            o << GenerateMessageClass(cls, fields) << "\n";
+            o << GenerateMessageClass(cls, fields, msg) << "\n";
         }
     }
 
@@ -1331,6 +1505,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <stdexcept>\n"
       << "#include <string>\n"
       << "#include <string_view>\n"
+      << "#include <utility>\n"
       << "#include <vector>\n\n";
 
     o << "namespace fletcher_gen {\n";

@@ -61,6 +61,33 @@ std::string CppClassName(const google::protobuf::Descriptor* msg,
 std::string CppCrossFileHeader(const google::protobuf::Descriptor* msg,
                                const google::protobuf::FileDescriptor* context_file);
 
+// GIR-9 (#75): C++ spelling of a generated `enum class` as seen from
+// `context_file`. Single source of truth for enum-type spelling, shared by the
+// row typed accessors (generator.cpp) and the view typed getters
+// (cpp_backend_view_visitor.cpp) — the enum DECLARATION emits the bare
+// `ed->name()` in its owning scope, every REFERENCE goes through this helper.
+//   * top-level enum          -> bare name ("TopLevelStatus")
+//   * nested enum             -> owner class + "::" + name
+//                                ("NestedEnums::InnerStatus", "EnumOwner::InnerStatus")
+//   * cross-package reference -> "::fletcher_gen::<pkg>::" prefixed
+// Derived from descriptors/scope only; no C++ spelling is stored on any IR node
+// (locked decision #1). Mirrors CppClassName's package-qualification rule so an
+// imported same-package enum (GIR-9's enum_coverage importing coverage's
+// TopLevelStatus) needs only an include, not a namespace prefix.
+std::string CppEnumName(const google::protobuf::EnumDescriptor* enum_descriptor,
+                        const google::protobuf::FileDescriptor* context_file);
+
+// GIR-9 (#75): whether the generated `enum class` for `enum_descriptor` is
+// actually emitted somewhere a typed accessor could name it. A top-level enum is
+// always emitted at package scope; a NESTED enum is emitted only inside its
+// owning generated message class, which is NOT generated when the owner is
+// recursive or a flattened wrapper (the same skip predicate the emit loops use:
+// IsRecursive || IsFlattenedWrapper). When this returns false the caller MUST
+// emit only the raw int32 accessor — a typed accessor would name an undeclared
+// class and break compilation. Shared by the row emitter (generator.cpp) and the
+// view emitter (cpp_backend_view_visitor.cpp) so both gate identically.
+bool CppEnumTypeEmittable(const google::protobuf::EnumDescriptor* enum_descriptor);
+
 // Emit positional-format edge encoding for a single top-level field, driven by
 // the recursive IR (NOT by FieldMapping). `value_expr` is the storage member
 // expression (e.g. "field_"); `field_index` is the positional index used for
