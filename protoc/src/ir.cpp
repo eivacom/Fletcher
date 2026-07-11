@@ -4,6 +4,7 @@
 #include "ir.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "type_mapper.hpp"
@@ -47,6 +48,20 @@ IrNode MakeUnsupported(const FD* field, const std::string& reason) {
     n.facts = BaseFacts(field);
     n.node = UnsupportedNode{reason};
     return n;
+}
+
+// The dynamically-typed well-known messages that have no static Arrow mapping.
+// Detected identically wherever the message type appears — as a singular field,
+// a repeated element, or a map value — so classification (and the GIR-8 #55
+// front-end validation that reads it) rejects them consistently (review 4b).
+// Returns the abstract UnsupportedNode reason, or nullopt for a mappable message.
+std::optional<std::string> DynamicWktUnsupportedReason(const Descriptor* msg) {
+    const std::string& fqn = msg->full_name();
+    if (fqn == "google.protobuf.Any")
+        return "google.protobuf.Any is dynamically typed and has no static Arrow mapping";
+    if (fqn == "google.protobuf.Struct")
+        return "google.protobuf.Struct has a dynamic schema and cannot be mapped to Arrow";
+    return std::nullopt;
 }
 
 // Physical/logical kind for a proto primitive (or enum, which lowers to INT32).
@@ -334,6 +349,8 @@ IrNode BuildFlattenedRepeated(const FD* field) {
 IrNode BuildRepeatedMessage(const FD* field) {
     const Descriptor* msg = field->message_type();
 
+    if (auto reason = DynamicWktUnsupportedReason(msg)) return MakeUnsupported(field, *reason);
+
     if (HasMessageFlatten(msg)) return BuildFlattenedRepeated(field);
 
     if (IsRecursive(msg))
@@ -395,6 +412,8 @@ IrNode BuildMapNode(const FD* field) {
         m.value = std::make_unique<IrNode>(std::move(v));
     } else if (val_fd->type() == FD::TYPE_MESSAGE) {
         const Descriptor* val_msg = val_fd->message_type();
+        if (auto reason = DynamicWktUnsupportedReason(val_msg))
+            return MakeUnsupported(field, *reason);
         if (IsRecursive(val_msg))
             return MakeUnsupported(field, "map value message '" + val_msg->full_name() +
                                               "' is recursive and cannot be represented in Arrow");
@@ -418,13 +437,7 @@ IrNode BuildSingularMessage(const FD* field) {
     const Descriptor* msg = field->message_type();
     const std::string& fqn = msg->full_name();
 
-    if (fqn == "google.protobuf.Any")
-        return MakeUnsupported(field,
-                               "google.protobuf.Any is dynamically typed and has no static "
-                               "Arrow mapping");
-    if (fqn == "google.protobuf.Struct")
-        return MakeUnsupported(
-            field, "google.protobuf.Struct has a dynamic schema and cannot be mapped to Arrow");
+    if (auto reason = DynamicWktUnsupportedReason(msg)) return MakeUnsupported(field, *reason);
 
     if (HasMessageFlatten(msg)) return BuildFlattenedSingular(field);
 

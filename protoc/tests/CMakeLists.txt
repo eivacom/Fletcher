@@ -22,3 +22,13 @@ target_compile_definitions(fletcher_proto_plugin_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(fletcher_proto_plugin_tests DISCOVERY_MODE PRE_TEST)
+
+# GIR-8 (#53) full-surface guard: assert the IR emitters (protoc/src, excluding
+# the read-only RBA emitter) contain zero `.ValueOrDie(`, so the "no unchecked
+# ValueOrDie in generated IR code" invariant holds for EVERY downstream harness
+# at the source — not just protoc-coverage's generated output (which is grepped
+# separately by GenErrors.NoValueOrDieInIrGeneratedCode).
+add_test(NAME GenErrors.NoValueOrDieInEmitterSources
+    COMMAND "${CMAKE_COMMAND}"
+        -DEMITTER_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../src
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_no_value_or_die_in_emitters.cmake)

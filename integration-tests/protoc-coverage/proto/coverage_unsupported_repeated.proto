@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-8 negative fixture (review 4b variant). COMMITTED BUT NOT WIRED into the
+// coverage generation set: invoked ONLY by GenErrors.RepeatedUnsupportedTypeFailsBuild.
+//
+// A REPEATED google.protobuf.Any element must be rejected exactly like a
+// singular one. Before the 4b root fix, BuildRepeatedMessage() built a
+// LIST<STRUCT> from Any's (mappable) leaf fields, so #55 missed it and the
+// build failed later with an unclear error. The fix classifies the repeated Any
+// element as NodeKind::UNSUPPORTED, so ValidateNoUnsupportedIr() fails fatally
+// here with the Any reason.
+syntax = "proto3";
+package integration.coverage.unsupported;
+
+import "google/protobuf/any.proto";
+
+message RepeatedUnsupportedCoverage {
+  repeated google.protobuf.Any payloads = 1;
+}

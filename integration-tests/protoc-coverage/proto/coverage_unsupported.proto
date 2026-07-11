@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-8 negative fixture. COMMITTED BUT NOT WIRED into the coverage generation
+// set: it is invoked ONLY by the GenErrors.UnsupportedTypeFailsBuild ctest,
+// which runs protoc-gen-fletcher on it directly and asserts the plugin FAILS
+// (non-zero exit) with a descriptive error naming the offending field and the
+// UnsupportedNode reason.
+//
+// `google.protobuf.Any` is dynamically typed and has no static Arrow mapping, so
+// BuildFieldIr() classifies `payload` as NodeKind::UNSUPPORTED. The new
+// ValidateNoUnsupportedIr() front-end pass must turn that into a fatal protoc
+// error rather than silently skipping the field (today's behaviour).
+syntax = "proto3";
+package integration.coverage.unsupported;
+
+import "google/protobuf/any.proto";
+
+message UnsupportedCoverage {
+  google.protobuf.Any payload = 1;
+}
