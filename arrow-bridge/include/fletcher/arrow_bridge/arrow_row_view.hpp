@@ -162,6 +162,87 @@ class ArrowNestedList2 {
 };
 
 // ---------------------------------------------------------------------------
+// ArrowNestedScalarList — accessor for List<List<Scalar>> fields (depth 2).
+//
+// GIR-10: the scalar-leaf counterpart of ArrowNestedList. Each outer element
+// returns an ArrowScalarList<ValueT, ArrayT> for the inner scalar list.
+//
+// Template parameters:
+//   ValueT — C++ return type of the leaf scalar (e.g. int32_t, double)
+//   ArrayT — Arrow array type of the leaf scalar (e.g. arrow::Int32Array)
+// ---------------------------------------------------------------------------
+
+template <typename ValueT, typename ArrayT>
+class ArrowNestedScalarList {
+    std::shared_ptr<arrow::Array> array_;
+
+   public:
+    ArrowNestedScalarList() = default;
+    explicit ArrowNestedScalarList(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
+
+    int64_t size() const { return array_ ? array_->length() : 0; }
+    bool empty() const { return size() == 0; }
+
+    ArrowScalarList<ValueT, ArrayT> operator[](int64_t i) const {
+        auto scalar = array_->GetScalar(i).ValueOrDie();
+        const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
+        return ArrowScalarList<ValueT, ArrayT>(ls.value);
+    }
+
+    struct Iterator {
+        const ArrowNestedScalarList* list;
+        int64_t i;
+        ArrowScalarList<ValueT, ArrayT> operator*() const { return (*list)[i]; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const Iterator& o) const { return i != o.i; }
+    };
+    Iterator begin() const { return {this, 0}; }
+    Iterator end() const { return {this, size()}; }
+};
+
+// ---------------------------------------------------------------------------
+// ArrowNestedScalarList2 — accessor for List<List<List<Scalar>>> fields (depth 3).
+//
+// GIR-10: each outer element returns an ArrowNestedScalarList<ValueT, ArrayT>
+// for the middle list.
+// ---------------------------------------------------------------------------
+
+template <typename ValueT, typename ArrayT>
+class ArrowNestedScalarList2 {
+    std::shared_ptr<arrow::Array> array_;
+
+   public:
+    ArrowNestedScalarList2() = default;
+    explicit ArrowNestedScalarList2(std::shared_ptr<arrow::Array> array)
+        : array_(std::move(array)) {}
+
+    int64_t size() const { return array_ ? array_->length() : 0; }
+    bool empty() const { return size() == 0; }
+
+    ArrowNestedScalarList<ValueT, ArrayT> operator[](int64_t i) const {
+        auto scalar = array_->GetScalar(i).ValueOrDie();
+        const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
+        return ArrowNestedScalarList<ValueT, ArrayT>(ls.value);
+    }
+
+    struct Iterator {
+        const ArrowNestedScalarList2* list;
+        int64_t i;
+        ArrowNestedScalarList<ValueT, ArrayT> operator*() const { return (*list)[i]; }
+        Iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const Iterator& o) const { return i != o.i; }
+    };
+    Iterator begin() const { return {this, 0}; }
+    Iterator end() const { return {this, size()}; }
+};
+
+// ---------------------------------------------------------------------------
 // ArrowScalarMap — accessor for map<K,V> fields where V is a scalar type.
 //
 // Template parameters:

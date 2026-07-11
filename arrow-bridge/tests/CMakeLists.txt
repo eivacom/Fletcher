@@ -4,7 +4,8 @@
 find_package(GTest REQUIRED)
 
 add_executable(arrow_bridge_tests
-    test_codec.cpp)
+    test_codec.cpp
+    test_codec_edge.cpp)
 
 target_link_libraries(arrow_bridge_tests PRIVATE
     GTest::gtest_main

@@ -37,11 +37,14 @@ std::string ReplaceAll(std::string s, const std::string& from, const std::string
     return s;
 }
 
-// The leaf struct descriptor of a nested list (List<List<...<Struct>>>) plus the
-// number of list levels. Structural: walk ListNode elements until the leaf.
+// The innermost leaf node of a nested list plus the number of list levels.
+// Structural: walk ListNode elements until the leaf. The leaf is a StructNode
+// (List<List<...<Struct>>>) or, GIR-10, a ScalarNode (List<List<...<Scalar>>>);
+// callers branch on leaf->kind rather than assuming a struct identity (a former
+// unconditional std::get<StructNode> here threw bad_variant_access on a scalar).
 struct NestedListShape {
     int depth = 1;
-    const google::protobuf::Descriptor* leaf = nullptr;
+    const ir::IrNode* leaf = nullptr;
 };
 
 NestedListShape ClassifyNestedList(const ir::IrNode& list_node) {
@@ -51,7 +54,7 @@ NestedListShape ClassifyNestedList(const ir::IrNode& list_node) {
         shape.depth += 1;
         cur = std::get<ir::ListNode>(cur->node).element.get();
     }
-    shape.leaf = std::get<ir::StructNode>(cur->node).identity.descriptor;
+    shape.leaf = cur;
     return shape;
 }
 
@@ -216,10 +219,24 @@ class EdgeViewGetterVisitor {
 
     void EmitNestedList(const ir::IrNode& list_node) {
         const NestedListShape shape = ClassifyNestedList(list_node);
-        const std::string vt = CppClassName(shape.leaf, context_file_) + "View";
-        const std::string tmpl = (shape.depth == 3)
-                                     ? "fletcher::ArrowNestedList2<" + vt + ">"
-                                     : "fletcher::ArrowNestedList<" + vt + ">";
+        std::string tmpl;
+        if (shape.leaf->kind == ir::NodeKind::SCALAR) {
+            // GIR-10 scalar leaf: depth-2 -> ArrowNestedScalarList<V,A>, depth-3 ->
+            // ArrowNestedScalarList2<V,A>. Both yield ArrowScalarList at the leaf.
+            const auto& e = std::get<ir::ScalarNode>(shape.leaf->node);
+            const CppScalarInfo& el = LookupScalar(e.logical_type, e.enum_identity);
+            const std::string& vt = el.getter_type;
+            const std::string& at = el.array_type;
+            tmpl = (shape.depth == 3) ? "fletcher::ArrowNestedScalarList2<" + vt + ", " + at + ">"
+                                      : "fletcher::ArrowNestedScalarList<" + vt + ", " + at + ">";
+        } else {
+            const std::string vt =
+                CppClassName(std::get<ir::StructNode>(shape.leaf->node).identity.descriptor,
+                             context_file_) +
+                "View";
+            tmpl = (shape.depth == 3) ? "fletcher::ArrowNestedList2<" + vt + ">"
+                                      : "fletcher::ArrowNestedList<" + vt + ">";
+        }
         out_ << "    " << tmpl << " " << name_ << "() const {\n"
              << "        const auto& ls = static_cast"
                 "<const arrow::ListScalar&>(\n"
@@ -414,9 +431,14 @@ class EdgeToArrowRowVisitor {
     }
 
     void EmitNestedList(const ir::IrNode& list_node) {
-        const bool nullable = list_node.facts.nullable;
         const NestedListShape shape = ClassifyNestedList(list_node);
-        const std::string nc = CppClassName(shape.leaf, context_file_);
+        if (shape.leaf->kind == ir::NodeKind::SCALAR) {
+            EmitNestedScalarList(list_node, shape);
+            return;
+        }
+        const bool nullable = list_node.facts.nullable;
+        const std::string nc = CppClassName(
+            std::get<ir::StructNode>(shape.leaf->node).identity.descriptor, context_file_);
 
         out_ << "    {\n"
              << "        auto coord_type = arrow::struct_(\n"
@@ -490,6 +512,77 @@ class EdgeToArrowRowVisitor {
                  << "            (void)outer_builder->AppendScalar(\n"
                  << "                arrow::ListScalar(*mid_builder->"
                     "Finish(), poly_list_type));\n"
+                 << "        }\n"
+                 << "        row.push_back(std::make_shared"
+                    "<arrow::ListScalar>(\n"
+                 << "            *outer_builder->Finish()));\n";
+        }
+
+        if (nullable) {
+            out_ << "        }\n";  // close else
+        }
+        out_ << "    }\n";
+    }
+
+    // GIR-10 scalar-leaf nested list -> arrow list<list<...<scalar>>>. Mirrors the
+    // struct-leaf EmitNestedList shape but builds the innermost ring with the leaf
+    // scalar's typed Arrow builder (Append(v)) instead of a StructScalar.
+    void EmitNestedScalarList(const ir::IrNode& list_node, const NestedListShape& shape) {
+        const bool nullable = list_node.facts.nullable;
+        const auto& e = std::get<ir::ScalarNode>(shape.leaf->node);
+        const CppScalarInfo& el = LookupScalar(e.logical_type, e.enum_identity);
+        const std::string data_ref = nullable ? ("(*" + getter_ + ")") : getter_;
+
+        out_ << "    {\n"
+             << "        auto coord_type = " << el.arrow_type_expr << ";\n";
+
+        if (shape.depth == 2) {
+            out_ << "        auto inner_list_type = arrow::list(\n"
+                 << "            arrow::field(\"item\", coord_type, true));\n";
+            if (nullable) {
+                out_ << "        if (" << getter_ << " == nullptr) {\n"
+                     << "            row.push_back(arrow::MakeNullScalar(\n"
+                     << "                arrow::list(arrow::field(\"item\","
+                        " inner_list_type, true))));\n"
+                     << "        } else {\n";
+            }
+            out_ << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
+                    "            arrow::MakeBuilder(inner_list_type), \"arrow::MakeBuilder\");\n"
+                 << "        for (const auto& ring : " << data_ref << ") {\n"
+                 << "            " << el.builder_type << " inner_builder;\n"
+                 << "            for (const auto& v : ring) (void)inner_builder.Append(v);\n"
+                 << "            (void)outer_builder->AppendScalar(\n"
+                 << "                arrow::ListScalar(*inner_builder.Finish(), inner_list_type));\n"
+                 << "        }\n"
+                 << "        row.push_back(std::make_shared"
+                    "<arrow::ListScalar>(\n"
+                 << "            *outer_builder->Finish()));\n";
+        } else if (shape.depth == 3) {
+            out_ << "        auto ring_list_type = arrow::list(\n"
+                 << "            arrow::field(\"item\", coord_type, true));\n"
+                 << "        auto poly_list_type = arrow::list(\n"
+                 << "            arrow::field(\"item\", ring_list_type, true));\n";
+            if (nullable) {
+                out_ << "        if (" << getter_ << " == nullptr) {\n"
+                     << "            row.push_back(arrow::MakeNullScalar(\n"
+                     << "                arrow::list(arrow::field(\"item\","
+                        " poly_list_type, true))));\n"
+                     << "        } else {\n";
+            }
+            out_ << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
+                    "            arrow::MakeBuilder(poly_list_type), \"arrow::MakeBuilder\");\n"
+                 << "        for (const auto& poly : " << data_ref << ") {\n"
+                 << "            auto mid_builder = detail::FletcherValueOrThrow(\n"
+                    "                arrow::MakeBuilder(ring_list_type), \"arrow::MakeBuilder\");\n"
+                 << "            for (const auto& ring : poly) {\n"
+                 << "                " << el.builder_type << " inner_builder;\n"
+                 << "                for (const auto& v : ring) (void)inner_builder.Append(v);\n"
+                 << "                (void)mid_builder->AppendScalar(\n"
+                 << "                    arrow::ListScalar(*inner_builder.Finish(),"
+                    " ring_list_type));\n"
+                 << "            }\n"
+                 << "            (void)outer_builder->AppendScalar(\n"
+                 << "                arrow::ListScalar(*mid_builder->Finish(), poly_list_type));\n"
                  << "        }\n"
                  << "        row.push_back(std::make_shared"
                     "<arrow::ListScalar>(\n"

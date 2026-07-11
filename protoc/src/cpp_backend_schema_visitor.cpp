@@ -40,12 +40,14 @@ bool IsSchemaRepresentable(const IrNode& node) {
             const IrNode& elem = *std::get<ir::ListNode>(node.node).element;
             if (elem.kind == NodeKind::SCALAR || elem.kind == NodeKind::STRUCT) return true;
             if (elem.kind == NodeKind::LIST) {
-                // Nested list: representable only when the innermost leaf is a
-                // struct (List<List<...<Struct>>>); a scalar leaf is dropped.
+                // Nested list: representable when the innermost leaf is a struct
+                // (List<List<...<Struct>>>) or, GIR-10, a scalar
+                // (List<List<...<Scalar>>>). EmitNodeType's LIST case already
+                // recurses leaf-agnostically, so no emission change is needed here.
                 const IrNode* cur = &elem;
                 while (cur->kind == NodeKind::LIST)
                     cur = std::get<ir::ListNode>(cur->node).element.get();
-                return cur->kind == NodeKind::STRUCT;
+                return cur->kind == NodeKind::STRUCT || cur->kind == NodeKind::SCALAR;
             }
             return false;
         }

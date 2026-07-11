@@ -315,7 +315,8 @@ std::string StorageDecl(const FieldInfo& fi) {
             return "std::vector<" + fi.mapping.nested_class + "> " + fi.name + "_";
 
         case FieldKind::NESTED_LIST: {
-            std::string type = fi.mapping.nested_class;
+            std::string type = fi.mapping.nested_leaf_is_scalar ? fi.mapping.element.storage_type
+                                                                : fi.mapping.nested_class;
             for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
             if (fi.mapping.nullable) return "std::optional<" + type + "> " + fi.name + "_";
             return type + " " + fi.name + "_";
@@ -411,7 +412,9 @@ void EmitSetters(std::ostringstream& o, const std::string& cls,
                 break;
 
             case FieldKind::NESTED_LIST: {
-                std::string type = fi.mapping.nested_class;
+                std::string type = fi.mapping.nested_leaf_is_scalar
+                                       ? fi.mapping.element.storage_type
+                                       : fi.mapping.nested_class;
                 for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
                 o << "    " << cls << "& set_" << fi.name << "(" << type << " v) {\n"
                   << "        " << fi.name << "_ = std::move(v);\n"
@@ -533,7 +536,9 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
                 break;
 
             case FieldKind::NESTED_LIST: {
-                std::string type = fi.mapping.nested_class;
+                std::string type = fi.mapping.nested_leaf_is_scalar
+                                       ? fi.mapping.element.storage_type
+                                       : fi.mapping.nested_class;
                 for (int d = 0; d < fi.mapping.list_depth; ++d) type = "std::vector<" + type + ">";
                 if (fi.mapping.nullable) {
                     o << "    const " << type << "* " << fi.name << "() const {\n"
@@ -1660,6 +1665,68 @@ bool ValidateNoUnsupportedIr(const google::protobuf::FileDescriptor* file, std::
     return true;
 }
 
+// GIR-10: locate the first scalar-leaf nested list (List<List<...<Scalar>>>,
+// i.e. a LIST whose element chain is ≥1 more LIST bottoming out in a SCALAR)
+// reachable from `node`, returning its proto field name. Single-level
+// List<Scalar> (REPEATED_SCALAR) and struct-leaf nested lists are NOT matched —
+// only the scalar-leaf-nested shape the read-only RBA C++/Rust accessor emitters
+// cannot represent (they assume a struct leaf: nested_class/nested_msg). Recurses
+// through struct fields / map key+value so a scalar-leaf nested list buried
+// inside a struct or a struct-leaf nested list is still found.
+std::optional<std::string> FindScalarLeafNestedList(const ir::IrNode& node) {
+    if (node.kind == ir::NodeKind::LIST) {
+        const ir::IrNode& elem = *std::get<ir::ListNode>(node.node).element;
+        if (elem.kind == ir::NodeKind::LIST) {
+            const ir::IrNode* cur = &elem;
+            while (cur->kind == ir::NodeKind::LIST)
+                cur = std::get<ir::ListNode>(cur->node).element.get();
+            if (cur->kind == ir::NodeKind::SCALAR) return node.facts.proto_full_name;
+            return FindScalarLeafNestedList(*cur);  // struct leaf — recurse into it
+        }
+        return FindScalarLeafNestedList(elem);
+    }
+    if (node.kind == ir::NodeKind::FIXED_SIZE_LIST)
+        return FindScalarLeafNestedList(*std::get<ir::FixedSizeListNode>(node.node).element);
+    if (node.kind == ir::NodeKind::MAP) {
+        const auto& m = std::get<ir::MapNode>(node.node);
+        if (auto e = FindScalarLeafNestedList(*m.key)) return e;
+        return FindScalarLeafNestedList(*m.value);
+    }
+    if (node.kind == ir::NodeKind::STRUCT) {
+        for (const auto& f : std::get<ir::StructNode>(node.node).fields)
+            if (auto e = FindScalarLeafNestedList(*f.type)) return e;
+    }
+    return std::nullopt;
+}
+
+// GIR-10 backend-availability guard (locked #3). The read-only RBA C++ accessor
+// and Rust accessor emitters assume a STRUCT leaf for nested lists; a scalar-leaf
+// nested list (List<List<scalar>>) would make them emit invalid code (empty
+// nested_class). The edge / Arrow view / IPC schema / TS backends DO support it.
+// So when `accessor` or `rust` is requested and any field is a scalar-leaf nested
+// list, fail the plugin with a clear error BEFORE any artifact is emitted — the
+// RBA emitters never process a scalar-leaf nested list. Do NOT modify the RBA
+// emitter; the reconciliation is round RIR.
+bool ValidateBackendsSupportFields(const google::protobuf::FileDescriptor* file, bool emit_accessor,
+                                   bool emit_rust, std::string* error) {
+    if (!emit_accessor && !emit_rust) return true;
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+        for (int i = 0; i < msg->field_count(); ++i) {
+            auto node = ir::BuildFieldIr(msg->field(i));
+            if (auto e = FindScalarLeafNestedList(node)) {
+                *error = "field '" + *e +
+                         "': scalar-leaf nested lists (List<List<scalar>>) are not yet supported "
+                         "by the RecordBatch accessor / Rust backend (tracked for round RIR); "
+                         "regenerate without --fletcher_opt=accessor,rust (the edge, Arrow view, "
+                         "IPC schema, and TS backends do support them)";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // ValidateServiceMethod (declared in generator_internal.hpp, namespace fletcher)
@@ -1735,6 +1802,12 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
                 emit_rust = true;
         }
     }
+
+    // GIR-10 (locked #3): reject scalar-leaf nested lists for the read-only RBA
+    // C++/Rust backends BEFORE any artifact is emitted, so the RBA emitters never
+    // process a shape they cannot represent (they assume a struct leaf). The edge /
+    // view / IPC / TS backends keep supporting it.
+    if (!ValidateBackendsSupportFields(file, emit_accessor, emit_rust, error)) return false;
 
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {

@@ -199,27 +199,39 @@ std::optional<FieldMapping> ProjectIrToFieldMapping(
                 return m;
             }
             if (elem.kind == NodeKind::LIST) {
-                // Count nesting depth until the leaf. The flat bridge only models
-                // struct-leaf nested lists (List<List<...<Struct>>>); a scalar leaf
-                // (List<List<Scalar>>) is not representable here — explicit nullopt.
+                // Count nesting depth until the leaf. Struct-leaf nested lists
+                // (List<List<...<Struct>>>) carry nested_class; GIR-10 also models
+                // scalar-leaf nested lists (List<List<...<Scalar>>>) via `element`
+                // plus nested_leaf_is_scalar. The scalar-leaf shape is never fed to
+                // the read-only RBA accessor (locked #3): its fixture is generated
+                // without accessor/rust, so RBA only ever sees struct leaves.
                 int depth = 1;
                 const IrNode* cur = &elem;
                 while (cur->kind == NodeKind::LIST) {
                     depth += 1;
                     cur = std::get<ir::ListNode>(cur->node).element.get();
                 }
-                if (cur->kind != NodeKind::STRUCT) return std::nullopt;
-                const auto& st = std::get<ir::StructNode>(cur->node);
                 FieldMapping m{};
                 m.kind = FieldKind::NESTED_LIST;
                 m.nullable = node.facts.nullable;
                 m.warning = node.facts.warning;
                 m.list_depth = depth;
-                m.nested_class = cpp_backend::CppClassName(st.identity.descriptor, context_file);
-                m.nested_header =
-                    cpp_backend::CppCrossFileHeader(st.identity.descriptor, context_file);
-                m.nested_msg = st.identity.descriptor;
-                return m;
+                if (cur->kind == NodeKind::STRUCT) {
+                    const auto& st = std::get<ir::StructNode>(cur->node);
+                    m.nested_class = cpp_backend::CppClassName(st.identity.descriptor, context_file);
+                    m.nested_header =
+                        cpp_backend::CppCrossFileHeader(st.identity.descriptor, context_file);
+                    m.nested_msg = st.identity.descriptor;
+                    return m;
+                }
+                if (cur->kind == NodeKind::SCALAR) {
+                    const auto& s = std::get<ir::ScalarNode>(cur->node);
+                    m.nested_leaf_is_scalar = true;
+                    m.element =
+                        ToScalarTypeInfo(cpp_backend::LookupScalar(s.logical_type, s.enum_identity));
+                    return m;
+                }
+                return std::nullopt;
             }
             return std::nullopt;
         }
