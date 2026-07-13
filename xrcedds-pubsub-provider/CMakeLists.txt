@@ -17,7 +17,7 @@ set(UCDR_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     microcdr
     GIT_REPOSITORY https://github.com/eProsima/Micro-CDR.git
-    GIT_TAG        v2.0.1)
+    GIT_TAG        v2.0.2)
 FetchContent_MakeAvailable(microcdr)
 
 # Make microcdr findable by XRCE-DDS Client's find_package() call.
@@ -31,10 +31,10 @@ file(WRITE "${_microcdr_config_dir}/microcdrConfig.cmake"
     "  message(FATAL_ERROR \"microcdr target not found\")\n"
     "endif()\n"
     "set(microcdr_FOUND TRUE)\n"
-    "set(microcdr_VERSION 2.0.1)\n")
+    "set(microcdr_VERSION 2.0.2)\n")
 file(WRITE "${_microcdr_config_dir}/microcdrConfigVersion.cmake" [=[
-set(PACKAGE_VERSION "2.0.1")
-if("${PACKAGE_FIND_VERSION}" VERSION_EQUAL "2.0.1")
+set(PACKAGE_VERSION "2.0.2")
+if("${PACKAGE_FIND_VERSION}" VERSION_EQUAL "2.0.2")
   set(PACKAGE_VERSION_EXACT TRUE)
   set(PACKAGE_VERSION_COMPATIBLE TRUE)
   set(PACKAGE_VERSION_UNSUITABLE FALSE)
@@ -60,7 +60,7 @@ set(UCLIENT_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     microxrcedds_client
     GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Client.git
-    GIT_TAG        v2.4.3)
+    GIT_TAG        v3.0.1)
 FetchContent_MakeAvailable(microxrcedds_client)
 
 # ── Fletcher dependencies ────────────────────────────────────────────────

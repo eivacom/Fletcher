@@ -69,7 +69,7 @@ else()
     ExternalProject_Add(microxrcedds_agent_proj
         PREFIX         ${AGENT_PREFIX}
         GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
-        GIT_TAG        v2.4.3
+        GIT_TAG        v3.0.1
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${AGENT_INSTALL_DIR}
             -DCMAKE_BUILD_TYPE=$<CONFIG>
