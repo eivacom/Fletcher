@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fletcher/arrow_bridge/arrow_row_view.hpp>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/positional_io.hpp>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 // Internal headers (arrow-bridge/src) — exercised directly by the HARD-1
@@ -161,6 +163,90 @@ TEST(CodecTest, DecodeScalarUnsupportedTypeThrowsInvalidArgument) {
     fletcher::detail::Reader r{src.data(), src.size()};
     EXPECT_THROW(fletcher::detail::DecodeScalarFromReader(r, arrow::list(arrow::int32())),
                  std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// HARD-2: Checked Arrow Result<T> access (#53, runtime half)
+//
+// Runtime paths that previously called .ValueOrDie() on a failed Arrow
+// Result<T> aborted the process. They must now throw std::invalid_argument
+// (H-INV-2). These forcing tests drive a failed Result<T> through a public
+// entry point and assert the throw. Red-first (locked decision #9): before the
+// fix each path reaches .ValueOrDie() on a failed Result, which calls abort()
+// and CRASHES the test binary (valid red — process termination, not a catchable
+// exception). Post-fix the same failed Result becomes a catchable
+// std::invalid_argument, so these use EXPECT_THROW (not a death test).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Satisfies ArrowRowViewList<ViewT>'s contract (arrow_row_view.hpp:59-60):
+// constructible from std::shared_ptr<arrow::Scalar>.
+class DummyStructView {
+   public:
+    explicit DummyStructView(std::shared_ptr<arrow::Scalar> scalar) : scalar_(std::move(scalar)) {}
+
+   private:
+    std::shared_ptr<arrow::Scalar> scalar_;
+};
+
+}  // namespace
+
+// Exercises the arrow_row_view.hpp path (ArrowRowViewList::operator[], line 74).
+// A struct array with one element (index 0 valid) is accessed out of range
+// (index 1), so array_->GetScalar(1) returns a failed Result.
+TEST(CodecTest, BadResultThrowsInsteadOfAbort) {
+    auto stype = arrow::struct_({arrow::field("x", arrow::int32())});
+
+    std::shared_ptr<arrow::Array> array;
+    arrow::StructBuilder builder(stype, arrow::default_memory_pool(),
+                                 {std::make_shared<arrow::Int32Builder>()});
+    ASSERT_TRUE(builder.Append().ok());
+    auto* x_builder = static_cast<arrow::Int32Builder*>(builder.field_builder(0));
+    ASSERT_TRUE(x_builder->Append(7).ok());
+    ASSERT_TRUE(builder.Finish(&array).ok());
+
+    fletcher::ArrowRowViewList<DummyStructView> views(array);
+
+    // Pre-fix: views[1] reaches array_->GetScalar(1).ValueOrDie() -> abort().
+    // Post-fix: the failed Result becomes a catchable std::invalid_argument.
+    EXPECT_THROW(static_cast<void>(views[1]), std::invalid_argument);
+}
+
+// Exercises a codec.cpp path (EncodePositionalValue MAP case, key GetScalar at
+// line 139) through the public Codec::EncodeRow. A deliberately-malformed map
+// entries StructArray declares length 2 but carries a length-1 key child;
+// StructArray::field() clamps the child to its own buffer (Slice does not
+// over-read), so the encode loop's key_arr->GetScalar(1) on that length-1 array
+// returns a failed Result. This is a genuine codec.cpp call site reached via a
+// public API entry point with untrusted/malformed input.
+TEST(CodecTest, CodecMapEncodeBadResultThrowsInsteadOfAbort) {
+    auto map_type = arrow::map(arrow::utf8(), arrow::int32());
+    const auto& mt = static_cast<const arrow::MapType&>(*map_type);
+    auto entries_type = mt.value_type();  // struct<key, value>
+
+    arrow::StringBuilder kb;
+    ASSERT_TRUE(kb.Append("a").ok());
+    std::shared_ptr<arrow::Array> keys;
+    ASSERT_TRUE(kb.Finish(&keys).ok());  // length 1
+
+    arrow::Int32Builder vb;
+    ASSERT_TRUE(vb.Append(1).ok());
+    std::shared_ptr<arrow::Array> vals;
+    ASSERT_TRUE(vb.Finish(&vals).ok());  // length 1
+
+    // Malformed: declared length 2, but the children are length 1.
+    auto entries = std::make_shared<arrow::StructArray>(entries_type, /*length=*/2,
+                                                        arrow::ArrayVector{keys, vals});
+    std::shared_ptr<arrow::Scalar> map_scalar =
+        std::make_shared<arrow::MapScalar>(entries, map_type);
+
+    auto schema = arrow::schema({arrow::field("m", map_type)});
+    fletcher::Codec codec(schema);
+
+    // Pre-fix: the key loop reaches key_arr->GetScalar(1).ValueOrDie() -> abort().
+    // Post-fix: the failed Result becomes a catchable std::invalid_argument.
+    EXPECT_THROW(static_cast<void>(codec.EncodeRow({map_scalar})), std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------
