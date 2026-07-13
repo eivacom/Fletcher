@@ -38,6 +38,7 @@
 #include <string>
 #include <thread>
 
+#include "internal/fletcher_topic_type.hpp"
 #include "internal/ordered_delivery.hpp"
 
 using namespace eprosima::fastdds::dds;
@@ -107,149 +108,9 @@ class RawBytesTopicType : public TopicDataType {
     }
 };
 
-// -----------------------------------------------------------------------
-// Transport data — carries RowEncoder on publish, raw bytes on subscribe.
-// -----------------------------------------------------------------------
-
-struct TransportData {
-    // Publish path — encoder writes row bytes directly into
-    // the DDS payload buffer via FixedWriteBuffer.
-    PubSubProvider::RowEncoder encoder;
-    const Attachments* attachments = nullptr;
-
-    // Subscribe path (decoded in-place by deserialize, moved by listener).
-    std::vector<uint8_t> decoded_row;
-    Attachments decoded_attachments;
-};
-
-// -----------------------------------------------------------------------
-// DDS TopicDataType — encodes row bytes directly into DDS payload.
-// -----------------------------------------------------------------------
-
-class FletcherTopicType : public TopicDataType {
-   public:
-    explicit FletcherTopicType(uint32_t max_payload) {
-        set_name("fletcher");
-        max_serialized_type_size = 4 + 4 + max_payload;
-        is_compute_key_provided = false;
-    }
-
-    bool serialize(
-        const void* const data, eprosima::fastdds::rtps::SerializedPayload_t& payload,
-        eprosima::fastdds::dds::DataRepresentationId_t /*data_representation*/) override {
-        const auto* d = static_cast<const TransportData*>(data);
-        try {
-            FixedWriteBuffer buf(payload.data, payload.max_size);
-
-            // CDR little-endian encapsulation header.
-            payload.encapsulation = CDR_LE;
-            const uint8_t cdr_header[] = {0x00, 0x01, 0x00, 0x00};
-            buf.Append(cdr_header, 4);
-
-            // CDR octet-sequence: uint32 length placeholder.
-            size_t seq_len_pos = buf.WriteLengthPlaceholder();
-            size_t seq_start = buf.Position();
-
-            // Envelope: [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
-            size_t row_len_pos = buf.WriteLengthPlaceholder();
-            size_t row_start = buf.Position();
-
-            // Row bytes written directly by the encoder.
-            d->encoder(buf);
-            buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
-
-            // Attachments.
-            const auto& att = *d->attachments;
-            buf.AppendFixed(static_cast<uint32_t>(att.size()));
-            for (const auto& [key, blob] : att) {
-                buf.AppendFixed(static_cast<uint32_t>(key.size()));
-                buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-                uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
-                buf.AppendFixed(blob_len);
-                if (blob_len > 0) buf.Append(blob->data(), blob_len);
-            }
-
-            // Patch CDR sequence length.
-            buf.PatchU32(seq_len_pos, static_cast<uint32_t>(buf.Position() - seq_start));
-
-            payload.length = static_cast<uint32_t>(buf.Position());
-            return true;
-        } catch (...) {
-            payload.length = 0;
-            return false;
-        }
-    }
-
-    bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
-        auto* d = static_cast<TransportData*>(data);
-        if (payload.length < 8) return false;
-
-        // Skip 4-byte CDR encapsulation, read 4-byte sequence length.
-        uint32_t data_size = 0;
-        std::memcpy(&data_size, payload.data + 4, sizeof(data_size));
-        if (8 + data_size > payload.length) return false;
-
-        const uint8_t* ptr = payload.data + 8;
-        size_t total = data_size;
-        if (total < 4) return false;
-
-        uint32_t row_len;
-        std::memcpy(&row_len, ptr, 4);
-        if (4 + row_len > total) return false;
-
-        // Deliver raw row bytes — no decoding, no Arrow dependency.
-        d->decoded_row.assign(ptr + 4, ptr + 4 + row_len);
-
-        // Parse attachments in-place.
-        d->decoded_attachments.clear();
-        size_t pos = 4 + row_len;
-        if (pos + 4 <= total) {
-            uint32_t att_count;
-            std::memcpy(&att_count, ptr + pos, 4);
-            pos += 4;
-            for (uint32_t i = 0; i < att_count; ++i) {
-                if (pos + 4 > total) return false;
-                uint32_t key_len;
-                std::memcpy(&key_len, ptr + pos, 4);
-                pos += 4;
-                if (pos + key_len > total) return false;
-                std::string key(reinterpret_cast<const char*>(ptr + pos), key_len);
-                pos += key_len;
-                if (pos + 4 > total) return false;
-                uint32_t blob_len;
-                std::memcpy(&blob_len, ptr + pos, 4);
-                pos += 4;
-                if (pos + blob_len > total) return false;
-                auto blob =
-                    std::make_shared<const std::vector<uint8_t>>(ptr + pos, ptr + pos + blob_len);
-                pos += blob_len;
-                d->decoded_attachments[std::move(key)] = std::move(blob);
-            }
-        }
-        return true;
-    }
-
-    uint32_t calculate_serialized_size(
-        const void* const /*data*/,
-        eprosima::fastdds::dds::DataRepresentationId_t /*data_representation*/) override {
-        return static_cast<uint32_t>(max_serialized_type_size);
-    }
-
-    void* create_data() override { return new TransportData(); }
-
-    void delete_data(void* data) override { delete static_cast<TransportData*>(data); }
-
-    bool compute_key(eprosima::fastdds::rtps::SerializedPayload_t& /*payload*/,
-                     eprosima::fastdds::rtps::InstanceHandle_t& /*handle*/,
-                     bool /*force_md5*/) override {
-        return false;
-    }
-    bool compute_key(const void* const /*data*/,
-                     eprosima::fastdds::rtps::InstanceHandle_t& /*handle*/,
-                     bool /*force_md5*/) override {
-        return false;
-    }
-};
+// TransportData and FletcherTopicType were extracted to
+// internal/fletcher_topic_type.hpp (fletcher::internal) so the serialize
+// diagnostic path is directly unit-testable. See that header.
 
 // -----------------------------------------------------------------------
 // DataReaderListener — delivers raw row bytes to subscriber callback.
@@ -265,7 +126,7 @@ class SubscriptionListener : public DataReaderListener {
         : delivery_(std::move(cb), std::move(schema)) {}
 
     void on_data_available(DataReader* reader) override {
-        TransportData data;
+        internal::TransportData data;
         SampleInfo info;
         while (reader->take_next_sample(&data, &info) == RETCODE_OK) {
             if (!info.valid_data) continue;
@@ -425,7 +286,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    impl_->type_support.reset(new FletcherTopicType(options.max_payload_bytes));
+    impl_->type_support.reset(new internal::FletcherTopicType(options.max_payload_bytes));
     impl_->type_support.register_type(impl_->participant);
 
     impl_->schema_type_support.reset(new RawBytesTopicType(options.max_payload_bytes));
@@ -553,10 +414,22 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
     // Encoder writes row bytes directly into the DDS payload buffer
     // via FixedWriteBuffer — no intermediate copy.
-    TransportData transport;
+    internal::TransportData transport;
     transport.encoder = std::move(encoder);
     transport.attachments = &attachments;
+    // #60: surface a swallowed SERIALIZE failure to the caller. write() serializes
+    // into the (TRANSIENT_LOCAL) history synchronously, so a throwing/ failing row
+    // encoder is captured in LastSerializeError() during this call — but FastDDS
+    // does NOT propagate that into write()'s return (and write()==false is itself a
+    // benign no-matched-reader outcome, not an error). So the reliable signal is the
+    // diagnostic sink, checked unconditionally: serialize() resets it per call, so a
+    // non-empty value here means THIS publish's encoder failed.
     ts.writer->write(&transport);
+    auto* fletcher_type = static_cast<internal::FletcherTopicType*>(impl_->type_support.get());
+    const std::string serialize_error = fletcher_type->LastSerializeError();
+    if (!serialize_error.empty())
+        throw std::runtime_error("FastDDS: failed to publish to '" + name +
+                                 "': " + serialize_error);
 }
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,

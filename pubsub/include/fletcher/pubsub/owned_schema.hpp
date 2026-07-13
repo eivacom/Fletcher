@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace fletcher {
@@ -52,7 +53,12 @@ class OwnedSchema {
     /// Create a deep copy of src.
     static OwnedSchema DeepCopy(const ArrowSchema* src) {
         OwnedSchema copy;
-        ArrowSchemaDeepCopy(src, copy.get());
+        ArrowErrorCode code = ArrowSchemaDeepCopy(src, copy.get());
+        if (code != NANOARROW_OK) {
+            throw std::runtime_error(
+                "OwnedSchema::DeepCopy: ArrowSchemaDeepCopy failed with code " +
+                std::to_string(code));
+        }
         return copy;
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -10,9 +11,12 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include "internal/fletcher_topic_type.hpp"
 #include "internal/ordered_delivery.hpp"
 
 using namespace fletcher;
@@ -56,6 +60,38 @@ static int32_t DecodeRow(const uint8_t* data) {
 }
 
 // ---------------------------------------------------------------------------
+// #60 — FletcherTopicType::serialize must surface a swallowed encoder exception
+// as a stored diagnostic while still returning false and NOT propagating out of
+// the DDS callback (H-INV-3). Exercised directly on the extracted internal type
+// (internal/fletcher_topic_type.hpp) via a throwing encoder — no DDS
+// participant required.
+// ---------------------------------------------------------------------------
+TEST(FletcherTopicTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
+    fletcher::internal::FletcherTopicType type(128);
+
+    Attachments attachments;
+    fletcher::internal::TransportData data;
+    data.attachments = &attachments;
+    data.encoder = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
+
+    // Use the reserving constructor so the SerializedPayload_t owns its
+    // (calloc-backed) buffer and frees it correctly on destruction. Aliasing a
+    // std::vector into payload.data would make ~SerializedPayload_t free()
+    // memory it does not own.
+    eprosima::fastdds::rtps::SerializedPayload_t payload(128);
+    payload.length = 123;
+
+    // No exception may escape serialize (H-INV-3): the encoder throw is caught.
+    bool result = true;
+    EXPECT_NO_THROW({
+        result = type.serialize(&data, payload, eprosima::fastdds::dds::DataRepresentationId_t{});
+    });
+    EXPECT_FALSE(result);
+    EXPECT_EQ(payload.length, 0u);
+    EXPECT_THAT(type.LastSerializeError(), testing::HasSubstr("encoder boom"));
+}
+
+// ---------------------------------------------------------------------------
 // Tests — basic provider behaviour
 // ---------------------------------------------------------------------------
 
@@ -90,6 +126,26 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     p.CreateTopic({"pub", "nosub"}, MakeSchema());
     EXPECT_NO_THROW(p.Publish({"pub", "nosub"}, MakeEncoder(1)));
+}
+
+// #60 (production half): a failing row encoder makes serialize() fail (captured in
+// LastSerializeError); Publish must SURFACE it as a throw carrying the diagnostic,
+// not drop the row silently. Paired with PublishWithoutSubscriberDoesNotThrow above,
+// which proves a benign no-reader write()==false (no serialize error) does NOT throw
+// — so the signal is the serialize diagnostic, not the write() return.
+TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
+    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    p.CreateTopic({"pub", "encfail"}, MakeSchema());
+    PubSubProvider::RowEncoder bad = [](WriteBuffer&) {
+        throw std::runtime_error("encoder boom");
+    };
+    try {
+        p.Publish({"pub", "encfail"}, bad);
+        FAIL() << "Publish must throw when the row encoder fails to serialize";
+    } catch (const std::runtime_error& e) {
+        EXPECT_THAT(e.what(), testing::HasSubstr("failed to publish"));
+        EXPECT_THAT(e.what(), testing::HasSubstr("encoder boom"));
+    }
 }
 
 TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
