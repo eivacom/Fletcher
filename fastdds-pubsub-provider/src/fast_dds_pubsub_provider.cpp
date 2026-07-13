@@ -422,10 +422,23 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // encoder is captured in LastSerializeError() during this call — but FastDDS
     // does NOT propagate that into write()'s return (and write()==false is itself a
     // benign no-matched-reader outcome, not an error). So the reliable signal is the
-    // diagnostic sink, checked unconditionally: serialize() resets it per call, so a
-    // non-empty value here means THIS publish's encoder failed.
-    ts.writer->write(&transport);
+    // diagnostic sink, checked unconditionally after write().
+    //
+    // This relies on write() invoking serialize() synchronously before it returns
+    // — true for the SYNCHRONOUS publish mode this provider uses. A DataWriter QoS
+    // override that selects ASYNCHRONOUS_PUBLISH_MODE would defer serialization to
+    // the flow-controller thread, and this check would run before serialize() and
+    // miss the failure (#60 would silently reopen for that topic).
+    //
+    // The single FletcherTopicType instance is shared by every data topic, so
+    // reset the sink immediately before write(): a non-empty value afterwards then
+    // means THIS publish's serialize() ran and failed, never a stale error from an
+    // earlier failed publish on another topic (defensive if write() ever returns
+    // without calling serialize() at all). Publish holds impl_->mu, so the
+    // clear/write/read sequence on the shared sink is not raced by another publish.
     auto* fletcher_type = static_cast<internal::FletcherTopicType*>(impl_->type_support.get());
+    fletcher_type->ClearSerializeError();
+    ts.writer->write(&transport);
     const std::string serialize_error = fletcher_type->LastSerializeError();
     if (!serialize_error.empty())
         throw std::runtime_error("FastDDS: failed to publish to '" + name +
