@@ -194,6 +194,17 @@ class FletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
         return last_serialize_error_;
     }
 
+    // Reset the diagnostic sink. Publish() calls this immediately before write()
+    // so that a non-empty LastSerializeError() afterwards unambiguously means
+    // THIS publish's serialize() ran and failed. serialize() also resets on
+    // entry, so in the normal path (write() invokes serialize() synchronously)
+    // this is redundant — but a single FletcherTopicType instance is shared by
+    // every data topic, so if a write() ever returns WITHOUT calling serialize()
+    // (e.g. it bails on a resource limit before serialization), the pre-write
+    // reset here prevents a stale error from an earlier failed publish on
+    // another topic being misattributed to this one. Thread-safe and noexcept.
+    void ClearSerializeError() const noexcept { SetLastSerializeError(""); }
+
    private:
     // Exception-safe diagnostic sink for the serialize catch handlers. Marked
     // noexcept and wraps the lock + assignment in an inner try/catch so NO

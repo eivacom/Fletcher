@@ -91,6 +91,30 @@ TEST(FletcherTopicTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
     EXPECT_THAT(type.LastSerializeError(), testing::HasSubstr("encoder boom"));
 }
 
+// #60 hardening: a single FletcherTopicType instance is shared by every data
+// topic, so the publish site resets the diagnostic sink (ClearSerializeError())
+// before write(). This guards the case where a write() returns WITHOUT invoking
+// serialize() (e.g. it bails on a resource limit before serialization): without
+// the pre-write reset a stale error from an earlier failed publish would be
+// misattributed to the current one. Exercised directly on the internal type.
+TEST(FletcherTopicTypeTest, ClearSerializeErrorResetsStaleDiagnostic) {
+    fletcher::internal::FletcherTopicType type(128);
+
+    // A prior failed publish leaves a diagnostic on the shared instance.
+    Attachments attachments;
+    fletcher::internal::TransportData data;
+    data.attachments = &attachments;
+    data.encoder = [](WriteBuffer&) { throw std::runtime_error("stale boom"); };
+    eprosima::fastdds::rtps::SerializedPayload_t payload(128);
+    type.serialize(&data, payload, eprosima::fastdds::dds::DataRepresentationId_t{});
+    ASSERT_THAT(type.LastSerializeError(), testing::HasSubstr("stale boom"));
+
+    // The next publish clears the sink before write(); if that write() then does
+    // not call serialize() at all, the sink must be empty — not "stale boom".
+    type.ClearSerializeError();
+    EXPECT_TRUE(type.LastSerializeError().empty());
+}
+
 // ---------------------------------------------------------------------------
 // Tests — basic provider behaviour
 // ---------------------------------------------------------------------------
@@ -136,9 +160,7 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
 TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     p.CreateTopic({"pub", "encfail"}, MakeSchema());
-    PubSubProvider::RowEncoder bad = [](WriteBuffer&) {
-        throw std::runtime_error("encoder boom");
-    };
+    PubSubProvider::RowEncoder bad = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
     try {
         p.Publish({"pub", "encfail"}, bad);
         FAIL() << "Publish must throw when the row encoder fails to serialize";
