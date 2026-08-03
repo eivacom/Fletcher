@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "nested.fletcher.pb.h"
+#include "option_metadata.fletcher.pb.h"
 #include "pubsub.fletcher.pb.h"
 
 namespace {
@@ -57,6 +58,39 @@ TEST(IpcParityTest, NestedMessageIpcFileMatchesRuntimeSchemaBytes) {
     ASSERT_FALSE(file_bytes.empty());
 
     fletcher::OwnedSchema schema = fletcher_gen::integration::LocationSchema();
+    const std::vector<uint8_t> runtime_bytes = fletcher::SerializeSchemaIpc(schema.get());
+
+    EXPECT_EQ(file_bytes, runtime_bytes);
+}
+
+TEST(IpcParityTest, MappedMetadataIpcFileMatchesRuntimeSchemaBytes) {
+    // #117: the two emission paths build their metadata from one shared pair
+    // vector, but only a byte comparison proves they agree once mapped keys are
+    // present — it is the single check that catches both a key-ORDER divergence
+    // and a C++ string-literal ESCAPING bug (option_metadata.proto's ext_meta
+    // carries JSON with embedded quotes).
+    const std::filesystem::path path = GeneratedDir() / "option_metadata.Sample.ipc";
+    ASSERT_TRUE(std::filesystem::exists(path)) << path;
+
+    const std::vector<uint8_t> file_bytes = ReadFileBytes(path);
+    ASSERT_FALSE(file_bytes.empty());
+
+    fletcher::OwnedSchema schema = fletcher_gen::integration::metadata::SampleSchema();
+    const std::vector<uint8_t> runtime_bytes = fletcher::SerializeSchemaIpc(schema.get());
+
+    EXPECT_EQ(file_bytes, runtime_bytes);
+}
+
+TEST(IpcParityTest, MappedMetadataOnFlattenedFieldsMatchesRuntimeSchemaBytes) {
+    // Pos exercises (fletcher.flatten_field) inlining plus the JSON-valued
+    // option, so this pins escaping and flatten-chain inheritance on both paths.
+    const std::filesystem::path path = GeneratedDir() / "option_metadata.Pos.ipc";
+    ASSERT_TRUE(std::filesystem::exists(path)) << path;
+
+    const std::vector<uint8_t> file_bytes = ReadFileBytes(path);
+    ASSERT_FALSE(file_bytes.empty());
+
+    fletcher::OwnedSchema schema = fletcher_gen::integration::metadata::PosSchema();
     const std::vector<uint8_t> runtime_bytes = fletcher::SerializeSchemaIpc(schema.get());
 
     EXPECT_EQ(file_bytes, runtime_bytes);

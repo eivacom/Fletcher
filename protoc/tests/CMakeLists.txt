@@ -5,7 +5,8 @@ find_package(GTest REQUIRED)
 
 add_executable(fletcher_proto_plugin_tests
     test_type_mapper.cpp
-    test_schema_builder.cpp)
+    test_schema_builder.cpp
+    test_option_metadata.cpp)
 
 target_link_libraries(fletcher_proto_plugin_tests PRIVATE
     GTest::gtest_main

@@ -9,6 +9,8 @@
 #include <nanoarrow/nanoarrow.hpp>
 #include <vector>
 
+#include "option_metadata.hpp"
+
 namespace fletcher {
 
 // Build the Arrow schema for msg in-process. Mirrors the <Class>Schema()
@@ -17,7 +19,11 @@ namespace fletcher {
 // is identical to the schema the generated code constructs at runtime.
 // Defined in generator.cpp because it shares the field-gathering internals
 // with code generation. Throws std::runtime_error on failure.
-nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg);
+//
+// `resolver` supplies any --fletcher_opt=metadata_from_option mappings; null
+// (the default) means only the four builtin metadata keys are emitted.
+nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg,
+                                           const OptionMetadataResolver* resolver = nullptr);
 
 // Serialize an ArrowSchema to Arrow IPC stream format (schema message +
 // end-of-stream marker, no batches). Byte-compatible with

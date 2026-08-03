@@ -110,6 +110,130 @@ Arrow schema.
 
 ---
 
+## `--fletcher_opt=metadata_from_option` — custom option passthrough
+
+A **CLI flag**, not a `.proto` option. It copies values out of *your own* custom
+proto options into Arrow schema/field metadata. Fletcher never interprets,
+validates or normalises what it copies, and has no built-in knowledge of any
+option or key — a rule is a byte-copy from an option path you name to an Arrow
+metadata key you name.
+
+```
+--fletcher_opt=metadata_from_option=<scope>:<option-path>:<arrow-key>
+```
+
+The token is split on its **first two** colons only, so `<arrow-key>` may
+contain colons of its own (`ARROW:extension:name`, `mypkg:unit`). Pass the flag
+once per rule — protoc joins repeated `--fletcher_opt` values with commas.
+
+### Scopes
+
+| Scope | Reads | Lands on |
+|---|---|---|
+| `field` | `FieldOptions` of the Arrow field's proto field | field metadata |
+| `field_type` | `MessageOptions` of that field's **message type** | field metadata |
+| `message` | `MessageOptions` of the message itself | schema metadata |
+
+`field_type` is how a "column type message" annotates every field that uses it:
+
+```proto
+message Time {
+    option (mypkg.type) = { unit: "s" };
+    option (fletcher.flatten) = true;
+    google.protobuf.Timestamp value = 1;
+}
+message Sample { Time t = 1; }   // field `t` inherits unit=s
+```
+
+Note `message` scope reaches only the schema root of the message being
+generated. When that same message is used as a *field* elsewhere, the nested
+schema's own metadata is replaced by the field's — use `field_type` for that.
+
+### Option paths
+
+```
+path := step ( '/' step )*
+step := <extension-fqn> ( '.' <sub-field> )*
+```
+
+Extensions are named by their fully-qualified name; the boundary between the
+extension name and the sub-field path is resolved automatically. `/` is the
+**enum hop**: valid only after a singular enum-typed sub-field, it continues
+from *that enum value's* `EnumValueOptions`. This is how a value declared once
+on an enum value reaches every field that selects it:
+
+```proto
+enum Enc {
+    ENC_GEO = 11 [(mypkg.enc_opts) = { extension_name: "geoarrow.point" }];
+}
+```
+```
+--fletcher_opt=metadata_from_option=field_type:mypkg.type.enc/mypkg.enc_opts.extension_name:ARROW:extension:name
+```
+
+### Value rendering
+
+| Sub-field type | Rendered as |
+|---|---|
+| string / bytes | verbatim |
+| enum | the value's **proto name**, verbatim (`NS_TYPE_TIME`) |
+| bool | `true` / `false` |
+| int32 / int64 / uint32 / uint64 | decimal |
+| repeated (of the above) | elements joined with `,` |
+| float / double | **rejected** — not reproducible across platforms |
+| message | **rejected** — the path is incomplete |
+
+An empty rendered value counts as **absent**.
+
+### Precedence
+
+Rules are evaluated in the order given, and a rule producing a non-empty value
+**overwrites** that Arrow key. So list the fallback *first* and the preferred
+source *last*. A key keeps the position of its first appearance, so output stays
+deterministic. Within one rule, the field's own declaration is tried before any
+wrapper it was inlined out of.
+
+Per-key merge, never whole-option replace: a field that overrides only `unit`
+still inherits `type` and `encoding` from its field type.
+
+### Interaction with flatten
+
+- `(fletcher.flatten)` wrappers: the annotation on the wrapper message lands on
+  the flattened column, because the referencing field keeps its own descriptor.
+- `(fletcher.flatten_field)`: the outer field disappears from the Arrow schema,
+  so its annotation (and its message type's) is inherited by **each** inlined
+  leaf, unless the leaf declares its own.
+
+### Errors
+
+Anything statically determinable from the descriptors is a **hard codegen
+error**: a malformed rule, an unknown scope, an empty key or path, a key that is
+one of the four generator-owned keys (`proto_package`, `proto_message`,
+`field_number`, `field_id`), an unknown sub-field, a `/` hop off a non-enum, or
+a rejected terminal type.
+
+Anything depending on a particular descriptor's contents is **skipped
+silently**: an option that is not applied, a sub-field left unset, a value that
+renders empty. An extension that no file in the protoc invocation declares is
+also skipped — one rule list is normally applied to a whole corpus where only
+some files import the declaring `.proto`.
+
+### Limitations
+
+- **List elements.** For `repeated <flatten wrapper>` the metadata lands on the
+  list field, not the element. An Arrow extension type on a list is
+  semantically wrong, but the element has no attachment point today.
+- **Map fields** inherit nothing: the message type of a map field is the
+  synthetic `MapEntry`, which is never a metadata carrier.
+- **Rules are a build-wide property.** For a cross-file nested struct the
+  generated C++ deep-copies `<Nested>Schema()` from a header produced by another
+  protoc invocation, while `--fletcher_opt=ipc` recomputes it in-process. Every
+  invocation contributing to one generated tree must pass an identical rule
+  list, or the two will disagree.
+- The inner field of a `(fletcher.flatten)` wrapper is not reachable — only the
+  wrapper's `MessageOptions` and the referencing field's `FieldOptions`.
+- `--fletcher_opt=ts` output does not carry mapped metadata.
+
 ## Extension field number registry
 
 | Number | Scope | Option |
@@ -120,3 +244,6 @@ Arrow schema.
 Field number 50000 is well within the `extensions 1000 to max` range
 that `google.protobuf.MessageOptions` and `FieldOptions` reserve for
 third-party extensions.
+
+Extension numbers named in a `metadata_from_option` rule are the **consumer's
+own**, not Fletcher's, and are not registered here.
