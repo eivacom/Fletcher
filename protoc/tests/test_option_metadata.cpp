@@ -38,8 +38,7 @@ TEST(EscapeCppStringLiteralTest, PrintableAsciiIsUnchanged) {
 
 TEST(EscapeCppStringLiteralTest, QuotesAndBackslashesAreEscaped) {
     // The motivating case: an option carrying JSON, e.g. ext_metadata.
-    EXPECT_EQ(EscapeCppStringLiteral(R"({"crs":"EPSG:4326"})"),
-              R"({\"crs\":\"EPSG:4326\"})");
+    EXPECT_EQ(EscapeCppStringLiteral(R"({"crs":"EPSG:4326"})"), R"({\"crs\":\"EPSG:4326\"})");
     EXPECT_EQ(EscapeCppStringLiteral("a\\b"), "a\\\\b");
     EXPECT_EQ(EscapeCppStringLiteral(R"(\")"), R"(\\\")");
 }
@@ -71,7 +70,10 @@ TEST(EscapeCppStringLiteralTest, EmbeddedNulIsEscapedAsThreeDigitOctal) {
     // back as 0x01. Note the generated path's ArrowCharView is strlen-based, so
     // a value containing NUL is truncated at emission — the in-process path
     // truncates identically via c_str(), so the two paths still agree.
-    const std::string with_nul("a\0" "1", 3);
+    const std::string with_nul(
+        "a\0"
+        "1",
+        3);
     EXPECT_EQ(EscapeCppStringLiteral(with_nul), "a\\0001");
 }
 
@@ -337,8 +339,8 @@ TEST(MetadataRuleParseTest, ParsesScopePathAndKeyWithColonsInTheKey) {
 TEST(MetadataRuleParseTest, NonRuleTokensAreLeftAlone) {
     std::vector<MetadataRule> rules;
     std::string error;
-    ASSERT_TRUE(fletcher::ParseMetadataRules("ts,ipc,accessor,rust,schema_only,banana", &rules,
-                                             &error))
+    ASSERT_TRUE(
+        fletcher::ParseMetadataRules("ts,ipc,accessor,rust,schema_only,banana", &rules, &error))
         << error;
     EXPECT_TRUE(rules.empty());
 }
@@ -347,13 +349,13 @@ TEST(MetadataRuleParseTest, MalformedRulesAreHardErrors) {
     std::vector<MetadataRule> rules;
     std::string error;
     // Missing the second separator.
-    EXPECT_FALSE(fletcher::ParseMetadataRules("metadata_from_option=field:fx.col.unit", &rules,
-                                              &error));
-    EXPECT_FALSE(fletcher::ParseMetadataRules("metadata_from_option=nope:fx.col.unit:k", &rules,
-                                              &error));
+    EXPECT_FALSE(
+        fletcher::ParseMetadataRules("metadata_from_option=field:fx.col.unit", &rules, &error));
+    EXPECT_FALSE(
+        fletcher::ParseMetadataRules("metadata_from_option=nope:fx.col.unit:k", &rules, &error));
     EXPECT_FALSE(fletcher::ParseMetadataRules("metadata_from_option=field::k", &rules, &error));
-    EXPECT_FALSE(fletcher::ParseMetadataRules("metadata_from_option=field:fx.col.unit:", &rules,
-                                              &error));
+    EXPECT_FALSE(
+        fletcher::ParseMetadataRules("metadata_from_option=field:fx.col.unit:", &rules, &error));
     EXPECT_FALSE(
         fletcher::ParseMetadataRules("metadata_from_option=field:fx.col//unit:k", &rules, &error));
 }
@@ -544,8 +546,9 @@ message M { double v = 1 [(fx.col) = { flag: true, count: 7 }]; }
 )");
     ASSERT_NE(f, nullptr);
     auto resolver = MakeResolver(
-        local, "metadata_from_option=field:fx.col.flag:x:flag,metadata_from_option=field:fx.col."
-               "count:x:count");
+        local,
+        "metadata_from_option=field:fx.col.flag:x:flag,metadata_from_option=field:fx.col."
+        "count:x:count");
     ASSERT_NE(resolver, nullptr);
     const auto m = AsMap(resolver->ForField(FieldOf(f, "M", "v"), {}));
     EXPECT_EQ(m.at("x:flag"), "true");

@@ -471,8 +471,7 @@ std::vector<std::pair<std::string, std::string>> OptionMetadataResolver::ForMess
 }
 
 std::vector<std::pair<std::string, std::string>> OptionMetadataResolver::ForField(
-    const FieldDescriptor* leaf,
-    const std::vector<const FieldDescriptor*>& flatten_chain) const {
+    const FieldDescriptor* leaf, const std::vector<const FieldDescriptor*>& flatten_chain) const {
     std::vector<std::pair<std::string, std::string>> pairs;
     if (leaf == nullptr) return pairs;
 

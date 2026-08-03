@@ -58,9 +58,9 @@ class OptionMetadataResolver {
     // in `pool` is NOT an error — one flag list is applied to a whole corpus and
     // only some files import the declaring .proto — that rule is dropped.
     // Returns nullptr and sets *error on failure.
-    static std::unique_ptr<OptionMetadataResolver> Create(std::vector<MetadataRule> rules,
-                                                          const google::protobuf::DescriptorPool* pool,
-                                                          std::string* error);
+    static std::unique_ptr<OptionMetadataResolver> Create(
+        std::vector<MetadataRule> rules, const google::protobuf::DescriptorPool* pool,
+        std::string* error);
     ~OptionMetadataResolver();
 
     OptionMetadataResolver(const OptionMetadataResolver&) = delete;

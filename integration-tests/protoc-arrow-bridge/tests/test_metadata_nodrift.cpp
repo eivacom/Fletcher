@@ -200,8 +200,9 @@ TEST(MetadataNoDriftTest, RulesActuallyChangeOutputWhenTheyMatch) {
     const fs::path plain = MakeCaseDir("control_plain");
     const fs::path mapped = MakeCaseDir("control_mapped");
     ASSERT_EQ(RunPlugin({"ipc"}, proto, plain), 0);
-    ASSERT_EQ(RunPlugin({"ipc", "metadata_from_option=field_type:integration.metadata.typ.unit:x:"
-                                "unit"},
+    ASSERT_EQ(RunPlugin({"ipc",
+                         "metadata_from_option=field_type:integration.metadata.typ.unit:x:"
+                         "unit"},
                         proto, mapped),
               0);
 
@@ -217,10 +218,10 @@ TEST(MetadataNoDriftTest, MalformedRulesFailProtocWithNonZeroExit) {
     ASSERT_TRUE(fs::exists(proto)) << proto;
 
     const std::array<const char*, 4> kBad = {
-        "metadata_from_option=field:absent.pkg.col.unit",          // missing the key
-        "metadata_from_option=nope:absent.pkg.col.unit:x:unit",    // unknown scope
-        "metadata_from_option=field:absent.pkg.col.unit:",         // empty key
-        "metadata_from_option=field::x:unit",                      // empty path
+        "metadata_from_option=field:absent.pkg.col.unit",        // missing the key
+        "metadata_from_option=nope:absent.pkg.col.unit:x:unit",  // unknown scope
+        "metadata_from_option=field:absent.pkg.col.unit:",       // empty key
+        "metadata_from_option=field::x:unit",                    // empty path
     };
     for (const char* bad : kBad) {
         const fs::path dir = MakeCaseDir("bad_" + Sanitize(bad).substr(0, 40));
