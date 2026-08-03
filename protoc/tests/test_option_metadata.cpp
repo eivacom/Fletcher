@@ -393,6 +393,26 @@ TEST(MetadataRuleCompileTest, StaticPathErrorsAreHardErrors) {
     EXPECT_NE(RuleError(fx.pool, "metadata_from_option=field:fx.col.ratio:k"), "");
 }
 
+TEST(MetadataRuleCompileTest, MultiComponentSubFieldPathResolvesToTheLongestExtensionPrefix) {
+    // "fx.col.nested.inner" must bind extension `fx.col` and sub-path
+    // nested->inner. The compiler scans prefixes longest-first, so this also
+    // covers it skipping "fx.col.nested.inner" and "fx.col.nested" (neither is
+    // an extension) before settling on "fx.col".
+    FixturePool local;
+    local.Add("fx.proto", kOptionsProto);
+    const FileDescriptor* f = local.Add("deep.proto", R"(
+syntax = "proto3";
+package dp;
+import "fx.proto";
+message M { double v = 1 [(fx.col) = { nested { inner: "deep" } }]; }
+)");
+    ASSERT_NE(f, nullptr);
+    auto resolver = MakeResolver(local, "metadata_from_option=field:fx.col.nested.inner:x:inner");
+    ASSERT_NE(resolver, nullptr);
+    const auto m = AsMap(resolver->ForField(FieldOf(f, "M", "v"), {}));
+    EXPECT_EQ(m.at("x:inner"), "deep");
+}
+
 TEST(MetadataRuleCompileTest, UnresolvableExtensionIsDroppedNotAnError) {
     Fx fx;
     // No file in this pool declares `absent.thing`, which is the normal case when

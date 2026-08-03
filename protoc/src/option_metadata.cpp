@@ -343,13 +343,20 @@ std::unique_ptr<OptionMetadataResolver> OptionMetadataResolver::Create(
             const char* extendee = RequiredExtendee(rule.scope, si);
             const std::vector<std::string> parts = Split(rule.steps[si], '.');
 
-            // Shortest-prefix-first: the extension's fully-qualified name is the
-            // longest leading run of components that resolves to an extension of
-            // the required extendee. Everything after it is the sub-field path.
+            // The extension's fully-qualified name is the LONGEST leading run of
+            // components that resolves to an extension of the required extendee;
+            // everything after it is the sub-field path. Scanning longest-first
+            // means a rule always binds the most specific extension it names.
+            //
+            // In practice at most one prefix can resolve at all: protobuf keeps
+            // messages and extension fields in one symbol table per scope, so an
+            // extension `p.x` and a message scope `p.x` (which `p.x.y` would
+            // require) collide at .proto compile time. Longest-first is belt and
+            // braces — it costs one loop direction and removes the question.
             const FieldDescriptor* ext = nullptr;
             size_t consumed = 0;
             bool wrong_extendee = false;
-            for (size_t k = 1; k <= parts.size(); ++k) {
+            for (size_t k = parts.size(); k >= 1; --k) {
                 std::string prefix = parts[0];
                 for (size_t j = 1; j < k; ++j) prefix += "." + parts[j];
                 const FieldDescriptor* candidate = pool->FindExtensionByName(prefix);
