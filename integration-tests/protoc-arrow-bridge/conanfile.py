@@ -4,7 +4,7 @@
 import os
 
 from conan import ConanFile
-from conan.tools.cmake import CMake, cmake_layout
+from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
 
 
 class ProtocArrowBridgeIntegrationConan(ConanFile):
@@ -21,7 +21,7 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
     external remote for our own packages.
     """
     settings = "os", "compiler", "build_type", "arch"
-    generators = "CMakeDeps", "CMakeToolchain"
+    generators = ("CMakeDeps",)
 
     def requirements(self):
         # Version ranges so the test picks up whatever the branch's
@@ -50,6 +50,27 @@ class ProtocArrowBridgeIntegrationConan(ConanFile):
 
     def layout(self):
         cmake_layout(self)
+
+    def generate(self):
+        # --fletcher_opt=metadata_from_option rules for option_metadata.proto
+        metadata_rules = (
+            "metadata_from_option=message:integration.metadata.typ.group:x:group",
+            "metadata_from_option=field_type:integration.metadata.typ.kind:x:kind",
+            "metadata_from_option=field_type:integration.metadata.typ.unit:x:unit",
+            "metadata_from_option=field_type:integration.metadata.typ.ext_meta"
+            ":ARROW:extension:metadata",
+            "metadata_from_option=field:integration.metadata.col.unit:x:unit",
+            "metadata_from_option=field_type:integration.metadata.typ.kind"
+            "/integration.metadata.typ_opts.ext_name:ARROW:extension:name",
+            "metadata_from_option=field_type:integration.metadata.typ.enc"
+            "/integration.metadata.enc_opts.ext_name:ARROW:extension:name",
+        )
+
+        tc = CMakeToolchain(self)
+        # Semicolon-joined so CMake receives it as a list. No rule contains a
+        # semicolon; a rule that did would need a different separator.
+        tc.cache_variables["FLETCHER_METADATA_RULES"] = ";".join(metadata_rules)
+        tc.generate()
 
     def build(self):
         # `conan build .` configures + builds + runs ctest through the

@@ -109,6 +109,55 @@ endforeach()
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
 # ----------------------------------------------------------------------------
+# #117 custom-option metadata passthrough. A separate generation command because
+# this stem is the only one that needs mapping rules; the loop above stays on a
+# bare `--fletcher_opt=ipc` so its outputs remain the untouched baseline.
+#
+# The rules themselves are declared in conanfile.py's generate() and arrive as
+# FLETCHER_METADATA_RULES (a list, rule order preserved and significant).
+# ----------------------------------------------------------------------------
+if(NOT DEFINED FLETCHER_METADATA_RULES)
+    message(FATAL_ERROR
+        "FLETCHER_METADATA_RULES is not set. This harness is driven by "
+        "`conan build .`, which supplies the metadata_from_option rules from "
+        "conanfile.py. Configure through Conan, or pass "
+        "-DFLETCHER_METADATA_RULES=\"rule1;rule2;...\" explicitly. Generating "
+        "the fixture without rules would silently produce metadata-less "
+        "schemas and fail the MetadataOptions tests in a confusing way.")
+endif()
+
+set(_META_RULES)
+foreach(_rule IN LISTS FLETCHER_METADATA_RULES)
+    list(APPEND _META_RULES "--fletcher_opt=${_rule}")
+endforeach()
+
+set(_meta_src  "${PROTO_DIR}/option_metadata.proto")
+set(_meta_hdr  "${GENERATED_DIR}/option_metadata.fletcher.pb.h")
+set(_meta_vhdr "${GENERATED_DIR}/option_metadata.fletcher.arrow.pb.h")
+set(_meta_ipc)
+foreach(_msg IN ITEMS Sample Pos Coord)
+    list(APPEND _meta_ipc "${GENERATED_DIR}/option_metadata.${_msg}.ipc")
+endforeach()
+add_custom_command(
+    OUTPUT  "${_meta_hdr}" "${_meta_vhdr}" ${_meta_ipc}
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=ipc"
+            ${_META_RULES}
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_meta_src}"
+    DEPENDS "${_meta_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+    COMMENT "protoc-gen-fletcher (metadata_from_option): option_metadata.proto"
+    VERBATIM
+)
+add_custom_target(generate_metadata_headers ALL
+    DEPENDS "${_meta_hdr}" "${_meta_vhdr}" ${_meta_ipc})
+
+# ----------------------------------------------------------------------------
 # RBA-2 accessor fixture: generate the real <Class>Accessor header for the
 # flat scalar fixture (accessor_scalar.proto) so the forcing test can include
 # and compile it. The accessor token is what triggers the .accessor.pb.h
@@ -192,8 +241,9 @@ add_executable(integration_tests
     tests/test_native_roundtrip.cpp
     tests/test_nullability_consistency.cpp
     tests/test_arrow_view.cpp
-    tests/test_ipc_parity.cpp)
-add_dependencies(integration_tests generate_headers)
+    tests/test_ipc_parity.cpp
+    tests/test_metadata_options.cpp)
+add_dependencies(integration_tests generate_headers generate_metadata_headers)
 
 target_include_directories(integration_tests PRIVATE
     "${GENERATED_DIR}")
@@ -219,6 +269,7 @@ gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
 # ----------------------------------------------------------------------------
 add_executable(accessor_tests
     tests/test_accessor.cpp
+    tests/test_metadata_nodrift.cpp
     tests/test_accessor_scalar.cpp
     tests/test_accessor_composite.cpp
     tests/test_accessor_capstone.cpp

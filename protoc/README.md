@@ -79,9 +79,18 @@ protoc \
 - `--fletcher_opt=accessor` — additionally generate the read-only C++ **RecordBatch accessor** header `<stem>.fletcher.accessor.pb.h` (one `<Class>Accessor` per message). See [RecordBatch accessors](#recordbatch-accessors) below.
 - `--fletcher_opt=rust` — additionally generate the read-only **Rust** RecordBatch accessor module `<stem>.fletcher.rs` (the Rust counterpart of `accessor`, targeting the official [`arrow`](https://crates.io/crates/arrow) crate). See [RecordBatch accessors](#recordbatch-accessors) below.
 
+- `--fletcher_opt=metadata_from_option=<scope>:<option-path>:<arrow-key>` — copy a value from one of **your own** custom proto options into Arrow schema or field metadata. Fletcher attaches no meaning to the option or the key; a rule is a byte-copy. Pass the flag once per rule. See [Fletcher proto options](../docs/fletcher-options.md#--fletcher_optmetadata_from_option--custom-option-passthrough) for the grammar, the three scopes, the enum hop, precedence and the error rules.
+
+  ```
+  --fletcher_opt=metadata_from_option=field_type:mypkg.type.unit:mypkg:unit
+  --fletcher_opt=metadata_from_option=field_type:mypkg.type.enc/mypkg.enc_opts.extension_name:ARROW:extension:name
+  ```
+
+  The four keys the generator always emits — `proto_package`, `proto_message`, `field_number`, `field_id` — are reserved: a rule targeting one of them is a hard error. Mapped keys are appended, never substituted. With no rules, output is byte-for-byte what it was before the feature existed.
+
 The `accessor` and `rust` tokens are purely additive: they emit only their own new files and never change the bytes of the C++ / TypeScript / IPC outputs, with or without the other options.
 
-Options combine comma-separated: `--fletcher_opt=ts,ipc` or `--fletcher_opt=accessor,rust,ipc`.
+Options combine comma-separated: `--fletcher_opt=ts,ipc` or `--fletcher_opt=accessor,rust,ipc`. protoc joins repeated `--fletcher_opt` flags with commas, so a long list of mapping rules is usually written one flag per rule.
 
 ## Conan package (C++ consumers)
 

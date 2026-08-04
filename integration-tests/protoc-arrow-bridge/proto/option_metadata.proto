@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// Fixture for --fletcher_opt=metadata_from_option (issue #117).
+//
+// Self-contained on purpose: it declares its OWN custom options rather than
+// importing any consumer's schema package. Fletcher must be able to copy an
+// arbitrary third-party option through to Arrow metadata with no knowledge of
+// what it means, so the fixture that proves it must not be tied to one.
+//
+// The option shapes here mirror the structures the mechanism has to handle:
+// message-level defaults inherited by fields of that type, enum-valued
+// sub-fields, a second hop into an enum value's own options, values carried
+// through (fletcher.flatten) wrappers and (fletcher.flatten_field) inlining,
+// and a value containing JSON so the C++ string-literal escaping is exercised
+// end to end.
+syntax = "proto3";
+
+package integration.metadata;
+
+import "fletcher/options.proto";
+import "google/protobuf/descriptor.proto";
+
+// ---- Option definitions -----------------------------------------------
+
+message EncOpts {
+    string ext_name = 1;
+}
+
+message TypOpts {
+    string ext_name = 3;
+}
+
+extend google.protobuf.EnumValueOptions {
+    EncOpts enc_opts = 60103;
+    TypOpts typ_opts = 60102;
+}
+
+enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_ALPHA = 1 [(integration.metadata.typ_opts) = { ext_name: "fx.alpha" }];
+}
+
+enum Enc {
+    ENC_UNSPECIFIED = 0;
+    ENC_F64 = 10;
+    ENC_GEO = 11 [(integration.metadata.enc_opts) = { ext_name: "geoarrow.point" }];
+}
+
+message ColOpts {
+    Kind kind = 1;
+    Enc enc = 2;
+    string unit = 3;
+    string ext_meta = 4;
+}
+
+message TypeDef {
+    Kind kind = 1;
+    Enc enc = 2;
+    string unit = 3;
+    string group = 4;
+    string ext_meta = 5;
+}
+
+extend google.protobuf.FieldOptions {
+    ColOpts col = 60100;
+}
+
+extend google.protobuf.MessageOptions {
+    TypeDef typ = 60101;
+}
+
+// ---- Schema -----------------------------------------------------------
+
+// A flatten wrapper: the Arrow column is a bare int64, and it must still carry
+// this message's annotation.
+message Stamp {
+    option (fletcher.flatten) = true;
+    option (integration.metadata.typ) = { kind: KIND_ALPHA, enc: ENC_F64, unit: "s" };
+
+    int64 value = 1;
+}
+
+message Coord {
+    option (integration.metadata.typ) = { unit: "m" };
+
+    double x = 1;
+    double y = 2;
+}
+
+// `coord` is inlined by (fletcher.flatten_field), so the outer field vanishes
+// from the Arrow schema and Coord's annotation can only reach x/y through the
+// flatten chain. ext_meta carries JSON: quotes must survive into the generated
+// C++ string literal and match the .ipc bytes exactly.
+message Pos {
+    option (integration.metadata.typ) = {
+        kind: KIND_ALPHA,
+        enc: ENC_GEO,
+        ext_meta: "{\"crs\":\"EPSG:4326\"}"
+    };
+
+    Coord coord = 1 [(fletcher.flatten_field) = true];
+}
+
+message Sample {
+    option (integration.metadata.typ) = { group: "g0" };
+
+    Stamp t = 1;                              // flatten wrapper -> int64 column
+    Pos pos = 2;                              // nested struct (deep-copied)
+    double heading = 3 [(integration.metadata.col) = { unit: "deg" }];  // field beats field_type
+    repeated Stamp stamps = 4;                // list; annotation lands on the list field
+    map<string, double> extras = 5;           // MapEntry is never a carrier
+}
