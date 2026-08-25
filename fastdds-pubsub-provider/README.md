@@ -8,7 +8,99 @@ Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds
 
 A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
 
-The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. A custom `TopicDataType` (`RawBytesTopicType`) handles the CDR serialisation without requiring IDL generation as a build step.
+The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. Custom `TopicDataType`s handle the CDR serialisation without requiring IDL generation as a build step, named as `fastddsgen` would have named them: `FletcherSamplePubSubType` over `FletcherSample`, plus `RawBytesPubSubType` for the companion schema channel.
+
+### Zero-copy: the plain sample
+
+Fast DDS delivers zero-copy only for a **plain** type — one whose in-memory layout already *is* its CDR representation, so neither end serialises anything. The sample is therefore a real fixed-layout struct, `internal::FletcherSample`:
+
+```cpp
+template <uint32_t N>
+struct FletcherSample {
+    uint32_t length;   // bytes of body in use
+    uint8_t  body[N];  // row, then attachments
+};
+```
+
+Its `static_assert`s stand in for what `fastddsgen` would have guaranteed from a `@extensibility(FINAL)` IDL struct: trivially copyable, standard layout, no padding, little-endian.
+
+The bound is a template parameter because a plain type's size has to be known to the compiler, and it reaches the provider as `FastDDSProviderOptions::max_payload_bytes`, a runtime option. `internal/payload_binding.hpp` is the seam between the two, and deliberately the only one: the registered type, the loaned publish flow and the loaned read flow all come from one `PayloadBinding`, so they cannot disagree about `N`.
+
+The bounds that exist are stated as a rule rather than a list — powers of two from 4 KiB to 8 MiB, which is also what keeps every one of them a multiple of 4:
+
+```cpp
+constexpr bool IsPayloadBound(uint32_t bytes) {
+    return std::has_single_bit(bytes) && bytes >= kMinPayloadBytes && bytes <= kMaxPayloadBytes;
+}
+
+template <uint32_t N>
+concept PayloadBound = IsPayloadBound(N);   // the same rule, for a bound the compiler knows
+
+options.max_payload_bytes = fletcher::kPayloadBytes<128 * 1024>;  // checked where it is written
+options.max_payload_bytes = fletcher::kPayloadBytes<100'000>;     // does not compile
+```
+
+Written once and used twice, so a bound rejected at run time and one rejected at compile time are
+rejected by the same expression. `IsPayloadBound()` is public, so a value read from configuration
+can be checked without catching.
+
+Nothing is ever rounded: a bound with no plain type behind it is a mistake, and one that only exists at run time — read from config, say — is refused by the constructor instead. The bound rides in the registered type name (`fletcher_65536`), so two providers on different bounds fail to match at discovery rather than exchanging samples one side cannot hold.
+
+Both ends address that struct, which is the whole difference from a hand-framed byte buffer. Each flow
+is its own class over a shared base, mirroring how DDS itself splits the calls — `SampleWriter` /
+`LoanableSampleWriter` on the publish side (`internal/sample_writer.hpp`), `DataReaderListener` /
+`LoanableDataReaderListener` on the subscribe side (`internal/data_reader_listener.hpp`):
+
+| | Publish — `SampleWriterBase` | Subscribe — `DataReaderListenerBase` |
+|---|---|---|
+| **Loanable** | `LoanableSampleWriter<N>`: `loan_sample` → fill `length` and `body` → `write(sample)`. No `serialize()` runs at all; with shared memory the struct being filled *is* the one the reader reads. | `LoanableDataReaderListener<N>`: `take(LoanableSequence<FletcherSample<N>>&, SampleInfoSeq&)` → read fields in place → `return_loan`. |
+| **Plain** | `SampleWriter`: `write(&PublishData)` runs `serialize()`, writing the same layout **truncated after `length`** — so a small row stays small on the wire. | `DataReaderListener`: `take_next_sample(&ReceivedData, &SampleInfo)` — Fast DDS deserialises, which reads `length` out of the payload and needs nothing beyond the bytes that arrived. |
+| **Chosen by** | `FastDDSProviderOptions::loan_publish` — a preference. | `internal::CanLoanSamples(qos)` — a **precondition**, not a preference: reading a payload in place as a `FletcherSample<N>` needs whole payload nodes, which only a `PREALLOCATED*` history memory policy guarantees. Under `DYNAMIC_RESERVE`/`DYNAMIC_REUSABLE` the pool sizes each node to what arrived, so a truncated sample leaves a node shorter than the struct and `length` would steer reads past its end. |
+
+Neither side is negotiated. `loan_sample` is gated by the *writer's* own type (`DataWriterImpl.cpp:525`) and the reader's loans by the *reader's* own type (`DataReaderImpl.cpp:1869-1896`), so all four pairings interoperate — upstream regression-tests exactly that in `test/dds/communication/mix_zero_copy_communication.json`, and it branches on `zero_copy_` between exactly these two reader calls in `test/dds/communication/SubscriberModule.cpp:295`.
+
+**Data-sharing** is left at `DataSharingQosPolicy`'s default `AUTOMATIC`, and no QoS this provider ships ever sets it otherwise. Fast DDS engages shared memory when both endpoints are on one host and the type qualifies, and falls back to the transport when they are not. There is nothing to configure and nothing to turn off — `off()` only removes an option Fast DDS was going to choose correctly. Upstream's own zero-copy test profile (`simple_reliable_zerocopy_profile.xml`) uses `AUTOMATIC` for the same reason.
+
+What this costs:
+
+- **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the full `sizeof(FletcherSample)` — `resource_limits().allocated_samples` slots up front, growing to `max_samples`, per endpoint. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry.
+- **Wire size under `loan_publish`.** Fast DDS stamps a loaned payload `length = max_serialized_type_size` and nothing recomputes it, so every sample crosses the wire at the full bound whatever the row weighs. And it buys little: measured publish-side (`bench_dds_payload`, p50 of 2x4000 samples) it saved a **fixed ~0.1-0.2 us**, not a per-byte cost — 1.05 -> 0.95 us at a 198-byte row and 2.15 -> 2.00 us at 60 KB. Both paths write the row bytes exactly once, so loaning removes no copy: it removes the encapsulation and the length field, and the `PublishData` the serialising path hands to `write()`. Those are now **14.6 ns against 29.3 ns** at a 198-byte row (`bench_pub_sub_type`), so the publish-side case for it is weaker than those DDS-level numbers, which predate that work. Off by default.
+- **Oversized rows throw** under `loan_publish`: a row plus attachments past `max_payload_bytes` raises `std::overflow_error` out of `Publish`. Without it the overflow is reported inside `serialize()` instead; either way the sample is dropped.
+
+What the **read** side is worth, which is where the plain type actually pays: `bench_read_flow`
+publishes flat out and meters the receive path, medians of 3 runs x 8000 samples.
+
+| row bytes | `LoanableDataReaderListener` | `DataReaderListener` | throughput gain |
+|---|---|---|---|
+| 198 | 8.07 µs/sample, 24.5 MB/s | 8.26 µs/sample, 24.0 MB/s | +2% |
+| 4 294 | 7.99 µs, 538 MB/s | 8.66 µs, 496 MB/s | +8% |
+| 16 582 | 8.04 µs, 2 062 MB/s | 10.15 µs, 1 634 MB/s | +26% |
+| 60 198 | 7.93 µs, 7 587 MB/s | 11.43 µs, 5 269 MB/s | **+44%** |
+
+The loaned path's per-sample cost is **flat in payload size** — it never copies — while the
+deserialising path grows linearly at roughly 58 ns/KiB, the cost of allocating a fresh `std::vector`
+per sample and memcpy-ing `length` bytes into it. That is the whole reason the read flow is taken
+whenever its precondition holds rather than offered as an option.
+
+The one deviation from a generated plain type: `serialize()` emits the used prefix rather than the whole struct, and `deserialize()` reads `length` bytes rather than memcpy-ing the lot. Fast DDS never reads past `payload.length`, so this is safe, and it is what keeps the non-loaned path from putting the whole bound on the wire per sample.
+
+### Statuses
+
+Endpoints are created with the status mask their listener implements rather than the default `StatusMask::all()` (`internal/data_writer_listener.hpp`).
+
+**`internal::DataWriterListener` overrides every callback `DataWriterListener` declares**, so nothing a DataWriter can report is left on the default no-op:
+
+| Status | Level | Why it matters |
+|---|---|---|
+| `offered_incompatible_qos` | error | The endpoints never match, so the only symptom is a subscriber that stays unconnected with nothing logged. Reachable whenever writer and reader QoS are configured independently. |
+| `publication_matched` | warning on loss, info on gain | A writer with no readers left keeps accepting publishes and delivers them nowhere. |
+| `offered_deadline_missed` | warning | Only fires on a writer an operator gave a `DEADLINE` to — Fletcher sets none. |
+| `liveliness_lost` | warning | Readers have marked the writer NOT_ALIVE. Fletcher leaves `LIVELINESS` at `AUTOMATIC` with an infinite lease, where it cannot fire, so this too reports a configured policy. |
+| `on_unacknowledged_sample_removed` | warning | Under `KEEP_ALL` + `RELIABLE`, history overflowed past `max_blocking_time` — loss rather than backpressure. No `StatusMask` bit; Fast DDS dispatches it whenever a listener is set at all. |
+
+The reader side, on `DataReaderListenerBase`, logs `requested_incompatible_qos`, `sample_lost` and `sample_rejected`; it does not yet implement `on_subscription_matched`, `on_requested_deadline_missed` or `on_liveliness_changed`, the mirrors of the three above.
+
+**`EPROSIMA_LOG_INFO` compiles to nothing** unless the build defines `FASTDDS_ENFORCE_LOG_INFO` (`Log.hpp:355-359`), so the routine half of `publication_matched` needs that switch to appear. Warnings and errors are always compiled in.
 
 ### Topic name
 
@@ -53,10 +145,19 @@ auto provider = std::make_shared<FastDDSPubSubProvider>(FastDDSProviderOptions{}
 // Custom options — pick a DDS domain and tune QoS:
 FastDDSProviderOptions opts;
 opts.domain_id = 7;
-opts.max_payload_bytes = 4 * 1024 * 1024;
 opts.default_writer_qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
 opts.default_writer_qos.history().depth = 10;
 auto custom = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
+
+// Publishing out of the transport's own buffer, with the history
+// sized to the rows on the topic (see Zero-copy: the plain sample above).
+FastDDSProviderOptions fast;
+fast.loan_publish = true;
+fast.default_writer_qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
+fast.default_writer_qos.history().depth = 10;
+fast.default_writer_qos.resource_limits().max_samples = 10;
+fast.default_writer_qos.resource_limits().allocated_samples = 10;
+auto shared = std::make_shared<FastDDSPubSubProvider>(std::move(fast));
 ```
 
 The provider is passed to `fletcher::Publisher` / `fletcher::Subscriber` or to generated `<Msg>Publisher` / `<Msg>Subscriber` classes:
@@ -124,8 +225,35 @@ publisher.CreateTopic({"misc", "events"},       schema_d);    // uses default_wr
 - `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict.
 - On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `std::shared_future<SharedSchema>` that resolves when the schema is known, and the provider buffers incoming data until then so the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.) Per-writer order is preserved across this handoff — see [Delivery guarantees](#delivery-guarantees).
 - Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
-- The subscription callback is invoked from a Fast DDS internal listener thread. Shared state accessed from the callback must be protected externally.
+- The subscription callback is invoked from a Fast DDS internal listener thread, **while Fast DDS holds that reader's own RTPS mutex**: `StatefulReader::process_data_msg` takes it and still holds it through `change_received`, `NotifyChanges` and the listener call, and the data-sharing thread reaches the same place through the same function. Two consequences. Shared state touched from the callback must be protected externally — and a slow or blocking callback stalls reception for that reader entirely, because nothing else can enter it. Hand work off to your own thread if it is not short.
 - `FastDDSPubSubProvider` is non-copyable and non-movable (DDS entities cannot be transferred).
+- The callback's `data` pointer is a loaned DDS payload: it is valid for the duration of the callback only. Copy anything you keep. (This was always the contract — the pointer was never owned by the callback — but loans are where holding on to it actually breaks.)
+
+### Measured decisions
+
+Numbers that justify a shape in the code, kept here rather than in the comment that would otherwise
+carry them — they date, and a stale figure in a source comment reads as current. Harnesses:
+`benchmarks/bench_pub_sub_type.cpp` here, and `tools/fletcher_bench` in the consuming repo.
+
+| Decision | Where | Measured |
+|---|---|---|
+| `Publish` takes the provider mutex **shared**, not exclusive | `src/fast_dds_pubsub_provider.cpp` | 16 threads on 16 topics: p99 **2.7 µs → 711 µs** when the exclusive lock spanned `DataWriter::write`. `DataWriter::write` is itself thread safe, so shared is enough to keep the topic and writer alive. |
+| `PublishData` and `ReceivedData` are separate structs | `src/internal/transport_data.hpp` | Bundled, every serialised publish built and destroyed an `Attachments` the publish path never reads — MSVC's `unordered_map` allocates a sentinel node in its default constructor. **52 ns of the 137 ns** the publish spends outside Fast DDS. |
+| `serialize()` writes the 8 framing bytes directly instead of through a `Cdr` | `src/internal/fletcher_sample_pub_sub_type.hpp` | Building a `FastBuffer` and a `Cdr` for them cost **47 ns per publish** for byte-identical output. Held by `FletcherWireFormat.FastCdrReproducesTheBytesExactly` and by `bench_pub_sub_type`'s fastcdr arm. |
+| `Publisher::CreateTopic` encodes the schema **before** taking the lock | `../pubsub/src/publisher.cpp` | The locked section becomes a byte compare. First declaration **1.4 → 2.8 µs** (it now encodes where it used to deep-copy); re-declaration **4.2 → 2.5 µs**, and concurrent callers no longer queue behind ~3.5 µs of IPC work each. |
+| `PublishData` holds the encoder and attachments by pointer | `src/internal/transport_data.hpp` | The provider layer costs **~80 ns** over a raw `DataWriter::write` of the same bytes, and the encoder and topic-name changes took **15–22 ns** off that (`tools/fletcher_bench/bench_publish` in the consuming repo, 16 interleaved A/B runs). |
+| `SubscribeCallback` takes `schema` and `attachments` by **const reference** | `../pubsub/include/fletcher/pubsub/provider.hpp` | By value it was **~110 ns per delivered sample against 1.4 ns for the call itself** — an empty `Attachments` is an `unordered_map`, and MSVC allocates a sentinel node in its default constructor, so every delivery built and destroyed one whether the sample carried attachments or not. |
+| The delivery layer latches into a lock-free path once the schema handoff is done | `src/internal/ordered_delivery.hpp` | `OrderedDelivery` exists for the subscriber-first startup window and used to charge for it forever. With that plus the listener reusing one `Attachments`, delivery went from **199 ns to 3.2 ns** per loaned sample and **398 ns to 3.5 ns** per copied one (`benchmarks/bench_pub_sub_type`, `BM_Deliver_*`). |
+
+> **Read these as differences, not absolutes,** and take each from the same run as its control —
+> `BM_RawWrite` for the publish rows, `BM_Deliver_CallbackOnly` for the delivery ones. The machine
+> drifts 2–3% between two runs of identical code, which is larger than several of these numbers.
+>
+> The DDS-level harnesses cannot resolve any of it: `bench_e2e` reports `write_p50` quantised to
+> 0.1 µs with ~0.2 µs of run-to-run drift, and `bench_contention` quantises p50 the same way. Three
+> changes argued from "obviously less work" reasoning were measured afterwards and turned out to be
+> regressions — what they cost and how they were caught is in the consuming repo's
+> `modules/io/docs/fastdds-provider-review.md`.
 
 ## Building the package locally
 
@@ -167,6 +295,10 @@ Add `-V` for full GTest output:
 ctest --test-dir build -C Debug --output-on-failure -V
 ```
 
+### Benchmarks
+
+[`benchmarks/`](benchmarks/) holds `bench_pub_sub_type`, which measures the DDS types against the one they replaced. It is outside this recipe's `exports_sources` and builds on its own — see that directory's README.
+
 ### Linux (devcontainer)
 
 See the repo root's [Development environment](../README.md#development-environment) section for how to open the devcontainer (VS Code or manual Docker). Once inside, from this directory.
@@ -207,7 +339,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.4.0-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.4.1-alpha")
 ```
 
 Install dependencies:

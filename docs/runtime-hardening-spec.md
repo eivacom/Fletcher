@@ -116,8 +116,8 @@ leave a diagnostic):
   (`std::invalid_argument` / `std::runtime_error`; the header already includes
   `<stdexcept>`). **Fix in place** — the file move (#21) is a deferred round
   (locked decision H-8).
-- **#60 — `catch(...)` in `FletcherTopicType::serialize` swallows everything.**
-  [fast_dds_pubsub_provider.cpp:177-180](../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L177-L180)
+- **#60 — `catch(...)` in `FletcherSamplePubSubType::serialize` swallows everything.**
+  [internal/fletcher_sample_pub_sub_type.hpp](../fastdds-pubsub-provider/src/internal/fletcher_sample_pub_sub_type.hpp)
   zeroes `payload.length` and returns `false` with no trace of the cause. Fix:
   add a `catch (const std::exception& e)` that captures `e.what()` into a
   logged/stored diagnostic *before* falling through to the `false` return; keep

@@ -64,7 +64,7 @@ class XrceDDSPubSubProvider : public PubSubProvider {
 
     void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
 
-    void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
 
     SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,

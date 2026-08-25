@@ -2,6 +2,12 @@
 
 A `protoc` compiler plugin that reads `.proto` files and generates C++ header files containing row wrapper classes in the `fletcher_gen` namespace, along with TypeScript schema descriptors. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()`, including the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 
+### Decoding: constructor or `DecodeInto`
+
+A row decodes either by constructing one — `MyRow(data, len)` or `MyRow(encoded_row)` — or **in place** into a row you already hold, with `DecodeInto(data, len)` / `DecodeInto(encoded_row)`. Both leave identical state: every field is written or cleared, so no value survives from the row decoded before it.
+
+Prefer `DecodeInto` in a subscribe callback. Constructing allocates each field's storage per call, and for a row carrying a large list that allocation dwarfs the copy: a 200 000-point cloud (600 000 doubles, 4.8 MB) measures **1052 µs constructed against 124 µs decoded into a reused row — 8.5×**, the latter within 2% of what `memcpy` alone costs for those bytes. Keep one row per subscription and decode into it.
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

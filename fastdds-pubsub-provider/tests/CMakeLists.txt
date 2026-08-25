@@ -4,10 +4,11 @@
 find_package(GTest REQUIRED)
 
 add_executable(fastdds_pubsub_tests
-    test_fast_dds_pubsub_provider.cpp)
+    test_fast_dds_pubsub_provider.cpp
+    test_fletcher_sample_pub_sub_type.cpp)
 
-# The OrderedDelivery white-box test includes the provider's internal header
-# directly (it is header-only and std-only).
+# The OrderedDelivery white-box test and the DDS-type test include the provider's
+# internal headers directly (they are header-only).
 target_include_directories(fastdds_pubsub_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

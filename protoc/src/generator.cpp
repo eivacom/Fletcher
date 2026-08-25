@@ -1592,6 +1592,16 @@ std::string PositionalReadCall(const ScalarTypeInfo& info) {
 }
 
 // Emit the scalar write expression for a value through a PositionalWriter.
+// Whether a repeated field of this scalar can go out as one memcpy instead of a virtual
+// WriteBuffer::Append per element. Gated on storage_type so the C++ width provably matches the
+// wire width; `bool` is out because std::vector<bool> is not contiguous. Anything else falls back
+// to the per-element loop.
+bool IsBulkCopyableScalar(const ScalarTypeInfo& info) {
+    const auto& st = info.storage_type;
+    return st == "int32_t" || st == "int64_t" || st == "uint32_t" || st == "uint64_t" ||
+           st == "float" || st == "double";
+}
+
 void EmitScalarWrite(std::ostringstream& o, const ScalarTypeInfo& info, const std::string& val_expr,
                      const std::string& indent) {
     std::string method = PositionalWriteCall(info);
@@ -1641,10 +1651,10 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
             const auto& nc = fi.mapping.nested_class;
             if (fi.mapping.nullable) {
                 o << "        if (!" << n << ".has_value()) w.SetNull(" << si << ");\n"
-                  << "        else { auto sw = w.BeginStruct(" << nc << "Schema()->n_children); "
-                  << n << "->EncodeStructTo_(sw); }\n";
+                  << "        else { auto sw = w.BeginStruct(" << nc << "::kNumArrowFields); " << n
+                  << "->EncodeStructTo_(sw); }\n";
             } else {
-                o << "        { auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+                o << "        { auto sw = w.BeginStruct(" << nc << "::kNumArrowFields);\n"
                   << "          if (" << n << ".has_value()) " << n << "->EncodeStructTo_(sw);\n"
                   << "          else " << nc << "().EncodeStructTo_(sw); }\n";
             }
@@ -1653,6 +1663,13 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
 
         case FieldKind::REPEATED_SCALAR: {
             const auto& e = fi.mapping.element;
+            // Repeated scalars are never null element-by-element, so the whole run can go out in
+            // one Append. Same bytes as the loop.
+            if (IsBulkCopyableScalar(e)) {
+                o << "        { w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
+                  << "          w.WriteFixedArray(" << n << ".data(), " << n << ".size()); }\n";
+                break;
+            }
             o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
               << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
               << "            ";
@@ -1665,7 +1682,7 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
             const auto& nc = fi.mapping.nested_class;
             o << "        { auto lc = w.BeginList(static_cast<uint32_t>(" << n << ".size()));\n"
               << "          for (uint32_t li_ = 0; li_ < " << n << ".size(); ++li_) {\n"
-              << "            auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+              << "            auto sw = w.BeginStruct(" << nc << "::kNumArrowFields);\n"
               << "            " << n << "[li_].EncodeStructTo_(sw);\n"
               << "          } }\n";
             break;
@@ -1694,7 +1711,7 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
                 src = var;
             }
             // Innermost: encode struct
-            o << "                auto sw = w.BeginStruct(" << nc << "Schema()->n_children);\n"
+            o << "                auto sw = w.BeginStruct(" << nc << "::kNumArrowFields);\n"
               << "                " << src << ".EncodeStructTo_(sw);\n";
             // Close loops
             for (int d = 0; d < depth; ++d) o << "            }\n";
@@ -1717,7 +1734,7 @@ void EmitFieldEncode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
 
             if (val_is_msg) {
                 const auto& mvc = fi.mapping.map_value_class;
-                o << "            auto sw = w.BeginStruct(" << mvc << "Schema()->n_children);\n"
+                o << "            auto sw = w.BeginStruct(" << mvc << "::kNumArrowFields);\n"
                   << "            v.EncodeStructTo_(sw);\n";
             } else {
                 o << "            ";
@@ -1782,6 +1799,8 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
                     o << "        if (!r.IsNull(" << si << ")) {\n"
                       << "            auto [p, n] = r.ReadBinary();\n"
                       << "            " << n << ".emplace(reinterpret_cast<const char*>(p), n);\n"
+                      << "        } else {\n"
+                      << "            " << n << ".reset();\n"
                       << "        }\n";
                 } else {
                     o << "        { auto [p, n] = r.ReadBinary();\n"
@@ -1790,14 +1809,16 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
             } else if (method == "ReadString") {
                 if (fi.mapping.nullable) {
                     o << "        if (!r.IsNull(" << si << ")) " << n << " = std::string(r."
-                      << method << "());\n";
+                      << method << "());\n"
+                      << "        else " << n << ".reset();\n";
                 } else {
                     o << "        " << n << " = std::string(r." << method << "());\n";
                 }
             } else {
                 if (fi.mapping.nullable) {
                     o << "        if (!r.IsNull(" << si << ")) " << n << " = r." << method
-                      << "();\n";
+                      << "();\n"
+                      << "        else " << n << ".reset();\n";
                 } else {
                     o << "        " << n << " = r." << method << "();\n";
                 }
@@ -1809,11 +1830,13 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
             const auto& nc = fi.mapping.nested_class;
             if (fi.mapping.nullable) {
                 o << "        if (!r.IsNull(" << si << ")) {\n"
-                  << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+                  << "            auto sr = r.ReadStruct(" << nc << "::kNumArrowFields);\n"
                   << "            " << n << ".emplace(sr);\n"
+                  << "        } else {\n"
+                  << "            " << n << ".reset();\n"
                   << "        }\n";
             } else {
-                o << "        { auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+                o << "        { auto sr = r.ReadStruct(" << nc << "::kNumArrowFields);\n"
                   << "          " << n << ".emplace(sr); }\n";
             }
             break;
@@ -1822,6 +1845,15 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
         case FieldKind::REPEATED_SCALAR: {
             const auto& e = fi.mapping.element;
             std::string method = PositionalReadCall(e);
+            if (IsBulkCopyableScalar(e)) {
+                // resize() value-initialises before ReadFixedArray overwrites it — a memset the
+                // per-element loop avoids, still far cheaper than a call each. ReadListHeader has
+                // already capped lh.count against the remaining buffer.
+                o << "        { auto lh = r.ReadListHeader();\n"
+                  << "          " << n << ".resize(lh.count);\n"
+                  << "          r.ReadFixedArray(" << n << ".data(), lh.count); }\n";
+                break;
+            }
             o << "        { auto lh = r.ReadListHeader();\n"
               << "          " << n << ".clear();\n"
               << "          " << n << ".reserve(lh.count);\n"
@@ -1844,7 +1876,7 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
               << "          " << n << ".clear();\n"
               << "          " << n << ".reserve(lh.count);\n"
               << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
-              << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+              << "            auto sr = r.ReadStruct(" << nc << "::kNumArrowFields);\n"
               << "            " << n << ".emplace_back(sr);\n"
               << "          } }\n";
             break;
@@ -1883,7 +1915,7 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
                 indent += "    ";
             }
             // Innermost: decode struct
-            o << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+            o << indent << "auto sr = r.ReadStruct(" << nc << "::kNumArrowFields);\n"
               << indent << cur_ref << " = " << nc << "(sr);\n";
             // Close loops
             for (int d = 0; d < depth; ++d) {
@@ -1920,7 +1952,7 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
 
             if (val_is_msg) {
                 const auto& mvc = fi.mapping.map_value_class;
-                o << "            auto sr = r.ReadStruct(" << mvc << "Schema()->n_children);\n"
+                o << "            auto sr = r.ReadStruct(" << mvc << "::kNumArrowFields);\n"
                   << "            " << n << ".emplace_back(std::move(keys_[mi_]), " << mvc
                   << "(sr));\n";
             } else {
@@ -1951,6 +1983,12 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
     // ---- class header ---------------------------------------------------
     o << "class " << cls << " {\n public:\n";
 
+    // The null-bitfield width, known here — so emit it rather than making callers build a whole
+    // schema at run time just to read n_children off it.
+    o << "    /// Number of Arrow fields in this message, i.e. the child count of\n"
+      << "    /// its struct schema. Used to size the positional null bitfield.\n"
+      << "    static constexpr int kNumArrowFields = " << fc << ";\n\n";
+
     // Default constructor
     o << "    /// Constructs an empty row. Use the setters to populate fields\n"
       << "    /// before calling Encode() to produce the wire-format buffer.\n";
@@ -1977,6 +2015,26 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
     o << "    explicit " << cls << "(fletcher::PositionalReader& r) {\n";
     for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
     o << "    }\n\n";
+
+    // Decode in place, keeping whatever the fields have already allocated.
+    o << "    /// Re-decodes this row from a wire-format buffer **in place**, keeping the "
+         "capacity\n"
+      << "    /// its fields already hold. The constructors above allocate per call, which for a "
+         "row\n"
+      << "    /// carrying a large list costs far more than the copy itself; a subscriber that "
+         "keeps\n"
+      << "    /// one row and calls this instead pays only the copy.\n"
+      << "    ///\n"
+      << "    /// Every field is written or cleared, so no value survives from the previous row.\n";
+    o << "    void DecodeInto(const uint8_t* data, size_t len) {\n"
+      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
+    for (size_t i = 0; i < fields.size(); ++i) EmitFieldDecode(o, fields[i], i);
+    o << "    }\n\n";
+
+    o << "    /// Convenience overload, matching the EncodedRow constructor.\n";
+    o << "    void DecodeInto(const fletcher::EncodedRow& row) {\n"
+      << "        DecodeInto(row.data(), row.size());\n"
+      << "    }\n\n";
 
     // Setters
     EmitSetters(o, cls, fields);
@@ -2151,14 +2209,14 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
       << "    /// Returns the subscription ID (used for Unsubscribe).\n";
     o << "    uint64_t Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
+      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb)\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
       << "                                 const uint8_t* data, size_t len,\n"
-      << "                                 fletcher::SharedSchema /*schema*/,\n"
-      << "                                 fletcher::Attachments att) {\n"
-      << "                cb(" << msg_class << "(data, len), std::move(att));\n"
+      << "                                 const fletcher::SharedSchema& /*schema*/,\n"
+      << "                                 const fletcher::Attachments& att) {\n"
+      << "                cb(" << msg_class << "(data, len), att);\n"
       << "            });\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";

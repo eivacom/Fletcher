@@ -3,7 +3,9 @@
 //
 #include "fletcher/pubsub/subscriber.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -15,25 +17,42 @@
 namespace fletcher {
 
 struct Subscriber::Impl {
+    struct Entry {
+        uint64_t id;
+        SubscribeCallback callback;
+    };
+
+    // Immutable snapshot of a topic's subscribers, so delivery copies one shared_ptr instead of
+    // scanning every subscription in the process and copying a std::function per match. Rebuilt on
+    // Subscribe/Unsubscribe (rare); read on every sample (hot).
+    using EntryList = std::shared_ptr<const std::vector<Entry>>;
+
     struct TopicState {
         std::vector<std::string> segments;
+        EntryList subscribers = std::make_shared<const std::vector<Entry>>();
         // The provider's schema future, cached so fan-out subscribers to the
         // same topic all share it (shared_future is copyable).
         std::shared_future<SharedSchema> schema_future;
         bool provider_subscribed = false;
     };
 
-    struct Subscription {
-        std::string topic_key;
-        SubscribeCallback callback;
-    };
-
     std::shared_ptr<PubSubProvider> provider;
 
     mutable std::mutex mu;
     std::unordered_map<std::string, TopicState> topics;
-    std::unordered_map<uint64_t, Subscription> subscriptions;
+    // Only maps an id to its topic, so Unsubscribe can find the list to rebuild. The callback
+    // itself lives in that topic's EntryList.
+    std::unordered_map<uint64_t, std::string> subscription_topic;
     std::atomic<uint64_t> next_id{1};
+
+    // Copy-on-write mutation of one topic's subscriber list. Called with mu held. Never mutates a
+    // published list, so a delivery already iterating an older snapshot stays valid.
+    template <typename Mutate>
+    static void RewriteEntries(TopicState& ts, Mutate mutate) {
+        auto next = std::make_shared<std::vector<Entry>>(*ts.subscribers);
+        mutate(*next);
+        ts.subscribers = std::move(next);
+    }
 
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
@@ -49,28 +68,25 @@ struct Subscriber::Impl {
 
         SubscriptionResult result = provider->Subscribe(
             segments,
-            [this, key](const uint8_t* data, size_t len, SharedSchema schema, Attachments att) {
-                // Snapshot (id, callback) pairs under the lock, then
-                // invoke outside the lock so callbacks can call back
-                // into Subscriber without deadlocking.
-                std::vector<std::pair<uint64_t, SubscribeCallback>> cbs;
+            [this, key](const uint8_t* data, size_t len, const SharedSchema& schema,
+                        const Attachments& att) {
+                EntryList entries;
                 {
                     std::lock_guard lk(mu);
-                    for (const auto& [id, sub] : subscriptions) {
-                        if (sub.topic_key == key) {
-                            cbs.emplace_back(id, sub.callback);
-                        }
-                    }
+                    auto it = topics.find(key);
+                    if (it == topics.end()) return;
+                    entries = it->second.subscribers;
                 }
-                // Copy attachments to all but the last callback; move
-                // into the last one to avoid an unnecessary copy when
-                // the attachments map is large.
-                for (size_t i = 0; i + 1 < cbs.size(); ++i) {
-                    cbs[i].second(cbs[i].first, data, len, schema, att);
+                if (entries->empty()) return;
+
+                // Copy the schema and attachments to all but the last callback; move into the last
+                // one to avoid an unnecessary copy when the attachments map is large.
+                for (size_t i = 0; i + 1 < entries->size(); ++i) {
+                    const Entry& entry = (*entries)[i];
+                    entry.callback(entry.id, data, len, schema, att);
                 }
-                if (!cbs.empty()) {
-                    cbs.back().second(cbs.back().first, data, len, schema, std::move(att));
-                }
+                const Entry& last = entries->back();
+                last.callback(last.id, data, len, std::move(schema), std::move(att));
             });
 
         lock.lock();
@@ -129,16 +145,28 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
     }
 
     uint64_t id = impl_->next_id.fetch_add(1);
-    impl_->subscriptions[id] = Impl::Subscription{key, std::move(cb)};
+    impl_->subscription_topic[id] = key;
+    Impl::RewriteEntries(it->second,
+                         [&](std::vector<Impl::Entry>& v) { v.push_back({id, std::move(cb)}); });
 
     std::shared_future<SharedSchema> schema;
     try {
         schema = impl_->EnsureProviderSubscription(key, it->second, lock);
     } catch (...) {
-        // Provider subscription failed — roll back the local
-        // subscription record so callers can retry without leaving
-        // dangling state behind.
-        impl_->subscriptions.erase(id);
+        // Provider subscription failed — roll back the local subscription record so callers can
+        // retry without leaving dangling state behind. EnsureProviderSubscription drops the lock
+        // before calling the provider and only retakes it on success, so the lock may or may not be
+        // held here; retake it if not, and re-find the topic rather than reusing `it`.
+        if (!lock.owns_lock()) lock.lock();
+        impl_->subscription_topic.erase(id);
+        auto topic_it = impl_->topics.find(key);
+        if (topic_it != impl_->topics.end()) {
+            Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
+                v.erase(std::remove_if(v.begin(), v.end(),
+                                       [id](const Impl::Entry& e) { return e.id == id; }),
+                        v.end());
+            });
+        }
         throw;
     }
     return {id, std::move(schema)};
@@ -149,25 +177,25 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
     {
         std::lock_guard lock(impl_->mu);
 
-        auto it = impl_->subscriptions.find(subscription_id);
-        if (it == impl_->subscriptions.end()) {
+        auto it = impl_->subscription_topic.find(subscription_id);
+        if (it == impl_->subscription_topic.end()) {
             throw std::runtime_error("Subscriber: unknown subscription ID");
         }
 
-        std::string key = it->second.topic_key;
-        impl_->subscriptions.erase(it);
+        const std::string key = it->second;
+        impl_->subscription_topic.erase(it);
 
-        bool any_remaining = false;
-        for (const auto& [id, sub] : impl_->subscriptions) {
-            if (sub.topic_key == key) {
-                any_remaining = true;
-                break;
-            }
-        }
+        auto topic_it = impl_->topics.find(key);
+        if (topic_it != impl_->topics.end()) {
+            Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
+                v.erase(std::remove_if(v.begin(), v.end(),
+                                       [subscription_id](const Impl::Entry& e) {
+                                           return e.id == subscription_id;
+                                       }),
+                        v.end());
+            });
 
-        if (!any_remaining) {
-            auto topic_it = impl_->topics.find(key);
-            if (topic_it != impl_->topics.end() && topic_it->second.provider_subscribed) {
+            if (topic_it->second.subscribers->empty() && topic_it->second.provider_subscribed) {
                 segments_to_unsub = topic_it->second.segments;
                 topic_it->second.provider_subscribed = false;
             }

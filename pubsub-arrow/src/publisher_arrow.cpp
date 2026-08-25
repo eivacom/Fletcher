@@ -70,9 +70,9 @@ void PublisherArrow::Publish(const std::vector<std::string>& segments, const Arr
 }
 
 void PublisherArrow::PublishDirect(const std::vector<std::string>& segments,
-                                   PubSubProvider::RowEncoder encoder,
+                                   const PubSubProvider::RowEncoder& encoder,
                                    const Attachments& attachments) {
-    publisher_->Publish(segments, std::move(encoder), attachments);
+    publisher_->Publish(segments, encoder, attachments);
 }
 
 std::vector<std::string> PublisherArrow::ListTopics() const { return publisher_->ListTopics(); }

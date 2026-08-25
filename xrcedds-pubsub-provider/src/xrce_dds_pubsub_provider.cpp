@@ -470,7 +470,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 }
 
 void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
-                                    RowEncoder encoder, const Attachments& attachments) {
+                                    const RowEncoder& encoder, const Attachments& attachments) {
     std::string name = JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 

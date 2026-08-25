@@ -63,7 +63,7 @@ class MockPubSubProvider : public PubSubProvider {
         created_topics.push_back({segments, std::move(schema)});
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         std::vector<uint8_t> buf;
         VectorWriteBuffer wb(buf);
@@ -202,7 +202,7 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
 
     fletcher_gen::integration::pubsub::Telemetry received;
     Attachments received_att;
-    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments att) {
+    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, const Attachments& att) {
         received = std::move(msg);
         received_att = std::move(att);
     });

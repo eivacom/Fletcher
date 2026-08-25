@@ -20,6 +20,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -72,6 +73,20 @@ class PositionalWriter {
     // Timestamp/Duration are int64 on the wire.
     void WriteTimestamp(int64_t v) { buf_.AppendFixed(v); }
     void WriteDuration(int64_t v) { buf_.AppendFixed(v); }
+
+    // Write a contiguous run of fixed-width values in one Append instead of one virtual call per
+    // element. Byte-identical to the equivalent loop: both are a raw copy of the object
+    // representation, and this format is little-endian only (static_assert above).
+    //
+    // Only valid where every element is present — a null element writes no payload, so a list that
+    // has any has to go through the per-element path.
+    template <typename T>
+    void WriteFixedArray(const T* data, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "WriteFixedArray requires a trivially copyable type");
+        if (count == 0) return;
+        buf_.Append(reinterpret_cast<const uint8_t*>(data), count * sizeof(T));
+    }
 
     // --- Variable-length writers ---
 
@@ -299,6 +314,20 @@ class PositionalReader {
         uint32_t len = Read<uint32_t>();
         const uint8_t* p = ReadBytes(len);
         return {p, len};
+    }
+
+    // Read a contiguous run of fixed-width values in one memcpy, the mirror of WriteFixedArray.
+    // `out` must have room for `count` elements.
+    template <typename T>
+    void ReadFixedArray(T* out, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "ReadFixedArray requires a trivially copyable type");
+        // Divide rather than multiply: `count * sizeof(T)` could wrap for a wire-supplied count and
+        // then pass a bounds check. pos_ <= len_ always, so the subtraction is safe.
+        if (count > (len_ - pos_) / sizeof(T))
+            throw std::invalid_argument("PositionalReader: buffer underrun (fixed array)");
+        if (count == 0) return;
+        std::memcpy(out, ReadBytes(count * sizeof(T)), count * sizeof(T));
     }
 
     // --- Composite readers ---

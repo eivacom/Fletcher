@@ -79,7 +79,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const fletcher::Attachments& attachments) override {
         std::vector<uint8_t> buf;
         fletcher::VectorWriteBuffer wb(buf);

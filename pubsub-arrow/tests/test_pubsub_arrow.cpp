@@ -32,7 +32,7 @@ class MockProvider : public PubSubProvider {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         std::string key = Join(segments);
 
@@ -170,7 +170,7 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     pub.CreateTopic(kTopic, TestSchema());
 
     Attachments received_att;
-    sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
+    sub.Subscribe(kTopic, [&](ArrowRow, const Attachments& att) { received_att = att; });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 

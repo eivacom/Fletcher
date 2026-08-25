@@ -186,7 +186,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
     // framed with sub-id 0 before the outer code could write the real id.
     auto result =
         subscriber_->Subscribe(segments, [weak](uint64_t sub_id, const uint8_t* data, size_t len,
-                                                SharedSchema /*schema*/, Attachments att) {
+                                                const SharedSchema& /*schema*/, const Attachments& att) {
             auto self = weak.lock();
             if (!self) return;
 
