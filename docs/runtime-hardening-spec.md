@@ -107,22 +107,24 @@ throw. No happy-path behaviour changes.
 Two independent silent-failure sites, same discipline (a failed operation must
 leave a diagnostic):
 
-- **#54 — `OwnedSchema::DeepCopy` discards its status.**
-  [owned_schema.hpp:53-57](../pubsub/include/fletcher/pubsub/owned_schema.hpp#L53-L57)
-  calls `ArrowSchemaDeepCopy(src, copy.get())` and ignores the returned
-  `ArrowErrorCode`. On failure the schema is left released/empty and
-  `MakeSharedSchema` later returns `nullptr` with no diagnostic — a failed copy
-  is indistinguishable from success. Fix: capture the code; throw
-  (`std::invalid_argument` / `std::runtime_error`; the header already includes
-  `<stdexcept>`). **Fix in place** — the file move (#21) is a deferred round
-  (locked decision H-8).
-- **#60 — `catch(...)` in `FletcherSamplePubSubType::serialize` swallows everything.**
+- **#54 — `OwnedSchema::DeepCopy` discards its status. RESOLVED.**
+  [owned_schema.hpp](../pubsub/include/fletcher/pubsub/owned_schema.hpp)
+  now captures the `ArrowErrorCode` and throws `std::runtime_error` on anything
+  but `NANOARROW_OK`, so a failed copy is no longer indistinguishable from
+  success. Note the consequence at every call site reached from a C callback:
+  `XrceDDSPubSubProvider::Impl::OnTopic` runs under `uxr_run_session_*`, where an
+  escaping exception is a terminate rather than an unwind, so the `DeepCopy`
+  there is inside the same `try` as the schema decode.
+- **#60 — `catch(...)` in `FletcherSamplePubSubType::serialize` swallows everything. RESOLVED.**
   [internal/fletcher_sample_pub_sub_type.hpp](../fastdds-pubsub-provider/src/internal/fletcher_sample_pub_sub_type.hpp)
-  zeroes `payload.length` and returns `false` with no trace of the cause. Fix:
-  add a `catch (const std::exception& e)` that captures `e.what()` into a
-  logged/stored diagnostic *before* falling through to the `false` return; keep
-  the catch-all as a last resort. **Must not rethrow** out of `serialize`
-  (H-INV-3 — DDS calls this on its own path).
+  now has a `catch (const std::exception& e)` that logs `e.what()` through
+  `EPROSIMA_LOG_ERROR` before falling through to the `false` return, with the
+  catch-all kept as a last resort; neither rethrows (H-INV-3). The same shape is
+  in `internal/raw_bytes_pub_sub_type.hpp` for both the schema channel's
+  `serialize` and its `deserialize`. `internal/sample_writer.hpp` no longer
+  guesses at the cause on the caller's side either — it reports the actual
+  `ReturnCode_t`, which distinguishes backpressure (`RETCODE_TIMEOUT`) from a row
+  that did not fit.
 
 **Acceptance.** `DeepCopy` of a schema whose copy fails throws with a message
 (negative test); a `serialize` that fails surfaces a diagnostic
@@ -131,10 +133,13 @@ leave a diagnostic):
 ### HARD-4 — Provider lifetime & callback re-entrancy (#63 + #62 residual)
 
 - **#63 — FastDDS destructor iterates topics without the lock.**
-  [fast_dds_pubsub_provider.cpp:441-460](../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L441-L460):
-  the `for (auto& [name, ts] : impl_->topics)` loop (`:444`) deletes DDS entities
-  (`:447-452`) with no `lock_guard(impl_->mu)` held, while `Publish` holds `mu`
-  (`:538`) and calls `ts.writer->write()` (`:559`). Fix: the **primary contract**
+  [fast_dds_pubsub_provider.cpp](../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp):
+  teardown has since moved into `~Impl` (so a throwing constructor still releases
+  what it built), and the `for (auto& [name, ts] : topics)` loop there deletes DDS
+  entities with no `lock_guard(mu)` held, while `Publish` holds `mu` in shared mode
+  and calls `ts.writer->write()`. Line anchors are deliberately omitted — the
+  earlier ones (`:441-460`, `:444`, `:447-452`, `:538`, `:559`) were invalidated by
+  that move and pointed at unrelated code. Fix: the **primary contract**
   is a documented "no concurrent API calls in flight during destruction"
   precondition (a lock alone cannot cure use-*during*-destruction); add the lock
   as defence-in-depth **only if it cannot deadlock** with the callback-outside-

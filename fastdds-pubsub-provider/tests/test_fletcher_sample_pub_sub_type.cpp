@@ -5,6 +5,7 @@
 // reaches serialize()/deserialize() through a live provider, which exercises them but cannot state
 // what they produce; these do.
 #include <fastcdr/Cdr.h>
+#include <fastcdr/FastBuffer.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -16,10 +17,11 @@
 #include <string>
 #include <vector>
 
+#include "fletcher/fastdds_pubsub_provider/internal/qos_defaults.hpp"
 #include "internal/envelope_codec.hpp"
 #include "internal/fletcher_sample.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
-#include "internal/payload_binding.hpp"
+#include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/transport_data.hpp"
 
 namespace {
@@ -28,18 +30,15 @@ using eprosima::fastdds::rtps::SerializedPayload_t;
 using fletcher::internal::PublishData;
 using fletcher::internal::ReceivedData;
 
-// The bound these tests work at. The type is templated on it — one plain type per power of two
-// between fletcher::kMinPayloadBytes and kMaxPayloadBytes — and every property below holds for all
-// of them, so they are pinned down once here rather than repeated per bound. What differs between
-// bounds is the type name and the sample size, which BoundsAreDistinctTypes covers directly.
+// The bound these tests work at; every property below holds for any bound the rule admits.
 constexpr uint32_t kTestPayloadBytes = 64 * 1024;
-using FletcherSample = fletcher::internal::FletcherSample<kTestPayloadBytes>;
-using FletcherSamplePubSubType = fletcher::internal::FletcherSamplePubSubType<kTestPayloadBytes>;
+using fletcher::internal::FletcherSamplePubSubType;
+using fletcher::internal::SampleSize;
 
 constexpr auto kXcdr1 = eprosima::fastdds::dds::DataRepresentationId_t::XCDR_DATA_REPRESENTATION;
 constexpr auto kXcdr2 = eprosima::fastdds::dds::DataRepresentationId_t::XCDR2_DATA_REPRESENTATION;
 
-// Offsets into the payload: the CDR encapsulation, then FletcherSample::length, then the body.
+// Offsets into the payload: the CDR encapsulation, then the sample's length, then the body.
 constexpr uint32_t kHeader = SerializedPayload_t::representation_header_size;
 constexpr uint32_t kLengthPrefix = 4;
 
@@ -68,60 +67,98 @@ uint32_t ReadU32(const uint8_t* at) {
     return value;
 }
 
+// The reference arm for FastCdrReproducesTheBytesExactly: fastcdr places the framing instead.
+class FastCdrFramedPubSubType : public FletcherSamplePubSubType {
+   public:
+    using FletcherSamplePubSubType::FletcherSamplePubSubType;
+
+    bool serialize(const void* const data, SerializedPayload_t& payload,
+                   eprosima::fastdds::dds::DataRepresentationId_t data_representation) override {
+        const auto* d = static_cast<const PublishData*>(data);
+        const bool xcdr1 = data_representation == kXcdr1;
+
+        eprosima::fastcdr::FastBuffer fastbuffer(reinterpret_cast<char*>(payload.data),
+                                                 payload.max_size);
+        eprosima::fastcdr::Cdr ser(
+            fastbuffer, eprosima::fastcdr::Cdr::DEFAULT_ENDIAN,
+            xcdr1 ? eprosima::fastcdr::CdrVersion::XCDRv1 : eprosima::fastcdr::CdrVersion::XCDRv2);
+        payload.encapsulation =
+            ser.endianness() == eprosima::fastcdr::Cdr::BIG_ENDIANNESS ? CDR_BE : CDR_LE;
+        ser.set_encoding_flag(xcdr1 ? eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR
+                                    : eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR2);
+
+        try {
+            ser.serialize_encapsulation();
+
+            // The save-state / serialize / jump sequence fastcdr uses for an XCDR2 DHEADER.
+            const eprosima::fastcdr::Cdr::state length_state = ser.get_state();
+            ser.serialize(static_cast<uint32_t>(0));
+
+            const size_t body_offset = ser.get_serialized_data_length();
+            fletcher::FixedWriteBuffer buf(payload.data + body_offset, kTestPayloadBytes);
+            fletcher::internal::EncodeEnvelopeBody(buf, *d->encoder, *d->attachments);
+            const auto body_size = static_cast<uint32_t>(buf.Position());
+
+            ser.set_state(length_state);
+            ser.serialize(body_size);
+            ser.jump(body_size);
+            ser.set_dds_cdr_options({0, 0});
+
+            payload.length = static_cast<uint32_t>(ser.get_serialized_data_length());
+            return true;
+        } catch (...) {
+            payload.length = 0;
+            return false;
+        }
+    }
+};
+
 // ---------------------------------------------------------------------------
 // What the type claims about itself
 // ---------------------------------------------------------------------------
 
 TEST(FletcherSamplePubSubTypeTest, ClaimsBoundedAndPlainForBothRepresentations) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     EXPECT_TRUE(type.is_bounded());
     EXPECT_TRUE(type.is_plain(kXcdr1));
     EXPECT_TRUE(type.is_plain(kXcdr2));
 }
 
 TEST(FletcherSamplePubSubTypeTest, NameCarriesThePayloadBound) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     EXPECT_EQ(type.get_name(), "fletcher_" + std::to_string(kTestPayloadBytes));
-    EXPECT_EQ(type.max_serialized_type_size, kHeader + sizeof(FletcherSample));
+    EXPECT_EQ(type.max_serialized_type_size, kHeader + SampleSize(kTestPayloadBytes));
 }
 
-// Two bounds are two DDS types, not one type configured two ways. That is what turns a bound
-// mismatch into a discovery-time non-match instead of a silent per-sample drop, and it is why the
-// bound can be a runtime option at all: each one is still plain.
+// Two bounds are two DDS types, which is what makes a mismatch a discovery-time non-match.
 TEST(FletcherSamplePubSubTypeTest, BoundsAreDistinctTypes) {
-    fletcher::internal::FletcherSamplePubSubType<fletcher::kMinPayloadBytes> small;
-    fletcher::internal::FletcherSamplePubSubType<fletcher::kMaxPayloadBytes> large;
+    FletcherSamplePubSubType small(fletcher::kMinPayloadBytes);
+    FletcherSamplePubSubType large(kTestPayloadBytes);
 
-    EXPECT_EQ(small.get_name(), "fletcher_4096");
-    EXPECT_EQ(large.get_name(), "fletcher_8388608");
+    EXPECT_EQ(small.get_name(), "fletcher_4");
+    EXPECT_EQ(large.get_name(), "fletcher_65536");
+    EXPECT_NE(small.get_name(), large.get_name());
     EXPECT_LT(small.max_serialized_type_size, large.max_serialized_type_size);
     EXPECT_TRUE(small.is_plain(kXcdr1));
     EXPECT_TRUE(large.is_plain(kXcdr1));
 }
 
-// Asserted rather than EXPECTed, because being a compile error is the point: these would fail the
-// build if the rule moved, which is what `kPayloadBytes<N>` gives a caller at its own call site.
-TEST(FletcherSamplePubSubTypeTest, ThePayloadBoundSetIsPowersOfTwoInRange) {
+// static_assert because being a compile error is the point: kPayloadBytes<N> gives callers this.
+TEST(FletcherSamplePubSubTypeTest, ThePayloadBoundRuleIsFourByteAlignment) {
     static_assert(fletcher::PayloadBound<fletcher::kMinPayloadBytes>);
     static_assert(fletcher::PayloadBound<64 * 1024>);
+    static_assert(fletcher::PayloadBound<100'000>, "4-aligned, so usable, power of two or not");
     static_assert(fletcher::PayloadBound<fletcher::kMaxPayloadBytes>);
-    static_assert(!fletcher::PayloadBound<100'000>, "not a power of two");
-    static_assert(!fletcher::PayloadBound<2048>, "below the floor");
-    static_assert(!fletcher::PayloadBound<16 * 1024 * 1024>, "above the ceiling");
-}
+    static_assert(!fletcher::PayloadBound<100'001>, "not a multiple of 4");
+    static_assert(!fletcher::PayloadBound<0>, "not positive");
+    static_assert(!fletcher::PayloadBound<2>, "positive, but cannot frame a sample");
 
-// The same rule for a bound that arrives as a number rather than as a template argument. Nothing is
-// rounded: an unsupported one is refused, not adjusted to the nearest that would work.
-TEST(FletcherSamplePubSubTypeTest, OnlyASupportedBoundGetsABinding) {
-    using fletcher::internal::MakePayloadBinding;
-
-    EXPECT_EQ(MakePayloadBinding(kTestPayloadBytes)->Bytes(), kTestPayloadBytes);
-    EXPECT_EQ(MakePayloadBinding(fletcher::kMinPayloadBytes)->Bytes(), fletcher::kMinPayloadBytes);
-    EXPECT_EQ(MakePayloadBinding(fletcher::kMaxPayloadBytes)->Bytes(), fletcher::kMaxPayloadBytes);
-
-    EXPECT_THROW(MakePayloadBinding(100'000), std::invalid_argument);
-    EXPECT_THROW(MakePayloadBinding(2048), std::invalid_argument);
-    EXPECT_THROW(MakePayloadBinding(fletcher::kMaxPayloadBytes * 2), std::invalid_argument);
+    // The same expression for a runtime bound, which is what the provider constructor rejects on.
+    EXPECT_TRUE(fletcher::IsPayloadBound(kTestPayloadBytes));
+    EXPECT_TRUE(fletcher::IsPayloadBound(100'000));
+    EXPECT_FALSE(fletcher::IsPayloadBound(100'001));
+    EXPECT_FALSE(fletcher::IsPayloadBound(0));
+    EXPECT_FALSE(fletcher::IsPayloadBound(fletcher::kMaxPayloadBytes + 4));
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +166,7 @@ TEST(FletcherSamplePubSubTypeTest, OnlyASupportedBoundGetsABinding) {
 // ---------------------------------------------------------------------------
 
 TEST(FletcherSamplePubSubTypeTest, WireLayoutIsEncapsulationThenLengthThenBody) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(214);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -143,8 +180,7 @@ TEST(FletcherSamplePubSubTypeTest, WireLayoutIsEncapsulationThenLengthThenBody) 
     EXPECT_EQ(payload.data[3], eprosima::fastcdr::Cdr::alignment(payload.length, 4));
     EXPECT_EQ(payload.encapsulation, CDR_LE);
 
-    // Then FletcherSample::length, and the envelope it counts: the row length, the row, and the
-    // attachment count.
+    // Then the sample's length, and the envelope it counts.
     const uint32_t body_size = ReadU32(payload.data + kHeader);
     EXPECT_EQ(payload.length, kHeader + kLengthPrefix + body_size);
     EXPECT_EQ(body_size, 4 + row.size() + 4);
@@ -153,7 +189,7 @@ TEST(FletcherSamplePubSubTypeTest, WireLayoutIsEncapsulationThenLengthThenBody) 
 }
 
 TEST(FletcherSamplePubSubTypeTest, StopsAfterTheBytesInUse) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(10);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -166,7 +202,7 @@ TEST(FletcherSamplePubSubTypeTest, StopsAfterTheBytesInUse) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, PaddingCountFollowsThePayloadLength) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     for (size_t size : {1u, 2u, 3u, 4u, 5u, 214u, 4096u}) {
         const std::vector<uint8_t> row = Row(size);
         Publishing publishing(row);
@@ -178,7 +214,7 @@ TEST(FletcherSamplePubSubTypeTest, PaddingCountFollowsThePayloadLength) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, Xcdr2ChangesOnlyTheRepresentationId) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(214);
     Publishing publishing(row);
 
@@ -196,8 +232,106 @@ TEST(FletcherSamplePubSubTypeTest, Xcdr2ChangesOnlyTheRepresentationId) {
            "the id may differ";
 }
 
+// Writing the encapsulation by hand is only licensed while it matches fastcdr byte for byte.
+TEST(FletcherSamplePubSubTypeTest, FastCdrReproducesTheBytesExactly) {
+    FletcherSamplePubSubType shipped(kTestPayloadBytes);
+    FastCdrFramedPubSubType reference(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(214);
+    Publishing publishing(row);
+
+    SerializedPayload_t shipped_xcdr1(shipped.max_serialized_type_size);
+    SerializedPayload_t reference_xcdr1(reference.max_serialized_type_size);
+    ASSERT_TRUE(shipped.serialize(&publishing.data, shipped_xcdr1, kXcdr1));
+    ASSERT_TRUE(reference.serialize(&publishing.data, reference_xcdr1, kXcdr1));
+
+    ASSERT_EQ(reference_xcdr1.length, shipped_xcdr1.length);
+    EXPECT_EQ(0, std::memcmp(reference_xcdr1.data, shipped_xcdr1.data, shipped_xcdr1.length))
+        << "the hand-written XCDR1 framing diverged from fastcdr";
+
+    // Again under XCDR2, which keeps both hand-written representation ids honest.
+    SerializedPayload_t shipped_xcdr2(shipped.max_serialized_type_size);
+    SerializedPayload_t reference_xcdr2(reference.max_serialized_type_size);
+    ASSERT_TRUE(shipped.serialize(&publishing.data, shipped_xcdr2, kXcdr2));
+    ASSERT_TRUE(reference.serialize(&publishing.data, reference_xcdr2, kXcdr2));
+
+    ASSERT_EQ(reference_xcdr2.length, shipped_xcdr2.length);
+    EXPECT_EQ(0, std::memcmp(reference_xcdr2.data, shipped_xcdr2.data, shipped_xcdr2.length))
+        << "the hand-written XCDR2 framing diverged from fastcdr";
+    EXPECT_NE(shipped_xcdr2.data[1], shipped_xcdr1.data[1])
+        << "XCDR2 must not reuse the XCDR1 representation id";
+}
+
+// One wire shape for both channels, though they are framed by different code.
+TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelFramesTheSameShapeAsTheDataChannel) {
+    FletcherSamplePubSubType data_type(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(214);
+    Publishing publishing(row);
+
+    SerializedPayload_t framed(data_type.max_serialized_type_size);
+    ASSERT_TRUE(data_type.serialize(&publishing.data, framed, kXcdr1));
+
+    // The same envelope bytes through the schema channel's non-plain sequence<octet>.
+    const uint32_t body_size = framed.length - kHeader - kLengthPrefix;
+    fletcher::internal::RawBytes raw;
+    raw.data.assign(framed.data + kHeader + kLengthPrefix,
+                    framed.data + kHeader + kLengthPrefix + body_size);
+
+    fletcher::internal::RawBytesPubSubType schema_type(kTestPayloadBytes);
+    SerializedPayload_t via_fastcdr(schema_type.max_serialized_type_size);
+    ASSERT_TRUE(schema_type.serialize(&raw, via_fastcdr, kXcdr1));
+
+    ASSERT_EQ(framed.length, via_fastcdr.length);
+    EXPECT_EQ(0, std::memcmp(framed.data, via_fastcdr.data, framed.length))
+        << "the hand-framed data channel and the fastcdr-framed schema channel disagree about the "
+           "same wire shape";
+}
+
+// Bounded but not plain, and construct_sample must keep answering false for a non-plain type.
+TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelIsBoundedButNotPlain) {
+    fletcher::internal::RawBytesPubSubType schema_type(kTestPayloadBytes);
+    EXPECT_TRUE(schema_type.is_bounded());
+    EXPECT_FALSE(schema_type.is_plain(kXcdr1));
+    EXPECT_FALSE(schema_type.is_plain(kXcdr2));
+    EXPECT_FALSE(schema_type.construct_sample(nullptr));
+    EXPECT_EQ(4u + 4u + kTestPayloadBytes, schema_type.max_serialized_type_size);
+
+    // 4 + 100'001 = 100'005, padded to 100'008, plus the 4-byte encapsulation.
+    fletcher::internal::RawBytesPubSubType odd_type(100'001);
+    EXPECT_EQ(100'012u, odd_type.max_serialized_type_size);
+
+    // Saturates rather than wraps: 32-bit arithmetic would have reported eight bytes.
+    fletcher::internal::RawBytesPubSubType absurd_type(UINT32_MAX);
+    EXPECT_EQ(UINT32_MAX, absurd_type.max_serialized_type_size);
+
+    // And the size of an actual sample comes out of fastcdr, not out of that ceiling.
+    fletcher::internal::RawBytes sample;
+    sample.data.assign(214, 0xAB);
+    EXPECT_EQ(4u + 4u + 214u, schema_type.calculate_serialized_size(&sample, kXcdr1));
+
+    // The data channel claims all three, which is what earns it loans.
+    FletcherSamplePubSubType data_type(kTestPayloadBytes);
+    EXPECT_TRUE(data_type.is_bounded());
+    EXPECT_TRUE(data_type.is_plain(kXcdr1));
+    EXPECT_TRUE(data_type.is_plain(kXcdr2));
+}
+
+// The pool is sized for the one sample the channel can hold, which is why bounded is affordable.
+TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
+    const auto wqos = fletcher::internal::MakeSchemaChannelWriterQos();
+    EXPECT_EQ(eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS, wqos.history().kind);
+    EXPECT_EQ(1, wqos.history().depth);
+    EXPECT_EQ(1, wqos.resource_limits().max_samples);
+    EXPECT_EQ(1, wqos.resource_limits().allocated_samples);
+
+    const auto rqos = fletcher::internal::MakeSchemaChannelReaderQos();
+    EXPECT_EQ(eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS, rqos.history().kind);
+    EXPECT_EQ(1, rqos.history().depth);
+    EXPECT_EQ(1, rqos.resource_limits().max_samples);
+    EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
+}
+
 TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(kTestPayloadBytes);  // + the envelope: too big.
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -208,20 +342,24 @@ TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
 
 // The property both publish flows rest on: whichever wrote the sample, a reader cannot tell.
 TEST(FletcherSamplePubSubTypeTest, LoanedAndSerialisedBodiesAreIdentical) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(214);
     Publishing publishing(row);
 
     SerializedPayload_t payload(type.max_serialized_type_size);
     ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
 
-    FletcherSample loaned{};
-    fletcher::FixedWriteBuffer buf(loaned.body, kTestPayloadBytes);
+    // What the loaned flow does, with a plain buffer standing in for the payload Fast DDS lends.
+    std::vector<uint8_t> loaned(SampleSize(kTestPayloadBytes));
+    fletcher::FixedWriteBuffer buf(fletcher::internal::SampleBody(loaned.data()),
+                                   kTestPayloadBytes);
     fletcher::internal::EncodeEnvelopeBody(buf, publishing.encoder, kNoAttachments);
-    loaned.length = static_cast<uint32_t>(buf.Position());
+    fletcher::internal::WriteSampleLength(loaned.data(), static_cast<uint32_t>(buf.Position()));
 
-    EXPECT_EQ(loaned.length, ReadU32(payload.data + kHeader));
-    EXPECT_EQ(0, std::memcmp(loaned.body, payload.data + kHeader + kLengthPrefix, loaned.length));
+    const uint32_t length = fletcher::internal::ReadSampleLength(loaned.data());
+    EXPECT_EQ(length, ReadU32(payload.data + kHeader));
+    EXPECT_EQ(0, std::memcmp(fletcher::internal::SampleBody(loaned.data()),
+                             payload.data + kHeader + kLengthPrefix, length));
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +367,7 @@ TEST(FletcherSamplePubSubTypeTest, LoanedAndSerialisedBodiesAreIdentical) {
 // ---------------------------------------------------------------------------
 
 TEST(FletcherSamplePubSubTypeTest, RoundTripsTheRow) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(214, 0x5A);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -242,7 +380,7 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsTheRow) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(32);
     fletcher::Attachments sent;
     sent["sidecar"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
@@ -259,7 +397,7 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, RoundTripsAnXcdr2Payload) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(64);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -271,7 +409,7 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAnXcdr2Payload) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, RefusesAnEncapsulationItCannotParse) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(64);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -287,7 +425,7 @@ TEST(FletcherSamplePubSubTypeTest, RefusesAnEncapsulationItCannotParse) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, RefusesAPayloadShorterThanItsHeader) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(64);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -310,7 +448,7 @@ TEST(FletcherSamplePubSubTypeTest, RefusesAPayloadShorterThanItsHeader) {
 // only calls them for a non-plain type, so for this one they are never reached — but they have to
 // be the right type if they are.
 TEST(FletcherSamplePubSubTypeTest, CreateDataMakesSomethingDeserializeCanFill) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(16);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -324,7 +462,7 @@ TEST(FletcherSamplePubSubTypeTest, CreateDataMakesSomethingDeserializeCanFill) {
 }
 
 TEST(FletcherSamplePubSubTypeTest, IsNotKeyed) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kTestPayloadBytes);
     EXPECT_FALSE(type.is_compute_key_provided);
 
     eprosima::fastdds::rtps::InstanceHandle_t handle;

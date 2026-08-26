@@ -8,54 +8,52 @@ Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds
 
 A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
 
-The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. Custom `TopicDataType`s handle the CDR serialisation without requiring IDL generation as a build step, named as `fastddsgen` would have named them: `FletcherSamplePubSubType` over `FletcherSample`, plus `RawBytesPubSubType` for the companion schema channel.
+The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. Custom `TopicDataType`s handle the CDR serialisation without requiring IDL generation as a build step, named as `fastddsgen` would have named them: `FletcherSamplePubSubType` over the sample layout, plus `RawBytesPubSubType` for the companion schema channel.
 
 ### Zero-copy: the plain sample
 
-Fast DDS delivers zero-copy only for a **plain** type — one whose in-memory layout already *is* its CDR representation, so neither end serialises anything. The sample is therefore a real fixed-layout struct, `internal::FletcherSample`:
+Fast DDS delivers zero-copy only for a **plain** type — one whose in-memory layout already *is* its CDR representation, so neither end serialises anything. The sample is therefore a fixed layout, spelled as an offset and a size in `internal/fletcher_sample.hpp`:
 
-```cpp
-template <uint32_t N>
-struct FletcherSample {
-    uint32_t length;   // bytes of body in use
-    uint8_t  body[N];  // row, then attachments
-};
+```
+[0, 4)                     uint32 length — bytes of body in use
+[4, 4 + payload_bytes)     body — row, then attachments
 ```
 
-Its `static_assert`s stand in for what `fastddsgen` would have guaranteed from a `@extensibility(FINAL)` IDL struct: trivially copyable, standard layout, no padding, little-endian.
-
-The bound is a template parameter because a plain type's size has to be known to the compiler, and it reaches the provider as `FastDDSProviderOptions::max_payload_bytes`, a runtime option. `internal/payload_binding.hpp` is the seam between the two, and deliberately the only one: the registered type, the loaned publish flow and the loaned read flow all come from one `PayloadBinding`, so they cannot disagree about `N`.
-
-The bounds that exist are stated as a rule rather than a list — powers of two from 4 KiB to 8 MiB, which is also what keeps every one of them a multiple of 4:
+Both ends address those two fields — `ReadSampleLength`/`WriteSampleLength` and `SampleBody` — which is the whole difference from a hand-framed byte buffer. Nothing about the layout can be padded (one length, then bytes), and the sample stays free of *tail* padding exactly while its total is 4-aligned. That is the one property the bound has to have, and the whole of the rule:
 
 ```cpp
 constexpr bool IsPayloadBound(uint32_t bytes) {
-    return std::has_single_bit(bytes) && bytes >= kMinPayloadBytes && bytes <= kMaxPayloadBytes;
+    return bytes >= kMinPayloadBytes && bytes <= kMaxPayloadBytes && bytes % 4 == 0;
 }
 
 template <uint32_t N>
 concept PayloadBound = IsPayloadBound(N);   // the same rule, for a bound the compiler knows
 
 options.max_payload_bytes = fletcher::kPayloadBytes<128 * 1024>;  // checked where it is written
-options.max_payload_bytes = fletcher::kPayloadBytes<100'000>;     // does not compile
+options.max_payload_bytes = fletcher::kPayloadBytes<100'001>;     // does not compile
 ```
 
 Written once and used twice, so a bound rejected at run time and one rejected at compile time are
 rejected by the same expression. `IsPayloadBound()` is public, so a value read from configuration
-can be checked without catching.
+can be checked without catching. `kMinPayloadBytes` is the smallest envelope that can exist and
+`kMaxPayloadBytes` is where a sample's own size stops fitting the uint32 Fast DDS reports it in —
+neither is a judgement about what a deployment can afford. What a bound *costs* is the bound
+multiplied by resource limits that belong to the caller, and nothing here caps that product (see
+[What this costs](#what-this-costs)).
 
-Nothing is ever rounded: a bound with no plain type behind it is a mistake, and one that only exists at run time — read from config, say — is refused by the constructor instead. The bound rides in the registered type name (`fletcher_65536`), so two providers on different bounds fail to match at discovery rather than exchanging samples one side cannot hold.
+Nothing is ever rounded: a bound that cannot frame a sample is a mistake, and one that only exists at run time — read from config, say — is refused by the constructor instead. The bound rides in the registered type name (`fletcher_65536`), so two providers on different bounds fail to match at discovery rather than exchanging samples one side cannot hold. That type name is also the *only* thing keeping two bounds apart, which is what makes the bound safe to be a runtime option at all.
 
-Both ends address that struct, which is the whole difference from a hand-framed byte buffer. Each flow
-is its own class over a shared base, mirroring how DDS itself splits the calls — `SampleWriter` /
+> An earlier revision made the sample a struct templated on its size, which forced the runtime option to be matched against a *compiled set* of bounds — powers of two from 4 KiB to 8 MiB, walked at compile time by doubling. Powers of two were never an alignment rule; they were what made the walk short enough to compile (stepping by 4 would need two million instantiations), and the floor and ceiling were where the walk started and stopped. Fast DDS never needed the compile-time size: `DataWriterImpl::loan_sample` reads the runtime `max_serialized_type_size`, and a loaned collection only casts the payload pointers it is handed. What the struct's `static_assert`s proved reduces to `bytes % 4 == 0`.
+
+Each flow is its own class over a shared base, mirroring how DDS itself splits the calls — `SampleWriter` /
 `LoanableSampleWriter` on the publish side (`internal/sample_writer.hpp`), `DataReaderListener` /
 `LoanableDataReaderListener` on the subscribe side (`internal/data_reader_listener.hpp`):
 
 | | Publish — `SampleWriterBase` | Subscribe — `DataReaderListenerBase` |
 |---|---|---|
-| **Loanable** | `LoanableSampleWriter<N>`: `loan_sample` → fill `length` and `body` → `write(sample)`. No `serialize()` runs at all; with shared memory the struct being filled *is* the one the reader reads. | `LoanableDataReaderListener<N>`: `take(LoanableSequence<FletcherSample<N>>&, SampleInfoSeq&)` → read fields in place → `return_loan`. |
+| **Loanable** | `LoanableSampleWriter`: `loan_sample` → fill the length and the body → `write(sample)`. No `serialize()` runs at all; with shared memory the payload being filled *is* the one the reader reads. | `LoanableDataReaderListener`: `take(LoanableSequence&, SampleInfoSeq&)` → read the two fields in place → `return_loan`. |
 | **Plain** | `SampleWriter`: `write(&PublishData)` runs `serialize()`, writing the same layout **truncated after `length`** — so a small row stays small on the wire. | `DataReaderListener`: `take_next_sample(&ReceivedData, &SampleInfo)` — Fast DDS deserialises, which reads `length` out of the payload and needs nothing beyond the bytes that arrived. |
-| **Chosen by** | `FastDDSProviderOptions::loan_publish` — a preference. | `internal::CanLoanSamples(qos)` — a **precondition**, not a preference: reading a payload in place as a `FletcherSample<N>` needs whole payload nodes, which only a `PREALLOCATED*` history memory policy guarantees. Under `DYNAMIC_RESERVE`/`DYNAMIC_REUSABLE` the pool sizes each node to what arrived, so a truncated sample leaves a node shorter than the struct and `length` would steer reads past its end. |
+| **Chosen by** | `FastDDSProviderOptions::loan_publish` — a preference. | `internal::CanLoanSamples(qos)` — a **precondition**, not a preference: reading a whole sample in place needs whole payload nodes, which only a `PREALLOCATED*` history memory policy guarantees. Under `DYNAMIC_RESERVE`/`DYNAMIC_REUSABLE` the pool sizes each node to what arrived, so a truncated sample leaves a node shorter than a whole one and `length` would steer reads past its end. |
 
 Neither side is negotiated. `loan_sample` is gated by the *writer's* own type (`DataWriterImpl.cpp:525`) and the reader's loans by the *reader's* own type (`DataReaderImpl.cpp:1869-1896`), so all four pairings interoperate — upstream regression-tests exactly that in `test/dds/communication/mix_zero_copy_communication.json`, and it branches on `zero_copy_` between exactly these two reader calls in `test/dds/communication/SubscriberModule.cpp:295`.
 
@@ -63,7 +61,7 @@ Neither side is negotiated. `loan_sample` is gated by the *writer's* own type (`
 
 What this costs:
 
-- **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the full `sizeof(FletcherSample)` — `resource_limits().allocated_samples` slots up front, growing to `max_samples`, per endpoint. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry.
+- **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the whole sample — `resource_limits().allocated_samples` slots up front, growing to `max_samples`, per endpoint. A data-sharing writer allocates `(max_samples + extra_samples) * (bound + 8)` bytes of shared segment immediately. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry; nothing in the provider caps their product, and if it does not fit a data-sharing segment (a 32-bit size) Fast DDS declines data-sharing and uses the transport.
 - **Wire size under `loan_publish`.** Fast DDS stamps a loaned payload `length = max_serialized_type_size` and nothing recomputes it, so every sample crosses the wire at the full bound whatever the row weighs. And it buys little: measured publish-side (`bench_dds_payload`, p50 of 2x4000 samples) it saved a **fixed ~0.1-0.2 us**, not a per-byte cost — 1.05 -> 0.95 us at a 198-byte row and 2.15 -> 2.00 us at 60 KB. Both paths write the row bytes exactly once, so loaning removes no copy: it removes the encapsulation and the length field, and the `PublishData` the serialising path hands to `write()`. Those are now **14.6 ns against 29.3 ns** at a 198-byte row (`bench_pub_sub_type`), so the publish-side case for it is weaker than those DDS-level numbers, which predate that work. Off by default.
 - **Oversized rows throw** under `loan_publish`: a row plus attachments past `max_payload_bytes` raises `std::overflow_error` out of `Publish`. Without it the overflow is reported inside `serialize()` instead; either way the sample is dropped.
 
@@ -82,7 +80,25 @@ deserialising path grows linearly at roughly 58 ns/KiB, the cost of allocating a
 per sample and memcpy-ing `length` bytes into it. That is the whole reason the read flow is taken
 whenever its precondition holds rather than offered as an option.
 
-The one deviation from a generated plain type: `serialize()` emits the used prefix rather than the whole struct, and `deserialize()` reads `length` bytes rather than memcpy-ing the lot. Fast DDS never reads past `payload.length`, so this is safe, and it is what keeps the non-loaned path from putting the whole bound on the wire per sample.
+The one deviation from a generated plain type: `serialize()` emits the used prefix rather than the whole sample, and `deserialize()` reads `length` bytes rather than memcpy-ing the lot. Fast DDS never reads past `payload.length`, so this is safe, and it is what keeps the non-loaned path from putting the whole bound on the wire per sample.
+
+**Where fastcdr is used and where it is not.** The rule is that fastcdr does the work wherever it is
+free, and the framing is hand-written only on the path where it is not:
+
+- The representation id is `EncodingAlgorithmFlag | Cdr::LITTLE_ENDIANNESS` and the padding octet is
+  `Cdr::alignment(length, 4)` — both fastcdr, both `constexpr`, both free.
+- The `__schema` channel builds a real `FastBuffer` and `Cdr` and serialises a `sequence<octet>`
+  outright. It writes once per topic, so the ~36 ns costs nothing there.
+- Only the data channel's eight framing bytes are placed by hand, and a unit test pins them to what
+  fastcdr produces (see the measured decisions table below).
+
+The two channels are therefore the **same shape on the wire** — a CDR `sequence<octet>`, because a
+sample's length sits at exactly the offset and width of the sequence length field. They differ only
+in memory: a length followed by raw bytes, which can be plain and loaned, against a `std::vector`,
+which cannot. `TheSchemaChannelFramesTheSameShapeAsTheDataChannel` asserts the byte equality, since
+the two are framed by different code.
+
+That deviation has a limit worth stating plainly: **the plain claim holds between Fletcher endpoints, not against a `fastddsgen`-generated peer.** A generated type support for the equivalent IDL reads `length` and then a fixed `octet[N]`, so a serialised Fletcher sample — which stops after the bytes in use — is short by however much of the bound the row did not need, and its `Cdr` refuses it. Fletcher's own reader is unaffected because it bounds itself by `length` on the copying path and by `internal::CanLoanSamples` on the loaned one. A peer that has to read these samples has to read them the same way, which in practice means through this provider (or the XRCE one, which forwards the bytes opaquely).
 
 ### Statuses
 
@@ -139,7 +155,7 @@ Both guarantees are enforced by routing every sample (buffered backlog and live)
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
-// Default options — Fletcher's profile on domain 0, 1 MB max payload.
+// Default options — Fletcher's profile on domain 0, 64 KiB max payload.
 auto provider = std::make_shared<FastDDSPubSubProvider>(FastDDSProviderOptions{});
 
 // Custom options — pick a DDS domain and tune QoS:
@@ -239,14 +255,16 @@ carry them — they date, and a stale figure in a source comment reads as curren
 |---|---|---|
 | `Publish` takes the provider mutex **shared**, not exclusive | `src/fast_dds_pubsub_provider.cpp` | 16 threads on 16 topics: p99 **2.7 µs → 711 µs** when the exclusive lock spanned `DataWriter::write`. `DataWriter::write` is itself thread safe, so shared is enough to keep the topic and writer alive. |
 | `PublishData` and `ReceivedData` are separate structs | `src/internal/transport_data.hpp` | Bundled, every serialised publish built and destroyed an `Attachments` the publish path never reads — MSVC's `unordered_map` allocates a sentinel node in its default constructor. **52 ns of the 137 ns** the publish spends outside Fast DDS. |
-| `serialize()` writes the 8 framing bytes directly instead of through a `Cdr` | `src/internal/fletcher_sample_pub_sub_type.hpp` | Building a `FastBuffer` and a `Cdr` for them cost **47 ns per publish** for byte-identical output. Held by `FletcherWireFormat.FastCdrReproducesTheBytesExactly` and by `bench_pub_sub_type`'s fastcdr arm. |
+| The sample is an offset and a size, not a struct templated on its bound | `src/internal/fletcher_sample.hpp` | The struct made the bound a compile-time constant, which forced a *compiled set* of bounds and gave the rule its floor, ceiling and power-of-two shape. It cost nothing to drop, because the bound never reached the encode loop as a constant either way: `EncodeEnvelopeBody` takes an abstract `WriteBuffer&`, so every `Append` is a virtual call and the bound is `FixedWriteBuffer::capacity_`, a runtime member. Measured against `BM_PublishFlow_LoanedStruct`, the baseline arm kept for exactly this (3 repetitions, mean wall): **14.7 ns against 16.2 ns** at 214 B, **31.9 against 32.4** at 4 KiB, **103 against 111** at 16 KiB, **971 against 976** at 60 KB — equal within a 2–9 % coefficient of variation, and not slower. The loaned read is unchanged at **2.05 ns**. |
+| `serialize()` writes the 8 framing bytes directly instead of through a `Cdr` | `src/internal/fletcher_sample_pub_sub_type.hpp` | Byte-identical output for **13.5 ns** against **52.9 ns** (fastcdr placing the encapsulation with the length reserved and patched) and **49.5 ns** (fastcdr serialising the `sequence<octet>` outright), measured over 400 000 calls on a 222-byte envelope. Against a 14.6 ns loaned publish that is ~3.5×. Held by `FletcherSamplePubSubTypeTest.FastCdrReproducesTheBytesExactly` (in the unit suite, so CI runs it) and by `bench_pub_sub_type`'s fastcdr arm. |
+| `OrderedDelivery` publishes queue emptiness in an atomic instead of locking to look | `src/internal/ordered_delivery.hpp` | The steady path has to know whether anything was queued while its callback ran — by the callback re-offering, or by another thread whose own drain bailed because this delivery was in progress. Taking `mu_` to find out cost **19.7 ns → 6.96 ns** per delivered sample once the answer became an acquire load (`BM_Deliver_OfferView`, 3 repetitions, cv < 1 %; `BM_Deliver_Offer` 19.6 → 7.17 ns), against a bare callback of 1.30 ns. `queue_` itself is still never touched without the lock; only the one bit is published, by `NoteQueuedLocked` under it. An earlier revision read `queue_.empty()` unlocked, which was the same speed and a data race. |
 | `Publisher::CreateTopic` encodes the schema **before** taking the lock | `../pubsub/src/publisher.cpp` | The locked section becomes a byte compare. First declaration **1.4 → 2.8 µs** (it now encodes where it used to deep-copy); re-declaration **4.2 → 2.5 µs**, and concurrent callers no longer queue behind ~3.5 µs of IPC work each. |
 | `PublishData` holds the encoder and attachments by pointer | `src/internal/transport_data.hpp` | The provider layer costs **~80 ns** over a raw `DataWriter::write` of the same bytes, and the encoder and topic-name changes took **15–22 ns** off that (`tools/fletcher_bench/bench_publish` in the consuming repo, 16 interleaved A/B runs). |
 | `SubscribeCallback` takes `schema` and `attachments` by **const reference** | `../pubsub/include/fletcher/pubsub/provider.hpp` | By value it was **~110 ns per delivered sample against 1.4 ns for the call itself** — an empty `Attachments` is an `unordered_map`, and MSVC allocates a sentinel node in its default constructor, so every delivery built and destroyed one whether the sample carried attachments or not. |
 | The delivery layer latches into a lock-free path once the schema handoff is done | `src/internal/ordered_delivery.hpp` | `OrderedDelivery` exists for the subscriber-first startup window and used to charge for it forever. With that plus the listener reusing one `Attachments`, delivery went from **199 ns to 3.2 ns** per loaned sample and **398 ns to 3.5 ns** per copied one (`benchmarks/bench_pub_sub_type`, `BM_Deliver_*`). |
 
 > **Read these as differences, not absolutes,** and take each from the same run as its control —
-> `BM_RawWrite` for the publish rows, `BM_Deliver_CallbackOnly` for the delivery ones. The machine
+> `BM_Memcpy` for the publish rows, `BM_Deliver_CallbackOnly` for the delivery ones. The machine
 > drifts 2–3% between two runs of identical code, which is larger than several of these numbers.
 >
 > The DDS-level harnesses cannot resolve any of it: `bench_e2e` reports `write_p50` quantised to
@@ -339,7 +357,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-fastdds-pubsub-provider/0.4.1-alpha")
+    self.requires("fletcher-fastdds-pubsub-provider/0.4.2-alpha")
 ```
 
 Install dependencies:

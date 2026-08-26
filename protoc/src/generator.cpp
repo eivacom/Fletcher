@@ -1846,12 +1846,9 @@ void EmitFieldDecode(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
             const auto& e = fi.mapping.element;
             std::string method = PositionalReadCall(e);
             if (IsBulkCopyableScalar(e)) {
-                // resize() value-initialises before ReadFixedArray overwrites it — a memset the
-                // per-element loop avoids, still far cheaper than a call each. ReadListHeader has
-                // already capped lh.count against the remaining buffer.
+                // ReadFixedArrayInto, not resize() then ReadFixedArray: it sizes after bounding.
                 o << "        { auto lh = r.ReadListHeader();\n"
-                  << "          " << n << ".resize(lh.count);\n"
-                  << "          r.ReadFixedArray(" << n << ".data(), lh.count); }\n";
+                  << "          r.ReadFixedArrayInto(" << n << ", lh.count); }\n";
                 break;
             }
             o << "        { auto lh = r.ReadListHeader();\n"

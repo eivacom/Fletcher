@@ -67,9 +67,8 @@ struct Subscriber::Impl {
         lock.unlock();
 
         SubscriptionResult result = provider->Subscribe(
-            segments,
-            [this, key](const uint8_t* data, size_t len, const SharedSchema& schema,
-                        const Attachments& att) {
+            segments, [this, key](const uint8_t* data, size_t len, const SharedSchema& schema,
+                                  const Attachments& att) {
                 EntryList entries;
                 {
                     std::lock_guard lk(mu);
@@ -79,14 +78,10 @@ struct Subscriber::Impl {
                 }
                 if (entries->empty()) return;
 
-                // Copy the schema and attachments to all but the last callback; move into the last
-                // one to avoid an unnecessary copy when the attachments map is large.
-                for (size_t i = 0; i + 1 < entries->size(); ++i) {
-                    const Entry& entry = (*entries)[i];
+                // Borrowed by every subscriber; a callback that keeps either one copies it.
+                for (const Entry& entry : *entries) {
                     entry.callback(entry.id, data, len, schema, att);
                 }
-                const Entry& last = entries->back();
-                last.callback(last.id, data, len, std::move(schema), std::move(att));
             });
 
         lock.lock();

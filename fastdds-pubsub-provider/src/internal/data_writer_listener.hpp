@@ -39,10 +39,11 @@ inline eprosima::fastdds::dds::StatusMask ReaderStatusMask() {
            << eprosima::fastdds::dds::StatusMask::sample_rejected();
 }
 
-// The companion __schema channel carries data only; its QoS is fixed by Fletcher, so a mismatch
-// there would be a Fletcher bug rather than something an operator configured.
+// sample_rejected matters: the pool is PREALLOCATED and cannot grow for an oversized schema.
 inline eprosima::fastdds::dds::StatusMask SchemaReaderStatusMask() {
-    return eprosima::fastdds::dds::StatusMask::data_available();
+    return eprosima::fastdds::dds::StatusMask::data_available()
+           << eprosima::fastdds::dds::StatusMask::sample_rejected()
+           << eprosima::fastdds::dds::StatusMask::sample_lost();
 }
 
 // Every callback DataWriterListener declares is overridden, in the order it declares them, so that

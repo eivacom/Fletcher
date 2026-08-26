@@ -104,6 +104,9 @@ struct XrceDDSPubSubProvider::Impl {
 
     XrceConfig config;
 
+    // Must be byte-identical to what a FastDDS peer registers, or the endpoints never match.
+    std::string type_name;
+
     // XRCE session and transport.
     uxrSession session{};
     uxrUDPTransport udp_transport{};
@@ -183,25 +186,25 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         auto& ts = tit->second;
         if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
 
-        // Malformed __schema sample must not throw out of the XRCE session
-        // callback thread (which could terminate the process); ignore it and
-        // let the retained TRANSIENT_LOCAL/KEEP_LAST(1) sample be redelivered.
+        // Reached from uxr_run_session_* through C, where an escaping exception terminates.
         OwnedSchema schema;
+        OwnedSchema schema_copy;
         try {
             schema = DeserializeSchemaIpc(body, seq_len);
+            if (!schema) return;
+            schema_copy = OwnedSchema::DeepCopy(schema.get());
         } catch (...) {
             return;
         }
-        if (!schema) return;
-        ts.schema = OwnedSchema::DeepCopy(schema.get());
+        ts.schema = std::move(schema_copy);
         ts.shared_schema = MakeSharedSchema(std::move(schema));
         ts.schema_promise.set_value(ts.shared_schema);
         ts.schema_resolved = true;
 
         if (ts.callback) {
-            for (auto& env : ts.pending) {
-                ts.callback(env.row.data(), env.row.size(), ts.shared_schema,
-                            std::move(env.attachments));
+            // Borrowed: a callback that keeps the attachments copies them, per the contract.
+            for (const auto& env : ts.pending) {
+                ts.callback(env.row.data(), env.row.size(), ts.shared_schema, env.attachments);
             }
         }
         ts.pending.clear();
@@ -232,8 +235,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         ts.pending.push_back(std::move(envelope));
         return;
     }
-    ts.callback(envelope.row.data(), envelope.row.size(), ts.shared_schema,
-                std::move(envelope.attachments));
+    ts.callback(envelope.row.data(), envelope.row.size(), ts.shared_schema, envelope.attachments);
 }
 
 // -----------------------------------------------------------------------
@@ -243,6 +245,15 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
 XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
     : impl_(std::make_unique<Impl>()) {
     impl_->config = config;
+
+    // The bound is part of the registered type name, so an unusable one matches nothing.
+    if (!IsPayloadBound(config.payload_bound)) {
+        throw std::invalid_argument(
+            "XRCE: payload_bound " + std::to_string(config.payload_bound) +
+            " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 between " +
+            std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+    }
+    impl_->type_name = FletcherTypeName(config.payload_bound);
 
     // Size reliable stream buffers.
     // history must be power of 2; buffer size = MTU * history.
@@ -394,9 +405,9 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     WaitForStatus(&impl_->session, req_part, "participant");
 
     // Create topic.
-    uint16_t req_topic =
-        uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out, ts.topic_id,
-                                    ts.participant_id, name.c_str(), "fletcher", UXR_REPLACE);
+    uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
+                                                     ts.topic_id, ts.participant_id, name.c_str(),
+                                                     impl_->type_name.c_str(), UXR_REPLACE);
     WaitForStatus(&impl_->session, req_topic, "topic");
 
     // Create publisher + data writer.
@@ -431,7 +442,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
         uint16_t req_st = uxr_buffer_create_topic_bin(
             &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
-            schema_name.c_str(), "SchemaBytes", UXR_REPLACE);
+            schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
         WaitForStatus(&impl_->session, req_st, "schema topic");
 
         uint16_t req_sp =
@@ -535,9 +546,9 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             name.c_str(), UXR_REPLACE);
         WaitForStatus(&impl_->session, req_part, "subscriber participant");
 
-        uint16_t req_topic =
-            uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out, ts.topic_id,
-                                        ts.participant_id, name.c_str(), "fletcher", UXR_REPLACE);
+        uint16_t req_topic = uxr_buffer_create_topic_bin(
+            &impl_->session, impl_->reliable_out, ts.topic_id, ts.participant_id, name.c_str(),
+            impl_->type_name.c_str(), UXR_REPLACE);
         WaitForStatus(&impl_->session, req_topic, "subscriber topic");
     }
 
@@ -561,7 +572,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         uint16_t req_st = uxr_buffer_create_topic_bin(
             &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
-            schema_name.c_str(), "SchemaBytes", UXR_REPLACE);
+            schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
         WaitForStatus(&impl_->session, req_st, "schema topic (sub)");
 
         uint16_t req_ss = uxr_buffer_create_subscriber_bin(&impl_->session, impl_->reliable_out,

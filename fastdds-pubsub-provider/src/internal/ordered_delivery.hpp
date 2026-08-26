@@ -63,6 +63,7 @@ class OrderedDelivery {
         }
         std::unique_lock<std::mutex> lk(mu_);
         queue_.push_back({row, attachments});
+        NoteQueuedLocked();
         TrimLocked();
         if (schema_ready_) {
             DrainLocked(lk);
@@ -80,6 +81,7 @@ class OrderedDelivery {
         std::unique_lock<std::mutex> lk(mu_);
         if (!schema_ready_ || draining_ || !queue_.empty()) {
             queue_.push_back({std::vector<uint8_t>(row, row + len), attachments});
+            NoteQueuedLocked();
             TrimLocked();
             if (schema_ready_) {
                 DrainLocked(lk);
@@ -126,8 +128,10 @@ class OrderedDelivery {
         Attachments att;
     };
 
-    // Drops the oldest samples once the backlog exceeds its bound. Warns once, because the drop
-    // that matters is the first one — after that it is a steady state, not an event.
+    // Call under mu_ after any mutation that can change whether the queue is empty.
+    void NoteQueuedLocked() { queued_.store(!queue_.empty(), std::memory_order_release); }
+
+    // Trims to max_queued_, which is at least 1, so emptiness cannot change.
     void TrimLocked() {
         if (max_queued_ == 0 || queue_.size() <= max_queued_) return;
         while (queue_.size() > max_queued_) {
@@ -141,28 +145,21 @@ class OrderedDelivery {
         }
     }
 
-    // The latched path: deliver without touching the mutex or the queue. Single-threaded by
-    // construction (see steady_), so draining_ and queue_ are read here unlocked — no other thread
-    // is left to race with.
-    //
-    // Returns false when re-entered from inside the callback, so the caller queues instead. That
-    // keeps the guarantee MidFlushOfferIsNotDeliveredInline pins down: a sample offered while a
-    // delivery is in progress lands *after* it, never nested inside it. Nesting would also let a
-    // callback that re-offers recurse until the stack runs out, where the queue makes it iterative.
+    // False when re-entered from the callback, so the caller queues and delivery stays iterative.
     bool DeliverSteady(const uint8_t* row, size_t len, const Attachments& attachments) {
-        if (draining_) {
+        bool expected = false;
+        if (!draining_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             return false;
         }
-        draining_ = true;
         try {
             callback_(row, len, schema_, attachments);
         } catch (...) {
-            draining_ = false;
+            draining_.store(false, std::memory_order_release);
             throw;
         }
-        draining_ = false;
-        // Anything the callback re-offered is waiting; drain it the ordinary way.
-        if (!queue_.empty()) {
+        draining_.store(false, std::memory_order_release);
+        // Whoever queued during the callback bailed on draining_, ordering their store before this.
+        if (queued_.load(std::memory_order_acquire)) {
             std::unique_lock<std::mutex> lk(mu_);
             DrainLocked(lk);
         }
@@ -181,10 +178,7 @@ class OrderedDelivery {
     // time: a second caller that enqueues mid-drain returns immediately and
     // leaves its sample for the active drainer, preserving order.
     void DrainLocked(std::unique_lock<std::mutex>& lk) {
-        // An empty queue leaves before anything is paid for. OfferView's fast path calls this after
-        // every inline delivery precisely to find it empty, so hoisting the schema copy above the
-        // loop without this measured +7 ns on every loaned sample — the copy moved from once per
-        // queued sample to once per call.
+        // The schema copy sits below the empty check: hoisting it cost +7 ns per sample.
         if (draining_) {
             return;
         }
@@ -199,6 +193,7 @@ class OrderedDelivery {
         while (!queue_.empty()) {
             PendingSample sample = std::move(queue_.front());
             queue_.pop_front();
+            NoteQueuedLocked();
             lk.unlock();
             try {
                 callback_(sample.row.data(), sample.row.size(), schema, sample.att);
@@ -217,25 +212,15 @@ class OrderedDelivery {
     std::mutex mu_;
     SharedSchema schema_;
     bool schema_ready_ = false;
-    bool draining_ = false;
+    // Atomic because DeliverSteady tests and sets it without mu_.
+    std::atomic<bool> draining_{false};
     std::deque<PendingSample> queue_;
+    // Queue emptiness, published for DeliverSteady, which does not take mu_.
+    std::atomic<bool> queued_{false};
     size_t max_queued_ = 0;
     bool warned_ = false;
 
-    // Latched once the handoff is over, never cleared, and the reason everything above stops
-    // costing anything in the steady state.
-    //
-    // Two threads can be in here, and only during startup: the data reader's listener (Offer /
-    // OfferView) and the __schema reader's listener (SetSchema). Fast DDS invokes on_data_available
-    // holding the RTPS reader's own mutex — StatefulReader::process_data_msg takes it and holds
-    // it through change_received, NotifyChanges and the listener call, and the data-sharing
-    // thread reaches the same place through the same function — so all calls for *one* reader
-    // are serialised. The schema listener fires once (SchemaListener::fired_) and never returns.
-    // So after the backlog drains there is a single caller left, and the queue and mutex have no
-    // work to do: the sample goes straight to the callback.
-    //
-    // Publishing is safe because MarkSteadyLocked runs under mu_ and only when the queue is
-    // observably empty, and reading is safe because schema_ is written once before it is set.
+    // Latched after the handoff; its release/acquire pair carries schema_ to the latched path.
     std::atomic<bool> steady_{false};
 };
 

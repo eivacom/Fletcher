@@ -14,7 +14,9 @@ target_link_libraries(bench_pub_sub_type PRIVATE benchmark::benchmark)
 # The narrated walkthrough: same types, same row, no timing.
 add_executable(example_arrow_roundtrip example_arrow_roundtrip.cpp)
 
-foreach(_target bench_pub_sub_type example_arrow_roundtrip)
+add_executable(exp_zero_copy exp_zero_copy.cpp)
+
+foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy)
     target_compile_features(${_target} PRIVATE cxx_std_20)
 
     # src/internal is on the include path so that the type exercised is the shipped one rather than a

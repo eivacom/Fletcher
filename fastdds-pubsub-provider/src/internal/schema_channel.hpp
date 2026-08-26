@@ -72,7 +72,16 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
             OwnedSchema owned;
             try {
                 owned = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
+            } catch (const std::exception& e) {
+                // If no later sample decodes, every subscriber waits on the future forever.
+                EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
+                                   "ignoring a schema sample that will not decode ("
+                                       << raw.data.size() << " bytes): " << e.what());
+                continue;
             } catch (...) {
+                EPROSIMA_LOG_ERROR(
+                    FLETCHER_SCHEMA,
+                    "ignoring a schema sample that will not decode: non-std exception");
                 continue;
             }
             bool expected = false;
@@ -92,6 +101,24 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
                 }
             }
         }
+    }
+
+    // Unreported, either leaves subscribers waiting on a schema future that never resolves.
+    void on_sample_rejected(eprosima::fastdds::dds::DataReader* /*reader*/,
+                            const eprosima::fastdds::dds::SampleRejectedStatus& status) override {
+        EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
+                           "a schema sample was rejected (reason "
+                               << static_cast<int>(status.last_reason) << ", " << status.total_count
+                               << " total); if it was too large for the channel, raise "
+                                  "max_schema_bytes on this endpoint");
+    }
+
+    void on_sample_lost(eprosima::fastdds::dds::DataReader* /*reader*/,
+                        const eprosima::fastdds::dds::SampleLostStatus& status) override {
+        EPROSIMA_LOG_WARNING(FLETCHER_SCHEMA, "a schema sample was lost ("
+                                                  << status.total_count
+                                                  << " total); the schema future stays unresolved "
+                                                     "until the writer's retained sample arrives");
     }
 
    private:

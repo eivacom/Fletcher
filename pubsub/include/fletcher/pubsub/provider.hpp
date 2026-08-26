@@ -101,9 +101,9 @@ class PubSubProvider {
     ///    in the order they were published. This holds across the schema
     ///    handoff too: the buffered pre-schema backlog is delivered before —
     ///    and never interleaved with — samples that arrive live afterwards.
-    using SubscribeCallback = std::function<void(const uint8_t* data, size_t len,
-                                                 const SharedSchema& schema,
-                                                 const Attachments& attachments)>;
+    using SubscribeCallback =
+        std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
+                           const Attachments& attachments)>;
 
     /// Subscribe to a named topic.  Returns the schema that the
     /// publisher provided when it created the topic. Delivery obeys the

@@ -18,8 +18,9 @@
 //                                    BM_Deliver_CallbackOnly from the same run.
 //   BM_ProviderPublishOverhead       what FastDDSPubSubProvider::Publish spends per sample before
 //                                    the type is reached, i.e. what the loan saving competes with.
-//                                    Superseded by the Monorepo's tools/fletcher_bench/bench_publish,
-//                                    which drives the real Publish against a raw DDS control.
+//                                    Superseded by the Monorepo's
+//                                    tools/fletcher_bench/bench_publish, which drives the real
+//                                    Publish against a raw DDS control.
 //   BM_Memcpy                        the floor: the row bytes moved once, nothing else.
 //   BM_BatchRoundTrip                a whole Arrow batch out and back — read a row out of an
 //                                    ArrowArray, encode, serialise, deserialise, decode, append to
@@ -40,13 +41,13 @@
 #include <cstdio>
 #include <cstring>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
-#include <functional>
 #include <fletcher/core/positional_io.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <functional>
 #include <map>
 #include <memory>
 #include <shared_mutex>
@@ -65,11 +66,15 @@ namespace {
 
 using eprosima::fastdds::rtps::SerializedPayload_t;
 
-// The payload bound these benchmarks measure at. The type is templated on it — one plain type per
-// power of two the provider compiles — and the numbers in the README were taken at 64 KiB.
+// The payload bound these benchmarks measure at. The numbers in the README were taken at 64 KiB.
 constexpr uint32_t kBenchPayloadBytes = 64 * 1024;
-using FletcherSample = fletcher::internal::FletcherSample<kBenchPayloadBytes>;
-using FletcherSamplePubSubType = fletcher::internal::FletcherSamplePubSubType<kBenchPayloadBytes>;
+using fletcher::internal::FletcherSamplePubSubType;
+
+// Stand-in for the payload Fast DDS lends; the shipped sample is an offset and a size.
+struct FletcherSample {
+    uint32_t length;
+    uint8_t body[kBenchPayloadBytes];
+};
 
 // The row, its Arrow schema, and the batch helpers the round-trip arms use — shared with
 // example_arrow_roundtrip.cpp so both put the same thing through the type.
@@ -150,7 +155,7 @@ void BM_Serialize_Legacy(benchmark::State& state) {
 BENCHMARK(BM_Serialize_Legacy)->FLETCHER_ROW_SIZES;
 
 void BM_Serialize_Current(benchmark::State& state) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kBenchPayloadBytes);
     SerializeArm(state, type);
 }
 BENCHMARK(BM_Serialize_Current)->FLETCHER_ROW_SIZES;
@@ -162,7 +167,7 @@ void BM_Deserialize_Legacy(benchmark::State& state) {
 BENCHMARK(BM_Deserialize_Legacy)->FLETCHER_ROW_SIZES;
 
 void BM_Deserialize_Current(benchmark::State& state) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kBenchPayloadBytes);
     DeserializeArm(state, type);
 }
 BENCHMARK(BM_Deserialize_Current)->FLETCHER_ROW_SIZES;
@@ -174,6 +179,8 @@ BENCHMARK(BM_Deserialize_Current)->FLETCHER_ROW_SIZES;
 // encapsulation, and its computed padding count, safe to keep.
 class FastCdrFramedPubSubType : public FletcherSamplePubSubType {
    public:
+    using FletcherSamplePubSubType::FletcherSamplePubSubType;
+
     bool serialize(const void* const data, SerializedPayload_t& payload,
                    eprosima::fastdds::dds::DataRepresentationId_t data_representation) override {
         const auto* d = static_cast<const fletcher::internal::PublishData*>(data);
@@ -218,7 +225,7 @@ class FastCdrFramedPubSubType : public FletcherSamplePubSubType {
 };
 
 void BM_Serialize_CurrentFastCdrFramed(benchmark::State& state) {
-    FastCdrFramedPubSubType type;
+    FastCdrFramedPubSubType type(kBenchPayloadBytes);
     SerializeArm(state, type);
 }
 BENCHMARK(BM_Serialize_CurrentFastCdrFramed)->FLETCHER_ROW_SIZES;
@@ -255,7 +262,7 @@ BENCHMARK(BM_PublishFieldsConstruct);
 // SampleWriter::Write — a PublishData per publish, which copies the RowEncoder std::function, then
 // serialize() into the transport's payload.
 void BM_PublishFlow_Serialised(benchmark::State& state) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kBenchPayloadBytes);
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     const fletcher::PubSubProvider::RowEncoder encoder = MakeByteEncoder(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -274,9 +281,25 @@ void BM_PublishFlow_Serialised(benchmark::State& state) {
 }
 BENCHMARK(BM_PublishFlow_Serialised)->FLETCHER_ROW_SIZES;
 
-// LoanableSampleWriter::Write, minus the loan_sample() call Fast DDS owns: the row goes straight
-// into the sample that will be published, and nothing frames it.
+// LoanableSampleWriter::Write minus the loan_sample() Fast DDS owns, addressed the same way.
 void BM_PublishFlow_Loaned(benchmark::State& state) {
+    const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
+    const fletcher::PubSubProvider::RowEncoder encoder = MakeByteEncoder(row);
+    std::vector<uint8_t> sample(fletcher::internal::SampleSize(kBenchPayloadBytes));
+    const uint32_t bound = kBenchPayloadBytes;  // runtime, as the provider holds it
+
+    for (auto _ : state) {
+        fletcher::FixedWriteBuffer buf(fletcher::internal::SampleBody(sample.data()), bound);
+        fletcher::internal::EncodeEnvelopeBody(buf, encoder, kNoAttachments);
+        fletcher::internal::WriteSampleLength(sample.data(), static_cast<uint32_t>(buf.Position()));
+        benchmark::DoNotOptimize(sample.data());
+    }
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * row.size());
+}
+BENCHMARK(BM_PublishFlow_Loaned)->FLETCHER_ROW_SIZES;
+
+// The same write through the struct the sample used to be: the baseline arm for dropping it.
+void BM_PublishFlow_LoanedStruct(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     const fletcher::PubSubProvider::RowEncoder encoder = MakeByteEncoder(row);
     auto sample = std::make_unique<FletcherSample>();
@@ -289,17 +312,18 @@ void BM_PublishFlow_Loaned(benchmark::State& state) {
     }
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * row.size());
 }
-BENCHMARK(BM_PublishFlow_Loaned)->FLETCHER_ROW_SIZES;
+BENCHMARK(BM_PublishFlow_LoanedStruct)->FLETCHER_ROW_SIZES;
 
 // LoanableDataReaderListener's read: the row stays where the writer put it, so the parse hands back
 // a pointer. Against BM_Deserialize_Current, which owes a vector copy of the same bytes.
 void BM_ReadFlow_Loaned(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
-    auto sample = std::make_unique<FletcherSample>();
+    std::vector<uint8_t> sample(fletcher::internal::SampleSize(kBenchPayloadBytes));
     {
-        fletcher::FixedWriteBuffer buf(sample->body, kBenchPayloadBytes);
+        fletcher::FixedWriteBuffer buf(fletcher::internal::SampleBody(sample.data()),
+                                       kBenchPayloadBytes);
         fletcher::internal::EncodeEnvelopeBody(buf, MakeByteEncoder(row), kNoAttachments);
-        sample->length = static_cast<uint32_t>(buf.Position());
+        fletcher::internal::WriteSampleLength(sample.data(), static_cast<uint32_t>(buf.Position()));
     }
 
     fletcher::Attachments attachments;
@@ -310,8 +334,10 @@ void BM_ReadFlow_Loaned(benchmark::State& state) {
         benchmark::ClobberMemory();
         const uint8_t* decoded = nullptr;
         uint32_t decoded_len = 0;
-        if (!fletcher::internal::ParseEnvelopeBody(sample->body, sample->length, decoded,
-                                                   decoded_len, attachments)) {
+        if (!fletcher::internal::ParseEnvelopeBody(
+                fletcher::internal::SampleBody(sample.data()),
+                fletcher::internal::ReadSampleLength(sample.data()), decoded, decoded_len,
+                attachments)) {
             state.SkipWithError("parse failed");
             break;
         }
@@ -336,13 +362,10 @@ BENCHMARK(BM_ReadFlow_Loaned)->FLETCHER_ROW_SIZES;
 // monorepo meters that thread instead, at the ~1.95 us GetThreadTimes tick. Measured here is every
 // piece of the path that *is* synchronously callable.
 
-// The sink every delivery arm ends at. Non-trivial enough not to be optimised away, cheap enough not
-// to dominate.
+// The sink every delivery arm ends at: not optimisable away, not dominant.
 fletcher::PubSubProvider::SubscribeCallback MakeSink(size_t& sum) {
     return [&sum](const uint8_t* data, size_t len, const fletcher::SharedSchema&,
-                  const fletcher::Attachments&) {
-        sum += len ? data[0] : 0;
-    };
+                  const fletcher::Attachments&) { sum += len ? data[0] : 0; };
 }
 
 // The floor: the callback alone, with the arguments a delivery hands it.
@@ -364,7 +387,8 @@ BENCHMARK(BM_Deliver_CallbackOnly)->FLETCHER_ROW_SIZES;
 void BM_Deliver_OfferView(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(MakeSink(sum), fletcher::MakeSharedSchema(TransformSchema()), 10);
+    fletcher::internal::OrderedDelivery delivery(MakeSink(sum),
+                                                 fletcher::MakeSharedSchema(TransformSchema()), 10);
     for (auto _ : state) {
         delivery.OfferView(row.data(), row.size(), kNoAttachments);
     }
@@ -378,13 +402,14 @@ BENCHMARK(BM_Deliver_OfferView)->FLETCHER_ROW_SIZES;
 // state neither one copies the row: Offer takes it by reference and the latched path passes the
 // pointer straight on.
 //
-// **This is not the copying flow's total cost.** That flow also pays a deserialize per sample, which
-// does copy the row into ReceivedData::decoded_row — see BM_Deserialize_Current. What this arm shows
-// is only what OrderedDelivery adds on top of it, which is now almost nothing.
+// **This is not the copying flow's total cost.** That flow also pays a deserialize per sample,
+// which does copy the row into ReceivedData::decoded_row — see BM_Deserialize_Current. What this
+// arm shows is only what OrderedDelivery adds on top of it, which is now almost nothing.
 void BM_Deliver_Offer(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(MakeSink(sum), fletcher::MakeSharedSchema(TransformSchema()), 10);
+    fletcher::internal::OrderedDelivery delivery(MakeSink(sum),
+                                                 fletcher::MakeSharedSchema(TransformSchema()), 10);
     for (auto _ : state) {
         delivery.Offer(row, kNoAttachments);
     }
@@ -393,10 +418,7 @@ void BM_Deliver_Offer(benchmark::State& state) {
 }
 BENCHMARK(BM_Deliver_Offer)->FLETCHER_ROW_SIZES;
 
-// ParseEnvelopeBody *with* attachments, which BM_ReadFlow_Loaned never exercises — it parses with
-// kNoAttachments, so the entire attachment branch was unmeasured. Each one costs two length reads, a
-// std::string key, a shared_ptr<vector> blob copied out of the payload, and a map insert.
-// state.range(0) is the attachment count; the row stays at the production 214 B.
+// ParseEnvelopeBody with attachments, which BM_ReadFlow_Loaned never exercises.
 void BM_Deliver_ParseAttachments(benchmark::State& state) {
     const int count = static_cast<int>(state.range(0));
     const std::vector<uint8_t> row(214, 0xAB);
@@ -419,8 +441,8 @@ void BM_Deliver_ParseAttachments(benchmark::State& state) {
         benchmark::ClobberMemory();
         const uint8_t* decoded = nullptr;
         uint32_t decoded_len = 0;
-        if (!fletcher::internal::ParseEnvelopeBody(sample->body, sample->length, decoded, decoded_len,
-                                                   decoded_attachments)) {
+        if (!fletcher::internal::ParseEnvelopeBody(sample->body, sample->length, decoded,
+                                                   decoded_len, decoded_attachments)) {
             state.SkipWithError("parse failed");
             break;
         }
@@ -485,7 +507,8 @@ void BatchRoundTripArm(benchmark::State& state, TopicTypeT& type) {
         for (int64_t i = 0; i < rows; ++i) {
             const TransformRow row = source_view.Row(i);
             fletcher::internal::PublishData transport;
-            const fletcher::PubSubProvider::RowEncoder encoder = [&row](fletcher::WriteBuffer& buf) { EncodeRow(row, buf); };
+            const fletcher::PubSubProvider::RowEncoder encoder =
+                [&row](fletcher::WriteBuffer& buf) { EncodeRow(row, buf); };
             transport.encoder = &encoder;
             transport.attachments = &kNoAttachments;
             if (!type.serialize(&transport, payload, kXcdr1) || !type.deserialize(payload, &sink)) {
@@ -509,7 +532,7 @@ void BM_BatchRoundTrip_Legacy(benchmark::State& state) {
 BENCHMARK(BM_BatchRoundTrip_Legacy)->Arg(1000)->Arg(8000);
 
 void BM_BatchRoundTrip_Current(benchmark::State& state) {
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kBenchPayloadBytes);
     BatchRoundTripArm(state, type);
 }
 BENCHMARK(BM_BatchRoundTrip_Current)->Arg(1000)->Arg(8000);
@@ -574,7 +597,9 @@ bool ValidateBatchRoundTrip(const char* arm, TopicTypeT& type) {
     for (int64_t i = 0; i < kRows; ++i) {
         const TransformRow row = source_view.Row(i);
         fletcher::internal::PublishData transport;
-        const fletcher::PubSubProvider::RowEncoder encoder = [&row](fletcher::WriteBuffer& buf) { EncodeRow(row, buf); };
+        const fletcher::PubSubProvider::RowEncoder encoder = [&row](fletcher::WriteBuffer& buf) {
+            EncodeRow(row, buf);
+        };
         transport.encoder = &encoder;
         transport.attachments = &kNoAttachments;
         if (!type.serialize(&transport, payload, kXcdr1)) {
@@ -616,7 +641,7 @@ bool ValidateBatchRoundTrip(const char* arm, TopicTypeT& type) {
 bool ValidateSameRowBytes() {
     const std::vector<uint8_t> row(214, 0xAB);
     fletcher::benchmarks::LegacyFletcherTopicType legacy(kBenchPayloadBytes);
-    FletcherSamplePubSubType current;
+    FletcherSamplePubSubType current(kBenchPayloadBytes);
 
     fletcher::internal::PublishData transport;
     const fletcher::PubSubProvider::RowEncoder encoder = MakeByteEncoder(row);
@@ -655,8 +680,8 @@ bool ValidatePayloadBytes() {
     transport.attachments = &kNoAttachments;
 
     fletcher::benchmarks::LegacyFletcherTopicType legacy(kBenchPayloadBytes);
-    FletcherSamplePubSubType current;
-    FastCdrFramedPubSubType fastcdr_framed;
+    FletcherSamplePubSubType current(kBenchPayloadBytes);
+    FastCdrFramedPubSubType fastcdr_framed(kBenchPayloadBytes);
 
     SerializedPayload_t legacy_payload(legacy.max_serialized_type_size);
     SerializedPayload_t current_payload(current.max_serialized_type_size);
@@ -725,7 +750,7 @@ bool ValidatePayloadBytes() {
 
 bool RunValidation() {
     fletcher::benchmarks::LegacyFletcherTopicType legacy(kBenchPayloadBytes);
-    FletcherSamplePubSubType current;
+    FletcherSamplePubSubType current(kBenchPayloadBytes);
     return ValidateSameRowBytes() && ValidatePayloadBytes() &&
            ValidateBatchRoundTrip("legacy", legacy) && ValidateBatchRoundTrip("current", current);
 }

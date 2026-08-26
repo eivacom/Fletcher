@@ -4,9 +4,9 @@
 // The two ways DDS lets a DataWriter accept a sample, one class each — the publish-side counterpart
 // of internal/data_reader_listener.hpp:
 //
-//   LoanableSampleWriter  loan_sample() → fill FletcherSample → write(sample). Fast DDS skips
+//   LoanableSampleWriter  loan_sample() → fill the sample → write(sample). Fast DDS skips
 //                         serialize() entirely for a loaned plain sample, and with data-sharing the
-//                         struct being filled *is* the one the reader reads, so nothing is copied
+//                         payload being filled *is* the one the reader reads, so nothing is copied
 //                         at any point.
 //   SampleWriter          write(&PublishData) → FletcherSamplePubSubType::serialize writes the same
 //                         layout into the transport's payload, truncated after the bytes in use.
@@ -33,6 +33,26 @@
 namespace fletcher {
 namespace internal {
 
+// RETCODE_TIMEOUT is backpressure and says nothing about the row; a serialize failure logs its own.
+inline const char* ExplainWriteFailure(eprosima::fastdds::dds::ReturnCode_t rc) {
+    switch (rc) {
+        case eprosima::fastdds::dds::RETCODE_TIMEOUT:
+            return "history full for max_blocking_time (backpressure; a subscriber is not keeping "
+                   "up, or resource_limits().max_samples is too small)";
+        case eprosima::fastdds::dds::RETCODE_OUT_OF_RESOURCES:
+            return "out of resources (the payload pool or the history is exhausted)";
+        case eprosima::fastdds::dds::RETCODE_ERROR:
+            return "write failed; if serialize() logged just above, the row did not fit the "
+                   "provider's payload bound";
+        case eprosima::fastdds::dds::RETCODE_NOT_ENABLED:
+            return "the writer is not enabled";
+        case eprosima::fastdds::dds::RETCODE_ILLEGAL_OPERATION:
+            return "illegal operation for this writer's type";
+        default:
+            return "write failed";
+    }
+}
+
 class SampleWriterBase {
    public:
     virtual ~SampleWriterBase() = default;
@@ -53,41 +73,41 @@ class SampleWriter : public SampleWriterBase {
         PublishData transport;
         transport.encoder = &encoder;
         transport.attachments = &attachments;
-        // A row past the provider's payload bound fails inside serialize() and Fast DDS drops the
-        // sample. This path cannot throw the way the loaned one does: the failure happens
-        // underneath write() rather than in front of it. It must not be silent either.
-        if (writer->write(&transport) != eprosima::fastdds::dds::RETCODE_OK) {
+        // An oversized row fails under write() rather than in front of it, so it cannot throw here.
+        const eprosima::fastdds::dds::ReturnCode_t rc = writer->write(&transport);
+        if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
-                               "writer on '"
-                                   << writer->get_topic()->get_name()
-                                   << "' dropped a sample: write failed, most likely a row "
-                                      "larger than the provider's payload bound");
+                               "writer on '" << writer->get_topic()->get_name()
+                                             << "' dropped a sample: " << ExplainWriteFailure(rc));
         }
     }
 };
 
-// N is the provider's payload bound: the loan is a FletcherSample<N>, so this class only fits a
-// writer whose registered type carries the same N. The provider instantiates the two together.
-template <uint32_t N>
+// Only fits a writer whose registered type carries the same bound.
 class LoanableSampleWriter : public SampleWriterBase {
    public:
+    explicit LoanableSampleWriter(uint32_t payload_bytes) : payload_bytes_(payload_bytes) {}
+
     void Write(eprosima::fastdds::dds::DataWriter* writer,
                const PubSubProvider::RowEncoder& encoder, const Attachments& attachments) override {
         void* sample = nullptr;
-        if (writer->loan_sample(sample,
-                                eprosima::fastdds::dds::DataWriter::LoanInitializationKind::
-                                    NO_LOAN_INITIALIZATION) != eprosima::fastdds::dds::RETCODE_OK) {
-            // Loan pool exhausted. Falling back keeps the publish correct — same bytes, one copy —
-            // rather than dropping the sample, and nothing reports the degradation.
-            fallback_.Write(writer, encoder, attachments);
+        const eprosima::fastdds::dds::ReturnCode_t loan = writer->loan_sample(
+            sample,
+            eprosima::fastdds::dds::DataWriter::LoanInitializationKind::NO_LOAN_INITIALIZATION);
+        if (loan != eprosima::fastdds::dds::RETCODE_OK) {
+            // A failed loan drops the sample: loan_publish asked for zero copy.
+            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                               "writer on '" << writer->get_topic()->get_name()
+                                             << "' dropped a sample: could not loan one ("
+                                             << ExplainWriteFailure(loan) << ")");
             return;
         }
 
-        auto* fletcher_sample = static_cast<FletcherSample<N>*>(sample);
+        auto* bytes = static_cast<uint8_t*>(sample);
         try {
-            FixedWriteBuffer buf(fletcher_sample->body, N);
+            FixedWriteBuffer buf(SampleBody(bytes), payload_bytes_);
             EncodeEnvelopeBody(buf, encoder, attachments);
-            fletcher_sample->length = static_cast<uint32_t>(buf.Position());
+            WriteSampleLength(bytes, static_cast<uint32_t>(buf.Position()));
         } catch (...) {
             writer->discard_loan(sample);
             throw;
@@ -96,13 +116,18 @@ class LoanableSampleWriter : public SampleWriterBase {
         // On failure Fast DDS re-registers the loan and returns without publishing
         // (DataWriterImpl.cpp), so dropping the pointer here would cost the writer a loan slot
         // permanently — and there are only max_samples + extra_samples of them.
-        if (writer->write(sample) != eprosima::fastdds::dds::RETCODE_OK) {
+        const eprosima::fastdds::dds::ReturnCode_t rc = writer->write(sample);
+        if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             writer->discard_loan(sample);
+            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                               "writer on '"
+                                   << writer->get_topic()->get_name()
+                                   << "' dropped a loaned sample: " << ExplainWriteFailure(rc));
         }
     }
 
    private:
-    SampleWriter fallback_;
+    uint32_t payload_bytes_;
 };
 
 }  // namespace internal

@@ -8,13 +8,12 @@
 // This file holds the provider itself: the pimpl, the participant/publisher/subscriber lifecycle,
 // and the four PubSubProvider methods. Everything they compose lives one per header in internal/:
 //
-//   fletcher_sample.hpp       the plain struct Fast DDS lends at both ends, sized by its bound
-//   payload_binding.hpp       everything that has to be built knowing that bound, behind one
-//                             interface — the seam between a runtime option and a template argument
+//   fletcher_sample.hpp       the plain sample Fast DDS lends at both ends: its layout, and what
+//                             makes it plain for a given bound
 //   transport_data.hpp        the sample types handed to Fast DDS on the serialising paths
-//   envelope_codec.hpp        the contents of FletcherSample::body
+//   envelope_codec.hpp        the contents of a sample's body
 //   fletcher_sample_pub_sub_type.hpp
-//                             the data-channel TopicDataType over FletcherSample — and what it
+//                             the data-channel TopicDataType over that layout — and what it
 //                             reports about itself, which is what Fast DDS gates data-sharing and
 //                             loans on
 //   raw_bytes_pub_sub_type.hpp
@@ -32,6 +31,7 @@
 
 #include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 
+#include <cstdint>
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
 #include <fastdds/dds/log/Log.hpp>
@@ -53,8 +53,8 @@
 #include "internal/data_reader_listener.hpp"
 #include "internal/data_writer_listener.hpp"
 #include "internal/envelope_codec.hpp"
+#include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/ordered_delivery.hpp"
-#include "internal/payload_binding.hpp"
 #include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/sample_writer.hpp"
 #include "internal/schema_channel.hpp"
@@ -115,9 +115,8 @@ struct FastDDSPubSubProvider::Impl {
     std::shared_mutex mu;
     std::map<std::string, TopicState> topics;
 
-    // The payload bound, and everything that has to be built knowing it — the registered type, and
-    // both loaned flows. See internal/payload_binding.hpp.
-    std::unique_ptr<internal::PayloadBinding> payload;
+    // The registered type and both loaned flows are built from this one number.
+    uint32_t payload_bytes = 0;
 
     // Which publish flow Publish uses, fixed at construction from
     // FastDDSProviderOptions::loan_publish. Stateless, so one instance serves every topic and
@@ -196,10 +195,19 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     impl_->default_reader_qos = std::move(options.default_reader_qos);
     impl_->topic_writer_qos = std::move(options.topic_writer_qos);
     impl_->topic_reader_qos = std::move(options.topic_reader_qos);
-    // Before the participant, so an unsupported bound throws without having created anything.
-    impl_->payload = internal::MakePayloadBinding(options.max_payload_bytes);
+    // Before the participant, so an unusable bound throws having created nothing.
+    if (!IsPayloadBound(options.max_payload_bytes)) {
+        throw std::invalid_argument(
+            "FastDDS: max_payload_bytes " + std::to_string(options.max_payload_bytes) +
+            " cannot bound a payload; it must be a multiple of 4 between " +
+            std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+    }
+    const uint32_t bound = options.max_payload_bytes;
+    impl_->payload_bytes = bound;
+
+    // What the bound costs against the caller's limits is Fast DDS's call, not checked here.
     if (options.loan_publish) {
-        impl_->sample_writer = impl_->payload->MakeLoanedWriter();
+        impl_->sample_writer = std::make_unique<internal::LoanableSampleWriter>(bound);
     } else {
         impl_->sample_writer = std::make_unique<internal::SampleWriter>();
     }
@@ -211,7 +219,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
     if (!impl_->participant)
         throw std::runtime_error("FastDDS: failed to create DomainParticipant");
 
-    impl_->type_support = impl_->payload->MakeTypeSupport();
+    impl_->type_support.reset(new internal::FletcherSamplePubSubType(bound));
     if (impl_->type_support.register_type(impl_->participant) != RETCODE_OK)
         throw std::runtime_error("FastDDS: failed to register the data type");
 
@@ -229,7 +237,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(FastDDSProviderOptions options)
 // Teardown lives in ~Impl so a throwing constructor still releases what it built.
 FastDDSPubSubProvider::~FastDDSPubSubProvider() = default;
 
-uint32_t FastDDSPubSubProvider::PayloadBytes() const { return impl_->payload->Bytes(); }
+uint32_t FastDDSPubSubProvider::PayloadBytes() const { return impl_->payload_bytes; }
 
 // -----------------------------------------------------------------------
 // PubSubProvider interface
@@ -372,11 +380,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         ts.schema ? MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get())) : nullptr;
     const DataReaderQos& rqos = impl_->ResolveReaderQos(name);
 
-    // Which read flow this reader can use is decided by its own QoS, not by anything the publisher
-    // does and not by a preference: reading a payload in place as a FletcherSample needs whole
-    // payload nodes, which only a PREALLOCATED* history memory policy guarantees. See
-    // internal::CanLoanSamples. The backlog bound is the reader's own history depth: samples the
-    // middleware would itself have dropped had they been decodable yet.
+    // The reader's own QoS decides the flow; the backlog bound is its history depth.
     const int32_t backlog_bound =
         rqos.history().kind == KEEP_LAST_HISTORY_QOS && rqos.history().depth > 0
             ? rqos.history().depth
@@ -385,8 +389,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
     // which used to reach OrderedDelivery as SIZE_MAX by sign conversion. Say "unbounded" outright.
     const size_t max_queued = backlog_bound > 0 ? static_cast<size_t>(backlog_bound) : 0;
     if (internal::CanLoanSamples(rqos)) {
-        ts.listener = impl_->payload->MakeLoanedListener(std::move(callback), std::move(initial),
-                                                         max_queued);
+        ts.listener = std::make_unique<internal::LoanableDataReaderListener>(
+            impl_->payload_bytes, std::move(callback), std::move(initial), max_queued);
     } else {
         EPROSIMA_LOG_INFO(FLETCHER_SUBSCRIPTION,
                           "reader on '" << name

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The data-channel DDS type over FletcherSample. Serialises a row into the DDS payload for the
+// The data-channel DDS type over the sample layout. Serialises a row into the DDS payload for the
 // non-loaned publish path, and reports the boundedness and plainness Fast DDS gates data-sharing
 // and loans on — see internal/fletcher_sample.hpp for why those two are true.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_FLETCHER_SAMPLE_PUB_SUB_TYPE_HPP_
@@ -10,14 +10,16 @@
 #include <fastcdr/Cdr.h>
 
 #include <algorithm>
-#include <cstddef>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <fastcdr/CdrEncoding.hpp>
+#include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/topic/TopicDataType.hpp>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
 #include <fletcher/core/write_buffer.hpp>
-#include <new>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <string>
 
 #include "envelope_codec.hpp"
@@ -27,11 +29,7 @@
 namespace fletcher {
 namespace internal {
 
-// A DDS-XTypes representation id is the encoding algorithm flag with the endianness bit set, so it
-// is spelled with fastcdr's own constants rather than as a literal: PLAIN_CDR | LITTLE_ENDIANNESS
-// is 0x01, which is exactly Fast DDS's `CDR_LE`, and PLAIN_CDR2 | LITTLE_ENDIANNESS is 0x07. Both
-// are header-only enums, so this costs nothing at run time — unlike routing the bytes through a
-// Cdr. See README "Measured decisions".
+// A representation id is the encoding flag with the endianness bit set; both enums fold here.
 constexpr uint8_t RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag encoding) {
     return static_cast<uint8_t>(encoding) |
            static_cast<uint8_t>(eprosima::fastcdr::Cdr::LITTLE_ENDIANNESS);
@@ -39,57 +37,30 @@ constexpr uint8_t RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag enco
 
 static_assert(RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR) == CDR_LE);
 
-template <uint32_t N>
 class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
    public:
-    // The alias fastddsgen puts on every generated type support.
-    using type = FletcherSample<N>;
-
-    FletcherSamplePubSubType() {
-        // N rides in the type name so that two providers on different bounds fail to match at
-        // discovery instead of exchanging samples one of them cannot hold. A plain type's size is
-        // part of its identity; this is the nearest thing to the type consistency an IDL type would
-        // get for free.
-        set_name("fletcher_" + std::to_string(N));
-        // Sized the way a generated type support sizes itself (DeliveryMechanismsPubSubTypes.cxx):
-        // the type, padded for possible submessage alignment, plus the encapsulation. The
-        // padding term is zero here because sizeof(type) is a multiple of 4, which
-        // fletcher_sample.hpp's static_assert on N guarantees — it is kept because it is fastcdr
-        // that decides that, not this file.
-        uint32_t type_size = static_cast<uint32_t>(sizeof(type));
-        type_size += static_cast<uint32_t>(eprosima::fastcdr::Cdr::alignment(type_size, 4));
+    // Precondition: the provider constructor rejects an unusable bound before creating anything.
+    explicit FletcherSamplePubSubType(uint32_t payload_bytes) : payload_bytes_(payload_bytes) {
+        assert(IsPayloadBound(payload_bytes));
+        set_name(FletcherTypeName(payload_bytes));
+        // A generated support also adds Cdr::alignment(type_size, 4), always zero for this layout.
         max_serialized_type_size =
-            type_size + eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
-        is_compute_key_provided = false;
+            SampleSize(payload_bytes) +
+            eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
     }
 
-    // Bounded unlocks data-sharing; plain additionally unlocks loans at both ends. Both are
-    // properties of FletcherSample<N> rather than claims made here — it is a fixed-size,
-    // padding-free, trivially copyable struct, which is what its static_asserts pin down. Fast DDS
-    // only needs to know they are *allowed*: whether data-sharing engages is its own decision
-    // (DataSharingQosPolicy stays at AUTO, which is why no QoS here ever mentions it), and whether
-    // the publish side loans is FastDDSProviderOptions::loan_publish. The cost of being bounded is
-    // PREALLOCATED payload pools, which N sizes.
+    // Bounded permits data-sharing, plain permits loans; Fast DDS decides whether either engages.
     bool is_bounded() const override { return true; }
 
-    // Dispatched per representation and answered by a constexpr layout check, which is the shape
-    // fastddsgen emits (DeliveryMechanismsPubSubTypes.hpp). Identical for both XCDR versions here —
-    // a FINAL struct of a uint32 and an octet array carries no DHEADER and no optional members, so
-    // nothing differs between v1 and v2.
+    // Plain for any bound IsPayloadBound admits, and identical under both XCDR versions.
     bool is_plain(
-        eprosima::fastdds::dds::DataRepresentationId_t data_representation) const override {
-        if (data_representation ==
-            eprosima::fastdds::dds::DataRepresentationId_t::XCDR2_DATA_REPRESENTATION) {
-            return is_plain_xcdrv2_impl();
-        }
-        return is_plain_xcdrv1_impl();
+        eprosima::fastdds::dds::DataRepresentationId_t /*data_representation*/) const override {
+        return true;
     }
 
-    // Lets Fast DDS hand out a loan under CONSTRUCTED_LOAN_INITIALIZATION
-    // (DataWriterImpl.cpp). Nothing here asks for that kind — LoanableSampleWriter
-    // overwrites `length` and the body it uses — but the type supports it either way.
+    // A zeroed length is an empty sample and bounds every read, so the body needs no memset.
     bool construct_sample(void* memory) const override {
-        new (memory) type();
+        WriteSampleLength(static_cast<uint8_t*>(memory), 0);
         return true;
     }
 
@@ -99,43 +70,23 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         constexpr uint32_t kHeader =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
 
-        // The non-loaned publish path. It writes the same layout the loaned path does — a
-        // FletcherSample<N> behind a CDR encapsulation header — but **truncated after the bytes in
-        // use**: `payload.length` stops at the end of the body instead of covering the whole
-        // fixed-size `body` array. Fast DDS never reads past `length` (nor does this type's own
-        // reader), so the tail padding a plain type would nominally carry is simply not sent, which
-        // is what keeps a small row small on the wire when loan_publish is off.
-        if (payload.max_size < kHeader + kEnvelopeLengthPrefix) {
+        // Truncated after the bytes in use, so a small row stays small on the wire.
+        if (payload.max_size < kHeader + kSampleLengthPrefix) {
             payload.length = 0;
             return false;
         }
-        // Bound the write by the buffer Fast DDS actually gave us rather than by the size
-        // max_serialized_type_size implies it has, and never past what a reader's FletcherSample<N>
-        // can hold.
-        const uint32_t kFraming = kHeader + static_cast<uint32_t>(kEnvelopeLengthPrefix);
-        const uint32_t capacity = std::min<uint32_t>(N, payload.max_size - kFraming);
+        // Bounded by the buffer Fast DDS actually gave us, and by what a reader's sample holds.
+        constexpr uint32_t kFraming = kHeader + kSampleLengthPrefix;
+        const uint32_t capacity = std::min<uint32_t>(payload_bytes_, payload.max_size - kFraming);
 
         try {
-            // The body goes down first: the length that precedes it is not known until it is
-            // written, and it is exactly FletcherSample<N>::length in position and width.
-            FixedWriteBuffer buf(payload.data + kHeader + kEnvelopeLengthPrefix, capacity);
+            // Body first: the length that precedes it is not known until it is written.
+            FixedWriteBuffer buf(SampleBody(payload.data + kHeader), capacity);
             EncodeEnvelopeBody(buf, *d->encoder, *d->attachments);
             const auto body_size = static_cast<uint32_t>(buf.Position());
-            const uint32_t length =
-                kHeader + static_cast<uint32_t>(kEnvelopeLengthPrefix) + body_size;
+            const uint32_t length = kFraming + body_size;
 
-            // Then the encapsulation, placed here rather than driven through a Cdr, but out of
-            // fastcdr's own constants. Byte 1 is the representation id for the version asked for,
-            // which is the selection a generated type support makes from this same argument
-            // (DeliveryMechanismsPubSubTypes.cxx). Byte 3 is the low octet of the DDS-XTypes
-            // options field, carrying how far short of a 4-byte boundary the payload ends —
-            // Cdr::set_dds_cdr_options computes it with exactly this call.
-            //
-            // The body is the same under both versions: a FINAL struct of a uint32 and an octet
-            // array carries no DHEADER under PLAIN_CDR2 and needs no extra alignment. That these
-            // eight bytes are byte for byte what fastcdr would have written is held by
-            // FletcherWireFormat.FastCdrReproducesTheBytesExactly and by bench_pub_sub_type's
-            // fastcdr arm, which compares both representations.
+            // Byte 1 is the representation id; byte 3 the shortfall from a 4-byte boundary.
             const uint8_t representation_id =
                 data_representation ==
                         eprosima::fastdds::dds::DataRepresentationId_t::XCDR2_DATA_REPRESENTATION
@@ -145,31 +96,33 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
                 0x00, representation_id, 0x00,
                 static_cast<uint8_t>(eprosima::fastcdr::Cdr::alignment(length, 4))};
             std::memcpy(payload.data, encapsulation, sizeof(encapsulation));
-            std::memcpy(payload.data + kHeader, &body_size, sizeof(body_size));
+            WriteSampleLength(payload.data + kHeader, body_size);
 
             payload.encapsulation = CDR_LE;
             payload.length = length;
             return true;
+        } catch (const std::exception& e) {
+            // A false return reaches the caller as a code that cannot distinguish the cause.
+            payload.length = 0;
+            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                               "serialize failed for " << get_name() << ": " << e.what());
+            return false;
         } catch (...) {
             payload.length = 0;
+            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                               "serialize failed for " << get_name() << ": non-std exception");
             return false;
         }
     }
 
-    // Only reached by a reader that asks for deserialised samples. Fletcher's own does not — it
-    // reads FletcherSample through a loan — but TopicDataType requires this, and a peer using
-    // take_next_sample on this topic gets the same rows out of it.
+    // For a peer using take_next_sample; Fletcher's own reader goes through a loan.
     bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
         auto* d = static_cast<ReceivedData*>(data);
         const uint32_t header =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
-        if (payload.length < header + kEnvelopeLengthPrefix) return false;
+        if (payload.length < header + kSampleLengthPrefix) return false;
 
-        // Read the encapsulation rather than skipping past it. The envelope's own length fields are
-        // host-order little-endian (envelope_codec.hpp), so a big-endian or parameter-list payload
-        // is not something this type can parse and has to be refused rather than misread. A
-        // generated type reaches the same place through Cdr::read_encapsulation, and likewise
-        // reports on the payload what it found (DeliveryMechanismsPubSubTypes.cxx).
+        // Host-order lengths, so a big-endian or parameter-list payload has to be refused.
         const uint8_t representation_id = payload.data[1];
         if (representation_id !=
                 RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR) &&
@@ -179,15 +132,13 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         }
         payload.encapsulation = CDR_LE;
 
-        // Past the encapsulation header sits FletcherSample: its length, then that many body bytes.
-        // Bounded by what actually arrived, since a serialised sample stops after the bytes in use.
-        uint32_t length = 0;
-        std::memcpy(&length, payload.data + header, sizeof(length));
-        if (length > payload.length - header - kEnvelopeLengthPrefix) return false;
+        // Bounded by what arrived, since a serialised sample stops after the bytes in use.
+        const uint32_t length = ReadSampleLength(payload.data + header);
+        if (length > payload.length - header - kSampleLengthPrefix) return false;
 
         const uint8_t* row = nullptr;
         uint32_t row_len = 0;
-        if (!ParseEnvelopeBody(payload.data + header + kEnvelopeLengthPrefix, length, row, row_len,
+        if (!ParseEnvelopeBody(SampleBody(payload.data + header), length, row, row_len,
                                d->decoded_attachments)) {
             return false;
         }
@@ -197,22 +148,19 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         return true;
     }
 
+    // Unused while the pool is PREALLOCATED*, which a caller's memory policy can change.
     uint32_t calculate_serialized_size(
         const void* const /*data*/,
         eprosima::fastdds::dds::DataRepresentationId_t /*data_representation*/) override {
-        // Dead under any PREALLOCATED* memory policy, which a bounded type always gets: Fast DDS
-        // takes pool_config_.payload_initial_size instead (DataWriterImpl.cpp). Still has to
-        // be honest, because a caller may set a different endpoint().history_memory_policy.
         return static_cast<uint32_t>(max_serialized_type_size);
     }
 
-    // A received sample, not a PublishData: the only caller in Fast DDS 3.4 is the reader's
-    // SampleLoanManager, which makes these to hand to deserialize() — and only for a non-plain
-    // type, so for this one they are never called at all (SampleLoanManager.hpp).
+    // Never reached: SampleLoanManager only calls these for a non-plain type.
     void* create_data() override { return new ReceivedData(); }
 
     void delete_data(void* data) override { delete static_cast<ReceivedData*>(data); }
 
+    // Keyless; is_compute_key_provided stays false, gating check_allocation_consistency.
     bool compute_key(eprosima::fastdds::rtps::SerializedPayload_t& /*payload*/,
                      eprosima::fastdds::rtps::InstanceHandle_t& /*handle*/,
                      bool /*force_md5*/) override {
@@ -225,8 +173,7 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
     }
 
    private:
-    static constexpr bool is_plain_xcdrv1_impl() { return FletcherSampleIsPlain<N>(); }
-    static constexpr bool is_plain_xcdrv2_impl() { return FletcherSampleIsPlain<N>(); }
+    uint32_t payload_bytes_;
 };
 
 }  // namespace internal

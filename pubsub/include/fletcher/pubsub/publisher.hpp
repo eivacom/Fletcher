@@ -36,8 +36,7 @@ class Publisher {
     /// Publish by writing the encoded row directly into the provider's
     /// transport buffer.
     void Publish(const std::vector<std::string>& segments,
-                 const PubSubProvider::RowEncoder& encoder,
-                 const Attachments& attachments = {});
+                 const PubSubProvider::RowEncoder& encoder, const Attachments& attachments = {});
 
     /// List all registered topic names (segments joined with "/").
     std::vector<std::string> ListTopics() const;

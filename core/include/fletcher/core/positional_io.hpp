@@ -316,18 +316,33 @@ class PositionalReader {
         return {p, len};
     }
 
+    // Divide, never multiply: a wrapped `count * sizeof(T)` would pass ReadBytes' own check.
+    template <typename T>
+    void CheckFixedArrayFits(size_t count) const {
+        if (count > (len_ - pos_) / sizeof(T))
+            throw std::invalid_argument("PositionalReader: buffer underrun (fixed array)");
+    }
+
     // Read a contiguous run of fixed-width values in one memcpy, the mirror of WriteFixedArray.
     // `out` must have room for `count` elements.
     template <typename T>
     void ReadFixedArray(T* out, size_t count) {
         static_assert(std::is_trivially_copyable_v<T>,
                       "ReadFixedArray requires a trivially copyable type");
-        // Divide rather than multiply: `count * sizeof(T)` could wrap for a wire-supplied count and
-        // then pass a bounds check. pos_ <= len_ always, so the subtraction is safe.
-        if (count > (len_ - pos_) / sizeof(T))
-            throw std::invalid_argument("PositionalReader: buffer underrun (fixed array)");
+        CheckFixedArrayFits<T>(count);
         if (count == 0) return;
         std::memcpy(out, ReadBytes(count * sizeof(T)), count * sizeof(T));
+    }
+
+    // Sizes the vector only once the count is known to fit; ReadListHeader admits 8x that.
+    template <typename T>
+    void ReadFixedArrayInto(std::vector<T>& out, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "ReadFixedArrayInto requires a trivially copyable type");
+        CheckFixedArrayFits<T>(count);
+        out.resize(count);
+        if (count == 0) return;
+        std::memcpy(out.data(), ReadBytes(count * sizeof(T)), count * sizeof(T));
     }
 
     // --- Composite readers ---

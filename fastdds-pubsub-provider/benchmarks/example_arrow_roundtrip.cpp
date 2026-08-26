@@ -41,11 +41,15 @@ namespace {
 
 using eprosima::fastdds::rtps::SerializedPayload_t;
 
-// The payload bound this walkthrough runs at; the type is templated on it, one plain type per
-// power of two the provider compiles.
+// The payload bound this walkthrough runs at.
 constexpr uint32_t kExamplePayloadBytes = 64 * 1024;
-using FletcherSample = fletcher::internal::FletcherSample<kExamplePayloadBytes>;
-using FletcherSamplePubSubType = fletcher::internal::FletcherSamplePubSubType<kExamplePayloadBytes>;
+using fletcher::internal::FletcherSamplePubSubType;
+
+// Stand-in for the payload Fast DDS lends; the shipped sample is an offset and a size.
+struct FletcherSample {
+    uint32_t length;
+    uint8_t body[kExamplePayloadBytes];
+};
 using namespace fletcher::benchmarks;  // NOLINT(build/namespaces)
 
 constexpr auto kXcdr1 = eprosima::fastdds::dds::DataRepresentationId_t::XCDR_DATA_REPRESENTATION;
@@ -132,7 +136,7 @@ int main() {
     // -----------------------------------------------------------------------------------------
     Rule("3. The DDS type");
     // -----------------------------------------------------------------------------------------
-    FletcherSamplePubSubType type;
+    FletcherSamplePubSubType type(kExamplePayloadBytes);
     std::printf("  registered name          %s\n", type.get_name().c_str());
     std::printf("  max_serialized_type_size %u B  (4 encapsulation + 4 length + %u body)\n",
                 type.max_serialized_type_size, kExamplePayloadBytes);

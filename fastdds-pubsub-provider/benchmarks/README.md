@@ -21,6 +21,7 @@ Not part of the Conan package: this directory is outside the recipe's `exports_s
 | `BM_Serialize`, `BM_Deserialize` | the two `TopicDataType`s head to head, row size swept |
 | `BM_Serialize_CurrentFastCdrFramed` | what fastcdr placing the encapsulation costs, which is how the current type was written until it was measured |
 | `BM_PublishFlow`, `BM_ReadFlow` | what the loaned flow removes from each side — the zero-copy budget |
+| `BM_PublishFlow_LoanedStruct` | the same loaned write through the struct the sample used to be, when its bound was a template argument. The baseline arm for dropping that struct; see the provider README's measured decisions |
 | `BM_ProviderPublishOverhead` | what `Publish` spends per sample before the type is reached. Superseded by the Monorepo's `tools/fletcher_bench/bench_publish`, which drives the real `Publish` against a raw DDS control |
 | `BM_Deliver_*` | the subscribe-side delivery layer: `OrderedDelivery` on both read flows, and `ParseEnvelopeBody` *with* attachments, which `BM_ReadFlow` never parses. Read each as its own time minus `BM_Deliver_CallbackOnly` **from the same run** |
 | `BM_AttachmentsConstruct`, `BM_PublishFieldsConstruct` | why the sample struct is split by direction: an empty `Attachments` against what `PublishData` costs |
@@ -36,6 +37,11 @@ A validation pass runs before the benchmarks and returns non-zero if it fails: b
 byte-identical rows, the current type's hand-written encapsulation must match fastcdr's output byte for
 byte, and a 1000-row Arrow batch must round-trip value-exact through each type. That middle check is
 what makes the hand-written header safe to keep, so do not weaken it.
+
+Nothing builds this directory in CI, so that middle check also lives in the unit suite as
+`FletcherSamplePubSubTypeTest.FastCdrReproducesTheBytesExactly`
+(`../tests/test_fletcher_sample_pub_sub_type.cpp`), which every PR runs. The copy here is kept
+because it also compares against the legacy type, which the unit suite does not know about.
 
 ## Running
 

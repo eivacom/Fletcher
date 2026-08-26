@@ -4,10 +4,10 @@
 #ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
-#include <bit>
 #include <cstdint>
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
 #include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <memory>
 #include <string>
@@ -16,53 +16,6 @@
 #include "fletcher/fastdds_pubsub_provider/internal/qos_defaults.hpp"
 
 namespace fletcher {
-
-/// The ends of the range `PayloadBound` admits — see it for what a bound is and what it costs.
-inline constexpr uint32_t kMinPayloadBytes = 4u * 1024;
-inline constexpr uint32_t kMaxPayloadBytes = 8u * 1024 * 1024;
-
-/// Whether this provider has a plain type for `bytes`: powers of two from 4 KiB to 8 MiB.
-///
-/// A bound is bytes of row payload in one sample — the encoded row plus all its attachments, not
-/// counting the 4-byte length that precedes them or the 4-byte CDR encapsulation header before it.
-///
-/// **Why a set rather than any number.** Fast DDS delivers zero-copy only for a *plain* type — one
-/// whose in-memory layout already is its CDR representation — and a plain type's size has to be
-/// known to the compiler (see internal/fletcher_sample.hpp). The provider therefore compiles one
-/// plain type per bound in this set and selects between them, which keeps the bound a deployment
-/// decision without giving up loans or data-sharing. Powers of two make the set a rule rather than
-/// a list, and every one of them is a multiple of 4 — which is what keeps the sample free of tail
-/// padding.
-///
-/// The bound is the expensive number in this header. A bounded type puts history payload pools in
-/// PREALLOCATED mode, so **every history slot reserves the whole bound up front**, per endpoint —
-/// `resource_limits().allocated_samples` slots initially, up to `max_samples`. Bring `max_samples`
-/// down as the bound goes up: the data-sharing segment estimate is 32-bit and overflows quietly.
-constexpr bool IsPayloadBound(uint32_t bytes) {
-    return std::has_single_bit(bytes) && bytes >= kMinPayloadBytes && bytes <= kMaxPayloadBytes;
-}
-
-/// The same rule as a constraint, for a bound known to the compiler. Written once and used twice so
-/// that a bound rejected at run time and one rejected at compile time are rejected by the same
-/// expression.
-template <uint32_t N>
-concept PayloadBound = IsPayloadBound(N);
-
-// The ends of the range have to satisfy the rule they bound. Also catches them being the wrong way
-// round, which would leave the provider's selection walk without a terminator.
-static_assert(IsPayloadBound(kMinPayloadBytes) && IsPayloadBound(kMaxPayloadBytes));
-
-/// Spell a bound this way and it is checked where it is written:
-///
-///     options.max_payload_bytes = fletcher::kPayloadBytes<128 * 1024>;  // fine
-///     options.max_payload_bytes = fletcher::kPayloadBytes<100'000>;     // does not compile
-///
-/// A bound that only exists at run time — read from a config file, say — cannot be checked this
-/// way, so the constructor rejects an unsupported one instead. Nothing is ever rounded: a bound the
-/// provider has no plain type for is a mistake, not something to silently fix.
-template <uint32_t N>
-    requires PayloadBound<N>
-inline constexpr uint32_t kPayloadBytes = N;
 
 /// Typed configuration for FastDDSPubSubProvider. All QoS settings
 /// are specified up-front; the provider is immutable with respect to
@@ -77,19 +30,31 @@ struct FastDDSProviderOptions {
     /// DDS domain ID.
     uint32_t domain_id = 0;
 
-    /// Ceiling on the row payload of one sample. Must satisfy the rule; the constructor throws
-    /// otherwise. Write it as `kPayloadBytes<N>` to be told at compile time instead, or call
-    /// `IsPayloadBound()` first to check a value that only exists at run time without catching.
+    /// @brief Ceiling on the row payload of one sample: any positive multiple of 4.
     ///
-    /// Endpoints on different bounds do not talk to each other: the bound is part of the registered
-    /// DDS type name, so a mismatch is a discovery-time non-match — the schema never arrives and
-    /// the subscriber stays unconnected — rather than a silent per-sample drop.
+    /// Checked by `IsPayloadBound`; the constructor throws otherwise, and nothing is rounded.
+    /// Write it as `kPayloadBytes<N>` to be told at compile time instead.
+    ///
+    /// The bound is part of the registered DDS type name, so endpoints on different bounds fail
+    /// to discover each other rather than dropping samples.
+    ///
+    /// @warning The expensive number in this header. A bounded type preallocates the whole bound
+    /// per history slot per endpoint, and a data-sharing writer reserves
+    /// `(max_samples + extra_samples) * (bound + 8)` bytes of shared segment up front. Nothing
+    /// caps that product; if it exceeds a 32-bit segment size Fast DDS uses the transport
+    /// instead. Bring `max_samples` down as the bound goes up.
     uint32_t max_payload_bytes = kPayloadBytes<64 * 1024>;
 
-    /// Maximum size of a serialised Arrow IPC schema, bounding the companion __schema channel.
-    /// Unlike `max_payload_bytes` this one is exact and endpoints need not agree on it: that
-    /// channel's type is neither bounded nor plain — an ordinary CDR `sequence<octet>` with a
-    /// grow-on-demand payload pool — so the number costs nothing up front.
+    /// @brief Maximum serialised Arrow IPC schema size, bounding the companion __schema channel.
+    ///
+    /// Any value: unlike `max_payload_bytes` this channel's type is not plain, so it need not
+    /// avoid padding. It reports itself bounded, which data-sharing asks for and which costs one
+    /// preallocated slot per endpoint here, since the channel is `KEEP_LAST(1)` and `CreateTopic`
+    /// announces a schema once per topic.
+    ///
+    /// @warning A PREALLOCATED pool cannot grow, so this matters at both ends: a schema larger
+    /// than a *receiving* endpoint's value is rejected rather than delivered, and that
+    /// subscriber's schema future never resolves. The reader reports `on_sample_rejected`.
     uint32_t max_schema_bytes = 64 * 1024;
 
     /// Publish out of a buffer the transport owns instead of encoding through one it then copies.
@@ -104,10 +69,18 @@ struct FastDDSProviderOptions {
     ///     layout truncated after the bytes in use, so off, small rows stay small.
     ///   - A row past `PayloadBytes()` throws out of Publish, where an unloaned writer fails the
     ///     serialisation internally and drops the sample.
+    ///   - **The unused tail of every sample goes on the wire.** The loan is taken with
+    ///     `NO_LOAN_INITIALIZATION` and only the bytes in use are written, so the rest of the
+    ///     `PayloadBytes()` a remote reader receives is whatever that pool slot last held — a
+    ///     previous sample of this topic, or, the first time a slot is used, uninitialised process
+    ///     memory. Not zeroed deliberately: a `memset` of the whole bound per sample costs more
+    ///     than the copy this option exists to avoid. With data-sharing (subscribers on this box,
+    ///     which is what the option is for) nothing crosses a wire at all. Leave it off if
+    ///     subscribers are remote and that tail matters.
     ///
     /// Subscribers need no matching setting. Loans are not negotiated: the reader's own type gates
     /// them (Fast DDS 3.4 `DataReaderImpl.cpp`), the writer's own gates `loan_sample`
-    /// (`DataWriterImpl.cpp`), and both publish paths write the same `FletcherSample` fields.
+    /// (`DataWriterImpl.cpp`), and both publish paths write the same two fields in the same places.
     /// Fletcher subscribers therefore always read out of the transport's buffer, whichever way the
     /// publisher wrote it.
     bool loan_publish = false;

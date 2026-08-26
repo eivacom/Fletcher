@@ -214,7 +214,8 @@ TEST(SubscriberTest, SubscribeToUnknownTopicSucceeds) {
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        {"no", "such"}, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {"no", "such"},
+        [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     EXPECT_GT(result.subscription_id, 0u);
 }
 
@@ -243,10 +244,10 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) { count_a++; });
-    subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) { count_b++; });
+    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                     const Attachments&) { count_a++; });
+    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                     const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
 
@@ -266,10 +267,11 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
 
     int count_a = 0;
     int count_b = 0;
-    Subscriber::SubscribeResult ra = subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) { count_a++; });
-    subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) { count_b++; });
+    Subscriber::SubscribeResult ra =
+        subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                         const Attachments&) { count_a++; });
+    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                     const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
     EXPECT_EQ(count_a, 1);
@@ -303,8 +305,8 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
-    subscriber.Subscribe(kTopic,
-                         [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
@@ -329,11 +331,11 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
-            received_value = DecodeTestRow(data, len);
-            received_att = std::move(att);
-        });
+    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len, const SharedSchema&,
+                                     const Attachments& att) {
+        received_value = DecodeTestRow(data, len);
+        received_att = std::move(att);
+    });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
@@ -379,18 +381,18 @@ TEST(SubscriberTest, UnsubscribeFromInsideCallbackIsSafe) {
     int second_calls = 0;
     uint64_t second_id = 0;
 
-    uint64_t first_id =
-        subscriber
-            .Subscribe(kTopic,
-                       [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
-                           ++first_calls;
-                           // Drop the *other* subscriber from inside this callback.
-                           if (second_id != 0) {
-                               subscriber.Unsubscribe(second_id);
-                               second_id = 0;
-                           }
-                       })
-            .subscription_id;
+    uint64_t first_id = subscriber
+                            .Subscribe(kTopic,
+                                       [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) {
+                                           ++first_calls;
+                                           // Drop the *other* subscriber from inside this callback.
+                                           if (second_id != 0) {
+                                               subscriber.Unsubscribe(second_id);
+                                               second_id = 0;
+                                           }
+                                       })
+                            .subscription_id;
     second_id = subscriber
                     .Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema,
                                            Attachments) { ++second_calls; })

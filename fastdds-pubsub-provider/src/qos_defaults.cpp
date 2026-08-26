@@ -27,6 +27,9 @@ namespace {
 // and makes the segment the size it looks like it should be.
 constexpr int32_t kMaxSamples = 100;
 
+// The channel holds one sample for the writer's life; the defaults would reserve 100.
+constexpr int32_t kSchemaSamples = 1;
+
 }  // namespace
 
 DataWriterQos MakeFletcherDefaultWriterQos() {
@@ -34,7 +37,10 @@ DataWriterQos MakeFletcherDefaultWriterQos() {
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
     qos.history().kind = KEEP_ALL_HISTORY_QOS;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    // Unkeyed, so one instance holds the whole history.
     qos.resource_limits().max_samples = kMaxSamples;
+    qos.resource_limits().max_instances = 1;
+    qos.resource_limits().max_samples_per_instance = kMaxSamples;
     return qos;
 }
 
@@ -43,7 +49,10 @@ DataReaderQos MakeFletcherDefaultReaderQos() {
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
     qos.history().kind = KEEP_ALL_HISTORY_QOS;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    // Unkeyed, so one instance holds the whole history.
     qos.resource_limits().max_samples = kMaxSamples;
+    qos.resource_limits().max_instances = 1;
+    qos.resource_limits().max_samples_per_instance = kMaxSamples;
     return qos;
 }
 
@@ -53,6 +62,11 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     qos.history().kind = KEEP_LAST_HISTORY_QOS;
     qos.history().depth = 1;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    // Unkeyed, so one instance holds the whole history.
+    qos.resource_limits().max_samples = kSchemaSamples;
+    qos.resource_limits().max_instances = 1;
+    qos.resource_limits().max_samples_per_instance = kSchemaSamples;
+    qos.resource_limits().allocated_samples = kSchemaSamples;
     return qos;
 }
 
@@ -62,6 +76,11 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.history().kind = KEEP_LAST_HISTORY_QOS;
     qos.history().depth = 1;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
+    // Unkeyed, so one instance holds the whole history.
+    qos.resource_limits().max_samples = kSchemaSamples;
+    qos.resource_limits().max_instances = 1;
+    qos.resource_limits().max_samples_per_instance = kSchemaSamples;
+    qos.resource_limits().allocated_samples = kSchemaSamples;
     return qos;
 }
 
