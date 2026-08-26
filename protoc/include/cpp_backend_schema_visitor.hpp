@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "ir.hpp"
+#include "option_metadata.hpp"
 
 namespace fletcher::cpp_backend {
 
@@ -46,12 +47,20 @@ struct SchemaFieldRecord {
     int32_t field_number = 0;
     std::string field_id;  // dotted path, e.g. "2.1"
     std::shared_ptr<const ir::IrNode> node;
-    // GIR-7: the source proto field for a non-flattened top-level field (nullptr
-    // for field-level-flatten inlined fields). The TS backend consults this to
-    // recover the declared wrapper name of a singular flatten-wrapper list field
-    // (Descriptor::name(), a language-neutral proto fact — no type string on the
-    // IR node). Unused by the schema paths.
+    // GIR-7: the proto field this record was built from — always the *leaf*
+    // descriptor, including for field-level-flatten inlined leaves (the flatten
+    // recursion records the inner fd, never the wrapper). The TS backend consults
+    // it to recover the declared wrapper name of a singular flatten-wrapper list
+    // field (Descriptor::name(), a language-neutral proto fact — no type string on
+    // the IR node); GIR-13 consults it as the primary metadata carrier.
     const google::protobuf::FieldDescriptor* source_field = nullptr;
+    // GIR-13: the outer->inner (fletcher.flatten_field) wrapper fields this leaf
+    // was inlined through; empty for a field that was not inlined. Descriptor-level
+    // counterpart of the numeric `field_id` path: field_id "2.1" <-> chain
+    // {fd(2)} with source_field == fd(1)-of-the-wrapper's-message. Orientation is
+    // load-bearing: OptionMetadataResolver::ForField scans it with rbegin(), so
+    // the LAST element must be the innermost wrapper ("most specific wins").
+    std::vector<const google::protobuf::FieldDescriptor*> flatten_chain;
 };
 
 // Walk `msg` applying field-level flatten and building the flattened field list
@@ -103,8 +112,11 @@ public:
 
     // Emit a nested message's full struct schema at `dst` (deep-copy semantics).
     // The visitor applies the field overlay (name/nullable/metadata) after this.
+    // GIR-13: `resolver` (nullable) is passed *through* rather than held as sink
+    // state so the visitor stays the single owner of the resolver pointer and the
+    // nested build provably uses the same one as the top-level walk.
     virtual void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg,
-                                       SchemaRef dst) = 0;
+                                       SchemaRef dst, const OptionMetadataResolver* resolver) = 0;
 };
 
 // Renders the schema-construction program as C++ source lines into `out`.
@@ -125,8 +137,8 @@ public:
     void SetNullable(SchemaRef schema, bool nullable) override;
     void SetMetadata(SchemaRef schema,
                      const std::vector<std::pair<std::string, std::string>>& pairs) override;
-    void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg,
-                               SchemaRef dst) override;
+    void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg, SchemaRef dst,
+                               const OptionMetadataResolver* resolver) override;
 
 private:
     const std::string& Expr(SchemaRef ref) const;
@@ -157,8 +169,8 @@ public:
     void SetNullable(SchemaRef schema, bool nullable) override;
     void SetMetadata(SchemaRef schema,
                      const std::vector<std::pair<std::string, std::string>>& pairs) override;
-    void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg,
-                               SchemaRef dst) override;
+    void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg, SchemaRef dst,
+                               const OptionMetadataResolver* resolver) override;
 
 private:
     ArrowSchema* root_;
@@ -167,19 +179,34 @@ private:
 // Orchestrates the flatten walk + per-field emission, driving the given sink.
 class SchemaVisitor {
 public:
+    // GIR-13: `resolver` (nullable) supplies the caller-mapped extra metadata
+    // pairs. nullptr means "no --fletcher_opt=metadata_from_option was given", in
+    // which case every emitted byte is bit-identical to the pre-GIR-13 output.
+    // NOTE the resolver memoises internally (mutable DynamicMessageFactory +
+    // cache): it must stay a per-Generate() stack-local used by ONE thread, never
+    // a member/static/shared object.
     SchemaVisitor(const google::protobuf::Descriptor* msg,
-                  const google::protobuf::FileDescriptor* context_file, SchemaSink& sink);
+                  const google::protobuf::FileDescriptor* context_file, SchemaSink& sink,
+                  const OptionMetadataResolver* resolver = nullptr);
 
     // Build the full message schema into sink_.Root().
     void Visit();
 
 private:
+    using MetaPairs = std::vector<std::pair<std::string, std::string>>;
+
     void EmitNodeType(const ir::IrNode& node, SchemaRef schema);
     void EmitScalarType(const ir::ScalarNode& scalar, SchemaRef schema);
+
+    // The ONE place each pair vector is built: builtins first, resolver extras
+    // appended. Both sinks consume the identical vector, so they cannot drift.
+    MetaPairs RootMetadata() const;
+    MetaPairs FieldMetadata(const SchemaFieldRecord& f) const;
 
     const google::protobuf::Descriptor* message_;
     const google::protobuf::FileDescriptor* context_file_;
     SchemaSink& sink_;
+    const OptionMetadataResolver* resolver_ = nullptr;
 };
 
 // Public entry points (drop-in replacements for the two old emitters).
@@ -187,9 +214,11 @@ private:
 // Generate the C++ source text for the free `<cls>Schema()` function.
 std::string GenerateSchemaFunctionFromIr(const std::string& cls,
                                          const google::protobuf::Descriptor* msg,
-                                         const google::protobuf::FileDescriptor* context_file);
+                                         const google::protobuf::FileDescriptor* context_file,
+                                         const OptionMetadataResolver* resolver = nullptr);
 
 // Build the in-process ArrowSchema for `msg` (uninitialised/released on entry).
-void BuildMessageSchemaIntoFromIr(const google::protobuf::Descriptor* msg, ArrowSchema* schema);
+void BuildMessageSchemaIntoFromIr(const google::protobuf::Descriptor* msg, ArrowSchema* schema,
+                                  const OptionMetadataResolver* resolver = nullptr);
 
 }  // namespace fletcher::cpp_backend

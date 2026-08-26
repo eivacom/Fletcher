@@ -60,8 +60,13 @@ bool IsSchemaRepresentable(const IrNode& node) {
     return false;
 }
 
-void BuildFlattenedFieldListImpl(const google::protobuf::Descriptor* msg,
-                                 std::vector<SchemaFieldRecord>& out, const std::string& id_prefix) {
+// `flatten_chain` is carried NEXT TO `id_prefix` on purpose: the two are the same
+// wrapper path expressed by descriptor and numerically, so threading them together
+// is what stops them disagreeing.
+void BuildFlattenedFieldListImpl(
+    const google::protobuf::Descriptor* msg, std::vector<SchemaFieldRecord>& out,
+    const std::string& id_prefix,
+    const std::vector<const google::protobuf::FieldDescriptor*>& flatten_chain) {
     for (int i = 0; i < msg->field_count(); ++i) {
         const auto* fd = msg->field(i);
 
@@ -73,7 +78,15 @@ void BuildFlattenedFieldListImpl(const google::protobuf::Descriptor* msg,
         // this field's number into the path (matches GatherFieldsImpl).
         if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
             HasFieldFlatten(fd)) {
-            BuildFlattenedFieldListImpl(fd->message_type(), out, path);
+            // GIR-13: append while DESCENDING => outer->inner, which is what
+            // OptionMetadataResolver::ForField's rbegin() scan requires to yield
+            // innermost-wrapper-first ("most specific declaration wins"). A
+            // reversed chain passes every single-level fixture and fails only on a
+            // two-level wrapper, so this is also pinned by
+            // SchemaVisitor.TwoLevelFlattenFieldChainPrefersTheInnermostWrapper.
+            std::vector<const google::protobuf::FieldDescriptor*> inner = flatten_chain;
+            inner.push_back(fd);
+            BuildFlattenedFieldListImpl(fd->message_type(), out, path, inner);
             continue;
         }
 
@@ -90,6 +103,8 @@ void BuildFlattenedFieldListImpl(const google::protobuf::Descriptor* msg,
         // this fd. The TS backend uses it to recover a singular flatten-wrapper's
         // declared name; the schema paths ignore it.
         rec.source_field = fd;
+        // GIR-13: the wrappers ABOVE this leaf (empty for a non-inlined field).
+        rec.flatten_chain = flatten_chain;
         out.push_back(std::move(rec));
     }
 }
@@ -160,7 +175,7 @@ const char* ArrowTimeUnitName(ArrowTimeUnit unit) {
 std::vector<SchemaFieldRecord> BuildFlattenedFieldList(const google::protobuf::Descriptor* msg,
                                                        const std::string& id_prefix) {
     std::vector<SchemaFieldRecord> out;
-    BuildFlattenedFieldListImpl(msg, out, id_prefix);
+    BuildFlattenedFieldListImpl(msg, out, id_prefix, {});
     return out;
 }
 
@@ -230,9 +245,24 @@ void CppSchemaSink::SetMetadata(SchemaRef schema,
          << indent_ << "    ArrowBufferInit(&buf);\n"
          << indent_ << "    ArrowMetadataBuilderInit(&buf, nullptr);\n";
     for (const auto& [key, value] : pairs) {
+        // GIR-13: escape BOTH members of EVERY pair. This sink renders into C++
+        // source that the compiler un-escapes back to the original bytes; the
+        // nanoarrow sink writes the same pair vector as FINAL metadata bytes and
+        // must therefore NOT escape. Escaping here (never in the visitor) is what
+        // keeps the two paths byte-identical — doing it in the visitor would leave
+        // every unit test green while storing escape sequences literally in the
+        // in-process / .ipc bytes.
+        //
+        // Uniform, not conditional: the four builtin keys/values are
+        // escape-invariant (EscapeCppStringLiteralTest.PrintableAsciiIsUnchanged),
+        // so this is a byte-level no-op for them and removes a
+        // builtin-vs-resolver branch that could rot. KEYS need it too: arrow_key
+        // is caller-named arbitrary bytes and may legally contain a quote or a
+        // backslash.
         out_ << indent_ << "    ArrowMetadataBuilderAppend(&buf,\n"
-             << indent_ << "        ArrowCharView(\"" << key << "\"),\n"
-             << indent_ << "        ArrowCharView(\"" << value << "\"));\n";
+             << indent_ << "        ArrowCharView(\"" << EscapeCppStringLiteral(key) << "\"),\n"
+             << indent_ << "        ArrowCharView(\"" << EscapeCppStringLiteral(value)
+             << "\"));\n";
     }
     out_ << indent_ << "    ArrowSchemaSetMetadata(" << Expr(schema) << ",\n"
          << indent_ << "        reinterpret_cast<const char*>(buf.data));\n"
@@ -241,7 +271,13 @@ void CppSchemaSink::SetMetadata(SchemaRef schema,
 }
 
 void CppSchemaSink::DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg,
-                                          SchemaRef dst) {
+                                          SchemaRef dst,
+                                          const OptionMetadataResolver* resolver) {
+    // GIR-13: intentionally ignored. This sink emits a *call* to <Nested>Schema(),
+    // which was generated by the same protoc invocation under the same rule list,
+    // so the nested metadata is already baked into that function. (Cross-invocation
+    // rule mismatch is a documented limitation: rules are a build-wide property.)
+    (void)resolver;
     out_ << indent_ << "ArrowSchemaDeepCopy(" << CppClassName(nested_msg, context_file_)
          << "Schema().get(), " << Expr(dst) << ");\n";
 }
@@ -316,9 +352,14 @@ void NanoarrowSchemaSink::SetMetadata(SchemaRef schema,
 }
 
 void NanoarrowSchemaSink::DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg,
-                                                SchemaRef dst) {
+                                                SchemaRef dst,
+                                                const OptionMetadataResolver* resolver) {
+    // GIR-13: the resolver MUST reach this recursion, otherwise a nested struct's
+    // grandchildren lose their mapped metadata on the in-process path only while
+    // the generated C++ (which deep-copies a <Nested>Schema() emitted *with* rules)
+    // keeps them — i.e. the .ipc file and the runtime schema would disagree.
     nanoarrow::UniqueSchema nested;
-    BuildMessageSchemaIntoFromIr(nested_msg, nested.get());
+    BuildMessageSchemaIntoFromIr(nested_msg, nested.get(), resolver);
     CheckNa(ArrowSchemaDeepCopy(nested.get(), static_cast<ArrowSchema*>(dst)), "copy struct schema");
 }
 
@@ -327,8 +368,9 @@ void NanoarrowSchemaSink::DeepCopyMessageStruct(const google::protobuf::Descript
 // ===========================================================================
 
 SchemaVisitor::SchemaVisitor(const google::protobuf::Descriptor* msg,
-                             const google::protobuf::FileDescriptor* context_file, SchemaSink& sink)
-    : message_(msg), context_file_(context_file), sink_(sink) {}
+                             const google::protobuf::FileDescriptor* context_file, SchemaSink& sink,
+                             const OptionMetadataResolver* resolver)
+    : message_(msg), context_file_(context_file), sink_(sink), resolver_(resolver) {}
 
 void SchemaVisitor::EmitScalarType(const ir::ScalarNode& scalar, SchemaRef schema) {
     const ir::LogicalType& lt = scalar.logical_type;
@@ -401,8 +443,11 @@ void SchemaVisitor::EmitNodeType(const ir::IrNode& node, SchemaRef schema) {
         }
 
         case NodeKind::STRUCT:
+            // Reached by a singular nested struct field AND by the element of
+            // List<Struct> / List<List<...<Struct>>> (the LIST case above recurses
+            // into EmitNodeType). Both must carry the resolver.
             sink_.DeepCopyMessageStruct(std::get<ir::StructNode>(node.node).identity.descriptor,
-                                        schema);
+                                        schema, resolver_);
             return;
 
         case NodeKind::MAP: {
@@ -416,8 +461,13 @@ void SchemaVisitor::EmitNodeType(const ir::IrNode& node, SchemaRef schema) {
             EmitScalarType(std::get<ir::ScalarNode>(mp.key->node), key_child);
 
             if (mp.value->kind == NodeKind::STRUCT) {
+                // map<K, MessageWithOptions>: the SECOND deep-copy site. Dropping
+                // the resolver here loses grandchild metadata on the in-process
+                // path only — no fixture outside test_schema_visitor.cpp's T2
+                // covers it.
                 sink_.DeepCopyMessageStruct(
-                    std::get<ir::StructNode>(mp.value->node).identity.descriptor, value_child);
+                    std::get<ir::StructNode>(mp.value->node).identity.descriptor, value_child,
+                    resolver_);
                 sink_.SetName(value_child, "value");  // deep-copy overwrote the name
             } else {
                 // Scalar value keeps nanoarrow's default "value" name.
@@ -433,13 +483,43 @@ void SchemaVisitor::EmitNodeType(const ir::IrNode& node, SchemaRef schema) {
     }
 }
 
+// GIR-13: builtins first, resolver extras appended — in exactly one place per
+// scope, so the two sinks provably consume the identical pair vector.
+//
+// No de-duplication here: per-key last-non-empty-wins and first-appearance
+// ordering are already applied inside the resolver, and a resolver key can never
+// collide with a builtin (the four generator-owned keys are rejected by
+// ParseMetadataRules). A plain append is the whole of the emitter's ordering duty.
+//
+// The pair vector is never empty (the builtins are always present), so no
+// "skip SetMetadata entirely" branch is introduced and the emitted-byte shape of
+// the no-rules path is unchanged.
+SchemaVisitor::MetaPairs SchemaVisitor::RootMetadata() const {
+    MetaPairs pairs = {{"proto_package", message_->file()->package()},
+                       {"proto_message", message_->name()}};
+    if (resolver_ != nullptr) {
+        const MetaPairs extra = resolver_->ForMessage(message_);
+        pairs.insert(pairs.end(), extra.begin(), extra.end());
+    }
+    return pairs;
+}
+
+SchemaVisitor::MetaPairs SchemaVisitor::FieldMetadata(const SchemaFieldRecord& f) const {
+    MetaPairs pairs = {{"field_number", std::to_string(f.field_number)},
+                       {"field_id", f.field_id}};
+    if (resolver_ != nullptr) {
+        const MetaPairs extra = resolver_->ForField(f.source_field, f.flatten_chain);
+        pairs.insert(pairs.end(), extra.begin(), extra.end());
+    }
+    return pairs;
+}
+
 void SchemaVisitor::Visit() {
     const std::vector<SchemaFieldRecord> fields = BuildFlattenedFieldList(message_);
 
     SchemaRef root = sink_.Root();
     sink_.InitRootStruct(root, static_cast<int64_t>(fields.size()));
-    sink_.SetMetadata(root, {{"proto_package", message_->file()->package()},
-                             {"proto_message", message_->name()}});
+    sink_.SetMetadata(root, RootMetadata());
 
     for (size_t i = 0; i < fields.size(); ++i) {
         const SchemaFieldRecord& f = fields[i];
@@ -451,8 +531,7 @@ void SchemaVisitor::Visit() {
         EmitNodeType(*f.node, child);
         sink_.SetName(child, f.name);
         sink_.SetNullable(child, f.node->facts.nullable);
-        sink_.SetMetadata(child, {{"field_number", std::to_string(f.field_number)},
-                                  {"field_id", f.field_id}});
+        sink_.SetMetadata(child, FieldMetadata(f));
     }
 }
 
@@ -462,7 +541,8 @@ void SchemaVisitor::Visit() {
 
 std::string GenerateSchemaFunctionFromIr(const std::string& cls,
                                          const google::protobuf::Descriptor* msg,
-                                         const google::protobuf::FileDescriptor* context_file) {
+                                         const google::protobuf::FileDescriptor* context_file,
+                                         const OptionMetadataResolver* resolver) {
     std::ostringstream o;
     o << "/// Returns the nanoarrow schema describing this message's wire layout.\n"
       << "/// Providers publish this schema on companion topics so that subscribers\n"
@@ -471,16 +551,17 @@ std::string GenerateSchemaFunctionFromIr(const std::string& cls,
       << "    fletcher::OwnedSchema schema;\n";
 
     CppSchemaSink sink(o, "    ", context_file);
-    SchemaVisitor visitor(msg, context_file, sink);
+    SchemaVisitor visitor(msg, context_file, sink, resolver);
     visitor.Visit();
 
     o << "    return schema;\n}\n";
     return o.str();
 }
 
-void BuildMessageSchemaIntoFromIr(const google::protobuf::Descriptor* msg, ArrowSchema* schema) {
+void BuildMessageSchemaIntoFromIr(const google::protobuf::Descriptor* msg, ArrowSchema* schema,
+                                  const OptionMetadataResolver* resolver) {
     NanoarrowSchemaSink sink(schema);
-    SchemaVisitor visitor(msg, msg->file(), sink);
+    SchemaVisitor visitor(msg, msg->file(), sink, resolver);
     visitor.Visit();
 }
 

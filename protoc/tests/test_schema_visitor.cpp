@@ -23,17 +23,22 @@
 // writes them from the legacy in-process BuildMessageSchema into SCHEMA_GOLDEN_DIR
 // and then skips); normal runs read the committed files.
 
+#include <google/protobuf/compiler/parser.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/io/tokenizer.h>
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <gtest/gtest.h>
 #include <nanoarrow/nanoarrow.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -41,6 +46,8 @@
 #include <vector>
 
 #include "cpp_backend_schema_visitor.hpp"
+#include "generator.hpp"
+#include "option_metadata.hpp"
 #include "schema_builder.hpp"
 
 using namespace google::protobuf;
@@ -333,9 +340,19 @@ public:
         log.push_back(m);
         inner_.SetMetadata(s, p);
     }
-    void DeepCopyMessageStruct(const Descriptor* d, cb::SchemaRef dst) override {
-        log.push_back("DeepCopy(" + std::string(d->full_name()) + "," + Id(dst) + ")");
-        inner_.DeepCopyMessageStruct(d, dst);
+    void DeepCopyMessageStruct(const Descriptor* d, cb::SchemaRef dst,
+                               const fletcher::OptionMetadataResolver* resolver) override {
+        // Records WHETHER the resolver reached this call. This is extra
+        // information in the trace, NOT a fix for T4's blindness: T4 compares two
+        // traces produced by the SAME SchemaVisitor, so any visitor-side mutation
+        // perturbs both traces identically and T4 stays green. Verified, not
+        // assumed -- passing nullptr at either EmitNodeType deep-copy site leaves
+        // T4 GREEN and turns T2 red. T4 is an ordering-only guard; T2 is the
+        // discriminator for resolver plumbing and T1 for the escaping layer. Do
+        // not read this annotation as making T4 a resolver-plumbing guard.
+        log.push_back("DeepCopy(" + std::string(d->full_name()) + "," + Id(dst) +
+                      (resolver != nullptr ? ",R)" : ",-)"));
+        inner_.DeepCopyMessageStruct(d, dst, resolver);
     }
 
 private:
@@ -352,20 +369,244 @@ private:
     int next_ = 0;
 };
 
-std::vector<std::string> TraceCpp(const Descriptor* msg) {
+std::vector<std::string> TraceCpp(const Descriptor* msg,
+                                  const fletcher::OptionMetadataResolver* resolver = nullptr) {
     std::ostringstream sink_out;
     cb::CppSchemaSink cpp(sink_out, "    ", msg->file());
     RecordingSink rec(cpp);
-    cb::SchemaVisitor(msg, msg->file(), rec).Visit();
+    cb::SchemaVisitor(msg, msg->file(), rec, resolver).Visit();
     return rec.log;
 }
 
-std::vector<std::string> TraceNano(const Descriptor* msg) {
+std::vector<std::string> TraceNano(const Descriptor* msg,
+                                   const fletcher::OptionMetadataResolver* resolver = nullptr) {
     nanoarrow::UniqueSchema schema;
     cb::NanoarrowSchemaSink nano(schema.get());
     RecordingSink rec(nano);
-    cb::SchemaVisitor(msg, msg->file(), rec).Visit();
+    cb::SchemaVisitor(msg, msg->file(), rec, resolver).Visit();
     return rec.log;
+}
+
+// ===========================================================================
+// GIR-13 (#121) option-metadata fixture. Compiles .proto SOURCE TEXT so the
+// custom options land in the descriptors exactly the way protoc produces them:
+// the pool knows the extension but the linked-in FieldOptions/MessageOptions C++
+// classes do not, so the value sits in the options message's UnknownFieldSet —
+// the shape the resolver's DynamicMessage re-parse has to cope with.
+//
+// flatten / flatten_field are declared LOCALLY at extension number 50000 because
+// the plugin matches them by number, not by name.
+// ===========================================================================
+
+class OptCollectErrors : public io::ErrorCollector {
+   public:
+    std::string text;
+    void AddError(int line, int column, const std::string& message) override {
+        text += std::to_string(line) + ":" + std::to_string(column) + ": " + message + "\n";
+    }
+    void AddWarning(int, int, const std::string&) override {}
+};
+
+class OptFixturePool {
+   public:
+    OptFixturePool() {
+        FileDescriptorProto fdp;
+        DescriptorProto::descriptor()->file()->CopyTo(&fdp);
+        EXPECT_NE(pool_.BuildFile(fdp), nullptr) << "failed to seed descriptor.proto";
+    }
+
+    const FileDescriptor* Add(const std::string& name, const std::string& source) {
+        io::ArrayInputStream input(source.data(), static_cast<int>(source.size()));
+        OptCollectErrors errors;
+        io::Tokenizer tokenizer(&input, &errors);
+        compiler::Parser parser;
+        parser.RecordErrorsTo(&errors);
+
+        FileDescriptorProto fdp;
+        if (!parser.Parse(&tokenizer, &fdp)) {
+            ADD_FAILURE() << "parse of " << name << " failed:\n" << errors.text;
+            return nullptr;
+        }
+        fdp.set_name(name);
+        const FileDescriptor* fd = pool_.BuildFile(fdp);
+        if (fd == nullptr) ADD_FAILURE() << "BuildFile(" << name << ") failed:\n" << errors.text;
+        return fd;
+    }
+
+    const DescriptorPool* pool() const { return &pool_; }
+
+   private:
+    DescriptorPool pool_;
+};
+
+// Deliberately neutral option vocabulary: the resolver must key off nothing.
+constexpr const char* kOptFixtureProto = R"(
+syntax = "proto3";
+package sv;
+import "google/protobuf/descriptor.proto";
+
+message ColOpts {                       // FieldOptions payload
+  string meta  = 1;                     // chain-independent, field-scope
+  string nasty = 2;                     // T1's arbitrary-bytes value
+}
+message TypeDef {                       // MessageOptions payload
+  string unit  = 1;
+  string group = 2;
+}
+extend google.protobuf.FieldOptions   { ColOpts col = 60100; bool flatten_field = 50000; }
+extend google.protobuf.MessageOptions { TypeDef typ = 60101; bool flatten       = 50000; }
+
+// --- nested-recursion fixtures (T2) ---
+message Coord {
+  option (sv.typ) = { unit: "m", group: "g-coord" };
+  double x = 1 [(sv.col) = { meta: "mx" }];   // field-scope key ON THE LEAF
+  double y = 2;
+}
+message Pos {
+  option (sv.typ) = { unit: "deg" };
+  Coord coord = 1 [(sv.flatten_field) = true];
+}
+message Sample {
+  Pos pos = 1;                          // struct child       -> EmitNodeType STRUCT
+  map<string, Coord> byname = 2;        // map w/ struct value -> EmitNodeType MAP
+  repeated Coord path = 3;              // list<struct>        -> STRUCT via LIST recursion
+}
+
+// --- escaping fixture (T1). NOTE: `v` sets `nasty` and DELIBERATELY leaves
+// `meta` unset, which also exercises the "sub-field unset => no key" silent-skip
+// path for the field-scope `sv.col.meta` rule on the very same field. ---
+// The trailing `2` is load-bearing: it lands immediately after the \260 octal
+// escape in the rendered C++, which is exactly what MSVC diagnoses as C4125
+// ("decimal digit terminates octal escape sequence") at /W4. Relies on the proto
+// tokenizer's octal escape being 3-digit/non-greedy -- self-checking, because T1
+// compares the decoded value against the C++ spelling below.
+message Nasty { double v = 1 [(sv.col) = { nasty: "{\"crs\":\"EPSG:4326\"}\\\001\302\2602" }]; }
+
+// --- two-level flatten_field (T3): a distinct key declared on EACH wrapper ---
+message Inner { option (sv.typ) = { unit: "inner" };               double leaf = 1; }
+message Mid   { option (sv.typ) = { unit: "mid", group: "g-mid" }; Inner inner = 1 [(sv.flatten_field) = true]; }
+message Outer { Mid mid = 1 [(sv.flatten_field) = true]; }
+)";
+
+// T1's arbitrary bytes, assembled in C++ so the test is self-checking against the
+// fixture's own proto-source escaping (both spellings must decode to the same
+// bytes; if they drift T1 goes red with a clear diff). Adjacent-literal
+// concatenation happens after escape conversion, so the \x01 hex escape cannot
+// run on into the following 0xC2 byte.
+const std::string& NastyValue() {
+    static const std::string kNasty =
+        "{\"crs\":\"EPSG:4326\"}\\"
+        "\x01"
+        "\xC2\xB0"
+        "2";
+    return kNasty;
+}
+
+// Literally  x:k"\q  — legal: ParseMetadataRules splits the token on its first
+// two colons only and copies the remainder verbatim, so an Arrow key may contain
+// a quote or a backslash. This is what pins escaping of the KEY, not just the
+// value (an escape-values-only implementation stays green without it).
+const std::string& NastyKey() {
+    static const std::string kNastyKey = "x:k\"\\q";
+    return kNastyKey;
+}
+
+struct OptFx {
+    OptFixturePool pool;
+    const FileDescriptor* file = nullptr;
+    OptFx() { file = pool.Add("sv.proto", kOptFixtureProto); }
+    const Descriptor* Msg(const std::string& name) const {
+        return file ? file->FindMessageTypeByName(name) : nullptr;
+    }
+};
+
+// Order matters only for same-key rules; these keys are disjoint. The two
+// ...typ.group... rules share the arrow key x:group but cannot interfere:
+// ForMessage considers only message-scope rules and ForField only the other two.
+std::vector<std::string> OptRules() {
+    return {
+        "metadata_from_option=field:sv.col.meta:x:meta",
+        "metadata_from_option=field_type:sv.typ.unit:x:unit",
+        "metadata_from_option=field_type:sv.typ.group:x:group",
+        "metadata_from_option=message:sv.typ.group:x:group",
+        // The token is ASSEMBLED here: the key is arbitrary bytes, not a literal.
+        "metadata_from_option=field:sv.col.nasty:" + NastyKey(),
+    };
+}
+
+std::unique_ptr<fletcher::OptionMetadataResolver> MakeOptResolver(const OptFx& fx) {
+    std::string parameter;
+    for (const std::string& r : OptRules()) {
+        if (!parameter.empty()) parameter += ",";
+        parameter += r;
+    }
+    std::vector<fletcher::MetadataRule> rules;
+    std::string error;
+    if (!fletcher::ParseMetadataRules(parameter, &rules, &error)) {
+        ADD_FAILURE() << "ParseMetadataRules failed: " << error;
+        return nullptr;
+    }
+    auto resolver =
+        fletcher::OptionMetadataResolver::Create(std::move(rules), fx.pool.pool(), &error);
+    if (!resolver) ADD_FAILURE() << "Create failed: " << error;
+    return resolver;
+}
+
+ArrowStringView View(const std::string& s) {
+    return ArrowStringView{s.data(), static_cast<int64_t>(s.size())};
+}
+
+bool HasMeta(const ArrowSchema* s, const std::string& key) {
+    return s && s->metadata && ArrowMetadataHasKey(s->metadata, View(key));
+}
+
+// "<missing>" rather than "" so an absent key can never be confused with an empty
+// value (the resolver skips empty values, so both are observable states).
+std::string MetaValue(const ArrowSchema* s, const std::string& key) {
+    if (!s || !s->metadata || !ArrowMetadataHasKey(s->metadata, View(key))) return "<missing>";
+    ArrowStringView value{};
+    if (ArrowMetadataGetValue(s->metadata, View(key), &value) != NANOARROW_OK) return "<error>";
+    return std::string(value.data, static_cast<size_t>(value.size_bytes));
+}
+
+// True iff `src` renders a decimal digit immediately after a 3-digit octal
+// escape. MSVC diagnoses that as C4125 at /W4, so a consumer building the
+// generated header with /W4 /WX would FAIL. Mini-scanner rather than a regex:
+// a doubled backslash must not be read as the start of an escape.
+bool RendersOctalEscapeFollowedByDigit(const std::string& src) {
+    for (size_t i = 0; i < src.size(); ++i) {
+        if (src[i] != '\\') continue;
+        const size_t start = i + 1;
+        if (start >= src.size()) break;
+        if (src[start] < '0' || src[start] > '7') {
+            ++i;  // \\ \" \n \r \t ... : skip the escaped character
+            continue;
+        }
+        size_t j = start;
+        while (j < src.size() && j - start < 3 && src[j] >= '0' && src[j] <= '7') ++j;
+        if (j < src.size() && src[j] >= '0' && src[j] <= '9') return true;
+        i = j - 1;
+    }
+    return false;
+}
+
+// GeneratorContext that captures Open()ed files in memory, so a test can drive
+// ArrowRowGenerator::Generate end to end without touching the filesystem.
+class CapturingContext : public compiler::GeneratorContext {
+   public:
+    std::map<std::string, std::string> files;
+
+    io::ZeroCopyOutputStream* Open(const std::string& filename) override {
+        return new io::StringOutputStream(&files[filename]);
+    }
+};
+
+const ArrowSchema* ChildNamed(const ArrowSchema* s, const std::string& name) {
+    if (!s) return nullptr;
+    for (int64_t i = 0; i < s->n_children; ++i) {
+        if (s->children[i]->name && name == s->children[i]->name) return s->children[i];
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -421,4 +662,279 @@ TEST(SchemaVisitor, CaptureGoldens) {
                   static_cast<std::streamsize>(bytes.size()));
     }
     SUCCEED() << "captured " << Cases().size() << " goldens into " << GoldenDir().string();
+}
+
+// ===========================================================================
+// GIR-13 supplementary guards (design §6 T1-T4). The three behaviours GIR-13
+// adds that can fail SILENTLY — the escaping LAYER, the resolver reaching the
+// NESTED build, and flatten-chain ORIENTATION — are otherwise covered only by
+// the Conan-gated integration lane. test_option_metadata.cpp cannot cover them:
+// it asserts only in-process schemas and builds `Pos` directly, so it never
+// exercises a deep-copied grandchild.
+// ===========================================================================
+
+// T1 — pins the LAYER the escaping happens in, for KEY and VALUE.
+//
+// Failure discrimination: no escaping => both positive source assertions red
+// (the escaped render is pure ASCII, so the raw 0x01 / 0xC2 0xB0 bytes cannot
+// appear in it); escaping the value only => the key assertion red; escaping in
+// the VISITOR instead of the sink => the source assertions pass but the
+// in-process assertion goes red; double escaping => positive assertions red.
+TEST(SchemaVisitor, CppSinkEscapesResolverBytesAndInProcessKeepsThemRaw) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    const Descriptor* msg = fx.Msg("Nasty");
+    ASSERT_NE(msg, nullptr);
+    auto resolver = MakeOptResolver(fx);
+    ASSERT_NE(resolver, nullptr);
+
+    const std::string& raw_value = NastyValue();
+    const std::string& raw_key = NastyKey();
+
+    // (a) the C++ source sink renders ESCAPED bytes, for the key as well as the
+    // value (an Arrow key is caller-named arbitrary bytes).
+    const std::string src =
+        cb::GenerateSchemaFunctionFromIr("Nasty", msg, msg->file(), resolver.get());
+    const std::string want_key =
+        "ArrowCharView(\"" + fletcher::EscapeCppStringLiteral(raw_key) + "\")";
+    const std::string want_value =
+        "ArrowCharView(\"" + fletcher::EscapeCppStringLiteral(raw_value) + "\")";
+    EXPECT_NE(src.find(want_key), std::string::npos)
+        << "escaped Arrow KEY missing from generated source";
+    EXPECT_NE(src.find(want_value), std::string::npos)
+        << "escaped metadata VALUE missing from generated source";
+    EXPECT_EQ(src.find(raw_key), std::string::npos) << "raw (unescaped) key leaked into source";
+    EXPECT_EQ(src.find(raw_value), std::string::npos) << "raw (unescaped) value leaked into source";
+
+    // The value's 0xB0 byte is immediately followed by '2', so an escaper that
+    // emitted "\2602" would render source that MSVC rejects at /W4 with C4125
+    // ("decimal digit terminates octal escape sequence") -- i.e. a consumer
+    // building the generated header with /W4 /WX would fail. The literal must be
+    // split instead. This asserts on the EMITTED SOURCE, which is the thing
+    // consumers compile.
+    EXPECT_FALSE(RendersOctalEscapeFollowedByDigit(src))
+        << "generated source renders an octal escape terminated by a decimal digit "
+           "(MSVC C4125)";
+
+    // (b) the in-process schema holds the RAW bytes — escaping must NOT happen in
+    // the visitor, or the in-process / .ipc bytes would carry literal escape
+    // sequences while the compiled generated code carries the original bytes.
+    nanoarrow::UniqueSchema schema = fletcher::BuildMessageSchema(msg, resolver.get());
+    const ArrowSchema* v = ChildNamed(schema.get(), "v");
+    ASSERT_NE(v, nullptr);
+    EXPECT_EQ(MetaValue(v, raw_key), raw_value);
+
+    // The sibling field-scope rule reads `sv.col.meta`, which `Nasty.v` leaves
+    // unset: an unset sub-field must produce no key at all.
+    EXPECT_FALSE(HasMeta(v, "x:meta"));
+}
+
+// T2 — the resolver must reach the nested build at BOTH DeepCopyMessageStruct
+// call sites (STRUCT and MAP-struct-value). The grandchild key is field-scope and
+// declared on Coord's own leaf, so it is chain-independent and depends on exactly
+// one thing: the resolver reaching the nested build. A field_type: key CANNOT be
+// used here — field_type skips non-message candidates, and these grandchildren
+// are scalars reached through a fresh nested build with an EMPTY flatten chain.
+// Do not "simplify" x:meta back to a field_type key; that silently un-covers the
+// map-value-struct site, which nothing else in the tree exercises.
+TEST(SchemaVisitor, NestedStructGrandchildrenKeepMappedMetadata) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    const Descriptor* sample = fx.Msg("Sample");
+    ASSERT_NE(sample, nullptr);
+    auto resolver = MakeOptResolver(fx);
+    ASSERT_NE(resolver, nullptr);
+
+    nanoarrow::UniqueSchema schema = fletcher::BuildMessageSchema(sample, resolver.get());
+
+    const ArrowSchema* pos = ChildNamed(schema.get(), "pos");
+    const ArrowSchema* byname = ChildNamed(schema.get(), "byname");
+    const ArrowSchema* path = ChildNamed(schema.get(), "path");
+    ASSERT_NE(pos, nullptr);
+    ASSERT_NE(byname, nullptr);
+    ASSERT_NE(path, nullptr);
+
+    // map -> entries -> [key, value] ; list -> item
+    ASSERT_EQ(byname->n_children, 1);
+    const ArrowSchema* entries = byname->children[0];
+    ASSERT_EQ(entries->n_children, 2);
+    const ArrowSchema* map_value = entries->children[1];
+    ASSERT_EQ(path->n_children, 1);
+    const ArrowSchema* item = path->children[0];
+
+    // Rows 1-3: the chain-independent field-scope grandchild key, at all three
+    // deep-copy routes. Dropping resolver_ at either EmitNodeType site turns the
+    // corresponding row red for the right reason.
+    EXPECT_EQ(MetaValue(ChildNamed(pos, "x"), "x:meta"), "mx") << "singular-struct deep copy";
+    EXPECT_EQ(MetaValue(ChildNamed(map_value, "x"), "x:meta"), "mx")
+        << "map-value-struct deep copy";
+    EXPECT_EQ(MetaValue(ChildNamed(item, "x"), "x:meta"), "mx") << "list<struct> deep copy";
+
+    // Rows 4-5: the nested RootMetadata (ForMessage) call inside the recursion.
+    // The value / item children keep the deep-copied nested ROOT metadata because
+    // the MAP / LIST branches apply only SetName to them, never a metadata overlay.
+    EXPECT_EQ(MetaValue(map_value, "x:group"), "g-coord");
+    EXPECT_EQ(MetaValue(item, "x:group"), "g-coord");
+
+    // Row 6: the flatten chain inside the nested build (Pos inlines coord).
+    EXPECT_EQ(MetaValue(ChildNamed(pos, "x"), "x:unit"), "m");
+
+    // Row 7: the field overlay REPLACED the deep-copied Pos root metadata. The
+    // value alone would also hold if the overlay had appended, so pin the
+    // replacement exactly: the deep-copied root carried proto_message, and
+    // ArrowSchemaSetMetadata replaces the whole blob.
+    EXPECT_EQ(MetaValue(pos, "x:unit"), "deg");
+    EXPECT_FALSE(HasMeta(pos, "proto_message")) << "overlay must REPLACE, not append";
+
+    // Row 8: for `repeated <wrapper>` the metadata lands on the LIST field.
+    EXPECT_EQ(MetaValue(path, "x:unit"), "m");
+
+    // Row 9: a map field's message type is the synthetic MapEntry, never a carrier.
+    EXPECT_FALSE(HasMeta(byname, "x:unit"));
+    EXPECT_FALSE(HasMeta(byname, "x:meta"));
+}
+
+// T3 — the required flatten-chain ORIENTATION guard. Outer.mid -> Mid.inner ->
+// Inner.leaf, with a distinct key declared on EACH wrapper. A reversed chain
+// fails x:unit ("mid" instead of "inner"); a chain truncated to its innermost
+// element fails x:group.
+TEST(SchemaVisitor, TwoLevelFlattenFieldChainPrefersTheInnermostWrapper) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    const Descriptor* outer = fx.Msg("Outer");
+    ASSERT_NE(outer, nullptr);
+    auto resolver = MakeOptResolver(fx);
+    ASSERT_NE(resolver, nullptr);
+
+    nanoarrow::UniqueSchema schema = fletcher::BuildMessageSchema(outer, resolver.get());
+    ASSERT_EQ(schema->n_children, 1);
+    const ArrowSchema* leaf = ChildNamed(schema.get(), "leaf");
+    ASSERT_NE(leaf, nullptr);
+
+    EXPECT_EQ(MetaValue(leaf, "field_id"), "1.1.1");
+    EXPECT_EQ(MetaValue(leaf, "x:unit"), "inner") << "innermost wrapper must win";
+    EXPECT_EQ(MetaValue(leaf, "x:group"), "g-mid")
+        << "a key declared only on the OUTER wrapper must still reach the leaf";
+}
+
+// T4 — cheap ordering guard: both sinks receive the identical ordered operation
+// stream (and therefore the identical pair vectors: builtins first, extras
+// appended) with a resolver active. Blind spots by construction —
+// RecordingSink::SetMetadata logs the RAW pair vector, i.e. above CppSchemaSink's
+// escaping, and the nested nanoarrow build runs on a fresh sink the recorder never
+// wraps — are covered by T1 and T2 respectively. Do NOT present T4 alone as
+// evidence for the nested recursion or for escaping.
+TEST(SchemaVisitor, CppAndIpcTracesAgreeWithResolverActive) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    auto resolver = MakeOptResolver(fx);
+    ASSERT_NE(resolver, nullptr);
+
+    for (const char* name : {"Sample", "Pos", "Outer"}) {
+        SCOPED_TRACE(name);
+        const Descriptor* msg = fx.Msg(name);
+        ASSERT_NE(msg, nullptr);
+        EXPECT_EQ(TraceCpp(msg, resolver.get()), TraceNano(msg, resolver.get()))
+            << "C++ source and in-process schema paths diverged with a resolver active";
+    }
+}
+
+// ===========================================================================
+// GIR-13 step-4b SF-3: nothing exercised the plugin entry point itself, so a
+// `resolver.get()` -> `nullptr` regression in generator.cpp's emission calls was
+// invisible to the whole unit suite (only the Conan-gated integration lane caught
+// it). These drive ArrowRowGenerator::Generate directly.
+// ===========================================================================
+
+TEST(GeneratorMetadataPlumbing, GenerateFeedsTheResolverToBothEmittedArtifacts) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    const Descriptor* sample = fx.Msg("Sample");
+    ASSERT_NE(sample, nullptr);
+
+    std::string parameter = "ipc";
+    for (const std::string& r : OptRules()) parameter += "," + r;
+
+    fletcher::ArrowRowGenerator generator;
+    CapturingContext ctx;
+    std::string error;
+    ASSERT_TRUE(generator.Generate(fx.file, parameter, &ctx, &error)) << error;
+
+    // (a) the emit_ipc loop must pass the resolver: the emitted .ipc bytes have to
+    // equal the in-process schema built WITH the resolver. Passing nullptr there
+    // yields builtins-only bytes and turns this red.
+    ASSERT_TRUE(ctx.files.count("sv.Sample.ipc")) << "no .ipc emitted";
+    auto resolver = MakeOptResolver(fx);
+    ASSERT_NE(resolver, nullptr);
+    nanoarrow::UniqueSchema expect_schema = fletcher::BuildMessageSchema(sample, resolver.get());
+    const std::vector<uint8_t> expect_bytes = fletcher::SerializeSchemaIpc(expect_schema.get());
+    const std::string& written = ctx.files.at("sv.Sample.ipc");
+    ASSERT_EQ(written.size(), expect_bytes.size());
+    EXPECT_TRUE(std::equal(expect_bytes.begin(), expect_bytes.end(),
+                           reinterpret_cast<const uint8_t*>(written.data())))
+        << "emitted .ipc does not match the resolver-built schema";
+
+    // (b) GenerateFile must pass the resolver: the generated header carries the
+    // mapped keys, ESCAPED, and no octal escape terminated by a decimal digit.
+    ASSERT_TRUE(ctx.files.count("sv.fletcher.pb.h")) << "no header emitted";
+    const std::string& header = ctx.files.at("sv.fletcher.pb.h");
+    EXPECT_NE(header.find("ArrowCharView(\"x:meta\")"), std::string::npos);
+    EXPECT_NE(
+        header.find("ArrowCharView(\"" + fletcher::EscapeCppStringLiteral(NastyValue()) + "\")"),
+        std::string::npos);
+    EXPECT_FALSE(RendersOctalEscapeFollowedByDigit(header)) << "MSVC C4125 in emitted header";
+}
+
+TEST(GeneratorMetadataPlumbing, NoRulesLeavesTheEmittedArtifactsAtTheBuiltinsOnly) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    const Descriptor* sample = fx.Msg("Sample");
+    ASSERT_NE(sample, nullptr);
+
+    fletcher::ArrowRowGenerator generator;
+    CapturingContext ctx;
+    std::string error;
+    ASSERT_TRUE(generator.Generate(fx.file, "ipc", &ctx, &error)) << error;
+
+    // resolver == nullptr is literally "no metadata_from_option was passed", which
+    // is what the byte-identical no-rules path (and the committed goldens) rest on.
+    ASSERT_TRUE(ctx.files.count("sv.Sample.ipc"));
+    nanoarrow::UniqueSchema plain = fletcher::BuildMessageSchema(sample, nullptr);
+    const std::vector<uint8_t> plain_bytes = fletcher::SerializeSchemaIpc(plain.get());
+    const std::string& written = ctx.files.at("sv.Sample.ipc");
+    ASSERT_EQ(written.size(), plain_bytes.size());
+    EXPECT_TRUE(std::equal(plain_bytes.begin(), plain_bytes.end(),
+                           reinterpret_cast<const uint8_t*>(written.data())));
+    EXPECT_EQ(ctx.files.at("sv.fletcher.pb.h").find("x:meta"), std::string::npos);
+}
+
+TEST(GeneratorMetadataPlumbing, RuleErrorsFailGenerateWithAMessage) {
+    OptFx fx;
+    ASSERT_NE(fx.file, nullptr);
+    fletcher::ArrowRowGenerator generator;
+
+    // Malformed token (missing the arrow key) -> ParseMetadataRules hard error.
+    {
+        CapturingContext ctx;
+        std::string error;
+        EXPECT_FALSE(
+            generator.Generate(fx.file, "metadata_from_option=field:sv.col.meta", &ctx, &error));
+        EXPECT_NE(error.find("metadata_from_option"), std::string::npos) << error;
+    }
+    // A generator-owned key may not be replaced.
+    {
+        CapturingContext ctx;
+        std::string error;
+        EXPECT_FALSE(generator.Generate(fx.file, "metadata_from_option=field:sv.col.meta:field_id",
+                                        &ctx, &error));
+        EXPECT_NE(error.find("field_id"), std::string::npos) << error;
+    }
+    // Statically-determinable path error -> OptionMetadataResolver::Create fails.
+    {
+        CapturingContext ctx;
+        std::string error;
+        EXPECT_FALSE(generator.Generate(fx.file, "metadata_from_option=field:sv.col.nope:x:k", &ctx,
+                                        &error));
+        EXPECT_FALSE(error.empty());
+    }
 }

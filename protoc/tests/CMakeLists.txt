@@ -8,6 +8,7 @@ add_executable(fletcher_proto_plugin_tests
     test_ir.cpp
     test_schema_builder.cpp
     test_schema_visitor.cpp
+    test_option_metadata.cpp
     test_ts_visitor.cpp)
 
 target_link_libraries(fletcher_proto_plugin_tests PRIVATE

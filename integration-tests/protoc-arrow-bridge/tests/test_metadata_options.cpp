@@ -106,7 +106,19 @@ TEST(MetadataOptionsTest, JsonValueSurvivesCppStringLiteralEscaping) {
     // The option value contains double quotes. If the emitter did not escape
     // them the generated header would not compile; if it over-escaped, the
     // value would come back mangled. Exact match is the assertion.
-    EXPECT_EQ(FieldMeta(schema, "pos", "ARROW:extension:metadata"), R"({"crs":"EPSG:4326"})");
+    //
+    // It ALSO carries the escaper's octal branch: 0xC2 0xB0 (U+00B0) immediately
+    // followed by the ASCII digit '2', plus a trailing 0x01 control byte. This is
+    // the only lane that COMPILES a generated header, so this is where the octal
+    // escapes are proven to round-trip through a real compiler rather than merely
+    // matching EscapeCppStringLiteral's own output. The `"\xB0" "2"` split below is
+    // required in the TEST source too: a C++ hex escape is greedy and '2' is a hex
+    // digit, so "\xB02" would be one character.
+    const std::string expected =
+        "{\"crs\":\"EPSG:4326\",\"unit\":\"\xC2\xB0"
+        "2\"}"
+        "\x01";
+    EXPECT_EQ(FieldMeta(schema, "pos", "ARROW:extension:metadata"), expected);
 }
 
 TEST(MetadataOptionsTest, FieldScopeOverridesInheritedFieldTypeScopePerKey) {

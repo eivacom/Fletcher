@@ -97,14 +97,14 @@ Kind: 🟩 test-guard · 🟦 IR/emitter migration (byte-identity-guarded) · �
 | GIR-9 | #75 emit C++ enum symbols (typed accessors) | 🟨 | `EnumEmit.GeneratedEnumSymbolsRoundTrip` | 🟢 |
 | GIR-10 | Codec edge/boundary + flatten/arbitrary-nesting coverage (3c/3d) | 🧪 | `CodecEdge.*` + `Nesting.ListOfListOfScalarRoundTrips` | 🟢 |
 | GIR-11 | Property + fuzz (3e) | 🧪 | `Fuzz.DecodeRowSurvivesRandomTruncatedBuffers` + round-trip property | 🟢 |
-| GIR-13 | #121 option metadata on the IR schema visitor | 🟨 | `OptionMetadataTest.FlattenFieldWrapperContextReachesEachInlinedLeaf` (+ the 32-test `test_option_metadata` suite) | ⚪ |
+| GIR-13 | #121 option metadata on the IR schema visitor | 🟨 | § 6 `SchemaVisitor.CppSinkEscapesResolverBytes…` (T1) + `…NestedStructGrandchildren…` (T2) + `…TwoLevelFlattenFieldChain…` (T3) + `GeneratorMetadataPlumbing.*`, with the `MetadataOptions`/`MetadataNoDrift`/`IpcParity` set. (`OptionMetadataTest.FlattenFieldWrapperContextReachesEachInlinedLeaf` was the nominal forcing test but goes green on the CMake wiring line alone — see the progress log.) | 🟢 |
 
 Suite shape: new protoc unit TU group (`test_ir.cpp`, lands GIR-3); the compile-and-run
 integration harness **landed at GIR-1** in `integration-tests/protoc-coverage/`
 (`coverage.proto` + `coverage_future.proto`; ctest targets `coverage_harness_tests`
 + `coverage_accessor_tests`; tsc/rustc checks Skip when the toolchain is absent);
 the Rust crate (`integration-tests/protoc-gen-fletcher-rust`) stays green (RBA
-no-drift). Both wired into the config's inner-loop/full-suite commands.
+no-drift). GIR-13 adds `GeneratorMetadataPlumbing.*` (3) + T1–T4 to `test_schema_visitor.cpp` and wires the pre-existing 33-test `test_option_metadata.cpp` into `protoc/tests/CMakeLists.txt`. Both wired into the config's inner-loop/full-suite commands.
 
 ---
 

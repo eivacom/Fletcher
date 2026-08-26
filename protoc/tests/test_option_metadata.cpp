@@ -60,9 +60,57 @@ TEST(EscapeCppStringLiteralTest, OctalEscapeIsNotGreedyAcrossFollowingCharacters
     // "\x01" followed by 'A' would be read back as the single character 0x1A.
     // Octal stops after exactly three digits, so 'A' stays a separate character.
     EXPECT_EQ(EscapeCppStringLiteral(std::string("\x01") + "A"), "\\001A");
-    // Digits following the escape are the sharper case: \0011 must remain a
-    // three-digit escape plus the character '1'.
-    EXPECT_EQ(EscapeCppStringLiteral(std::string("\x01") + "1"), "\\0011");
+    // Digits following the escape are the sharper case. The three-digit escape is
+    // already non-greedy, so "\0011" would decode correctly -- but MSVC rejects it
+    // at /W4 (C4125), so the literal is SPLIT instead. Same two bytes, no warning.
+    EXPECT_EQ(EscapeCppStringLiteral(std::string("\x01") + "1"), "\\001\" \"1");
+}
+
+TEST(EscapeCppStringLiteralTest, OctalEscapeIsNeverTerminatedByADecimalDigit) {
+    // MSVC C4125 "decimal digit terminates octal escape sequence" is a LEVEL-4
+    // warning, so a consumer compiling the generated header with /W4 /WX fails to
+    // build. The escaper must therefore never emit [0-9] straight after a \nnn
+    // escape; it closes and reopens the literal instead. Byte-neutral: adjacent
+    // literals are concatenated after escape conversion.
+    EXPECT_EQ(EscapeCppStringLiteral("\xC2\xB0"
+                                     "2"),
+              "\\302\\260\" \"2");
+    // A RUN of digits needs only one split -- after it, the following digits are
+    // ordinary characters in a fresh literal, not escape terminators.
+    EXPECT_EQ(EscapeCppStringLiteral("\xC2\xB0"
+                                     "2345"),
+              "\\302\\260\" \"2345");
+    // Non-digits need no split, and a digit that does not follow an octal escape
+    // must stay exactly where it is.
+    EXPECT_EQ(EscapeCppStringLiteral("\xC2\xB0"
+                                     "x2"),
+              "\\302\\260x2");
+    EXPECT_EQ(EscapeCppStringLiteral("a1b2"), "a1b2");
+    // The short escapes are not octal, so they are never split.
+    EXPECT_EQ(EscapeCppStringLiteral("\n1"), "\\n1");
+    EXPECT_EQ(EscapeCppStringLiteral("\\1"), "\\\\1");
+
+    // Structural restatement of the invariant, independent of the expectations
+    // above: scan the rendered output of every single byte followed by every
+    // digit and assert no \<octal-digits><decimal-digit> sequence survives.
+    for (int b = 0; b < 256; ++b) {
+        for (char d = '0'; d <= '9'; ++d) {
+            const std::string in(1, static_cast<char>(b));
+            const std::string out = EscapeCppStringLiteral(in + d);
+            for (size_t i = 0; i + 1 < out.size(); ++i) {
+                if (out[i] < '0' || out[i] > '7') continue;
+                // Walk back to the start of the escape run, if any.
+                size_t j = i;
+                while (j > 0 && out[j - 1] >= '0' && out[j - 1] <= '7') --j;
+                const bool in_octal_escape = j > 0 && out[j - 1] == '\\';
+                const bool ends_run = (i - j) == 2;  // 3 digits consumed
+                if (in_octal_escape && ends_run) {
+                    EXPECT_FALSE(out[i + 1] >= '0' && out[i + 1] <= '9')
+                        << "C4125: byte " << b << " + '" << d << "' rendered as " << out;
+                }
+            }
+        }
+    }
 }
 
 TEST(EscapeCppStringLiteralTest, EmbeddedNulIsEscapedAsThreeDigitOctal) {
@@ -74,7 +122,9 @@ TEST(EscapeCppStringLiteralTest, EmbeddedNulIsEscapedAsThreeDigitOctal) {
         "a\0"
         "1",
         3);
-    EXPECT_EQ(EscapeCppStringLiteral(with_nul), "a\\0001");
+    // Split after the escape so MSVC /W4 does not raise C4125; still exactly the
+    // three-digit form, so '1' cannot be absorbed into the escape.
+    EXPECT_EQ(EscapeCppStringLiteral(with_nul), "a\\000\" \"1");
 }
 
 TEST(EscapeCppStringLiteralTest, NonAsciiBytesAreEscapedSoOutputStaysAscii) {
