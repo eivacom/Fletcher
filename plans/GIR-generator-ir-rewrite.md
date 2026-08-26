@@ -67,6 +67,7 @@ Kind: 🟩 test-guard · 🟦 IR/emitter migration (byte-identity-guarded) · �
 | GIR-9 | #75 emit C++ enum symbols (typed accessors) | 🟨 | `EnumEmit.GeneratedEnumSymbolsRoundTrip` | 🟢 |
 | GIR-10 | Codec edge/boundary + flatten/arbitrary-nesting coverage (3c/3d) | 🧪 | `CodecEdge.*` + `Nesting.ListOfListOfScalarRoundTrips` | 🟢 |
 | GIR-11 | Property + fuzz (3e) | 🧪 | `Fuzz.DecodeRowSurvivesRandomTruncatedBuffers` + round-trip property | 🟢 |
+| GIR-13 | #121 option metadata on the IR schema visitor | 🟨 | `OptionMetadataTest.FlattenFieldWrapperContextReachesEachInlinedLeaf` (+ the 32-test `test_option_metadata` suite) | ⚪ |
 
 Suite shape: new protoc unit TU group (`test_ir.cpp`, lands GIR-3); the compile-and-run
 integration harness **landed at GIR-1** in `integration-tests/protoc-coverage/`
@@ -178,6 +179,44 @@ test. **Acceptance.** §3e; exercises the Phase-1 safety fixes.
 > and the Datamodel repo owns it. #59 is not a generator item here; the IR carries
 > no CRS/geospatial metadata. (Removed 2026-07-10 per maintainer directive.)
 
+### GIR-13 — #121 option metadata on the IR schema visitor
+
+**Story.** As a user who maps custom proto options into Arrow schema metadata via
+`--fletcher_opt=metadata_from_option=...`, the feature works exactly as specified
+in [docs/fletcher-options.md](../docs/fletcher-options.md) when the schema is
+rendered by the IR schema-visitor — including an annotation declared on a
+`(fletcher.flatten_field)` wrapper reaching each leaf inlined through it, and an
+option value containing arbitrary bytes producing a valid generated header.
+
+**Why it exists.** #121 landed on `main` on 2026-08-04, *after* this branch cut at
+`5b36534`. It threads an `OptionMetadataResolver` through the **flat** generator —
+the machinery GIR-5 replaced with one IR visitor + two sinks. The resolver must be
+re-threaded into the visitor. This is the sole blocker on merging the round; it
+also makes #121's "both paths consume the identical pair vector" invariant
+structural rather than hand-maintained.
+
+**Scope.** Re-add the `metadata_from_option` option plumbing (absent on this
+branch); restore the `BuildMessageSchema` resolver parameter dropped by GIR-5;
+carry the flatten chain through the visitor's own flatten walk
+(`BuildFlattenedFieldListImpl` currently discards the wrapper, so `ForField`'s
+chain argument is unreachable); apply `EscapeCppStringLiteral` in
+`CppSchemaSink::SetMetadata`, which today writes metadata values raw; preserve
+builtins-first/extras-appended ordering at both call sites.
+`option_metadata.{hpp,cpp}` port across **unchanged**.
+Full design: [GIR-13-option-metadata-on-ir.md](GIR-13-option-metadata-on-ir.md).
+
+**Forcing test.** `OptionMetadataTest.FlattenFieldWrapperContextReachesEachInlinedLeaf`
+— red while the flatten chain is dropped. The forcing tests for this item
+**already exist on `main`**; the item ports #121's suites and makes them pass
+against the IR emitter rather than authoring new ones.
+
+**Acceptance.** All 32 `test_option_metadata` tests green (incl. the 8
+`EscapeCppStringLiteralTest` cases), #121's 3 integration TUs green,
+`SchemaVisitor.CppAndIpcByteIdentical` still green **with a resolver active**, and
+the 10 `protoc/tests/golden/*.ipc` goldens **byte-identical** (they carry no rules
+— a change there means the resolver leaked into the no-rules path). No change to
+`docs/fletcher-options.md`: the user-facing contract is unaltered.
+
 ---
 
 ## Downstream (out of this round)
@@ -194,7 +233,11 @@ The generator's forward roadmap after GIR: **GIR → BIND-C# → BIND-Rust → R
 
 ## Definition of done (round)
 
-GIR-1..GIR-11 forcing tests 🟢; the full protoc unit suite +
+GIR-1..GIR-11 **and GIR-13** forcing tests 🟢 (GIR-1..GIR-11 closed 2026-07-11;
+GIR-13 added 2026-08-26 when #121 landed on `main` after this branch cut — the
+round reopened for it, so the archived-at-close artifacts for GIR-1..GIR-11 stay
+in `docs/archive/GIR/` while this tracker and the progress log came back to
+`plans/`); the full protoc unit suite +
 the new compile-and-run harness + the Rust crate green; **wire format
 byte-identical** (Encode==EncodeRow + decode round-trip oracles green for every
 migrated emitter; generated-source goldens re-baselined under review, RBA no-drift

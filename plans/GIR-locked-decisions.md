@@ -70,7 +70,7 @@ proposed deviation is a **stop-and-ask**. Full rationale in
    path; do not remove the bespoke edge path.
 
 9. **Every behavioural item ships a red-first test; refactor items ship a green
-   oracle.** Feature/fix items (GIR-8/9/12) fail before the fix for the right
+   oracle.** Feature/fix items (GIR-8/9/13) fail before the fix for the right
    reason. Migration items (GIR-3..7) are guarded by the byte-identity /
    round-trip oracles (a refactor that changes wire bytes is red). Coverage items
    (GIR-10/11) may surface real bugs (red-first) or stand as regression guards.
