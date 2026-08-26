@@ -246,7 +246,7 @@ The short form, verified 2026-08-26:
 - `hard/3-7-consolidated` fast-forwards from `main`, so the base also carries
   #111, #121 and #122.
 
-Until #124 merges, a PR from this branch shows HARD's 9 commits alongside GIR's.
+Until #124 merges, a PR from this branch shows the nine HARD-3..7 commits alongside GIR's.
 After it merges, only GIR's changes remain in the diff.
 
 Downstream chain is unchanged: **GIR → BIND-C# → BIND-Rust → RIR**.

@@ -27,6 +27,11 @@ the foundation BIND's Rust/C# row emitters (BIND-5/6) build on.
   `main`.** This is a locked base — see below.
 - The stale `feature/robustness_improvements` branch is **not** revived (its
   Phase-1 content is on `main` via #98).
+- Rebased, not merged (repo convention) — onto the base named per item above. PR
+  split (each independently reviewable): GIR-1/2 (harness+oracles) → GIR-3/4 (IR +
+  edge codec) → GIR-5..7 (schema/IPC, view, TS) → GIR-8/9 (generator-behaviour +
+  enum) → GIR-10/11 (coverage) → GIR-13 (option metadata). No PR until green +
+  reviewed; PR/merge is the user's step.
 
 ### GIR-13 base — `hard/3-7-consolidated`, not `main`
 
@@ -49,14 +54,10 @@ Why this is safe — verified 2026-08-26:
   includes everything on `main` (#111, #121, #122) as well as HARD-3..7.
 
 **Consequence to accept:** until #124 merges, a PR from this branch carries
-HARD's 9 commits in its diff as well as GIR's. Once #124 lands, they are already
+the nine HARD-3..7 commits in its diff as well as GIR's. Once #124 lands, they are already
 in `main` and the GIR PR shows only GIR's changes. If #124's scope changes in
 review, rebase this branch onto whatever supersedes it — not onto bare `main`,
 which would drop the HARD fixes GIR-13 is being built against.
-- Rebased onto `main`, not merged (repo convention). PR split (each independently
-  reviewable): GIR-1/2 (harness+oracles) → GIR-3/4 (IR + edge codec) → GIR-5..7
-  (schema/IPC, view, TS) → GIR-8/9 (generator-behaviour + enum) → GIR-10/11
-  (coverage). No PR until green + reviewed; PR/merge is the user's step.
 
 ## Sequencing
 
@@ -71,6 +72,10 @@ GIR-7  TS interface + descriptor       →  GIR-8  #55 + #53-generated (errors) 
 GIR-9  #75 enum symbols                →  GIR-10 codec edge/boundary + nesting  →
 GIR-11 property/fuzz
 ```
+
+GIR-13 was added after the round closed (see the tracker) and is sequenced last,
+on its own base — it depends on nothing in GIR-1..GIR-11 beyond the IR schema
+visitor GIR-5 built.
 
 ---
 
