@@ -229,10 +229,24 @@ RBA emitter: untouched (locked decision #3).
 - Wire-format change of any kind (locked decision #2).
 - Re-litigating GIR-5's two-sink unification.
 
-## Sequencing
+## Base and sequencing
 
-Independent of PR #124 (HARD-3..7) — disjoint file sets. Do this on
-`feature/generator-ir-rewrite` rebased onto `main` **after** #124 merges, so the
-branch rebases once rather than twice.
+**Base: `hard/3-7-consolidated` (PR #124) — NOT `main`.** Rebase
+`feature/generator-ir-rewrite` onto that branch and do GIR-13 there. Do not wait
+for #124 to merge. This is a locked base; the full rationale and the consequence
+to accept are in
+[GIR-generator-ir-rewrite.md](GIR-generator-ir-rewrite.md#gir-13-base--hard3-7-consolidated-not-main).
+
+The short form, verified 2026-08-26:
+
+- HARD-3..7 and GIR change **disjoint file sets** — no overlap at all.
+- Trial-merging GIR onto `hard/3-7-consolidated` conflicts in exactly the same
+  four files as onto `main`, all of them #121 — i.e. this item's own work. HARD
+  contributes **zero** additional conflicts.
+- `hard/3-7-consolidated` fast-forwards from `main`, so the base also carries
+  #111, #121 and #122.
+
+Until #124 merges, a PR from this branch shows HARD's 9 commits alongside GIR's.
+After it merges, only GIR's changes remain in the diff.
 
 Downstream chain is unchanged: **GIR → BIND-C# → BIND-Rust → RIR**.

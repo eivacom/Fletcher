@@ -22,12 +22,37 @@ the foundation BIND's Rust/C# row emitters (BIND-5/6) build on.
 
 ## Branch strategy
 
-- Base on **`main` after the HARD runtime-hardening PRs (#109–#116) merge** —
-  HARD is orthogonal (runtime/pubsub) but touches the same wire path Phase 3
-  exercises; confirm the base at kickoff. Suggested branch:
-  `feature/generator-ir-rewrite`.
+- **GIR-1..GIR-11 (closed 2026-07-11)** were based on `main` at `5b36534`.
+- **GIR-13 bases on the `hard/3-7-consolidated` branch (PR #124), NOT on
+  `main`.** This is a locked base — see below.
 - The stale `feature/robustness_improvements` branch is **not** revived (its
   Phase-1 content is on `main` via #98).
+
+### GIR-13 base — `hard/3-7-consolidated`, not `main`
+
+Rebase `feature/generator-ir-rewrite` onto **`hard/3-7-consolidated`** and do
+GIR-13 there. Do **not** wait for PR #124 to merge, and do **not** base GIR-13 on
+`main`.
+
+Why this is safe — verified 2026-08-26:
+
+- **Zero file overlap.** The set of files HARD-3..7 changes and the set GIR
+  changes are disjoint (`comm -12` over both diffs returns nothing). HARD touches
+  `core/`, `pubsub/`, the two providers, and `arrow-bridge/src/`; GIR touches
+  `protoc/` plus `arrow-bridge/include/.../arrow_row_view.hpp` and
+  `arrow-bridge/tests/`.
+- **HARD contributes no conflicts.** Trial-merging GIR onto
+  `hard/3-7-consolidated` conflicts in exactly the same four files as merging onto
+  `main` — `generator_internal.hpp`, `schema_builder.hpp`, `generator.cpp`,
+  `tests/CMakeLists.txt` — all of them #121, i.e. GIR-13's own work.
+- `hard/3-7-consolidated` is a pure fast-forward from `main`, so this base
+  includes everything on `main` (#111, #121, #122) as well as HARD-3..7.
+
+**Consequence to accept:** until #124 merges, a PR from this branch carries
+HARD's 9 commits in its diff as well as GIR's. Once #124 lands, they are already
+in `main` and the GIR PR shows only GIR's changes. If #124's scope changes in
+review, rebase this branch onto whatever supersedes it — not onto bare `main`,
+which would drop the HARD fixes GIR-13 is being built against.
 - Rebased onto `main`, not merged (repo convention). PR split (each independently
   reviewable): GIR-1/2 (harness+oracles) → GIR-3/4 (IR + edge codec) → GIR-5..7
   (schema/IPC, view, TS) → GIR-8/9 (generator-behaviour + enum) → GIR-10/11
