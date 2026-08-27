@@ -82,7 +82,10 @@ class FixedWriteBuffer : public WriteBuffer {
     FixedWriteBuffer(uint8_t* data, size_t capacity) : data_(data), capacity_(capacity) {}
 
     void Append(const uint8_t* data, size_t len) override {
-        if (pos_ + len > capacity_) throw std::overflow_error("FixedWriteBuffer: overflow");
+        // Overflow-safe form of `pos_ + len > capacity_`, as PositionalReader::ReadBytes uses
+        // (pos_ <= capacity_ always). A wrapping sum would pass the check for an attacker-supplied
+        // length.
+        if (len > capacity_ - pos_) throw std::overflow_error("FixedWriteBuffer: overflow");
         std::memcpy(data_ + pos_, data, len);
         pos_ += len;
     }

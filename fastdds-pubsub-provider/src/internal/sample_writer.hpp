@@ -33,26 +33,6 @@
 namespace fletcher {
 namespace internal {
 
-// RETCODE_TIMEOUT is backpressure and says nothing about the row; a serialize failure logs its own.
-inline const char* ExplainWriteFailure(eprosima::fastdds::dds::ReturnCode_t rc) {
-    switch (rc) {
-        case eprosima::fastdds::dds::RETCODE_TIMEOUT:
-            return "history full for max_blocking_time (backpressure; a subscriber is not keeping "
-                   "up, or resource_limits().max_samples is too small)";
-        case eprosima::fastdds::dds::RETCODE_OUT_OF_RESOURCES:
-            return "out of resources (the payload pool or the history is exhausted)";
-        case eprosima::fastdds::dds::RETCODE_ERROR:
-            return "write failed; if serialize() logged just above, the row did not fit the "
-                   "provider's payload bound";
-        case eprosima::fastdds::dds::RETCODE_NOT_ENABLED:
-            return "the writer is not enabled";
-        case eprosima::fastdds::dds::RETCODE_ILLEGAL_OPERATION:
-            return "illegal operation for this writer's type";
-        default:
-            return "write failed";
-    }
-}
-
 class SampleWriterBase {
    public:
     virtual ~SampleWriterBase() = default;
@@ -78,7 +58,7 @@ class SampleWriter : public SampleWriterBase {
         if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
                                "writer on '" << writer->get_topic()->get_name()
-                                             << "' dropped a sample: " << ExplainWriteFailure(rc));
+                                             << "' dropped a sample, return code " << rc);
         }
     }
 };
@@ -98,8 +78,8 @@ class LoanableSampleWriter : public SampleWriterBase {
             // A failed loan drops the sample: loan_publish asked for zero copy.
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
                                "writer on '" << writer->get_topic()->get_name()
-                                             << "' dropped a sample: could not loan one ("
-                                             << ExplainWriteFailure(loan) << ")");
+                                             << "' dropped a sample: loan_sample returned "
+                                             << loan);
             return;
         }
 
@@ -120,9 +100,8 @@ class LoanableSampleWriter : public SampleWriterBase {
         if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             writer->discard_loan(sample);
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
-                               "writer on '"
-                                   << writer->get_topic()->get_name()
-                                   << "' dropped a loaned sample: " << ExplainWriteFailure(rc));
+                               "writer on '" << writer->get_topic()->get_name()
+                                             << "' dropped a loaned sample, return code " << rc);
         }
     }
 

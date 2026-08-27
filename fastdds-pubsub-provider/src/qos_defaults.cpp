@@ -3,8 +3,6 @@
 //
 #include "fletcher/fastdds_pubsub_provider/internal/qos_defaults.hpp"
 
-#include <cstdint>
-
 namespace fletcher {
 namespace internal {
 
@@ -17,30 +15,20 @@ using eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
 using eprosima::fastdds::dds::RELIABLE_RELIABILITY_QOS;
 using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 
-namespace {
-
-// Fast DDS defaults max_samples to 5000 while allocating 100. That is harmless for a heap payload
-// pool, which grows on demand, but the type is bounded, so a data-sharing writer sizes its shared
-// segment at (max_samples + extra_samples) * sizeof(FletcherSample) and allocates all of it up
-// front — gigabytes, which overflows the segment's 32-bit size and drops the endpoint back to the
-// transport. Capping max_samples at what is actually reserved keeps KEEP_ALL's lossless semantics
-// and makes the segment the size it looks like it should be.
-constexpr int32_t kMaxSamples = 100;
-
-// The channel holds one sample for the writer's life; the defaults would reserve 100.
-constexpr int32_t kSchemaSamples = 1;
-
-}  // namespace
-
+// max_samples is 100 rather than Fast DDS's 5000: the type is bounded, so a data-sharing writer
+// sizes its shared segment at (max_samples + extra_samples) * sizeof(FletcherSample) and reserves
+// all of it up front. At 5000 that is gigabytes, which overflows the segment's 32-bit size and
+// drops the endpoint back to the transport. 100 is what Fast DDS allocates anyway, and KEEP_ALL
+// stays lossless either way.
 DataWriterQos MakeFletcherDefaultWriterQos() {
     DataWriterQos qos = DATAWRITER_QOS_DEFAULT;
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
     qos.history().kind = KEEP_ALL_HISTORY_QOS;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
     // Unkeyed, so one instance holds the whole history.
-    qos.resource_limits().max_samples = kMaxSamples;
+    qos.resource_limits().max_samples = 100;
     qos.resource_limits().max_instances = 1;
-    qos.resource_limits().max_samples_per_instance = kMaxSamples;
+    qos.resource_limits().max_samples_per_instance = 100;
     return qos;
 }
 
@@ -50,12 +38,14 @@ DataReaderQos MakeFletcherDefaultReaderQos() {
     qos.history().kind = KEEP_ALL_HISTORY_QOS;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
     // Unkeyed, so one instance holds the whole history.
-    qos.resource_limits().max_samples = kMaxSamples;
+    qos.resource_limits().max_samples = 100;
     qos.resource_limits().max_instances = 1;
-    qos.resource_limits().max_samples_per_instance = kMaxSamples;
+    qos.resource_limits().max_samples_per_instance = 100;
     return qos;
 }
 
+// One retained sample for the writer's life, so the pool is pinned to one slot; the defaults
+// would reserve 100 of a bounded type per schema endpoint.
 DataWriterQos MakeSchemaChannelWriterQos() {
     DataWriterQos qos = DATAWRITER_QOS_DEFAULT;
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -63,10 +53,10 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     qos.history().depth = 1;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
     // Unkeyed, so one instance holds the whole history.
-    qos.resource_limits().max_samples = kSchemaSamples;
+    qos.resource_limits().max_samples = 1;
     qos.resource_limits().max_instances = 1;
-    qos.resource_limits().max_samples_per_instance = kSchemaSamples;
-    qos.resource_limits().allocated_samples = kSchemaSamples;
+    qos.resource_limits().max_samples_per_instance = 1;
+    qos.resource_limits().allocated_samples = 1;
     return qos;
 }
 
@@ -77,10 +67,10 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.history().depth = 1;
     qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
     // Unkeyed, so one instance holds the whole history.
-    qos.resource_limits().max_samples = kSchemaSamples;
+    qos.resource_limits().max_samples = 1;
     qos.resource_limits().max_instances = 1;
-    qos.resource_limits().max_samples_per_instance = kSchemaSamples;
-    qos.resource_limits().allocated_samples = kSchemaSamples;
+    qos.resource_limits().max_samples_per_instance = 1;
+    qos.resource_limits().allocated_samples = 1;
     return qos;
 }
 

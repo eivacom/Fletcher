@@ -51,10 +51,10 @@ std::vector<uint8_t> SerializeSchemaIpc(const ArrowSchema* schema) {
     std::memset(&err, 0, sizeof(err));
 
     // Every Check below can throw, so each resource is owned by a guard rather than released at the
-    // end of the happy path. Ownership migrates as nanoarrow takes it over:
-    // ArrowIpcOutputStreamInitBuffer makes the stream own the buffer, and ArrowIpcWriterInit moves
-    // the stream into the writer (zeroing ours), so a released guard whose resource has moved on is
-    // a no-op.
+    // end of the happy path. Declaration order is the contract: the stream only *borrows* the
+    // buffer (nanoarrow_ipc.h is explicit that it does not take ownership), so the buffer's guard
+    // is declared first and therefore runs last. ArrowIpcWriterInit does move the stream into the
+    // writer, zeroing ours, so the stream guard is a no-op by the time it runs.
     ArrowBuffer buf;
     ArrowBufferInit(&buf);
     Guard buf_guard([&] { ArrowBufferReset(&buf); });

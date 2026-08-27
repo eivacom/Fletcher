@@ -75,24 +75,21 @@ class InProcessProvider : public fletcher::PubSubProvider {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         if (schema) {
-            slot.schema = fletcher::OwnedSchema::DeepCopy(schema.get());
+            slot.schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(schema.get()));
         }
     }
 
+    // mu_ is held across the callback: one delivery at a time, so a callback must not re-enter.
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const fletcher::Attachments& attachments) override {
         std::vector<uint8_t> buf;
         fletcher::VectorWriteBuffer wb(buf);
         encoder(wb);
 
-        SubscribeCallback cb;
-        {
-            std::lock_guard lock(mu_);
-            auto [it, _] = topics_.try_emplace(Join(segments));
-            cb = it->second.callback;
-        }
-        if (cb) {
-            cb(buf.data(), buf.size(), nullptr, attachments);
+        std::lock_guard lock(mu_);
+        auto [it, _] = topics_.try_emplace(Join(segments));
+        if (it->second.callback) {
+            it->second.callback(buf.data(), buf.size(), it->second.schema, attachments);
         }
     }
 
@@ -101,11 +98,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
         std::lock_guard lock(mu_);
         auto& slot = topics_[Join(segments)];
         slot.callback = std::move(callback);
-        fletcher::SharedSchema schema;
-        if (slot.schema) {
-            schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(slot.schema.get()));
-        }
-        return {fletcher::MakeReadySchemaFuture(std::move(schema))};
+        return {fletcher::MakeReadySchemaFuture(slot.schema)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -119,7 +112,8 @@ class InProcessProvider : public fletcher::PubSubProvider {
    private:
     struct TopicState {
         SubscribeCallback callback;
-        fletcher::OwnedSchema schema;
+        // Null when nobody announced one; the gateway lets the client bring its own.
+        fletcher::SharedSchema schema;
     };
     std::mutex mu_;
     std::unordered_map<std::string, TopicState> topics_;

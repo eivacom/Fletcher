@@ -71,12 +71,13 @@ struct FastDDSProviderOptions {
     ///     serialisation internally and drops the sample.
     ///   - **The unused tail of every sample goes on the wire.** The loan is taken with
     ///     `NO_LOAN_INITIALIZATION` and only the bytes in use are written, so the rest of the
-    ///     `PayloadBytes()` a remote reader receives is whatever that pool slot last held — a
-    ///     previous sample of this topic, or, the first time a slot is used, uninitialised process
-    ///     memory. Not zeroed deliberately: a `memset` of the whole bound per sample costs more
+    ///     `PayloadBytes()` a remote reader receives is a **previous sample of this topic** —
+    ///     zeros the first time a slot is used, since Fast DDS's payload nodes come from `calloc`
+    ///     (`TopicPayloadPool`) and a data-sharing segment from the OS. Never unrelated process
+    ///     memory. Not zeroed per sample deliberately: a `memset` of the whole bound costs more
     ///     than the copy this option exists to avoid. With data-sharing (subscribers on this box,
     ///     which is what the option is for) nothing crosses a wire at all. Leave it off if
-    ///     subscribers are remote and that tail matters.
+    ///     subscribers are remote and one topic's samples must not leak into each other.
     ///
     /// Subscribers need no matching setting. Loans are not negotiated: the reader's own type gates
     /// them (Fast DDS 3.4 `DataReaderImpl.cpp`), the writer's own gates `loan_sample`

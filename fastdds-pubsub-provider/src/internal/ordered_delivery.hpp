@@ -128,8 +128,10 @@ class OrderedDelivery {
         Attachments att;
     };
 
-    // Call under mu_ after any mutation that can change whether the queue is empty.
-    void NoteQueuedLocked() { queued_.store(!queue_.empty(), std::memory_order_release); }
+    // Call under mu_ after any mutation that can change whether the queue is empty. seq_cst for
+    // the reason spelled out in DeliverSteady: this store and the `draining_` read that follows it
+    // in DrainLocked are one half of a StoreLoad pair.
+    void NoteQueuedLocked() { queued_.store(!queue_.empty(), std::memory_order_seq_cst); }
 
     // Trims to max_queued_, which is at least 1, so emptiness cannot change.
     void TrimLocked() {
@@ -154,12 +156,19 @@ class OrderedDelivery {
         try {
             callback_(row, len, schema_, attachments);
         } catch (...) {
-            draining_.store(false, std::memory_order_release);
+            draining_.store(false, std::memory_order_seq_cst);
             throw;
         }
-        draining_.store(false, std::memory_order_release);
-        // Whoever queued during the callback bailed on draining_, ordering their store before this.
-        if (queued_.load(std::memory_order_acquire)) {
+        draining_.store(false, std::memory_order_seq_cst);
+        // Anything queued while the callback ran is this thread's to drain, because the thread that
+        // queued it saw `draining_` set and bailed. Both operations here are seq_cst, as are their
+        // opposite numbers under mu_ (NoteQueuedLocked's store, DrainLocked's read of draining_):
+        // storing one flag and then loading the other is a StoreLoad pair, which release/acquire
+        // does NOT order. Without a single total order both threads can miss each other and strand
+        // the sample until the next Offer — which would then deliver it out of order, the one thing
+        // this class exists to prevent. Only one thread offers here in practice (see steady_), so
+        // this is belt and braces; it costs one fence per delivered sample.
+        if (queued_.load(std::memory_order_seq_cst)) {
             std::unique_lock<std::mutex> lk(mu_);
             DrainLocked(lk);
         }
@@ -221,6 +230,14 @@ class OrderedDelivery {
     bool warned_ = false;
 
     // Latched after the handoff; its release/acquire pair carries schema_ to the latched path.
+    //
+    // Once latched there is exactly one thread offering: the schema listener fires once and is then
+    // finished, and Fast DDS serialises every on_data_available for one reader under that reader's
+    // own RTPS mutex — StatefulReader::process_data_msg takes it and still holds it through
+    // change_received, NotifyChanges and the listener call, and the data-sharing thread reaches the
+    // same place through the same function (verified against Fast DDS 3.4.0). That is an upstream
+    // implementation detail rather than an API guarantee, which is why the two flags above do not
+    // lean on it.
     std::atomic<bool> steady_{false};
 };
 

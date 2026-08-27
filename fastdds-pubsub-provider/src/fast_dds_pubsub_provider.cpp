@@ -44,11 +44,12 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
-#include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "internal/data_reader_listener.hpp"
 #include "internal/data_writer_listener.hpp"
@@ -63,21 +64,6 @@
 using namespace eprosima::fastdds::dds;
 
 namespace fletcher {
-namespace {
-
-// Fast DDS reports failure by return code, never by exception, so a discarded code is a failure
-// that did not happen as far as the caller can tell. Teardown is where that matters most and where
-// throwing is not an option: `delete_datareader` refuses with RETCODE_PRECONDITION_NOT_MET while
-// a reader still holds an outstanding loan or an undeleted ReadCondition (SubscriberImpl::
-// delete_datareader, DataReaderImpl::can_be_deleted), and a reader that was not deleted keeps its
-// listener alive and keeps delivering into an object that is being destroyed.
-void LogIfFailed(ReturnCode_t code, const char* what) {
-    if (code != RETCODE_OK) {
-        EPROSIMA_LOG_ERROR(FLETCHER_PROVIDER, what << " failed, return code " << code);
-    }
-}
-
-}  // namespace
 
 // -----------------------------------------------------------------------
 // Impl — hides all Fast DDS types behind the pimpl wall.
@@ -100,6 +86,9 @@ struct FastDDSPubSubProvider::Impl {
         std::shared_ptr<internal::SchemaChannel> schema_channel;
         // Schema (nanoarrow ArrowSchema).
         OwnedSchema schema;
+        // The same schema as Arrow IPC bytes, kept from the announcement so a re-declaration is a
+        // byte compare rather than another encode of what was already encoded once.
+        std::vector<uint8_t> schema_ipc;
         bool is_publisher = false;
     };
 
@@ -113,7 +102,11 @@ struct FastDDSPubSubProvider::Impl {
     // writer alive for the duration of the call, and publishes to different topics then run
     // concurrently instead of serialising on this mutex. See README "Measured decisions".
     std::shared_mutex mu;
-    std::map<std::string, TopicState> topics;
+    // Unordered because Publish looks a topic up by name on every sample and a hash beats the
+    // std::map this was: log-n string comparisons per publish bought nothing. Reference stability
+    // across Publish's lock drop is unchanged — rehashing invalidates iterators, never references
+    // or pointers to elements.
+    std::unordered_map<std::string, TopicState> topics;
 
     // The registered type and both loaned flows are built from this one number.
     uint32_t payload_bytes = 0;
@@ -160,28 +153,19 @@ struct FastDDSPubSubProvider::Impl {
         for (auto& [name, ts] : topics) {
             // Delete the schema reader first: it stops the schema listener (which
             // resolves the schema channel) before the rest is torn down.
-            if (ts.schema_reader)
-                LogIfFailed(subscriber->delete_datareader(ts.schema_reader),
-                            "delete_datareader(schema)");
-            if (ts.schema_writer)
-                LogIfFailed(publisher->delete_datawriter(ts.schema_writer),
-                            "delete_datawriter(schema)");
-            if (ts.writer)
-                LogIfFailed(publisher->delete_datawriter(ts.writer), "delete_datawriter");
-            if (ts.reader)
-                LogIfFailed(subscriber->delete_datareader(ts.reader), "delete_datareader");
-            if (ts.schema_topic)
-                LogIfFailed(participant->delete_topic(ts.schema_topic), "delete_topic(schema)");
-            if (ts.topic) LogIfFailed(participant->delete_topic(ts.topic), "delete_topic");
+            if (ts.schema_reader) subscriber->delete_datareader(ts.schema_reader);
+            if (ts.schema_writer) publisher->delete_datawriter(ts.schema_writer);
+            if (ts.writer) publisher->delete_datawriter(ts.writer);
+            if (ts.reader) subscriber->delete_datareader(ts.reader);
+            if (ts.schema_topic) participant->delete_topic(ts.schema_topic);
+            if (ts.topic) participant->delete_topic(ts.topic);
         }
         topics.clear();
 
-        if (publisher) LogIfFailed(participant->delete_publisher(publisher), "delete_publisher");
-        if (subscriber)
-            LogIfFailed(participant->delete_subscriber(subscriber), "delete_subscriber");
+        if (publisher) participant->delete_publisher(publisher);
+        if (subscriber) participant->delete_subscriber(subscriber);
 
-        LogIfFailed(DomainParticipantFactory::get_instance()->delete_participant(participant),
-                    "delete_participant");
+        DomainParticipantFactory::get_instance()->delete_participant(participant);
     }
 };
 
@@ -273,8 +257,9 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         if (ts.schema_writer) {
             // A publisher already announced a schema for this topic. Idempotent
             // for an identical schema (fan-in / re-declaration); a different one
-            // is a genuine conflict that must not be silently dropped.
-            if (ts.schema && ipc != SerializeSchemaIpc(ts.schema.get())) {
+            // is a genuine conflict that must not be silently dropped. Compared against the bytes
+            // that announcement sent, not against a fresh encode of the stored schema.
+            if (ts.schema && ipc != ts.schema_ipc) {
                 throw std::runtime_error(
                     "FastDDS: topic already declared with a conflicting schema: " + name);
             }
@@ -283,8 +268,6 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
         // First schema announcement (possibly attaching to a topic state a
         // subscriber-first reader already created).
-        ts.schema = OwnedSchema::DeepCopy(schema.get());
-
         std::string schema_name = name + "/__schema";
         // The __schema topic may already exist (a subscriber-first reader
         // created it to await the schema); reuse it.
@@ -306,8 +289,20 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // The one write whose failure is invisible from the outside: subscribers learn the schema
         // only from this sample, so a dropped one leaves every subscriber of this topic waiting
         // forever on a future that never resolves.
-        if (ts.schema_writer->write(&raw) != RETCODE_OK)
+        if (ts.schema_writer->write(&raw) != RETCODE_OK) {
+            // Undo the half-announcement before throwing. The caller is being told to retry, and a
+            // retry short-circuits on a non-null schema_writer — so one left behind here turns
+            // every later CreateTopic for this topic into a silent no-op and makes the failure
+            // permanent, which is the very thing the paragraph above says must not happen.
+            impl_->publisher->delete_datawriter(ts.schema_writer);
+            ts.schema_writer = nullptr;
             throw std::runtime_error("FastDDS: failed to announce the schema for: " + name);
+        }
+
+        // Recorded only once the announcement is out, so a failed one leaves nothing behind for a
+        // retry to match against and nothing for it to short-circuit on.
+        ts.schema = OwnedSchema::DeepCopy(schema.get());
+        ts.schema_ipc = std::move(raw.data);
     }
 }
 
@@ -331,8 +326,9 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // Lazily create the DataWriter on first publish. QoS is resolved from per-topic override →
     // instance default at this point. Creating it mutates the topic state, so this one step needs
     // the lock exclusively, and another thread may have won the race in between — hence the
-    // re-check. `topics` is a std::map, so dropping the lock cannot invalidate `ts`: only erase
-    // does that, and nothing erases outside the destructor.
+    // re-check. Dropping the lock cannot invalidate `ts`: std::unordered_map guarantees references
+    // to elements survive a rehash, only erase invalidates them, and nothing erases outside the
+    // destructor.
     if (!ts.writer) {
         lock.unlock();
         {
@@ -486,11 +482,8 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
     // Delete the readers OUTSIDE the lock: their listener callbacks (the
     // schema listener in particular) acquire the provider mutex. Deleting the
     // schema reader first waits for any in-flight schema delivery to finish.
-    if (schema_reader)
-        LogIfFailed(impl_->subscriber->delete_datareader(schema_reader),
-                    "delete_datareader(schema)");
-    if (data_reader)
-        LogIfFailed(impl_->subscriber->delete_datareader(data_reader), "delete_datareader");
+    if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
+    if (data_reader) impl_->subscriber->delete_datareader(data_reader);
 
     // Both readers are gone, so no callback can still be running: `listener` and `schema_listener`
     // die here, at the end of scope, and nothing else can be looking at them.

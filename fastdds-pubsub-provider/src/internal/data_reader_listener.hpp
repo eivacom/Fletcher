@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
 // The two read flows, both feeding OrderedDelivery; the schema arrives via SetSchema.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_READER_LISTENER_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_READER_LISTENER_HPP_

@@ -8,6 +8,8 @@ A row decodes either by constructing one — `MyRow(data, len)` or `MyRow(encode
 
 Prefer `DecodeInto` in a subscribe callback. Constructing allocates each field's storage per call, and for a row carrying a large list that allocation dwarfs the copy: a 200 000-point cloud (600 000 doubles, 4.8 MB) measures **1052 µs constructed against 124 µs decoded into a reused row — 8.5×**, the latter within 2% of what `memcpy` alone costs for those bytes. Keep one row per subscription and decode into it.
 
+Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)`: one row per subscription, decoded into on every sample, handed to `cb` as a `const <Msg>&` borrowed for the duration of the call. `Subscribe(cb)` still constructs a fresh row per sample and passes it by value — use that one when the callback keeps the row.
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

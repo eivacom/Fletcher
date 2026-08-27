@@ -142,7 +142,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("fletcher-core/0.1.0-alpha")
+        self.requires("fletcher-core/0.5.0-alpha")
 
     def layout(self):
         cmake_layout(self)

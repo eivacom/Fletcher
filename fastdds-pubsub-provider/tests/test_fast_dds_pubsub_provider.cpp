@@ -11,6 +11,7 @@
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -1108,4 +1109,27 @@ TEST(FastDDSPubSubProviderTest, ASchemaTooLargeForItsChannelIsReported) {
     opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
     FastDDSPubSubProvider p(opts);
     EXPECT_THROW(p.CreateTopic({"schema", "toobig"}, MakeSchema()), std::runtime_error);
+}
+
+// A throw invites a retry, so a failed announcement has to leave nothing behind for that retry to
+// short-circuit on. It used to leave its DataWriter: the second call then matched the "already
+// announced" branch and returned quietly, so the failure became permanent and every subscriber of
+// the topic waited forever on a schema future nothing would resolve.
+TEST(FastDDSPubSubProviderTest, AFailedSchemaAnnouncementCanBeRetried) {
+    FastDDSProviderOptions opts;
+    opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
+    FastDDSPubSubProvider p(opts);
+
+    auto announce = [&p] {
+        try {
+            p.CreateTopic({"schema", "retry"}, MakeSchema());
+        } catch (const std::runtime_error& e) {
+            return std::string(e.what());
+        }
+        return std::string("returned without announcing");
+    };
+
+    // Both calls must reach the write and fail *there* — not earlier, and not silently.
+    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
+    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
 }

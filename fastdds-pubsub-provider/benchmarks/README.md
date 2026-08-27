@@ -1,13 +1,14 @@
 # Benchmarks — the provider's DDS types
 
-Two programs over the same row, neither of which creates a DDS entity:
+Three programs over the same row. Only the last creates DDS entities:
 
 | Program | What it is |
 |---|---|
 | `bench_pub_sub_type` | Google Benchmark. Measures `internal::FletcherSamplePubSubType` against the type it replaced, at nanosecond resolution. |
 | `example_arrow_roundtrip` | A narrated walkthrough. Prints one Arrow batch all the way to DDS bytes and back, naming every intermediate type and dumping every buffer. Start here to see the flow. |
+| `exp_zero_copy` | Ping-pong latency across the two axes that make a sample zero-copy — loaning and data-sharing — through real participants, writers and readers. The only one here that goes near DDS. |
 
-`transform_batch.hpp` holds the row both use — NaviSuite's `TransformWithVelocity`, its Arrow schema,
+`transform_batch.hpp` holds the row all three use — NaviSuite's `TransformWithVelocity`, its Arrow schema,
 and the batch helpers — so the thing measured and the thing narrated are the same thing.
 
 The unit tests for the type itself are elsewhere and run in CI:

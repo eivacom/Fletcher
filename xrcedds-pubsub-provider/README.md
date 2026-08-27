@@ -18,7 +18,7 @@ The binary payload is a serialized `Envelope`:
 
 This format is shared with the FastDDS provider, so payloads are wire-compatible between provider implementations.
 
-Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `XrceConfig::payload_bound` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is dropped by its own length check.
+Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `XrceConfig::payload_bound` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
 
 ### Topic name
 

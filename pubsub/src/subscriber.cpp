@@ -27,9 +27,18 @@ struct Subscriber::Impl {
     // Subscribe/Unsubscribe (rare); read on every sample (hot).
     using EntryList = std::shared_ptr<const std::vector<Entry>>;
 
+    // The snapshot lives in its own heap object, owned jointly by the topic state and by the
+    // provider callback that delivers to it. That is what keeps delivery off `mu`: the callback
+    // holds the fanout directly, so it needs neither the map lookup that used to find it nor the
+    // lock that lookup required — an atomic load replaces a mutex round trip on every sample.
+    struct Fanout {
+        std::atomic<EntryList> entries{std::make_shared<const std::vector<Entry>>()};
+    };
+    using FanoutPtr = std::shared_ptr<Fanout>;
+
     struct TopicState {
         std::vector<std::string> segments;
-        EntryList subscribers = std::make_shared<const std::vector<Entry>>();
+        FanoutPtr fanout = std::make_shared<Fanout>();
         // The provider's schema future, cached so fan-out subscribers to the
         // same topic all share it (shared_future is copyable).
         std::shared_future<SharedSchema> schema_future;
@@ -45,13 +54,14 @@ struct Subscriber::Impl {
     std::unordered_map<uint64_t, std::string> subscription_topic;
     std::atomic<uint64_t> next_id{1};
 
-    // Copy-on-write mutation of one topic's subscriber list. Called with mu held. Never mutates a
-    // published list, so a delivery already iterating an older snapshot stays valid.
+    // Copy-on-write mutation of one topic's subscriber list. Called with mu held — the lock is what
+    // serialises two rewrites, not what publishes the result. Never mutates a published list, so a
+    // delivery already iterating an older snapshot stays valid.
     template <typename Mutate>
     static void RewriteEntries(TopicState& ts, Mutate mutate) {
-        auto next = std::make_shared<std::vector<Entry>>(*ts.subscribers);
+        auto next = std::make_shared<std::vector<Entry>>(*ts.fanout->entries.load());
         mutate(*next);
-        ts.subscribers = std::move(next);
+        ts.fanout->entries.store(std::move(next));
     }
 
     // Called with mu held. Releases the lock while calling into the
@@ -63,21 +73,14 @@ struct Subscriber::Impl {
         }
 
         std::vector<std::string> segments = ts.segments;
+        FanoutPtr fanout = ts.fanout;
 
         lock.unlock();
 
         SubscriptionResult result = provider->Subscribe(
-            segments, [this, key](const uint8_t* data, size_t len, const SharedSchema& schema,
-                                  const Attachments& att) {
-                EntryList entries;
-                {
-                    std::lock_guard lk(mu);
-                    auto it = topics.find(key);
-                    if (it == topics.end()) return;
-                    entries = it->second.subscribers;
-                }
-                if (entries->empty()) return;
-
+            segments, [fanout](const uint8_t* data, size_t len, const SharedSchema& schema,
+                               const Attachments& att) {
+                EntryList entries = fanout->entries.load();
                 // Borrowed by every subscriber; a callback that keeps either one copies it.
                 for (const Entry& entry : *entries) {
                     entry.callback(entry.id, data, len, schema, att);
@@ -131,12 +134,9 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
     std::string key = internal::JoinSegments(segments);
     std::unique_lock lock(impl_->mu);
 
-    auto it = impl_->topics.find(key);
-    if (it == impl_->topics.end()) {
-        Impl::TopicState ts;
-        ts.segments = segments;
-        impl_->topics[key] = std::move(ts);
-        it = impl_->topics.find(key);
+    auto [it, inserted] = impl_->topics.try_emplace(key);
+    if (inserted) {
+        it->second.segments = segments;
     }
 
     uint64_t id = impl_->next_id.fetch_add(1);
@@ -190,7 +190,8 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
                         v.end());
             });
 
-            if (topic_it->second.subscribers->empty() && topic_it->second.provider_subscribed) {
+            if (topic_it->second.fanout->entries.load()->empty() &&
+                topic_it->second.provider_subscribed) {
                 segments_to_unsub = topic_it->second.segments;
                 topic_it->second.provider_subscribed = false;
             }

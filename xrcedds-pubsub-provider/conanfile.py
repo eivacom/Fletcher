@@ -29,7 +29,7 @@ class FletcherPubsubConan(ConanFile):
 
     def requirements(self):
         self.requires("fletcher-pubsub/0.5.0-alpha", transitive_headers=True)
-        self.requires("fletcher-core/0.4.1-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
