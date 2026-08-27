@@ -43,6 +43,12 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
                    fletcher::PubSubProvider& provider, const ArrowSchema* schema) {
     publisher.ListTopics();
     subscriber.Subscribe({"probe"}, {});
+    // NOTE: PubSubProvider::Subscribe is VIRTUAL, and gcc (measured: 13.3.0, the
+    // version the Linux CI profile pins) emits no -Wunused-result diagnostic for a
+    // discarded [[nodiscard]] virtual call — through the base OR the concrete type.
+    // So this line is an effective gate on MSVC only; on gcc it contributes nothing
+    // and the test stays green purely on the non-virtual discards around it. Do not
+    // read a passing Linux run as proof that this line is guarded.
     provider.Subscribe({"probe"}, {});
     fletcher::OwnedSchema::DeepCopy(schema);
 }
