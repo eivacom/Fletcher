@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -10,9 +11,12 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include "internal/fletcher_topic_type.hpp"
 #include "internal/ordered_delivery.hpp"
 
 using namespace fletcher;
@@ -56,11 +60,95 @@ static int32_t DecodeRow(const uint8_t* data) {
 }
 
 // ---------------------------------------------------------------------------
+// #60 — FletcherTopicType::serialize must surface a swallowed encoder exception
+// as a stored diagnostic while still returning false and NOT propagating out of
+// the DDS callback (H-INV-3). Exercised directly on the extracted internal type
+// (internal/fletcher_topic_type.hpp) via a throwing encoder — no DDS
+// participant required.
+// ---------------------------------------------------------------------------
+TEST(FletcherTopicTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
+    fletcher::internal::FletcherTopicType type(128);
+
+    Attachments attachments;
+    fletcher::internal::TransportData data;
+    data.attachments = &attachments;
+    data.encoder = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
+
+    // Use the reserving constructor so the SerializedPayload_t owns its
+    // (calloc-backed) buffer and frees it correctly on destruction. Aliasing a
+    // std::vector into payload.data would make ~SerializedPayload_t free()
+    // memory it does not own.
+    eprosima::fastdds::rtps::SerializedPayload_t payload(128);
+    payload.length = 123;
+
+    // No exception may escape serialize (H-INV-3): the encoder throw is caught.
+    bool result = true;
+    EXPECT_NO_THROW({
+        result = type.serialize(&data, payload, eprosima::fastdds::dds::DataRepresentationId_t{});
+    });
+    EXPECT_FALSE(result);
+    EXPECT_EQ(payload.length, 0u);
+    EXPECT_THAT(type.LastSerializeError(), testing::HasSubstr("encoder boom"));
+}
+
+// #60 hardening: a single FletcherTopicType instance is shared by every data
+// topic, so the publish site resets the diagnostic sink (ClearSerializeError())
+// before write(). This guards the case where a write() returns WITHOUT invoking
+// serialize() (e.g. it bails on a resource limit before serialization): without
+// the pre-write reset a stale error from an earlier failed publish would be
+// misattributed to the current one. Exercised directly on the internal type.
+TEST(FletcherTopicTypeTest, ClearSerializeErrorResetsStaleDiagnostic) {
+    fletcher::internal::FletcherTopicType type(128);
+
+    // A prior failed publish leaves a diagnostic on the shared instance.
+    Attachments attachments;
+    fletcher::internal::TransportData data;
+    data.attachments = &attachments;
+    data.encoder = [](WriteBuffer&) { throw std::runtime_error("stale boom"); };
+    eprosima::fastdds::rtps::SerializedPayload_t payload(128);
+    type.serialize(&data, payload, eprosima::fastdds::dds::DataRepresentationId_t{});
+    ASSERT_THAT(type.LastSerializeError(), testing::HasSubstr("stale boom"));
+
+    // The next publish clears the sink before write(); if that write() then does
+    // not call serialize() at all, the sink must be empty — not "stale boom".
+    type.ClearSerializeError();
+    EXPECT_TRUE(type.LastSerializeError().empty());
+}
+
+// ---------------------------------------------------------------------------
 // Tests — basic provider behaviour
 // ---------------------------------------------------------------------------
 
 TEST(FastDDSPubSubProviderTest, ConstructDestruct) {
     EXPECT_NO_THROW({ FastDDSPubSubProvider p(FastDDSProviderOptions{}); });
+}
+
+// #63 (HARD-4) — Destruction is a documented quiescence contract, not a
+// synchronization boundary: callers must ensure no public API call is in flight
+// and no re-entrant provider callback is pending when the provider is destroyed
+// (see ~FastDDSPubSubProvider). This exercises the SUPPORTED teardown — quiescent
+// use, then destruction with no concurrent activity — and documents that
+// contract. It is intentionally NOT a race test: a destruction-during-use race
+// would be flaky and would not make that usage supported (HARD-4 design).
+TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
+    EXPECT_NO_THROW({
+        FastDDSPubSubProvider provider(FastDDSProviderOptions{});
+        provider.CreateTopic({"quiescent", "teardown"}, MakeSchema());
+
+        std::atomic<int32_t> received{-1};
+        static_cast<void>(
+            provider.Subscribe({"quiescent", "teardown"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
+        provider.Publish({"quiescent", "teardown"}, MakeEncoder(1));
+
+        // Reach a quiescent point before teardown: Unsubscribe deletes the
+        // readers outside the provider lock, draining any in-flight listener
+        // callback, so no callback can be running when `provider` is destroyed
+        // at end of scope with no concurrent API calls.
+        provider.Unsubscribe({"quiescent", "teardown"});
+    });
 }
 
 TEST(FastDDSPubSubProviderTest, CreateTopicSucceeds) {
@@ -90,6 +178,24 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
     FastDDSPubSubProvider p(FastDDSProviderOptions{});
     p.CreateTopic({"pub", "nosub"}, MakeSchema());
     EXPECT_NO_THROW(p.Publish({"pub", "nosub"}, MakeEncoder(1)));
+}
+
+// #60 (production half): a failing row encoder makes serialize() fail (captured in
+// LastSerializeError); Publish must SURFACE it as a throw carrying the diagnostic,
+// not drop the row silently. Paired with PublishWithoutSubscriberDoesNotThrow above,
+// which proves a benign no-reader write()==false (no serialize error) does NOT throw
+// — so the signal is the serialize diagnostic, not the write() return.
+TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
+    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    p.CreateTopic({"pub", "encfail"}, MakeSchema());
+    PubSubProvider::RowEncoder bad = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
+    try {
+        p.Publish({"pub", "encfail"}, bad);
+        FAIL() << "Publish must throw when the row encoder fails to serialize";
+    } catch (const std::runtime_error& e) {
+        EXPECT_THAT(e.what(), testing::HasSubstr("failed to publish"));
+        EXPECT_THAT(e.what(), testing::HasSubstr("encoder boom"));
+    }
 }
 
 TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
@@ -139,10 +245,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultWriterQos) {
     pub_provider.CreateTopic({"customdefault", "writer"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"customdefault", "writer"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"customdefault", "writer"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"customdefault", "writer"}, MakeEncoder(7));
 
@@ -164,10 +271,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultReaderQos) {
     pub_provider.CreateTopic({"customdefault", "reader"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"customdefault", "reader"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"customdefault", "reader"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"customdefault", "reader"}, MakeEncoder(11));
 
@@ -195,14 +303,14 @@ TEST(FastDDSPubSubProviderTest, PerTopicWriterQosOverridesDefault) {
 
     std::atomic<int32_t> received_override{-1};
     std::atomic<int32_t> received_default{-1};
-    sub_provider.Subscribe({"pertopic", "override"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received_override.store(DecodeRow(data));
-                           });
-    sub_provider.Subscribe({"pertopic", "default"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received_default.store(DecodeRow(data));
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"pertopic", "override"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received_override.store(DecodeRow(data));
+        }));
+    static_cast<void>(sub_provider.Subscribe(
+        {"pertopic", "default"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received_default.store(DecodeRow(data));
+        }));
 
     pub_provider.Publish({"pertopic", "override"}, MakeEncoder(101));
     pub_provider.Publish({"pertopic", "default"}, MakeEncoder(202));
@@ -230,10 +338,11 @@ TEST(FastDDSPubSubProviderTest, PerTopicReaderQosOverridesDefault) {
     pub_provider.CreateTopic({"pertopic", "readeroverride"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"pertopic", "readeroverride"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"pertopic", "readeroverride"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"pertopic", "readeroverride"}, MakeEncoder(303));
 
@@ -270,10 +379,10 @@ TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
     pub_provider.CreateTopic({"autonomy", "profile"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"autonomy", "profile"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"autonomy", "profile"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received.store(DecodeRow(data));
+        }));
 
     pub_provider.Publish({"autonomy", "profile"}, MakeEncoder(2026));
 
@@ -357,13 +466,13 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     std::condition_variable cv;
     std::vector<int32_t> received;
 
-    sub_provider.Subscribe({"ordering", "burst"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len < 5) return;
-                               std::lock_guard<std::mutex> lk(mu);
-                               received.push_back(DecodeRow(data));
-                               cv.notify_all();
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"ordering", "burst"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len < 5) return;
+            std::lock_guard<std::mutex> lk(mu);
+            received.push_back(DecodeRow(data));
+            cv.notify_all();
+        }));
 
     pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
     for (int32_t i = 0; i < kCount; ++i) {

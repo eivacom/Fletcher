@@ -65,6 +65,12 @@ struct FastDDSProviderOptions {
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(FastDDSProviderOptions options);
+
+    /// Destruction precondition: the caller must ensure the provider is
+    /// quiescent — no thread executing or about to enter a public API on this
+    /// instance, and no provider callback still in flight that can re-enter it.
+    /// The destructor tears down DDS entities and invalidates all internal
+    /// state; it is not a synchronization boundary for concurrent use.
     ~FastDDSPubSubProvider() override;
 
     FastDDSPubSubProvider(const FastDDSPubSubProvider&) = delete;
@@ -75,8 +81,12 @@ class FastDDSPubSubProvider : public PubSubProvider {
     void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
                  const Attachments& attachments = {}) override;
 
-    SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                 SubscribeCallback callback) override;
+    // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and
+    // the diagnostic keys off the STATIC type at the call site, so the annotation
+    // must be repeated on every concrete override or it never fires where
+    // applications actually call (#56).
+    [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
+                                               SubscribeCallback callback) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

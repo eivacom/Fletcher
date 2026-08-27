@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
@@ -22,7 +23,7 @@ using namespace fletcher;
 class MockProvider : public PubSubProvider {
    public:
     void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         topics_created.push_back(key);
         if (schema) {
             schemas_[key] = OwnedSchema::DeepCopy(schema.get());
@@ -31,7 +32,7 @@ class MockProvider : public PubSubProvider {
 
     void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
 
         std::vector<uint8_t> buf;
         VectorWriteBuffer wb(buf);
@@ -50,7 +51,7 @@ class MockProvider : public PubSubProvider {
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                  SubscribeCallback callback) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         SharedSchema schema;
@@ -61,7 +62,7 @@ class MockProvider : public PubSubProvider {
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
-        callbacks_.erase(Join(segments));
+        callbacks_.erase(fletcher::internal::JoinSegments(segments));
         unsubscribe_count++;
     }
 
@@ -71,17 +72,6 @@ class MockProvider : public PubSubProvider {
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
-
-    static std::string Join(const std::vector<std::string>& segs) {
-        std::string out;
-        for (size_t i = 0; i < segs.size(); ++i) {
-            if (i > 0) {
-                out += '/';
-            }
-            out += segs[i];
-        }
-        return out;
-    }
 };
 
 /// Build a nanoarrow schema: struct{ x: int32 }.
@@ -186,8 +176,10 @@ TEST(SubscriberTest, PublishDelegatesToProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     int32_t received_value = 0;
-    subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema,
-                                     Attachments) { received_value = DecodeTestRow(data, len); });
+    (void)subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            received_value = DecodeTestRow(data, len);
+        });
 
     publisher.Publish(kTopic, MakeTestEncoder(42));
 
@@ -243,9 +235,9 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
@@ -268,7 +260,7 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
     int count_b = 0;
     Subscriber::SubscribeResult ra = subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
@@ -303,8 +295,8 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
-    subscriber.Subscribe(kTopic,
-                         [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+    (void)subscriber.Subscribe(kTopic,
+                               [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
@@ -329,7 +321,7 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    subscriber.Subscribe(
+    (void)subscriber.Subscribe(
         kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments att) {
             received_value = DecodeTestRow(data, len);
             received_att = std::move(att);

@@ -45,7 +45,7 @@ class PublisherArrow {
     void PublishDirect(const std::vector<std::string>& segments, PubSubProvider::RowEncoder encoder,
                        const Attachments& attachments = {});
 
-    std::vector<std::string> ListTopics() const;
+    [[nodiscard]] std::vector<std::string> ListTopics() const;
 
    private:
     std::unique_ptr<Publisher> publisher_;
@@ -56,8 +56,6 @@ class PublisherArrow {
         std::unique_ptr<Codec> codec;
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
-
-    static std::string JoinSegments(const std::vector<std::string>& segs);
 };
 
 }  // namespace fletcher

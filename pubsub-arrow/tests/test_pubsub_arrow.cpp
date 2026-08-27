@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
@@ -25,7 +26,7 @@ using namespace fletcher;
 class MockProvider : public PubSubProvider {
    public:
     void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         topics_created.push_back(key);
         if (schema) {
             schemas_[key] = OwnedSchema::DeepCopy(schema.get());
@@ -34,7 +35,7 @@ class MockProvider : public PubSubProvider {
 
     void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
                  const Attachments& attachments) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
 
         std::vector<uint8_t> buf;
         VectorWriteBuffer wb(buf);
@@ -53,7 +54,7 @@ class MockProvider : public PubSubProvider {
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                  SubscribeCallback callback) override {
-        std::string key = Join(segments);
+        std::string key = fletcher::internal::JoinSegments(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
         SharedSchema schema;
@@ -64,7 +65,7 @@ class MockProvider : public PubSubProvider {
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
-        callbacks_.erase(Join(segments));
+        callbacks_.erase(fletcher::internal::JoinSegments(segments));
     }
 
     std::vector<std::string> topics_created;
@@ -72,17 +73,6 @@ class MockProvider : public PubSubProvider {
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
-
-    static std::string Join(const std::vector<std::string>& segs) {
-        std::string out;
-        for (size_t i = 0; i < segs.size(); ++i) {
-            if (i > 0) {
-                out += '/';
-            }
-            out += segs[i];
-        }
-        return out;
-    }
 };
 
 static auto TestSchema() {
@@ -149,7 +139,8 @@ TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
     pub.CreateTopic(kTopic, TestSchema());
 
     ArrowRow received;
-    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); }));
 
     ArrowRow sent = {
         std::make_shared<arrow::Int32Scalar>(42),
@@ -170,7 +161,8 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     pub.CreateTopic(kTopic, TestSchema());
 
     Attachments received_att;
-    sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); }));
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
@@ -193,7 +185,8 @@ TEST(PubSubArrowTest, PublishDirectPassthrough) {
     pub.CreateTopic(kTopic, schema);
 
     ArrowRow received;
-    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); }));
 
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) {
         buf.AppendByte(0x00);
@@ -281,7 +274,7 @@ TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);  // long, so only the count triggers
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
 
@@ -304,7 +297,7 @@ TEST(SubscriberArrowBatchTest, FlushesAtTimeout) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;  // high, so only the timeout triggers
     opt.timeout = std::chrono::milliseconds(100);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     pub.Publish(kTopic, MakeRow(1, "a"));
     pub.Publish(kTopic, MakeRow(2, "b"));
@@ -349,7 +342,7 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 2;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xBE, 0xEF});
     pub.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
@@ -403,7 +396,7 @@ TEST(SubscriberArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::milliseconds(100);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     // Only a malformed row arrives in this window.
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
@@ -432,7 +425,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     // Published as plain values; subscriber re-folds into a dictionary.
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
@@ -472,7 +465,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
     pub.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});

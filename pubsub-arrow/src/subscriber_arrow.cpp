@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <future>
 #include <mutex>
@@ -276,7 +277,7 @@ SubscriberArrow::~SubscriberArrow() {
 
 SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     const std::vector<std::string>& segments, SubscribeCallback callback) {
-    std::string key = JoinSegments(segments);
+    std::string key = internal::JoinSegments(segments);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
@@ -322,7 +323,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
 
 SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     const std::vector<std::string>& segments, RecordBatchCallback callback, BatchOptions options) {
-    std::string key = JoinSegments(segments);
+    std::string key = internal::JoinSegments(segments);
 
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
                                                         options.timeout);
@@ -439,18 +440,6 @@ void SubscriberArrow::Unsubscribe(uint64_t subscription_id) {
     if (!any_remaining) {
         codecs_.erase(key);
     }
-}
-
-std::string SubscriberArrow::JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) {
-        return {};
-    }
-    std::string out = segs[0];
-    for (size_t i = 1; i < segs.size(); ++i) {
-        out += '/';
-        out += segs[i];
-    }
-    return out;
 }
 
 }  // namespace fletcher

@@ -7,6 +7,7 @@
 #include <arrow/c/bridge.h>
 
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <stdexcept>
 
@@ -43,7 +44,7 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
     publisher_->CreateTopic(segments, std::move(nano));
 
     if (schema) {
-        std::string key = JoinSegments(segments);
+        std::string key = internal::JoinSegments(segments);
         std::lock_guard lock(mu_);
         codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
     }
@@ -51,7 +52,7 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
 
 void PublisherArrow::Publish(const std::vector<std::string>& segments, const ArrowRow& row,
                              const Attachments& attachments) {
-    std::string key = JoinSegments(segments);
+    std::string key = internal::JoinSegments(segments);
     Codec* codec;
     {
         std::lock_guard lock(mu_);
@@ -76,17 +77,5 @@ void PublisherArrow::PublishDirect(const std::vector<std::string>& segments,
 }
 
 std::vector<std::string> PublisherArrow::ListTopics() const { return publisher_->ListTopics(); }
-
-std::string PublisherArrow::JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) {
-        return {};
-    }
-    std::string out = segs[0];
-    for (size_t i = 1; i < segs.size(); ++i) {
-        out += '/';
-        out += segs[i];
-    }
-    return out;
-}
 
 }  // namespace fletcher

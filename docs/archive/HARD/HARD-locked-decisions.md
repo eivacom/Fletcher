@@ -3,7 +3,7 @@
 Firm choices for the runtime & pubsub hardening round. The architect,
 architecture reviewer, implementer, and compliance reviewer must honor these; a
 proposed deviation is a **stop-and-ask**. Full rationale in
-[docs/runtime-hardening-spec.md](../docs/runtime-hardening-spec.md).
+[docs/archive/HARD/runtime-hardening-spec.md](runtime-hardening-spec.md).
 
 1. **Wire format is byte-identical (H-INV-1).** Every fix changes ownership,
    error signalling, or code shape — never the encode→decode bytes. Existing
