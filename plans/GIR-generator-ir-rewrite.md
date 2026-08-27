@@ -23,8 +23,9 @@ the foundation BIND's Rust/C# row emitters (BIND-5/6) build on.
 ## Branch strategy
 
 - **GIR-1..GIR-11 (closed 2026-07-11)** were based on `main` at `5b36534`.
-- **GIR-13 bases on the `hard/3-7-consolidated` branch (PR #124), NOT on
-  `main`.** This is a locked base — see below.
+- **GIR-13 was developed on the `hard/3-7-consolidated` branch (PR #124), which
+  squash-merged into `main` as `499624d` on 2026-08-27.** The branch is now
+  rebased onto `main`; that locked base is **discharged** — see below.
 - The stale `feature/robustness_improvements` branch is **not** revived (its
   Phase-1 content is on `main` via #98).
 - Rebased, not merged (repo convention) — onto the base named per item above. PR
@@ -33,31 +34,30 @@ the foundation BIND's Rust/C# row emitters (BIND-5/6) build on.
   enum) → GIR-10/11 (coverage) → GIR-13 (option metadata). No PR until green +
   reviewed; PR/merge is the user's step.
 
-### GIR-13 base — `hard/3-7-consolidated`, not `main`
+### GIR-13 base — history (discharged 2026-08-27)
 
-Rebase `feature/generator-ir-rewrite` onto **`hard/3-7-consolidated`** and do
-GIR-13 there. Do **not** wait for PR #124 to merge, and do **not** base GIR-13 on
-`main`.
+**Current state: this branch is rebased onto `main` and no longer needs a special
+base.** PR #124 squash-merged as `499624d`, so all of HARD-3..7 is in `main`, and
+the 9 HARD commits were dropped from this branch during the rebase
+(`git rebase --onto origin/main 230b144`) — their content arrives via the squash.
+`feature/generator-ir-rewrite` is a pure fast-forward from `main`.
 
-Why this is safe — verified 2026-08-26:
+Kept for the record, because the reasoning explains the branch's shape:
 
-- **Zero file overlap.** The set of files HARD-3..7 changes and the set GIR
-  changes are disjoint (`comm -12` over both diffs returns nothing). HARD touches
-  `core/`, `pubsub/`, the two providers, and `arrow-bridge/src/`; GIR touches
+GIR-13 was deliberately developed on `hard/3-7-consolidated` rather than `main`,
+without waiting for #124 to merge. Verified 2026-08-26:
+
+- **Zero file overlap.** The files HARD-3..7 changes and the files GIR changes
+  were disjoint (`comm -12` over both diffs returned nothing). HARD touched
+  `core/`, `pubsub/`, the two providers and `arrow-bridge/src/`; GIR touches
   `protoc/` plus `arrow-bridge/include/.../arrow_row_view.hpp` and
   `arrow-bridge/tests/`.
-- **HARD contributes no conflicts.** Trial-merging GIR onto
-  `hard/3-7-consolidated` conflicts in exactly the same four files as merging onto
-  `main` — `generator_internal.hpp`, `schema_builder.hpp`, `generator.cpp`,
-  `tests/CMakeLists.txt` — all of them #121, i.e. GIR-13's own work.
-- `hard/3-7-consolidated` is a pure fast-forward from `main`, so this base
-  includes everything on `main` (#111, #121, #122) as well as HARD-3..7.
-
-**Consequence to accept:** until #124 merges, a PR from this branch carries
-the nine HARD-3..7 commits in its diff as well as GIR's. Once #124 lands, they are already
-in `main` and the GIR PR shows only GIR's changes. If #124's scope changes in
-review, rebase this branch onto whatever supersedes it — not onto bare `main`,
-which would drop the HARD fixes GIR-13 is being built against.
+- **HARD contributed no conflicts.** Trial-merging GIR onto
+  `hard/3-7-consolidated` conflicted in exactly the same four files as merging
+  onto `main` — `generator_internal.hpp`, `schema_builder.hpp`, `generator.cpp`,
+  `tests/CMakeLists.txt` — all of them #121, i.e. GIR-13's own work. The
+  post-merge rebase onto `main` was likewise conflict-free.
+- The base carried everything on `main` (#111, #121, #122) as well as HARD-3..7.
 
 ## Sequencing
 

@@ -3,7 +3,12 @@
 **Item:** GIR-13 · **Story/acceptance:** [GIR-generator-ir-rewrite.md § GIR-13](GIR-generator-ir-rewrite.md#gir-13--121-option-metadata-on-the-ir-schema-visitor)
 **Locked decisions:** [GIR-locked-decisions.md](GIR-locked-decisions.md) (#2, #3, #5, #9, #10)
 **Spec:** [docs/fletcher-options.md § `--fletcher_opt=metadata_from_option`](../docs/fletcher-options.md) (authoritative, **unchanged by this item**), [docs/robustness-plan.md § Phase 2](../docs/robustness-plan.md)
-**Base:** `feature/generator-ir-rewrite` rebased onto `hard/3-7-consolidated` (locked base — already done)
+**Base:** `feature/generator-ir-rewrite`, rebased onto **`main`**. GIR-13 was
+developed on `hard/3-7-consolidated` (PR #124) under a locked base; #124
+squash-merged as `499624d` on 2026-08-27, the 9 HARD commits were dropped from
+this branch (their content arrives via the squash), and the locked base is
+**discharged**. Rationale kept in
+[GIR-generator-ir-rewrite.md](GIR-generator-ir-rewrite.md#gir-13-base--history-discharged-2026-08-27).
 
 **Revision 3 (2026-08-26)** — §6 T2 respecified against the re-review (its
 grandchild key was unsatisfiable); T1 also pins the escaped **key**; fixture

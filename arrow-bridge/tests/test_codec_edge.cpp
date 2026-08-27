@@ -395,7 +395,7 @@ TEST(CodecEdge, DecodeRejectsBadDenseUnionTypeCode) {
     fletcher::Codec codec(schema);
     // [row bitfield 0x00 (present)] [type_code = 0x09 — no such child].
     const std::vector<uint8_t> buf = {0x00, 0x09};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 TEST(CodecEdge, DecodeRejectsBadSparseUnionTypeCode) {
@@ -404,7 +404,7 @@ TEST(CodecEdge, DecodeRejectsBadSparseUnionTypeCode) {
     auto schema = arrow::schema({arrow::field("u", union_type)});
     fletcher::Codec codec(schema);
     const std::vector<uint8_t> buf = {0x00, 0x7F};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 TEST(CodecEdge, DecodeRejectsTruncatedStructBitfield) {
@@ -416,7 +416,7 @@ TEST(CodecEdge, DecodeRejectsTruncatedStructBitfield) {
     // [row bitfield 0x00 (struct present)] and nothing else — the struct's own
     // bitfield byte is truncated.
     const std::vector<uint8_t> buf = {0x00};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
 
 TEST(CodecEdge, DecodeRejectsFixedSizeBinaryWidthTruncation) {
@@ -425,5 +425,5 @@ TEST(CodecEdge, DecodeRejectsFixedSizeBinaryWidthTruncation) {
     fletcher::Codec codec(schema);
     // Present field but only 3 of the 8 required payload bytes are supplied.
     const std::vector<uint8_t> buf = {0x00, 0x01, 0x02, 0x03};
-    EXPECT_THROW(codec.DecodeRow(buf.data(), buf.size()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
 }
