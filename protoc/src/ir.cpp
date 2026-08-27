@@ -30,8 +30,7 @@ FieldFacts BaseFacts(const FD* field) {
     f.repeated = field->is_repeated();
     f.map_entry = field->is_map();
     f.in_real_oneof = field->real_containing_oneof() != nullptr;
-    const bool proto2 =
-        field->file()->syntax() == google::protobuf::FileDescriptor::SYNTAX_PROTO2;
+    const bool proto2 = field->file()->syntax() == google::protobuf::FileDescriptor::SYNTAX_PROTO2;
     f.proto2_optional = proto2 && field->label() == FD::LABEL_OPTIONAL;
     f.proto3_optional = !proto2 && field->has_optional_keyword();
     return f;
@@ -132,8 +131,8 @@ EnumIdentity BuildEnumIdentity(const google::protobuf::EnumDescriptor* ed) {
 }
 
 LogicalType SimpleLogical(LogicalKind k) {
-    return LogicalType{k, std::nullopt, std::nullopt, std::nullopt,
-                       std::nullopt, std::nullopt, std::nullopt};
+    return LogicalType{
+        k, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt};
 }
 
 // SCALAR node for a scalar/enum leaf (no top-level facts — caller sets facts).
@@ -207,8 +206,13 @@ std::optional<IrNode> TryBuildWkt(const FD* field) {
         n.facts.nullable = IsFieldNullable(field);
         n.facts.wkt = WktKind::TIMESTAMP;
         ScalarNode s;
-        s.logical_type = LogicalType{LogicalKind::WKT_TIMESTAMP, std::nullopt, TimeUnit::NANO,
-                                     std::nullopt, std::nullopt, std::nullopt, std::nullopt};
+        s.logical_type = LogicalType{LogicalKind::WKT_TIMESTAMP,
+                                     std::nullopt,
+                                     TimeUnit::NANO,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     std::nullopt};
         n.node = std::move(s);
         return n;
     }
@@ -218,8 +222,13 @@ std::optional<IrNode> TryBuildWkt(const FD* field) {
         n.facts.nullable = IsFieldNullable(field);
         n.facts.wkt = WktKind::DURATION;
         ScalarNode s;
-        s.logical_type = LogicalType{LogicalKind::WKT_DURATION, std::nullopt, TimeUnit::NANO,
-                                     std::nullopt, std::nullopt, std::nullopt, std::nullopt};
+        s.logical_type = LogicalType{LogicalKind::WKT_DURATION,
+                                     std::nullopt,
+                                     TimeUnit::NANO,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     std::nullopt};
         n.node = std::move(s);
         return n;
     }
@@ -369,8 +378,8 @@ IrNode BuildRepeatedMessage(const FD* field) {
     node.facts.nullable = false;
     int depth = NestingDepth(msg);
     if (depth >= 3)
-        node.facts.warning = "list of deeply nested struct (depth " + std::to_string(depth + 1) +
-                             ")";
+        node.facts.warning =
+            "list of deeply nested struct (depth " + std::to_string(depth + 1) + ")";
     return node;
 }
 
@@ -449,8 +458,8 @@ IrNode BuildSingularMessage(const FD* field) {
     if (HasMessageFlatten(msg)) return BuildFlattenedSingular(field);
 
     if (IsRecursive(msg))
-        return MakeUnsupported(field, "message '" + fqn +
-                                          "' is recursive and cannot be represented in Arrow");
+        return MakeUnsupported(
+            field, "message '" + fqn + "' is recursive and cannot be represented in Arrow");
 
     IrNode node = MakeStructNode(msg);
     node.facts = BaseFacts(field);

@@ -63,9 +63,8 @@ TEST(TsVisitor, DescriptorByteIdentical) {
     const std::string golden_path = TS_GOLDEN_PATH;
 
     const std::string generated = ReadFile(generated_path);
-    ASSERT_FALSE(generated.empty())
-        << "generated TS not found or empty: " << generated_path
-        << " (was the coverage plugin run with --fletcher_opt=ts?)";
+    ASSERT_FALSE(generated.empty()) << "generated TS not found or empty: " << generated_path
+                                    << " (was the coverage plugin run with --fletcher_opt=ts?)";
 
     // Gated regeneration: overwrite the committed golden and skip. Never runs in
     // normal ctest.
@@ -76,8 +75,7 @@ TEST(TsVisitor, DescriptorByteIdentical) {
     }
 
     const std::string golden = ReadFile(golden_path);
-    ASSERT_FALSE(golden.empty())
-        << "committed golden not found or empty: " << golden_path;
+    ASSERT_FALSE(golden.empty()) << "committed golden not found or empty: " << golden_path;
 
     EXPECT_EQ(generated, golden)
         << "IR-driven TS drifted from the committed golden for the coverage "

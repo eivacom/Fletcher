@@ -35,14 +35,14 @@
 namespace fletcher::ts_backend {
 
 class TsVisitor {
-public:
+   public:
     explicit TsVisitor(const google::protobuf::FileDescriptor* file);
 
     // Generate the full .fletcher.ts file (header, cross-file placeholder imports,
     // per-message interface + TypedSchema, service topic constants).
     std::string GenerateFile();
 
-private:
+   private:
     // Interface + TypedSchema for one message; "" for an empty (all-dropped) message.
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);
 

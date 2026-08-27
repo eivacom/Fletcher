@@ -218,7 +218,8 @@ std::optional<FieldMapping> ProjectIrToFieldMapping(
                 m.list_depth = depth;
                 if (cur->kind == NodeKind::STRUCT) {
                     const auto& st = std::get<ir::StructNode>(cur->node);
-                    m.nested_class = cpp_backend::CppClassName(st.identity.descriptor, context_file);
+                    m.nested_class =
+                        cpp_backend::CppClassName(st.identity.descriptor, context_file);
                     m.nested_header =
                         cpp_backend::CppCrossFileHeader(st.identity.descriptor, context_file);
                     m.nested_msg = st.identity.descriptor;
@@ -227,8 +228,8 @@ std::optional<FieldMapping> ProjectIrToFieldMapping(
                 if (cur->kind == NodeKind::SCALAR) {
                     const auto& s = std::get<ir::ScalarNode>(cur->node);
                     m.nested_leaf_is_scalar = true;
-                    m.element =
-                        ToScalarTypeInfo(cpp_backend::LookupScalar(s.logical_type, s.enum_identity));
+                    m.element = ToScalarTypeInfo(
+                        cpp_backend::LookupScalar(s.logical_type, s.enum_identity));
                     return m;
                 }
                 return std::nullopt;
@@ -246,12 +247,14 @@ std::optional<FieldMapping> ProjectIrToFieldMapping(
             m.nullable = node.facts.nullable;
             m.warning = node.facts.warning;
             const auto& k = std::get<ir::ScalarNode>(mp.key->node);
-            m.map_key = ToScalarTypeInfo(cpp_backend::LookupScalar(k.logical_type, k.enum_identity));
+            m.map_key =
+                ToScalarTypeInfo(cpp_backend::LookupScalar(k.logical_type, k.enum_identity));
 
             if (v.kind == NodeKind::STRUCT) {
                 const auto& vst = std::get<ir::StructNode>(v.node);
                 m.map_value_is_message = true;
-                m.map_value_class = cpp_backend::CppClassName(vst.identity.descriptor, context_file);
+                m.map_value_class =
+                    cpp_backend::CppClassName(vst.identity.descriptor, context_file);
                 m.map_value_header =
                     cpp_backend::CppCrossFileHeader(vst.identity.descriptor, context_file);
                 m.map_value_msg = vst.identity.descriptor;

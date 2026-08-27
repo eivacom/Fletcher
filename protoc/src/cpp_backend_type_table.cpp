@@ -190,7 +190,7 @@ struct EncodeContext {
 };
 
 class EdgeEncodeVisitor {
-public:
+   public:
     explicit EdgeEncodeVisitor(EncodeContext ctx) : ctx_(std::move(ctx)) {}
 
     void EmitField(const ir::IrNode& node) {
@@ -254,7 +254,7 @@ public:
         }
     }
 
-private:
+   private:
     void EmitScalar(const ir::ScalarNode& s, const EncodeContext& ctx) {
         const CppScalarInfo& info = LookupScalar(s.logical_type, s.enum_identity);
         const bool is_binary = s.logical_type.kind == ir::LogicalKind::BINARY;
@@ -267,7 +267,8 @@ private:
                     obj = ctx.value_expr;
                     break;
                 case ValueAccessMode::DEREF_OPTIONAL:
-                    obj = "(*" + ctx.value_expr + ")";  // fix 2a: (*field_).data(), not *field_.data()
+                    obj = "(*" + ctx.value_expr +
+                          ")";  // fix 2a: (*field_).data(), not *field_.data()
                     break;
                 case ValueAccessMode::VALUE_OR_DEFAULT:
                     obj = ctx.value_expr + ".value_or(" + info.default_value + ")";

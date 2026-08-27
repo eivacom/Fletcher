@@ -60,9 +60,7 @@ void SetMessageFlatten(DescriptorProto* msg) {
     opts->GetReflection()->MutableUnknownFields(opts)->AddVarint(50000, 1);
 }
 
-const ir::ScalarNode& AsScalar(const ir::IrNode& n) {
-    return std::get<ir::ScalarNode>(n.node);
-}
+const ir::ScalarNode& AsScalar(const ir::IrNode& n) { return std::get<ir::ScalarNode>(n.node); }
 const ir::ListNode& AsList(const ir::IrNode& n) { return std::get<ir::ListNode>(n.node); }
 const ir::StructNode& AsStruct(const ir::IrNode& n) { return std::get<ir::StructNode>(n.node); }
 const ir::MapNode& AsMap(const ir::IrNode& n) { return std::get<ir::MapNode>(n.node); }
@@ -70,10 +68,9 @@ const ir::UnsupportedNode& AsUnsupported(const ir::IrNode& n) {
     return std::get<ir::UnsupportedNode>(n.node);
 }
 
-FieldDescriptorProto* AddField(DescriptorProto* msg, const std::string& name, int number,
-                               FieldDescriptorProto::Type type,
-                               FieldDescriptorProto::Label label =
-                                   FieldDescriptorProto::LABEL_OPTIONAL) {
+FieldDescriptorProto* AddField(
+    DescriptorProto* msg, const std::string& name, int number, FieldDescriptorProto::Type type,
+    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
     auto* f = msg->add_field();
     f->set_name(name);
     f->set_number(number);
@@ -132,8 +129,8 @@ TEST(IrTest, BuildsLanguageNeutralIr) {
     EXPECT_EQ(kind_of(8), ir::LogicalKind::BINARY);
 
     // nullable comes from facts, and only from facts.
-    EXPECT_FALSE(ir::BuildFieldIr(scalars->field(1)).facts.nullable);   // plain int32
-    EXPECT_TRUE(ir::BuildFieldIr(scalars->field(9)).facts.nullable);    // optional int32
+    EXPECT_FALSE(ir::BuildFieldIr(scalars->field(1)).facts.nullable);  // plain int32
+    EXPECT_TRUE(ir::BuildFieldIr(scalars->field(9)).facts.nullable);   // optional int32
     // NOTE: the IR carries no C++ type string — ir::ScalarNode exposes only
     // logical_type + enum_identity (there is no arrow_type_expr/storage_type/…).
 
@@ -409,10 +406,9 @@ TEST(IrTest, CppBackendLookupOwnsTypeStrings) {
 
 namespace {
 
-const FileDescriptor* BuildScalarField(DescriptorPool& pool, const std::string& tag,
-                                       FieldDescriptorProto::Type type,
-                                       FieldDescriptorProto::Label label =
-                                           FieldDescriptorProto::LABEL_OPTIONAL) {
+const FileDescriptor* BuildScalarField(
+    DescriptorPool& pool, const std::string& tag, FieldDescriptorProto::Type type,
+    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
     FileDescriptorProto fdp;
     fdp.set_name("ss_" + tag + ".proto");
     fdp.set_syntax("proto3");

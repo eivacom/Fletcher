@@ -79,7 +79,7 @@ using SchemaRef = void*;
 // Sink abstraction: encapsulates every nanoarrow call and child navigation so
 // the visitor is sink-agnostic. Both sinks implement this identically.
 class SchemaSink {
-public:
+   public:
     virtual ~SchemaSink() = default;
 
     // Root of the schema being built (sink-specific handle).
@@ -121,7 +121,7 @@ public:
 
 // Renders the schema-construction program as C++ source lines into `out`.
 class CppSchemaSink : public SchemaSink {
-public:
+   public:
     CppSchemaSink(std::ostringstream& out, std::string indent,
                   const google::protobuf::FileDescriptor* context_file);
 
@@ -140,7 +140,7 @@ public:
     void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg, SchemaRef dst,
                                const OptionMetadataResolver* resolver) override;
 
-private:
+   private:
     const std::string& Expr(SchemaRef ref) const;
     SchemaRef Intern(std::string expr);
 
@@ -154,7 +154,7 @@ private:
 
 // Executes the schema-construction program in-process against an ArrowSchema*.
 class NanoarrowSchemaSink : public SchemaSink {
-public:
+   public:
     explicit NanoarrowSchemaSink(ArrowSchema* root);
 
     SchemaRef Root() override;
@@ -172,13 +172,13 @@ public:
     void DeepCopyMessageStruct(const google::protobuf::Descriptor* nested_msg, SchemaRef dst,
                                const OptionMetadataResolver* resolver) override;
 
-private:
+   private:
     ArrowSchema* root_;
 };
 
 // Orchestrates the flatten walk + per-field emission, driving the given sink.
 class SchemaVisitor {
-public:
+   public:
     // GIR-13: `resolver` (nullable) supplies the caller-mapped extra metadata
     // pairs. nullptr means "no --fletcher_opt=metadata_from_option was given", in
     // which case every emitted byte is bit-identical to the pre-GIR-13 output.
@@ -192,7 +192,7 @@ public:
     // Build the full message schema into sink_.Root().
     void Visit();
 
-private:
+   private:
     using MetaPairs = std::vector<std::pair<std::string, std::string>>;
 
     void EmitNodeType(const ir::IrNode& node, SchemaRef schema);

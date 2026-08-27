@@ -33,12 +33,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fletcher/arrow_bridge/codec.hpp>
 #include <fstream>
 #include <map>
 #include <string>
 #include <vector>
-
-#include <fletcher/arrow_bridge/codec.hpp>
 
 #include "coverage.fletcher.arrow.pb.h"
 #include "coverage.fletcher.pb.h"
@@ -226,8 +225,9 @@ void ExpectEquals(const gen::CompositeCoverage& e, const gen::CompositeCoverageV
             ASSERT_EQ(inner.size(),
                       static_cast<int64_t>(e.nested_struct_lists()[static_cast<size_t>(i)].size()));
             for (int64_t j = 0; j < inner.size(); ++j)
-                ExpectEquals(e.nested_struct_lists()[static_cast<size_t>(i)][static_cast<size_t>(j)],
-                             inner[j]);
+                ExpectEquals(
+                    e.nested_struct_lists()[static_cast<size_t>(i)][static_cast<size_t>(j)],
+                    inner[j]);
         }
     }
     // struct-leaf nested lists: depth 3.
@@ -240,13 +240,14 @@ void ExpectEquals(const gen::CompositeCoverage& e, const gen::CompositeCoverageV
                       static_cast<int64_t>(e.depth3_struct_lists()[static_cast<size_t>(i)].size()));
             for (int64_t j = 0; j < mid.size(); ++j) {
                 const auto inner = mid[j];
-                ASSERT_EQ(inner.size(), static_cast<int64_t>(
-                              e.depth3_struct_lists()[static_cast<size_t>(i)][static_cast<size_t>(j)]
-                                  .size()));
+                ASSERT_EQ(
+                    inner.size(),
+                    static_cast<int64_t>(
+                        e.depth3_struct_lists()[static_cast<size_t>(i)][static_cast<size_t>(j)]
+                            .size()));
                 for (int64_t k = 0; k < inner.size(); ++k)
-                    ExpectEquals(e.depth3_struct_lists()[static_cast<size_t>(i)]
-                                                        [static_cast<size_t>(j)]
-                                                        [static_cast<size_t>(k)],
+                    ExpectEquals(e.depth3_struct_lists()[static_cast<size_t>(
+                                     i)][static_cast<size_t>(j)][static_cast<size_t>(k)],
                                  inner[k]);
             }
         }
@@ -334,15 +335,15 @@ TEST(ParityOracle, EncodeEqualsEncodeRowAndRoundTrips) {
                                           "coverage.ScalarCoverage.all-set.v1.bin");
     CheckFixture<gen::CompositeCoverageView>(fx::MakeComposite(), gen::CompositeCoverageSchema,
                                              "coverage.CompositeCoverage.v1.bin");
-    CheckFixture<gen::CompositeCoverageView>(fx::MakeCompositeWithAlternateNullsAndEmpties(),
-                                             gen::CompositeCoverageSchema,
-                                             "coverage.CompositeCoverage.alternate-null-empty.v1.bin");
+    CheckFixture<gen::CompositeCoverageView>(
+        fx::MakeCompositeWithAlternateNullsAndEmpties(), gen::CompositeCoverageSchema,
+        "coverage.CompositeCoverage.alternate-null-empty.v1.bin");
     CheckFixture<gen::CompositeCoverageView>(fx::MakeCompositeWithMapsNonSorted(),
                                              gen::CompositeCoverageSchema,
                                              "coverage.CompositeCoverage.maps-non-sorted.v1.bin");
     CheckFixture<gen::BranchView>(fx::MakeBranch(), gen::BranchSchema, "coverage.Branch.v1.bin");
-    CheckFixture<gen::LeafView>(fx::MakeLeaf(42, "leaf", fx::kTopLevelStatusError),
-                                gen::LeafSchema, "coverage.Leaf.v1.bin");
+    CheckFixture<gen::LeafView>(fx::MakeLeaf(42, "leaf", fx::kTopLevelStatusError), gen::LeafSchema,
+                                "coverage.Leaf.v1.bin");
     CheckFixture<gen::NestedEnumsView>(fx::MakeNestedEnums(), gen::NestedEnumsSchema,
                                        "coverage.NestedEnums.v1.bin");
     CheckFixture<gen::FlattenedPointView>(fx::MakeFlattenedPoint(), gen::FlattenedPointSchema,

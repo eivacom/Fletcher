@@ -14,16 +14,15 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <fletcher/arrow_bridge/codec.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/schema_ipc.hpp>
 
 #include "coverage.fletcher.arrow.pb.h"
 #include "coverage.fletcher.pb.h"
@@ -384,11 +383,10 @@ TEST(CoverageHarness, GeneratedCppCompilesEncodesAndReconstructs) {
     }
 
     // The CompositeCoverage IPC schema exposes the expected top-level fields.
-    OwnedSchema composite_nano =
-        [] {
-            const auto bytes = ReadFileBytes(GeneratedDir() / "coverage.CompositeCoverage.ipc");
-            return DeserializeSchemaIpc(bytes.data(), bytes.size());
-        }();
+    OwnedSchema composite_nano = [] {
+        const auto bytes = ReadFileBytes(GeneratedDir() / "coverage.CompositeCoverage.ipc");
+        return DeserializeSchemaIpc(bytes.data(), bytes.size());
+    }();
     const auto composite_schema = ImportNano(std::move(composite_nano));
     ASSERT_NE(composite_schema, nullptr);
     EXPECT_NE(composite_schema->GetFieldByName("scalars"), nullptr);

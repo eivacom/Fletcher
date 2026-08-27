@@ -62,8 +62,7 @@ NestedListShape ClassifyNestedList(const ir::IrNode& list_node) {
 
 class EdgeViewGetterVisitor {
    public:
-    EdgeViewGetterVisitor(std::ostringstream& out, std::string getter_name,
-                          std::size_t field_index,
+    EdgeViewGetterVisitor(std::ostringstream& out, std::string getter_name, std::size_t field_index,
                           const google::protobuf::FileDescriptor* context_file)
         : out_(out),
           name_(std::move(getter_name)),
@@ -109,8 +108,8 @@ class EdgeViewGetterVisitor {
                      << "            static_cast<size_t>"
                         "(s.value->size())};\n";
             } else {
-                out_ << "        return static_cast<const " << sc.scalar_type
-                     << "&>(*scalars_[" << si_ << "]).value;\n";
+                out_ << "        return static_cast<const " << sc.scalar_type << "&>(*scalars_["
+                     << si_ << "]).value;\n";
             }
             out_ << "    }\n";
         } else {
@@ -123,8 +122,8 @@ class EdgeViewGetterVisitor {
                      << "                static_cast<size_t>"
                         "(s.value->size())};\n";
             } else {
-                out_ << "        return static_cast<const " << sc.scalar_type
-                     << "&>(*scalars_[" << si_ << "]).value;\n";
+                out_ << "        return static_cast<const " << sc.scalar_type << "&>(*scalars_["
+                     << si_ << "]).value;\n";
             }
             out_ << "    }\n";
         }
@@ -189,8 +188,7 @@ class EdgeViewGetterVisitor {
              << "        const auto& ls = static_cast"
                 "<const arrow::ListScalar&>(\n"
              << "            *scalars_[" << si_ << "]);\n"
-             << "        return fletcher::ArrowScalarList<" << vt << ", " << at
-             << ">(ls.value);\n"
+             << "        return fletcher::ArrowScalarList<" << vt << ", " << at << ">(ls.value);\n"
              << "    }\n";
 
         // GIR-9 (#75): additive typed view getter for a repeated enum (casts the
@@ -261,21 +259,21 @@ class EdgeViewGetterVisitor {
                  << "        const auto& ms = static_cast"
                     "<const arrow::MapScalar&>(\n"
                  << "            *scalars_[" << si_ << "]);\n"
-                 << "        return fletcher::ArrowRowViewMap<" << kv << ", " << ka << ", "
-                 << vt << ">(ms.value);\n"
+                 << "        return fletcher::ArrowRowViewMap<" << kv << ", " << ka << ", " << vt
+                 << ">(ms.value);\n"
                  << "    }\n";
         } else {
             const ir::ScalarNode& val = std::get<ir::ScalarNode>(map.value->node);
             const CppScalarInfo& vi = LookupScalar(val.logical_type, val.enum_identity);
             const std::string& vv = vi.getter_type;
             const std::string& va = vi.array_type;
-            out_ << "    fletcher::ArrowScalarMap<" << kv << ", " << ka << ", " << vv << ", "
-                 << va << "> " << name_ << "() const {\n"
+            out_ << "    fletcher::ArrowScalarMap<" << kv << ", " << ka << ", " << vv << ", " << va
+                 << "> " << name_ << "() const {\n"
                  << "        const auto& ms = static_cast"
                     "<const arrow::MapScalar&>(\n"
                  << "            *scalars_[" << si_ << "]);\n"
-                 << "        return fletcher::ArrowScalarMap<" << kv << ", " << ka << ", "
-                 << vv << ", " << va << ">(ms.value);\n"
+                 << "        return fletcher::ArrowScalarMap<" << kv << ", " << ka << ", " << vv
+                 << ", " << va << ">(ms.value);\n"
                  << "    }\n";
 
             // GIR-9 (#75): additive typed view getter for an enum-valued map
@@ -546,17 +544,18 @@ class EdgeToArrowRowVisitor {
                         " inner_list_type, true))));\n"
                      << "        } else {\n";
             }
-            out_ << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
-                    "            arrow::MakeBuilder(inner_list_type), \"arrow::MakeBuilder\");\n"
-                 << "        for (const auto& ring : " << data_ref << ") {\n"
-                 << "            " << el.builder_type << " inner_builder;\n"
-                 << "            for (const auto& v : ring) (void)inner_builder.Append(v);\n"
-                 << "            (void)outer_builder->AppendScalar(\n"
-                 << "                arrow::ListScalar(*inner_builder.Finish(), inner_list_type));\n"
-                 << "        }\n"
-                 << "        row.push_back(std::make_shared"
-                    "<arrow::ListScalar>(\n"
-                 << "            *outer_builder->Finish()));\n";
+            out_
+                << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
+                   "            arrow::MakeBuilder(inner_list_type), \"arrow::MakeBuilder\");\n"
+                << "        for (const auto& ring : " << data_ref << ") {\n"
+                << "            " << el.builder_type << " inner_builder;\n"
+                << "            for (const auto& v : ring) (void)inner_builder.Append(v);\n"
+                << "            (void)outer_builder->AppendScalar(\n"
+                << "                arrow::ListScalar(*inner_builder.Finish(), inner_list_type));\n"
+                << "        }\n"
+                << "        row.push_back(std::make_shared"
+                   "<arrow::ListScalar>(\n"
+                << "            *outer_builder->Finish()));\n";
         } else if (shape.depth == 3) {
             out_ << "        auto ring_list_type = arrow::list(\n"
                  << "            arrow::field(\"item\", coord_type, true));\n"
@@ -637,8 +636,8 @@ class EdgeToArrowRowVisitor {
         } else {
             const ir::ScalarNode& val = std::get<ir::ScalarNode>(map.value->node);
             const CppScalarInfo& mv = LookupScalar(val.logical_type, val.enum_identity);
-            out_ << "        auto val_field = arrow::field(\"value\", "
-                 << mv.arrow_type_expr << ", true);\n";
+            out_ << "        auto val_field = arrow::field(\"value\", " << mv.arrow_type_expr
+                 << ", true);\n";
         }
         out_ << "        auto kv = *arrow::StructArray::Make(\n"
              << "            {keys, vals},\n"

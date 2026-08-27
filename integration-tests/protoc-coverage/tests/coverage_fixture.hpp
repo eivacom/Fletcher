@@ -174,7 +174,8 @@ inline gen::CompositeCoverage MakeComposite() {
     c.set_repeated_scalar({10, 20, 30});
     c.set_repeated_string({"x", "y"});
     c.set_repeated_bytes({});  // empty container
-    c.set_repeated_struct({MakeLeaf(5, "s0", kTopLevelStatusOk), MakeLeaf(6, "s1", kTopLevelStatusWarn)});
+    c.set_repeated_struct(
+        {MakeLeaf(5, "s0", kTopLevelStatusOk), MakeLeaf(6, "s1", kTopLevelStatusWarn)});
 
     c.set_map_scalar({{"a", 1}, {"b", 2}});
     c.set_map_struct({{"k", MakeLeaf(7, "mk", kTopLevelStatusWarn)}});

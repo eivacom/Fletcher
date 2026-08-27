@@ -103,7 +103,8 @@ TEST(EnumEmit, GeneratedEnumSymbolsRoundTrip) {
     raw_msg.set_nullable_status(2);
     raw_msg.set_nested_status(1);
     raw_msg.set_statuses(std::vector<int32_t>{1, 2});
-    raw_msg.set_status_by_name(std::vector<std::pair<std::string, int32_t>>{{"ok", 1}, {"warn", 2}});
+    raw_msg.set_status_by_name(
+        std::vector<std::pair<std::string, int32_t>>{{"ok", 1}, {"warn", 2}});
 
     gen::EnumCoverage typed_msg;
     typed_msg.set_status(gen::TopLevelStatus::TOP_LEVEL_STATUS_OK);

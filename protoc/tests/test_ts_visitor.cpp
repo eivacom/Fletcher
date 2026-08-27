@@ -29,9 +29,9 @@ namespace {
 // an in-memory fixture can set it directly without linking the extension.
 constexpr int kFlattenOptionNumber = 50000;
 
-FieldDescriptorProto* AddField(DescriptorProto* msg, const char* name, int number,
-                               FieldDescriptorProto::Type type,
-                               FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
+FieldDescriptorProto* AddField(
+    DescriptorProto* msg, const char* name, int number, FieldDescriptorProto::Type type,
+    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
     auto* f = msg->add_field();
     f->set_name(name);
     f->set_number(number);
@@ -101,11 +101,14 @@ TEST(TsVisitor, SingularNestedFlattenWrapperKeepsLeafName) {
     // Singular wrapper -> single list level: keeps the DECLARED wrapper name (this
     // also guards the fix against over-correcting the byte-golden #12/#18 case).
     EXPECT_NE(ts.find("single: IStructListWrapper[];"), std::string::npos)
-        << "singular single-level wrapper should keep the declared name:\n" << ts;
+        << "singular single-level wrapper should keep the declared name:\n"
+        << ts;
 
     // Singular wrapper -> NESTED list: keeps the LEAF identity, NOT the wrapper.
     EXPECT_NE(ts.find("nested: ILeaf[][];"), std::string::npos)
-        << "singular nested wrapper should render the leaf type:\n" << ts;
+        << "singular nested wrapper should render the leaf type:\n"
+        << ts;
     EXPECT_EQ(ts.find("INestedStructListWrapper[][]"), std::string::npos)
-        << "declared wrapper name leaked through a nested list:\n" << ts;
+        << "declared wrapper name leaked through a nested list:\n"
+        << ts;
 }

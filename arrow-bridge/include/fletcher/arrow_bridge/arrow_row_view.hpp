@@ -185,7 +185,8 @@ class ArrowNestedScalarList {
 
    public:
     ArrowNestedScalarList() = default;
-    explicit ArrowNestedScalarList(std::shared_ptr<arrow::Array> array) : array_(std::move(array)) {}
+    explicit ArrowNestedScalarList(std::shared_ptr<arrow::Array> array)
+        : array_(std::move(array)) {}
 
     int64_t size() const { return array_ ? array_->length() : 0; }
     bool empty() const { return size() == 0; }

@@ -25,12 +25,11 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <fletcher/arrow_bridge/codec.hpp>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <fletcher/arrow_bridge/codec.hpp>
 
 #include "coverage.fletcher.arrow.pb.h"
 #include "coverage.fletcher.pb.h"
@@ -126,7 +125,8 @@ gen::CompositeCoverage RebuildComposite(const gen::CompositeCoverageView& v) {
     gen::CompositeCoverage c;
 
     c.set_scalars(RebuildScalars(v.scalars()));
-    if (v.optional_scalars().has_value()) c.set_optional_scalars(RebuildScalars(*v.optional_scalars()));
+    if (v.optional_scalars().has_value())
+        c.set_optional_scalars(RebuildScalars(*v.optional_scalars()));
 
     c.set_branch(RebuildBranch(v.branch()));
     if (v.optional_branch().has_value()) c.set_optional_branch(RebuildBranch(*v.optional_branch()));

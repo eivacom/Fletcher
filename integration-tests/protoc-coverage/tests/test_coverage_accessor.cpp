@@ -15,10 +15,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
 #include <vector>
-
-#include <fletcher/pubsub/owned_schema.hpp>
 
 #include "coverage.fletcher.accessor.pb.h"
 #include "coverage.fletcher.arrow.pb.h"

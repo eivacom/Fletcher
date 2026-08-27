@@ -29,7 +29,6 @@
 #include <google/protobuf/io/tokenizer.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <gtest/gtest.h>
-#include <nanoarrow/nanoarrow.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -39,6 +38,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <nanoarrow/nanoarrow.hpp>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -61,9 +61,9 @@ namespace {
 // protoc-coverage integration goldens); these cover the option-free kinds.
 // ===========================================================================
 
-FieldDescriptorProto* AddField(DescriptorProto* msg, const char* name, int number,
-                               FieldDescriptorProto::Type type,
-                               FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
+FieldDescriptorProto* AddField(
+    DescriptorProto* msg, const char* name, int number, FieldDescriptorProto::Type type,
+    FieldDescriptorProto::Label label = FieldDescriptorProto::LABEL_OPTIONAL) {
     auto* f = msg->add_field();
     f->set_name(name);
     f->set_number(number);
@@ -89,7 +89,7 @@ void AddMapEntry(DescriptorProto* owner, DescriptorProto* msg, const char* field
 
 // Owns the descriptor pool + all fixture messages for the whole test run.
 class Fixtures {
-public:
+   public:
     Fixtures() {
         BuildWkt();
         BuildProto2();
@@ -101,7 +101,7 @@ public:
         return d;
     }
 
-private:
+   private:
     void BuildWkt() {
         FileDescriptorProto fdp;
         fdp.set_name("google/protobuf/timestamp.proto");
@@ -288,7 +288,7 @@ std::vector<uint8_t> IrSchemaIpc(const Descriptor* msg) {
 // ===========================================================================
 
 class RecordingSink : public cb::SchemaSink {
-public:
+   public:
     explicit RecordingSink(cb::SchemaSink& inner) : inner_(inner) {}
 
     std::vector<std::string> log;
@@ -355,7 +355,7 @@ public:
         inner_.DeepCopyMessageStruct(d, dst, resolver);
     }
 
-private:
+   private:
     std::string Id(cb::SchemaRef r) {
         auto it = ids_.find(r);
         if (it != ids_.end()) return std::to_string(it->second);
@@ -627,8 +627,7 @@ TEST(SchemaVisitor, CppAndIpcByteIdentical) {
         // committed golden captured from today's emitter.
         const std::vector<uint8_t> golden = ReadFileBytes(GoldenDir() / c.golden);
         ASSERT_FALSE(golden.empty())
-            << "missing golden " << c.golden
-            << " (regenerate with FLETCHER_CAPTURE_GOLDENS=1)";
+            << "missing golden " << c.golden << " (regenerate with FLETCHER_CAPTURE_GOLDENS=1)";
         const std::vector<uint8_t> actual = IrSchemaIpc(msg);
         EXPECT_EQ(actual, golden) << "IR schema drifted from golden for " << c.message;
 

@@ -18,12 +18,11 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <vector>
-
-#include <fletcher/pubsub/owned_schema.hpp>
 
 namespace coverage_test {
 
