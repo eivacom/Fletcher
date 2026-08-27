@@ -27,6 +27,8 @@
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <vector>
 
 void DiscardCore(fletcher::PositionalReader& reader, const fletcher::Envelope& envelope,
@@ -43,6 +45,22 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
     subscriber.Subscribe({"probe"}, {});
     provider.Subscribe({"probe"}, {});
     fletcher::OwnedSchema::DeepCopy(schema);
+}
+
+// The Arrow wrappers are the primary user-facing API and were NOT covered by the
+// original probe, which only reached the `fletcher::Publisher`/`Subscriber` and the
+// PubSubProvider BASE. That mattered: [[nodiscard]] is not inherited and the
+// diagnostic keys off the STATIC type at the call site, so annotating a base
+// virtual alone fires nowhere an application actually calls. These probes pin the
+// concrete declarations so the annotations cannot rot back out (#56).
+void DiscardArrowWrappers(fletcher::PublisherArrow& publisher,
+                          fletcher::SubscriberArrow& subscriber) {
+    publisher.ListTopics();
+    // All three SubscriberArrow::Subscribe overloads.
+    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{});
+    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{},
+                         fletcher::BatchOptions{});
+    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{});
 }
 
 void DiscardCodec(fletcher::Codec& codec, const fletcher::ArrowRow& row,

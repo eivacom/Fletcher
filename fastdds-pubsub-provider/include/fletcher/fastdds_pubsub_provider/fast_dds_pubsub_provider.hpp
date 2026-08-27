@@ -81,8 +81,12 @@ class FastDDSPubSubProvider : public PubSubProvider {
     void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
                  const Attachments& attachments = {}) override;
 
-    SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                 SubscribeCallback callback) override;
+    // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and
+    // the diagnostic keys off the STATIC type at the call site, so the annotation
+    // must be repeated on every concrete override or it never fires where
+    // applications actually call (#56).
+    [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
+                                               SubscribeCallback callback) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

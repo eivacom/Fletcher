@@ -45,7 +45,7 @@ class PublisherArrow {
     void PublishDirect(const std::vector<std::string>& segments, PubSubProvider::RowEncoder encoder,
                        const Attachments& attachments = {});
 
-    std::vector<std::string> ListTopics() const;
+    [[nodiscard]] std::vector<std::string> ListTopics() const;
 
    private:
     std::unique_ptr<Publisher> publisher_;

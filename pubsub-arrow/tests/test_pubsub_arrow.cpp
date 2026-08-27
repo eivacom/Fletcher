@@ -139,7 +139,8 @@ TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
     pub.CreateTopic(kTopic, TestSchema());
 
     ArrowRow received;
-    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); }));
 
     ArrowRow sent = {
         std::make_shared<arrow::Int32Scalar>(42),
@@ -160,7 +161,8 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     pub.CreateTopic(kTopic, TestSchema());
 
     Attachments received_att;
-    sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); }));
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
@@ -183,7 +185,8 @@ TEST(PubSubArrowTest, PublishDirectPassthrough) {
     pub.CreateTopic(kTopic, schema);
 
     ArrowRow received;
-    sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); });
+    static_cast<void>(
+        sub.Subscribe(kTopic, [&](ArrowRow row, Attachments) { received = std::move(row); }));
 
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) {
         buf.AppendByte(0x00);
@@ -271,7 +274,7 @@ TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);  // long, so only the count triggers
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
 
@@ -294,7 +297,7 @@ TEST(SubscriberArrowBatchTest, FlushesAtTimeout) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;  // high, so only the timeout triggers
     opt.timeout = std::chrono::milliseconds(100);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     pub.Publish(kTopic, MakeRow(1, "a"));
     pub.Publish(kTopic, MakeRow(2, "b"));
@@ -339,7 +342,7 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 2;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xBE, 0xEF});
     pub.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
@@ -393,7 +396,7 @@ TEST(SubscriberArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::milliseconds(100);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     // Only a malformed row arrives in this window.
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
@@ -422,7 +425,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     // Published as plain values; subscriber re-folds into a dictionary.
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
@@ -462,7 +465,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
-    sub.Subscribe(kTopic, sink.callback(), opt);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
     pub.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});

@@ -136,10 +136,11 @@ TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
         provider.CreateTopic({"quiescent", "teardown"}, MakeSchema());
 
         std::atomic<int32_t> received{-1};
-        provider.Subscribe({"quiescent", "teardown"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+        static_cast<void>(
+            provider.Subscribe({"quiescent", "teardown"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
         provider.Publish({"quiescent", "teardown"}, MakeEncoder(1));
 
         // Reach a quiescent point before teardown: Unsubscribe deletes the
@@ -244,10 +245,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultWriterQos) {
     pub_provider.CreateTopic({"customdefault", "writer"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"customdefault", "writer"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"customdefault", "writer"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"customdefault", "writer"}, MakeEncoder(7));
 
@@ -269,10 +271,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultReaderQos) {
     pub_provider.CreateTopic({"customdefault", "reader"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"customdefault", "reader"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"customdefault", "reader"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"customdefault", "reader"}, MakeEncoder(11));
 
@@ -300,14 +303,14 @@ TEST(FastDDSPubSubProviderTest, PerTopicWriterQosOverridesDefault) {
 
     std::atomic<int32_t> received_override{-1};
     std::atomic<int32_t> received_default{-1};
-    sub_provider.Subscribe({"pertopic", "override"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received_override.store(DecodeRow(data));
-                           });
-    sub_provider.Subscribe({"pertopic", "default"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received_default.store(DecodeRow(data));
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"pertopic", "override"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received_override.store(DecodeRow(data));
+        }));
+    static_cast<void>(sub_provider.Subscribe(
+        {"pertopic", "default"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received_default.store(DecodeRow(data));
+        }));
 
     pub_provider.Publish({"pertopic", "override"}, MakeEncoder(101));
     pub_provider.Publish({"pertopic", "default"}, MakeEncoder(202));
@@ -335,10 +338,11 @@ TEST(FastDDSPubSubProviderTest, PerTopicReaderQosOverridesDefault) {
     pub_provider.CreateTopic({"pertopic", "readeroverride"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"pertopic", "readeroverride"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(
+        sub_provider.Subscribe({"pertopic", "readeroverride"},
+                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                                   if (len >= 5) received.store(DecodeRow(data));
+                               }));
 
     pub_provider.Publish({"pertopic", "readeroverride"}, MakeEncoder(303));
 
@@ -375,10 +379,10 @@ TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
     pub_provider.CreateTopic({"autonomy", "profile"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    sub_provider.Subscribe({"autonomy", "profile"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len >= 5) received.store(DecodeRow(data));
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"autonomy", "profile"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len >= 5) received.store(DecodeRow(data));
+        }));
 
     pub_provider.Publish({"autonomy", "profile"}, MakeEncoder(2026));
 
@@ -462,13 +466,13 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     std::condition_variable cv;
     std::vector<int32_t> received;
 
-    sub_provider.Subscribe({"ordering", "burst"},
-                           [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                               if (len < 5) return;
-                               std::lock_guard<std::mutex> lk(mu);
-                               received.push_back(DecodeRow(data));
-                               cv.notify_all();
-                           });
+    static_cast<void>(sub_provider.Subscribe(
+        {"ordering", "burst"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+            if (len < 5) return;
+            std::lock_guard<std::mutex> lk(mu);
+            received.push_back(DecodeRow(data));
+            cv.notify_all();
+        }));
 
     pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
     for (int32_t i = 0; i < kCount; ++i) {

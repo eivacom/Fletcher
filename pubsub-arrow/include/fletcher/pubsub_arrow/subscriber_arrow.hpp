@@ -50,7 +50,8 @@ class SubscriberArrow {
 
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, Attachments attachments)>;
-    SubscribeResult Subscribe(const std::vector<std::string>& segments, SubscribeCallback callback);
+    [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                            SubscribeCallback callback);
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
@@ -84,14 +85,14 @@ class SubscriberArrow {
     using RecordBatchCallback =
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;
-    SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              RecordBatchCallback callback, BatchOptions options);
+    [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                            RecordBatchCallback callback, BatchOptions options);
 
     /// Convenience overload using the default BatchOptions (8000 rows, 1 min).
     /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's
     /// member initializers aren't usable in a default arg of the same class.)
-    SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                              RecordBatchCallback callback) {
+    [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                            RecordBatchCallback callback) {
         return Subscribe(segments, std::move(callback), BatchOptions{});
     }
 

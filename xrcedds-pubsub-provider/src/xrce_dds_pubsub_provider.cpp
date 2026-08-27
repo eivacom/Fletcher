@@ -199,20 +199,32 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             auto& ts = tit->second;
             if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
 
-            // Malformed __schema sample must not throw out of the XRCE session
-            // callback thread (which could terminate the process); ignore it and
-            // let the retained TRANSIENT_LOCAL/KEEP_LAST(1) sample be redelivered.
-            OwnedSchema schema;
+            // NOTHING in the schema-resolution sequence below may throw out of
+            // the XRCE session callback thread. OnTopic is invoked from inside
+            // uxr_run_session_time(), so unwinding would cross C frames from the
+            // XRCE client library: UB on MSVC and process termination in
+            // practice (H-INV-3 / HARD locked decision #3).
+            //
+            // The guard covers the WHOLE sequence, not just the parse, because
+            // every step can throw:
+            //   * DeserializeSchemaIpc — malformed/truncated __schema sample;
+            //   * OwnedSchema::DeepCopy — throws on a failed deep copy (#54);
+            //   * MakeSharedSchema — allocates;
+            //   * schema_promise.set_value — std::future_error if already
+            //     satisfied, plus allocation.
+            // On any failure schema_resolved stays false and we return, so the
+            // retained TRANSIENT_LOCAL/KEEP_LAST(1) __schema sample is
+            // redelivered and resolution is retried.
             try {
-                schema = DeserializeSchemaIpc(body, seq_len);
+                OwnedSchema schema = DeserializeSchemaIpc(body, seq_len);
+                if (!schema) return;
+                ts.schema = OwnedSchema::DeepCopy(schema.get());
+                ts.shared_schema = MakeSharedSchema(std::move(schema));
+                ts.schema_promise.set_value(ts.shared_schema);
+                ts.schema_resolved = true;
             } catch (...) {
                 return;
             }
-            if (!schema) return;
-            ts.schema = OwnedSchema::DeepCopy(schema.get());
-            ts.shared_schema = MakeSharedSchema(std::move(schema));
-            ts.schema_promise.set_value(ts.shared_schema);
-            ts.schema_resolved = true;
 
             callback = ts.callback;
             schema_for_callbacks = ts.shared_schema;
@@ -248,20 +260,26 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     {
         auto& ts = tit->second;
 
+        // Same H-INV-3 constraint as the schema path above: nothing here may throw
+        // out of the XRCE session callback thread, because OnTopic is invoked from
+        // inside uxr_run_session_time() and unwinding would cross the XRCE client's
+        // C frames (UB on MSVC, process termination in practice).
+        //
         // DeserializeEnvelope throws std::invalid_argument on a malformed/truncated
-        // sample. That must not escape the XRCE session callback thread (which could
-        // tear down the session pump / process), so drop the bad sample and keep the
-        // session alive. std::invalid_argument is the only type it throws; anything
-        // else is unexpected and is left to propagate.
+        // sample, and buffering a pending sample allocates (std::bad_alloc). The
+        // guard is a catch-all rather than `catch (const std::invalid_argument&)`:
+        // letting an "unexpected" type propagate from here is not a safe fallback,
+        // it is the UB this invariant exists to prevent. Drop the sample and keep
+        // the session pump alive; a well-formed sample is redelivered.
         try {
             envelope = DeserializeEnvelope(body, seq_len);
-        } catch (const std::invalid_argument&) {
-            return;
-        }
-        if (!ts.shared_schema) {
-            // Subscriber-first: the schema has not arrived yet. Buffer the sample;
-            // it is flushed in order when the __schema sample resolves the future.
-            ts.pending.push_back(std::move(envelope));
+            if (!ts.shared_schema) {
+                // Subscriber-first: the schema has not arrived yet. Buffer the sample;
+                // it is flushed in order when the __schema sample resolves the future.
+                ts.pending.push_back(std::move(envelope));
+                return;
+            }
+        } catch (...) {
             return;
         }
         callback = ts.callback;

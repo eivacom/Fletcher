@@ -48,7 +48,8 @@ add_library(discard_probe_tu OBJECT EXCLUDE_FROM_ALL
 target_link_libraries(discard_probe_tu PRIVATE
     fletcher-core::fletcher-core
     fletcher-pubsub::fletcher-pubsub
-    fletcher-arrow-bridge::fletcher-arrow-bridge)
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub-arrow)  # needed to probe the CONCRETE Arrow wrappers
 
 target_compile_features(discard_probe_tu PRIVATE cxx_std_20)
 

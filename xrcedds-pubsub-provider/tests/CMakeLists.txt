@@ -21,3 +21,37 @@ target_link_libraries(xrce_provider_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(xrce_provider_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# HARD-6 forcing test for the CONCRETE XrceDDSPubSubProvider::Subscribe override.
+#
+# See discard_probe.cpp for why a base-virtual annotation is not enough:
+# [[nodiscard]] is not inherited and the diagnostic keys off the static type at
+# the call site. The regex is DIAGNOSTIC-SPECIFIC so only a real compiler
+# diagnostic can supply the match -- never a flag or filename echoed into the
+# scanned output ("C4834" appears only in `error C4834:`, not in `/we4834`;
+# "ignoring return value" is the gcc/clang phrase and appears in no flag).
+# ---------------------------------------------------------------------------
+add_library(xrce_discard_probe_tu OBJECT EXCLUDE_FROM_ALL
+    discard_probe.cpp)
+
+target_link_libraries(xrce_discard_probe_tu PRIVATE
+    fletcher-xrcedds-pubsub-provider)
+
+target_compile_features(xrce_discard_probe_tu PRIVATE cxx_std_20)
+
+if(MSVC)
+    target_compile_options(xrce_discard_probe_tu PRIVATE /we4834)
+else()
+    target_compile_options(xrce_discard_probe_tu PRIVATE -Werror=unused-result)
+endif()
+
+add_test(
+    NAME NodiscardTest.XrceConcreteSubscribeCompileFailsOnDiscard
+    COMMAND ${CMAKE_COMMAND}
+            --build ${CMAKE_BINARY_DIR}
+            --target xrce_discard_probe_tu
+            --config $<CONFIG>)
+
+set_tests_properties(NodiscardTest.XrceConcreteSubscribeCompileFailsOnDiscard PROPERTIES
+    PASS_REGULAR_EXPRESSION "C4834|ignoring return value")
