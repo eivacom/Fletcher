@@ -84,8 +84,17 @@ std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* fi
 
 // Canonical projection of a language-neutral IR node onto the (temporary) flat
 // FieldMapping bridge that the not-yet-migrated emitters consume. Returns nullopt
-// for Unsupported nodes and for IR shapes the flat model cannot represent
-// (e.g. List<List<Scalar>>). Edge ENCODE does NOT use this — it walks the IR.
+// for Unsupported nodes and for IR shapes the flat model cannot represent.
+//
+// Scalar-leaf nested lists (List<List<...<Scalar>>>) ARE representable as of
+// GIR-10: they project onto `element` plus the additive `nested_leaf_is_scalar`
+// discriminator, so this returns a mapping for them rather than nullopt. The
+// struct-leaf counterpart uses `nested_class`. That shape never reaches the
+// read-only RBA accessor — a front-end guard
+// (ValidateBackendsSupportFields/FindScalarLeafNestedList in generator.cpp)
+// rejects `--fletcher_opt=accessor,rust` for such protos until round RIR.
+//
+// Edge ENCODE does NOT use this — it walks the IR.
 std::optional<FieldMapping> ProjectIrToFieldMapping(
     const ir::IrNode& node, const google::protobuf::FileDescriptor* context_file);
 

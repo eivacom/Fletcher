@@ -192,7 +192,8 @@ class ArrowNestedScalarList {
     bool empty() const { return size() == 0; }
 
     ArrowScalarList<ValueT, ArrayT> operator[](int64_t i) const {
-        auto scalar = array_->GetScalar(i).ValueOrDie();
+        auto scalar =
+            detail::ValueOrThrow(array_->GetScalar(i), "ArrowNestedScalarList: GetScalar failed");
         const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
         return ArrowScalarList<ValueT, ArrayT>(ls.value);
     }
@@ -231,7 +232,8 @@ class ArrowNestedScalarList2 {
     bool empty() const { return size() == 0; }
 
     ArrowNestedScalarList<ValueT, ArrayT> operator[](int64_t i) const {
-        auto scalar = array_->GetScalar(i).ValueOrDie();
+        auto scalar =
+            detail::ValueOrThrow(array_->GetScalar(i), "ArrowNestedScalarList2: GetScalar failed");
         const auto& ls = static_cast<const arrow::ListScalar&>(*scalar);
         return ArrowNestedScalarList<ValueT, ArrayT>(ls.value);
     }
