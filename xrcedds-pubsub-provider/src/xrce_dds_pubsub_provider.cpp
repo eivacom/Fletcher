@@ -491,13 +491,12 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     auto& ts = it->second;
 
     // Encode row bytes into a local buffer.
-    std::vector<uint8_t> row_bytes;
-    VectorWriteBuffer row_buf(row_bytes);
+    VectorWriteBuffer row_buf;
     encoder(row_buf);
 
     // Serialize the full envelope.
     Envelope env;
-    env.row = std::move(row_bytes);
+    env.row = row_buf.Finish();
     env.attachments = attachments;
     auto envelope = SerializeEnvelope(env);
 

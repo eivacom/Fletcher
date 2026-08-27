@@ -82,9 +82,9 @@ class InProcessProvider : public fletcher::PubSubProvider {
     // mu_ is held across the callback: one delivery at a time, so a callback must not re-enter.
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const fletcher::Attachments& attachments) override {
-        std::vector<uint8_t> buf;
-        fletcher::VectorWriteBuffer wb(buf);
+        fletcher::VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
         std::lock_guard lock(mu_);
         auto [it, _] = topics_.try_emplace(Join(segments));

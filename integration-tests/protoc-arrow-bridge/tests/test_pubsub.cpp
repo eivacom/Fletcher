@@ -65,9 +65,9 @@ class MockPubSubProvider : public PubSubProvider {
 
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        std::vector<uint8_t> buf = wb.Finish();
         SharedSchema sp;
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {

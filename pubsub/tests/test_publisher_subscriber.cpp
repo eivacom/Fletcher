@@ -33,9 +33,9 @@ class MockProvider : public PubSubProvider {
                  const Attachments& attachments) override {
         std::string key = Join(segments);
 
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {

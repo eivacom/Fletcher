@@ -124,11 +124,9 @@ int main() {
     const TransformRow row = source_view.Row(0);
     PrintRow("row", row);
 
-    fletcher::EncodedRow row_bytes;
-    {
-        fletcher::VectorWriteBuffer buffer(row_bytes);
-        EncodeRow(row, buffer);
-    }
+    fletcher::VectorWriteBuffer buffer;
+    EncodeRow(row, buffer);
+    const fletcher::EncodedRow row_bytes = buffer.Finish();
     std::printf(
         "  PositionalWriter         1 null-bitfield byte + timestamp(8) + 2 nested structs\n");
     HexDump("fletcher::EncodedRow", row_bytes.data(), row_bytes.size());

@@ -1773,10 +1773,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// Useful for testing, WAL storage, or any context where you need\n"
       << "    /// the encoded bytes as a standalone value.\n";
     o << "    fletcher::EncodedRow Encode() const {\n"
-      << "        fletcher::EncodedRow row;\n"
-      << "        fletcher::VectorWriteBuffer buf(row);\n"
+      << "        fletcher::VectorWriteBuffer buf;\n"
       << "        EncodeTo(buf);\n"
-      << "        return row;\n"
+      << "        return buf.Finish();\n"
       << "    }\n\n";
 }
 
