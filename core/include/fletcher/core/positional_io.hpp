@@ -43,8 +43,7 @@ class PositionalWriter {
         : buf_(buf), num_fields_(num_fields), bitfield_offset_(buf.Position()) {
         if (num_fields < 0)
             throw std::invalid_argument("PositionalWriter: num_fields must be >= 0");
-        size_t nbytes = BitfieldBytes(num_fields);
-        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
+        buf_.AppendZeros(BitfieldBytes(num_fields));
     }
 
     // Mark field at field_index as null.  Call before writing payloads.
@@ -74,9 +73,9 @@ class PositionalWriter {
     void WriteTimestamp(int64_t v) { buf_.AppendFixed(v); }
     void WriteDuration(int64_t v) { buf_.AppendFixed(v); }
 
-    // Write a contiguous run of fixed-width values in one Append instead of one virtual call per
-    // element. Byte-identical to the equivalent loop: both are a raw copy of the object
-    // representation, and this format is little-endian only (static_assert above).
+    // Write a contiguous run of fixed-width values in one Append instead of one per element.
+    // Byte-identical to the equivalent loop: both are a raw copy of the object representation,
+    // and this format is little-endian only (static_assert above).
     //
     // Only valid where every element is present — a null element writes no payload, so a list that
     // has any has to go through the per-element path.
@@ -124,8 +123,7 @@ class PositionalWriter {
     ListContext BeginList(uint32_t count) {
         buf_.AppendFixed(count);
         size_t bf_offset = buf_.Position();
-        size_t nbytes = BitfieldBytes(count);
-        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
+        buf_.AppendZeros(BitfieldBytes(count));
         return ListContext{buf_, bf_offset, count};
     }
 
@@ -138,8 +136,7 @@ class PositionalWriter {
         // Call after writing all key payloads.  Writes value null bitfield.
         ListContext BeginValues() {
             size_t bf_offset = buf.Position();
-            size_t nbytes = (count + 7) / 8;
-            for (size_t i = 0; i < nbytes; ++i) buf.AppendByte(0);
+            buf.AppendZeros(BitfieldBytes(count));
             return ListContext{buf, bf_offset, count};
         }
     };

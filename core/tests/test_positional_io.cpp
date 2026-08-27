@@ -209,3 +209,45 @@ TEST(ReadTrailingUint64FieldTest, RejectsRowShorterThanUint64) {
     std::vector<uint8_t> tiny = {0x00, 0x01, 0x02};  // < 8 bytes
     EXPECT_THROW(ReadTrailingUint64Field(tiny), std::invalid_argument);
 }
+
+TEST(WriteBufferTest, AppendZerosWritesZerosAndRespectsCapacity) {
+    std::vector<uint8_t> vec = {0xFF};
+    VectorWriteBuffer vb(vec);
+    vb.AppendZeros(3);
+    EXPECT_EQ(vec, (std::vector<uint8_t>{0xFF, 0, 0, 0}));
+
+    uint8_t fixed[4] = {1, 2, 3, 4};
+    FixedWriteBuffer fb(fixed, sizeof(fixed));
+    fb.AppendByte(9);
+    fb.AppendZeros(3);
+    EXPECT_EQ(fb.Position(), 4u);
+    EXPECT_EQ(fixed[0], 9);
+    EXPECT_EQ(fixed[1], 0);
+    EXPECT_EQ(fixed[3], 0);
+    EXPECT_THROW(fb.AppendZeros(1), std::overflow_error);
+}
+
+TEST(WriteBufferTest, VectorTracksSizeAndPatchesStayBehindPosition) {
+    std::vector<uint8_t> vec = {0xAA, 0xBB};
+    VectorWriteBuffer vb(vec);
+    EXPECT_EQ(vb.Position(), 2u);
+    size_t len_pos = vb.WriteLengthPlaceholder();
+    for (int i = 0; i < 300; ++i) vb.AppendByte(static_cast<uint8_t>(i));
+    EXPECT_EQ(vec.size(), vb.Position());
+    EXPECT_EQ(vec.size(), 306u);
+    EXPECT_EQ(vec[1], 0xBB);
+    EXPECT_EQ(vec[6 + 299], static_cast<uint8_t>(299));
+    vb.PatchU32(len_pos, 300);
+    EXPECT_EQ(vec[2], 300 - 256);
+    EXPECT_EQ(vec[3], 1);
+    EXPECT_THROW(vb.PatchU32(vec.size() - 3, 0), std::out_of_range);
+    EXPECT_THROW(vb.PatchByte(vec.size(), 1), std::out_of_range);
+
+    uint8_t fixed[8];
+    FixedWriteBuffer fb(fixed, sizeof(fixed));
+    fb.AppendFixed<uint32_t>(0);
+    EXPECT_THROW(fb.PatchByte(4, 1), std::out_of_range);
+    EXPECT_THROW(fb.Append(fixed, 5), std::overflow_error);
+    fb.Append(fixed, 4);
+    EXPECT_THROW(fb.AppendByte(0), std::overflow_error);
+}
