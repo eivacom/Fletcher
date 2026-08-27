@@ -1,7 +1,7 @@
 # HARD — Runtime & PubSub Hardening — Execution Plan
 
 Round plan + tracker for the runtime/pubsub correctness round.
-Spec: [docs/runtime-hardening-spec.md](../docs/runtime-hardening-spec.md).
+Spec: [docs/archive/HARD/runtime-hardening-spec.md](runtime-hardening-spec.md).
 Locked decisions: [HARD-locked-decisions.md](HARD-locked-decisions.md).
 This file is both the `plan_path` (the tracker) and the `user_stories_path`.
 

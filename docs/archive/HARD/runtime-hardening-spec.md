@@ -6,8 +6,8 @@ closes a set of GitHub issues migrated from the old README TODO list, plus one
 residual hazard uncovered while triaging them. **The protoc generator and
 generated code are out of scope** (a separate "GEN" round owns those).
 
-Execution plan / tracker: [plans/HARD-runtime-pubsub-hardening.md](../plans/HARD-runtime-pubsub-hardening.md).
-Locked decisions: [plans/HARD-locked-decisions.md](../plans/HARD-locked-decisions.md).
+Execution plan / tracker: [docs/archive/HARD/HARD-runtime-pubsub-hardening.md](HARD-runtime-pubsub-hardening.md).
+Locked decisions: [docs/archive/HARD/HARD-locked-decisions.md](HARD-locked-decisions.md).
 
 ## Goal
 
@@ -55,7 +55,7 @@ Two defects in one function, `arrow-bridge/src/scalar_codec.cpp`
 `DecodeScalarFromReader`:
 
 - **#52 (memory safety, dangling reference).** The `FIXED_SIZE_BINARY` case
-  ([scalar_codec.cpp:272-278](../arrow-bridge/src/scalar_codec.cpp#L272-L278))
+  ([scalar_codec.cpp:272-278](../../../arrow-bridge/src/scalar_codec.cpp#L272-L278))
   wraps the reader's transient pointer in a **non-owning** buffer:
   `std::make_shared<arrow::Buffer>(ptr, byte_width)` (`:276`). The returned
   `FixedSizeBinaryScalar` aliases the caller's input buffer and **dangles** once
@@ -65,10 +65,10 @@ Two defects in one function, `arrow-bridge/src/scalar_codec.cpp`
   the string branch. Distinct from the (resolved) encode-side over-read that
   Arrow's size CHECK already guards — this is the decode path.
 - **#58 (dead code / fall-through).** The string/binary block's inner `switch`
-  ([:233-248](../arrow-bridge/src/scalar_codec.cpp#L233-L248)) has each of the
+  ([:233-248](../../../arrow-bridge/src/scalar_codec.cpp#L233-L248)) has each of the
   six string ids `return`, but the inner `default: break;` (`:246-247`) and the
   outer `break;` (`:249`) fall through to a function-tail `throw` at
-  [:317](../arrow-bridge/src/scalar_codec.cpp#L317) that duplicates the `default`
+  [:317](../../../arrow-bridge/src/scalar_codec.cpp#L317) that duplicates the `default`
   case's throw (`:313-315`) and is **unreachable** (the outer case labels have
   already narrowed `type->id()` to the six handled ids). Fix: make the block
   self-terminating (no fall-through to an unreachable tail) and remove the
@@ -108,7 +108,7 @@ Two independent silent-failure sites, same discipline (a failed operation must
 leave a diagnostic):
 
 - **#54 — `OwnedSchema::DeepCopy` discards its status.**
-  [owned_schema.hpp:53-57](../pubsub/include/fletcher/pubsub/owned_schema.hpp#L53-L57)
+  [owned_schema.hpp:53-57](../../../pubsub/include/fletcher/pubsub/owned_schema.hpp#L53-L57)
   calls `ArrowSchemaDeepCopy(src, copy.get())` and ignores the returned
   `ArrowErrorCode`. On failure the schema is left released/empty and
   `MakeSharedSchema` later returns `nullptr` with no diagnostic — a failed copy
@@ -117,7 +117,7 @@ leave a diagnostic):
   `<stdexcept>`). **Fix in place** — the file move (#21) is a deferred round
   (locked decision H-8).
 - **#60 — `catch(...)` in `FletcherTopicType::serialize` swallows everything.**
-  [fast_dds_pubsub_provider.cpp:177-180](../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L177-L180)
+  [fast_dds_pubsub_provider.cpp:177-180](../../../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L177-L180)
   zeroes `payload.length` and returns `false` with no trace of the cause. Fix:
   add a `catch (const std::exception& e)` that captures `e.what()` into a
   logged/stored diagnostic *before* falling through to the `false` return; keep
@@ -131,7 +131,7 @@ leave a diagnostic):
 ### HARD-4 — Provider lifetime & callback re-entrancy (#63 + #62 residual)
 
 - **#63 — FastDDS destructor iterates topics without the lock.**
-  [fast_dds_pubsub_provider.cpp:441-460](../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L441-L460):
+  [fast_dds_pubsub_provider.cpp:441-460](../../../fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp#L441-L460):
   the `for (auto& [name, ts] : impl_->topics)` loop (`:444`) deletes DDS entities
   (`:447-452`) with no `lock_guard(impl_->mu)` held, while `Publish` holds `mu`
   (`:538`) and calls `ts.writer->write()` (`:559`). Fix: the **primary contract**
@@ -141,7 +141,7 @@ leave a diagnostic):
   lock discipline (H-INV-3, locked decision H-4).
 - **#62 residual — re-entrant `Unsubscribe` UAF in XRCE `OnTopic`.** The reported
   deadlock is already resolved (recursive mutex; issue closed). Residual: `OnTopic`
-  holds `auto& ts = tit->second` ([xrce_dds_pubsub_provider.cpp:216](../xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp#L216))
+  holds `auto& ts = tit->second` ([xrce_dds_pubsub_provider.cpp:216](../../../xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp#L216))
   and invokes the user callback (`:235` data path; `:201-207` schema-flush path,
   which then touches `ts.pending` at `:207`). A callback that `Unsubscribe`s its
   own delivering topic does an **in-place reset** of that `TopicState`
@@ -168,10 +168,10 @@ from within a delivery and completes cleanly).
 
 **Docs-only; verified by review, not test-gated.** `Subscriber`'s fan-out
 snapshots `(id, callback)` pairs under `mu`, releases the lock, then invokes them
-([subscriber.cpp:52-74](../pubsub/src/subscriber.cpp#L52-L74)); a subscriber that
+([subscriber.cpp:52-74](../../../pubsub/src/subscriber.cpp#L52-L74)); a subscriber that
 unsubscribes between the snapshot and the call receives one final message. This
 is intentional. Document it on the `Unsubscribe` doc comment
-([subscriber.hpp:60-62](../pubsub/include/fletcher/pubsub/subscriber.hpp#L60-L62)).
+([subscriber.hpp:60-62](../../../pubsub/include/fletcher/pubsub/subscriber.hpp#L60-L62)).
 
 **Acceptance.** The `Unsubscribe` doc comment states the one-final-message
 guarantee and why (copy-then-release-then-call). No code change.
@@ -257,7 +257,7 @@ HARD-4 (provider lifetime) → HARD-5 (docs) → HARD-6 (nodiscard) → HARD-7 (
   the deadlock (#62) is already resolved.
 - Reader-bounds / oversized-length hardening against untrusted wire bytes — that
   is the separate `feature/robustness_improvements` Phase-1 work-stream (see
-  [docs/robustness-plan.md](robustness-plan.md)); this round does not duplicate
+  [docs/robustness-plan.md](../../robustness-plan.md)); this round does not duplicate
   or depend on it.
 
 ## Closed during triage (verified fixed, not part of this round)

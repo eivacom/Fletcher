@@ -65,7 +65,7 @@ void DiscardArrowWrappers(fletcher::PublisherArrow& publisher,
     // All three SubscriberArrow::Subscribe overloads.
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{},
-                         fletcher::BatchOptions{});
+                         fletcher::SubscriberArrow::BatchOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{});
 }
 
