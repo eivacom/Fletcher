@@ -12,12 +12,12 @@ This file is both the `plan_path` (the tracker) and the `user_stories_path`.
 > | The plan says | Reality after GIR |
 > |---|---|
 > | DICT-3 "Schema emission (**nanoarrow + Arrow**)" — two emitters | GIR-5 unified them into **one** `cpp_backend::SchemaVisitor` with two sinks (C++ source / in-process nanoarrow). `BuildMessageSchemaInto` no longer exists in source. DICT-3 is now **one** change, not two kept in lockstep |
-> | DICT-2 cites `type_mapper.cpp:632-669`, `MapWellKnown`, `MapStructField` | All gone; `type_mapper.cpp` is 465 lines and that classification moved into `ir.cpp`. The option must be read into the **IR builder**, and dictionary-ness carried on `ScalarFacts` |
+> | DICT-2 cites `type_mapper.cpp:632-669`, `MapWellKnown`, `MapStructField` | All gone; `type_mapper.cpp` is 465 lines and that classification moved into `ir.cpp`. The option must be read into the **IR builder**, and dictionary-ness carried on `FieldFacts` |
 > | Branch strategy: base on #79 or `feature/robustness_improvements`; "`main` does not have it" | Both stale, and resolved favourably — the dictionary runtime `BuildDictionaryColumn` is on `main` (#79 merged), and the RBA accessor is on `main` (#106 merged) |
 > | DICT-6 patches the flat RBA accessor | **DICT-6 is removed.** Replaced by **DICT-1.5** (a front-end guard) with the accessor work folded into round **RIR** — see below |
 >
 > **Still valid and load-bearing:** GIR deliberately pre-built the hook this round
-> needs — `ScalarFacts.dictionary` exists in [`protoc/include/ir.hpp`](../protoc/include/ir.hpp)
+> needs — `FieldFacts.dictionary` exists in [`protoc/include/ir.hpp`](../protoc/include/ir.hpp)
 > per GIR locked decision #7 ("a dictionary field stays SCALAR with a modifier —
 > it is **not** a structural container peer of List/Struct"). Extension **50001**
 > is still free (`50000` is taken twice: `flatten` on MessageOptions,
@@ -55,7 +55,7 @@ only — **wire format and runtime re-fold are unchanged** (hard invariant).
   #106) are both on `main`. The pre-GIR candidate bases — #79 or
   `feature/robustness_improvements` — are obsolete; neither branch is live.
 - DICT must land **after GIR** because it emits schema through the unified IR
-  schema-visitor and carries dictionary-ness on the IR's `ScalarFacts`. Basing on
+  schema-visitor and carries dictionary-ness on the IR's `FieldFacts`. Basing on
   a pre-GIR tree would write the round against emitters that no longer exist.
 - **Position in the roadmap: DICT runs BEFORE the binding rounds.**
 

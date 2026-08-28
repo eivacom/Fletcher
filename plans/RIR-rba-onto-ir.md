@@ -90,7 +90,7 @@ it is a stop-and-ask. RIR is the tail; it must not grow a tail of its own.
   the encoding stays invisible at the API, with borrowed returns tied to the
   cached dictionary's values buffer; index-type→key-array mapping driven by the
   option's `index_type`. Then **remove the DICT-1.5 front-end guard**. The
-  dictionary flag is already on the IR as `ScalarFacts.dictionary` (GIR locked
+  dictionary flag is already on the IR as `FieldFacts.dictionary` (GIR locked
   #7), so this is an emitter change, not an IR change.
 - **Carry the `nested_leaf_is_scalar` distinction.** GIR-10 routed scalar-leaf
   nesting to the `FieldKind`-consuming emitters by reusing `FieldKind::NESTED_LIST`

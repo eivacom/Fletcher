@@ -24,7 +24,10 @@ stop-and-ask. Full rationale in
 
 5. **Dictionary-ness is a scalar MODIFIER, never a structural kind.**
    *(Restated 2026-08-28 for the post-GIR tree; the intent is unchanged.)* The
-   canonical carrier is **`ScalarFacts.dictionary`** on the IR
+   canonical carrier is **`ir::FieldFacts.dictionary`** on the IR
+   *(corrected 2026-08-28: an earlier revision of this decision said
+   `ScalarFacts`; the post-GIR type is `FieldFacts` at `ir.hpp:133` — same
+   intent, a field-level modifier on the IR)*
    ([`protoc/include/ir.hpp`](../protoc/include/ir.hpp)), which GIR already
    provides per **GIR locked decision #7**. `FieldKind` stays `SCALAR` and the
    flat `FieldMapping` projection carries whatever it needs derived from the IR —
