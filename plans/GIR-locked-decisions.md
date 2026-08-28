@@ -25,7 +25,10 @@ proposed deviation is a **stop-and-ask**. Full rationale in
 3. **The RBA accessor emitter stays read-only this round.** It is not rewritten
    onto the IR (freshly merged, heavily tested, non-wire); it consumes a **thin
    `FieldKind` projection** of the IR. Consequences: RBA keeps its depth-2/3 cap,
-   and DICT-6 still patches the flat accessor. **`FieldKind` is NOT deleted at
+   and dictionary columns likewise do not reach it (**updated 2026-08-28:** the
+   original DICT-6 would have patched dictionary reading into the flat accessor;
+   that item moved to **RIR**, and round DICT now ships only a front-end guard —
+   DICT-1.5 — so nothing patches the flat accessor at all). **`FieldKind` is NOT deleted at
    Phase-2 parity** — it survives as a thin IR projection through a long
    transition. Rewriting the RBA emitter is out of scope / stop-and-ask.
    **Its concrete home:** the reconciliation (migrate the RBA C++/Rust accessor

@@ -172,7 +172,7 @@ migrate/leave decision that was taken for each:
 | Arrow view + `ToArrowRow` | **Migrated** (GIR-6); the dead `SetFrom*` / `ToScalars` / `Make*Scalar_` helpers were deleted (0 callers, 0 generated hits). |
 | nanoarrow schema emitter **+ its IPC-builder sibling** (`BuildMessageSchemaInto`/`BuildMessageSchema`) | **Migrated, UNIFIED** (GIR-5) — one IR schema-visitor renders C++ source on one path and executes nanoarrow in-process on the other, via a `SchemaSink` abstraction. This killed exactly the hand-kept-in-lockstep drift Phase 2 targeted; `.ipc` byte-compat held (`test_schema_builder.cpp` + 10 per-node-kind `.ipc` goldens green). |
 | TS interface + descriptor | **Migrated** (GIR-7) — the round's language-neutrality proof-point (new `ts_backend` table, all TS strings off the IR). |
-| **RBA C++ + Rust accessor** (`recordbatch_accessor_emitter.cpp`) | **Left read-only** — consumes a thin `FieldKind` projection of the IR; **not** rewritten (freshly merged, heavily tested, non-wire). Reconciled onto the IR in round **RIR**. Consequences: RBA keeps its depth-2/3 cap (arbitrary depth does not reach the accessor); GIR-10's scalar-leaf `List<List<scalar>>` is **rejected up front** for `accessor`/`rust` by `ValidateBackendsSupportFields` (see below); DICT-6 still patches dictionary reading into the flat accessor. |
+| **RBA C++ + Rust accessor** (`recordbatch_accessor_emitter.cpp`) | **Left read-only** — consumes a thin `FieldKind` projection of the IR; **not** rewritten (freshly merged, heavily tested, non-wire). Reconciled onto the IR in round **RIR**. Consequences: RBA keeps its depth-2/3 cap (arbitrary depth does not reach the accessor); GIR-10's scalar-leaf `List<List<scalar>>` is **rejected up front** for `accessor`/`rust` by `ValidateBackendsSupportFields` (see below); dictionary columns are likewise rejected up front for `accessor`/`rust` (DICT-1.5, 2026-08-28) rather than patched into the flat accessor — the accessor-side dictionary work moved to RIR. |
 | Publisher/subscriber **service** emitters | **IR-orthogonal** — they key on method/topic, not `FieldKind`; "one IR" did not amortize them (relevant to BIND-5/6's service helpers). |
 
 - **`FieldKind` was not deleted at parity.** It stayed load-bearing for RBA (and
@@ -330,7 +330,7 @@ The order below was honored; HARD and round GIR have both landed.
 resolved by outcome: **round GIR shipped without DICT**, so **DICT builds on the
 IR** (after). The IR already models a dictionary as a scalar modifier
 (`facts.dictionary`, locked #7); DICT emits schema through the unified IR schema
-visitor, and DICT-6 patches the still-read-only flat RBA accessor (reconciled in
+visitor. (**Updated 2026-08-28:** DICT no longer patches the read-only flat RBA accessor — that item moved to RIR; DICT ships a front-end guard instead. Reconciled in
 RIR).
 
 **GEN / #75 — DONE.** Per the plan's own throwaway-work rationale ("fixing the
