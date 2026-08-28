@@ -69,3 +69,53 @@ for the tracker.
 - **An invariant over-claimed.** "The walk judges a child message exactly where emission deep-copies that child's schema" implied no hole remained; it also miscounted (two call sites, four emission positions — the LIST case recurses). Restated in terms of positions, with what is *not* judged named explicitly. The implementer also declined a PM suggestion to assert that gap-2's sibling shares P1-C's fix shape, on the grounds that asserting it unverified would be the same failure mode — correctly.
 - **PM delivery-mechanics errors, third and fourth of the round:** the docs commit swallowed DICT-2's two fixtures because they were already staged and `git commit` takes the whole index; and unstaged `// MUTATION` markers were live in the source during a review dispatch. **Standing gate now:** stage before dispatching review, re-stage after each fix round, commit with an explicit pathspec, and check `git status --porcelain` + `git grep MUTATION -- protoc/` before every commit.
 **Commit / push:** `feature/dictionary-option` -> `origin feature/dictionary-option`
+
+## ROUND HALTED after DICT-2 — awaiting reassessment (2026-08-28)
+
+**Status: DICT-1, DICT-1.5, DICT-2 are 🟢 and pushed. DICT-3, DICT-4, DICT-5 are ⚪ and NOT started.** DICT-3's design was authored and is committed for the record, but **nothing from it was implemented**. Halted by maintainer decision at the DICT-3 stop-and-ask below.
+
+### Why the round stopped
+
+DICT-3's design surfaced a blocker the round's premise did not account for:
+
+> **nanoarrow's IPC writer rejects dictionary types outright.**
+> `third_party/nanoarrow/nanoarrow_ipc.c`:
+> `case NANOARROW_TYPE_DICTIONARY: ArrowErrorSet(error, "IPC encoding of dictionary types unsupported"); return ENOTSUP;`
+
+Consequence: `SerializeSchemaIpc` throws for a dictionary schema, so **`CreateTopic` cannot announce one over any IPC-based provider** — FastDDS, XRCE-DDS, or the gateway. In-process and mock providers are unaffected.
+
+So the feature as specified would generate a correct dictionary schema that **no real deployment could publish**. DICT-4's forcing test (`RoundtripRefoldsToDictionaryArray`, "via batched Subscribe") runs against a mock, so it would have gone green while the path stayed unusable in production — a green test for an unusable feature.
+
+**This was already known in the tree, not a new discovery.** `pubsub/src/publisher.cpp:44-54` carries: *"Some valid schemas cannot be IPC-encoded (e.g. dictionary types, which nanoarrow's IPC writer rejects); if either side fails to serialize we cannot prove a conflict, so accept the re-declaration rather than throwing."* Someone hit this in the conflict-detection path and worked around it locally, without the consequence for a dictionary feature being drawn out.
+
+There are **two** vendored nanoarrow copies (`protoc/third_party/`, `pubsub/third_party/`), so a fix means patching both.
+
+### Options put to the maintainer (chose: stop and reassess)
+
+1. Document as a v1 limitation and continue — ship the generator work, dictionary columns in-process/mock only.
+2. Patch both vendored nanoarrow copies to implement Arrow IPC dictionary encoding (DictionaryEncoding metadata + dictionary batches). Substantial, third-party, needs its own round.
+3. Land DICT-3 only, defer DICT-4/5.
+4. **Stop now and reassess** ← chosen.
+
+The reassessment question is essentially: *was `(fletcher.dictionary)` wanted for pub/sub?* If yes, the part that cannot work is exactly the part that was wanted, and the round's value assumption needs revisiting before more is built. If it was wanted for in-process Arrow consumers, option 1 remains viable.
+
+### The tree is in a coherent state — stopping here is safe
+
+The three holes disclosed in spec §7.1.1 are **harmless precisely because DICT-3 did not land**: nothing reads `facts.dictionary`, so a swallowed declaration produces a **byte-identical artifact** and the only cost is a missing diagnostic. That property holds as long as no emission gate exists. It would have flipped to *silently wrong column type* the moment DICT-3 emitted encoding — which is why the chain-following follow-up was scheduled to land before or with DICT-3.
+
+What DICT-1/1.5/2 deliver standalone, with no dependency on DICT-3:
+- the `(fletcher.dictionary)` option surface (extension 50001) and a reader,
+- validation of every illegal declaration shape (five rules, fatal), and
+- a guard refusing `--fletcher_opt=accessor` / `rust` rather than emitting an accessor that mis-reads.
+
+Nothing emits dictionary encoding, so no user-visible schema changed.
+
+### DICT-3 design findings worth keeping regardless of the decision
+
+Recorded here because they outlive the round's fate:
+
+- **`ArrowTypeName` lacks `INT8` / `INT16`.** A non-int32 dictionary index would render as `NANOARROW_TYPE_UNINITIALIZED` **in the generated C++ source only**. Any future DICT-3 forcing test must cover a non-int32 index — an int32-only test would pass over this.
+- **DICT-1.5's documentation is now factually wrong** where it says the IPC schema output accepts dictionary fields. It does not. If DICT-3 is ever resumed, `--fletcher_opt=ipc` must become a front-end rejection.
+- **The story's DICT-3 wiring instruction would break the coverage harness**: adding `dictionary` to `PROTO_STEMS` gives every stem `ipc`, which now fails. A dedicated custom command is needed instead.
+- **The design's own timing analysis concluded the chain-following follow-up was NOT a prerequisite** — per hole: the repeated shape puts the fact on a LIST so the kind gate makes it byte-identical `list<utf8>`; gap-2's sibling never enters the IR; the singular and wrapper-hop shapes sit on genuine scalars where `dictionary(idx, value)` is the *correct* type, with `ordered` the only unmet declaration and v1 honouring it nowhere. That analysis stands if the round resumes.
+- The branch point for a resumption is `832bff4`, and the DICT-3 design doc is `plans/DICT-3-schema-emission.md`.

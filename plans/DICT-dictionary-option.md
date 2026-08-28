@@ -114,6 +114,19 @@ this round at all — it is in RIR (see above).
 
 ---
 
+> **ROUND HALTED after DICT-2 (2026-08-28) — awaiting reassessment.** DICT-3's
+> design found that nanoarrow's IPC writer rejects dictionary types outright
+> (`nanoarrow_ipc.c`: `NANOARROW_TYPE_DICTIONARY` -> `ENOTSUP`), so a dictionary
+> schema **cannot be announced over FastDDS / XRCE-DDS / the gateway** —
+> `SerializeSchemaIpc` throws in `CreateTopic`. In-process and mock providers
+> work. DICT-4's forcing test runs on a mock and would have gone green while the
+> path stayed unusable in production. Maintainer chose to stop and reassess
+> rather than document it as a v1 limitation. **DICT-3/4/5 are NOT started;**
+> DICT-3's design is committed for the record but nothing from it is implemented.
+> Full analysis, the options considered, and the design findings worth keeping
+> are in [DICT-progress-log.md](DICT-progress-log.md) under "ROUND HALTED".
+> Resumption point: `832bff4`.
+
 ## Work-item tracker
 
 Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + reviewed)
