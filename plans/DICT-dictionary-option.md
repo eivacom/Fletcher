@@ -122,7 +122,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 |------|-------|--------------|--------|
 | DICT-1 | Option surface + reader | `TypeMapperTest.ReadsDictionaryOption` | 🟢 |
 | DICT-1.5 | Front-end guard: reject `accessor`/`rust` for dictionary fields | `GenErrors.DictionaryRejectedBy_{accessor,rust}` | 🟢 |
-| DICT-2 | Mapper wiring + validation | `TypeMapperTest.DictionaryMappingAndRejections` | ⚪ |
+| DICT-2 | Mapper wiring + validation | `TypeMapperTest.DictionaryMappingAndRejections` | 🟢 |
 | DICT-3 | Schema emission (ONE IR schema-visitor) | `DictionaryTest.SchemaIsDictionaryType` | ⚪ |
 | DICT-4 | End-to-end roundtrip via batched Subscribe | `DictionaryTest.RoundtripRefoldsToDictionaryArray` | ⚪ |
 | DICT-5 | TypeScript descriptor + docs | `DictionaryTest.TsDescriptorUsesValueType` | ⚪ |
@@ -222,32 +222,112 @@ produces a dictionary mapping, and on an invalid field a clear error.
 **Scope.**
 - `type_mapper.hpp`: add `bool is_dictionary = false;` + `std::string
   dict_index_type_expr;` to `FieldMapping` (spec §5). `FieldKind` stays `SCALAR`.
-- `MapScalarField`: when `HasFieldDictionary`, set `is_dictionary` and
-  `dict_index_type_expr` (from `index_type`); leave `scalar` as the value type;
-  preserve `nullable`.
+- `ProjectIrToFieldMapping`'s `SCALAR` branch (there is no `MapScalarField`
+  post-GIR-3): when `node.facts.dictionary`, set `is_dictionary` and
+  `dict_index_type_expr` (from `node.facts.dictionary_index_kind`, via the new
+  `cpp_backend::DictionaryIndexArrowTypeExpr`); leave `scalar` as the value type;
+  preserve `nullable`. Dictionary-ness stays **IR-derived** — the projection is
+  the only writer, and it reads the same node's facts.
 - **Acceptance is keyed on the _mapped_ `FieldKind`, not the raw proto type.**
   Accept the option exactly when `MapField` resolves the field to
   `FieldKind::SCALAR` — which by construction includes singular scalars, enums,
   **and well-known wrapper messages** (`google.protobuf.StringValue`,
   `Int32Value`, …). `MapField` routes WKT wrappers through `MapWellKnown` to a
-  nullable `FieldKind::SCALAR` _before_ the struct branch
-  ([type_mapper.cpp:632-669](../protoc/src/type_mapper.cpp#L632-L669)), so a
-  wrapper carrying `(fletcher.dictionary)` is a **valid nullable dictionary**
-  (`dictionary(<idx>, <inner>)`, nullable) — gating on the raw
+  nullable `FieldKind::SCALAR` before the struct branch — post-GIR-3 that route
+  is `ir::BuildFieldIr` → `TryBuildWkt` ([ir.cpp:601](../protoc/src/ir.cpp#L601))
+  → `ProjectIrToFieldMapping`; `MapWellKnown` and `MapStructField` no longer
+  exist. So a wrapper carrying `(fletcher.dictionary)` is a **valid nullable
+  dictionary** (`dictionary(<idx>, <inner>)`, nullable) — gating on the raw
   `field->type()==TYPE_MESSAGE` would wrongly reject it. Real struct messages
-  (`MapStructField` → `STRUCT`), `repeated`, `map`, and `NESTED_LIST` fields are
+  (→ `STRUCT`), `repeated`, `map`, and `NESTED_LIST` fields are
   rejected because they map to a non-`SCALAR` kind (spec §4, decision #9).
-- `MapField`/`UnsupportedReason`: reject the option on non-`SCALAR`-mapped fields
-  (struct message, `repeated`, `map`) and reject `ordered: true`, each with a
-  distinct reason (spec §4, §6).
+  **One exception, added by DICT-2:** a WKT wrapper field that ALSO carries
+  `(fletcher.flatten_field)` is **rejected** (rule R1) — both inlining walks
+  inline `StringValue.value` as a plain non-nullable `utf8` column, so accepting
+  it would silently drop the declaration. Do not "fix" R1 by excluding WKTs.
+- **Reject via the front-end validation pass; `MapField` stays total.** Reject
+  the option on non-`SCALAR`-mapped fields (struct message, `repeated`, `map`,
+  nested list) and reject `ordered: true`, each with a distinct reason
+  (spec §4, §6). **CORRECTED (DICT-2 design D0, ruled ACCEPTED at step-2):** the
+  earlier wording "`MapField`/`UnsupportedReason`: reject … → `nullopt`" is
+  wrong on this tree. `ProjectIrToFieldMapping` returning `nullopt` is a *silent
+  dropped column* — `GatherFieldsImpl` turns it into a `skipped_comment` and
+  continues at exit 0 — and the schema walk does not call the projection at all
+  (it uses `IsSchemaRepresentable`, a by-hand mirror), so a projection-level
+  rejection would drift the row header against the schema. Enforcement is
+  therefore ONE fatal front-end pass, `ValidateDictionaryDeclarations` in
+  `generator.cpp` with the rules in `type_mapper.cpp`
+  (`DictionaryUnsupportedReason` / `FindIllegalDictionaryField`), in the family
+  that already owns `ValidateNoUnsupportedIr` (#55) and
+  `ValidateBackendsSupportFields` (DICT-1.5). It runs **after** #55 and
+  **before** DICT-1.5's guard.
+- Five rules, each with its own message: **R1** `flatten_field` wrapper carrying
+  the option (spec §7.1 gap 1, WKT wrappers included); **R2** the kind gate
+  (locked #9), gating on the **top-level** node only; **R3** `ordered: true`
+  (locked #8); **R4** two *disagreeing* declarations on one singular
+  `(fletcher.flatten)` chain (agreeing ones stay silent — no warning channel was
+  invented, `FieldMapping.warning` is read nowhere post-GIR-5); **R5** an inner
+  declaration under a **single-field** `repeated` flatten wrapper (gap 2). R5
+  carries `field_count() == 1`: a MULTI-field wrapper behind a `repeated` field is
+  a legal, emitted shape and must stay legal.
+- Also deletes the dead `ir::DictionaryModifier` enum.
+- **DETECTION BOUNDARY (step-4 re-review).** The pass judges a generated
+  message's own columns, `(fletcher.flatten_field)` descent, **and** struct /
+  list-element / map-value children — positions where emission deep-copies a
+  child's own schema function. So an **imported** message's illegal declaration is
+  now reported from an importing file too (S3 **CLOSED for a directly-named
+  child**; before the closure the same declaration was fatal or silent depending
+  only on which `.proto` protoc was pointed at). The walk never enters a `(fletcher.flatten)`
+  **wrapper** message: nothing inlines a wrapper's fields, so `flatten_field`
+  there is a genuine no-op and the declaration is **honoured** — applying R1
+  inside one would be a **false positive** (pinned by ctest
+  `GenErrors.DictionaryLiveInsideFlattenWrapperAccepted`). That leaves **two
+  disclosed holes, all accepted**: a flatten wrapper reached through a
+  non-flattening context (a `map` value / struct child — "S2"); gap 2's sibling;
+  and a struct **leaf behind a wrapper hop** (P1-C — it *is* deep-copied, so the
+  file-choice inconsistency survives one wrapper hop; every nested-list struct leaf
+  is in this class). All three drop `ordered: true` silently. Closing S2 needs R1
+  `is_top_level`-gated; P1-C needs the wrapper **chain followed to its leaf**
+  (smaller, could land first). Neither is fixable by descending into the wrapper.
+  Exact boundary:
+  [DICT-2 design, step-4 addendum](DICT-2-mapper-wiring-validation.md) and
+  spec §7.1.1.
+- **CARRY-FORWARD to round RIR:** `FieldMapping.is_dictionary` /
+  `dict_index_type_expr` have no production reader in DICT-2 by design. RIR's
+  IR-based RecordBatch accessor consumes them for its
+  `arrow::dictionary(<dict_index_type_expr>, <scalar.arrow_type_expr>)` type gate
+  (spec §5.1) **in the same change that removes the DICT-1.5 guard**. Do not
+  orphan them.
+- **DICT-3 must branch on `ir::FieldFacts.dictionary` AND
+  `node.kind == ir::NodeKind::SCALAR`,** not on `FieldMapping.is_dictionary`:
+  dictionary-ness stays IR-derived for mapping/emission (descriptor reads in
+  DICT-2 are rejection-only), which is what keeps DICT-1.5's
+  "guard-inspected ⊇ emittable" property intact.
+  **The kind gate is load-bearing, not belt-and-braces** (step-4 re-review):
+  DICT-2's pass does *not* establish "only `SCALAR` nodes carrying the fact reach
+  emission". Via the disclosed S2 hole, `M {map<string, W> m = 1;}` with
+  `W {flatten; repeated string vals = 1 [(fletcher.dictionary) = {INT8}];}`
+  generates at exit 0 with the fact live on a **LIST** node (proved by
+  `--fletcher_opt=accessor` naming `xf.ns.W.vals`). Branching on the fact alone
+  would emit `dictionary(<idx>, <list>)` — harmless today because no emitter reads
+  the fact, a malformed schema the day DICT-3 lands.
 
 **Forcing test** (`protoc/tests/test_type_mapper.cpp`): a scalar field with the
 option → `mapping.is_dictionary`, correct `dict_index_type_expr`, value-type
 `scalar` unchanged, nullability preserved; **a WKT-wrapper field
 (`google.protobuf.StringValue` with the option) → accepted as a nullable
 dictionary** (`is_dictionary`, value type `utf8`, `nullable`); the option on a
-repeated / struct-message / map field → `nullopt` with the matching
-`UnsupportedReason`; `ordered:true` → `nullopt` + reason.
+repeated / struct-message / map / nested-list field, a `flatten_field` wrapper
+(including a WKT one), a disagreeing flatten chain, and an inner declaration under
+a single-field `repeated` flatten wrapper → each a **distinct rejection reason**
+from `DictionaryUnsupportedReason` (not `nullopt` — see the corrected Scope
+bullet); `ordered:true` → a rejection + reason. Plus the false-positive guards:
+`Rec.s` (scalar + `flatten_field` + dictionary), `Ctl.rep_multi` (a `repeated`
+multi-field flatten wrapper), agreeing chains, and the no-option repeated / map /
+wrapper controls must all stay **legal**. Plugin level: four `GenErrors.*` ctests
+in `integration-tests/protoc-coverage` (the `fieldFlatten` one **retargeted** from
+DICT-1.5's message to DICT-2's, plus a `_passOrder` sibling pinning the pass
+order).
 
 ### DICT-3 — Schema emission (ONE IR schema-visitor)
 
@@ -256,7 +336,23 @@ repeated / struct-message / map field → `nullopt` with the matching
 output stays value-typed.
 
 **Scope.**
-- **There are TWO schema emitters and BOTH must branch on `is_dictionary`**
+- **GATE (from DICT-2, mandatory): branch on `ir::FieldFacts.dictionary` AND
+  `node.kind == ir::NodeKind::SCALAR`.** The kind gate is load-bearing, not
+  belt-and-braces: DICT-2's validation pass has two disclosed holes through which
+  an **accepted** proto reaches emission with the fact on a **LIST** node
+  (`M {map<string, W> m = 1;}` over
+  `W {flatten; repeated string vals = 1 [(fletcher.dictionary) = {INT8}];}`
+  generates at exit 0; `--fletcher_opt=accessor` proves the fact is live on the
+  LIST). Branching on the fact alone emits `dictionary(<idx>, <list>)`. See
+  [DICT-2 design](DICT-2-mapper-wiring-validation.md) D8 and spec §7.1.1.
+- **STALE, corrected by DICT-2's D11 finding 1: there is ONE schema emitter, not
+  two.** Post-GIR-5 `GenerateSchemaFunction` delegates to
+  `cpp_backend::GenerateSchemaFunctionFromIr` and `BuildMessageSchemaInto` to
+  `cpp_backend::BuildMessageSchemaIntoFromIr` — one `cpp_backend::SchemaVisitor`,
+  two sinks. `EmitNanoarrowTypeSetup`, `SetScalarSchemaType`, `ArrowTypeExpr` and
+  friends are **definition-only (dead)**. Branch inside the visitor; do **not**
+  "fix" the dead functions. The original bullet is kept below for history:
+- ~~**There are TWO schema emitters and BOTH must branch on `is_dictionary`**~~
   (post-#96): (1) `EmitNanoarrowTypeSetup`
   ([generator.cpp:900](../protoc/src/generator.cpp#L900), used by
   `GenerateSchemaFunction` for the generated `<Cls>Schema()` C++ source), and

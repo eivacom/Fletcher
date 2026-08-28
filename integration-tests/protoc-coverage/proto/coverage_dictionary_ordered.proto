@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-2 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryOrderedRejected.
+//
+// Isolates rule R3 (locked #8 / spec section 6): `ordered: true` is not
+// supported in v1, because the runtime re-fold produces a first-seen-order
+// dictionary. This fixture is what proves the rule is wired into Generate() at
+// plugin level and not merely unit-tested: the shape is otherwise a perfectly
+// ordinary singular scalar dictionary, so the ONLY reason generation fails is
+// `ordered`. Asks for `ipc` (no RecordBatch accessor / Rust backend) so
+// DICT-1.5's backend guard cannot be what fires.
+syntax = "proto3";
+package integration.coverage.dict2_ordered;
+
+import "fletcher/options.proto";
+
+message Dict2OrderedGuard {
+  string category = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8,
+                                                ordered: true}];
+  int32 seq = 2;
+}

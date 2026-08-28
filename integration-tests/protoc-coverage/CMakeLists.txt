@@ -593,16 +593,110 @@ add_test(NAME GenErrors.DictionaryRejectedBy_accessor_flatten
         -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
 
-add_test(NAME GenErrors.DictionaryRejectedBy_accessor_fieldFlatten
+# ---------------------------------------------------------------------------
+# DICT-2 legality forcing tests (spec sections 4/6/7.1, locked #8/#9).
+# ValidateDictionaryDeclarations rejects an ILLEGAL (fletcher.dictionary)
+# declaration for EVERY option set, before any artifact is written -- an illegal
+# declaration is a defect in the .proto, not a backend gap. Every test below
+# therefore asks for `ipc` (no RecordBatch accessor / Rust backend), which is
+# what makes "DICT-1.5's guard is not what fired" observable.
+#
+# EXPECT_MESSAGE keeps following the paren-free convention documented above.
+#
+# RETARGET (was GenErrors.DictionaryRejectedBy_accessor_fieldFlatten, which
+# asserted DICT-1.5's message on this fixture): DICT-2's pass runs FIRST and
+# rejects the shape outright, so the old expectation can no longer be reached.
+# The IR-route coverage that test carried (BaseFacts(w) at ir.cpp:545) moved to
+# TypeMapperTest.ReadsDictionaryOption's D4b sub-case -- see the rewritten header
+# comment in coverage_dictionary_field_flatten.proto.
+# ---------------------------------------------------------------------------
+add_test(NAME GenErrors.DictionaryOnFlattenFieldWrapperRejected
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_field_flatten.proto
+        -DFLETCHER_OPT=ipc
+        "-DEXPECT_MESSAGE=cannot be combined with"
+        -DEXPECT_FIELD=DictFfGuard.w
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/fieldFlatten
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# Pass-ORDER pin: with `accessor` requested BOTH passes see this fixture, and
+# DICT-2's must win because DICT-1.5's remedy ("regenerate without
+# --fletcher_opt=accessor,rust") is misleading advice for an illegal declaration.
+# The substring is a HARD pin, not a soft one: DICT-1.5's message provably cannot
+# contain "cannot be combined with" (its text is "... are not yet supported by the
+# RecordBatch accessor / Rust backend ... regenerate without ...").
+add_test(NAME GenErrors.DictionaryOnFlattenFieldWrapperRejected_passOrder
     COMMAND "${CMAKE_COMMAND}"
         -DPROTOC=$<TARGET_FILE:protobuf::protoc>
         -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
         -DPROTO_DIR=${PROTO_DIR}
         -DPROTO_FILE=coverage_dictionary_field_flatten.proto
         -DFLETCHER_OPT=accessor
-        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        "-DEXPECT_MESSAGE=cannot be combined with"
         -DEXPECT_FIELD=DictFfGuard.w
-        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/fieldFlatten
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/fieldFlattenPassOrder
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# NO-FALSE-POSITIVE pin for rule R1's scope, and the ONLY test that can catch it.
+# `flatten_field` inlining exists only in a GENERATED message's own column list, so
+# inside an IsFlattenedWrapper it is a no-op and the dictionary declaration is
+# RESOLVED AND HONOURED (a live int16 dictionary column). R1 must therefore never
+# be applied inside a wrapper: ValidateDictionaryDeclarations keeps the top-level
+# `IsFlattenedWrapper(msg)` skip AND the `!IsFlattenedWrapper(child)` term on its
+# struct/list/map-child descent. Deleting either fires R1 on
+# DictWrapLiveWrap.p and reds THIS test.
+#
+# The unit suite provably cannot cover this: ValidateDictionaryDeclarations is
+# file-local and no unit test calls it, so both step-4 reviewers found the earlier
+# unit-level assertion inert under that mutation. EXPECT_ARTIFACTS keeps the exit-0
+# direction non-vacuous.
+add_test(NAME GenErrors.DictionaryLiveInsideFlattenWrapperAccepted
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_wrapper_live.proto
+        -DFLETCHER_OPT=ipc
+        -DEXPECT_SUCCESS=ON
+        "-DEXPECT_ARTIFACTS=coverage_dictionary_wrapper_live.fletcher.pb.h|coverage_dictionary_wrapper_live.fletcher.arrow.pb.h|coverage_dictionary_wrapper_live.DictWrapLiveHolder.ipc"
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/dict2WrapperLive
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# R2 -- the kind gate (locked #9): a dictionary on a field that maps to a LIST.
+add_test(NAME GenErrors.DictionaryOnRepeatedRejected
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_repeated.proto
+        -DFLETCHER_OPT=ipc
+        "-DEXPECT_MESSAGE=requires a scalar column"
+        -DEXPECT_FIELD=Dict2RepeatedGuard.tags
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/dict2Repeated
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# R3 -- locked #8: `ordered: true` is not supported in v1.
+add_test(NAME GenErrors.DictionaryOrderedRejected
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_ordered.proto
+        -DFLETCHER_OPT=ipc
+        "-DEXPECT_MESSAGE=ordered: true is not supported"
+        -DEXPECT_FIELD=Dict2OrderedGuard.category
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/dict2Ordered
         -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
         -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)

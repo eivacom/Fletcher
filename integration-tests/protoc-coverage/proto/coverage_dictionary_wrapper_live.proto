@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-2 POSITIVE (no-false-positive) fixture. COMMITTED BUT NOT WIRED into any
+// generation unit; invoked only by ctest
+// GenErrors.DictionaryLiveInsideFlattenWrapperAccepted.
+//
+// THIS IS THE GUARD THAT JUSTIFIES A DELIBERATE DESIGN DEVIATION, so it is a
+// negative-of-a-negative and its EXPECT_SUCCESS direction is the whole point.
+//
+// (fletcher.flatten_field) inlining exists ONLY in GatherFieldsImpl /
+// BuildFlattenedFieldListImpl, i.e. only in a GENERATED message's own top-level
+// column list. DictWrapLiveWrap is an IsFlattenedWrapper, so no schema function
+// is generated for it and nothing inlines its fields: `flatten_field` on
+// DictWrapLiveWrap.p is a NO-OP, the chain resolves through it, and the
+// (fletcher.dictionary) declaration is RESOLVED AND HONOURED -- the emitted
+// column for DictWrapLiveHolder.w is a live int16 dictionary over utf8.
+//
+// Therefore rule R1 must NOT be applied inside a flatten wrapper, and
+// ValidateDictionaryDeclarations must keep BOTH of its wrapper exclusions:
+//   * the top-level `IsFlattenedWrapper(msg)` skip, and
+//   * the `!IsFlattenedWrapper(child)` term on its struct/list/map-child descent.
+// Deleting either makes R1 fire on DictWrapLiveWrap.p and this test goes RED --
+// which is the point: it is a FALSE POSITIVE on a proto whose dictionary really
+// is emitted. The unit suite cannot catch that (the pass is file-local and no
+// unit test calls it), so this ctest is the only pin.
+//
+// `n` is here so the holder still has an ordinary column; the three expected
+// artifacts make the exit-0 assertion non-vacuous.
+syntax = "proto3";
+package integration.coverage.dict_wrap_live;
+
+import "fletcher/options.proto";
+
+message DictWrapLiveLeaf {
+  option (fletcher.flatten) = true;
+  string s = 1;
+}
+
+message DictWrapLiveWrap {
+  option (fletcher.flatten) = true;
+  DictWrapLiveLeaf p = 1 [(fletcher.flatten_field) = true,
+                          (fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT16}];
+}
+
+message DictWrapLiveHolder {
+  DictWrapLiveWrap w = 1;
+  int32 n = 2;
+}

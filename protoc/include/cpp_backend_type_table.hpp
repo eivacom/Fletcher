@@ -50,6 +50,15 @@ struct CppScalarInfo {
 const CppScalarInfo& LookupScalar(const ir::LogicalType& type,
                                   const std::optional<ir::EnumIdentity>& enum_identity);
 
+// DICT-2: the declared index type of a dictionary column as a C++ Arrow type
+// expression ("arrow::int8()" .. "arrow::int64()"). Exhaustive 4-case switch, no
+// `default`. Deliberately NOT routed through LookupScalar: no proto type maps to
+// int8/int16, so those logical kinds have no CppScalarInfo row and feeding an
+// index kind to LookupScalar would be a category error. The spelling is the one
+// spec section 5.1 names for round RIR's accessor type gate,
+// arrow::dictionary(<index>, <value>).
+std::string DictionaryIndexArrowTypeExpr(ir::DictionaryIndexKind kind);
+
 // Globally-qualified generated C++ class reference for `msg` as seen from
 // `context_file` (bare name in-package; "::fletcher_gen::<pkg>::" prefixed
 // cross-package). Single source of truth for struct class-name resolution.

@@ -132,6 +132,26 @@ std::string CppClassName(const google::protobuf::Descriptor* msg,
     return "::fletcher_gen::" + DotToColons(pkg) + "::" + bare;
 }
 
+// DICT-2 (declared in cpp_backend_type_table.hpp): the ONLY new Arrow type text
+// this item adds, and it lives here because GIR locked #1 puts every C++/Arrow
+// type string in this table. Exhaustive switch, no `default`: adding a fifth
+// ir::DictionaryIndexKind raises a -Wswitch WARNING here -- not a compile error
+// (the build sets no -Werror//WX, and the fallback `return` below keeps it
+// compiling). The fallback is unreachable today.
+std::string DictionaryIndexArrowTypeExpr(ir::DictionaryIndexKind kind) {
+    switch (kind) {
+        case ir::DictionaryIndexKind::INT8:
+            return "arrow::int8()";
+        case ir::DictionaryIndexKind::INT16:
+            return "arrow::int16()";
+        case ir::DictionaryIndexKind::INT32:
+            return "arrow::int32()";
+        case ir::DictionaryIndexKind::INT64:
+            return "arrow::int64()";
+    }
+    return "arrow::int32()";  // unreachable: the switch above is exhaustive
+}
+
 std::string CppCrossFileHeader(const google::protobuf::Descriptor* msg,
                                const google::protobuf::FileDescriptor* context_file) {
     if (msg->file() == context_file) return "";

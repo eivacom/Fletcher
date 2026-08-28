@@ -1729,8 +1729,8 @@ std::optional<std::string> FindScalarLeafNestedList(const ir::IrNode& node) {
 // FindScalarLeafNestedList — three walks that are now extended together. A missing
 // edge here is a silently under-approximating guard.
 //
-// The live carrier is ir::FieldFacts.dictionary. ir::DictionaryModifier is DEAD
-// (its deletion is DICT-2's) and is deliberately NOT read here.
+// The live carrier is ir::FieldFacts.dictionary; there is no other dictionary
+// carrier on the IR (DICT-2 deleted the dead ir::DictionaryModifier enum).
 std::optional<std::string> FindDictionaryField(const ir::IrNode& node) {
     if (node.facts.dictionary) return node.facts.proto_full_name;
     if (node.kind == ir::NodeKind::LIST)
@@ -1747,6 +1747,52 @@ std::optional<std::string> FindDictionaryField(const ir::IrNode& node) {
             if (auto e = FindDictionaryField(*f.type)) return e;
     }
     return std::nullopt;
+}
+
+// DICT-2 (spec sections 4/6, locked #8/#9): reject illegal (fletcher.dictionary)
+// declarations BEFORE any artifact is written. The rules themselves live in
+// type_mapper.cpp (DictionaryUnsupportedReason / FindIllegalDictionaryField);
+// this is the four-line loop that turns them into protoc's *error.
+//
+// BACKEND-INDEPENDENT, unlike ValidateBackendsSupportFields: an illegal
+// declaration is a defect in the .proto, not a backend gap, so this runs for
+// every option set including schema_only.
+//
+// NOT a MapField -> nullopt rejection (design D0): nullopt becomes a
+// `skipped_comment` and generation continues at exit 0 -- a SILENT DROPPED
+// COLUMN -- and the schema walk does not call the projection at all
+// (IsSchemaRepresentable is a by-hand mirror), so a projection-level rejection
+// would drift the row header against the schema.
+//
+// Same `IsRecursive || IsFlattenedWrapper` skip predicate the emit loops and both
+// sibling passes use, so validation fires only on messages that are actually
+// generated.
+//
+// THE WRAPPER SKIP IS LOAD-BEARING, NOT INCIDENTAL (step-4 re-review). No schema
+// function is generated for an IsFlattenedWrapper, so nothing inlines its fields:
+// (fletcher.flatten_field) inside one is a genuine no-op and its
+// (fletcher.dictionary) is RESOLVED AND HONOURED. Judging a wrapper on its own
+// would fire rule R1 on a declaration that really is emitted -- a FALSE POSITIVE.
+// FindIllegalDictionaryField's child descent carries the same exclusion. Pinned by
+// ctest GenErrors.DictionaryLiveInsideFlattenWrapperAccepted (the unit suite
+// cannot: this pass is file-local and no unit test calls it).
+//
+// A wrapper's inner declaration is normally judged anyway, via the USING field's
+// resolved node (R2/R3/R4) or via R5. It is NOT judged when the wrapper is reached
+// through a NON-flattening context -- a map value or a struct child, which do not
+// flatten -- nor is a declared-but-never-used wrapper. Both are disclosed,
+// accepted holes; see docs/dictionary-option-spec.md section 7.1.1. Closing the
+// first needs R1 gated on `is_top_level`.
+bool ValidateDictionaryDeclarations(const google::protobuf::FileDescriptor* file,
+                                    std::string* error) {
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+        if (auto e = FindIllegalDictionaryField(msg)) {
+            *error = *e;
+            return false;
+        }
+    }
+    return true;
 }
 
 // Backend-availability guard now covering TWO shapes the read-only RBA C++ /
@@ -1906,6 +1952,21 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
             return false;
         }
     }
+
+    // DICT-2: fatally reject an ILLEGAL (fletcher.dictionary) declaration --
+    // non-scalar mapped kind, ordered: true, a (fletcher.flatten_field) wrapper
+    // carrying the option, a disagreeing wrapper/leaf pair, or an inner
+    // declaration under a single-field `repeated` (fletcher.flatten) wrapper.
+    //
+    // ORDER IS DELIBERATE. It runs AFTER ValidateNoUnsupportedIr (#55, at the top
+    // of Generate()) so a genuinely unsupported field type reports its own error
+    // rather than being masked by an option-legality complaint; and BEFORE
+    // ValidateBackendsSupportFields because DICT-1.5's remedy ("regenerate
+    // without --fletcher_opt=accessor,rust") is actively misleading advice for an
+    // ILLEGAL declaration -- following it yields a second error. DICT-2's message
+    // is the root cause and must win. Pinned by
+    // GenErrors.DictionaryOnFlattenFieldWrapperRejected_passOrder.
+    if (!ValidateDictionaryDeclarations(file, error)) return false;
 
     // Reject, for the read-only RBA C++/Rust backends, the two shapes they cannot
     // yet represent -- BEFORE any artifact is emitted, so the RBA emitters never

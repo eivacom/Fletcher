@@ -1,17 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
-// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_fieldFlatten.
+// DICT-2 negative fixture (originally DICT-1.5's). COMMITTED BUT NOT WIRED into
+// any generation unit; invoked only by ctest
+// GenErrors.DictionaryOnFlattenFieldWrapperRejected and its `_passOrder` sibling.
 //
 // Field-level flatten wrapper with the dictionary declared ON THE WRAPPER FIELD
 // ITSELF (the DICT-1 carry-forward's exact shape) -- DictFfWrap carries NO
-// dictionary internally. Both GatherFieldsImpl (generator.cpp:606-610) and
+// dictionary internally.
+//
+// THIS SHAPE IS NOW ILLEGAL (DICT-2 rule R1, spec section 7.1 gap 1): the
+// wrapper's fields are inlined as separate columns, so there is no single column
+// to dictionary-encode. Both GatherFieldsImpl (generator.cpp:606-610) and
 // BuildFlattenedFieldListImpl (cpp_backend_schema_visitor.cpp:78-90) `continue`
-// past a (fletcher.flatten_field) wrapper field, so the only route that can see
-// this declaration is BaseFacts(w) at ir.cpp:545 (BuildSingularMessage). If that
-// route is broken, no node in this file carries the fact and the guard would
-// wrongly exit 0.
+// past a (fletcher.flatten_field) wrapper field, so accepting it would emit a
+// VALUE-typed column for a field the author declared dictionary.
+// ValidateDictionaryDeclarations therefore fails the plugin for EVERY option set,
+// and it runs BEFORE DICT-1.5's backend-availability guard -- which is what the
+// `_passOrder` sibling pins (DICT-2's root-cause message must win over
+// DICT-1.5's "regenerate without --fletcher_opt=accessor,rust", which is
+// misleading advice for an illegal declaration).
+//
+// This fixture used to pin the IR route BaseFacts(w) at ir.cpp:545 -- the only
+// route that can see a wrapper-field declaration. It no longer does (R1 is
+// descriptor-based). That route is now asserted directly, on this same shape, by
+// TypeMapperTest.ReadsDictionaryOption's D4b sub-case
+// (EXPECT_TRUE(ir::BuildFieldIr(Rec.p).facts.dictionary)).
 syntax = "proto3";
 package integration.coverage.dict_guard_field_flatten;
 

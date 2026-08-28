@@ -100,11 +100,6 @@ enum class WktKind {
     DURATION,
 };
 
-enum class DictionaryModifier {
-    NONE,
-    DICTIONARY,
-};
-
 // DICT-1: the index type of a dictionary-encoded column, as declared by
 // (fletcher.dictionary).index_type. A dedicated 4-value enum rather than a reuse
 // of LogicalKind::INT8/16/32/64: those slots have no cpp_backend_type_table

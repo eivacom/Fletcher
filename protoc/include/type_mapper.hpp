@@ -39,10 +39,33 @@ enum class FieldKind {
 struct FieldMapping {
     FieldKind kind;
     bool nullable;
-    std::string warning;  // Non-empty → emit as a comment in generated code
+    // DICT-2 (D6): NOT RENDERED ANYWHERE. Post-GIR-5 nothing reads this member
+    // (nor ir::FieldFacts.warning, which feeds it) — the eleven writers are the
+    // only traffic. Treat it as a dead channel: do not route a new diagnostic
+    // through it (DICT-2 deliberately made its conflict rule a fatal front-end
+    // error instead of inventing a warning nobody reads).
+    std::string warning;
 
     // SCALAR kind:
     ScalarTypeInfo scalar;
+
+    // DICT-2 (spec section 5): DERIVED projection of ir::FieldFacts.dictionary,
+    // the ONE canonical carrier (locked #5). NOT a second source of truth: never
+    // written from a descriptor read, never written by an emitter. `scalar` stays
+    // the VALUE type (locked #7) — nothing here changes storage/setter/getter/
+    // wire/TS behaviour.
+    // Set ONLY when kind == FieldKind::SCALAR: locked #9 makes the option legal
+    // only there, ValidateDictionaryDeclarations rejects every other kind
+    // fatally before any emitter runs, and a `list(dictionary(...))` carrier is
+    // explicitly out of scope (spec section 8).
+    // NAMED CONSUMER — round RIR's IR-based RecordBatch accessor. Spec section
+    // 5.1 specifies its type gate in EXACTLY this spelling:
+    // arrow::dictionary(<dict_index_type_expr>, <scalar.arrow_type_expr>).
+    // These fields CANNOT reach today's read-only RBA emitter: DICT-1.5 fails the
+    // plugin for --fletcher_opt=accessor,rust on any dictionary proto (locked
+    // #11), and RIR removes that guard in the same change that consumes them.
+    bool is_dictionary = false;
+    std::string dict_index_type_expr;  // e.g. "arrow::int16()"; empty iff !is_dictionary
 
     // REPEATED_SCALAR kind — describes the list element:
     ScalarTypeInfo element;
@@ -107,6 +130,52 @@ std::optional<FieldMapping> ProjectIrToFieldMapping(
 
 // Human-readable explanation of why a field is unsupported (legacy boundary text).
 std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
+
+// -----------------------------------------------------------------------
+// DICT-2: (fletcher.dictionary) legality (spec sections 4/6, locked #8/#9)
+// -----------------------------------------------------------------------
+// These two are PURE PREDICATES with no side effects; generator.cpp's
+// ValidateDictionaryDeclarations turns a non-nullopt answer into protoc's
+// *error and fails the plugin BEFORE any artifact is written. Rejection is
+// deliberately NOT `MapField -> nullopt` (design D0): nullopt becomes a
+// `skipped_comment` and generation continues at exit 0, i.e. a SILENT DROPPED
+// COLUMN, and it would drift the projection against IsSchemaRepresentable.
+//
+// REJECTION ONLY. Both read descriptors directly (HasFieldDictionary /
+// ReadFieldDictionaryOption) because the conditions R4/R5 test are NOT visible
+// on any IR node — ir.cpp keeps only the winner of a flatten-chain conflict and
+// BuildFlattenedRepeated never reads the inner field at all. Do NOT copy that
+// pattern into an emitter: dictionary-ness for MAPPING and EMISSION stays
+// IR-derived from ir::FieldFacts.dictionary (design D8), which is what keeps
+// DICT-1.5's "guard-inspected superset of emittable" property intact.
+
+// Why a (fletcher.dictionary) declaration reachable from `field` is illegal, or
+// nullopt when it is legal. `field` must be a field that would actually become a
+// column of a generated message (a message's own declared field, or a field
+// inlined through a (fletcher.flatten_field) wrapper — see
+// FindIllegalDictionaryField).
+std::optional<std::string> DictionaryUnsupportedReason(
+    const google::protobuf::FieldDescriptor* field);
+
+// First illegal declaration among `msg`'s columns, in declaration order. Descends
+// through (fletcher.flatten_field) wrappers exactly as the two inlining walks do,
+// AND into a singular-message child / list element / map value -- positions where
+// cpp_backend_schema_visitor's DeepCopyMessageStruct emits a child message's OWN
+// schema function, so those fields really are columns. It does NOT reach such a
+// position when the child is behind a (fletcher.flatten) WRAPPER hop (which
+// includes every nested-list struct leaf); that hole is disclosed in
+// docs/dictionary-option-spec.md section 7.1.1 and is NOT fixable by descending
+// into the wrapper -- see the exclusion note below.
+// NEVER descends into an IsFlattenedWrapper (or IsRecursive) message: no schema
+// function is generated for a wrapper, so nothing inlines its fields,
+// (fletcher.flatten_field) inside one is a no-op, and its (fletcher.dictionary) is
+// RESOLVED AND HONOURED -- applying rule R1 there would be a false positive on a
+// working proto (pinned by ctest
+// GenErrors.DictionaryLiveInsideFlattenWrapperAccepted; see
+// docs/dictionary-option-spec.md section 7.1.1 for the boundary and the two
+// shapes it deliberately leaves silent).
+// nullopt when `msg` is clean.
+std::optional<std::string> FindIllegalDictionaryField(const google::protobuf::Descriptor* msg);
 
 // True if the field is nullable (proto3 `optional` keyword, or proto2 optional).
 bool IsFieldNullable(const google::protobuf::FieldDescriptor* field);

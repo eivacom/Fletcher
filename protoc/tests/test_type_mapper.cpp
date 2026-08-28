@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "cpp_backend_schema_visitor.hpp"
@@ -1128,8 +1129,11 @@ TEST(TypeMapperTest, ReadsDictionaryOption) {
         EXPECT_TRUE(ir::BuildFieldIr(FieldByName(schema, "Holder", "on_inner")).facts.dictionary);
     }
 
-    // -- D4b: the (fletcher.flatten_field) hole, pinned as it behaves TODAY.
-    //    DICT-2 rejects this shape and must consciously flip this sub-case.
+    // -- D4b: the (fletcher.flatten_field) hole. The IR/projection behaviour
+    //    pinned here is UNCHANGED by DICT-2: the projection still drops the
+    //    wrapper's declaration. What DICT-2 added is a REJECTION of the shape
+    //    (rule R1, TypeMapperTest.DictionaryMappingAndRejections) -- precisely
+    //    BECAUSE this drop is real, so no accepted proto can reach it.
     {
         SCOPED_TRACE("flatten_field wrapper carrying the option: silently dropped (D4b)");
         const Descriptor* rec = schema->FindMessageTypeByName("Rec");
@@ -1137,6 +1141,17 @@ TEST(TypeMapperTest, ReadsDictionaryOption) {
         const FieldDescriptor* wrapper = rec->FindFieldByName("p");
         ASSERT_NE(wrapper, nullptr);
         EXPECT_TRUE(HasFieldDictionary(wrapper));  // the declaration IS readable
+        // DICT-2 B4a: pins that BaseFacts(field) (ir.cpp:544) carries a
+        // flatten_field wrapper's OWN declaration onto its IR node. It replaces
+        // the coverage removed when
+        // GenErrors.DictionaryRejectedBy_accessor_fieldFlatten was retargeted
+        // from DICT-1.5's message to DICT-2's R1 (which is descriptor-based and
+        // so does NOT exercise this route). Identical code path and shape as
+        // that fixture's DictFfGuard.w: a 2-field, non-flatten message behind a
+        // (fletcher.flatten_field) field. (Not the only pin on that line --
+        // DictionaryMappingAndRejections' StructDict.st R2 sub-case leans on it
+        // too, step-4b nit 2 -- but it is the only one on THIS shape.)
+        EXPECT_TRUE(ir::BuildFieldIr(wrapper).facts.dictionary);
         auto records = cpp_backend::BuildFlattenedFieldList(rec);
         int dict_count = 0;
         int inlined = 0;
@@ -1317,5 +1332,564 @@ TEST(TypeMapperTest, ReadsDictionaryOption) {
         EXPECT_FALSE(ReadFieldDictionaryOption(fd).has_value());
         EXPECT_FALSE(HasFieldDictionary(fd));
         EXPECT_FALSE(ir::BuildFieldIr(fd).facts.dictionary);
+    }
+}
+
+// ===========================================================================
+// DICT-2 forcing test: mapper wiring + the (fletcher.dictionary) legality rules
+// ===========================================================================
+// Design: plans/DICT-2-mapper-wiring-validation.md (rev 2).
+//
+// Two halves, one test:
+//   * the POSITIVE projection (D1): FieldMapping gains `is_dictionary` +
+//     `dict_index_type_expr`, DERIVED from ir::FieldFacts.dictionary. The VALUE
+//     type, nullability and every other member are unchanged.
+//   * the LEGALITY rules (D2/D3, R1-R5): DictionaryUnsupportedReason(field) and
+//     FindIllegalDictionaryField(msg), the pure descriptor/IR predicates that
+//     generator.cpp's ValidateDictionaryDeclarations turns into a fatal
+//     front-end error. Rejection is NOT MapField -> nullopt (D0): nullopt is a
+//     silent dropped column.
+//
+// kDictSchema is deliberately NOT edited (DICT-1's sub-cases depend on it
+// verbatim); everything DICT-2 needs beyond it lives in kDict2Schema below.
+
+namespace {
+
+constexpr const char* kDict2Schema = R"(
+syntax = "proto3";
+package d2;
+import "fletcher/options.proto";
+import "google/protobuf/wrappers.proto";
+
+enum Color { COLOR_UNSPECIFIED = 0; COLOR_RED = 1; }
+
+message W1   { option (fletcher.flatten) = true; string value = 1; }
+message W1i8 { option (fletcher.flatten) = true;
+               string value = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8}]; }
+message W1i32{ option (fletcher.flatten) = true;
+               string value = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT32}]; }
+message W1i8t{ option (fletcher.flatten) = true;
+               string value = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8,
+                                                          ordered: true}]; }
+message W2   { option (fletcher.flatten) = true;
+               string k = 1 [(fletcher.dictionary) = {}]; int32 n = 2; }
+message PBad { repeated string tags = 1 [(fletcher.dictionary) = {}]; string ok = 2; }
+message Plain2 { string a = 1; string b = 2; }
+
+message Ctl {
+  optional string opt_cat = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8}];
+  Color  color      = 2 [(fletcher.dictionary) = {}];
+  W1     wrap_plain = 3 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT16}];
+  W1i8   agree      = 4 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8}];
+  W1i32  agree_dflt = 5 [(fletcher.dictionary) = {}];
+  W1i8   disagree   = 6 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT64}];
+  // R4 (the locked-#8 hole). index_type MUST be spelled INT8 here so `ordered` is
+  // the ONLY difference from W1i8's leaf: with `= {ordered: true}` the outer
+  // option decodes to INT32, the indexes would differ too, and an implementation
+  // comparing index_kind ALONE would still reject it -- i.e. the assertion would
+  // be vacuous for the property it exists to pin (step-2 cycle-2 item R1).
+  W1i8   ord_wrap   = 7 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8,
+                                                  ordered: true}];
+  W1i8   ff_flat    = 8 [(fletcher.flatten_field) = true, (fletcher.dictionary) = {}];
+  google.protobuf.StringValue wkt_ff = 9
+                          [(fletcher.flatten_field) = true, (fletcher.dictionary) = {}];
+  repeated W2 rep_multi = 10;
+  repeated string plain_tags   = 11;
+  map<string, string> plain_lbl = 12;
+  W1 plain_wrap = 13;
+  // the OTHER branch of D2's locked-#8 closure argument: outer and leaf are EQUAL
+  // and both set ordered, so R4 must stay silent and R3 must fire.
+  W1i8t  ord_agree  = 14 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8,
+                                                   ordered: true}];
+}
+
+message StructDict { Plain2 st = 1 [(fletcher.dictionary) = {}]; }
+message RecFf { PBad p = 1 [(fletcher.flatten_field) = true]; }
+
+// ---- step-4 review S4: the two `is_repeated` terms in R4's loop ------------
+// (a) `if (field->is_repeated()) return nullopt;`  -- WD8 has TWO disagreeing
+//     INNER declarations down a single-field chain, and the OUTER field carries
+//     none, so R2 cannot fire on the LIST: dropping the term makes R4 steal the
+//     shape from R5 and report "conflicting" instead.
+message VD8 { option (fletcher.flatten) = true;
+              string s = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT64}]; }
+message WD8 { option (fletcher.flatten) = true;
+              VD8 v = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8}]; }
+// (b) `if (inner->is_repeated()) break;`  -- ir.cpp reads BaseFacts(WD9.vs) and
+//     NOTHING below it, so the two declarations under `vs` are never used.
+//     Dropping the term reports a "conflict" between them, with advice ("make
+//     them identical") that leads to silence rather than a fix. `vs` itself
+//     carries no option so R2 cannot fire on the LIST first.
+//     This is ALSO spec 7.1 gap 2's disclosed SIBLING (silent + safe by
+//     construction), so the same shape pins both facts.
+message UD9 { option (fletcher.flatten) = true;
+              string s = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT64}]; }
+message VD9 { option (fletcher.flatten) = true;
+              UD9 u = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT8}]; }
+message WD9 { option (fletcher.flatten) = true; repeated VD9 vs = 1; }
+
+// ---- step-4 review S2/S3: why R1 is sound ONLY at the top level of a
+//      generated message, i.e. why the pass must KEEP its IsFlattenedWrapper
+//      skip and cannot close S2/S3 by dropping it. `flatten_field` inlining
+//      happens ONLY in GatherFieldsImpl / BuildFlattenedFieldListImpl, i.e. only
+//      for a generated message's OWN columns. Inside a flatten wrapper it is a
+//      no-op, so FfW.p's declaration is RESOLVED AND HONOURED (Chains
+//      .ff_inside_wrapper maps to a SCALAR int16 dictionary) -- judging FfW on
+//      its own would make R1 a FALSE POSITIVE.
+message FfLeaf { option (fletcher.flatten) = true; string s = 1; }
+message FfW { option (fletcher.flatten) = true;
+              FfLeaf p = 1 [(fletcher.flatten_field) = true,
+                            (fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT16}]; }
+
+message Chains {
+  repeated WD8 r4_repeated_outer = 1;
+  WD9 r4_repeated_inner = 2;
+  FfW ff_inside_wrapper = 3;
+}
+
+// ---- step-4 re-review: the S3 closure (struct / list-element / map-value
+//      descent). BadChild stands in for a message in an IMPORTED file: before the
+//      closure the SAME declaration was fatal when its own file was the
+//      generation unit and silently accepted when only an importer was, i.e. the
+//      verdict depended on which .proto protoc was pointed at.
+message BadChild { string k = 1 [(fletcher.dictionary) = {ordered: true}]; }
+message HostSingular { BadChild c = 1; int32 n = 2; }
+message HostRepeated { repeated BadChild c = 1; }
+message HostMap { map<string, BadChild> c = 1; }
+// ...and the exclusion that keeps R1 sound. W1i8t is an IsFlattenedWrapper, so
+// nothing inlines its fields and a declaration inside it is HONOURED -- the
+// descent must NOT enter it. This is also spec 7.1.1's S2 shape, which stays OPEN
+// BY DESIGN: closing it needs R1 to become top-level-gated, which is a design
+// decision, so this assertion is meant to red if someone opens it by accident.
+message HostMapWrapper { map<string, W1i8t> c = 1; }
+)";
+
+// Convenience: the reason for `msg.field`, failing loudly if it was accepted.
+std::string ReasonFor(const FileDescriptor* file, const std::string& msg,
+                      const std::string& field) {
+    const FieldDescriptor* fd = FieldByName(file, msg, field);
+    if (fd == nullptr) {
+        ADD_FAILURE() << "no such field: " << msg << "." << field;
+        return "<missing field>";
+    }
+    auto r = DictionaryUnsupportedReason(fd);
+    if (!r) {
+        ADD_FAILURE() << msg << "." << field << " was accepted, expected a rejection";
+        return "<accepted>";
+    }
+    return *r;
+}
+
+bool IsLegal(const FileDescriptor* file, const std::string& msg, const std::string& field) {
+    const FieldDescriptor* fd = FieldByName(file, msg, field);
+    if (fd == nullptr) {
+        ADD_FAILURE() << "no such field: " << msg << "." << field;
+        return false;
+    }
+    auto r = DictionaryUnsupportedReason(fd);
+    if (r) ADD_FAILURE() << msg << "." << field << " was rejected: " << *r;
+    return !r.has_value();
+}
+
+bool Mentions(const std::string& haystack, const std::string& needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+// P2-3: FindIllegalDictionaryField dereferences its argument, so a renamed or
+// mistyped message name must FAIL the test, not segfault the whole binary.
+const Descriptor* MsgOrFail(const FileDescriptor* file, const std::string& name) {
+    const Descriptor* d = file->FindMessageTypeByName(name);
+    EXPECT_NE(d, nullptr) << "no such message: " << name;
+    return d;
+}
+
+// Same, for the message-level walk: returns "<missing message>" rather than
+// dereferencing null.
+std::optional<std::string> IllegalIn(const FileDescriptor* file, const std::string& name) {
+    const Descriptor* d = MsgOrFail(file, name);
+    if (d == nullptr) return std::string("<missing message>");
+    return FindIllegalDictionaryField(d);
+}
+
+}  // namespace
+
+TEST(TypeMapperTest, DictionaryMappingAndRejections) {
+    ProtoTextPool pool;
+    ASSERT_TRUE(pool.seeded());
+    ASSERT_NE(AddFletcherOptions(pool), nullptr);
+    ASSERT_NE(pool.AddLinked(google::protobuf::StringValue::GetDescriptor()->file()), nullptr);
+    const FileDescriptor* d1 = pool.Add("dict_schema.proto", kDictSchema);
+    ASSERT_NE(d1, nullptr);
+    const FileDescriptor* d2 = pool.Add("dict2_schema.proto", kDict2Schema);
+    ASSERT_NE(d2, nullptr);
+
+    // =====================================================================
+    // D1 -- the POSITIVE projection
+    // =====================================================================
+    {
+        SCOPED_TRACE("D1: scalar dictionary projects onto is_dictionary + index expr");
+        auto m = MapField(FieldByName(d1, "Ev", "i16"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_EQ(m->kind, FieldKind::SCALAR);
+        EXPECT_TRUE(m->is_dictionary);
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int16()");
+        // locked #7: `scalar` stays the VALUE type.
+        EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::utf8()");
+        EXPECT_FALSE(m->nullable);
+    }
+    {
+        SCOPED_TRACE("D1: the four index kinds + the two UNSPECIFIED spellings");
+        struct Row {
+            const char* field;
+            const char* expr;
+        };
+        const Row kRows[] = {
+            {"empty", "arrow::int32()"}, {"unspec", "arrow::int32()"}, {"i8", "arrow::int8()"},
+            {"i16", "arrow::int16()"},   {"i32", "arrow::int32()"},    {"i64", "arrow::int64()"},
+        };
+        for (const Row& r : kRows) {
+            auto m = MapField(FieldByName(d1, "Ev", r.field));
+            ASSERT_TRUE(m.has_value()) << r.field;
+            EXPECT_TRUE(m->is_dictionary) << r.field;
+            EXPECT_EQ(m->dict_index_type_expr, r.expr) << r.field;
+        }
+    }
+    {
+        SCOPED_TRACE("D1: nullability is preserved (proto3 optional)");
+        auto m = MapField(FieldByName(d2, "Ctl", "opt_cat"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_EQ(m->kind, FieldKind::SCALAR);
+        EXPECT_TRUE(m->is_dictionary);
+        EXPECT_TRUE(m->nullable);
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int8()");
+        EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::utf8()");
+    }
+    {
+        SCOPED_TRACE("D1: an enum dictionary keeps its int32 VALUE type");
+        auto m = MapField(FieldByName(d2, "Ctl", "color"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_EQ(m->kind, FieldKind::SCALAR);
+        EXPECT_TRUE(m->is_dictionary);
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int32()");
+        EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::int32()");
+    }
+    {
+        // locked #9's acceptance case: a WKT wrapper WITHOUT flatten_field is a
+        // valid NULLABLE dictionary. Contrast Ctl.wkt_ff below, which is R1.
+        SCOPED_TRACE("D1: google.protobuf.StringValue dictionary (locked #9)");
+        auto m = MapField(FieldByName(d1, "Wkt", "s"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_EQ(m->kind, FieldKind::SCALAR);
+        EXPECT_TRUE(m->nullable);
+        EXPECT_TRUE(m->is_dictionary);
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int16()");
+        EXPECT_EQ(m->scalar.arrow_type_expr, "arrow::utf8()");
+    }
+    {
+        SCOPED_TRACE("D1: no false positive -- a plain scalar carries neither field");
+        auto m = MapField(FieldByName(d1, "Ev", "plain"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_FALSE(m->is_dictionary);
+        EXPECT_TRUE(m->dict_index_type_expr.empty());
+    }
+
+    // =====================================================================
+    // R2 -- the kind gate (locked #9)
+    // =====================================================================
+    const std::string r2_list = ReasonFor(d1, "Shapes", "tags");
+    const std::string r2_map = ReasonFor(d1, "Shapes", "labels");
+    const std::string r2_struct = ReasonFor(d2, "StructDict", "st");
+    const std::string r2_nested = ReasonFor(d1, "Holder", "rep_nested");
+    const std::string r2_unsupported = ReasonFor(d1, "Shapes", "oc");
+    {
+        SCOPED_TRACE("R2: the kind-word names the column the field actually maps to");
+        EXPECT_TRUE(Mentions(r2_list, "list")) << r2_list;
+        EXPECT_TRUE(Mentions(r2_list, "dt.Shapes.tags")) << r2_list;
+        EXPECT_TRUE(Mentions(r2_map, "map")) << r2_map;
+        EXPECT_TRUE(Mentions(r2_struct, "struct")) << r2_struct;
+        EXPECT_TRUE(Mentions(r2_nested, "list")) << r2_nested;
+        // A oneof member has no Arrow mapping at all -- its own dedicated clause,
+        // NOT the kind-word ("maps to an unsupported field type" reads oddly).
+        EXPECT_TRUE(Mentions(r2_unsupported, "no Arrow mapping")) << r2_unsupported;
+    }
+    {
+        // R2 gates on the TOP-LEVEL node only, never an OR over the subtree: a
+        // scalar dictionary inside a STRUCT CHILD is legal (spec 7.1's closing
+        // rule) and is judged on its own when its own message is walked.
+        SCOPED_TRACE("R2: no subtree-OR -- a struct child's scalar dictionary is legal");
+        EXPECT_TRUE(IsLegal(d1, "MemberHolder", "m"));
+        EXPECT_TRUE(IsLegal(d1, "Member", "dict"));
+        EXPECT_FALSE(IllegalIn(d1, "MemberHolder")) << "MemberHolder itself declares nothing";
+    }
+
+    // =====================================================================
+    // R3 -- ordered: true (locked #8)
+    // =====================================================================
+    const std::string r3 = ReasonFor(d1, "Ev", "ord");
+    {
+        SCOPED_TRACE("R3: ordered: true on a plain scalar");
+        EXPECT_TRUE(Mentions(r3, "ordered")) << r3;
+        EXPECT_TRUE(Mentions(ReasonFor(d1, "Ev", "ord16"), "ordered"));
+        // wrapper-declared ordered with NO leaf declaration: leaf-wins does not
+        // apply, so the resolved node carries it and R3 sees it.
+        EXPECT_TRUE(Mentions(ReasonFor(d1, "Holder", "on_wrapper"), "ordered"));
+    }
+
+    // =====================================================================
+    // R1 -- (fletcher.flatten_field) + (fletcher.dictionary)  [spec 7.1 gap 1]
+    // =====================================================================
+    const std::string r1 = ReasonFor(d1, "Rec", "p");
+    {
+        SCOPED_TRACE("R1: the three-term wrapper predicate");
+        EXPECT_TRUE(Mentions(r1, "flatten_field")) << r1;
+        EXPECT_TRUE(Mentions(r1, "dt.Rec.p")) << r1;
+        // THIRD TERM: flatten_field on a SCALAR is a documented no-op, and the
+        // dictionary there is legal (spec 4; DICT-1 pins the IR side).
+        EXPECT_TRUE(IsLegal(d1, "Rec", "s"));
+    }
+    {
+        // D4 row 1: BuildFieldIr(ff_flat) is a SCALAR carrying the dictionary, so
+        // R2 ALONE WOULD ACCEPT IT -- while both inlining walks `continue` past
+        // the wrapper and emit a value-typed column. R1 is the only rule that
+        // catches it.
+        SCOPED_TRACE("R1: flatten_field OVER a message-level flatten wrapper (D4 row 1)");
+        const FieldDescriptor* fd = FieldByName(d2, "Ctl", "ff_flat");
+        ASSERT_NE(fd, nullptr);
+        ir::IrNode n = ir::BuildFieldIr(fd);
+        EXPECT_EQ(n.kind, ir::NodeKind::SCALAR) << "R2 alone would accept this";
+        EXPECT_TRUE(Mentions(ReasonFor(d2, "Ctl", "ff_flat"), "flatten_field"));
+    }
+    {
+        // D4 row 2 (B5): the WKT instance of the SAME "R2 accepts / emission
+        // drops" class. Do NOT exclude WKTs from R1 -- that reopens the hole.
+        SCOPED_TRACE("R1: StringValue + flatten_field + dictionary (D4 row 2)");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(d2, "Ctl", "wkt_ff"));
+        EXPECT_EQ(n.kind, ir::NodeKind::SCALAR) << "TryBuildWkt -> R2 alone would accept";
+        EXPECT_TRUE(Mentions(ReasonFor(d2, "Ctl", "wkt_ff"), "flatten_field"));
+    }
+
+    // =====================================================================
+    // R4 -- disagreeing declarations on one singular flatten chain
+    // =====================================================================
+    const std::string r4 = ReasonFor(d2, "Ctl", "disagree");
+    {
+        SCOPED_TRACE("R4: disagreeing index types");
+        EXPECT_TRUE(Mentions(r4, "conflicting")) << r4;
+        EXPECT_TRUE(Mentions(r4, "int64")) << r4;
+        EXPECT_TRUE(Mentions(r4, "int8")) << r4;
+    }
+    {
+        // The locked-#8 hole, and the reason R4's equality must compare BOTH
+        // members of the DECODED option. `ordered` is the SOLE difference here.
+        SCOPED_TRACE("R4: ordered is part of the equality (locked #8)");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(d2, "Ctl", "ord_wrap"));
+        ASSERT_EQ(n.kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_FALSE(n.facts.dictionary_ordered)
+            << "leaf-wins discards the outer option wholesale, so R3 CANNOT see this";
+        const std::string r = ReasonFor(d2, "Ctl", "ord_wrap");
+        EXPECT_TRUE(Mentions(r, "conflicting")) << r;
+        // `ordered` alone is decorative (every R4 message renders it); asserting
+        // BOTH renderings is what pins that `ordered` participates in R4's
+        // equality and that both sides are legible (step-4b nit 1).
+        EXPECT_TRUE(Mentions(r, "ordered true")) << r;
+        EXPECT_TRUE(Mentions(r, "ordered false")) << r;
+        EXPECT_FALSE(Mentions(r, "int16")) << "index is INT8 on BOTH sides: " << r;
+    }
+    {
+        // The OTHER branch of the closure argument: equal options that both set
+        // ordered must surface on the resolved node and be reported by R3.
+        SCOPED_TRACE("R3 (not R4): outer and leaf both {INT8, ordered: true}");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(d2, "Ctl", "ord_agree"));
+        ASSERT_EQ(n.kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(n.facts.dictionary_ordered);
+        const std::string r = ReasonFor(d2, "Ctl", "ord_agree");
+        EXPECT_TRUE(Mentions(r, "ordered")) << r;
+        EXPECT_FALSE(Mentions(r, "conflicting")) << r;
+    }
+    {
+        SCOPED_TRACE("R4: EQUAL options are not a conflict (spelling differences included)");
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "agree"));
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "agree_dflt"));  // {} == INT32
+        // the legal wrapper-declared control (no ordered anywhere).
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "wrap_plain"));
+        auto m = MapField(FieldByName(d2, "Ctl", "wrap_plain"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_TRUE(m->is_dictionary);
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int16()");
+    }
+
+    // =====================================================================
+    // R5 -- inner declaration under a SINGLE-FIELD repeated flatten wrapper
+    // =====================================================================
+    const std::string r5 = ReasonFor(d1, "Holder", "rep_inner_declared");
+    {
+        SCOPED_TRACE("R5: spec 7.1 gap 2 is now a hard error");
+        EXPECT_TRUE(Mentions(r5, "dt.WrapInner.value")) << r5;
+        EXPECT_TRUE(Mentions(r5, "repeated")) << r5;
+        // ...and the IR still DROPS the fact (DICT-1's SF-1 pin is untouched):
+        // R5 walks descriptors precisely because no IR node can see this.
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(d1, "Holder", "rep_inner_declared"));
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_FALSE(n.facts.dictionary);
+    }
+    {
+        // B1 -- THE false-positive guard. A MULTI-field flatten wrapper behind a
+        // `repeated` field is a LEGAL, EMITTED shape: BuildFlattenedRepeated
+        // returns List<Struct(W2)> without entering its chain loop, W2 is not
+        // IsFlattenedWrapper so the pass validates it on its own, and W2.k's
+        // scalar dictionary is honoured by BuildStructVariant.
+        SCOPED_TRACE("R5: field_count() == 1 -- a multi-field wrapper is untouched");
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "rep_multi"));
+        EXPECT_FALSE(IllegalIn(d2, "W2")) << "W2.k's scalar dictionary is legal";
+        EXPECT_TRUE(IsLegal(d2, "W2", "k"));
+    }
+
+    // =====================================================================
+    // S4 (step-4 review) -- R4's TWO load-bearing `is_repeated` terms.
+    // Both were mandatory step-2 residuals and both were unpinned: deleting
+    // either left the whole suite green. Each sub-case below reds on exactly one
+    // deletion.
+    // =====================================================================
+    {
+        // Term 1: `if (field->is_repeated()) return std::nullopt;`
+        // Without it R4 collects WD8.v {INT8} and VD8.s {INT64}, finds a
+        // "conflict", and STEALS the shape from R5 -- reporting a conflict
+        // between two declarations that ir.cpp never compares, instead of R5's
+        // accurate "the resulting column is a list".
+        SCOPED_TRACE("S4a: a repeated outer field is R5's business, never R4's");
+        const std::string r = ReasonFor(d2, "Chains", "r4_repeated_outer");
+        EXPECT_TRUE(Mentions(r, "inside a repeated")) << r;
+        EXPECT_TRUE(Mentions(r, "d2.WD8.v")) << r;
+        EXPECT_FALSE(Mentions(r, "conflicting")) << "R4 stole a shape from R5: " << r;
+    }
+    {
+        // Term 2: `if (inner->is_repeated()) break;` -- placed AFTER that inner's
+        // own option is collected, because BuildFlattenedRepeated DOES read
+        // BaseFacts(WD9.vs) and nothing below it. Without the break R4 reports a
+        // conflict between VD9.u and UD9.s, NEITHER of which ir.cpp reads, with
+        // advice ("make them identical") that leads to silence rather than a fix.
+        //
+        // This is ALSO spec 7.1 gap 2's disclosed SIBLING: a `repeated` hop
+        // inside a singular chain. It stays SILENT by design (Risk 5) and is safe
+        // by gap 2's own construction argument -- schema emission consumes the
+        // identical node and drops the declaration too, so the column is a plain
+        // list and no mis-read exists. DO NOT "close" this by generalising R5.
+        SCOPED_TRACE("S4b: R4 stops where ir.cpp stops reading (== gap 2's sibling)");
+        const FieldDescriptor* fd = FieldByName(d2, "Chains", "r4_repeated_inner");
+        ASSERT_NE(fd, nullptr);
+        ir::IrNode n = ir::BuildFieldIr(fd);
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_FALSE(n.facts.dictionary) << "both declarations below `vs` are dropped by ir.cpp";
+        auto r = DictionaryUnsupportedReason(fd);
+        EXPECT_FALSE(r.has_value()) << "must NOT report a conflict ir.cpp never sees: " << *r;
+    }
+    {
+        // Why the pass must KEEP its IsFlattenedWrapper skip, i.e. why step-4b's
+        // S2/S3 cannot be closed by dropping it: R1 is sound ONLY for a generated
+        // message's OWN columns. `flatten_field` inlining lives in
+        // GatherFieldsImpl / BuildFlattenedFieldListImpl only; INSIDE a flatten
+        // wrapper it is a no-op, so FfW.p's declaration is resolved and HONOURED.
+        // Judging FfW on its own would fire R1 on FfW.p -- a FALSE POSITIVE on a
+        // proto whose dictionary really is emitted.
+        SCOPED_TRACE("R1 is top-level-only: a flatten_field decl INSIDE a wrapper is honoured");
+        auto m = MapField(FieldByName(d2, "Chains", "ff_inside_wrapper"));
+        ASSERT_TRUE(m.has_value());
+        EXPECT_EQ(m->kind, FieldKind::SCALAR);
+        EXPECT_TRUE(m->is_dictionary)
+            << "the declaration is LIVE, so rejecting it is a false positive";
+        EXPECT_EQ(m->dict_index_type_expr, "arrow::int16()");
+        EXPECT_TRUE(IsLegal(d2, "Chains", "ff_inside_wrapper"));
+        // ...and, for the record, the rule set applied to the wrapper ITSELF does
+        // reject it. That asymmetry is exactly the hazard above.
+        EXPECT_TRUE(IllegalIn(d2, "FfW").has_value())
+            << "judging a flatten wrapper directly is UNSOUND for R1; the pass skips wrappers";
+    }
+
+    // =====================================================================
+    // S3 closure (step-4 re-review) -- struct / list-element / map-value descent.
+    // The walk judges a child message where emission deep-copies that child's own
+    // schema function AND the child is named DIRECTLY by a field of a judged
+    // message. A child behind a (fletcher.flatten) wrapper hop is NOT judged (the
+    // wrapper exclusion is required for R1's soundness) -- a disclosed hole, see
+    // docs/dictionary-option-spec.md section 7.1.1.
+    // =====================================================================
+    {
+        SCOPED_TRACE("S3: a child message's illegal declaration is judged from the HOST");
+        for (const char* host : {"HostSingular", "HostRepeated", "HostMap"}) {
+            SCOPED_TRACE(host);
+            auto e = IllegalIn(d2, host);
+            ASSERT_TRUE(e.has_value()) << host << " accepted an illegal child declaration";
+            EXPECT_TRUE(Mentions(*e, "d2.BadChild.k")) << *e;
+            EXPECT_TRUE(Mentions(*e, "ordered")) << *e;
+        }
+        // ...and the declaring message still reports it on its own, unchanged: the
+        // point of the closure is that the two verdicts now AGREE.
+        auto own = IllegalIn(d2, "BadChild");
+        ASSERT_TRUE(own.has_value());
+        EXPECT_EQ(*own, *IllegalIn(d2, "HostSingular"))
+            << "the verdict must not depend on which message the walk started from";
+    }
+    {
+        // The exclusion that keeps R1 sound (and leaves spec 7.1.1's S2 open by
+        // design). A flatten wrapper has NO generated schema function, so nothing
+        // inlines its fields and a declaration inside it is HONOURED -- see the
+        // Chains.ff_inside_wrapper block above and ctest
+        // GenErrors.DictionaryLiveInsideFlattenWrapperAccepted, which is the pin
+        // that actually reds (this pass is file-local; no unit test calls it).
+        SCOPED_TRACE("S3 closure never descends into an IsFlattenedWrapper child (S2 stays open)");
+        EXPECT_FALSE(IllegalIn(d2, "HostMapWrapper"))
+            << "descending into a flatten wrapper would make R1 a FALSE POSITIVE";
+    }
+
+    // =====================================================================
+    // D3 -- the message walk
+    // =====================================================================
+    {
+        // The walk descends through a (fletcher.flatten_field) wrapper exactly as
+        // the two inlining walks do, so it judges the fields that really become
+        // columns -- PBad.tags is one of RecFf's columns.
+        SCOPED_TRACE("D3: descent into a flatten_field wrapper judges the INLINED fields");
+        auto e = IllegalIn(d2, "RecFf");
+        ASSERT_TRUE(e.has_value());
+        EXPECT_TRUE(Mentions(*e, "d2.PBad.tags")) << *e;
+        EXPECT_TRUE(Mentions(*e, "list")) << *e;
+    }
+    {
+        SCOPED_TRACE("D3: the FIRST offender in declaration order wins");
+        auto e = IllegalIn(d2, "Ctl");
+        ASSERT_TRUE(e.has_value());
+        // Ctl fields 1-5 are legal; field 6 (`disagree`) is the first offender.
+        EXPECT_EQ(*e, r4) << *e;
+    }
+    {
+        SCOPED_TRACE("D3: a clean message is nullopt");
+        EXPECT_FALSE(IllegalIn(d1, "Pair"));
+        EXPECT_FALSE(IllegalIn(d2, "W1"));
+    }
+
+    // =====================================================================
+    // Legal controls -- catches an implementation that rejects non-scalars
+    // regardless of whether a dictionary is declared at all.
+    // =====================================================================
+    {
+        SCOPED_TRACE("no-option controls: repeated / map / wrapper / struct");
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "plain_tags"));
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "plain_lbl"));
+        EXPECT_TRUE(IsLegal(d2, "Ctl", "plain_wrap"));
+        EXPECT_TRUE(IsLegal(d1, "Holder", "on_inner"));
+        EXPECT_TRUE(IsLegal(d1, "Holder", "on_none"));
+        EXPECT_TRUE(IsLegal(d1, "Ev", "plain"));
+        EXPECT_TRUE(IsLegal(d1, "Ev", "i16"));
+        EXPECT_TRUE(IsLegal(d2, "Plain2", "a"));
+    }
+
+    // =====================================================================
+    // "each with a distinct reason" (story) -- all six texts pairwise distinct.
+    // =====================================================================
+    {
+        SCOPED_TRACE("all six rule texts are pairwise distinct");
+        const std::set<std::string> texts = {r1, r2_list, r2_unsupported, r3, r4, r5};
+        EXPECT_EQ(texts.size(), 6u);
     }
 }

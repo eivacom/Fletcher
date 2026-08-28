@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-2 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryOnRepeatedRejected.
+//
+// Isolates rule R2 (the kind gate, locked #9 / spec section 4): a
+// (fletcher.dictionary) declaration on a field that maps to a LIST column, not a
+// scalar one. The plugin must FAIL with "requires a scalar column" naming the
+// field, for EVERY option set -- an illegal declaration is a defect in the
+// .proto, not a backend gap, so the ctest deliberately asks for `ipc` (no
+// RecordBatch accessor / Rust backend) to prove DICT-1.5's guard is not what
+// fires. `ok` is a legal scalar dictionary in the same message, so a plugin that
+// rejected the message wholesale rather than the offending field would still be
+// visible in the reported field name.
+syntax = "proto3";
+package integration.coverage.dict2_repeated;
+
+import "fletcher/options.proto";
+
+message Dict2RepeatedGuard {
+  repeated string tags = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT16}];
+  string ok = 2 [(fletcher.dictionary) = {}];
+}

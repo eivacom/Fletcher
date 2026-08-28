@@ -246,6 +246,38 @@ specification, including which shapes accept the option and where the
 declaration is dropped or propagated by `(fletcher.flatten)` /
 `(fletcher.flatten_field)`.
 
+**Rejected declarations.** The plugin fails generation — for **every** option
+set, with an error naming the offending field — when the option is declared on any
+field that becomes a column of a generated message: the message's own fields, a
+field inlined through `(fletcher.flatten_field)`, and any field of a nested
+message used as a struct field, a list element or a map value (including a message
+from an **imported** `.proto`). It is rejected when declared:
+on a field that does not map to a **scalar** column (`repeated`, `map<K,V>`, a
+struct message, a nested list); with `ordered: true` (not supported in v1); on a
+`(fletcher.flatten_field)` **wrapper field** (its fields are inlined as separate
+columns, so there is no single column to encode — this includes a well-known
+wrapper such as `google.protobuf.StringValue` when it carries `flatten_field`);
+twice on one `(fletcher.flatten)` chain with **disagreeing** settings (identical
+settings are fine, and `= {}` / `DICTIONARY_INDEX_UNSPECIFIED` /
+`DICTIONARY_INDEX_INT32` all count as identical); and on the inner field of a
+**single-field** `(fletcher.flatten)` wrapper reached through a `repeated` field
+(the resulting column is a list). `(fletcher.flatten_field)` on a plain **scalar**
+field is a documented no-op, so a scalar carrying both options is legal; and a
+well-known wrapper field carrying the option **without** `flatten_field` is a
+legal nullable dictionary.
+
+A few shapes are **not** reached by the check and are accepted silently, all of
+them behind a `(fletcher.flatten)` wrapper — the check cannot look inside a
+wrapper, because a `(fletcher.flatten_field)` declaration there really *is*
+honoured and rejecting it would break working protos. Specifically: a wrapper
+message reached through a `map` value or a struct field; a declaration below a
+`repeated` hop inside a singular wrapper chain; and a declaration on a **nested
+message reached through a wrapper** (so an imported message's illegal declaration
+is reported when it is used directly, but not when a wrapper sits in between). All
+of these drop `ordered: true` silently. See
+[docs/dictionary-option-spec.md §7.1.1](dictionary-option-spec.md) for the exact
+boundary.
+
 **v1 limitation.** A proto with a `(fletcher.dictionary)` field must omit
 `--fletcher_opt=accessor,rust` — the plugin rejects generation for those two
 backends with an error naming the field, until round RIR migrates the
