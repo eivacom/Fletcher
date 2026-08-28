@@ -92,6 +92,15 @@ it is a stop-and-ask. RIR is the tail; it must not grow a tail of its own.
   option's `index_type`. Then **remove the DICT-1.5 front-end guard**. The
   dictionary flag is already on the IR as `FieldFacts.dictionary` (GIR locked
   #7), so this is an emitter change, not an IR change.
+- **`FieldMapping.dict_index_type_expr` is retained FOR RIR.** *(Recorded
+  2026-08-28, DICT-2 step-2 ruling (b).)* DICT-2 populates
+  `is_dictionary` + `dict_index_type_expr` on the flat projection even though
+  nothing in DICT reads them — `dict_index_type_expr` is the exact spelling
+  spec §5.1 names for the accessor's positional `dictionary(<idx>, <val>)`
+  type gate, which is RIR's to build. When RIR migrates the accessor onto the
+  IR it should read `ir::FieldFacts.dictionary_index_kind` directly and then
+  **retire both fields with `FieldKind`**, rather than carrying the projection
+  spelling forward.
 - **Carry the `nested_leaf_is_scalar` distinction.** GIR-10 routed scalar-leaf
   nesting to the `FieldKind`-consuming emitters by reusing `FieldKind::NESTED_LIST`
   + an additive `nested_leaf_is_scalar` bool (no new enum value, so the read-only

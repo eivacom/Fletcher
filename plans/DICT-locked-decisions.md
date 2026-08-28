@@ -59,6 +59,15 @@ stop-and-ask. Full rationale in
    `NESTED_LIST` map to non-`SCALAR` kinds and are a codegen error with a clear
    `UnsupportedReason`. Dictionary value type must be primitive/scalar.
 
+   *(Clarified 2026-08-28, DICT-2 step-2 ruling (a).) "a clear
+   `UnsupportedReason`" means a clear reason **string**, not the literal
+   `UnsupportedReason()` function. That function's sole consumer is
+   `generator.cpp:619`, which appends it to a skipped-fields **comment** and
+   lets the plugin exit 0 — so routing a rejection through it would make
+   "a codegen error" not an error at all, contradicting this decision's own
+   words. DICT-2 therefore rejects via a fatal front-end pass that sets
+   protoc's `*error`, carrying a reason string of equivalent clarity.)
+
 10. **Read the option without linking `options.pb.cc`** — the constraint is the
     mechanism-independent part, and it holds. *(Revisited 2026-08-28.)* The
     original mechanism was a hand-rolled unknown-field walker over the
