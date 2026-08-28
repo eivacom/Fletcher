@@ -6,7 +6,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "option_reader.hpp"
 #include "type_mapper.hpp"
 
 namespace fletcher::ir {
@@ -33,6 +35,34 @@ FieldFacts BaseFacts(const FD* field) {
     const bool proto2 = field->file()->syntax() == google::protobuf::FileDescriptor::SYNTAX_PROTO2;
     f.proto2_optional = proto2 && field->label() == FD::LABEL_OPTIONAL;
     f.proto3_optional = !proto2 && field->has_optional_keyword();
+    // DICT-1: the (fletcher.dictionary) option is read HERE, in the one place
+    // every field-built node passes through, so every such node carries the fact
+    // identically.
+    //
+    // PLACEMENT RULE (step-4b SF-2, qualified by re-review RR-1) — a dictionary
+    // declaration is a FIELD-level fact, and it lands on EVERY node that is
+    // itself built from BaseFacts(field). Precisely (all pinned by
+    // TypeMapperTest.ReadsDictionaryOption):
+    //   * singular scalar / WKT wrapper / struct / map / oneof-unsupported: the
+    //     one node built from the field. Map KEY and VALUE nodes are built from
+    //     the synthetic map entry's own fields and therefore do NOT carry it.
+    //   * `repeated` scalar or enum: the LIST node AND its element, because
+    //     BuildRepeatedScalarOrEnum calls BaseFacts(field) for both.
+    //   * message-level-flatten propagation: ApplyDictionaryFacts mirrors that,
+    //     so a wrapper over a `repeated` inner field also lands on both.
+    //   * BUT NOT the INTERMEDIATE levels of a nested-list shape: the extra list
+    //     levels that BuildFlattenedRepeated builds with MakeListOf keep DEFAULT
+    //     facts, so `repeated <wrapper of a repeated scalar>` reads
+    //     outer LIST = true, intermediate LIST = FALSE, leaf SCALAR = true. A
+    //     consumer walking down therefore finds -> loses -> refinds the fact;
+    //     do not treat an interior `dictionary == false` as authoritative.
+    // Gating stays on the TOP-LEVEL node's kind, never on "some node has
+    // dictionary = true". See docs/dictionary-option-spec.md 7.1.
+    if (const std::optional<DictionaryOption> d = ReadFieldDictionaryOption(field)) {
+        f.dictionary = true;
+        f.dictionary_index_kind = d->index_kind;
+        f.dictionary_ordered = d->ordered;
+    }
     return f;
 }
 
@@ -255,6 +285,24 @@ std::string FlattenIgnoredWarning(const Descriptor* msg) {
            " fields); apply flatten to individual fields instead";
 }
 
+// DICT-1 (step-4b SF-2): apply a propagated dictionary declaration to `node` AND
+// to the nodes below it that were built from the SAME proto field — today that is
+// a LIST's element (a flatten wrapper whose single inner field is `repeated`), so
+// the flatten path lands the fact in the same places BaseFacts would have. Leaf
+// wins is enforced per node: an existing declaration is never overwritten.
+void ApplyDictionaryFacts(IrNode& node, const DictionaryOption& d) {
+    if (!node.facts.dictionary) {
+        node.facts.dictionary = true;
+        node.facts.dictionary_index_kind = d.index_kind;
+        node.facts.dictionary_ordered = d.ordered;
+    }
+    if (node.kind == NodeKind::LIST) {
+        if (const ListNode* list = std::get_if<ListNode>(&node.node)) {
+            if (list->element) ApplyDictionaryFacts(*list->element, d);
+        }
+    }
+}
+
 // Singular message field whose target has (fletcher.flatten): resolve through
 // the wrapper and return the inner field's IR, propagating the outer field's
 // nullable when set. Mirrors type_mapper's MapFlattenedSingular.
@@ -272,6 +320,20 @@ IrNode BuildFlattenedSingular(const FD* field) {
     const FD* inner = msg->field(0);
     IrNode inner_ir = BuildFieldIr(inner);
     if (IsFieldNullable(field)) inner_ir.facts.nullable = true;
+    // DICT-1: propagate the OUTER (wrapper) field's (fletcher.dictionary) onto
+    // the resolved inner node. What is returned is the INNER field's IR, so a
+    // wrapper-declared option would otherwise be silently dropped and a
+    // value-typed column emitted for a field the author declared dictionary.
+    // LEAF WINS when both declare it — the most specific declaration governs, so
+    // a shared-library wrapper cannot dictate a consumer's column. A DISAGREEING
+    // pair is accepted silently: facts.warning is no longer rendered anywhere
+    // post-GIR, so escalating the conflict belongs to the item that owns the
+    // error channel, not here.
+    if (!inner_ir.facts.dictionary) {
+        if (const std::optional<DictionaryOption> outer = ReadFieldDictionaryOption(field)) {
+            ApplyDictionaryFacts(inner_ir, *outer);
+        }
+    }
     return inner_ir;
 }
 
@@ -280,6 +342,24 @@ IrNode BuildFlattenedSingular(const FD* field) {
 // `repeated`. Mirrors type_mapper's MapFlattenedRepeated (including its current
 // treatment of scalar leaves: depth-0 collapses to List<Scalar>, depth>0 is
 // Unsupported until GIR-10).
+//
+// DICT-1 (step-4b SF-1) — KNOWN GAP, deliberately deferred, owned by the
+// validation item that owns the error channel (DICT-2), tracked next to the
+// (fletcher.flatten_field) hole in docs/dictionary-option-spec.md §7.1:
+// the OUTERMOST node and the leaf here are built from BaseFacts(FIELD), i.e. the
+// OUTER field, so an outer `[(fletcher.dictionary)]` is carried on those (but NOT
+// on the intermediate list levels of a nested-list shape — RR-1, and see the
+// PLACEMENT RULE on BaseFacts) — while this path never
+// calls BuildFieldIr(inner), so a dictionary declared on the wrapper's INNER
+// field is NOT read, and `repeated W xs` therefore disagrees with `W w` (which
+// goes through BuildFlattenedSingular). Not fixed here because the resulting node
+// is always LIST/UNSUPPORTED, which DICT-2 rejects as non-SCALAR anyway, and
+// mirroring the propagation across this function's seven return sites (four
+// LIST, three MakeUnsupported) would put
+// the GIR-10 nested-list shapes at risk for no user-visible gain. Today's
+// behaviour is PINNED by TypeMapperTest.ReadsDictionaryOption
+// ("flattened repeated: inner-declared dictionary is dropped (SF-1)"), so
+// closing the gap flips a test rather than silently changing behaviour.
 IrNode BuildFlattenedRepeated(const FD* field) {
     const Descriptor* msg = field->message_type();
 

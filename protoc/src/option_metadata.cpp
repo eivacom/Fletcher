@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "option_reader.hpp"
+
 namespace fletcher {
 
 namespace {
@@ -242,18 +244,24 @@ class OptionMetadataResolver::Impl {
     // Parsed options keyed on the address of the source options message.
     // Descriptors are immutable for the pool's lifetime, and every
     // options-less descriptor shares one default instance that parses to empty.
+    //
+    // MEMBER-ORDER INVARIANT — NOT a style choice: the cached messages are
+    // created from `factory`'s prototypes, so they MUST be destroyed BEFORE it.
+    // Members destruct in reverse declaration order, so `factory` has to stay
+    // declared ABOVE `cache`. Swapping these two lines is a silent
+    // use-after-free at resolver teardown, not a reordering.
     mutable std::map<const Message*, std::unique_ptr<Message>> cache;
 
     const Message* ParsedOptions(const Message& opts, const Descriptor* pool_opts_desc) const {
         auto it = cache.find(&opts);
         if (it != cache.end()) return it->second.get();
 
-        // The linked-in options message carries the third-party extension in its
-        // UnknownFieldSet (the plugin does not link the declaring .proto).
-        // Serializing round-trips those bytes; the DynamicMessage re-parses them
-        // as a real extension because its pool knows the extension.
-        std::unique_ptr<Message> dyn(factory.GetPrototype(pool_opts_desc)->New());
-        if (!dyn->ParseFromString(opts.SerializeAsString())) return nullptr;
+        // The serialize/re-parse round-trip lives in option_reader (DICT-1): one
+        // implementation of the "custom option the plugin does not link" trick,
+        // two typed consumers (third-party options -> Arrow metadata strings
+        // here, Fletcher's own options -> typed values there).
+        std::unique_ptr<Message> dyn = ReparseOptionsWithPool(opts, pool_opts_desc, &factory);
+        if (!dyn) return nullptr;
         const Message* raw = dyn.get();
         cache.emplace(&opts, std::move(dyn));
         return raw;

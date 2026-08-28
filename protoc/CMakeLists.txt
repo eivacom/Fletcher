@@ -25,6 +25,7 @@ add_library(fletcher_plugin_core STATIC
     src/ts_backend_visitor.cpp
     src/generator.cpp
     src/option_metadata.cpp
+    src/option_reader.cpp
     src/recordbatch_accessor_emitter.cpp
     src/schema_ipc.cpp)
 

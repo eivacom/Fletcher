@@ -105,6 +105,19 @@ enum class DictionaryModifier {
     DICTIONARY,
 };
 
+// DICT-1: the index type of a dictionary-encoded column, as declared by
+// (fletcher.dictionary).index_type. A dedicated 4-value enum rather than a reuse
+// of LogicalKind::INT8/16/32/64: those slots have no cpp_backend_type_table
+// entry (no proto type maps to int8/int16), so reuse would buy nothing and
+// invite someone to feed an index kind to LookupScalar. Four values make the
+// backend mapping an exhaustive switch with no `default`.
+enum class DictionaryIndexKind {
+    INT8,
+    INT16,
+    INT32,
+    INT64,
+};
+
 struct LogicalType {
     LogicalKind kind;
     std::optional<int32_t> fixed_size_binary_width;
@@ -137,7 +150,13 @@ struct FieldFacts {
     std::string proto_full_name;
     int32_t wire_field_id = 0;
     bool nullable = false;
+    // DICT-1: `dictionary` is PRESENCE of (fletcher.dictionary) on the field;
+    // the two fields below are its payload and are only meaningful when it is
+    // true (they keep their defaults otherwise). Deliberately flat rather than a
+    // sub-struct: locked decision #5 and test_ir.cpp both name `facts.dictionary`.
     bool dictionary = false;
+    DictionaryIndexKind dictionary_index_kind = DictionaryIndexKind::INT32;
+    bool dictionary_ordered = false;
     bool repeated = false;
     bool map_entry = false;
     bool proto3_optional = false;

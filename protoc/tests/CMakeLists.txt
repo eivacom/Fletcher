@@ -18,8 +18,13 @@ target_link_libraries(fletcher_proto_plugin_tests PRIVATE
 # GIR-5: committed per-node-kind .ipc goldens (captured from today's emitter)
 # live in tests/golden. The forcing test reads them from the source tree so they
 # are reviewed as source, never regenerated silently from the build tree.
+# DICT-1: the forcing test compiles the SHIPPED fletcher/options.proto source
+# text into a test DescriptorPool (see proto_text_pool.hpp), so the option
+# surface itself — extension number, sub-field names, enum value names — is
+# asserted rather than duplicated inline.
 target_compile_definitions(fletcher_proto_plugin_tests PRIVATE
-    SCHEMA_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+    SCHEMA_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
+    FLETCHER_OPTIONS_PROTO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../include")
 
 include(GoogleTest)
 gtest_discover_tests(fletcher_proto_plugin_tests DISCOVERY_MODE PRE_TEST)

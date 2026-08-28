@@ -120,7 +120,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 
 | Item | Title | Forcing test | Status |
 |------|-------|--------------|--------|
-| DICT-1 | Option surface + reader | `TypeMapperTest.ReadsDictionaryOption` | ⚪ |
+| DICT-1 | Option surface + reader | `TypeMapperTest.ReadsDictionaryOption` | 🟢 |
 | DICT-1.5 | Front-end guard: reject `accessor`/`rust` for dictionary fields | `GenErrors.DictionaryRejectedBy_{accessor,rust}` | ⚪ |
 | DICT-2 | Mapper wiring + validation | `TypeMapperTest.DictionaryMappingAndRejections` | ⚪ |
 | DICT-3 | Schema emission (ONE IR schema-visitor) | `DictionaryTest.SchemaIsDictionaryType` | ⚪ |
@@ -132,7 +132,7 @@ Suite shape: integration `+2 .proto` (`dictionary.proto`), `+1` test TU
 `test_type_mapper.cpp`. **DICT-1.5** adds its two negative plugin-exit tests
 beside GIR-10's existing backend-guard negatives in
 `integration-tests/protoc-coverage` (`GenErrors.*`), plus a dictionary-bearing
-fixture proto there. **No accessor test TU and no Rust-crate change** — the
+fixture proto there. DICT-1 landed `protoc/tests/proto_text_pool.hpp` (an all-`inline`, per-test source-text pool helper) and a new `option_reader` module. **No accessor test TU and no Rust-crate change** — the
 accessor suites appear only as RBA no-drift checks, since this round does not
 touch the accessor emitter (the old DICT-6 moved to RIR).
 

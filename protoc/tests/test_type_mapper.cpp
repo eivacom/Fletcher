@@ -3,8 +3,18 @@
 //
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/unknown_field_set.h>
+#include <google/protobuf/wrappers.pb.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <optional>
+#include <string>
+
+#include "cpp_backend_schema_visitor.hpp"
+#include "ir.hpp"
+#include "option_reader.hpp"
+#include "proto_text_pool.hpp"
 #include "type_mapper.hpp"
 
 using namespace fletcher;
@@ -680,4 +690,632 @@ TEST(TypeMapperTest, CrossFileReferenceIsNoLongerUnsupported) {
     // MapField should now succeed for cross-file references.
     const auto* fd = consumer->message_type(0)->field(0);
     EXPECT_TRUE(MapField(fd).has_value());
+}
+
+// ===========================================================================
+// DICT-1 forcing test: the (fletcher.dictionary) option surface + typed reader
+// ===========================================================================
+// SUITE NAME: `TypeMapperTest` is retained verbatim for tracker fidelity — this
+// is round DICT's named forcing test — but type_mapper.{hpp,cpp} is NOT touched
+// by DICT-1. The code actually under test is `option_reader` (the typed
+// (fletcher.dictionary) reader) and `ir` (fact population + message-level
+// flatten propagation).
+//
+// Two harness routes, both pre-existing in-tree patterns:
+//   (1) SOURCE TEXT — compile the SHIPPED protoc/include/fletcher/options.proto
+//       plus test protos that use it (proto_text_pool.hpp). The realistic route:
+//       BuildFile's option interpreter resolves (fletcher.dictionary) against
+//       the pool and stores it in the linked FieldOptions' UnknownFieldSet,
+//       because the C++ class does not know the extension. Using the shipped
+//       file means this test also asserts spec section 2 / locked #2 (number
+//       50001, sub-field names, enum value names).
+//   (2) UNKNOWN-FIELD INJECTION — mutate the FieldDescriptorProto's options
+//       before BuildFile (test_ir.cpp:56-61 pattern). Required for the byte
+//       sequences .proto source text cannot express: an undeclared enum number,
+//       a truncated payload, a wrong wire type, and the extension-absent pool.
+
+namespace {
+
+using fletcher::ir::DictionaryIndexKind;
+using fletcher::test::AddFletcherOptions;
+using fletcher::test::ProtoTextPool;
+
+// Route 2 primitives.
+void InjectDictBytes(FieldDescriptorProto* f, const std::string& payload) {
+    auto* opts = f->mutable_options();
+    opts->GetReflection()->MutableUnknownFields(opts)->AddLengthDelimited(50001, payload);
+}
+
+void InjectBytesAt(FieldDescriptorProto* f, int number, const std::string& payload) {
+    auto* opts = f->mutable_options();
+    opts->GetReflection()->MutableUnknownFields(opts)->AddLengthDelimited(number, payload);
+}
+
+void InjectDictVarint(FieldDescriptorProto* f, uint64_t value) {
+    auto* opts = f->mutable_options();
+    opts->GetReflection()->MutableUnknownFields(opts)->AddVarint(50001, value);
+}
+
+// The serialized payload of a length-delimited unknown field on `field`'s
+// options, or nullopt. Used to prove two sub-cases really do carry IDENTICAL
+// bytes, so the only difference between them is which pool declares the number.
+std::optional<std::string> UnknownPayloadAt(const FieldDescriptor* field, int number) {
+    const auto& opts = field->options();
+    const auto& unknown = opts.GetReflection()->GetUnknownFields(opts);
+    for (int i = 0; i < unknown.field_count(); ++i) {
+        const auto& uf = unknown.field(i);
+        if (uf.number() == number &&
+            uf.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED) {
+            return uf.length_delimited();
+        }
+    }
+    return std::nullopt;
+}
+
+const FieldDescriptor* FieldByName(const FileDescriptor* file, const std::string& msg,
+                                   const std::string& field) {
+    const Descriptor* d = file->FindMessageTypeByName(msg);
+    if (d == nullptr) return nullptr;
+    return d->FindFieldByName(field);
+}
+
+FileDescriptorProto InjectedFile(const std::string& name) {
+    FileDescriptorProto fdp;
+    fdp.set_name(name);
+    fdp.set_syntax("proto3");
+    auto* msg = fdp.add_message_type();
+    msg->set_name("Inj");
+    return fdp;
+}
+
+FieldDescriptorProto* InjectedField(FileDescriptorProto* fdp, const std::string& name, int number) {
+    auto* f = fdp->mutable_message_type(0)->add_field();
+    f->set_name(name);
+    f->set_number(number);
+    f->set_type(FieldDescriptorProto::TYPE_STRING);
+    f->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
+    return f;
+}
+
+// `DictionaryOptions{ index_type: INT16, ordered: true }` on the wire. Also the
+// EXACT serialization of `zz.Foreign{ x: 2, y: true }` below — protobuf's wire
+// format carries no type identity, which is why the reader's answer must (and
+// does) hinge on which pool DECLARES 50001, not on the bytes.
+constexpr const char* kI16OrderedBytes = "\x08\x02\x10\x01";
+constexpr int kI16OrderedLen = 4;
+
+// The realistic (route 1) fixture.
+constexpr const char* kDictSchema = R"(
+syntax = "proto3";
+package dt;
+import "fletcher/options.proto";
+import "google/protobuf/wrappers.proto";
+
+message Ev {
+  string plain  = 1;
+  string empty  = 2 [(fletcher.dictionary) = {}];
+  string unspec = 3 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_UNSPECIFIED }];
+  string i8     = 4 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT8 }];
+  string i16    = 5 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT16 }];
+  string i32    = 6 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT32 }];
+  string i64    = 7 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT64 }];
+  string ord    = 8 [(fletcher.dictionary) = { ordered: true }];
+  string ord16  = 9 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT16,
+                                               ordered: true }];
+}
+
+message WrapOuter {
+  option (fletcher.flatten) = true;
+  string value = 1;
+}
+
+message WrapInner {
+  option (fletcher.flatten) = true;
+  string value = 1 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT8 }];
+}
+
+message WrapRepeated {
+  option (fletcher.flatten) = true;
+  repeated string values = 1;
+}
+
+message Holder {
+  WrapOuter on_wrapper = 1 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT64,
+                                                      ordered: true }];
+  WrapInner on_inner = 2;
+  WrapInner on_both = 3 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT64 }];
+  WrapOuter on_none = 4;
+  // wrapper whose single inner field is `repeated`: the propagated fact must
+  // land on the LIST *and* its element (SF-2 placement rule).
+  WrapRepeated on_rep_wrapper = 5 [(fletcher.dictionary) = {
+                                       index_type: DICTIONARY_INDEX_INT16 }];
+  // flattened REPEATED shapes (SF-1): outer-declared is carried, inner-declared
+  // is dropped — today's behaviour, deliberately deferred to DICT-2.
+  repeated WrapOuter rep_outer_declared = 6 [(fletcher.dictionary) = {
+                                                 index_type: DICTIONARY_INDEX_INT16 }];
+  repeated WrapInner rep_inner_declared = 7;
+  // RR-1: `repeated <wrapper of a repeated scalar>` -> List<List<Scalar>>. The
+  // INTERMEDIATE list level is produced by MakeListOf and gets DEFAULT facts.
+  repeated WrapRepeated rep_nested = 8 [(fletcher.dictionary) = {
+                                            index_type: DICTIONARY_INDEX_INT16 }];
+}
+
+message Pair {
+  string a = 1;
+  string b = 2;
+}
+
+message Rec {
+  Pair p = 1 [(fletcher.flatten_field) = true,
+              (fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT16 }];
+  string s = 2 [(fletcher.flatten_field) = true,
+                (fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT8 }];
+}
+
+message Wkt {
+  google.protobuf.StringValue s = 1 [(fletcher.dictionary) = {
+                                        index_type: DICTIONARY_INDEX_INT16 }];
+}
+
+// Non-scalar / non-singular carriers (SF-4).
+message Shapes {
+  repeated string tags = 1 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT16 }];
+  map<string, string> labels = 2 [(fletcher.dictionary) = {
+                                      index_type: DICTIONARY_INDEX_INT8 }];
+  oneof choice {
+    string oc = 3 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT64 }];
+  }
+}
+
+message Member {
+  string dict  = 1 [(fletcher.dictionary) = { index_type: DICTIONARY_INDEX_INT16 }];
+  string plain = 2;
+}
+
+message MemberHolder {
+  Member m = 1;
+}
+)";
+
+// A FOREIGN message-typed FieldOptions extension, declared at `number`. The
+// number is substituted so the SAME declaration + SAME payload bytes can be
+// tested twice: at 50001 in a pool that does NOT know fletcher/options.proto,
+// and at 60200 in a pool that DOES. That pair is what makes the reader's
+// scoping observable in-suite rather than only under mutation.
+std::string ForeignSchema(int number) {
+    return R"(
+syntax = "proto3";
+package zz;
+import "google/protobuf/descriptor.proto";
+
+message Foreign { int32 x = 1; bool y = 2; }
+extend google.protobuf.FieldOptions { Foreign foreign = )" +
+           std::to_string(number) + R"(; }
+
+message Msg {
+  string f = 1 [(zz.foreign) = { x: 2, y: true }];
+}
+)";
+}
+
+}  // namespace
+
+TEST(TypeMapperTest, ReadsDictionaryOption) {
+    // ---- route 1: the shipped option surface + a realistic schema ----------
+    ProtoTextPool pool;
+    ASSERT_TRUE(pool.seeded());
+    ASSERT_NE(AddFletcherOptions(pool), nullptr);
+    ASSERT_NE(pool.AddLinked(google::protobuf::StringValue::GetDescriptor()->file()), nullptr);
+    const FileDescriptor* schema = pool.Add("dict_schema.proto", kDictSchema);
+    ASSERT_NE(schema, nullptr);
+
+    // -- absence ------------------------------------------------------------
+    {
+        SCOPED_TRACE("absence -> no dictionary");
+        const FieldDescriptor* f = FieldByName(schema, "Ev", "plain");
+        ASSERT_NE(f, nullptr);
+        EXPECT_FALSE(ReadFieldDictionaryOption(f).has_value());
+        EXPECT_FALSE(HasFieldDictionary(f));
+    }
+
+    // -- presence + index-type round trip (decoded by enum SYMBOL name) -----
+    struct IndexCase {
+        const char* field;
+        DictionaryIndexKind kind;
+    };
+    const IndexCase kIndexCases[] = {
+        {"empty", DictionaryIndexKind::INT32},   // = {} -> defaults
+        {"unspec", DictionaryIndexKind::INT32},  // UNSPECIFIED resolves to int32
+        {"i8", DictionaryIndexKind::INT8},      {"i16", DictionaryIndexKind::INT16},
+        {"i32", DictionaryIndexKind::INT32},    {"i64", DictionaryIndexKind::INT64},
+    };
+    for (const IndexCase& c : kIndexCases) {
+        SCOPED_TRACE(std::string("index round trip: Ev.") + c.field);
+        const FieldDescriptor* f = FieldByName(schema, "Ev", c.field);
+        ASSERT_NE(f, nullptr);
+        EXPECT_TRUE(HasFieldDictionary(f));
+        auto d = ReadFieldDictionaryOption(f);
+        ASSERT_TRUE(d.has_value());
+        EXPECT_EQ(d->index_kind, c.kind);
+        EXPECT_FALSE(d->ordered);
+    }
+
+    // -- ordered = true (proto3 omits a defaulted false, so this is the only
+    //    thing that proves the `ordered` sub-field is decoded at all) --------
+    {
+        SCOPED_TRACE("source text: ordered: true");
+        auto d = ReadFieldDictionaryOption(FieldByName(schema, "Ev", "ord"));
+        ASSERT_TRUE(d.has_value());
+        EXPECT_TRUE(d->ordered);
+        EXPECT_EQ(d->index_kind, DictionaryIndexKind::INT32);
+
+        auto d16 = ReadFieldDictionaryOption(FieldByName(schema, "Ev", "ord16"));
+        ASSERT_TRUE(d16.has_value());
+        EXPECT_TRUE(d16->ordered);
+        EXPECT_EQ(d16->index_kind, DictionaryIndexKind::INT16);
+    }
+
+    // -- the facts land on ir::FieldFacts (locked #5 carrier) ---------------
+    {
+        SCOPED_TRACE("ir::FieldFacts population");
+        ir::IrNode plain = ir::BuildFieldIr(FieldByName(schema, "Ev", "plain"));
+        EXPECT_EQ(plain.kind, ir::NodeKind::SCALAR);
+        EXPECT_FALSE(plain.facts.dictionary);
+        EXPECT_EQ(plain.facts.dictionary_index_kind, DictionaryIndexKind::INT32);
+        EXPECT_FALSE(plain.facts.dictionary_ordered);
+
+        ir::IrNode ord16 = ir::BuildFieldIr(FieldByName(schema, "Ev", "ord16"));
+        // dictionary is a scalar MODIFIER: no container peer appears.
+        EXPECT_EQ(ord16.kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(ord16.facts.dictionary);
+        EXPECT_EQ(ord16.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        EXPECT_TRUE(ord16.facts.dictionary_ordered);
+
+        ir::IrNode i64 = ir::BuildFieldIr(FieldByName(schema, "Ev", "i64"));
+        EXPECT_TRUE(i64.facts.dictionary);
+        EXPECT_EQ(i64.facts.dictionary_index_kind, DictionaryIndexKind::INT64);
+        EXPECT_FALSE(i64.facts.dictionary_ordered);
+    }
+
+    // -- SF-4: repeated / map / oneof / struct-member carriers --------------
+    // Pins the PLACEMENT RULE asserted by BaseFacts' comment: the nodes built
+    // from the field carries the fact, and gating is on the top-level kind.
+    {
+        SCOPED_TRACE("repeated scalar: LIST *and* element carry the fact");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Shapes", "tags"));
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        const auto& list = std::get<ir::ListNode>(n.node);
+        ASSERT_NE(list.element, nullptr);
+        EXPECT_EQ(list.element->kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(list.element->facts.dictionary);
+        EXPECT_EQ(list.element->facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+    }
+    {
+        SCOPED_TRACE("map: the MAP node carries it; key/value nodes do not");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Shapes", "labels"));
+        ASSERT_EQ(n.kind, ir::NodeKind::MAP);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT8);
+        const auto& mp = std::get<ir::MapNode>(n.node);
+        ASSERT_NE(mp.key, nullptr);
+        ASSERT_NE(mp.value, nullptr);
+        // key/value are built from the synthetic MapEntry's own fields, which
+        // carry no option — so a consumer must not look for the fact there.
+        EXPECT_FALSE(mp.key->facts.dictionary);
+        EXPECT_FALSE(mp.value->facts.dictionary);
+    }
+    {
+        SCOPED_TRACE("oneof member: node is UNSUPPORTED but the fact is still read");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Shapes", "oc"));
+        EXPECT_EQ(n.kind, ir::NodeKind::UNSUPPORTED);
+        EXPECT_TRUE(n.facts.in_real_oneof);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT64);
+    }
+    {
+        SCOPED_TRACE("struct member: each member carries its own declaration");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "MemberHolder", "m"));
+        ASSERT_EQ(n.kind, ir::NodeKind::STRUCT);
+        EXPECT_FALSE(n.facts.dictionary);  // the holder field declares nothing
+        const auto& st = std::get<ir::StructNode>(n.node);
+        ASSERT_EQ(st.fields.size(), 2u);
+        ASSERT_NE(st.fields[0].type, nullptr);
+        ASSERT_NE(st.fields[1].type, nullptr);
+        EXPECT_TRUE(st.fields[0].type->facts.dictionary);
+        EXPECT_EQ(st.fields[0].type->facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        EXPECT_FALSE(st.fields[1].type->facts.dictionary);
+    }
+
+    // -- message-level (fletcher.flatten) propagation -----------------------
+    {
+        SCOPED_TRACE("flatten wrapper: option on the wrapper field reaches the inner node");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "on_wrapper"));
+        EXPECT_EQ(n.kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT64);
+        EXPECT_TRUE(n.facts.dictionary_ordered);
+    }
+    {
+        SCOPED_TRACE("flatten wrapper: option on the inner field");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "on_inner"));
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT8);
+    }
+    {
+        SCOPED_TRACE("flatten wrapper: BOTH declared with different index types -> leaf wins");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "on_both"));
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT8);  // leaf, not INT64
+        EXPECT_FALSE(n.facts.dictionary_ordered);
+    }
+    {
+        SCOPED_TRACE("flatten wrapper: neither declares -> no dictionary");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "on_none"));
+        EXPECT_FALSE(n.facts.dictionary);
+    }
+    {
+        // SF-2: propagation must not land the fact on the LIST alone — that would
+        // disagree with BuildRepeatedScalarOrEnum, which writes both.
+        SCOPED_TRACE("flatten wrapper over a repeated inner field: LIST *and* element");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "on_rep_wrapper"));
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        const auto& list = std::get<ir::ListNode>(n.node);
+        ASSERT_NE(list.element, nullptr);
+        EXPECT_TRUE(list.element->facts.dictionary);
+        EXPECT_EQ(list.element->facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+    }
+
+    // -- SF-1: the flattened-REPEATED path, pinned as it behaves TODAY.
+    //    Outer-declared is carried on the outermost list and the leaf, NOT on
+    //    intermediate levels (see the RR-1 block below);
+    //    INNER-declared is dropped, because this path never calls
+    //    BuildFieldIr(inner). Deliberately deferred to DICT-2 (see the comment on
+    //    BuildFlattenedRepeated and spec 7.1); closing the gap flips this
+    //    sub-case rather than silently changing behaviour.
+    {
+        SCOPED_TRACE("flattened repeated: outer-declared dictionary IS carried");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "rep_outer_declared"));
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        const auto& list = std::get<ir::ListNode>(n.node);
+        ASSERT_NE(list.element, nullptr);
+        EXPECT_TRUE(list.element->facts.dictionary);
+    }
+    {
+        // RR-1: the placement rule is NOT "every node built from the field". Only
+        // the OUTERMOST node and the LEAF get BaseFacts(field) here; every
+        // intermediate list level comes from MakeListOf and keeps DEFAULT facts,
+        // so a consumer walking down finds -> loses -> refinds the fact. Pinned so
+        // the qualified rule (spec 7.1) is guarded, not merely asserted.
+        SCOPED_TRACE("flattened repeated nested list: outer true / intermediate FALSE / leaf true");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Holder", "rep_nested"));
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+        const auto& outer_list = std::get<ir::ListNode>(n.node);
+        ASSERT_NE(outer_list.element, nullptr);
+        ASSERT_EQ(outer_list.element->kind, ir::NodeKind::LIST);
+        EXPECT_FALSE(outer_list.element->facts.dictionary)
+            << "intermediate list level carries DEFAULT facts";
+        const auto& mid_list = std::get<ir::ListNode>(outer_list.element->node);
+        ASSERT_NE(mid_list.element, nullptr);
+        EXPECT_EQ(mid_list.element->kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(mid_list.element->facts.dictionary)
+            << "the leaf IS built from BaseFacts(field)";
+        EXPECT_EQ(mid_list.element->facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+    }
+    {
+        SCOPED_TRACE("flattened repeated: INNER-declared dictionary is DROPPED (SF-1 gap)");
+        const FieldDescriptor* fd = FieldByName(schema, "Holder", "rep_inner_declared");
+        ASSERT_NE(fd, nullptr);
+        // The declaration itself is readable on the inner field...
+        const Descriptor* wrap = schema->FindMessageTypeByName("WrapInner");
+        ASSERT_NE(wrap, nullptr);
+        EXPECT_TRUE(HasFieldDictionary(wrap->field(0)));
+        // ...but nothing on the repeated-flatten result carries it today.
+        ir::IrNode n = ir::BuildFieldIr(fd);
+        ASSERT_EQ(n.kind, ir::NodeKind::LIST);
+        EXPECT_FALSE(n.facts.dictionary);
+        const auto& list = std::get<ir::ListNode>(n.node);
+        ASSERT_NE(list.element, nullptr);
+        EXPECT_FALSE(list.element->facts.dictionary);
+        // Contrast: the SINGULAR spelling of the same wrapper DOES carry it.
+        EXPECT_TRUE(ir::BuildFieldIr(FieldByName(schema, "Holder", "on_inner")).facts.dictionary);
+    }
+
+    // -- D4b: the (fletcher.flatten_field) hole, pinned as it behaves TODAY.
+    //    DICT-2 rejects this shape and must consciously flip this sub-case.
+    {
+        SCOPED_TRACE("flatten_field wrapper carrying the option: silently dropped (D4b)");
+        const Descriptor* rec = schema->FindMessageTypeByName("Rec");
+        ASSERT_NE(rec, nullptr);
+        const FieldDescriptor* wrapper = rec->FindFieldByName("p");
+        ASSERT_NE(wrapper, nullptr);
+        EXPECT_TRUE(HasFieldDictionary(wrapper));  // the declaration IS readable
+        auto records = cpp_backend::BuildFlattenedFieldList(rec);
+        int dict_count = 0;
+        int inlined = 0;
+        for (const auto& r : records) {
+            ASSERT_NE(r.node, nullptr);
+            if (r.name == "a" || r.name == "b") {
+                ++inlined;
+                EXPECT_FALSE(r.node->facts.dictionary) << r.name;
+            }
+            if (r.node->facts.dictionary) ++dict_count;
+        }
+        EXPECT_EQ(inlined, 2) << "expected Pair.a/Pair.b to be inlined";
+        // spec section 4 companion: flatten_field on a SCALAR is a no-op, so `s`
+        // keeps its dictionary — that is the only dictionary in the list.
+        EXPECT_EQ(dict_count, 1);
+        ir::IrNode s = ir::BuildFieldIr(rec->FindFieldByName("s"));
+        EXPECT_TRUE(s.facts.dictionary);
+        EXPECT_EQ(s.facts.dictionary_index_kind, DictionaryIndexKind::INT8);
+    }
+
+    // -- WKT wrapper: nullable dictionary scalar (locked #9, DICT-2 depends) --
+    {
+        SCOPED_TRACE("google.protobuf.StringValue with the option");
+        ir::IrNode n = ir::BuildFieldIr(FieldByName(schema, "Wkt", "s"));
+        EXPECT_EQ(n.kind, ir::NodeKind::SCALAR);
+        EXPECT_TRUE(n.facts.nullable);
+        EXPECT_TRUE(n.facts.dictionary);
+        EXPECT_EQ(n.facts.dictionary_index_kind, DictionaryIndexKind::INT16);
+    }
+
+    // ---- route 2: hand-encoded payloads, pool KNOWS the extension ----------
+    // This pool is also where the probe's DISCRIMINATION is exercised (SF-3):
+    // it holds, side by side, a valid payload, a corrupt one (probe fires), a
+    // foreign-but-parseable one, a wrong-wire-type one (probe not reached), and
+    // a foreign message-typed option DECLARED at a neighbouring number.
+    {
+        ProtoTextPool ipool;
+        ASSERT_TRUE(ipool.seeded());
+        ASSERT_NE(AddFletcherOptions(ipool), nullptr);
+
+        // A foreign message-typed FieldOptions extension DECLARED at 60200 in the
+        // very pool that declares fletcher.dictionary at 50001. Its payload bytes
+        // are byte-identical to a valid DictionaryOptions{INT16, ordered} — proven
+        // below — so if the reader keyed off anything other than the declared
+        // extension it would read a dictionary here.
+        const FileDescriptor* neighbour = ipool.Add("dict_neighbour.proto", ForeignSchema(60200));
+        ASSERT_NE(neighbour, nullptr);
+
+        FileDescriptorProto fdp = InjectedFile("dict_injected.proto");
+        InjectedField(&fdp, "none", 1);
+        InjectDictBytes(InjectedField(&fdp, "i16", 2), std::string("\x08\x02", 2));
+        InjectDictBytes(InjectedField(&fdp, "ordered", 3), std::string("\x10\x01", 2));
+        InjectDictBytes(InjectedField(&fdp, "i16_ordered", 4),
+                        std::string(kI16OrderedBytes, kI16OrderedLen));
+        InjectDictBytes(InjectedField(&fdp, "empty", 5), std::string());
+        InjectDictBytes(InjectedField(&fdp, "bad_enum", 6), std::string("\x08\x09", 2));
+        InjectDictBytes(InjectedField(&fdp, "truncated", 7), std::string("\x08", 1));
+        InjectDictVarint(InjectedField(&fdp, "varint", 8), 1);
+        // Foreign payload shapes AT 50001, in a pool that declares the extension:
+        //  - `1a 05 01`: field 3, length-delimited, length 5 with 1 byte left ->
+        //    the submessage parse fails -> whole re-parse fails -> probe fires.
+        //  - `08 02 1a 03 61 62 63`: index_type INT16 plus an unknown field 3 =
+        //    "abc" -> parses fine, so the DECLARED sub-field is DECODED (INT16, not
+        //    defaults) even though the blob also carries foreign bytes. The
+        //    differing result is what makes "the probe was not involved"
+        //    observable (re-review P2-21).
+        InjectDictBytes(InjectedField(&fdp, "foreign_corrupt", 9), std::string("\x1a\x05\x01", 3));
+        InjectDictBytes(InjectedField(&fdp, "foreign_parseable", 10),
+                        std::string("\x08\x02\x1a\x03\x61\x62\x63", 7));
+        // Same bytes, NOT at 50001: must not be read at all.
+        InjectBytesAt(InjectedField(&fdp, "wrong_number", 11), 50002,
+                      std::string(kI16OrderedBytes, kI16OrderedLen));
+        const FileDescriptor* inj = ipool.Build(fdp);
+        ASSERT_NE(inj, nullptr);
+        const Descriptor* m = inj->message_type(0);
+
+        struct ByteCase {
+            const char* field;
+            bool present;
+            DictionaryIndexKind kind;
+            bool ordered;
+            const char* why;
+        };
+        const ByteCase kByteCases[] = {
+            {"none", false, DictionaryIndexKind::INT32, false, "no options at all"},
+            // NOTE (N-15): the negative rows below (bad_enum, foreign_*) all
+            // expect the DEFAULT kind, so they are only meaningful because these
+            // positive rows share the loop. Do not delete them.
+            {"i16", true, DictionaryIndexKind::INT16, false, "08 02"},
+            {"ordered", true, DictionaryIndexKind::INT32, true, "10 01"},
+            {"i16_ordered", true, DictionaryIndexKind::INT16, true, "08 02 10 01"},
+            {"empty", true, DictionaryIndexKind::INT32, false, "zero-length submessage"},
+            {"bad_enum", true, DictionaryIndexKind::INT32, false,
+             "08 09: undeclared enum number -> unknowns -> default"},
+            {"truncated", true, DictionaryIndexKind::INT32, false,
+             "08: re-parse fails -> narrowed presence probe -> defaults"},
+            {"foreign_corrupt", true, DictionaryIndexKind::INT32, false,
+             "1a 05 01: foreign, unparseable -> probe fires -> declared, defaults"},
+            {"foreign_parseable", true, DictionaryIndexKind::INT16, false,
+             "08 02 + 1a 03 'abc': parseable -> INT16 DECODED (not defaults), which "
+             "is what distinguishes this from the probe-driven rows"},
+            // Wire-type mismatch on a KNOWN field is skipped into the unknowns,
+            // so the parse succeeds and HasField(ext) is false: NOT a dictionary,
+            // and the step-5 probe is never reached.
+            {"varint", false, DictionaryIndexKind::INT32, false, "varint at #50001"},
+            {"wrong_number", false, DictionaryIndexKind::INT32, false,
+             "valid dictionary bytes at #50002 -> not read"},
+        };
+        for (const ByteCase& c : kByteCases) {
+            SCOPED_TRACE(std::string("injected: ") + c.field + " (" + c.why + ")");
+            const FieldDescriptor* f = m->FindFieldByName(c.field);
+            ASSERT_NE(f, nullptr);
+            auto d = ReadFieldDictionaryOption(f);
+            EXPECT_EQ(d.has_value(), c.present);
+            EXPECT_EQ(HasFieldDictionary(f), c.present);
+            if (!c.present || !d.has_value()) continue;
+            EXPECT_EQ(d->index_kind, c.kind);
+            EXPECT_EQ(d->ordered, c.ordered);
+            ir::IrNode n = ir::BuildFieldIr(f);
+            EXPECT_TRUE(n.facts.dictionary);
+            EXPECT_EQ(n.facts.dictionary_index_kind, c.kind);
+            EXPECT_EQ(n.facts.dictionary_ordered, c.ordered);
+        }
+
+        // SF-3, half 1: a FOREIGN message-typed option, really DECLARED, in the
+        // pool that also declares fletcher.dictionary. Same bytes as
+        // `i16_ordered` above (asserted, not assumed) at a neighbouring number.
+        {
+            SCOPED_TRACE("declared foreign option at #60200 in the Fletcher-aware pool");
+            const FieldDescriptor* fd = FieldByName(neighbour, "Msg", "f");
+            ASSERT_NE(fd, nullptr);
+            auto payload = UnknownPayloadAt(fd, 60200);
+            ASSERT_TRUE(payload.has_value()) << "the foreign option must be present";
+            EXPECT_EQ(*payload, std::string(kI16OrderedBytes, kI16OrderedLen))
+                << "these bytes decode to {INT16, ordered} when they sit at 50001";
+            EXPECT_FALSE(ReadFieldDictionaryOption(fd).has_value());
+            EXPECT_FALSE(HasFieldDictionary(fd));
+            EXPECT_FALSE(ir::BuildFieldIr(fd).facts.dictionary);
+        }
+    }
+
+    // ---- route 2 WITHOUT route 1: no fletcher/options.proto in the pool ----
+    // The narrowed presence probe must not fire on a bare field number: valid
+    // bytes at #50001 with no Fletcher declaration behind them are NOT a
+    // dictionary (R1 — a false positive would fabricate a schema).
+    {
+        SCOPED_TRACE("extension NOT in the pool -> nullopt");
+        ProtoTextPool bare;
+        ASSERT_TRUE(bare.seeded());
+        FileDescriptorProto fdp = InjectedFile("dict_no_ext.proto");
+        InjectDictBytes(InjectedField(&fdp, "i16", 1), std::string("\x08\x02", 2));
+        const FileDescriptor* f = bare.Build(fdp);
+        ASSERT_NE(f, nullptr);
+        const FieldDescriptor* fd = f->message_type(0)->FindFieldByName("i16");
+        ASSERT_NE(fd, nullptr);
+        EXPECT_FALSE(ReadFieldDictionaryOption(fd).has_value());
+        EXPECT_FALSE(HasFieldDictionary(fd));
+        EXPECT_FALSE(ir::BuildFieldIr(fd).facts.dictionary);
+    }
+    {
+        // SF-3, half 2: the SAME foreign declaration, now really occupying 50001
+        // (only possible in a pool that does not declare fletcher.dictionary —
+        // protobuf refuses two extensions of one extendee at one number). Same
+        // bytes as the decoded `i16_ordered` case; opposite answer. The pair is
+        // the no-false-positive property: the reader keys off the POOL's
+        // declaration, never off the number or the bytes.
+        SCOPED_TRACE("FOREIGN message-typed option DECLARED at #50001 -> nullopt");
+        ProtoTextPool foreign;
+        ASSERT_TRUE(foreign.seeded());
+        const FileDescriptor* f = foreign.Add("dict_foreign.proto", ForeignSchema(50001));
+        ASSERT_NE(f, nullptr);
+        const FieldDescriptor* fd = FieldByName(f, "Msg", "f");
+        ASSERT_NE(fd, nullptr);
+        auto payload = UnknownPayloadAt(fd, 50001);
+        ASSERT_TRUE(payload.has_value()) << "the foreign option must be present";
+        EXPECT_EQ(*payload, std::string(kI16OrderedBytes, kI16OrderedLen))
+            << "identical bytes to the i16_ordered sub-case, which decodes to {INT16, ordered}";
+        EXPECT_FALSE(ReadFieldDictionaryOption(fd).has_value());
+        EXPECT_FALSE(HasFieldDictionary(fd));
+        EXPECT_FALSE(ir::BuildFieldIr(fd).facts.dictionary);
+    }
 }

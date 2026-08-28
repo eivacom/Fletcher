@@ -217,16 +217,116 @@ surface stays forward-compatible; honoring it is a documented follow-up.
 
 ## 7. Reading the option (implementation note)
 
-The existing `FindBoolOption`
-([type_mapper.cpp:21-29](../protoc/src/type_mapper.cpp#L21-L29)) reads a **varint**
-unknown field. A *message-typed* option arrives instead as a
-**length-delimited** unknown field (#50001) on `FieldOptions` whose payload is a
-serialized `DictionaryOptions`. The reader must walk that payload's inner fields
-(field 1 = `index_type` varint, field 2 = `ordered` varint). Per
-[locked-decisions](../plans/DICT-locked-decisions.md), this is done with a small
-unknown-field walker — preserving the plugin's property of **not** linking
-`options.pb.cc` — with linking the generated descriptor recorded as the
-alternative if the option set grows.
+The plugin still does **not** link a generated `fletcher/options.pb.cc` (locked
+decision #10), so `(fletcher.dictionary)` never arrives as a known field: the
+linked-in `google::protobuf::FieldOptions` C++ class does not know the extension,
+and the value therefore sits as a **length-delimited** unknown field (#50001) in
+that options message's `UnknownFieldSet`.
+
+**Mechanism: reflection over a `DynamicMessage`, not an unknown-field walker.**
+The reader (`protoc/src/option_reader.cpp`) serializes `field->options()` and
+re-parses those bytes into a `DynamicMessage` whose descriptor comes from the
+`DescriptorPool` protoc populated from the `CodeGeneratorRequest` — which *does*
+know `fletcher.dictionary`. The extension then reads as a real message field by
+reflection, and its sub-fields (`index_type`, `ordered`) are located **by name**,
+with `index_type` resolved to its enum **symbol name**
+(`DICTIONARY_INDEX_INT16` → int16), never to a raw field/enum number. That
+round-trip is the one shared primitive `ReparseOptionsWithPool`, extracted from
+the identical trick `OptionMetadataResolver` already used for third-party options
+(`option_metadata.cpp`) — one implementation, two typed consumers, no second
+bespoke option parser. It is also why a consumer pinning an older or newer
+`fletcher/options.proto` still reads correctly, and why the reader keeps working
+if someone later *does* link the generated descriptor.
+
+**Presence is the trigger** (`= {}` is a dictionary with defaults), read as
+`HasField` on the re-parsed extension.
+
+**The extension declaration is the only evidence acted on.** The pool must
+resolve `fletcher.dictionary` to a singular, message-typed `FieldOptions`
+extension numbered 50001; otherwise the field has no dictionary. A bare
+length-delimited field at #50001 is deliberately *not* enough — 50000/50001 sit
+in the collision-prone internal range, so trusting the number alone would let a
+foreign option fabricate a dictionary column nobody declared.
+
+*Granularity of that guarantee:* it is defended at **pool-declaration**
+granularity, not per field. Protobuf refuses two extensions of the same extendee
+at the same number in one pool, so a foreign option can never be *declared* at
+50001 in a pool that also declares `fletcher.dictionary` — but once the pool does
+declare it, the bytes at #50001 are interpreted as a `DictionaryOptions`
+regardless of who wrote them, and the presence probe below trusts a bare
+"#50001 + length-delimited" record. The wire format carries no type identity, so
+no reader can do better; what makes the answer safe is that the *declaration*
+comes from Fletcher's own `options.proto`.
+
+**Fail-soft contract.** A **declared** but unreadable option resolves to the
+**defaults** (int32, unordered) — never to "absent", and never to a hard error:
+the reader is called from `ir::BuildFieldIr`, which has no error channel, and
+dropping a declared dictionary would emit a *value-typed* column for a field the
+author declared dictionary. Concretely, when the extension resolved but its blob
+does not re-parse (a truncated or garbage payload), a narrow **presence probe**
+looks for a length-delimited field #50001 in the untouched `UnknownFieldSet` and
+answers "declared, defaults". The probe *decodes nothing* — it is not a payload
+walker. These paths are unreachable from protoc-compiled input (protoc either
+serializes a valid `DictionaryOptions` or fails the compile), so this is a
+robustness floor rather than a routine path; a louder failure for a corrupt
+payload belongs to the validation pass, which has an error channel.
+
+Linking the generated descriptor remains the recorded alternative if Fletcher's
+own option set ever outgrows reflection.
+
+### 7.1 Known gaps at v1 — wrapper shapes where the declaration is dropped
+
+Both are **silent today**, both are owned by the validation item that owns the
+error channel (DICT-2), and both are pinned by sub-cases of
+`TypeMapperTest.ReadsDictionaryOption` so closing them flips a test rather than
+silently changing behaviour:
+
+1. **`(fletcher.flatten_field)` wrapper field.** A wrapper field carrying both
+   `flatten_field` and `dictionary` is inlined away by the field walks
+   (`cpp_backend_schema_visitor.cpp`'s `BuildFlattenedFieldListImpl`,
+   `generator.cpp`'s `GatherFieldsImpl`) *before* its IR node is ever built, so
+   no node carries the fact. Intended semantics: **reject** — a wrapper that
+   inlines N columns has no single column to dictionary-encode. Enforcement must
+   be a front-end **descriptor** walk, not a projection-level check, because the
+   projection is never invoked for the wrapper. (A *scalar* field carrying both
+   is fine: `flatten_field` requires a message type, so it is a documented no-op
+   and the dictionary applies.)
+2. **Inner declaration under a `repeated` message-level-flatten wrapper.**
+   `ir::BuildFlattenedRepeated` builds each of its seven return nodes from the
+   **outer** field's
+   facts, so `repeated W xs [(fletcher.dictionary) = {...}]` is carried on the
+   outermost list and the leaf (but *not* on intermediate list levels — see the
+   placement table below), while a
+   dictionary declared on `W`'s single inner field is **not read** — the singular
+   spelling `W w` (which resolves through `BuildFlattenedSingular` and does
+   propagate) therefore disagrees with the repeated one. Not closed in v1 because
+   the resulting node is always a list, which the validation item rejects as
+   non-scalar anyway; the cost of the gap is that the rejection cannot *fire* for
+   the inner-declared shape, so it stays quiet instead of loud.
+
+**Where the fact lands (for consumers).** A dictionary declaration is a
+*field-level* fact, and it lands on every IR node that is itself built from that
+field's facts — which is **not** the same as "every node in the subtree".
+Precisely:
+
+| Shape | Nodes carrying `dictionary` |
+|---|---|
+| singular scalar, WKT wrapper, struct, oneof member (unsupported node) | the single node built from the field |
+| `repeated` scalar / enum | the list node **and** its element |
+| map | the **map node only** — key and value nodes are built from the synthetic map-entry fields and carry nothing |
+| message-level-flatten wrapper (singular), incl. a wrapper over a `repeated` inner field | the resolved node, and its element when that node is a list |
+| **nested list** from a repeated flatten wrapper (`repeated W` where `W` wraps a `repeated` scalar) | the **outermost** list and the **leaf** — the **intermediate** list levels keep default facts (`dictionary == false`) |
+
+The last row is a real interior gap: `ir::BuildFlattenedRepeated` builds its extra
+list levels with `MakeListOf`, which produces default facts, so a consumer walking
+down the tree *finds → loses → refinds* the fact. Do not treat an interior
+`dictionary == false` as authoritative. It is harmless in v1 (the validation item
+rejects the whole non-scalar shape) and is pinned by the
+`"flattened repeated nested list"` sub-case of
+`TypeMapperTest.ReadsDictionaryOption`.
+
+Consumers must in all cases gate on the **top-level** node's kind rather than on
+"some node has `dictionary = true`".
 
 ## 8. Out of scope
 

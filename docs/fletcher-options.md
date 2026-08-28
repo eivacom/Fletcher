@@ -240,8 +240,9 @@ some files import the declaring `.proto`.
 |--------|-------|--------|
 | `50000` | MessageOptions | `fletcher.flatten` |
 | `50000` | FieldOptions | `fletcher.flatten_field` |
+| `50001` | FieldOptions | `fletcher.dictionary` |
 
-Field number 50000 is well within the `extensions 1000 to max` range
+Field numbers 50000/50001 are well within the `extensions 1000 to max` range
 that `google.protobuf.MessageOptions` and `FieldOptions` reserve for
 third-party extensions.
 

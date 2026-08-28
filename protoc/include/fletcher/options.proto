@@ -19,3 +19,27 @@ extend google.protobuf.FieldOptions {
     // Inline the referenced message's fields into the enclosing message.
     optional bool flatten_field = 50000;
 }
+
+// --- Dictionary encoding (see docs/dictionary-option-spec.md) --------------
+
+enum DictionaryIndexType {
+    DICTIONARY_INDEX_UNSPECIFIED = 0;  // resolves to int32
+    DICTIONARY_INDEX_INT8 = 1;
+    DICTIONARY_INDEX_INT16 = 2;
+    DICTIONARY_INDEX_INT32 = 3;
+    DICTIONARY_INDEX_INT64 = 4;
+}
+
+message DictionaryOptions {
+    // Index type of the emitted dictionary column; defaults to int32.
+    optional DictionaryIndexType index_type = 1;
+    // Declares the dictionary ordered. v1: rejected at codegen.
+    optional bool ordered = 2;
+}
+
+extend google.protobuf.FieldOptions {
+    // Emit this field as an Arrow dictionary-encoded column. Presence is the
+    // trigger: `= {}` means "dictionary, with defaults".
+    // 50000 is taken by flatten_field on FieldOptions.
+    optional DictionaryOptions dictionary = 50001;
+}
