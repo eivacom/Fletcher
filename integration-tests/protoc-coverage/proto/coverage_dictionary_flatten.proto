@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_flatten.
+//
+// Message-level flatten wrapper with the dictionary declared on the wrapper's
+// INNER field. DictFlatWrap is skipped by the message loop's
+// IsFlattenedWrapper term, so the only route to `kind`'s declaration is
+// BuildFieldIr(w) -> BuildFlattenedSingular -> ApplyDictionaryFacts on the
+// resolved inner node (ir.cpp:314, :332-336). This pins that propagation.
+syntax = "proto3";
+package integration.coverage.dict_guard_flatten;
+
+import "fletcher/options.proto";
+
+message DictFlattenGuard {
+  DictFlatWrap w = 1;
+}
+
+message DictFlatWrap {
+  option (fletcher.flatten) = true;
+  string kind = 1 [(fletcher.dictionary) = {}];
+}

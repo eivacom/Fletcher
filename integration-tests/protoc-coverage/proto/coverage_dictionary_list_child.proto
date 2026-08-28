@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_listChild.
+//
+// step-4b should-fix S1: isolates FindDictionaryField's LIST-element recursion
+// edge. `xs` itself carries no (fletcher.dictionary) option, so the root LIST
+// node built by BuildRepeatedMessage (ir.cpp:457, BaseFacts(xs)) is false; the
+// list's element is a bare MakeStructNode(DictStructChildInner) with default
+// facts, and the declaration lives on THAT struct's own field `k`
+// (imported from coverage_dictionary_struct_child_inner.proto, so
+// OrderedMessages(file) never visits DictStructChildInner directly). Reaching
+// it therefore requires BOTH the LIST edge and the STRUCT edge; deleting just
+// the LIST branch reds this test alone (the singular-struct-child fixture does
+// not exercise LIST at all).
+syntax = "proto3";
+package integration.coverage.dict_guard_list_child;
+
+import "coverage_dictionary_struct_child_inner.proto";
+
+message DictListChildGuard {
+  repeated integration.coverage.dict_guard_struct_child_inner.DictStructChildInner xs = 1;
+}

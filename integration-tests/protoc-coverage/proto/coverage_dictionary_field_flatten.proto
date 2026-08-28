@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_fieldFlatten.
+//
+// Field-level flatten wrapper with the dictionary declared ON THE WRAPPER FIELD
+// ITSELF (the DICT-1 carry-forward's exact shape) -- DictFfWrap carries NO
+// dictionary internally. Both GatherFieldsImpl (generator.cpp:606-610) and
+// BuildFlattenedFieldListImpl (cpp_backend_schema_visitor.cpp:78-90) `continue`
+// past a (fletcher.flatten_field) wrapper field, so the only route that can see
+// this declaration is BaseFacts(w) at ir.cpp:545 (BuildSingularMessage). If that
+// route is broken, no node in this file carries the fact and the guard would
+// wrongly exit 0.
+syntax = "proto3";
+package integration.coverage.dict_guard_field_flatten;
+
+import "fletcher/options.proto";
+
+message DictFfGuard {
+  DictFfWrap w = 1 [(fletcher.flatten_field) = true, (fletcher.dictionary) = {}];
+}
+
+message DictFfWrap {
+  string kind = 1;
+  int32 n = 2;
+}

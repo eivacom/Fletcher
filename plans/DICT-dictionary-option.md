@@ -121,7 +121,7 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | Item | Title | Forcing test | Status |
 |------|-------|--------------|--------|
 | DICT-1 | Option surface + reader | `TypeMapperTest.ReadsDictionaryOption` | 🟢 |
-| DICT-1.5 | Front-end guard: reject `accessor`/`rust` for dictionary fields | `GenErrors.DictionaryRejectedBy_{accessor,rust}` | ⚪ |
+| DICT-1.5 | Front-end guard: reject `accessor`/`rust` for dictionary fields | `GenErrors.DictionaryRejectedBy_{accessor,rust}` | 🟢 |
 | DICT-2 | Mapper wiring + validation | `TypeMapperTest.DictionaryMappingAndRejections` | ⚪ |
 | DICT-3 | Schema emission (ONE IR schema-visitor) | `DictionaryTest.SchemaIsDictionaryType` | ⚪ |
 | DICT-4 | End-to-end roundtrip via batched Subscribe | `DictionaryTest.RoundtripRefoldsToDictionaryArray` | ⚪ |
@@ -275,6 +275,19 @@ output stays value-typed.
 - Any separate server-tier Arrow schema/`ToArrowRow` path: confirm per-row
   scalars stay **value-type** (codec accepts them; spec §5) — change only if a
   schema-type string is emitted there.
+- **Keep reading dictionary-ness from `ir::FieldFacts.dictionary`, not from the
+  descriptor.** DICT-1.5's backend-availability guard
+  ([FindDictionaryField](../protoc/src/generator.cpp), spec §7.1 gap 2) is only
+  safe to miss the inner-declared `repeated <message-level-flatten wrapper>`
+  shape *because* schema emission consumes the identical IR node and therefore
+  drops the same declaration — no mis-read exists today. If DICT-3 ever derives
+  `is_dictionary` from a second, descriptor-based source (e.g.
+  `HasFieldDictionary` on the field directly) instead of the IR's
+  `facts.dictionary`, that shape would silently start emitting
+  `dictionary(idx, val)` with **no guard and no test** catching the now-real
+  mis-read (step-4b code review, N5). Re-verify DICT-1.5's superset property
+  (`plans/DICT-1.5-backend-support-guard.md` D1 / Risk 2) before making that
+  change, or close the IR gap first.
 
 **Forcing test** (`integration-tests/protoc-arrow-bridge`, new `dictionary.proto`
 + `tests/test_dictionary.cpp`, mirroring `test_flatten.cpp`): assert

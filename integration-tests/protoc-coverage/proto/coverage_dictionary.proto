@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor,
+// GenErrors.DictionaryRejectedBy_rust and
+// GenErrors.DictionaryAcceptedWithoutRbaBackends.
+//
+// Plain singular scalar (fletcher.dictionary) field. The read-only RecordBatch
+// accessor / Rust backend emitters assume a value-typed column; DICT-3 will emit
+// this column as dictionary(idx, val). The DICT-1.5 front-end guard
+// (ValidateBackendsSupportFields/FindDictionaryField in generator.cpp) must fail
+// the plugin for --fletcher_opt=accessor,rust and accept it otherwise.
+syntax = "proto3";
+package integration.coverage.dict_guard;
+
+import "fletcher/options.proto";
+
+message DictScalarGuard {
+  optional string category = 1 [(fletcher.dictionary) = {index_type: DICTIONARY_INDEX_INT16}];
+  int32 seq = 2;
+}

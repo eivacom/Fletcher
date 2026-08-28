@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_structChild.
+//
+// Only THIS file is passed to protoc; the dictionary declaration lives in the
+// IMPORTED coverage_dictionary_struct_child_inner.proto's message, which
+// OrderedMessages(file) drops (generator.cpp:175, `msg->file() != file`). The
+// nanoarrow schema/IPC for DictStructChildGuard carries the inner field's type
+// inline from the same IR node, so this is the STRUCT-child edge of
+// FindDictionaryField's walk (D1's BuildStructVariant:571 row) -- the only
+// shape that isolates it from every root-hit fixture above.
+syntax = "proto3";
+package integration.coverage.dict_guard_struct_child;
+
+import "coverage_dictionary_struct_child_inner.proto";
+
+message DictStructChildGuard {
+  integration.coverage.dict_guard_struct_child_inner.DictStructChildInner i = 1;
+}

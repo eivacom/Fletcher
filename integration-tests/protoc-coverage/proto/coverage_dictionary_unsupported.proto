@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryGuardDoesNotMaskUnsupportedType.
+//
+// One message carries BOTH a dictionary field and a genuinely-unsupported
+// google.protobuf.Any field, with the Any field declared AFTER the dictionary
+// field (this ordering matters: it proves pass-ordering, not field-ordering).
+// ValidateNoUnsupportedIr (generator.cpp:1787, first statement of Generate())
+// must report the Any error BEFORE ValidateBackendsSupportFields
+// (generator.cpp:1850) ever runs, so the dictionary guard must not mask it.
+syntax = "proto3";
+package integration.coverage.dict_guard_unsupported;
+
+import "fletcher/options.proto";
+import "google/protobuf/any.proto";
+
+message DictUnsupportedGuard {
+  optional string category = 1 [(fletcher.dictionary) = {}];
+  google.protobuf.Any payload = 2;
+}

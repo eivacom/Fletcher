@@ -285,12 +285,21 @@ silently changing behaviour:
    `flatten_field` and `dictionary` is inlined away by the field walks
    (`cpp_backend_schema_visitor.cpp`'s `BuildFlattenedFieldListImpl`,
    `generator.cpp`'s `GatherFieldsImpl`) *before* its IR node is ever built, so
-   no node carries the fact. Intended semantics: **reject** — a wrapper that
-   inlines N columns has no single column to dictionary-encode. Enforcement must
-   be a front-end **descriptor** walk, not a projection-level check, because the
-   projection is never invoked for the wrapper. (A *scalar* field carrying both
+   the *projection* (`ProjectIrToFieldMapping`'s output / `FieldMapping`) never
+   carries the fact for this shape. Intended semantics: **reject** — a wrapper
+   that inlines N columns has no single column to dictionary-encode. Enforcement
+   for DICT-2's mapped-kind rejection must therefore be **a walk rooted at each
+   message's own declared fields (descriptor or `ir::BuildFieldIr`) rather than a
+   check on the projection's output** — the projection is never invoked for the
+   wrapper. This is scoped to DICT-2; the choice between a descriptor walk and an
+   `ir::BuildFieldIr` walk stays DICT-2's to make. (A *scalar* field carrying both
    is fine: `flatten_field` requires a message type, so it is a documented no-op
    and the dictionary applies.)
+   **DICT-1.5's backend-availability guard is unaffected by this gap.** It calls
+   `ir::BuildFieldIr` on each message's own declared fields directly (not via
+   `GatherFieldsImpl`/`BuildFlattenedFieldListImpl`'s projection), so
+   `BaseFacts(w)` for the wrapper field itself is read and the guard fires; see
+   `plans/DICT-1.5-backend-support-guard.md` D1.
 2. **Inner declaration under a `repeated` message-level-flatten wrapper.**
    `ir::BuildFlattenedRepeated` builds each of its seven return nodes from the
    **outer** field's
@@ -303,6 +312,13 @@ silently changing behaviour:
    the resulting node is always a list, which the validation item rejects as
    non-scalar anyway; the cost of the gap is that the rejection cannot *fire* for
    the inner-declared shape, so it stays quiet instead of loud.
+   **DICT-1.5's backend-availability guard also cannot see this declaration, and
+   that is safe by construction rather than by luck:** schema emission consumes
+   the identical node (`GatherFieldsImpl`'s inline branch requires
+   `!fd->is_repeated()`), so it drops the declaration too — the emitted column is
+   a plain `list<...>`, the accessor reads a `list<...>` as a `list<...>`, and no
+   mis-read exists. See `plans/DICT-1.5-backend-support-guard.md` D1 ("The one
+   declaration the IR cannot see, and why that is safe").
 
 **Where the fact lands (for consumers).** A dictionary declaration is a
 *field-level* fact, and it lands on every IR node that is itself built from that
@@ -326,7 +342,26 @@ rejects the whole non-scalar shape) and is pinned by the
 `TypeMapperTest.ReadsDictionaryOption`.
 
 Consumers must in all cases gate on the **top-level** node's kind rather than on
-"some node has `dictionary = true`".
+"some node has `dictionary = true`" — for **kind / emission** decisions, where an
+OR across a subtree would silently change a column's declared Arrow type on
+evidence that does not belong to that column. This rule stays binding for
+emitters (and, per locked decision #9, for DICT-2's legality gate: a scalar
+dictionary declared inside a struct child stays legal, and DICT-2 must gate on
+the field's own mapped `FieldKind`, not on an ancestor's — over-rejecting there
+would permanently reject a legal proto).
+
+The **one** exception is a **backend-availability rejection** predicate, where
+the error asymmetry is the opposite: over-approximating costs a loud, fixable
+error (regenerate without `--fletcher_opt=accessor,rust`) and no wrong output,
+while under-approximating costs a silent mis-read. DICT-1.5's
+`FindDictionaryField` (`plans/DICT-1.5-backend-support-guard.md` D2) is exactly
+this predicate and deliberately ORs over every reachable node (list elements at
+every level, fixed-size-list elements, map key/value, struct fields) rather than
+gating on the top-level node alone — gating on the top-level node alone would
+silently miss a dictionary declared on a field of a struct-typed (including
+imported) child, breaking the safety property the guard exists to provide. This
+exception is bounded to backend-availability guards; it is not licence for any
+kind/emission consumer, or for DICT-2's legality gate, to OR over a subtree.
 
 ## 8. Out of scope
 

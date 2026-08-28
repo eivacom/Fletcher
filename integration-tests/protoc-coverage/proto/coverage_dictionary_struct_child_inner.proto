@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture (imported half). COMMITTED BUT NOT WIRED into any
+// generation unit; imported only by coverage_dictionary_struct_child.proto and
+// invoked (via that file) only by ctest
+// GenErrors.DictionaryRejectedBy_accessor_structChild.
+//
+// Declares the dictionary on a message that is NOT itself passed to protoc, so
+// it is excluded from OrderedMessages(file) (generator.cpp:175,
+// `msg->file() != file`). The only route by which the guard can see this
+// declaration is the STRUCT-field recursion in FindDictionaryField, reached
+// from the struct-typed field in the importing file.
+syntax = "proto3";
+package integration.coverage.dict_guard_struct_child_inner;
+
+import "fletcher/options.proto";
+
+message DictStructChildInner {
+  string k = 1 [(fletcher.dictionary) = {}];
+}

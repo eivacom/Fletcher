@@ -513,6 +513,11 @@ add_test(NAME GenErrors.NoValueOrDieInIrGeneratedCode
 # error, NOT emit malformed accessor/Rust code. The edge/view/ipc/ts backends
 # still support the shape (covered by the ipc,ts ScalarNestedCoverage unit above),
 # so only accessor/rust are the rejecting tokens here.
+#
+# EXPECT_FIELD pins WHICH of ValidateBackendsSupportFields' two guard predicates
+# fired (DICT-1.5 added a second one, sharing this EXPECT_MESSAGE substring), so
+# this family and the GenErrors.DictionaryRejectedBy_* family below cannot be
+# confused for each other.
 # ---------------------------------------------------------------------------
 foreach(_gopt accessor rust)
     add_test(NAME GenErrors.ScalarLeafNestedListRejectedBy_${_gopt}
@@ -523,11 +528,173 @@ foreach(_gopt accessor rust)
             -DPROTO_FILE=coverage_scalar_nested.proto
             -DFLETCHER_OPT=${_gopt}
             "-DEXPECT_MESSAGE=not yet supported by the RecordBatch accessor / Rust backend"
-            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/backend-guard-generated
+            -DEXPECT_FIELD=ScalarNestedCoverage.nested_scalar_lists
+            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/backend-guard-generated/${_gopt}
             -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
             -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
 endforeach()
+
+# ---------------------------------------------------------------------------
+# DICT-1.5 backend-availability guard (locked #11) forcing tests. Extends
+# GIR-10's ValidateBackendsSupportFields with a dictionary predicate
+# (FindDictionaryField in generator.cpp): a proto with a (fletcher.dictionary)
+# field under the read-only RBA C++ accessor (`accessor`) or Rust (`rust`)
+# backend must FAIL with a clear guard error naming the field, NOT emit an
+# accessor that mis-reads a dictionary(idx, val) column as value-typed. The
+# edge/Arrow view/IPC schema/TS backends still accept dictionary fields, so
+# only accessor/rust are the rejecting tokens here.
+#
+# EXPECT_MESSAGE avoids literal parentheses ((fletcher.dictionary) would open
+# ERE capture groups under MATCHES); dots below are regex `.` and match the
+# literal dots in the "Message.field" tail.
+# ---------------------------------------------------------------------------
+foreach(_gopt accessor rust)
+    add_test(NAME GenErrors.DictionaryRejectedBy_${_gopt}
+        COMMAND "${CMAKE_COMMAND}"
+            -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+            -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+            -DPROTO_DIR=${PROTO_DIR}
+            -DPROTO_FILE=coverage_dictionary.proto
+            -DFLETCHER_OPT=${_gopt}
+            "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+            -DEXPECT_FIELD=DictScalarGuard.category
+            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/${_gopt}
+            -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+            -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+endforeach()
+
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_wkt
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_wkt.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictWktGuard.label
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/wkt
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_flatten
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_flatten.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictFlatWrap.kind
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/flatten
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_fieldFlatten
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_field_flatten.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictFfGuard.w
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/fieldFlatten
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# Residual item #1 from the DICT-1.5 step-2 review: no other fixture isolates
+# the STRUCT-child edge of FindDictionaryField's walk (every other fixture hits
+# the fact on the field's OWN root node). DictStructChildInner lives in an
+# IMPORTED file that is never itself passed to protoc, so OrderedMessages(file)
+# drops it (generator.cpp:175) and the only surviving route is the struct-field
+# recursion into DictStructChildGuard.i's STRUCT node.
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_structChild
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_struct_child.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictStructChildInner.k
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/structChild
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+# step-4b should-fix S1: no fixture above exercises FindDictionaryField's LIST or
+# MAP recursion edges (every root hit above is a scalar, WKT-scalar, or singular
+# struct field). Both are reachable and matter -- an in-file declaring message
+# would be visited directly by the guard's own message loop, so the IMPORTED
+# DictStructChildInner (already used by the structChild fixture above) is reused
+# here behind a `repeated` / `map` field to force descent through LIST/MAP before
+# STRUCT. Deleting either recursion branch reds exactly its own test below.
+#
+# FIXED_SIZE_LIST is the third child-bearing NodeKind FindDictionaryField
+# descends into, but it is NOT fixtured: mirroring FindUnsupportedIr's own
+# disclosed gap (generator.cpp, "FIXED_SIZE_LIST is defensive/future-proofing"),
+# ir::BuildFieldIr never constructs a FIXED_SIZE_LIST node today, so no real
+# .proto can reach that branch. Tracked as a shared, accepted limitation of all
+# three IR walks, not a DICT-1.5-specific hole.
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_listChild
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_list_child.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictStructChildInner.k
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/listChild
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+add_test(NAME GenErrors.DictionaryRejectedBy_accessor_mapChild
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_map_child.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=dictionary.*RecordBatch accessor / Rust backend.*round RIR"
+        -DEXPECT_FIELD=DictStructChildInner.k
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/mapChild
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+add_test(NAME GenErrors.DictionaryAcceptedWithoutRbaBackends
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary.proto
+        -DFLETCHER_OPT=ipc,ts
+        -DEXPECT_SUCCESS=ON
+        "-DEXPECT_ARTIFACTS=coverage_dictionary.fletcher.pb.h|coverage_dictionary.fletcher.arrow.pb.h|coverage_dictionary.fletcher.ts|coverage_dictionary.DictScalarGuard.ipc"
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/acceptedWithoutRba
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+
+add_test(NAME GenErrors.DictionaryGuardDoesNotMaskUnsupportedType
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+        -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+        -DPROTO_DIR=${PROTO_DIR}
+        -DPROTO_FILE=coverage_dictionary_unsupported.proto
+        -DFLETCHER_OPT=accessor
+        "-DEXPECT_MESSAGE=google.protobuf.Any is dynamically typed"
+        -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/dictionary-guard-generated/maskCheck
+        -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+        -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
 
 # ---------------------------------------------------------------------------
 # Optional toolchain checks (graceful skip). tsc / cargo+rustc are found at

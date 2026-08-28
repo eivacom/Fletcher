@@ -1704,14 +1704,69 @@ std::optional<std::string> FindScalarLeafNestedList(const ir::IrNode& node) {
     return std::nullopt;
 }
 
-// GIR-10 backend-availability guard (locked #3). The read-only RBA C++ accessor
-// and Rust accessor emitters assume a STRUCT leaf for nested lists; a scalar-leaf
-// nested list (List<List<scalar>>) would make them emit invalid code (empty
-// nested_class). The edge / Arrow view / IPC schema / TS backends DO support it.
-// So when `accessor` or `rust` is requested and any field is a scalar-leaf nested
-// list, fail the plugin with a clear error BEFORE any artifact is emitted — the
-// RBA emitters never process a scalar-leaf nested list. Do NOT modify the RBA
-// emitter; the reconciliation is round RIR.
+// DICT-1.5 (locked #11): locate the first node reachable from `node` that carries
+// a (fletcher.dictionary) declaration; returns the DECLARING field's fully
+// qualified proto name (which may be EMPTY if that node has default facts — the
+// caller substitutes the field descriptor's name, see the call site).
+//
+// PLACEMENT (spec §7.1 / the placement table on ir.cpp's BaseFacts): a dictionary
+// declaration is a FIELD-level fact landed per SHAPE, NOT on every node of a
+// subtree. The INTERMEDIATE list levels of a nested-list shape keep DEFAULT facts,
+// so an interior `dictionary == false` is NOT authoritative. This walk therefore
+// descends UNCONDITIONALLY into every child and never treats a false as a reason
+// to stop: it is a pure OR over the reachable nodes, not a downward search that
+// can be cut off. Do NOT "optimise" it into an early return on false.
+//
+// This "some node has dictionary == true" shape is deliberate and is the ONE
+// context in which it is correct: this is a REJECTION predicate, where
+// over-approximating is the safe direction. Spec §7.1's closing rule ("gate on the
+// top-level node's kind, not on 'some node has dictionary = true'") governs
+// KIND / EMISSION decisions, where an OR would silently change a column's type.
+// Do not copy this walk into an emitter.
+//
+// FORWARD COMPAT (mirrors FindUnsupportedIr, generator.cpp:1612-1617): any future
+// child-bearing NodeKind MUST be added here as well as to FindUnsupportedIr and
+// FindScalarLeafNestedList — three walks that are now extended together. A missing
+// edge here is a silently under-approximating guard.
+//
+// The live carrier is ir::FieldFacts.dictionary. ir::DictionaryModifier is DEAD
+// (its deletion is DICT-2's) and is deliberately NOT read here.
+std::optional<std::string> FindDictionaryField(const ir::IrNode& node) {
+    if (node.facts.dictionary) return node.facts.proto_full_name;
+    if (node.kind == ir::NodeKind::LIST)
+        return FindDictionaryField(*std::get<ir::ListNode>(node.node).element);
+    if (node.kind == ir::NodeKind::FIXED_SIZE_LIST)
+        return FindDictionaryField(*std::get<ir::FixedSizeListNode>(node.node).element);
+    if (node.kind == ir::NodeKind::MAP) {
+        const auto& m = std::get<ir::MapNode>(node.node);
+        if (auto e = FindDictionaryField(*m.key)) return e;
+        return FindDictionaryField(*m.value);
+    }
+    if (node.kind == ir::NodeKind::STRUCT) {
+        for (const auto& f : std::get<ir::StructNode>(node.node).fields)
+            if (auto e = FindDictionaryField(*f.type)) return e;
+    }
+    return std::nullopt;
+}
+
+// Backend-availability guard now covering TWO shapes the read-only RBA C++ /
+// Rust accessor emitters cannot yet represent:
+//
+//  - GIR-10 (locked #3): a scalar-leaf nested list (List<List<scalar>>) would
+//    make them emit invalid code (empty nested_class), since they assume a
+//    STRUCT leaf for nested lists.
+//  - DICT-1.5 (locked #11): a (fletcher.dictionary) field, since the emitters'
+//    positional type gate and getters assume a value-typed column, not the
+//    dictionary(idx, val) column DICT-3 will emit.
+//
+// The edge / Arrow view / IPC schema / TS backends support the nested-list
+// shape and accept (though do not yet dictionary-encode) the dictionary shape.
+// So when `accessor` or `rust` is requested and any field matches either shape, fail
+// the plugin with a clear error BEFORE any artifact is emitted — the RBA
+// emitters never process either shape. Do NOT modify the RBA emitter; the
+// reconciliation is round RIR. First offending field in OrderedMessages ×
+// field-declaration order wins; within one field, the nested-list complaint
+// wins over the dictionary complaint (checked in that order below).
 bool ValidateBackendsSupportFields(const google::protobuf::FileDescriptor* file, bool emit_accessor,
                                    bool emit_rust, std::string* error) {
     if (!emit_accessor && !emit_rust) return true;
@@ -1719,12 +1774,21 @@ bool ValidateBackendsSupportFields(const google::protobuf::FileDescriptor* file,
         if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
         for (int i = 0; i < msg->field_count(); ++i) {
             auto node = ir::BuildFieldIr(msg->field(i));
-            if (auto e = FindScalarLeafNestedList(node)) {
+            if (auto e = FindScalarLeafNestedList(node)) {  // GIR-10, unchanged
                 *error = "field '" + *e +
                          "': scalar-leaf nested lists (List<List<scalar>>) are not yet supported "
                          "by the RecordBatch accessor / Rust backend (tracked for round RIR); "
                          "regenerate without --fletcher_opt=accessor,rust (the edge, Arrow view, "
                          "IPC schema, and TS backends do support them)";
+                return false;
+            }
+            if (auto e = FindDictionaryField(node)) {  // DICT-1.5
+                const std::string name = e->empty() ? msg->field(i)->full_name() : *e;
+                *error = "field '" + name +
+                         "': (fletcher.dictionary) columns are not yet supported by the "
+                         "RecordBatch accessor / Rust backend (tracked for round RIR); "
+                         "regenerate without --fletcher_opt=accessor,rust (the edge, "
+                         "Arrow view, IPC schema and TS backends accept dictionary fields)";
                 return false;
             }
         }
@@ -1843,10 +1907,13 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         }
     }
 
-    // GIR-10 (locked #3): reject scalar-leaf nested lists for the read-only RBA
-    // C++/Rust backends BEFORE any artifact is emitted, so the RBA emitters never
-    // process a shape they cannot represent (they assume a struct leaf). The edge /
-    // view / IPC / TS backends keep supporting it.
+    // Reject, for the read-only RBA C++/Rust backends, the two shapes they cannot
+    // yet represent -- BEFORE any artifact is emitted, so the RBA emitters never
+    // process either shape: GIR-10 (locked #3) scalar-leaf nested lists (they
+    // assume a struct leaf) and DICT-1.5 (locked #11) `(fletcher.dictionary)`
+    // fields (they assume a value-typed column, not `dictionary(idx, val)`). The
+    // edge / view / IPC / TS backends support the nested-list shape and accept
+    // (though do not yet dictionary-encode) the dictionary shape.
     if (!ValidateBackendsSupportFields(file, emit_accessor, emit_rust, error)) return false;
 
     // Always emit the C++ header (edge-compatible, nanoarrow only).

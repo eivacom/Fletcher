@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// DICT-1.5 negative fixture. COMMITTED BUT NOT WIRED into any generation unit;
+// invoked only by ctest GenErrors.DictionaryRejectedBy_accessor_mapChild.
+//
+// step-4b should-fix S1: isolates FindDictionaryField's MAP-value recursion
+// edge. `m` itself carries no (fletcher.dictionary) option, so the root MAP
+// node built by BuildMapNode (ir.cpp:482, BaseFacts(m)) is false, the
+// synthetic map-entry key carries nothing (BaseFacts(key_fd) can never be
+// annotated), and the map value is a bare MakeStructNode(DictStructChildInner)
+// with default facts whose own field `k` carries the declaration (imported
+// from coverage_dictionary_struct_child_inner.proto, so OrderedMessages(file)
+// never visits DictStructChildInner directly). Reaching it therefore requires
+// BOTH the MAP edge and the STRUCT edge; deleting just the MAP branch reds
+// this test alone.
+syntax = "proto3";
+package integration.coverage.dict_guard_map_child;
+
+import "coverage_dictionary_struct_child_inner.proto";
+
+message DictMapChildGuard {
+  map<string, integration.coverage.dict_guard_struct_child_inner.DictStructChildInner> m = 1;
+}

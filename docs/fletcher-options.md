@@ -234,6 +234,25 @@ some files import the declaring `.proto`.
   wrapper's `MessageOptions` and the referencing field's `FieldOptions`.
 - `--fletcher_opt=ts` output does not carry mapped metadata.
 
+## `(fletcher.dictionary)`
+
+**Applies to:** `google.protobuf.FieldOptions`
+**Type:** `DictionaryOptions` message (`index_type`, `ordered`)
+**Extension field number:** `50001`
+
+Marks a field for Arrow dictionary encoding. Presence is the trigger — `[(fletcher.dictionary) = {}]` means "dictionary, with defaults" (an `int32` index).
+See [docs/dictionary-option-spec.md](dictionary-option-spec.md) for the full
+specification, including which shapes accept the option and where the
+declaration is dropped or propagated by `(fletcher.flatten)` /
+`(fletcher.flatten_field)`.
+
+**v1 limitation.** A proto with a `(fletcher.dictionary)` field must omit
+`--fletcher_opt=accessor,rust` — the plugin rejects generation for those two
+backends with an error naming the field, until round RIR migrates the
+RecordBatch accessor / Rust backend onto the IR and can emit the
+`dictionary(idx, val)` column type. The `edge`, Arrow view, IPC schema, and
+`ts` backends accept dictionary fields today.
+
 ## Extension field number registry
 
 | Number | Scope | Option |

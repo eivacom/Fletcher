@@ -94,6 +94,13 @@ std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* fi
 // (ValidateBackendsSupportFields/FindScalarLeafNestedList in generator.cpp)
 // rejects `--fletcher_opt=accessor,rust` for such protos until round RIR.
 //
+// The same front-end pass ALSO guards a (fletcher.dictionary) field (DICT-1.5,
+// locked #11, ValidateBackendsSupportFields/FindDictionaryField in
+// generator.cpp) for the same two backends and the same reason: the RBA
+// emitters assume a value-typed column, not the dictionary(idx, val) column
+// DICT-3 will emit. This comment names both guarded shapes so it does not read
+// as this pass's full inventory.
+//
 // Edge ENCODE does NOT use this — it walks the IR.
 std::optional<FieldMapping> ProjectIrToFieldMapping(
     const ir::IrNode& node, const google::protobuf::FileDescriptor* context_file);
