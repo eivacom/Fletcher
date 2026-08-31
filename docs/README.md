@@ -10,6 +10,7 @@ component-diagram.md           # Component detail and dependency graph
 data-flow-diagrams.md          # Encode/decode, pub/sub, browser flows
 wire-format-specification.md   # Positional wire format, type mapping, envelope
 recordbatch-accessor-spec.md   # Column-oriented C++/Rust RecordBatch accessors (accessor/rust opts)
+protocol-driver-abi-spec.md    # Pure-C protocol driver ABI: runtime driver selection + config (round PDA)
 technology-decisions.md        # Technology decision log (TD-001 through TD-007)
 fletcher-options.md            # (fletcher.flatten) schema-flattening option
 ```
