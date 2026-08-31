@@ -1,0 +1,569 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# GIR-1 generator compile-and-run coverage harness. One broad coverage.proto is
+# run through protoc-gen-fletcher and every generated surface is compiled and
+# executed as a refactor guard before the IR rewrite. Mirrors the CMake/Conan
+# conventions of integration-tests/protoc-arrow-bridge.
+cmake_minimum_required(VERSION 3.15)
+project(protoc-coverage-integration CXX)
+
+find_package(fletcher-protoc CONFIG REQUIRED)
+find_package(fletcher-arrow-bridge CONFIG REQUIRED)
+find_package(fletcher-pubsub CONFIG REQUIRED)
+find_package(protobuf CONFIG REQUIRED)
+find_package(Arrow CONFIG REQUIRED)
+find_package(GTest REQUIRED)
+
+# fletcher-protoc-target.cmake only WARNs (not FATALs) when the plugin
+# executable cannot be located — fail loudly here so the build doesn't continue
+# into add_custom_command and blow up with a confusing $<TARGET_FILE:...> error.
+if(NOT TARGET fletcher-protoc::plugin)
+    message(FATAL_ERROR
+        "fletcher-protoc::plugin target was not created. The protoc plugin "
+        "executable is required for code generation; check the fletcher-protoc "
+        "package install for the binary.")
+endif()
+
+# Locate the protobuf well-known-types include dir (google/protobuf/*.proto) so
+# messages importing Timestamp / Duration / Wrappers / Empty compile.
+foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir  "${_protoc_loc}" DIRECTORY)
+        get_filename_component(_protoc_root "${_protoc_dir}/.." ABSOLUTE)
+        set(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_root}/include")
+        break()
+    endif()
+endforeach()
+if(NOT PROTOBUF_WKT_INCLUDE_DIR)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION)
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir  "${_protoc_loc}" DIRECTORY)
+        get_filename_component(_protoc_root "${_protoc_dir}/.." ABSOLUTE)
+        set(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_root}/include")
+    else()
+        message(FATAL_ERROR "Cannot determine protobuf WKT include dir")
+    endif()
+endif()
+message(STATUS "Protobuf WKT include dir: ${PROTOBUF_WKT_INCLUDE_DIR}")
+
+# Validate the resolved include dir before it is fed to protoc as an `-I`. A
+# broken/empty symlink or a non-standard protobuf package layout would resolve
+# to a path that does not exist (or exists but is missing the WKT protos),
+# producing a valid CMake configure but a cryptic protoc "File not found" during
+# generation. Fail loudly here instead. coverage.proto imports Timestamp,
+# Duration, Wrappers and Empty, so require each of those protos to be present.
+if(NOT IS_DIRECTORY "${PROTOBUF_WKT_INCLUDE_DIR}")
+    message(FATAL_ERROR
+        "Resolved Protobuf WKT include dir does not exist or is not a "
+        "directory: '${PROTOBUF_WKT_INCLUDE_DIR}'. The protobuf package layout "
+        "may differ from the expected <protoc>/../include, or a symlink is "
+        "broken; cannot -I the well-known-types.")
+endif()
+foreach(_wkt timestamp duration wrappers empty)
+    if(NOT EXISTS "${PROTOBUF_WKT_INCLUDE_DIR}/google/protobuf/${_wkt}.proto")
+        message(FATAL_ERROR
+            "Protobuf well-known-type proto missing under resolved include dir: "
+            "'${PROTOBUF_WKT_INCLUDE_DIR}/google/protobuf/${_wkt}.proto'. The "
+            "protobuf install looks broken or the include dir is an empty "
+            "symlink; coverage.proto's WKT imports would not resolve.")
+    endif()
+endforeach()
+
+set(PROTO_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+# ---------------------------------------------------------------------------
+# Generation. A SINGLE protoc invocation with --fletcher_opt=ipc,accessor,ts,rust
+# emits every artifact (verified for GIR-1): the three C++ headers, the TS and
+# Rust files (incl. the shared __rba.fletcher.rs helper), and an .ipc schema
+# stream per top-level message (bar the inlined flatten list-wrappers). Only
+# coverage.proto is wired — it is named explicitly below, never globbed, so
+# coverage_future.proto stays committed-but-unwired until GIR-10 (see
+# proto/coverage_future.proto). The post-generation .ipc guard is the backstop:
+# were a coverage_future message ever pulled in, its extra .ipc would fail the
+# build loudly rather than silently expanding coverage.
+# ---------------------------------------------------------------------------
+set(_stem coverage)
+set(_src  "${PROTO_DIR}/${_stem}.proto")
+
+set(GENERATED_CPP_HEADERS
+    "${GENERATED_DIR}/${_stem}.fletcher.pb.h"
+    "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h"
+    "${GENERATED_DIR}/${_stem}.fletcher.accessor.pb.h")
+set(GENERATED_TS
+    "${GENERATED_DIR}/${_stem}.fletcher.ts")
+set(GENERATED_RUST
+    "${GENERATED_DIR}/${_stem}.fletcher.rs"
+    "${GENERATED_DIR}/__rba.fletcher.rs")
+# The complete set of top-level messages protoc-gen-fletcher emits an .ipc
+# schema stream for. NOTE: this is NOT literally every message in coverage.proto
+# — the flatten *list* wrappers (StructListWrapper, NestedStructListWrapper) are
+# inlined and emit no standalone .ipc, whereas normal messages and message-level
+# flatten structs (FlattenedPoint) do. This list is the single source of truth
+# for "what generation must produce"; a post-generation guard
+# (cmake/validate_generated_ipc.cmake, wired below) fails the build if protoc's
+# emitted .ipc set drifts from it, so adding / removing / renaming a top-level
+# message can't silently under- or over-generate the fixture (review finding 2).
+set(_ipc_all_messages
+    Branch
+    CompositeCoverage
+    FieldFlattenedPosition
+    FlattenedPoint
+    Leaf
+    NestedEnums
+    ScalarCoverage
+    ServiceReply
+    ServiceRequest)
+
+# The runtime C++ test only opens these; per the design, only the .ipc files a
+# test reads back are declared as custom-command outputs (dependency edges). The
+# rest are still produced by the same protoc call and are covered by the guard.
+set(_ipc_opened_messages
+    ScalarCoverage
+    CompositeCoverage
+    ServiceRequest
+    ServiceReply)
+
+set(GENERATED_IPC "")
+foreach(_m IN LISTS _ipc_opened_messages)
+    list(APPEND GENERATED_IPC "${GENERATED_DIR}/${_stem}.${_m}.ipc")
+endforeach()
+
+# '|'-joined list of every .ipc basename the guard expects (semicolons can't
+# survive as a single -D argument through add_custom_command).
+set(_expected_ipc_names "")
+foreach(_m IN LISTS _ipc_all_messages)
+    list(APPEND _expected_ipc_names "${_stem}.${_m}.ipc")
+endforeach()
+string(REPLACE ";" "|" _expected_ipc_arg "${_expected_ipc_names}")
+
+set(GENERATED_OUTPUTS
+    ${GENERATED_CPP_HEADERS} ${GENERATED_TS} ${GENERATED_RUST} ${GENERATED_IPC})
+
+add_custom_command(
+    OUTPUT  ${GENERATED_OUTPUTS}
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=ipc,accessor,ts,rust"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_src}"
+    # Immediately after generation, assert the emitted .ipc set matches the
+    # single-source list above (review finding 2). A non-zero exit fails the
+    # custom command and therefore the build.
+    COMMAND "${CMAKE_COMMAND}"
+            "-DGENERATED_DIR=${GENERATED_DIR}"
+            "-DEXPECTED_IPC_NAMES=${_expected_ipc_arg}"
+            "-DIPC_STEM=${_stem}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    DEPENDS "${_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    COMMENT "protoc-gen-fletcher (ipc,accessor,ts,rust): ${_stem}.proto"
+    VERBATIM
+)
+
+# ---------------------------------------------------------------------------
+# GIR-9 (#75) enum-emission generation unit. A SECOND, independent protoc
+# invocation for proto/enum_coverage.proto, emitting into the SAME GENERATED_DIR
+# but validated only for its own stem (IPC_STEM=enum_coverage). It imports
+# coverage.proto (for the top-level enum TopLevelStatus), so coverage.proto is a
+# DEPENDS input. Crucially it does NOT request `rust`: the coverage unit's
+# `rust` opt already emits the fixed-name shared __rba.fletcher.rs helper, and a
+# second producer of that same file would be a duplicate-output / Windows
+# parallel-write hazard (and enum_coverage.fletcher.rs would be dead output —
+# the Rust cargo harness compiles only its fixed entry set). The enum forcing
+# test needs only the C++ row/view headers (+ the .ipc guard); ipc,accessor,ts
+# is sufficient.
+# ---------------------------------------------------------------------------
+set(_enum_stem enum_coverage)
+set(_enum_src  "${PROTO_DIR}/${_enum_stem}.proto")
+
+set(GENERATED_ENUM_CPP_HEADERS
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.pb.h"
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.arrow.pb.h"
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.accessor.pb.h")
+set(GENERATED_ENUM_TS
+    "${GENERATED_DIR}/${_enum_stem}.fletcher.ts")
+
+# Every top-level message enum_coverage.proto emits an .ipc schema stream for
+# (single source of truth for the stem-scoped guard below). Excludes the
+# non-emittable owners FlattenedEnumOwner (flatten wrapper) and RecursiveEnumOwner
+# (recursive), which emit no class and no .ipc.
+set(_enum_ipc_all_messages
+    EnumCoverage
+    EnumOwner
+    FieldFlattenedEnum
+    FlattenedEnumRef
+    ImportedEnumCarrier
+    RecursiveEnumRef)
+
+set(GENERATED_ENUM_IPC "")
+foreach(_m IN LISTS _enum_ipc_all_messages)
+    list(APPEND GENERATED_ENUM_IPC "${GENERATED_DIR}/${_enum_stem}.${_m}.ipc")
+endforeach()
+
+set(_enum_expected_ipc_names "")
+foreach(_m IN LISTS _enum_ipc_all_messages)
+    list(APPEND _enum_expected_ipc_names "${_enum_stem}.${_m}.ipc")
+endforeach()
+string(REPLACE ";" "|" _enum_expected_ipc_arg "${_enum_expected_ipc_names}")
+
+set(GENERATED_ENUM_OUTPUTS
+    ${GENERATED_ENUM_CPP_HEADERS} ${GENERATED_ENUM_TS} ${GENERATED_ENUM_IPC})
+
+add_custom_command(
+    OUTPUT  ${GENERATED_ENUM_OUTPUTS}
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=ipc,accessor,ts"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_enum_src}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DGENERATED_DIR=${GENERATED_DIR}"
+            "-DEXPECTED_IPC_NAMES=${_enum_expected_ipc_arg}"
+            "-DIPC_STEM=${_enum_stem}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    DEPENDS "${_enum_src}" "${_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    COMMENT "protoc-gen-fletcher (ipc,accessor,ts): ${_enum_stem}.proto"
+    VERBATIM
+)
+
+# ---------------------------------------------------------------------------
+# GIR-10 (§3d) scalar-leaf nested-list generation unit. A THIRD, independent
+# protoc invocation for proto/coverage_scalar_nested.proto (message
+# ScalarNestedCoverage), emitting into the SAME GENERATED_DIR but validated only
+# for its own stem (IPC_STEM=coverage_scalar_nested). Crucially it requests only
+# `--fletcher_opt=ipc,ts` and OMITS `accessor` and `rust`: the read-only RBA
+# accessor assumes a struct-leaf nested list and must never be fed the scalar-leaf
+# nested lists this message carries (locked decision #3). The C++ edge header and
+# the Arrow view/ToArrowRow header are emitted unconditionally (no opt token), so
+# ipc,ts is the full RBA-omitting set. No .fletcher.accessor.pb.h and no
+# .fletcher.rs are produced for this stem.
+# ---------------------------------------------------------------------------
+set(_sn_stem coverage_scalar_nested)
+set(_sn_src  "${PROTO_DIR}/${_sn_stem}.proto")
+
+set(GENERATED_SN_CPP_HEADERS
+    "${GENERATED_DIR}/${_sn_stem}.fletcher.pb.h"
+    "${GENERATED_DIR}/${_sn_stem}.fletcher.arrow.pb.h")
+set(GENERATED_SN_TS
+    "${GENERATED_DIR}/${_sn_stem}.fletcher.ts")
+
+# Only ScalarNestedCoverage emits an .ipc; the flatten list-wrappers
+# (ScalarListWrapper, NestedScalarListWrapper) are inlined and emit none.
+set(_sn_ipc_all_messages
+    ScalarNestedCoverage)
+
+set(GENERATED_SN_IPC "")
+foreach(_m IN LISTS _sn_ipc_all_messages)
+    list(APPEND GENERATED_SN_IPC "${GENERATED_DIR}/${_sn_stem}.${_m}.ipc")
+endforeach()
+
+set(_sn_expected_ipc_names "")
+foreach(_m IN LISTS _sn_ipc_all_messages)
+    list(APPEND _sn_expected_ipc_names "${_sn_stem}.${_m}.ipc")
+endforeach()
+string(REPLACE ";" "|" _sn_expected_ipc_arg "${_sn_expected_ipc_names}")
+
+set(GENERATED_SN_OUTPUTS
+    ${GENERATED_SN_CPP_HEADERS} ${GENERATED_SN_TS} ${GENERATED_SN_IPC})
+
+add_custom_command(
+    OUTPUT  ${GENERATED_SN_OUTPUTS}
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_opt=ipc,ts"
+            "--fletcher_out=${GENERATED_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${_sn_src}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DGENERATED_DIR=${GENERATED_DIR}"
+            "-DEXPECTED_IPC_NAMES=${_sn_expected_ipc_arg}"
+            "-DIPC_STEM=${_sn_stem}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    DEPENDS "${_sn_src}" fletcher-protoc::plugin
+            "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
+    COMMENT "protoc-gen-fletcher (ipc,ts — NO accessor/rust): ${_sn_stem}.proto"
+    VERBATIM
+)
+
+add_custom_target(generate_coverage_outputs ALL
+    DEPENDS ${GENERATED_OUTPUTS} ${GENERATED_ENUM_OUTPUTS} ${GENERATED_SN_OUTPUTS})
+
+enable_testing()
+
+# ---------------------------------------------------------------------------
+# C++ harness: edge row + Arrow view / ToArrowRow + IPC schema. The service
+# surface is compiled (pubsub linkage) but no transport is executed.
+# ---------------------------------------------------------------------------
+add_executable(coverage_harness_tests tests/test_coverage_harness.cpp)
+add_dependencies(coverage_harness_tests generate_coverage_outputs)
+target_include_directories(coverage_harness_tests PRIVATE "${GENERATED_DIR}")
+target_compile_definitions(coverage_harness_tests PRIVATE
+    GENERATED_DIR_PATH="${GENERATED_DIR}"
+    # GIR-4: the harness now reconstructs the committed goldens through the
+    # generated edge constructor, so it reads the same source-controlled golden/
+    # dir as the parity oracle (never the build tree).
+    PARITY_GOLDEN_DIR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+target_link_libraries(coverage_harness_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-2 parity oracle: encode byte-identity (Encode()==EncodeRow()==golden) plus
+# decode round-trip / golden-decode value equality for every active message. The
+# golden/ .bin files are the source-controlled wire-contract baseline; the test
+# reads them from PARITY_GOLDEN_DIR_PATH (never from the build tree) so they are
+# reviewed as source, not regenerated on every build.
+# ---------------------------------------------------------------------------
+add_executable(coverage_parity_oracle_tests tests/test_parity_oracle.cpp)
+add_dependencies(coverage_parity_oracle_tests generate_coverage_outputs)
+target_include_directories(coverage_parity_oracle_tests PRIVATE "${GENERATED_DIR}")
+target_compile_definitions(coverage_parity_oracle_tests PRIVATE
+    PARITY_GOLDEN_DIR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+target_link_libraries(coverage_parity_oracle_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# RBA C++ accessor: build an Arrow RecordBatch matching CompositeCoverage and
+# read representative values through the generated accessor (read-only guard).
+# ---------------------------------------------------------------------------
+add_executable(coverage_accessor_tests tests/test_coverage_accessor.cpp)
+add_dependencies(coverage_accessor_tests generate_coverage_outputs)
+target_include_directories(coverage_accessor_tests PRIVATE "${GENERATED_DIR}")
+# fletcher-pubsub is linked (beyond arrow + arrow-bridge) because this test
+# builds its RecordBatch via the generated ToArrowRow, whose edge/arrow headers
+# transitively include <fletcher/pubsub/owned_schema.hpp> (OwnedSchema).
+target_link_libraries(coverage_accessor_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-6 view-visitor forcing test: message -> ToArrowRow -> Codec -> View ->
+# reconstruct -> Equals. Exercises the IR-driven ToArrowRow() + `<Class>View`
+# getters end to end through the real Codec on the CompositeCoverage fixture.
+# ---------------------------------------------------------------------------
+add_executable(coverage_view_visitor_tests tests/test_view_visitor.cpp)
+add_dependencies(coverage_view_visitor_tests generate_coverage_outputs)
+target_include_directories(coverage_view_visitor_tests PRIVATE "${GENERATED_DIR}")
+target_link_libraries(coverage_view_visitor_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-7 forcing test: TsVisitor.DescriptorByteIdentical. The IR-driven TS
+# interface + TypedSchema/SchemaDescriptor the plugin emits for coverage.proto
+# must be byte-identical to the committed frozen golden (golden/coverage.fletcher.ts).
+# No Arrow/pubsub linkage — it only diffs two files.
+# ---------------------------------------------------------------------------
+add_executable(coverage_ts_visitor_tests tests/test_ts_visitor.cpp)
+add_dependencies(coverage_ts_visitor_tests generate_coverage_outputs)
+target_compile_definitions(coverage_ts_visitor_tests PRIVATE
+    GENERATED_TS_PATH="${GENERATED_DIR}/${_stem}.fletcher.ts"
+    TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_stem}.fletcher.ts")
+target_link_libraries(coverage_ts_visitor_tests PRIVATE GTest::gtest_main)
+
+# ---------------------------------------------------------------------------
+# GIR-9 (#75) forcing test: EnumEmit.GeneratedEnumSymbolsRoundTrip. Compiles and
+# runs the generated enum classes + typed accessors for enum_coverage.proto
+# (and the additive typed accessors on the existing coverage.proto enum fields).
+# ---------------------------------------------------------------------------
+add_executable(coverage_enum_emit_tests tests/test_enum_emit.cpp)
+add_dependencies(coverage_enum_emit_tests generate_coverage_outputs)
+target_include_directories(coverage_enum_emit_tests PRIVATE "${GENERATED_DIR}")
+target_link_libraries(coverage_enum_emit_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-9 TS byte-identity guard for the new generation unit: the enum_coverage
+# .fletcher.ts the plugin emits must be byte-identical to the committed golden
+# (enum lowering stays int32 on the TS surface). Reuses the parameterised
+# test_ts_visitor.cpp with the enum_coverage paths; the test is discovered as
+# TsVisitor.DescriptorByteIdentical from a separate binary.
+# ---------------------------------------------------------------------------
+add_executable(coverage_enum_ts_visitor_tests tests/test_ts_visitor.cpp)
+add_dependencies(coverage_enum_ts_visitor_tests generate_coverage_outputs)
+target_compile_definitions(coverage_enum_ts_visitor_tests PRIVATE
+    GENERATED_TS_PATH="${GENERATED_DIR}/${_enum_stem}.fletcher.ts"
+    TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_enum_stem}.fletcher.ts")
+target_link_libraries(coverage_enum_ts_visitor_tests PRIVATE GTest::gtest_main)
+
+# ---------------------------------------------------------------------------
+# GIR-10 (§3d) forcing test: Nesting.ListOfListOfScalarRoundTrips (+ nullable /
+# depth-3 / schema-evolution-negative cases). Exercises the newly faithful
+# scalar-leaf nested-list surfaces end to end: generated edge encode -> decode ->
+# field equality, and ToArrowRow -> Codec -> View reconstruction, on the
+# ScalarNestedCoverage fixture. Also asserts the Arrow schema is truly
+# list<list<int32>> (not collapsed).
+# ---------------------------------------------------------------------------
+add_executable(coverage_nesting_tests tests/test_nesting.cpp)
+add_dependencies(coverage_nesting_tests generate_coverage_outputs)
+target_include_directories(coverage_nesting_tests PRIVATE "${GENERATED_DIR}")
+target_link_libraries(coverage_nesting_tests PRIVATE
+    GTest::gtest_main
+    arrow::arrow
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    fletcher-pubsub::fletcher-pubsub)
+
+# ---------------------------------------------------------------------------
+# GIR-10 TS byte-identity guard for the scalar-leaf-nested generation unit: the
+# coverage_scalar_nested .fletcher.ts the plugin emits (number[][] / number[][][])
+# must be byte-identical to its committed golden. Reuses the parameterised
+# test_ts_visitor.cpp; discovered as TsVisitor.DescriptorByteIdentical from a
+# separate binary with a distinct prefix.
+# ---------------------------------------------------------------------------
+add_executable(coverage_scalar_nested_ts_visitor_tests tests/test_ts_visitor.cpp)
+add_dependencies(coverage_scalar_nested_ts_visitor_tests generate_coverage_outputs)
+target_compile_definitions(coverage_scalar_nested_ts_visitor_tests PRIVATE
+    GENERATED_TS_PATH="${GENERATED_DIR}/${_sn_stem}.fletcher.ts"
+    TS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_sn_stem}.fletcher.ts")
+target_link_libraries(coverage_scalar_nested_ts_visitor_tests PRIVATE GTest::gtest_main)
+
+include(GoogleTest)
+gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_enum_ts_visitor_tests DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX "enum.")
+gtest_discover_tests(coverage_nesting_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(coverage_scalar_nested_ts_visitor_tests DISCOVERY_MODE PRE_TEST
+    TEST_PREFIX "scalar_nested.")
+
+# ---------------------------------------------------------------------------
+# GIR-8 forcing tests (negative generation + zero-ValueOrDie assertion).
+#
+# GenErrors.{,Repeated,Map}UnsupportedTypeFailsBuild: run the plugin on the
+# unwired coverage_unsupported*.proto fixtures (singular / repeated / map
+# google.protobuf.Any) and require a non-zero exit whose error names that
+# shape's offending field and carries the UnsupportedNode reason. The fixtures
+# are NOT part of the coverage generation set — each is invoked only by its test
+# via a dedicated protoc call.
+#
+# NoValueOrDieInIrGeneratedCode: assert the IR-emitted generated files
+# (*.fletcher.pb.h / *.fletcher.arrow.pb.h / *.fletcher.ts) carry zero
+# .ValueOrDie(); RBA outputs (*.accessor.pb.h / *.fletcher.rs / __rba.fletcher.rs)
+# and binary .ipc are excluded — RBA is read-only and reconciled in round RIR.
+# This proves the real generated OUTPUT of the coverage harness is clean; the
+# companion full-surface guard that greps the EMITTER SOURCES for every harness
+# at once lives in the protoc unit suite (GenErrors.NoValueOrDieInEmitterSources).
+# ---------------------------------------------------------------------------
+# Singular, repeated, and map google.protobuf.Any (review 4b) each in their own
+# single-message fixture so one protoc invocation isolates one shape and the
+# error must name that shape's field. All three carry the same Any reason.
+foreach(_variant
+        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload"
+        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads"
+        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map")
+    string(REPLACE "|" ";" _parts "${_variant}")
+    list(GET _parts 0 _test_name)
+    list(GET _parts 1 _proto_file)
+    list(GET _parts 2 _expect_field)
+    add_test(NAME GenErrors.${_test_name}
+        COMMAND "${CMAKE_COMMAND}"
+            -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+            -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+            -DPROTO_DIR=${PROTO_DIR}
+            -DPROTO_FILE=${_proto_file}
+            -DEXPECT_FIELD=${_expect_field}
+            "-DEXPECT_REASON=google.protobuf.Any is dynamically typed"
+            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/unsupported-generated
+            -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+            -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_unsupported_generation_check.cmake)
+endforeach()
+
+add_test(NAME GenErrors.NoValueOrDieInIrGeneratedCode
+    COMMAND "${CMAKE_COMMAND}"
+        -DGENERATED_DIR=${GENERATED_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_no_value_or_die.cmake)
+
+# ---------------------------------------------------------------------------
+# GIR-10 backend-availability guard (locked #3) forcing tests. Generating a proto
+# with a scalar-leaf nested list (List<List<scalar>>) under the read-only RBA C++
+# accessor (`accessor`) or Rust (`rust`) backend must FAIL with a clear guard
+# error, NOT emit malformed accessor/Rust code. The edge/view/ipc/ts backends
+# still support the shape (covered by the ipc,ts ScalarNestedCoverage unit above),
+# so only accessor/rust are the rejecting tokens here.
+# ---------------------------------------------------------------------------
+foreach(_gopt accessor rust)
+    add_test(NAME GenErrors.ScalarLeafNestedListRejectedBy_${_gopt}
+        COMMAND "${CMAKE_COMMAND}"
+            -DPROTOC=$<TARGET_FILE:protobuf::protoc>
+            -DFLETCHER_PLUGIN=$<TARGET_FILE:fletcher-protoc::plugin>
+            -DPROTO_DIR=${PROTO_DIR}
+            -DPROTO_FILE=coverage_scalar_nested.proto
+            -DFLETCHER_OPT=${_gopt}
+            "-DEXPECT_MESSAGE=not yet supported by the RecordBatch accessor / Rust backend"
+            -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/backend-guard-generated
+            -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
+            -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+endforeach()
+
+# ---------------------------------------------------------------------------
+# Optional toolchain checks (graceful skip). tsc / cargo+rustc are found at
+# configure time; the wrapper scripts print SKIP_MARKER and exit 0 when the
+# tool is absent, and SKIP_REGULAR_EXPRESSION reports the test as Skipped
+# (never Passed or Failed) irrespective of exit code.
+# ---------------------------------------------------------------------------
+find_program(TSC_EXECUTABLE tsc)
+find_program(CARGO_EXECUTABLE cargo)
+find_program(RUSTC_EXECUTABLE rustc)
+message(STATUS "tsc:   ${TSC_EXECUTABLE}")
+message(STATUS "cargo: ${CARGO_EXECUTABLE}")
+message(STATUS "rustc: ${RUSTC_EXECUTABLE}")
+
+add_test(NAME CoverageHarness.GeneratedTypescriptCompiles
+    COMMAND "${CMAKE_COMMAND}"
+        -DTSC_EXECUTABLE=${TSC_EXECUTABLE}
+        -DGENERATED_DIR=${GENERATED_DIR}
+        -DTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/ts
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_tsc_check.cmake)
+set_tests_properties(CoverageHarness.GeneratedTypescriptCompiles
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER")
+
+add_test(NAME CoverageHarness.GeneratedRustAccessorCompiles
+    COMMAND "${CMAKE_COMMAND}"
+        -DCARGO_EXECUTABLE=${CARGO_EXECUTABLE}
+        -DRUSTC_EXECUTABLE=${RUSTC_EXECUTABLE}
+        -DGENERATED_DIR=${GENERATED_DIR}
+        -DRUST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/rust-accessor
+        -DCARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-target
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_cargo_check.cmake)
+set_tests_properties(CoverageHarness.GeneratedRustAccessorCompiles
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER")
+
+# The TS/Rust checks read the emitted generated files, so they must run after
+# generation. They invoke external toolchains, not the C++ test binaries, so
+# express the dependency as a fixture ordering via the generate target through
+# the build (ALL target guarantees generation before ctest is invoked by
+# `conan build .` / the presets flow).

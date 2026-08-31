@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# The generated coverage.fletcher.ts is copied here by cmake/run_tsc_check.cmake
+# at test time; it is a build artifact, never source.
+/generated/
+/node_modules/

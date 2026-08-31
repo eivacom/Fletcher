@@ -19,38 +19,43 @@
 
 #include <google/protobuf/descriptor.h>
 
+#include <memory>
 #include <set>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "ir.hpp"
 #include "option_metadata.hpp"
 #include "type_mapper.hpp"
 
 namespace fletcher {
+
+// True if `method` is eligible to become a pub/sub topic (client-streaming
+// request, no server streaming, google.protobuf.Empty reply, input message
+// generated in this file). On failure, `*reason` is set to the user-facing skip
+// text. Single source of truth for both the C++ pub/sub generator and the TS
+// backend's topic-constant emission (GIR-7). Relocated to external linkage from
+// generator.cpp's anonymous namespace (RBA-2 pattern) — no behavioural change.
+bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
+                           const std::set<const google::protobuf::Descriptor*>& generated_msgs,
+                           std::string* reason);
 
 // Per-field information gathered before code generation. Mirrors the schema
 // model produced by GatherFields: one entry per supported (mapped) field, with
 // field-level-flatten sub-messages inlined.
 struct FieldInfo {
     std::string name;
-    FieldMapping mapping;
+    FieldMapping mapping;  // temporary bridge for the not-yet-migrated emitters
     int field_number = 0;  // leaf proto field number
     std::string field_id;  // dotted field-number path, unique even when field-level
                            // flatten inlines sub-messages (e.g. "2.1"); equals the
                            // field_number string for non-inlined top-level fields
     const google::protobuf::FieldDescriptor* descriptor{};  // original proto descriptor
-
-    // Outer→inner chain of (fletcher.flatten_field) wrapper fields this leaf was
-    // inlined through; empty for a field that was not inlined. The descriptor-level
-    // counterpart of field_id's dotted numeric path: GatherFieldsImpl drops the
-    // outer field when it inlines, so this is the only way to reach an annotation
-    // declared on it.
-    //
-    // Message-level (fletcher.flatten) does NOT appear here — MapField resolves it
-    // internally and `descriptor` remains the outer field, so the wrapper's message
-    // type is already reachable as descriptor->message_type().
-    std::vector<const google::protobuf::FieldDescriptor*> flatten_chain;
+    // GIR-3: the canonical language-neutral IR for this field — the source of
+    // truth the edge ENCODE visitor walks. shared_ptr keeps FieldInfo copyable
+    // despite IrNode owning unique_ptr children. `mapping` is a projection of
+    // this same IR (single source), consumed by the other emitters for now.
+    std::shared_ptr<const ir::IrNode> ir;
 };
 
 // Parsed form of the comma-separated --fletcher_opt=... plugin parameter.
@@ -66,7 +71,8 @@ struct PluginOptions {
 // Parse the --fletcher_opt parameter into `*out`. Unknown tokens are ignored
 // without error, unchanged from the behaviour every existing caller relies on.
 // Returns false and sets *error only for a token the plugin recognises but
-// cannot parse. Single tokenizer for both Generate() and GenerateAll().
+// cannot parse. Single tokenizer for both Generate() and GenerateAll() — a new
+// opt token added here reaches BOTH, which is the point of the shared function.
 bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error);
 
 // Topologically ordered, generatable messages of `file` (dependencies first,
@@ -79,23 +85,14 @@ std::string ArrowTypeExpr(const FieldInfo& fi);
 
 // Gather the supported fields of `msg` (flatten-inlining applied). Unsupported
 // fields are appended to `*skipped_comment` and omitted from the result.
+//
+// GIR-5: the schema paths no longer consume this — schema construction is driven
+// by cpp_backend::BuildFlattenedFieldList (a language-neutral IR walk). Gather
+// Fields remains the FieldMapping-bridge source for the not-yet-migrated
+// emitters (row class, RBA accessors, TS) and for the skipped-field comment;
+// the schema visitor reads it read-only via that shared field-order model.
 std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
                                     std::string* skipped_comment);
-
-// The Arrow metadata attached to a message's schema root / to one field.
-//
-// Single source of truth for both emission paths: GenerateSchemaFunction turns
-// the returned vector into ArrowMetadataBuilderAppend source lines, and
-// BuildMessageSchemaInto (--fletcher_opt=ipc) hands the same vector to
-// SetMetadataPairs in-process. Keys, values and their ORDER therefore cannot
-// drift between the generated <Class>Schema() and the emitted .ipc bytes, which
-// test_ipc_parity.cpp compares byte-for-byte.
-// `resolver` may be null (no metadata_from_option rules), in which case only the
-// four builtin keys are returned and the emitted bytes are exactly as before.
-std::vector<std::pair<std::string, std::string>> SchemaMetadataPairs(
-    const google::protobuf::Descriptor* msg, const OptionMetadataResolver* resolver);
-std::vector<std::pair<std::string, std::string>> FieldMetadataPairs(
-    const FieldInfo& fi, const OptionMetadataResolver* resolver);
 
 // Cross-file generated-header include paths needed by `file`: scans every
 // supported field mapping (recursively through nested types) and collects the

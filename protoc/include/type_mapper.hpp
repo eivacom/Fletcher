@@ -10,6 +10,10 @@
 
 namespace fletcher {
 
+namespace ir {
+struct IrNode;
+}  // namespace ir
+
 // Describes a scalar (or scalar-like) Arrow type: enough information for the
 // code generator to emit setters, builders, and scalar constructors.
 struct ScalarTypeInfo {
@@ -46,7 +50,14 @@ struct FieldMapping {
     // STRUCT / REPEATED_STRUCT / NESTED_LIST kind:
     std::string nested_class;   // C++ type reference (globally qualified when cross-file)
     std::string nested_header;  // non-empty → #include this path (cross-file dependency)
-    int list_depth = 0;         // NESTED_LIST: 2 = List<List<Struct>>, 3 = List<List<List<Struct>>>
+    int list_depth = 0;         // NESTED_LIST: 2 = List<List<leaf>>, 3 = List<List<List<leaf>>>
+    // NESTED_LIST kind, GIR-10: when true the innermost leaf is a SCALAR (the
+    // scalar type is carried in `element`, like REPEATED_SCALAR), not a message
+    // struct (`nested_class`). This scalar-leaf nested-list shape is NEVER fed to
+    // the read-only RBA accessor emitter (locked #3): the fixture that carries it
+    // (ScalarNestedCoverage) is generated without the accessor/rust opts, so RBA
+    // only ever sees struct-leaf nested lists and its behaviour is unchanged.
+    bool nested_leaf_is_scalar = false;
     // Descriptor behind nested_class — the message whose schema the generated
     // code references via <nested_class>Schema(). Used by the in-process
     // schema builder (--fletcher_opt=ipc) to build the same schema directly.
@@ -64,10 +75,37 @@ struct FieldMapping {
 
 // Classify a proto field and return enough information to generate Arrow code.
 // Returns nullopt for unsupported constructs (oneof, recursive, etc.).
+//
+// GIR-3: MapField() is now a thin bridge over the canonical IR — it is
+// ProjectIrToFieldMapping(ir::BuildFieldIr(field), field->file()). There is no
+// second, independent classifier: RBA / decode / schema / view / TS all consume
+// FieldMapping derived from the same BuildFieldIr() source, so they cannot drift.
 std::optional<FieldMapping> MapField(const google::protobuf::FieldDescriptor* field);
 
-// Human-readable explanation of why MapField returned nullopt.
+// Canonical projection of a language-neutral IR node onto the (temporary) flat
+// FieldMapping bridge that the not-yet-migrated emitters consume. Returns nullopt
+// for Unsupported nodes and for IR shapes the flat model cannot represent.
+//
+// Scalar-leaf nested lists (List<List<...<Scalar>>>) ARE representable as of
+// GIR-10: they project onto `element` plus the additive `nested_leaf_is_scalar`
+// discriminator, so this returns a mapping for them rather than nullopt. The
+// struct-leaf counterpart uses `nested_class`. That shape never reaches the
+// read-only RBA accessor — a front-end guard
+// (ValidateBackendsSupportFields/FindScalarLeafNestedList in generator.cpp)
+// rejects `--fletcher_opt=accessor,rust` for such protos until round RIR.
+//
+// Edge ENCODE does NOT use this — it walks the IR.
+std::optional<FieldMapping> ProjectIrToFieldMapping(
+    const ir::IrNode& node, const google::protobuf::FileDescriptor* context_file);
+
+// Human-readable explanation of why a field is unsupported (legacy boundary text).
 std::string UnsupportedReason(const google::protobuf::FieldDescriptor* field);
+
+// True if the field is nullable (proto3 `optional` keyword, or proto2 optional).
+bool IsFieldNullable(const google::protobuf::FieldDescriptor* field);
+
+// True if the message carries the (fletcher.flatten) message option.
+bool HasMessageFlatten(const google::protobuf::Descriptor* msg);
 
 // True if the message (directly or transitively) references itself.
 bool IsRecursive(const google::protobuf::Descriptor* msg);

@@ -92,11 +92,23 @@ message Coord {
 // from the Arrow schema and Coord's annotation can only reach x/y through the
 // flatten chain. ext_meta carries JSON: quotes must survive into the generated
 // C++ string literal and match the .ipc bytes exactly.
+//
+// It also deliberately carries bytes that exercise the escaper's OCTAL branch
+// through a real compiler -- this is the only lane that actually COMPILES a
+// generated header, and a pure-ASCII value left that branch unproven end to end:
+//   \302\260  U+00B0 DEGREE SIGN (non-ASCII, so it must not be emitted raw --
+//             the header's meaning would then depend on the compiler's source
+//             encoding), immediately followed by the ASCII digit '2', which is
+//             what makes MSVC raise C4125 unless the literal is split;
+//   \001      a control byte (the other half of the octal branch).
+// Both the octal escapes here and in the C++ rendering are 3-digit/non-greedy;
+// MetadataOptionsTest.JsonValueSurvivesCppStringLiteralEscaping compares the
+// COMPILED value against the expected bytes, so any drift fails loudly.
 message Pos {
     option (integration.metadata.typ) = {
         kind: KIND_ALPHA,
         enc: ENC_GEO,
-        ext_meta: "{\"crs\":\"EPSG:4326\"}"
+        ext_meta: "{\"crs\":\"EPSG:4326\",\"unit\":\"\302\2602\"}\001"
     };
 
     Coord coord = 1 [(fletcher.flatten_field) = true];

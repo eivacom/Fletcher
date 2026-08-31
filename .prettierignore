@@ -5,3 +5,7 @@ dist/
 **/build/
 **/generated-ts/
 package-lock.json
+
+# Byte-exact generator output committed as goldens: prettier must not rewrite
+# them or the parity / visitor comparisons break.
+integration-tests/protoc-coverage/golden/

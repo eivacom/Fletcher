@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// GIR-9 enum-emission forcing fixture (#75). A SEPARATE proto (isolated from
+// coverage.proto so the existing whole-file coverage.fletcher.ts and the
+// coverage.*.ipc / coverage.*.v1.bin goldens stay byte-identical). It exercises,
+// on its own generation unit, the four enum-field shapes (singular / nullable /
+// repeated / map value), an intentionally UNREFERENCED standalone enum, an
+// IMPORTED top-level enum (TopLevelStatus from coverage.proto), and a nested
+// enum whose OWNING message (EnumOwner) is declared AFTER the referencing
+// message (EnumCoverage) with no TYPE_MESSAGE edge between them — so the
+// enum-owner ordering edge in TopologicalVisit is exercised red-first.
+//
+// Enum storage stays int32 on every non-C++ surface (Arrow schema / IPC / wire /
+// TS); the typed C++ accessors are additive and live only in the generated
+// row/view headers.
+syntax = "proto3";
+package integration.coverage;
+
+import "coverage.proto";
+import "fletcher/options.proto";
+
+enum StandaloneStatus {
+  STANDALONE_STATUS_UNSPECIFIED = 0;
+  STANDALONE_STATUS_PRESENT = 1;
+}
+
+message EnumCoverage {
+  TopLevelStatus status = 1;
+  optional TopLevelStatus nullable_status = 2;
+  repeated TopLevelStatus statuses = 3;
+  map<string, TopLevelStatus> status_by_name = 4;
+  EnumOwner.InnerStatus nested_status = 5;
+}
+
+message EnumOwner {
+  enum InnerStatus {
+    INNER_STATUS_UNSPECIFIED = 0;
+    INNER_STATUS_ACTIVE = 1;
+    INNER_STATUS_DISABLED = 2;
+  }
+
+  int32 marker = 1;
+}
+
+// --- GIR-9 re-review 4a: nested enum whose OWNER message is NOT emittable ----
+// A nested enum declared inside a message that the emit loops skip (recursive,
+// or a flattened wrapper) is never emitted as a C++ enum class. A field
+// referencing such an enum must fall back to the raw int32 accessor ONLY —
+// emitting `Owner::InnerStatus` typed accessors would name an undeclared class
+// and break compilation. Red-first for the emittability gate: without the gate
+// the generated header references undeclared classes and does not compile.
+
+// Flattened wrapper (flatten option + exactly one field) that also declares a
+// nested enum. Structurally identical to StructListWrapper in coverage.proto, so
+// the wrapper class is never generated (it is inlined at use sites) — leaving
+// WrappedStatus with no C++ home.
+message FlattenedEnumOwner {
+  option (fletcher.flatten) = true;
+
+  enum WrappedStatus {
+    WRAPPED_STATUS_UNSPECIFIED = 0;
+    WRAPPED_STATUS_SET = 1;
+  }
+
+  repeated EnumOwner wrapped_items = 1;
+}
+
+message FlattenedEnumRef {
+  FlattenedEnumOwner.WrappedStatus wrapped = 1;
+}
+
+// Recursive message (self-referential) that declares a nested enum. Recursive
+// messages are skipped entirely, so RecStatus has no C++ home. This also
+// exercises the enum-owner ordering edge on a recursive owner (must terminate,
+// not recurse unbounded).
+message RecursiveEnumOwner {
+  enum RecStatus {
+    REC_STATUS_UNSPECIFIED = 0;
+    REC_STATUS_SET = 1;
+  }
+
+  RecursiveEnumOwner child = 1;
+}
+
+message RecursiveEnumRef {
+  RecursiveEnumOwner.RecStatus rec = 1;
+}
+
+// --- GIR-9 re-review P2-1: field-flattened IMPORTED enum field ---------------
+// FieldFlattenedEnum field-flattens ImportedEnumCarrier, inlining its fields —
+// including an IMPORTED enum (TopLevelStatus from coverage.proto). The inlined
+// enum's typed accessor lands on FieldFlattenedEnum, so the cross-file enum
+// include collector must descend into field-level flatten to keep coverage's
+// generated header visible (mirrors the message-import path).
+message ImportedEnumCarrier {
+  option (fletcher.flatten) = true;
+
+  TopLevelStatus carrier_status = 1;
+  int32 carrier_amount = 2;
+}
+
+message FieldFlattenedEnum {
+  ImportedEnumCarrier carrier = 1 [(fletcher.flatten_field) = true];
+}

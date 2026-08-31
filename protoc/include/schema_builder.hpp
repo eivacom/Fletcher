@@ -13,15 +13,16 @@
 
 namespace fletcher {
 
-// Build the Arrow schema for msg in-process. Mirrors the <Class>Schema()
-// function the generator emits into .fletcher.pb.h — same nanoarrow calls,
-// same field order, names, nullability flags, and metadata — so the result
-// is identical to the schema the generated code constructs at runtime.
-// Defined in generator.cpp because it shares the field-gathering internals
-// with code generation. Throws std::runtime_error on failure.
+// Build the Arrow schema for msg in-process. This is the in-process execution
+// sink of the ONE IR-driven schema visitor (GIR-5): the same
+// cpp_backend::SchemaVisitor that emits the generated <Class>Schema() source
+// also drives this build (via a nanoarrow sink), so the two are byte-identical
+// by construction — same field order, names, nullability flags, and metadata.
+// Defined in generator.cpp (thin wrapper over the visitor). Throws
+// std::runtime_error on failure.
 //
-// `resolver` supplies any --fletcher_opt=metadata_from_option mappings; null
-// (the default) means only the four builtin metadata keys are emitted.
+// GIR-13: `resolver` (nullable) supplies --fletcher_opt=metadata_from_option
+// extras. nullptr == "no rules given" and reproduces the pre-GIR-13 bytes exactly.
 nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* msg,
                                            const OptionMetadataResolver* resolver = nullptr);
 

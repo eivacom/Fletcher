@@ -521,7 +521,22 @@ std::vector<std::pair<std::string, std::string>> OptionMetadataResolver::ForFiel
 std::string EscapeCppStringLiteral(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
+    // True when the last thing appended was a \nnn octal escape. MSVC emits
+    // C4125 ("decimal digit terminates octal escape sequence") at /W4 when a
+    // decimal digit follows one, so a consumer compiling the generated header with
+    // /W4 /WX would FAIL to build (verified with cl 17.14 /std:c++20). The other
+    // escapes (\\ \" \n \r \t) are not octal and need no such handling.
+    bool prev_was_octal = false;
     for (const unsigned char c : s) {
+        // Close and reopen the literal. Adjacent string-literal concatenation
+        // happens in translation phase 6, AFTER escape conversion in phase 5, so
+        // "\302" "2" decodes to exactly the same two bytes as "\3022" would --
+        // the octal escape already stopped after three digits either way. This is
+        // byte-neutral by construction; only the rendered SOURCE changes. The
+        // caller wraps the whole returned body in ONE pair of quotes, which is
+        // what makes the inserted `" "` well-formed there.
+        if (prev_was_octal && c >= '0' && c <= '9') out += "\" \"";
+        prev_was_octal = false;
         switch (c) {
             case '\\':
                 out += "\\\\";
@@ -543,6 +558,7 @@ std::string EscapeCppStringLiteral(const std::string& s) {
                     char buf[5];
                     std::snprintf(buf, sizeof buf, "\\%03o", c);
                     out += buf;
+                    prev_was_octal = true;
                 } else {
                     out += static_cast<char>(c);
                 }

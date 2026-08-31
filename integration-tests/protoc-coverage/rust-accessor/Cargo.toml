@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+[package]
+name = "fletcher-coverage-rust-check"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LGPL-3.0-or-later"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Exact pin: the generated RBA Rust code commits to this arrow-rs API surface
+# (the same pin as the authoritative integration-tests/protoc-gen-fletcher-rust
+# crate). GIR-1 only compile-checks the generated accessor; it does not rewrite
+# RBA or add generated Rust row/backend work.
+arrow = "=59.0.0"

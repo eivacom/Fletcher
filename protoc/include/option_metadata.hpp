@@ -71,7 +71,8 @@ class OptionMetadataResolver {
         const google::protobuf::Descriptor* msg) const;
 
     // Field-level pairs (kField / kFieldType rules). `flatten_chain` is
-    // FieldInfo::flatten_chain: the outer→inner (fletcher.flatten_field) wrappers
+    // SchemaFieldRecord::flatten_chain (GIR-13; FieldInfo no longer carries it):
+    // the outer→inner (fletcher.flatten_field) wrappers
     // this leaf was inlined through. Candidates are tried leaf-first, then the
     // chain innermost→outermost, so the most specific declaration wins.
     std::vector<std::pair<std::string, std::string>> ForField(
@@ -92,6 +93,13 @@ class OptionMetadataResolver {
 // Octal, never \x: C++ hex escapes consume an unbounded run of hex digits, so a
 // 0x01 byte followed by a literal 'A' would emit "\x01A" and be read back as one
 // character. Octal escapes stop after three digits.
+//
+// A decimal digit is never emitted directly after an octal escape: the literal is
+// split there (`"\302" "2"`) because MSVC diagnoses `"\3022"` as C4125 at /W4,
+// which would break a consumer building the generated header with /W4 /WX. The
+// decoded bytes are unaffected (adjacent literals are concatenated after escape
+// conversion), but the returned body therefore has to be placed between ONE pair
+// of quotes -- which is exactly how CppSchemaSink::SetMetadata uses it.
 std::string EscapeCppStringLiteral(const std::string& s);
 
 }  // namespace fletcher
