@@ -30,13 +30,13 @@ class MockProvider : public PubSubProvider {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         std::string key = fletcher::internal::JoinSegments(segments);
 
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
@@ -193,9 +193,9 @@ TEST(SubscriberTest, SubscribeReturnsUniqueIds) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     Subscriber::SubscribeResult r2 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
 
     EXPECT_NE(r1.subscription_id, r2.subscription_id);
 }
@@ -206,7 +206,8 @@ TEST(SubscriberTest, SubscribeToUnknownTopicSucceeds) {
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        {"no", "such"}, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        {"no", "such"},
+        [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     EXPECT_GT(result.subscription_id, 0u);
 }
 
@@ -218,7 +219,7 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     ASSERT_TRUE(result.schema.valid());
     SharedSchema sch = result.schema.get();
     ASSERT_TRUE(sch);
@@ -235,10 +236,10 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_a++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
 
@@ -258,10 +259,11 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
 
     int count_a = 0;
     int count_b = 0;
-    Subscriber::SubscribeResult ra = subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+    Subscriber::SubscribeResult ra =
+        subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                         const Attachments&) { count_a++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
     EXPECT_EQ(count_a, 1);
@@ -280,7 +282,7 @@ TEST(SubscriberTest, UnsubscribeLastSubscriberUnsubscribesFromProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     EXPECT_EQ(mock->unsubscribe_count, 0);
 
     subscriber.Unsubscribe(r.subscription_id);
@@ -294,9 +296,9 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
-    (void)subscriber.Subscribe(kTopic,
-                               [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
@@ -321,11 +323,12 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments att) {
-            received_value = DecodeTestRow(data, len);
-            received_att = std::move(att);
-        });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len,
+                                           const SharedSchema&, const Attachments& att) {
+        received_value = DecodeTestRow(data, len);
+        // Borrowed, so this copies — moving from a const& would silently copy anyway.
+        received_att = att;
+    });
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 
@@ -334,4 +337,68 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
     EXPECT_EQ(received_value, 99);
     ASSERT_EQ(received_att.count("img"), 1u);
     EXPECT_EQ(*received_att.at("img"), *blob);
+}
+
+// Fan-out used to iterate an unordered_map of every subscription in the process, so the order
+// callbacks ran in was arbitrary. It is now the order they subscribed in — cheaper and predictable,
+// and worth holding to.
+TEST(SubscriberTest, FanOutRunsCallbacksInSubscriptionOrder) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    std::vector<int> order;
+    for (int i = 0; i < 8; ++i) {
+        subscriber.Subscribe(kTopic, [&order, i](uint64_t, const uint8_t*, size_t, SharedSchema,
+                                                 Attachments) { order.push_back(i); });
+    }
+
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+
+    ASSERT_EQ(order.size(), 8u);
+    EXPECT_TRUE(std::is_sorted(order.begin(), order.end()));
+}
+
+// Delivery snapshots the subscriber list and then invokes outside the lock, so a callback may
+// unsubscribe itself — or another subscriber — without deadlocking or invalidating the iteration in
+// progress. The sample being delivered still reaches everyone who was subscribed when it started;
+// the removal takes effect from the next one.
+TEST(SubscriberTest, UnsubscribeFromInsideCallbackIsSafe) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    int first_calls = 0;
+    int second_calls = 0;
+    uint64_t second_id = 0;
+
+    uint64_t first_id = subscriber
+                            .Subscribe(kTopic,
+                                       [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) {
+                                           ++first_calls;
+                                           // Drop the *other* subscriber from inside this callback.
+                                           if (second_id != 0) {
+                                               subscriber.Unsubscribe(second_id);
+                                               second_id = 0;
+                                           }
+                                       })
+                            .subscription_id;
+    second_id = subscriber
+                    .Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema,
+                                           Attachments) { ++second_calls; })
+                    .subscription_id;
+
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+    // Both were subscribed when this sample started, so both saw it.
+    EXPECT_EQ(first_calls, 1);
+    EXPECT_EQ(second_calls, 1);
+
+    publisher.Publish(kTopic, MakeTestEncoder(2));
+    EXPECT_EQ(first_calls, 2);
+    EXPECT_EQ(second_calls, 1);
+
+    subscriber.Unsubscribe(first_id);
 }

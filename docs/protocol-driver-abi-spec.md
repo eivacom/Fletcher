@@ -185,32 +185,53 @@ Fletcher encodes into it, via `RowEncoder = std::function<void(WriteBuffer&)>`.
 That inversion is the entire zero-copy encode path — `FixedWriteBuffer` exists
 precisely to wrap a DDS payload
 ([core/include/fletcher/core/write_buffer.hpp](../core/include/fletcher/core/write_buffer.hpp)).
-The ABI mirrors `WriteBuffer`'s five virtuals exactly:
+
+`WriteBuffer` is a **window plus a refill hook**, not a set of per-operation
+virtuals: `Append`/`AppendByte`/`AppendZeros`/`Position`/`PatchU32`/`PatchByte`
+are non-virtual and write straight into `{data_, capacity_, pos_}`, and only
+running out of room reaches the two virtuals, `AppendSlow`/`AppendZerosSlow`.
+The ABI mirrors that shape, which is what makes it cheap — **one crossing per
+window refill, not one per append**:
 
 ```c
 typedef struct {
-    void*  ctx;
-    /* None of these may throw or longjmp; failure is reported via the
-       error channel (§6). */
-    void   (*append)(void* ctx, const uint8_t* data, size_t len);
-    void   (*append_byte)(void* ctx, uint8_t byte);
-    size_t (*position)(const void* ctx);
-    void   (*patch_u32)(void* ctx, size_t offset, uint32_t value);
-    void   (*patch_byte)(void* ctx, size_t offset, uint8_t bits);
+    void*    ctx;
+    uint8_t* data;      /* the window; Fletcher writes into it directly */
+    size_t   capacity;  /* bytes available at `data` */
+    size_t   pos;       /* write cursor, also the row's length so far */
+
+    /* Called only when the window is full. Must append the bytes anyway —
+       updating data/capacity/pos to a window that has room — or report
+       failure through the error channel (§6). `grow_zeros` appends `len`
+       ZERO bytes (null-bitfield placeholders). Neither may throw or
+       longjmp across the boundary. */
+    fletcher_status (*grow)(struct fletcher_write_buffer* self,
+                            const uint8_t* data, size_t len);
+    fletcher_status (*grow_zeros)(struct fletcher_write_buffer* self, size_t len);
 } fletcher_write_buffer;
 ```
 
-`patch_byte` **ORs** bits into the target byte (null-bitfield patching);
-`patch_u32` **overwrites** four bytes (length prefixes). Both match the C++
-semantics they mirror; a driver must not reinterpret them.
+Rules (normative), each inherited from the C++ semantics a driver must not
+reinterpret:
+
+1. **Patching is done by Fletcher, in the window** — `patch_u32` overwrites four
+   bytes at an earlier offset (length prefixes) and `patch_byte` **ORs** bits
+   into one (null bitfields). A driver therefore may not move or reallocate
+   bytes already written **below `pos`** except inside `grow`, and `grow` must
+   preserve them verbatim.
+2. **Bounds are computed by subtraction, never addition** — `len > capacity - pos`,
+   so an attacker-supplied length cannot wrap.
+3. A fixed-capacity driver (a DDS payload of a bounded type) implements both
+   hooks as an overflow failure; a growable one refills the window.
 
 ### §4.1 — Consequence for driver authors (normative, must be documented)
 
-`patch_u32`/`patch_byte` make the buffer a **random-access writable region, not a
-stream**. A naive socket-stream driver cannot implement it without internal
-buffering. This is inherent to the positional wire format — length prefixes and
-null bitfields are back-patched (TD-002) — so it is a real requirement on driver
-authors, not an accident of the design.
+The window is a **random-access writable region, not a stream**: Fletcher
+back-patches length prefixes and null bitfields at offsets below `pos`. A naive
+socket-stream driver cannot supply that without internal buffering. This is
+inherent to the positional wire format (TD-002), so it is a real requirement on
+driver authors, not an accident of the design — and it is the reason `grow` must
+carry the already-written bytes across a refill rather than flushing them.
 
 ### §4.2 — Why the struct must be shared with the binding ABI
 

@@ -76,24 +76,28 @@ class InProcessProvider : public fletcher::PubSubProvider {
         std::lock_guard lock(mu_);
         auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
         if (schema) {
-            slot.schema = fletcher::OwnedSchema::DeepCopy(schema.get());
+            slot.schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(schema.get()));
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    // mu_ is held across the callback: one delivery at a time, so a callback must not re-enter.
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const fletcher::Attachments& attachments) override {
-        std::vector<uint8_t> buf;
-        fletcher::VectorWriteBuffer wb(buf);
+        fletcher::VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
-        SubscribeCallback cb;
-        {
-            std::lock_guard lock(mu_);
-            auto [it, _] = topics_.try_emplace(fletcher::internal::JoinSegments(segments));
-            cb = it->second.callback;
-        }
+        std::lock_guard lock(mu_);
+        auto [it, _] = topics_.try_emplace(fletcher::internal::JoinSegments(segments));
+        // Copy-to-locals before dispatch (HARD-4's pattern): a callback that re-enters
+        // Unsubscribe() would otherwise null the std::function being invoked. Dispatch stays
+        // under mu_ so the delivery contract's one-callback-at-a-time clause holds; mu_ is
+        // non-recursive, so a re-entering callback deadlocks rather than corrupting — which is
+        // what the contract forbids.
+        const SubscribeCallback cb = it->second.callback;
+        const fletcher::SharedSchema schema = it->second.schema;
         if (cb) {
-            cb(buf.data(), buf.size(), nullptr, attachments);
+            cb(buf.data(), buf.size(), schema, attachments);
         }
     }
 
@@ -102,11 +106,7 @@ class InProcessProvider : public fletcher::PubSubProvider {
         std::lock_guard lock(mu_);
         auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
         slot.callback = std::move(callback);
-        fletcher::SharedSchema schema;
-        if (slot.schema) {
-            schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(slot.schema.get()));
-        }
-        return {fletcher::MakeReadySchemaFuture(std::move(schema))};
+        return {fletcher::MakeReadySchemaFuture(slot.schema)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -120,7 +120,8 @@ class InProcessProvider : public fletcher::PubSubProvider {
    private:
     struct TopicState {
         SubscribeCallback callback;
-        fletcher::OwnedSchema schema;
+        // Null when nobody announced one; the gateway lets the client bring its own.
+        fletcher::SharedSchema schema;
     };
     std::mutex mu_;
     std::unordered_map<std::string, TopicState> topics_;

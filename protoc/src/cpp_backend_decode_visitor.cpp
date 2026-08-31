@@ -81,6 +81,8 @@ class EdgeDecodeVisitor {
                 out_ << "        if (!r.IsNull(" << si_ << ")) {\n"
                      << "            auto [p, n] = r.ReadBinary();\n"
                      << "            " << n_ << ".emplace(reinterpret_cast<const char*>(p), n);\n"
+                     << "        } else {\n"
+                     << "            " << n_ << ".reset();\n"
                      << "        }\n";
             } else {
                 out_ << "        { auto [p, n] = r.ReadBinary();\n"
@@ -89,14 +91,16 @@ class EdgeDecodeVisitor {
         } else if (method == "ReadString") {
             if (nullable) {
                 out_ << "        if (!r.IsNull(" << si_ << ")) " << n_ << " = std::string(r."
-                     << method << "());\n";
+                     << method << "());\n"
+                     << "        else " << n_ << ".reset();\n";
             } else {
                 out_ << "        " << n_ << " = std::string(r." << method << "());\n";
             }
         } else {
             if (nullable) {
                 out_ << "        if (!r.IsNull(" << si_ << ")) " << n_ << " = r." << method
-                     << "();\n";
+                     << "();\n"
+                     << "        else " << n_ << ".reset();\n";
             } else {
                 out_ << "        " << n_ << " = r." << method << "();\n";
             }
@@ -110,6 +114,8 @@ class EdgeDecodeVisitor {
             out_ << "        if (!r.IsNull(" << si_ << ")) {\n"
                  << "            auto sr = r.ReadStruct(" << cls << "Schema()->n_children);\n"
                  << "            " << n_ << ".emplace(sr);\n"
+                 << "        } else {\n"
+                 << "            " << n_ << ".reset();\n"
                  << "        }\n";
         } else {
             out_ << "        { auto sr = r.ReadStruct(" << cls << "Schema()->n_children);\n"

@@ -76,30 +76,47 @@ class PubSubProvider {
     /// Publish by writing the encoded row directly into the provider's
     /// buffer.  The provider supplies a WriteBuffer; the encoder writes
     /// into it.
-    virtual void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
+    virtual void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                          const Attachments& attachments = {}) = 0;
 
     /// Callback signature for Subscribe — delivers raw encoded row bytes,
     /// the topic's schema, and any sidecar attachments.
-    /// The SharedSchema keeps the schema alive as long as any copy exists,
-    /// so callbacks may safely store it for later use.
+    /// `schema` and `attachments` are **borrowed for the duration of the call**, like `data`. A
+    /// callback that wants to keep either one copies it — SharedSchema is a shared_ptr, so a copy
+    /// keeps the schema alive for as long as that copy lives.
+    ///
+    /// They were passed by value until it was measured. An empty `Attachments` is an
+    /// `unordered_map`, and MSVC allocates a sentinel node in its default constructor, so every
+    /// delivery on every topic built and destroyed one whether or not the sample carried any:
+    /// **~110 ns per sample against 1.4 ns for the call itself**, more than the whole rest of the
+    /// delivery path. See "Measured decisions" in the FastDDS provider README.
     ///
     /// Delivery contract every provider must uphold:
     ///  - **Schema before data.** The callback is never invoked with a null
     ///    schema. A subscriber may Subscribe before any publisher exists; the
     ///    schema then arrives asynchronously, and the provider buffers data
     ///    that arrives ahead of it and delivers that data only once the schema
-    ///    is known.
+    ///    is known. A transport that carries no schemas at all - the gateway's in-process
+    ///    loopback, where the client brings its own - passes null throughout instead, and
+    ///    must never mix the two.
     ///  - **Per-writer order.** Samples from a single writer reach the callback
     ///    in the order they were published. This holds across the schema
     ///    handoff too: the buffered pre-schema backlog is delivered before —
     ///    and never interleaved with — samples that arrive live afterwards.
-    using SubscribeCallback = std::function<void(const uint8_t* data, size_t len,
-                                                 SharedSchema schema, Attachments attachments)>;
+    ///  - **One callback at a time.** Never two deliveries in flight for the same
+    ///    subscription, though the thread they arrive on may differ between samples. A
+    ///    provider that fans out from several threads must serialise them itself.
+    using SubscribeCallback =
+        std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
+                           const Attachments& attachments)>;
 
     /// Subscribe to a named topic.  Returns the schema that the
     /// publisher provided when it created the topic. Delivery obeys the
     /// SubscribeCallback contract above (schema-before-data, per-writer order).
+    ///
+    /// `data` may point into a buffer the transport owns rather than a copy of one — that is a
+    /// provider-local optimisation, not part of this contract. Either way the pointer is only
+    /// valid for the duration of the call and was never owned by the callback.
     [[nodiscard]] virtual SubscriptionResult Subscribe(
         const std::vector<std::string>& topic_segments, SubscribeCallback callback) = 0;
 

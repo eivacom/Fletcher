@@ -4,6 +4,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -16,8 +17,10 @@
 #include <thread>
 #include <vector>
 
-#include "internal/fletcher_topic_type.hpp"
+#include "internal/data_reader_listener.hpp"
+#include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/ordered_delivery.hpp"
+#include "internal/transport_data.hpp"
 
 using namespace fletcher;
 using namespace eprosima::fastdds::dds;
@@ -60,19 +63,25 @@ static int32_t DecodeRow(const uint8_t* data) {
 }
 
 // ---------------------------------------------------------------------------
-// #60 — FletcherTopicType::serialize must surface a swallowed encoder exception
-// as a stored diagnostic while still returning false and NOT propagating out of
-// the DDS callback (H-INV-3). Exercised directly on the extracted internal type
-// (internal/fletcher_topic_type.hpp) via a throwing encoder — no DDS
-// participant required.
+// #60 — serialize() must surface a swallowed encoder exception as a diagnostic
+// the caller can act on, while still returning false and NOT propagating out of
+// the DDS callback (H-INV-3). Exercised directly on the internal sample type via
+// a throwing encoder — no DDS participant required.
+//
+// Re-anchored from FletcherTopicType (retired with the data-sharing rewrite) onto
+// FletcherSamplePubSubType. The diagnostic now rides on the per-publish
+// PublishData rather than a sink on the shared type instance — see below.
 // ---------------------------------------------------------------------------
-TEST(FletcherTopicTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
-    fletcher::internal::FletcherTopicType type(128);
+TEST(FletcherSamplePubSubTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
+    fletcher::internal::FletcherSamplePubSubType type(128);
 
     Attachments attachments;
-    fletcher::internal::TransportData data;
+    const PubSubProvider::RowEncoder bad = [](WriteBuffer&) {
+        throw std::runtime_error("encoder boom");
+    };
+    fletcher::internal::PublishData data;
     data.attachments = &attachments;
-    data.encoder = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
+    data.encoder = &bad;
 
     // Use the reserving constructor so the SerializedPayload_t owns its
     // (calloc-backed) buffer and frees it correctly on destruction. Aliasing a
@@ -88,31 +97,44 @@ TEST(FletcherTopicTypeTest, SerializeCapturesEncoderExceptionDiagnostic) {
     });
     EXPECT_FALSE(result);
     EXPECT_EQ(payload.length, 0u);
-    EXPECT_THAT(type.LastSerializeError(), testing::HasSubstr("encoder boom"));
+    EXPECT_THAT(data.serialize_error, testing::HasSubstr("encoder boom"));
 }
 
-// #60 hardening: a single FletcherTopicType instance is shared by every data
-// topic, so the publish site resets the diagnostic sink (ClearSerializeError())
-// before write(). This guards the case where a write() returns WITHOUT invoking
-// serialize() (e.g. it bails on a resource limit before serialization): without
-// the pre-write reset a stale error from an earlier failed publish would be
-// misattributed to the current one. Exercised directly on the internal type.
-TEST(FletcherTopicTypeTest, ClearSerializeErrorResetsStaleDiagnostic) {
-    fletcher::internal::FletcherTopicType type(128);
-
-    // A prior failed publish leaves a diagnostic on the shared instance.
+// #60 hardening, restated for the per-publish diagnostic. One
+// FletcherSamplePubSubType instance is shared by every data topic and every
+// thread, so a diagnostic stored ON THE TYPE would need clearing before each
+// write() or a stale error from an earlier failed publish on another topic would
+// be misattributed to this one — and under the provider's SHARED publish lock,
+// concurrent publishes would race on it outright.
+//
+// Carrying it on the per-call PublishData removes the failure mode rather than
+// guarding it: each publish reads only its own. This replaces HARD's
+// ClearSerializeErrorResetsStaleDiagnostic, whose premise (a shared sink needing
+// a pre-write reset) no longer exists.
+TEST(FletcherSamplePubSubTypeTest, SerializeDiagnosticDoesNotLeakBetweenPublishes) {
+    fletcher::internal::FletcherSamplePubSubType type(128);  // shared by every topic
     Attachments attachments;
-    fletcher::internal::TransportData data;
-    data.attachments = &attachments;
-    data.encoder = [](WriteBuffer&) { throw std::runtime_error("stale boom"); };
-    eprosima::fastdds::rtps::SerializedPayload_t payload(128);
-    type.serialize(&data, payload, eprosima::fastdds::dds::DataRepresentationId_t{});
-    ASSERT_THAT(type.LastSerializeError(), testing::HasSubstr("stale boom"));
 
-    // The next publish clears the sink before write(); if that write() then does
-    // not call serialize() at all, the sink must be empty — not "stale boom".
-    type.ClearSerializeError();
-    EXPECT_TRUE(type.LastSerializeError().empty());
+    // A prior failed publish records its reason.
+    const PubSubProvider::RowEncoder bad = [](WriteBuffer&) {
+        throw std::runtime_error("stale boom");
+    };
+    fletcher::internal::PublishData failed;
+    failed.attachments = &attachments;
+    failed.encoder = &bad;
+    eprosima::fastdds::rtps::SerializedPayload_t p1(128);
+    type.serialize(&failed, p1, eprosima::fastdds::dds::DataRepresentationId_t{});
+    ASSERT_THAT(failed.serialize_error, testing::HasSubstr("stale boom"));
+
+    // The next publish through the SAME type instance carries its own, and a
+    // success leaves it empty — so Publish cannot misattribute the earlier failure.
+    const PubSubProvider::RowEncoder good = MakeEncoder(7);
+    fletcher::internal::PublishData ok;
+    ok.attachments = &attachments;
+    ok.encoder = &good;
+    eprosima::fastdds::rtps::SerializedPayload_t p2(128);
+    EXPECT_TRUE(type.serialize(&ok, p2, eprosima::fastdds::dds::DataRepresentationId_t{}));
+    EXPECT_TRUE(ok.serialize_error.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +228,8 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
-        {"roundtrip", "x"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+        {"roundtrip", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
 
@@ -228,6 +251,401 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 }
 
 // ---------------------------------------------------------------------------
+// Tests — loans / data-sharing
+// ---------------------------------------------------------------------------
+
+// The sample type is bounded and plain, so every endpoint reserves the whole payload bound per
+// history slot — which is what the resource limits here keep in check. The default memory policy
+// preallocates, so a reader built from these reads through loans; LoanPublishOptions() makes the
+// publish side loan too.
+static FastDDSProviderOptions BoundedOptions() {
+    FastDDSProviderOptions opts;
+    opts.default_writer_qos.history().kind = KEEP_LAST_HISTORY_QOS;
+    opts.default_writer_qos.history().depth = 10;
+    opts.default_writer_qos.resource_limits().max_samples = 10;
+    opts.default_writer_qos.resource_limits().allocated_samples = 10;
+    opts.default_reader_qos.history().kind = KEEP_LAST_HISTORY_QOS;
+    opts.default_reader_qos.history().depth = 10;
+    opts.default_reader_qos.resource_limits().max_samples = 10;
+    opts.default_reader_qos.resource_limits().allocated_samples = 10;
+    return opts;
+}
+
+static FastDDSProviderOptions LoanPublishOptions() {
+    FastDDSProviderOptions opts = BoundedOptions();
+    opts.loan_publish = true;
+    return opts;
+}
+
+// The bound is a runtime option, and it is taken as given — PayloadBytes() is what a row has to fit
+// and what the registered type name carries.
+TEST(FastDDSPubSubProviderTest, ThePayloadBoundIsWhatWasAskedFor) {
+    FastDDSProviderOptions opts = BoundedOptions();
+    opts.max_payload_bytes = kPayloadBytes<128 * 1024>;
+    FastDDSPubSubProvider provider(opts);
+    EXPECT_EQ(provider.PayloadBytes(), 128u * 1024);
+}
+
+// Nothing is rounded, and 4-byte alignment is the whole rule; these values cannot work.
+TEST(FastDDSPubSubProviderTest, AnUnusablePayloadBoundIsRefused) {
+    FastDDSProviderOptions opts = BoundedOptions();
+    opts.max_payload_bytes = 100'001;  // not a multiple of 4, so the sample carries tail padding
+    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
+
+    opts.max_payload_bytes = 0;
+    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
+
+    // Past where a sample's own size still fits the uint32 Fast DDS reports it in.
+    opts.max_payload_bytes = kMaxPayloadBytes + 4;
+    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
+}
+
+// A bound that is not a power of two is ordinary.
+TEST(FastDDSPubSubProviderTest, ABoundThatIsNotAPowerOfTwoIsFine) {
+    FastDDSProviderOptions opts = BoundedOptions();
+    opts.max_payload_bytes = kPayloadBytes<100'000>;
+    FastDDSPubSubProvider provider(opts);
+    EXPECT_EQ(provider.PayloadBytes(), 100'000u);
+}
+
+// Nothing caps a bound; a constructor allocates no pools, which are per endpoint.
+TEST(FastDDSPubSubProviderTest, ALargeBoundIsFine) {
+    FastDDSProviderOptions opts = BoundedOptions();
+    opts.max_payload_bytes = kPayloadBytes<8 * 1024 * 1024>;
+    EXPECT_NO_THROW(FastDDSPubSubProvider provider(opts));
+
+    // Well past where the old compiled set stopped.
+    FastDDSProviderOptions large = BoundedOptions();
+    large.max_payload_bytes = kPayloadBytes<256 * 1024 * 1024>;
+    EXPECT_NO_THROW(FastDDSPubSubProvider provider(large));
+
+    // And with Fast DDS's own default max_samples behind it, which the old check rejected outright.
+    FastDDSProviderOptions unbounded_limits = BoundedOptions();
+    unbounded_limits.max_payload_bytes = kPayloadBytes<8 * 1024 * 1024>;
+    unbounded_limits.default_writer_qos.resource_limits().max_samples = 5000;
+    EXPECT_NO_THROW(FastDDSPubSubProvider provider(unbounded_limits));
+}
+
+// Every provider must spell this identically, and it is the only thing keeping bounds apart.
+TEST(FastDDSPubSubProviderTest, TheTypeNameCarriesTheBoundForEveryProvider) {
+    EXPECT_EQ("fletcher_65536", FletcherTypeName(64 * 1024));
+    EXPECT_EQ("fletcher_100000", FletcherTypeName(100'000));
+    EXPECT_EQ("fletcher_4", FletcherTypeName(kMinPayloadBytes));
+    EXPECT_NE(FletcherTypeName(64 * 1024), FletcherTypeName(8 * 1024 * 1024));
+}
+
+static int32_t AwaitRow(const std::atomic<int32_t>& received) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return received.load();
+}
+
+// Late-joiner replay under the SHIPPED default QoS. The gateway (and any caller that does not
+// override QoS) gets KEEP_ALL + max_samples=100 + TRANSIENT_LOCAL, and a bounded plain type leaves
+// data_sharing at AUTO, so data-sharing engages. A publisher that announces its schema and writes
+// rows BEFORE any subscriber exists relies on TRANSIENT_LOCAL retention to replay all of them to
+// the reader that joins later.
+//
+// This combination was previously untested: the data-sharing tests above use BoundedOptions()
+// (KEEP_LAST depth 10) and subscribe BEFORE publishing, so neither the shipped defaults nor the
+// late-joiner direction was covered. integration-tests/gateway-fastdds-ts hits exactly this and
+// intermittently receives a subset of the rows (often only the newest).
+TEST(FastDDSPubSubProviderTest, DefaultQosReplaysEveryRetainedRowToALateJoiner) {
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+
+    pub_provider.CreateTopic({"latejoin", "defaults"}, MakeSchema());
+
+    // Published with no reader anywhere: only retention can carry these to the subscriber below.
+    constexpr int kRows = 3;
+    for (int i = 1; i <= kRows; ++i) pub_provider.Publish({"latejoin", "defaults"}, MakeEncoder(i));
+
+    std::mutex mu;
+    std::vector<int32_t> received;
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"latejoin", "defaults"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len < 5) return;
+            std::lock_guard<std::mutex> lk(mu);
+            received.push_back(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            if (received.size() >= kRows) break;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    std::lock_guard<std::mutex> lk(mu);
+    std::sort(received.begin(), received.end());
+    EXPECT_EQ(received, (std::vector<int32_t>{1, 2, 3}))
+        << "TRANSIENT_LOCAL + KEEP_ALL must replay every retained row to a late-joining reader";
+}
+
+// loan_publish: the writer encodes into a loaned payload and the reader reads the row out of the
+// loan it takes, with no serialise/deserialise pair in between.
+TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
+    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
+    FastDDSPubSubProvider sub_provider(BoundedOptions());
+
+    pub_provider.CreateTopic({"loaned", "x"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"loaned", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    pub_provider.Publish({"loaned", "x"}, MakeEncoder(42));
+
+    EXPECT_EQ(AwaitRow(received), 42);
+}
+
+// A non-preallocating reader gets nodes sized to what arrived, so it reads through copies.
+TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
+    FastDDSProviderOptions sub_opts = BoundedOptions();
+    sub_opts.default_reader_qos.endpoint().history_memory_policy =
+        eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE;
+
+    FastDDSPubSubProvider pub_provider(BoundedOptions());
+    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+
+    pub_provider.CreateTopic({"dynamic", "reader"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"dynamic", "reader"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    pub_provider.Publish({"dynamic", "reader"}, MakeEncoder(57));
+
+    EXPECT_EQ(AwaitRow(received), 57);
+}
+
+// And the predicate itself, since it is what decides which flow a reader gets.
+TEST(FastDDSPubSubProviderTest, CanLoanSamplesFollowsTheMemoryPolicy) {
+    DataReaderQos qos;
+    EXPECT_TRUE(internal::CanLoanSamples(qos)) << "the default policy preallocates";
+
+    qos.endpoint().history_memory_policy = eprosima::fastdds::rtps::PREALLOCATED_MEMORY_MODE;
+    EXPECT_TRUE(internal::CanLoanSamples(qos));
+
+    qos.endpoint().history_memory_policy = eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE;
+    EXPECT_FALSE(internal::CanLoanSamples(qos));
+
+    qos.endpoint().history_memory_policy = eprosima::fastdds::rtps::DYNAMIC_REUSABLE_MEMORY_MODE;
+    EXPECT_FALSE(internal::CanLoanSamples(qos));
+}
+
+// The publish side not loaning: Fast DDS may still use shared memory, but the writer serialises
+// into the payload rather than handing its buffer to the encoder. The reader loans either way, so
+// this is also the copying-publisher-to-loaning-subscriber pairing — a serialised payload is only
+// as long as the row needs, while the loan spans a whole slot, and it is the sample's own length
+// rather than the payload length that bounds the read.
+TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
+    FastDDSPubSubProvider pub_provider(BoundedOptions());
+    FastDDSPubSubProvider sub_provider(BoundedOptions());
+
+    pub_provider.CreateTopic({"datasharing", "x"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"datasharing", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    pub_provider.Publish({"datasharing", "x"}, MakeEncoder(31));
+
+    EXPECT_EQ(AwaitRow(received), 31);
+}
+
+// Same DataSharingKind::ON check as for zero-copy: it passes only while the type
+// declares itself bounded, which is all data-sharing needs. Being plain (loans)
+// is a separate claim this mode does not make.
+TEST(FastDDSPubSubProviderTest, DataSharingTypeIsAcceptedForDataSharing) {
+    FastDDSProviderOptions pub_opts = BoundedOptions();
+    pub_opts.default_writer_qos.data_sharing().on("");
+    FastDDSProviderOptions sub_opts = BoundedOptions();
+    sub_opts.default_reader_qos.data_sharing().on("");
+
+    FastDDSPubSubProvider pub_provider(std::move(pub_opts));
+    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+
+    pub_provider.CreateTopic({"datasharing", "on"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"datasharing", "on"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    pub_provider.Publish({"datasharing", "on"}, MakeEncoder(29));
+
+    EXPECT_EQ(AwaitRow(received), 29);
+}
+
+// The mirror of the zero-copy oversize test, and what separates the two modes:
+// with no loan to encode into, the overflow happens inside serialize(), which
+// reports it to Fast DDS instead of throwing out of Publish. The sample is
+// dropped either way.
+TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
+    FastDDSPubSubProvider pub_provider(BoundedOptions());
+    pub_provider.CreateTopic({"datasharing", "oversized"}, MakeSchema());
+
+    auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
+        std::vector<uint8_t> blob(bound + 16, 0x5A);
+        buf.Append(blob.data(), blob.size());
+    };
+    EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, oversized));
+    EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, MakeEncoder(3)));
+}
+
+// DataSharingKind::ON makes Fast DDS reject an endpoint whose type is not
+// bounded, instead of quietly falling back to the transport — so this only
+// passes while the type really declares itself bounded.
+TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
+    FastDDSProviderOptions pub_opts = BoundedOptions();
+    pub_opts.default_writer_qos.data_sharing().on("");
+    FastDDSProviderOptions sub_opts = BoundedOptions();
+    sub_opts.default_reader_qos.data_sharing().on("");
+
+    FastDDSPubSubProvider pub_provider(std::move(pub_opts));
+    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+
+    pub_provider.CreateTopic({"bounded", "datasharing"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"bounded", "datasharing"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    pub_provider.Publish({"bounded", "datasharing"}, MakeEncoder(23));
+
+    EXPECT_EQ(AwaitRow(received), 23);
+}
+
+// A row that overruns the bound throws out of Publish, which only the loaned
+// path does (the serialising path swallows the overflow inside serialize()) —
+// so this is where the writer proves it loaned. Repeating it past the size of
+// the loan pool also proves the failed attempt returned its loan: once loans
+// leak, loan_sample starts failing and Publish stops throwing.
+TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
+    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
+    pub_provider.CreateTopic({"loaned", "oversized"}, MakeSchema());
+
+    auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
+        std::vector<uint8_t> blob(bound + 16, 0x5A);
+        buf.Append(blob.data(), blob.size());
+    };
+    for (int i = 0; i < 15; ++i) {
+        EXPECT_THROW(pub_provider.Publish({"loaned", "oversized"}, oversized), std::overflow_error)
+            << "attempt " << i;
+    }
+
+    EXPECT_NO_THROW(pub_provider.Publish({"loaned", "oversized"}, MakeEncoder(3)));
+}
+
+// A throwing callback runs on a Fast DDS listener thread, where an escaping exception terminates
+// the process. On the loaned path it must also not take the loan with it: the reader has only
+// max_samples + extra_samples loans, so a handful of leaks starves delivery for good.
+TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoans) {
+    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
+    FastDDSPubSubProvider sub_provider(BoundedOptions());
+
+    pub_provider.CreateTopic({"loaned", "throwing"}, MakeSchema());
+
+    std::atomic<int> deliveries{0};
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"loaned", "throwing"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            // More throws than the loan pool holds, so a leak cannot be masked by spare slots.
+            if (deliveries.fetch_add(1) < 15) throw std::runtime_error("callback failure");
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    for (int32_t i = 0; i < 40; ++i) {
+        pub_provider.Publish({"loaned", "throwing"}, MakeEncoder(i));
+    }
+
+    EXPECT_NE(AwaitRow(received), -1) << "delivery stopped after the throwing callbacks";
+    EXPECT_GT(deliveries.load(), 15);
+}
+
+// Same guarantee with a publisher that does not loan.
+TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
+    FastDDSPubSubProvider pub_provider(BoundedOptions());
+    FastDDSPubSubProvider sub_provider(BoundedOptions());
+
+    pub_provider.CreateTopic({"datasharing", "throwing"}, MakeSchema());
+
+    std::atomic<int> deliveries{0};
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"datasharing", "throwing"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (deliveries.fetch_add(1) < 5) throw std::runtime_error("callback failure");
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    for (int32_t i = 0; i < 20; ++i) {
+        pub_provider.Publish({"datasharing", "throwing"}, MakeEncoder(i));
+    }
+
+    EXPECT_NE(AwaitRow(received), -1) << "delivery stopped after the throwing callbacks";
+    EXPECT_GT(deliveries.load(), 5);
+}
+
+// Attachments ride the same envelope on the loaned path.
+TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
+    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
+    FastDDSPubSubProvider sub_provider(BoundedOptions());
+
+    pub_provider.CreateTopic({"loaned", "attachments"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    std::vector<uint8_t> blob_seen;
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"loaned", "attachments"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
+            auto it = att.find("sidecar");
+            if (it != att.end() && it->second) blob_seen = *it->second;
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(result.schema.get());
+
+    Attachments att;
+    att["sidecar"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+    pub_provider.Publish({"loaned", "attachments"}, MakeEncoder(7), att);
+
+    EXPECT_EQ(AwaitRow(received), 7);
+    EXPECT_EQ(blob_seen, (std::vector<uint8_t>{1, 2, 3}));
+}
+
+// Loans are never negotiated: each side's own type gates its own, so all pairings interoperate.
+
+// ---------------------------------------------------------------------------
 // Tests — QoS configuration via FastDDSProviderOptions
 // ---------------------------------------------------------------------------
 
@@ -245,11 +663,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultWriterQos) {
     pub_provider.CreateTopic({"customdefault", "writer"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    static_cast<void>(
-        sub_provider.Subscribe({"customdefault", "writer"},
-                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                                   if (len >= 5) received.store(DecodeRow(data));
-                               }));
+    (void)sub_provider.Subscribe(
+        {"customdefault", "writer"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
 
     pub_provider.Publish({"customdefault", "writer"}, MakeEncoder(7));
 
@@ -271,11 +689,11 @@ TEST(FastDDSPubSubProviderTest, CustomDefaultReaderQos) {
     pub_provider.CreateTopic({"customdefault", "reader"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    static_cast<void>(
-        sub_provider.Subscribe({"customdefault", "reader"},
-                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                                   if (len >= 5) received.store(DecodeRow(data));
-                               }));
+    (void)sub_provider.Subscribe(
+        {"customdefault", "reader"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
 
     pub_provider.Publish({"customdefault", "reader"}, MakeEncoder(11));
 
@@ -303,14 +721,15 @@ TEST(FastDDSPubSubProviderTest, PerTopicWriterQosOverridesDefault) {
 
     std::atomic<int32_t> received_override{-1};
     std::atomic<int32_t> received_default{-1};
-    static_cast<void>(sub_provider.Subscribe(
-        {"pertopic", "override"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+    (void)sub_provider.Subscribe(
+        {"pertopic", "override"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received_override.store(DecodeRow(data));
-        }));
-    static_cast<void>(sub_provider.Subscribe(
-        {"pertopic", "default"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-            if (len >= 5) received_default.store(DecodeRow(data));
-        }));
+        });
+    sub_provider.Subscribe({"pertopic", "default"}, [&](const uint8_t* data, size_t len,
+                                                        const SharedSchema&, const Attachments&) {
+        if (len >= 5) received_default.store(DecodeRow(data));
+    });
 
     pub_provider.Publish({"pertopic", "override"}, MakeEncoder(101));
     pub_provider.Publish({"pertopic", "default"}, MakeEncoder(202));
@@ -338,11 +757,11 @@ TEST(FastDDSPubSubProviderTest, PerTopicReaderQosOverridesDefault) {
     pub_provider.CreateTopic({"pertopic", "readeroverride"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    static_cast<void>(
-        sub_provider.Subscribe({"pertopic", "readeroverride"},
-                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
-                                   if (len >= 5) received.store(DecodeRow(data));
-                               }));
+    (void)sub_provider.Subscribe(
+        {"pertopic", "readeroverride"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
 
     pub_provider.Publish({"pertopic", "readeroverride"}, MakeEncoder(303));
 
@@ -379,10 +798,11 @@ TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
     pub_provider.CreateTopic({"autonomy", "profile"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
-    static_cast<void>(sub_provider.Subscribe(
-        {"autonomy", "profile"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+    (void)sub_provider.Subscribe(
+        {"autonomy", "profile"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
-        }));
+        });
 
     pub_provider.Publish({"autonomy", "profile"}, MakeEncoder(2026));
 
@@ -410,7 +830,8 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
 
     // Subscribe with no publisher yet — must return immediately (no block, no throw).
     SubscriptionResult result = sub_provider.Subscribe(
-        {"subfirst", "x"}, [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+        {"subfirst", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             std::lock_guard<std::mutex> lk(mu);
             rx_schema = schema;
             if (len >= 5) received.store(DecodeRow(data));
@@ -466,13 +887,14 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     std::condition_variable cv;
     std::vector<int32_t> received;
 
-    static_cast<void>(sub_provider.Subscribe(
-        {"ordering", "burst"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+    (void)sub_provider.Subscribe(
+        {"ordering", "burst"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len < 5) return;
             std::lock_guard<std::mutex> lk(mu);
             received.push_back(DecodeRow(data));
             cv.notify_all();
-        }));
+        });
 
     pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
     for (int32_t i = 0; i < kCount; ++i) {
@@ -521,7 +943,7 @@ TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
     bool injected = false;
 
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             ASSERT_GE(len, 5u);
             if (active > 0) {
                 nested = true;
@@ -571,7 +993,7 @@ TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
 TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
     std::vector<int32_t> order;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             ASSERT_GE(len, 5u);
             EXPECT_TRUE(schema) << "callback invoked with a null schema";
             order.push_back(DecodeRow(data));
@@ -595,7 +1017,7 @@ TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
 TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
     std::vector<int32_t> order;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, SharedSchema schema, Attachments) {
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             ASSERT_GE(len, 5u);
             EXPECT_TRUE(schema) << "callback invoked with a null schema";
             order.push_back(DecodeRow(data));
@@ -613,4 +1035,276 @@ TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
     delivery.SetSchema(MakeSharedSchema(MakeSchema()));
     ASSERT_EQ(order.size(), 1u);
     EXPECT_EQ(order[0], 7);
+}
+
+// OfferView only borrows its bytes. A view buffered before the schema arrives
+// must therefore be copied, not remembered — the loan it points into is
+// returned as soon as OfferView comes back.
+TEST(OrderedDeliveryTest, OfferViewCopiesWhatItCannotDeliverYet) {
+    std::vector<int32_t> order;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            ASSERT_GE(len, 5u);
+            order.push_back(DecodeRow(data));
+        });
+
+    std::vector<uint8_t> row(5);
+    row[0] = 0x00;
+    int32_t v = 7;
+    std::memcpy(row.data() + 1, &v, sizeof(v));
+
+    delivery.OfferView(row.data(), row.size(), {});
+    EXPECT_TRUE(order.empty());
+
+    row.assign(row.size(), 0xAA);  // the "loan" is gone
+
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+    ASSERT_EQ(order.size(), 1u);
+    EXPECT_EQ(order[0], 7);
+}
+
+// With the schema in hand and nothing queued, OfferView hands the view straight
+// to the callback.
+TEST(OrderedDeliveryTest, OfferViewDeliversInlineOnceSchemaIsKnown) {
+    const uint8_t* seen = nullptr;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) { seen = data; },
+        MakeSharedSchema(MakeSchema()));
+
+    std::vector<uint8_t> row(5);
+    delivery.OfferView(row.data(), row.size(), {});
+    EXPECT_EQ(seen, row.data()) << "the view was copied instead of delivered in place";
+}
+
+// A subscriber that starts before its publisher buffers everything until the schema arrives. If no
+// publisher ever appears that is unbounded growth on a reachable path, so the backlog is capped and
+// the oldest go — which is what KEEP_LAST would have done to the same samples.
+TEST(OrderedDeliveryTest, BacklogIsCappedAndDropsOldest) {
+    std::vector<int32_t> order;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            ASSERT_GE(len, 5u);
+            order.push_back(DecodeRow(data));
+        },
+        nullptr, /*max_queued=*/3);
+
+    for (int32_t i = 0; i < 10; ++i) {
+        std::vector<uint8_t> row(5);
+        row[0] = 0x00;
+        std::memcpy(row.data() + 1, &i, sizeof(i));
+        delivery.Offer(row, {});
+    }
+    EXPECT_TRUE(order.empty()) << "nothing may be delivered before the schema is known";
+
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+    ASSERT_EQ(order.size(), 3u);
+    EXPECT_EQ(order, (std::vector<int32_t>{7, 8, 9})) << "the newest samples should survive";
+}
+
+// ---------------------------------------------------------------------------
+// The latched (steady) path
+//
+// Once the schema is known and the backlog is gone, OrderedDelivery has nothing left to order: the
+// schema listener has fired for the last time, and Fast DDS serialises every on_data_available for
+// one reader under that reader's own mutex. It latches into a path that skips the mutex, the queue
+// and the schema copy. These tests pin the contract that must survive that: every sample, in order,
+// never with a null schema, loaned bytes still lent, and re-entry still queued rather than nested.
+// ---------------------------------------------------------------------------
+
+namespace {
+std::vector<uint8_t> DeliveryRow(int32_t value) {
+    std::vector<uint8_t> row(5);
+    row[0] = 0x00;
+    std::memcpy(row.data() + 1, &value, sizeof(value));
+    return row;
+}
+}  // namespace
+
+TEST(OrderedDeliveryTest, SteadyStateDeliversEverySampleInOrderWithASchema) {
+    std::vector<int32_t> order;
+    size_t with_schema = 0;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+            ASSERT_GE(len, 5u);
+            if (schema) ++with_schema;
+            order.push_back(DecodeRow(data));
+        },
+        nullptr, /*max_queued=*/16);
+
+    // Reach the steady state by draining a backlog rather than starting in it.
+    for (int32_t i = 0; i < 3; ++i) delivery.Offer(DeliveryRow(i), {});
+    EXPECT_TRUE(order.empty());
+    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
+    ASSERT_EQ(order.size(), 3u);
+
+    // Everything from here takes the latched path, alternating both entry points.
+    for (int32_t i = 3; i < 13; ++i) {
+        if (i % 2 == 0) {
+            delivery.Offer(DeliveryRow(i), {});
+        } else {
+            const std::vector<uint8_t> row = DeliveryRow(i);
+            delivery.OfferView(row.data(), row.size(), {});
+        }
+    }
+
+    ASSERT_EQ(order.size(), 13u);
+    EXPECT_EQ(with_schema, 13u) << "the callback must never see a null schema";
+    for (int32_t i = 0; i < 13; ++i) {
+        EXPECT_EQ(order[static_cast<size_t>(i)], i) << "out of order at index " << i;
+    }
+}
+
+TEST(OrderedDeliveryTest, SteadyStateOfferViewStillLendsTheBytes) {
+    const uint8_t* seen = nullptr;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) { seen = data; },
+        MakeSharedSchema(MakeSchema()));
+
+    const std::vector<uint8_t> first(5);
+    delivery.OfferView(first.data(), first.size(), {});
+    ASSERT_EQ(seen, first.data());
+
+    // The first delivery latches; this one takes the lock-free path.
+    const std::vector<uint8_t> second(5);
+    delivery.OfferView(second.data(), second.size(), {});
+    EXPECT_EQ(seen, second.data()) << "the latched path copied the view instead of lending it";
+}
+
+// The no-nesting guarantee of MidFlushOfferIsNotDeliveredInline, restated for the latched path: a
+// sample offered from inside the callback lands after it, not on top of it. Nesting here would also
+// let a re-offering callback recurse until the stack runs out.
+TEST(OrderedDeliveryTest, SteadyStateReentrantOfferIsQueuedNotNested) {
+    std::vector<int32_t> order;
+    int active = 0;
+    bool nested = false;
+    fletcher::internal::OrderedDelivery* self = nullptr;
+    bool injected = false;
+
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+            if (active > 0) nested = true;
+            ++active;
+            order.push_back(DecodeRow(data));
+            if (!injected) {
+                injected = true;
+                self->Offer(DeliveryRow(99), {});
+            }
+            --active;
+        },
+        MakeSharedSchema(MakeSchema()));
+    self = &delivery;
+
+    delivery.Offer(DeliveryRow(1), {});  // latches the steady state
+    delivery.Offer(DeliveryRow(2), {});  // re-enters from inside the callback
+
+    EXPECT_FALSE(nested) << "the latched path delivered a re-offered sample inline";
+    EXPECT_EQ(order, (std::vector<int32_t>{1, 99, 2}));
+}
+
+// A throwing callback must not leave the latched path wedged: the next sample still gets through.
+TEST(OrderedDeliveryTest, SteadyStateSurvivesAThrowingCallback) {
+    std::vector<int32_t> order;
+    bool thrown = false;
+    fletcher::internal::OrderedDelivery delivery(
+        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+            order.push_back(DecodeRow(data));
+            if (!thrown) {
+                thrown = true;
+                throw std::runtime_error("callback");
+            }
+        },
+        MakeSharedSchema(MakeSchema()));
+
+    EXPECT_THROW(delivery.Offer(DeliveryRow(1), {}), std::runtime_error);
+    delivery.Offer(DeliveryRow(2), {});
+    EXPECT_EQ(order, (std::vector<int32_t>{1, 2})) << "delivery wedged after the callback threw";
+}
+
+// ---------------------------------------------------------------------------
+// Unsubscribe detaches the listeners it owns, not whatever is there afterwards
+//
+// Unsubscribe deletes the readers outside the provider lock, because their callbacks take locks of
+// their own. It used to then re-find the topic and reset its listeners — but a Subscribe racing
+// that window sees `reader == nullptr`, installs a *new* reader and listener, and the second lookup
+// destroys that live listener underneath it. The listeners are now moved out alongside the readers
+// under the first lock, so a resubscribe cycle can never lose the new one.
+// ---------------------------------------------------------------------------
+TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    pub_provider.CreateTopic({"resub", "x"}, MakeSchema());
+
+    std::atomic<int32_t> first{-1};
+    sub_provider.Subscribe({"resub", "x"}, [&](const uint8_t* data, size_t len, const SharedSchema&,
+                                               const Attachments&) {
+        if (len >= 5) first.store(DecodeRow(data));
+    });
+    pub_provider.Publish({"resub", "x"}, MakeEncoder(1));
+    ASSERT_EQ(AwaitRow(first), 1);
+
+    sub_provider.Unsubscribe({"resub", "x"});
+
+    // The second subscription must be fully functional: its listener has to survive the teardown of
+    // the first, and the schema future has to resolve again.
+    std::atomic<int32_t> second{-1};
+    SubscriptionResult again = sub_provider.Subscribe(
+        {"resub", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) second.store(DecodeRow(data));
+        });
+    ASSERT_TRUE(again.schema.valid());
+    ASSERT_TRUE(again.schema.get());
+
+    pub_provider.Publish({"resub", "x"}, MakeEncoder(2));
+    EXPECT_EQ(AwaitRow(second), 2);
+}
+
+// Unsubscribing a topic that was never subscribed is a no-op, and must not disturb a live
+// subscription on a different topic.
+TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
+    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    pub_provider.CreateTopic({"unsub", "live"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    sub_provider.Subscribe({"unsub", "live"}, [&](const uint8_t* data, size_t len,
+                                                  const SharedSchema&, const Attachments&) {
+        if (len >= 5) received.store(DecodeRow(data));
+    });
+
+    EXPECT_NO_THROW(sub_provider.Unsubscribe({"unsub", "never"}));
+
+    pub_provider.Publish({"unsub", "live"}, MakeEncoder(7));
+    EXPECT_EQ(AwaitRow(received), 7);
+}
+
+// The write is checked, so an oversized schema surfaces at declaration time.
+TEST(FastDDSPubSubProviderTest, ASchemaTooLargeForItsChannelIsReported) {
+    FastDDSProviderOptions opts;
+    opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
+    FastDDSPubSubProvider p(opts);
+    EXPECT_THROW(p.CreateTopic({"schema", "toobig"}, MakeSchema()), std::runtime_error);
+}
+
+// A throw invites a retry, so a failed announcement has to leave nothing behind for that retry to
+// short-circuit on. It used to leave its DataWriter: the second call then matched the "already
+// announced" branch and returned quietly, so the failure became permanent and every subscriber of
+// the topic waited forever on a schema future nothing would resolve.
+TEST(FastDDSPubSubProviderTest, AFailedSchemaAnnouncementCanBeRetried) {
+    FastDDSProviderOptions opts;
+    opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
+    FastDDSPubSubProvider p(opts);
+
+    auto announce = [&p] {
+        try {
+            p.CreateTopic({"schema", "retry"}, MakeSchema());
+        } catch (const std::runtime_error& e) {
+            return std::string(e.what());
+        }
+        return std::string("returned without announcing");
+    };
+
+    // Both calls must reach the write and fail *there* — not earlier, and not silently.
+    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
+    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
 }

@@ -546,11 +546,14 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
         cpp_backend::LookupScalar(std::get<ir::ScalarNode>(i32.node).logical_type, std::nullopt)
             .positional_read));
 
-    // (b) nullable scalar: gated on IsNull(idx) (facts.nullable is the source).
+    // (b) nullable scalar: gated on IsNull(idx) (facts.nullable is the source), and the
+    //     null branch CLEARS the field. Every field being written or cleared is what lets
+    //     <Class>::DecodeInto reuse a row without leaking the previous one's value.
     ir::IrNode i32_null = ir::BuildFieldIr(h->field(0));
     i32_null.facts.nullable = true;
     EXPECT_EQ(DecodeOf(i32_null, "opt_", 2, ctx),
-              "        if (!r.IsNull(2)) opt_ = r.ReadInt32();\n");
+              "        if (!r.IsNull(2)) opt_ = r.ReadInt32();\n"
+              "        else opt_.reset();\n");
 
     // (c) string is COPIED into an owned std::string, not borrowed.
     EXPECT_EQ(DecodeOf(str, "s_", 2, ctx), "        s_ = std::string(r.ReadString());\n");
@@ -565,13 +568,16 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
               "        { auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
               "          inner_.emplace(sr); }\n");
 
-    // (f) nullable struct: IsNull gate, then ReadStruct, then optional::emplace.
+    // (f) nullable struct: IsNull gate, then ReadStruct, then optional::emplace; the null
+    //     branch resets, per (b).
     ir::IrNode inner_null = ir::BuildFieldIr(h->field(3));
     inner_null.facts.nullable = true;
     EXPECT_EQ(DecodeOf(inner_null, "oi_", 6, ctx),
               "        if (!r.IsNull(6)) {\n"
               "            auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
               "            oi_.emplace(sr);\n"
+              "        } else {\n"
+              "            oi_.reset();\n"
               "        }\n");
 
     // (g) single-level repeated struct: inline emplace_back(sr), and NO null gate

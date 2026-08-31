@@ -17,13 +17,13 @@ int main() {
     auto restored = fletcher::DeserializeEnvelope(serialized);
     assert(restored.row == env.row);
 
-    // PositionalWriter: backing vector + buffer wrapper, then write one bool field
-    std::vector<uint8_t> raw;
-    fletcher::VectorWriteBuffer writeBuffer(raw);
+    // PositionalWriter over an owning buffer: write one bool field, then Finish() for the bytes
+    fletcher::VectorWriteBuffer writeBuffer;
     fletcher::PositionalWriter positionalWriter(writeBuffer, 1 /*num_fields*/);
     positionalWriter.WriteBool(false);
+    std::vector<uint8_t> raw = writeBuffer.Finish();
 
     // Blob: shared_ptr to a const byte vector
-    fletcher::Blob blob = std::make_shared<const std::vector<uint8_t>>(raw);
+    fletcher::Blob blob = std::make_shared<const std::vector<uint8_t>>(std::move(raw));
     assert(blob && !blob->empty());
 }

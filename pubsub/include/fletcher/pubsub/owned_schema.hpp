@@ -50,7 +50,9 @@ class OwnedSchema {
     bool valid() const noexcept { return schema_.release != nullptr; }
     explicit operator bool() const noexcept { return valid(); }
 
-    /// Create a deep copy of src.
+    /// Create a deep copy of src. Throws if the copy cannot be made — silently returning an empty
+    /// schema would let a topic be declared with no schema at all, which the delivery contract
+    /// (schema-before-data) relies on never happening.
     [[nodiscard]] static OwnedSchema DeepCopy(const ArrowSchema* src) {
         OwnedSchema copy;
         ArrowErrorCode code = ArrowSchemaDeepCopy(src, copy.get());

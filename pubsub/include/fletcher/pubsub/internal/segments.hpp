@@ -14,6 +14,24 @@
 namespace fletcher {
 namespace internal {
 
+// Joins into `out`, reusing its capacity. For the publish path, where building a fresh std::string
+// to index the topic map was a malloc and a free on every sample.
+//
+// Deliberately not shared with JoinSegments below: routing that through here made it start from an
+// empty string where it used to copy-construct from segs[0], which costs a reallocation and showed
+// up as ~2.5% on bench_pubsub_fanout's BM_CreateTopic_Redeclare. Six duplicated lines are cheaper.
+inline void JoinSegmentsInto(std::string& out, const std::vector<std::string>& segs) {
+    out.clear();
+    if (segs.empty()) {
+        return;
+    }
+    out += segs[0];
+    for (size_t i = 1; i < segs.size(); ++i) {
+        out += '/';
+        out += segs[i];
+    }
+}
+
 inline std::string JoinSegments(const std::vector<std::string>& segs) {
     if (segs.empty()) {
         return {};

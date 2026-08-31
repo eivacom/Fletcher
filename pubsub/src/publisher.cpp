@@ -16,8 +16,17 @@ namespace fletcher {
 
 struct Publisher::Impl {
     struct TopicState {
-        std::vector<std::string> segments;
-        OwnedSchema schema;
+        // The declared schema as Arrow IPC bytes, which is the only form it is ever needed in —
+        // comparing a re-declaration against it. Keeping the bytes rather than an OwnedSchema saves
+        // a deep copy per topic and one IPC encode per re-declaration.
+        //
+        // A declaration with no schema at all is empty bytes, which is a real value: re-declaring a
+        // schema-bearing topic without one stays a conflict, as it was before.
+        std::vector<uint8_t> schema_ipc;
+        // False only when a schema was supplied and could not be IPC-encoded (nanoarrow's writer
+        // rejects dictionary types, for one). A conflict cannot be proven either way against bytes
+        // that could not be produced, so such topics accept any re-declaration.
+        bool encodable = true;
     };
 
     std::shared_ptr<PubSubProvider> provider;
@@ -37,41 +46,35 @@ Publisher::~Publisher() = default;
 void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
     std::string key = internal::JoinSegments(segments);
 
-    // Atomically claim the topic key under the lock. Re-declaring an existing
-    // topic is idempotent for an identical schema — which lets several
-    // publishers share one topic (fan-in) — while a different schema for the
-    // same topic is a genuine conflict that must not be silently accepted.
+    // Re-declaring an existing topic is idempotent for an identical schema — which lets several
+    // publishers share one topic (fan-in) — while a different schema for the same topic is a
+    // genuine conflict that must not be silently accepted.
+    //
+    // Encode before taking the lock, so the locked section is a byte compare rather than two IPC
+    // encodes that every concurrent CreateTopic queues behind. A first declaration pays an encode
+    // where it previously only deep-copied; see the FastDDS provider README, "Measured decisions".
+    Impl::TopicState incoming;
+    if (schema) {
+        try {
+            incoming.schema_ipc = SerializeSchemaIpc(schema.get());
+        } catch (const std::exception&) {
+            incoming.encodable = false;
+        }
+    }
+
     {
         std::lock_guard lock(impl_->mu);
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
-            // Compare via serialized Arrow IPC. Some valid schemas cannot be
-            // IPC-encoded (e.g. dictionary types, which nanoarrow's IPC writer
-            // rejects); if either side fails to serialize we cannot prove a
-            // conflict, so accept the re-declaration rather than throwing.
-            bool conflicting = false;
-            try {
-                std::vector<uint8_t> incoming =
-                    schema ? SerializeSchemaIpc(schema.get()) : std::vector<uint8_t>{};
-                std::vector<uint8_t> existing = it->second.schema
-                                                    ? SerializeSchemaIpc(it->second.schema.get())
-                                                    : std::vector<uint8_t>{};
-                conflicting = (incoming != existing);
-            } catch (const std::exception&) {
-                conflicting = false;
-            }
+            const bool conflicting = incoming.encodable && it->second.encodable &&
+                                     incoming.schema_ipc != it->second.schema_ipc;
             if (conflicting) {
                 throw std::runtime_error(
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }
             return;  // identical (or non-comparable) re-declaration — no-op
         }
-        Impl::TopicState ts;
-        ts.segments = segments;
-        if (schema) {
-            ts.schema = OwnedSchema::DeepCopy(schema.get());
-        }
-        impl_->topics.emplace(key, std::move(ts));
+        impl_->topics.emplace(key, std::move(incoming));
     }
 
     try {
@@ -86,8 +89,8 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
 }
 
 void Publisher::Publish(const std::vector<std::string>& segments,
-                        PubSubProvider::RowEncoder encoder, const Attachments& attachments) {
-    impl_->provider->Publish(segments, std::move(encoder), attachments);
+                        const PubSubProvider::RowEncoder& encoder, const Attachments& attachments) {
+    impl_->provider->Publish(segments, encoder, attachments);
 }
 
 std::vector<std::string> Publisher::ListTopics() const {

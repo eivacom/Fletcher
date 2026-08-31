@@ -5,6 +5,7 @@
 #define FLETCHER_INCLUDE_XRCE_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <memory>
 #include <string>
@@ -26,6 +27,14 @@ struct XrceConfig {
 
     /// Maximum payload size in bytes (default 512 for constrained devices).
     uint32_t max_payload = 512;
+
+    /// @brief The row payload bound this client's DDS topics advertise.
+    ///
+    /// Part of the registered DDS type name, so it must equal the `max_payload_bytes` of any
+    /// FastDDS peer or the two never discover each other. Must satisfy `IsPayloadBound`; the
+    /// constructor throws `std::invalid_argument` otherwise. Not enforced here — `max_payload`
+    /// above is what bounds this provider's writes.
+    uint32_t payload_bound = kPayloadBytes<64 * 1024>;
 
     /// Budget in milliseconds for the initial session creation handshake.
     /// The client retries in ~1000 ms increments, so effective granularity
@@ -64,7 +73,7 @@ class XrceDDSPubSubProvider : public PubSubProvider {
 
     void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
 
-    void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
 
     // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and

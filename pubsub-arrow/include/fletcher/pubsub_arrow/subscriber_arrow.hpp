@@ -49,7 +49,7 @@ class SubscriberArrow {
     };
 
     /// Subscribe with ArrowRow delivery.
-    using SubscribeCallback = std::function<void(ArrowRow row, Attachments attachments)>;
+    using SubscribeCallback = std::function<void(ArrowRow row, const Attachments& attachments)>;
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
                                             SubscribeCallback callback);
 

@@ -33,13 +33,13 @@ class MockProvider : public PubSubProvider {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         std::string key = fletcher::internal::JoinSegments(segments);
 
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
@@ -162,7 +162,7 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
 
     Attachments received_att;
     static_cast<void>(
-        sub.Subscribe(kTopic, [&](ArrowRow, Attachments att) { received_att = std::move(att); }));
+        sub.Subscribe(kTopic, [&](ArrowRow, const Attachments& att) { received_att = att; }));
 
     auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
 

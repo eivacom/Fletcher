@@ -19,6 +19,12 @@ namespace internal {
 eprosima::fastdds::dds::DataWriterQos MakeFletcherDefaultWriterQos();
 eprosima::fastdds::dds::DataReaderQos MakeFletcherDefaultReaderQos();
 
+// The companion __schema channel: one small retained sample per topic, so KEEP_LAST(1). Fixed
+// rather than configurable — it is an implementation detail of how the schema reaches a subscriber
+// that joined late.
+eprosima::fastdds::dds::DataWriterQos MakeSchemaChannelWriterQos();
+eprosima::fastdds::dds::DataReaderQos MakeSchemaChannelReaderQos();
+
 }  // namespace internal
 }  // namespace fletcher
 

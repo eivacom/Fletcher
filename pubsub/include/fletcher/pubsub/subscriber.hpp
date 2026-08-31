@@ -51,7 +51,7 @@ class Subscriber {
     /// racing against the Subscribe() return.
     using SubscribeCallback =
         std::function<void(uint64_t subscription_id, const uint8_t* data, size_t len,
-                           SharedSchema schema, Attachments attachments)>;
+                           const SharedSchema& schema, const Attachments& attachments)>;
 
     /// Subscribe to a topic. Returns a per-subscription ID for targeted
     /// unsubscribe and the schema that the publisher registered.

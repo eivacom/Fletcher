@@ -66,14 +66,46 @@ if(EXISTS "${AGENT_BINARY}" AND _agent_runtime_libs)
     message(STATUS "MicroXRCEAgent found at ${AGENT_BINARY} — skipping ExternalProject build.")
     add_custom_target(microxrcedds_agent_proj)
 else()
+    # The Agent uses *this* project's Fast DDS and Fast CDR — the ones Conan resolved and the ones
+    # the test binary itself links — rather than building its own.
+    #
+    # Left to itself the Agent's superbuild clones Fast DDS from the moving `3.x` branch
+    # (Micro-XRCE-DDS-Agent's CMakeLists: `set(_fastdds_tag 3.x)`), so an Agent built today gets
+    # whatever Fast DDS released most recently while this repo pins fast-dds/3.4.0. Nobody chooses
+    # that version and nothing pins it, which is how the Agent here ended up on 3.6 — and its
+    # from-source build on MSVC 19.4 then failed inside create_participant with
+    # "foonathan::memory ... received invalid size/alignment 64, max supported is 56", a node-size
+    # table Fast DDS fixes at build time for the toolchains it knows. Conan's 3.4.0 has no such
+    # problem; every other suite in this repo creates participants against it constantly.
+    #
+    # UAGENT_USE_SYSTEM_FASTDDS/FASTCDR switch the superbuild from cloning those two to
+    # find_package(fastdds 3) / find_package(fastcdr 2); CMAKE_PREFIX_PATH is what lets them
+    # resolve, and it is this project's own — so the Agent links the very packages the test binary
+    # links. Conan builds fast-dds static here, so there is not even a DLL to resolve at run time.
+    #
+    # Passing CMAKE_PREFIX_PATH rather than CMAKE_TOOLCHAIN_FILE is deliberate. The Agent's
+    # SuperBuild.cmake forwards only CMAKE_TOOLCHAIN_FILE to its own nested ExternalProjects and
+    # nothing else, so handing it the Conan toolchain makes spdlog's configure fail on
+    # "CMake policy CMP0091 must be NEW" — the policy Conan normally sets on the command line beside
+    # the toolchain, which never reaches that far. The prefix path needs no such companion. Its
+    # final stage shares this binary dir (and therefore this cache) with the superbuild pass, so the
+    # options set here are the ones its find_package sees.
+    #
+    # LIST_SEPARATOR because CMAKE_PREFIX_PATH is a CMake list and would otherwise be cut at its
+    # first semicolon.
+    string(REPLACE ";" "|" _agent_prefix_path "${CMAKE_PREFIX_PATH}")
     ExternalProject_Add(microxrcedds_agent_proj
         PREFIX         ${AGENT_PREFIX}
         GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
         GIT_TAG        v3.0.1
+        LIST_SEPARATOR |
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${AGENT_INSTALL_DIR}
             -DCMAKE_BUILD_TYPE=$<CONFIG>
+            -DCMAKE_PREFIX_PATH=${_agent_prefix_path}
             -DUAGENT_SUPERBUILD=ON
+            -DUAGENT_USE_SYSTEM_FASTDDS=ON
+            -DUAGENT_USE_SYSTEM_FASTCDR=ON
             -DUAGENT_BUILD_TESTS=OFF
             -DUAGENT_BUILD_EXAMPLES=OFF
         BUILD_BYPRODUCTS ${AGENT_BINARY}

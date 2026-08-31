@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
 #include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <memory>
 #include <string>
@@ -29,10 +30,61 @@ struct FastDDSProviderOptions {
     /// DDS domain ID.
     uint32_t domain_id = 0;
 
-    /// Maximum DDS payload size in bytes. Bounds the full serialised
-    /// envelope: CDR framing + row bytes + all attachments. Also
-    /// applied to the companion schema channel.
-    uint32_t max_payload_bytes = 1024 * 1024;
+    /// @brief Ceiling on the row payload of one sample: any positive multiple of 4.
+    ///
+    /// Checked by `IsPayloadBound`; the constructor throws otherwise, and nothing is rounded.
+    /// Write it as `kPayloadBytes<N>` to be told at compile time instead.
+    ///
+    /// The bound is part of the registered DDS type name, so endpoints on different bounds fail
+    /// to discover each other rather than dropping samples.
+    ///
+    /// @warning The expensive number in this header. A bounded type preallocates the whole bound
+    /// per history slot per endpoint, and a data-sharing writer reserves
+    /// `(max_samples + extra_samples) * (bound + 8)` bytes of shared segment up front. Nothing
+    /// caps that product; if it exceeds a 32-bit segment size Fast DDS uses the transport
+    /// instead. Bring `max_samples` down as the bound goes up.
+    uint32_t max_payload_bytes = kPayloadBytes<64 * 1024>;
+
+    /// @brief Maximum serialised Arrow IPC schema size, bounding the companion __schema channel.
+    ///
+    /// Any value: unlike `max_payload_bytes` this channel's type is not plain, so it need not
+    /// avoid padding. It reports itself bounded, which data-sharing asks for and which costs one
+    /// preallocated slot per endpoint here, since the channel is `KEEP_LAST(1)` and `CreateTopic`
+    /// announces a schema once per topic.
+    ///
+    /// @warning A PREALLOCATED pool cannot grow, so this matters at both ends: a schema larger
+    /// than a *receiving* endpoint's value is rejected rather than delivered, and that
+    /// subscriber's schema future never resolves. The reader reports `on_sample_rejected`.
+    uint32_t max_schema_bytes = 64 * 1024;
+
+    /// Publish out of a buffer the transport owns instead of encoding through one it then copies.
+    /// With data-sharing that buffer *is* the segment the subscriber reads from, so a same-machine
+    /// sample is never copied at all, and no `serialize()` runs on the publish path.
+    ///
+    /// A deployment switch, not a topic property: it says "my subscribers are on this box", and it
+    /// applies to every topic this provider publishes. Two things change when it is on:
+    ///   - Every sample crosses the wire at the full sample size. Fast DDS stamps a loaned payload
+    ///     `length = max_serialized_type_size` and nothing recomputes it, so a 214-byte row costs
+    ///     a whole `PayloadBytes()` to any reader off this host. A serialised sample is the same
+    ///     layout truncated after the bytes in use, so off, small rows stay small.
+    ///   - A row past `PayloadBytes()` throws out of Publish, where an unloaned writer fails the
+    ///     serialisation internally and drops the sample.
+    ///   - **The unused tail of every sample goes on the wire.** The loan is taken with
+    ///     `NO_LOAN_INITIALIZATION` and only the bytes in use are written, so the rest of the
+    ///     `PayloadBytes()` a remote reader receives is a **previous sample of this topic** —
+    ///     zeros the first time a slot is used, since Fast DDS's payload nodes come from `calloc`
+    ///     (`TopicPayloadPool`) and a data-sharing segment from the OS. Never unrelated process
+    ///     memory. Not zeroed per sample deliberately: a `memset` of the whole bound costs more
+    ///     than the copy this option exists to avoid. With data-sharing (subscribers on this box,
+    ///     which is what the option is for) nothing crosses a wire at all. Leave it off if
+    ///     subscribers are remote and one topic's samples must not leak into each other.
+    ///
+    /// Subscribers need no matching setting. Loans are not negotiated: the reader's own type gates
+    /// them (Fast DDS 3.4 `DataReaderImpl.cpp`), the writer's own gates `loan_sample`
+    /// (`DataWriterImpl.cpp`), and both publish paths write the same two fields in the same places.
+    /// Fletcher subscribers therefore always read out of the transport's buffer, whichever way the
+    /// publisher wrote it.
+    bool loan_publish = false;
 
     /// Default DataWriter QoS applied to any topic without a per-topic
     /// override.
@@ -78,7 +130,7 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
 
-    void Publish(const std::vector<std::string>& topic_segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
 
     // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and
@@ -89,6 +141,11 @@ class FastDDSPubSubProvider : public PubSubProvider {
                                                SubscribeCallback callback) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
+
+    /// The payload bound in force — `FastDDSProviderOptions::max_payload_bytes` exactly as given,
+    /// since an unsupported one never gets past the constructor. It is the number in the registered
+    /// type name, and the size a row has to fit.
+    uint32_t PayloadBytes() const;
 
    private:
     struct Impl;

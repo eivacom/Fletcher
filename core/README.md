@@ -142,7 +142,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("fletcher-core/0.1.0-alpha")
+        self.requires("fletcher-core/0.5.0-alpha")
 
     def layout(self):
         cmake_layout(self)
@@ -200,13 +200,13 @@ int main() {
     auto serialized = fletcher::SerializeEnvelope(env);
     auto restored   = fletcher::DeserializeEnvelope(serialized);
 
-    // Write positional wire format into a growable buffer
-    std::vector<uint8_t> raw;
-    fletcher::VectorWriteBuffer writeBuffer(raw);
+    // Write positional wire format into a growable buffer; Finish() hands the bytes over
+    fletcher::VectorWriteBuffer writeBuffer;
     fletcher::PositionalWriter writer(writeBuffer, 1 /*num_fields*/);
     writer.WriteBool(false);
+    std::vector<uint8_t> raw = writeBuffer.Finish();
 
     // Share the buffer as a Blob (zero-copy shared_ptr)
-    fletcher::Blob blob = std::make_shared<const std::vector<uint8_t>>(raw);
+    fletcher::Blob blob = std::make_shared<const std::vector<uint8_t>>(std::move(raw));
 }
 ```

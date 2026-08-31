@@ -64,11 +64,11 @@ class SubscriberArrow::RecordBatchBatcher {
         cv_.notify_all();
     }
 
-    void AddRow(ArrowRow row, Attachments att) {
+    void AddRow(ArrowRow row, const Attachments& att) {
         std::unique_lock<std::mutex> lk(mu_);
         if (stopped_) return;
         rows_.push_back(std::move(row));
-        atts_.push_back(std::move(att));
+        atts_.push_back(att);
         ArmTimer();
         if (ready_ && static_cast<int64_t>(rows_.size()) >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
@@ -282,7 +282,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
         [this, key, cb = std::move(callback)](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                              SharedSchema schema, Attachments att) {
+                                              const SharedSchema& schema, const Attachments& att) {
             // Lazy codec acquisition from the per-message schema: in
             // subscriber-first mode the codec is not registered at Subscribe
             // time (no prior CreateTopic), and the provider may deliver before
@@ -292,7 +292,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
                 return;
             }
             ArrowRow row = codec->DecodeRow(data, len);
-            cb(std::move(row), std::move(att));
+            cb(std::move(row), att);
         });
 
     // Track sub_id -> topic_key so Unsubscribe can release the codec
@@ -332,7 +332,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
         [this, key, batcher, schema_set](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                         SharedSchema schema, Attachments att) {
+                                         const SharedSchema& schema, const Attachments& att) {
             // Lazy-init the codec from the per-message schema: in
             // subscriber-first mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before Subscribe
@@ -365,7 +365,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
                 batcher->NoteDropped();
                 return;
             }
-            batcher->AddRow(std::move(row), std::move(att));
+            batcher->AddRow(std::move(row), att);
         });
 
     {

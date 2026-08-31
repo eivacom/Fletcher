@@ -35,7 +35,8 @@ int main() {
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
-        {"example", "topic"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+        {"example", "topic"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));

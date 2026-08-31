@@ -95,6 +95,9 @@ struct XrceDDSPubSubProvider::Impl {
 
     XrceConfig config;
 
+    // Must be byte-identical to what a FastDDS peer registers, or the endpoints never match.
+    std::string type_name;
+
     // XRCE session and transport.
     uxrSession session{};
     uxrUDPTransport udp_transport{};
@@ -236,8 +239,8 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         // point; a re-entrant Unsubscribe may reset the live TopicState.
         if (callback) {
             for (auto& env : pending) {
-                callback(env.row.data(), env.row.size(), schema_for_callbacks,
-                         std::move(env.attachments));
+                // Borrowed: a callback that keeps the attachments copies them, per the contract.
+                callback(env.row.data(), env.row.size(), schema_for_callbacks, env.attachments);
             }
         }
         return;
@@ -289,7 +292,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     // Deliver from locals only — do NOT read or write ts / ts.* past this point.
     if (callback) {
         callback(envelope.row.data(), envelope.row.size(), schema_for_callback,
-                 std::move(envelope.attachments));
+                 envelope.attachments);
     }
 }
 
@@ -300,6 +303,15 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
 XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
     : impl_(std::make_unique<Impl>()) {
     impl_->config = config;
+
+    // The bound is part of the registered type name, so an unusable one matches nothing.
+    if (!IsPayloadBound(config.payload_bound)) {
+        throw std::invalid_argument(
+            "XRCE: payload_bound " + std::to_string(config.payload_bound) +
+            " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 between " +
+            std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+    }
+    impl_->type_name = FletcherTypeName(config.payload_bound);
 
     // Size reliable stream buffers.
     // history must be power of 2; buffer size = MTU * history.
@@ -451,9 +463,9 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     WaitForStatus(&impl_->session, req_part, "participant");
 
     // Create topic.
-    uint16_t req_topic =
-        uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out, ts.topic_id,
-                                    ts.participant_id, name.c_str(), "fletcher", UXR_REPLACE);
+    uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
+                                                     ts.topic_id, ts.participant_id, name.c_str(),
+                                                     impl_->type_name.c_str(), UXR_REPLACE);
     WaitForStatus(&impl_->session, req_topic, "topic");
 
     // Create publisher + data writer.
@@ -488,7 +500,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
         uint16_t req_st = uxr_buffer_create_topic_bin(
             &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
-            schema_name.c_str(), "SchemaBytes", UXR_REPLACE);
+            schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
         WaitForStatus(&impl_->session, req_st, "schema topic");
 
         uint16_t req_sp =
@@ -527,7 +539,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 }
 
 void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
-                                    RowEncoder encoder, const Attachments& attachments) {
+                                    const RowEncoder& encoder, const Attachments& attachments) {
     std::string name = internal::JoinSegments(topic_segments);
     std::lock_guard lock(impl_->mu);
 
@@ -537,13 +549,12 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     auto& ts = it->second;
 
     // Encode row bytes into a local buffer.
-    std::vector<uint8_t> row_bytes;
-    VectorWriteBuffer row_buf(row_bytes);
+    VectorWriteBuffer row_buf;
     encoder(row_buf);
 
     // Serialize the full envelope.
     Envelope env;
-    env.row = std::move(row_bytes);
+    env.row = row_buf.Finish();
     env.attachments = attachments;
     auto envelope = SerializeEnvelope(env);
 
@@ -592,9 +603,9 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             name.c_str(), UXR_REPLACE);
         WaitForStatus(&impl_->session, req_part, "subscriber participant");
 
-        uint16_t req_topic =
-            uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out, ts.topic_id,
-                                        ts.participant_id, name.c_str(), "fletcher", UXR_REPLACE);
+        uint16_t req_topic = uxr_buffer_create_topic_bin(
+            &impl_->session, impl_->reliable_out, ts.topic_id, ts.participant_id, name.c_str(),
+            impl_->type_name.c_str(), UXR_REPLACE);
         WaitForStatus(&impl_->session, req_topic, "subscriber topic");
     }
 
@@ -618,7 +629,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         uint16_t req_st = uxr_buffer_create_topic_bin(
             &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
-            schema_name.c_str(), "SchemaBytes", UXR_REPLACE);
+            schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
         WaitForStatus(&impl_->session, req_st, "schema topic (sub)");
 
         uint16_t req_ss = uxr_buffer_create_subscriber_bin(&impl_->session, impl_->reliable_out,
