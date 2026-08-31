@@ -75,8 +75,8 @@ const FileDescriptor* BuildCorpus(DescriptorPool* pool) {
     AddField(w1, "v", 1, FieldDescriptorProto::TYPE_MESSAGE, FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".lockstep.Inner");
 
-    // Scalar-leaf flatten wrappers: `repeated S1` is depth 3 (kept),
-    // `repeated S2` is depth 4 (over the bound, dropped).
+    // Scalar-leaf flatten wrappers: `repeated S1` is depth 3, `repeated S2` is
+    // depth 4 — both representable; the depth limit lives in the view emitters.
     auto* s0 = fdp.add_message_type();
     s0->set_name("S0");
     SetMessageFlatten(s0);
@@ -122,8 +122,11 @@ const FileDescriptor* BuildCorpus(DescriptorPool* pool) {
     AddField(host, "k_nested_scalar", 8, FieldDescriptorProto::TYPE_MESSAGE,
              FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".lockstep.S1");
-    // Dropped: over the nested-list depth bound (depth 4).
-    AddField(host, "d_too_deep", 9, FieldDescriptorProto::TYPE_MESSAGE,
+    // KEPT, and load-bearing: a depth-4 scalar-leaf nested list. It is beyond what
+    // the Arrow view layer can render (guarded there with a static_assert) but is
+    // fully representable in the schema, storage and edge codec — and
+    // transitive_gate.proto depends on that. Both walks must keep it.
+    AddField(host, "k_too_deep_but_representable", 9, FieldDescriptorProto::TYPE_MESSAGE,
              FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".lockstep.S2");
     // Dropped: recursive flatten wrapper.
@@ -188,6 +191,6 @@ TEST(SchemaCodecLockstep, CorpusActuallyExercisesBothKeptAndDroppedShapes) {
             ++dropped;
         }
     }
-    EXPECT_GE(kept, 6);
-    EXPECT_GE(dropped, 4);
+    EXPECT_GE(kept, 7);
+    EXPECT_GE(dropped, 3);
 }

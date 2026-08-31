@@ -58,6 +58,40 @@ NestedListShape ClassifyNestedList(const ir::IrNode& list_node) {
     return shape;
 }
 
+// The maximum nested-list depth THIS FILE's two emitters can render. Both are
+// written out per depth (depth-2 and depth-3 branches in ToArrowRow; the
+// ArrowNestedList/ArrowNestedList2 template choice in the view getter), so a
+// deeper list has no faithful emission here.
+//
+// Deeper lists are deliberately NOT rejected at the classifier: they are
+// representable everywhere else — nanoarrow schema, row storage, edge encode and
+// edge decode are all depth-generic and correct at any depth — and
+// `integration-tests/protoc-gen-fletcher-rust/proto/transitive_gate.proto`
+// (RBA-6b, D-RBA-8) depends on a depth-4 field being "in-scope representable but
+// beyond the supported depth" so the RBA accessor's transitive skip gate has
+// something to skip. Rejecting at the classifier would change the emitted schema
+// (locked #2) and break that fixture.
+//
+// So the failure is placed exactly where the defect is: the generated Arrow
+// header. Previously these emitters fell through both depth branches and emitted
+// a block with NO row.push_back, leaving an N-1 row vector against an N-child
+// schema — silently, with no compile error (PR #125 review, findings 1 and 2). A
+// static_assert turns that silent arity corruption into a clear compile error for
+// the only consumer it can affect: one that actually compiles this header.
+constexpr int kMaxRenderableNestedListDepth = 3;
+
+void EmitNestedListDepthUnsupported(std::ostringstream& out, const std::string& field_name,
+                                    int depth, const char* context) {
+    out << "    static_assert(false,\n"
+        << "        \"" << field_name << ": nested list depth " << depth
+        << " exceeds the maximum depth " << kMaxRenderableNestedListDepth << "\"\n"
+        << "        \" that " << context << " can render. The nanoarrow schema, row storage\"\n"
+        << "        \" and edge encode/decode handle this field correctly; only the Arrow\"\n"
+        << "        \" view layer cannot. Either keep this field out of Arrow"
+           " view/ToArrowRow\"\n"
+        << "        \" consumers, or make both emitters depth-generic (round RIR).\");\n";
+}
+
 // ---- View getter visitor --------------------------------------------------
 
 class EdgeViewGetterVisitor {
@@ -217,6 +251,11 @@ class EdgeViewGetterVisitor {
 
     void EmitNestedList(const ir::IrNode& list_node) {
         const NestedListShape shape = ClassifyNestedList(list_node);
+        if (shape.depth > kMaxRenderableNestedListDepth) {
+            // Was: any depth != 3 silently got the depth-2 accessor template.
+            EmitNestedListDepthUnsupported(out_, name_, shape.depth, "the Arrow view accessor");
+            return;
+        }
         std::string tmpl;
         if (shape.leaf->kind == ir::NodeKind::SCALAR) {
             // GIR-10 scalar leaf: depth-2 -> ArrowNestedScalarList<V,A>, depth-3 ->
@@ -430,6 +469,12 @@ class EdgeToArrowRowVisitor {
 
     void EmitNestedList(const ir::IrNode& list_node) {
         const NestedListShape shape = ClassifyNestedList(list_node);
+        if (shape.depth > kMaxRenderableNestedListDepth) {
+            // Was: fell through both depth branches and emitted a block with no
+            // row.push_back, shifting every later field's slot against the schema.
+            EmitNestedListDepthUnsupported(out_, getter_, shape.depth, "ToArrowRow");
+            return;
+        }
         if (shape.leaf->kind == ir::NodeKind::SCALAR) {
             EmitNestedScalarList(list_node, shape);
             return;

@@ -25,6 +25,7 @@
 
 #include "cpp_backend_decode_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
+#include "cpp_backend_view_visitor.hpp"
 #include "ir.hpp"
 #include "type_mapper.hpp"
 
@@ -646,6 +647,21 @@ void AddScalarFlattenChain(FileDescriptorProto* fp, int hops) {
     }
 }
 
+// A second, independent scalar-leaf flatten chain (V0, V1) so the depth-3
+// contrast case in ViewDepthBoundTest does not share messages with the depth-4
+// case. `repeated V1` == 3 list levels.
+void AddScalarFlattenChain2(FileDescriptorProto* fp) {
+    auto* v0 = fp->add_message_type();
+    v0->set_name("V0");
+    SetMessageFlatten(v0);
+    AddField(v0, "v", 1, FieldDescriptorProto::TYPE_INT32, FieldDescriptorProto::LABEL_REPEATED);
+    auto* v1 = fp->add_message_type();
+    v1->set_name("V1");
+    SetMessageFlatten(v1);
+    AddField(v1, "v", 1, FieldDescriptorProto::TYPE_MESSAGE, FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".V0");
+}
+
 int ListDepthOf(const ir::IrNode& node) {
     int d = 0;
     const ir::IrNode* cur = &node;
@@ -684,57 +700,101 @@ TEST(IrDepthBoundTest, Depth3ScalarLeafNestedListStaysSupported) {
     EXPECT_EQ(ListDepthOf(node), 3);
 }
 
-// Findings 1 and 2: schema, row storage and edge encode/decode are depth-generic,
-// but the Arrow view accessor and ToArrowRow are written per depth and stop at 3.
-// Before this guard a depth-4 field generated a schema child with NO matching
-// ToArrowRow push_back (a silent arity shift against the schema), a view accessor
-// claiming depth 2, and — when nullable — an unbalanced brace that did not compile.
-// The classifier must reject it so ValidateNoUnsupportedIr fails the build.
-TEST(IrDepthBoundTest, Depth4ScalarLeafNestedListIsUnsupportedNotSilentlyWrong) {
+// Findings 1 and 2, corrected scope. A depth-4 nested list is deliberately still
+// REPRESENTABLE: the nanoarrow schema, row storage and edge encode/decode are all
+// depth-generic and correct at any depth, and
+// integration-tests/protoc-gen-fletcher-rust/proto/transitive_gate.proto (RBA-6b,
+// D-RBA-8) depends on exactly this — a field that is "in-scope representable but
+// beyond the supported depth" — so the RBA accessor's transitive skip gate has
+// something to skip. An earlier attempt at this fix rejected depth > 4 at the
+// classifier; that broke the fixture AND would have changed the emitted schema
+// (locked #2). The defect is confined to the Arrow view layer, and so is the
+// guard — see ViewDepthBoundTest below.
+TEST(IrDepthBoundTest, Depth4ScalarLeafNestedListStaysRepresentable) {
     DescriptorPool pool;
     FileDescriptorProto fp;
     fp.set_name("ir_depth4.proto");
     fp.set_syntax("proto3");
     AddScalarFlattenChain(&fp, 3);  // W0, W1, W2 -> `repeated W2` == 4 list levels
 
-    // One more hop, so `optional W3` resolves through the wrapper to a 4-level
-    // list with nullable propagated onto it — the shape that produced the
-    // unbalanced-brace output.
-    auto* w3 = fp.add_message_type();
-    w3->set_name("W3");
-    SetMessageFlatten(w3);
-    AddField(w3, "v", 1, FieldDescriptorProto::TYPE_MESSAGE, FieldDescriptorProto::LABEL_REPEATED)
-        ->set_type_name(".W2");
-
     auto* host = fp.add_message_type();
     host->set_name("Host");
     AddField(host, "d4", 1, FieldDescriptorProto::TYPE_MESSAGE,
              FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".W2");
-    // proto3 `optional W3 d4_nullable` needs its synthetic single-member oneof.
-    auto* opt_oneof = host->add_oneof_decl();
-    opt_oneof->set_name("_d4_nullable");
-    auto* opt_f = AddField(host, "d4_nullable", 2, FieldDescriptorProto::TYPE_MESSAGE);
-    opt_f->set_type_name(".W3");
-    opt_f->set_proto3_optional(true);
-    opt_f->set_oneof_index(0);
 
     const FileDescriptor* file = pool.BuildFile(fp);
     ASSERT_NE(file, nullptr);
     const Descriptor* h = file->FindMessageTypeByName("Host");
     ASSERT_NE(h, nullptr);
 
-    for (int i = 0; i < 2; ++i) {
-        const auto node = ir::BuildFieldIr(h->field(i));
-        EXPECT_EQ(node.kind, ir::NodeKind::UNSUPPORTED) << "field " << h->field(i)->name();
-        if (node.kind == ir::NodeKind::UNSUPPORTED) {
-            const std::string reason = AsUnsupported(node).reason;
-            EXPECT_NE(reason.find("nested list depth 4"), std::string::npos) << reason;
-            EXPECT_NE(reason.find("maximum of 3"), std::string::npos) << reason;
-        }
-        // The projection must drop it too, so no emitter can see a depth-4 shape.
-        EXPECT_FALSE(ProjectIrToFieldMapping(node, file).has_value());
-    }
+    const auto node = ir::BuildFieldIr(h->field(0));
+    ASSERT_EQ(node.kind, ir::NodeKind::LIST) << "depth-4 must NOT be Unsupported";
+    EXPECT_EQ(ListDepthOf(node), 4);
+    EXPECT_TRUE(ProjectIrToFieldMapping(node, file).has_value())
+        << "depth-4 must stay projectable — transitive_gate.proto depends on it";
+}
+
+// The actual finding-1/finding-2 guard, at the only layer that cannot render the
+// shape. Previously ToArrowRow fell through both depth branches and emitted a
+// block with NO row.push_back (an N-1 row vector against an N-child schema,
+// silently), and the view getter handed any depth != 3 the depth-2 accessor
+// template. Both now emit a static_assert naming the field and the limit, so the
+// failure lands as a clear compile error in the generated header rather than as
+// silent arity corruption at runtime.
+TEST(ViewDepthBoundTest, Depth4EmitsAStaticAssertInsteadOfSilentlyWrongOutput) {
+    DescriptorPool pool;
+    FileDescriptorProto fp;
+    fp.set_name("view_depth4.proto");
+    fp.set_syntax("proto3");
+    AddScalarFlattenChain(&fp, 3);  // depth-4 via `repeated W2`
+    AddScalarFlattenChain2(&fp);    // depth-3 via `repeated V1`, for the contrast case
+
+    auto* host = fp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "d4", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".W2");
+    AddField(host, "d3", 2, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".V1");
+
+    const FileDescriptor* file = pool.BuildFile(fp);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* h = file->FindMessageTypeByName("Host");
+    ASSERT_NE(h, nullptr);
+
+    const auto d4 = ir::BuildFieldIr(h->field(0));
+    const auto d3 = ir::BuildFieldIr(h->field(1));
+    ASSERT_EQ(ListDepthOf(d4), 4);
+    ASSERT_EQ(ListDepthOf(d3), 3);
+
+    // (a) ToArrowRow: static_assert, and crucially NO push_back for that field.
+    std::ostringstream row4;
+    cpp_backend::EmitToArrowRowFieldFromIr(row4, d4, "msg.d4()", 0, file);
+    EXPECT_NE(row4.str().find("static_assert(false"), std::string::npos) << row4.str();
+    EXPECT_NE(row4.str().find("nested list depth 4"), std::string::npos) << row4.str();
+    EXPECT_NE(row4.str().find("msg.d4()"), std::string::npos) << row4.str();
+    EXPECT_EQ(row4.str().find("row.push_back"), std::string::npos)
+        << "a depth-4 field must not silently emit a partial body";
+
+    // (b) View getter: static_assert, and NOT the depth-2 accessor template.
+    std::ostringstream view4;
+    cpp_backend::EmitViewGetterFromIr(view4, d4, "d4", 0, file);
+    EXPECT_NE(view4.str().find("static_assert(false"), std::string::npos) << view4.str();
+    EXPECT_EQ(view4.str().find("ArrowNestedScalarList<"), std::string::npos)
+        << "depth-4 must not receive the depth-2 accessor template";
+
+    // (c) Depth 3 is unaffected — the guard's edge, so an over-broad guard fails here.
+    std::ostringstream row3;
+    cpp_backend::EmitToArrowRowFieldFromIr(row3, d3, "msg.d3()", 1, file);
+    EXPECT_EQ(row3.str().find("static_assert"), std::string::npos) << row3.str();
+    EXPECT_NE(row3.str().find("row.push_back"), std::string::npos) << row3.str();
+
+    std::ostringstream view3;
+    cpp_backend::EmitViewGetterFromIr(view3, d3, "d3", 1, file);
+    EXPECT_EQ(view3.str().find("static_assert"), std::string::npos) << view3.str();
+    EXPECT_NE(view3.str().find("ArrowNestedScalarList2<"), std::string::npos) << view3.str();
 }
 
 // Finding 3: a self-referential flatten wrapper. HasMessageFlatten was tested

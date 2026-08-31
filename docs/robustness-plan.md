@@ -123,14 +123,21 @@ have repeated that anti-pattern had the IR not been abstract.
   nested lists is a **new feature** (see the byte-identity scoping in Phase 3).
 - Flatten resolution becomes IR construction (a chained-flatten wrapper yields
   nested `List(List(Struct))`; arbitrary **struct** depth falls out).
-- **Nested-list depth stays bounded at 3** (`ir::kMaxNestedListDepth`). Schema,
-  row storage and edge encode/decode came out depth-generic, but `ToArrowRow` and
-  the Arrow view accessor did **not**: both are still written out per depth and
-  stop at 3, as does the RBA accessor's `IsSupportedNestedList`. A deeper list is
-  rejected at the classifier (`BuildFieldIr`'s depth post-condition) so
-  `ValidateNoUnsupportedIr` fails the build — before the bound existed, depth 4
-  emitted a schema child with no matching `ToArrowRow` push_back, a silent arity
-  shift. Lifting the bound means making those two emitters depth-generic, not
+- **Nested-list depth is bounded in the Arrow view layer only**
+  (`cpp_backend::kMaxRenderableNestedListDepth`). The nanoarrow schema, row
+  storage and edge encode/decode all came out genuinely depth-generic and are
+  correct at any depth — but `ToArrowRow` and the Arrow view accessor did **not**:
+  both are still written out per depth and stop at 3, as does the RBA accessor's
+  `IsSupportedNestedList`. A deeper list stays fully representable (the schema
+  keeps the column, the edge codec round-trips it), and the two view emitters emit
+  a `static_assert` naming the field instead of what they did before — falling
+  through both depth branches and emitting a block with **no** `row.push_back`, an
+  N-1 row vector against an N-child schema, silently.
+  Deliberately **not** rejected at the classifier: that would change the emitted
+  schema (locked #2) and break `transitive_gate.proto` (RBA-6b / D-RBA-8), which
+  depends on a depth-4 field being "in-scope representable but beyond the
+  supported depth" so the accessor's transitive skip gate has something to skip.
+  Lifting the bound means making those two emitters depth-generic (round RIR), not
   raising the constant. (PR #125 review, findings 1 and 2.)
 - **Folded in GEN/#75 by construction:** #55 (silent `// TODO`/`nullopt` for
   unsupported types) became the explicit `Unsupported{reason}` node → a clean
