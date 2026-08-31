@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "ir.hpp"
+#include "option_metadata.hpp"
 #include "type_mapper.hpp"
 
 namespace fletcher {
@@ -56,6 +57,23 @@ struct FieldInfo {
     // this same IR (single source), consumed by the other emitters for now.
     std::shared_ptr<const ir::IrNode> ir;
 };
+
+// Parsed form of the comma-separated --fletcher_opt=... plugin parameter.
+struct PluginOptions {
+    bool schema_only = false;
+    bool ts = false;
+    bool ipc = false;
+    bool accessor = false;
+    bool rust = false;
+    std::vector<MetadataRule> metadata_rules;
+};
+
+// Parse the --fletcher_opt parameter into `*out`. Unknown tokens are ignored
+// without error, unchanged from the behaviour every existing caller relies on.
+// Returns false and sets *error only for a token the plugin recognises but
+// cannot parse. Single tokenizer for both Generate() and GenerateAll() — a new
+// opt token added here reaches BOTH, which is the point of the shared function.
+bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error);
 
 // Topologically ordered, generatable messages of `file` (dependencies first,
 // synthetic map-entries / recursive / out-of-file messages excluded).

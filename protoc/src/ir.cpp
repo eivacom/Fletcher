@@ -304,7 +304,7 @@ IrNode BuildFlattenedRepeated(const FD* field) {
 
         if (inner->is_repeated()) {
             if (!IsSupportedScalarType(inner->type()))
-                return MakeUnsupported(field, "map value type unsupported");
+                return MakeUnsupported(field, "flatten wrapper leaf type unsupported");
             // The wrapper's own `repeated <scalar>` is ONE list level; the caller's
             // `repeated` (the field being classified) is ANOTHER; each intermediate
             // repeated-message flatten hop counted in `depth` adds one more. So the
@@ -367,11 +367,16 @@ IrNode BuildRepeatedMessage(const FD* field) {
 
     if (auto reason = DynamicWktUnsupportedReason(msg)) return MakeUnsupported(field, *reason);
 
-    if (HasMessageFlatten(msg)) return BuildFlattenedRepeated(field);
-
+    // Recursion is checked BEFORE flatten: a flatten wrapper has exactly one
+    // field, so a cycle anywhere below it is a cycle the flatten chain walk WOULD
+    // follow — and that walk has no visited set, so it spins forever (repeated
+    // form) or recurses without bound (singular form). Testing the hard
+    // unsupported condition first makes the walk unreachable for cyclic input.
     if (IsRecursive(msg))
         return MakeUnsupported(field, "message '" + msg->full_name() +
                                           "' is recursive and cannot be represented in Arrow");
+
+    if (HasMessageFlatten(msg)) return BuildFlattenedRepeated(field);
 
     IrNode node = MakeListOf(MakeStructNode(msg));
     node.facts = BaseFacts(field);
@@ -404,12 +409,10 @@ IrNode BuildMapNode(const FD* field) {
 
     MapNode m;
 
-    // Key (proto restricts keys to integral/bool/string, but guard anyway).
-    if (!IsSupportedScalarType(key_fd->type()) || key_fd->type() == FD::TYPE_ENUM) {
-        // enum keys are not produced by proto; treat non-scalar keys as unsupported.
-        if (!IsSupportedScalarType(key_fd->type()))
-            return MakeUnsupported(field, "map key type cannot map to a scalar Arrow type");
-    }
+    // Key (proto restricts map keys to integral/bool/string and rejects enum keys
+    // at parse time, so this is a defensive guard that no valid .proto reaches).
+    if (!IsSupportedScalarType(key_fd->type()))
+        return MakeUnsupported(field, "map key type cannot map to a scalar Arrow type");
     {
         IrNode k = MakeNode(NodeKind::SCALAR);
         k.facts = BaseFacts(key_fd);
@@ -455,11 +458,12 @@ IrNode BuildSingularMessage(const FD* field) {
 
     if (auto reason = DynamicWktUnsupportedReason(msg)) return MakeUnsupported(field, *reason);
 
-    if (HasMessageFlatten(msg)) return BuildFlattenedSingular(field);
-
+    // Recursion before flatten — see the note in BuildRepeatedMessage.
     if (IsRecursive(msg))
         return MakeUnsupported(
             field, "message '" + fqn + "' is recursive and cannot be represented in Arrow");
+
+    if (HasMessageFlatten(msg)) return BuildFlattenedSingular(field);
 
     IrNode node = MakeStructNode(msg);
     node.facts = BaseFacts(field);
@@ -494,6 +498,39 @@ StructNode BuildStructVariant(const Descriptor* msg) {
     return s;
 }
 
+// ---------------------------------------------------------------------------
+// Nested-list depth bound
+// ---------------------------------------------------------------------------
+//
+// Schema, row storage and edge encode/decode are all depth-generic, but the two
+// emitters that render a nested list are NOT: the Arrow view accessor picks
+// between ArrowNestedList/ArrowNestedList2 (and their GIR-10 scalar-leaf
+// counterparts) by `depth == 3`, and ToArrowRow's builder nest is written out
+// per depth. Both stop at 3. The read-only RBA accessor already draws the same
+// line explicitly (IsSupportedNestedList: depth 2 or 3, spec §6).
+//
+// Without a bound, a deeper list emitted a schema child with NO matching
+// ToArrowRow push_back — a silent arity shift between the row vector and the
+// schema — plus a view accessor claiming depth 2 over a deeper column. Bound it
+// here, at the classifier, so ValidateNoUnsupportedIr fails the build with a
+// clear message instead of emitting quietly-wrong code (the #55 / GIR-8
+// contract). Lifting the bound means making both emitters depth-generic, not
+// raising this constant.
+constexpr int kMaxNestedListDepth = 3;
+
+// Number of LIST levels at the head of `node` (0 for a non-list).
+int ListChainDepth(const IrNode& node) {
+    int depth = 0;
+    const IrNode* cur = &node;
+    while (cur->kind == NodeKind::LIST) {
+        ++depth;
+        cur = std::get<ListNode>(cur->node).element.get();
+    }
+    return depth;
+}
+
+IrNode BuildFieldIrDispatch(const google::protobuf::FieldDescriptor* field);
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -501,6 +538,24 @@ StructNode BuildStructVariant(const Descriptor* msg) {
 // ---------------------------------------------------------------------------
 
 IrNode BuildFieldIr(const google::protobuf::FieldDescriptor* field) {
+    IrNode node = BuildFieldIrDispatch(field);
+
+    // Depth post-condition, applied at the SINGLE classifier entry point so it
+    // covers every construction path — including a deep list reached through a
+    // struct member, since BuildStructVariant builds members via BuildFieldIr.
+    const int depth = ListChainDepth(node);
+    if (depth > kMaxNestedListDepth)
+        return MakeUnsupported(field, "nested list depth " + std::to_string(depth) +
+                                          " exceeds the supported maximum of " +
+                                          std::to_string(kMaxNestedListDepth) +
+                                          "; flatten chains this deep have no Arrow view "
+                                          "accessor or ToArrowRow emission");
+    return node;
+}
+
+namespace {
+
+IrNode BuildFieldIrDispatch(const google::protobuf::FieldDescriptor* field) {
     // 1. Real oneof (not synthetic proto3 optional).
     if (field->real_containing_oneof())
         return MakeUnsupported(field, "oneof '" + field->real_containing_oneof()->name() +
@@ -525,6 +580,8 @@ IrNode BuildFieldIr(const google::protobuf::FieldDescriptor* field) {
     // 6/7. Singular enum or primitive.
     return BuildSingularScalarOrEnum(field);
 }
+
+}  // namespace
 
 StructNode BuildMessageIr(const google::protobuf::Descriptor* message) {
     return BuildStructVariant(message);

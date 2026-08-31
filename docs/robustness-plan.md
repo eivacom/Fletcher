@@ -123,6 +123,15 @@ have repeated that anti-pattern had the IR not been abstract.
   nested lists is a **new feature** (see the byte-identity scoping in Phase 3).
 - Flatten resolution becomes IR construction (a chained-flatten wrapper yields
   nested `List(List(Struct))`; arbitrary **struct** depth falls out).
+- **Nested-list depth stays bounded at 3** (`ir::kMaxNestedListDepth`). Schema,
+  row storage and edge encode/decode came out depth-generic, but `ToArrowRow` and
+  the Arrow view accessor did **not**: both are still written out per depth and
+  stop at 3, as does the RBA accessor's `IsSupportedNestedList`. A deeper list is
+  rejected at the classifier (`BuildFieldIr`'s depth post-condition) so
+  `ValidateNoUnsupportedIr` fails the build — before the bound existed, depth 4
+  emitted a schema child with no matching `ToArrowRow` push_back, a silent arity
+  shift. Lifting the bound means making those two emitters depth-generic, not
+  raising the constant. (PR #125 review, findings 1 and 2.)
 - **Folded in GEN/#75 by construction:** #55 (silent `// TODO`/`nullopt` for
   unsupported types) became the explicit `Unsupported{reason}` node → a clean
   build error; #75 became the `Enum` node. (GeoArrow CRS / #59 is **not** folded

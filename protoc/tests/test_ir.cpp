@@ -620,3 +620,165 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
     EXPECT_FALSE(Contains(uo, "ReadStruct"));
     EXPECT_FALSE(Contains(uo, "ReadInt32"));
 }
+
+// ===========================================================================
+// Depth bound and flatten-cycle guards (PR #125 review findings 1, 2, 3)
+// ===========================================================================
+
+namespace {
+
+// Build a chain of `hops` scalar-leaf flatten wrappers: W0 { repeated int32 },
+// W1 { repeated W0 }, ... Each hop adds one list level, and the caller's own
+// `repeated` adds one more, so `repeated W<hops-1>` is `hops + 1` list levels.
+void AddScalarFlattenChain(FileDescriptorProto* fp, int hops) {
+    for (int i = 0; i < hops; ++i) {
+        auto* w = fp->add_message_type();
+        w->set_name("W" + std::to_string(i));
+        SetMessageFlatten(w);
+        if (i == 0) {
+            AddField(w, "v", 1, FieldDescriptorProto::TYPE_INT32,
+                     FieldDescriptorProto::LABEL_REPEATED);
+        } else {
+            AddField(w, "v", 1, FieldDescriptorProto::TYPE_MESSAGE,
+                     FieldDescriptorProto::LABEL_REPEATED)
+                ->set_type_name(".W" + std::to_string(i - 1));
+        }
+    }
+}
+
+int ListDepthOf(const ir::IrNode& node) {
+    int d = 0;
+    const ir::IrNode* cur = &node;
+    while (cur->kind == ir::NodeKind::LIST) {
+        ++d;
+        cur = AsList(*cur).element.get();
+    }
+    return d;
+}
+
+}  // namespace
+
+// Depth 3 is the supported maximum and must keep classifying as a real nested
+// list — this is the guard's lower edge, so a regression that over-rejects is
+// caught here rather than only in the integration goldens.
+TEST(IrDepthBoundTest, Depth3ScalarLeafNestedListStaysSupported) {
+    DescriptorPool pool;
+    FileDescriptorProto fp;
+    fp.set_name("ir_depth3.proto");
+    fp.set_syntax("proto3");
+    AddScalarFlattenChain(&fp, 2);  // W0, W1 -> `repeated W1` == 3 list levels
+
+    auto* host = fp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "d3", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".W1");
+
+    const FileDescriptor* file = pool.BuildFile(fp);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* h = file->FindMessageTypeByName("Host");
+    ASSERT_NE(h, nullptr);
+
+    const auto node = ir::BuildFieldIr(h->field(0));
+    ASSERT_EQ(node.kind, ir::NodeKind::LIST);
+    EXPECT_EQ(ListDepthOf(node), 3);
+}
+
+// Findings 1 and 2: schema, row storage and edge encode/decode are depth-generic,
+// but the Arrow view accessor and ToArrowRow are written per depth and stop at 3.
+// Before this guard a depth-4 field generated a schema child with NO matching
+// ToArrowRow push_back (a silent arity shift against the schema), a view accessor
+// claiming depth 2, and — when nullable — an unbalanced brace that did not compile.
+// The classifier must reject it so ValidateNoUnsupportedIr fails the build.
+TEST(IrDepthBoundTest, Depth4ScalarLeafNestedListIsUnsupportedNotSilentlyWrong) {
+    DescriptorPool pool;
+    FileDescriptorProto fp;
+    fp.set_name("ir_depth4.proto");
+    fp.set_syntax("proto3");
+    AddScalarFlattenChain(&fp, 3);  // W0, W1, W2 -> `repeated W2` == 4 list levels
+
+    // One more hop, so `optional W3` resolves through the wrapper to a 4-level
+    // list with nullable propagated onto it — the shape that produced the
+    // unbalanced-brace output.
+    auto* w3 = fp.add_message_type();
+    w3->set_name("W3");
+    SetMessageFlatten(w3);
+    AddField(w3, "v", 1, FieldDescriptorProto::TYPE_MESSAGE, FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".W2");
+
+    auto* host = fp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "d4", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".W2");
+    // proto3 `optional W3 d4_nullable` needs its synthetic single-member oneof.
+    auto* opt_oneof = host->add_oneof_decl();
+    opt_oneof->set_name("_d4_nullable");
+    auto* opt_f = AddField(host, "d4_nullable", 2, FieldDescriptorProto::TYPE_MESSAGE);
+    opt_f->set_type_name(".W3");
+    opt_f->set_proto3_optional(true);
+    opt_f->set_oneof_index(0);
+
+    const FileDescriptor* file = pool.BuildFile(fp);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* h = file->FindMessageTypeByName("Host");
+    ASSERT_NE(h, nullptr);
+
+    for (int i = 0; i < 2; ++i) {
+        const auto node = ir::BuildFieldIr(h->field(i));
+        EXPECT_EQ(node.kind, ir::NodeKind::UNSUPPORTED) << "field " << h->field(i)->name();
+        if (node.kind == ir::NodeKind::UNSUPPORTED) {
+            const std::string reason = AsUnsupported(node).reason;
+            EXPECT_NE(reason.find("nested list depth 4"), std::string::npos) << reason;
+            EXPECT_NE(reason.find("maximum of 3"), std::string::npos) << reason;
+        }
+        // The projection must drop it too, so no emitter can see a depth-4 shape.
+        EXPECT_FALSE(ProjectIrToFieldMapping(node, file).has_value());
+    }
+}
+
+// Finding 3: a self-referential flatten wrapper. HasMessageFlatten was tested
+// BEFORE IsRecursive, so the chain walk (which carries no visited set) ran on
+// cyclic input: the repeated form spun forever and the singular form recursed
+// until the stack overflowed. Recursion is now checked first, which makes the
+// walk unreachable for cyclic input. Both forms must classify as Unsupported —
+// and must TERMINATE, which is what running this test at all proves.
+TEST(IrFlattenCycleTest, SelfReferentialFlattenWrapperIsUnsupportedAndTerminates) {
+    DescriptorPool pool;
+    FileDescriptorProto fp;
+    fp.set_name("ir_flatten_cycle.proto");
+    fp.set_syntax("proto3");
+
+    // message WRep { option (fletcher.flatten) = true; repeated WRep w = 1; }
+    auto* wrep = fp.add_message_type();
+    wrep->set_name("WRep");
+    SetMessageFlatten(wrep);
+    AddField(wrep, "w", 1, FieldDescriptorProto::TYPE_MESSAGE, FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".WRep");
+
+    // message WSing { option (fletcher.flatten) = true; WSing w = 1; }
+    auto* wsing = fp.add_message_type();
+    wsing->set_name("WSing");
+    SetMessageFlatten(wsing);
+    AddField(wsing, "w", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".WSing");
+
+    auto* host = fp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "rep", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".WRep");
+    AddField(host, "sing", 2, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".WSing");
+
+    const FileDescriptor* file = pool.BuildFile(fp);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* h = file->FindMessageTypeByName("Host");
+    ASSERT_NE(h, nullptr);
+
+    for (int i = 0; i < 2; ++i) {
+        const auto node = ir::BuildFieldIr(h->field(i));
+        EXPECT_EQ(node.kind, ir::NodeKind::UNSUPPORTED) << "field " << h->field(i)->name();
+        if (node.kind == ir::NodeKind::UNSUPPORTED)
+            EXPECT_NE(AsUnsupported(node).reason.find("is recursive"), std::string::npos)
+                << AsUnsupported(node).reason;
+    }
+}

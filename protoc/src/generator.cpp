@@ -639,276 +639,18 @@ namespace {
 // Free schema function for one message
 // -----------------------------------------------------------------------
 
-// Helper: emit nanoarrow type setup code for a single child schema.
-// `child_expr` is the C expression for the ArrowSchema* child pointer.
-void EmitNanoarrowTypeSetup(std::ostringstream& o, const std::string& child_expr,
-                            const FieldInfo& fi, const std::string& indent) {
-    switch (fi.mapping.kind) {
-        case FieldKind::SCALAR: {
-            const auto& expr = fi.mapping.scalar.arrow_type_expr;
-            if (expr.find("timestamp") != std::string::npos) {
-                o << indent << "ArrowSchemaSetTypeDateTime(" << child_expr
-                  << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-            } else if (expr.find("duration") != std::string::npos) {
-                o << indent << "ArrowSchemaSetTypeDateTime(" << child_expr
-                  << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-            } else if (expr == "arrow::boolean()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_BOOL);\n";
-            } else if (expr == "arrow::int32()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_INT32);\n";
-            } else if (expr == "arrow::int64()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_INT64);\n";
-            } else if (expr == "arrow::uint32()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_UINT32);\n";
-            } else if (expr == "arrow::uint64()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_UINT64);\n";
-            } else if (expr == "arrow::float32()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_FLOAT);\n";
-            } else if (expr == "arrow::float64()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_DOUBLE);\n";
-            } else if (expr == "arrow::utf8()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_STRING);\n";
-            } else if (expr == "arrow::binary()") {
-                o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_BINARY);\n";
-            } else {
-                o << indent << "// TODO: unknown scalar type: " << expr << "\n";
-            }
-            break;
-        }
-
-        case FieldKind::STRUCT:
-            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
-              << child_expr << ");\n";
-            break;
-
-        case FieldKind::REPEATED_SCALAR: {
-            // list(element_type)
-            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_LIST);\n";
-            // The list child ("item") is allocated by ArrowSchemaSetType.
-            // Set item type.
-            const auto& elem_expr = fi.mapping.element.arrow_type_expr;
-            std::string item = child_expr + "->children[0]";
-            if (elem_expr.find("timestamp") != std::string::npos) {
-                o << indent << "ArrowSchemaSetTypeDateTime(" << item
-                  << ", NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-            } else if (elem_expr.find("duration") != std::string::npos) {
-                o << indent << "ArrowSchemaSetTypeDateTime(" << item
-                  << ", NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr);\n";
-            } else if (elem_expr == "arrow::boolean()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BOOL);\n";
-            } else if (elem_expr == "arrow::int32()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT32);\n";
-            } else if (elem_expr == "arrow::int64()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_INT64);\n";
-            } else if (elem_expr == "arrow::uint32()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT32);\n";
-            } else if (elem_expr == "arrow::uint64()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_UINT64);\n";
-            } else if (elem_expr == "arrow::float32()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_FLOAT);\n";
-            } else if (elem_expr == "arrow::float64()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_DOUBLE);\n";
-            } else if (elem_expr == "arrow::utf8()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_STRING);\n";
-            } else if (elem_expr == "arrow::binary()") {
-                o << indent << "ArrowSchemaSetType(" << item << ", NANOARROW_TYPE_BINARY);\n";
-            } else {
-                o << indent << "// TODO: unknown element type: " << elem_expr << "\n";
-            }
-            o << indent << "ArrowSchemaSetName(" << item << ", \"item\");\n";
-            break;
-        }
-
-        case FieldKind::REPEATED_STRUCT:
-            // list(struct(...))
-            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_LIST);\n";
-            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
-              << child_expr << "->children[0]);\n";
-            o << indent << "ArrowSchemaSetName(" << child_expr << "->children[0], \"item\");\n";
-            break;
-
-        case FieldKind::NESTED_LIST: {
-            // List<List<...<Struct>>>
-            // Build from outside in: list -> list -> ... -> struct
-            std::string cur = child_expr;
-            for (int d = 0; d < fi.mapping.list_depth; ++d) {
-                o << indent << "ArrowSchemaSetType(" << cur << ", NANOARROW_TYPE_LIST);\n";
-                std::string item = cur + "->children[0]";
-                o << indent << "ArrowSchemaSetName(" << item << ", \"item\");\n";
-                cur = item;
-            }
-            // Innermost: struct (deep copy overwrites the name, restore "item")
-            o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.nested_class << "Schema().get(), "
-              << cur << ");\n";
-            o << indent << "ArrowSchemaSetName(" << cur << ", \"item\");\n";
-            break;
-        }
-
-        case FieldKind::MAP: {
-            // map(key_type, value_type)
-            o << indent << "ArrowSchemaSetType(" << child_expr << ", NANOARROW_TYPE_MAP);\n";
-            // MAP creates a child "entries" struct with two children: "key" and "value".
-            std::string entries = child_expr + "->children[0]";
-            std::string key_child = entries + "->children[0]";
-            std::string val_child = entries + "->children[1]";
-
-            // Key type
-            const auto& key_expr = fi.mapping.map_key.arrow_type_expr;
-            if (key_expr == "arrow::utf8()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_STRING);\n";
-            } else if (key_expr == "arrow::int32()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT32);\n";
-            } else if (key_expr == "arrow::int64()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_INT64);\n";
-            } else if (key_expr == "arrow::uint32()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT32);\n";
-            } else if (key_expr == "arrow::uint64()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_UINT64);\n";
-            } else if (key_expr == "arrow::boolean()") {
-                o << indent << "ArrowSchemaSetType(" << key_child << ", NANOARROW_TYPE_BOOL);\n";
-            } else {
-                o << indent << "// TODO: unknown map key type: " << key_expr << "\n";
-            }
-
-            // Value type
-            if (fi.mapping.map_value_is_message) {
-                o << indent << "ArrowSchemaDeepCopy(" << fi.mapping.map_value_class
-                  << "Schema().get(), " << val_child << ");\n";
-                o << indent << "ArrowSchemaSetName(" << val_child << ", \"value\");\n";
-            } else {
-                const auto& val_expr = fi.mapping.map_value.arrow_type_expr;
-                if (val_expr == "arrow::utf8()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_STRING);\n";
-                } else if (val_expr == "arrow::int32()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_INT32);\n";
-                } else if (val_expr == "arrow::int64()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_INT64);\n";
-                } else if (val_expr == "arrow::uint32()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_UINT32);\n";
-                } else if (val_expr == "arrow::uint64()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_UINT64);\n";
-                } else if (val_expr == "arrow::boolean()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_BOOL);\n";
-                } else if (val_expr == "arrow::float32()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_FLOAT);\n";
-                } else if (val_expr == "arrow::float64()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_DOUBLE);\n";
-                } else if (val_expr == "arrow::binary()") {
-                    o << indent << "ArrowSchemaSetType(" << val_child
-                      << ", NANOARROW_TYPE_BINARY);\n";
-                } else {
-                    o << indent << "// TODO: unknown map value type: " << val_expr << "\n";
-                }
-            }
-            break;
-        }
-    }  // switch
-}
-
 // GIR-5: the C++ <Class>Schema() source is now emitted by the ONE IR-driven
 // schema visitor (cpp_backend::GenerateSchemaFunctionFromIr), the same visitor
 // that BuildMessageSchemaInto executes in-process — the two paths cannot drift
-// (locked decision #5). `fields` is retained for signature compatibility with
-// the generation loop but is no longer read here (the visitor rebuilds the
-// flattened field list from the IR). The emitted source may differ cosmetically
-// from the pre-GIR-5 output (nanoarrow-call ordering for nested lists, dropped
-// per-field warning comments), but the runtime schema — and therefore the .ipc
-// bytes — is byte-identical.
-std::string GenerateSchemaFunction(const std::string& cls, const std::vector<FieldInfo>& fields,
-                                   const google::protobuf::Descriptor* msg,
+// (locked decision #5). The visitor rebuilds the flattened field list from the
+// IR, so this takes NO GatherFields vector: the schema is driven by the IR, not
+// by GatherFields order. The emitted source may differ cosmetically from the
+// pre-GIR-5 output (nanoarrow-call ordering for nested lists, dropped per-field
+// warning comments), but the runtime schema — and therefore the .ipc bytes — is
+// byte-identical.
+std::string GenerateSchemaFunction(const std::string& cls, const google::protobuf::Descriptor* msg,
                                    const OptionMetadataResolver* resolver = nullptr) {
-    (void)fields;
     return cpp_backend::GenerateSchemaFunctionFromIr(cls, msg, msg->file(), resolver);
-}
-
-// -----------------------------------------------------------------------
-// In-process schema construction (--fletcher_opt=ipc)
-//
-// Executes the same nanoarrow calls that GenerateSchemaFunction /
-// EmitNanoarrowTypeSetup emit as C++ source, so the schema built here is
-// identical to the one the generated <Class>Schema() builds at runtime.
-// Any change to the emitted schema code must be mirrored here.
-// -----------------------------------------------------------------------
-
-void CheckNa(ArrowErrorCode code, const char* context) {
-    if (code != NANOARROW_OK) {
-        throw std::runtime_error(std::string("BuildMessageSchema: ") + context + " failed");
-    }
-}
-
-// Counterpart of the scalar branches in EmitNanoarrowTypeSetup.
-void SetScalarSchemaType(ArrowSchema* schema, const std::string& expr) {
-    if (expr.find("timestamp") != std::string::npos) {
-        CheckNa(ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_TIMESTAMP,
-                                           NANOARROW_TIME_UNIT_NANO, nullptr),
-                "set timestamp type");
-        return;
-    }
-    if (expr.find("duration") != std::string::npos) {
-        CheckNa(ArrowSchemaSetTypeDateTime(schema, NANOARROW_TYPE_DURATION,
-                                           NANOARROW_TIME_UNIT_NANO, nullptr),
-                "set duration type");
-        return;
-    }
-
-    ArrowType type;
-    if (expr == "arrow::boolean()") {
-        type = NANOARROW_TYPE_BOOL;
-    } else if (expr == "arrow::int32()") {
-        type = NANOARROW_TYPE_INT32;
-    } else if (expr == "arrow::int64()") {
-        type = NANOARROW_TYPE_INT64;
-    } else if (expr == "arrow::uint32()") {
-        type = NANOARROW_TYPE_UINT32;
-    } else if (expr == "arrow::uint64()") {
-        type = NANOARROW_TYPE_UINT64;
-    } else if (expr == "arrow::float32()") {
-        type = NANOARROW_TYPE_FLOAT;
-    } else if (expr == "arrow::float64()") {
-        type = NANOARROW_TYPE_DOUBLE;
-    } else if (expr == "arrow::utf8()") {
-        type = NANOARROW_TYPE_STRING;
-    } else if (expr == "arrow::binary()") {
-        type = NANOARROW_TYPE_BINARY;
-    } else {
-        throw std::runtime_error("BuildMessageSchema: unsupported scalar type " + expr);
-    }
-    CheckNa(ArrowSchemaSetType(schema, type), "set scalar type");
-}
-
-void SetMetadataPairs(ArrowSchema* schema,
-                      const std::vector<std::pair<std::string, std::string>>& pairs) {
-    ArrowBuffer buf;
-    ArrowBufferInit(&buf);
-    // Collect the first failure but always reach ArrowBufferReset, then throw.
-    ArrowErrorCode code = ArrowMetadataBuilderInit(&buf, nullptr);
-    for (const auto& [key, value] : pairs) {
-        if (code != NANOARROW_OK) break;
-        code = ArrowMetadataBuilderAppend(&buf, ArrowCharView(key.c_str()),
-                                          ArrowCharView(value.c_str()));
-    }
-    if (code == NANOARROW_OK) {
-        code = ArrowSchemaSetMetadata(schema, reinterpret_cast<const char*>(buf.data));
-    }
-    ArrowBufferReset(&buf);
-    CheckNa(code, "set metadata");
-}
-
-const google::protobuf::Descriptor* RequireNestedMsg(const google::protobuf::Descriptor* nested,
-                                                     const std::string& field_name) {
-    if (!nested) {
-        throw std::runtime_error("BuildMessageSchema: missing nested descriptor for field '" +
-                                 field_name + "'");
-    }
-    return nested;
 }
 
 // GIR-5: the in-process ArrowSchema is now built by the SAME IR-driven schema
@@ -1372,7 +1114,7 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
         }
 
         // Always emit the free schema function.
-        o << GenerateSchemaFunction(cls, fields, msg, resolver) << "\n";
+        o << GenerateSchemaFunction(cls, msg, resolver) << "\n";
 
         // Optionally emit the row class.
         // View class omitted — generated separately in .fletcher.arrow.pb.h.
@@ -1774,6 +1516,31 @@ nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* m
     return schema;
 }
 
+// Single tokenizer for both Generate() and GenerateAll(). Restored from `main`
+// (it arrived with #121 and was dropped during the GIR generator rewrite): with
+// two inline tokenizers, a new opt token added to Generate()'s loop silently did
+// not reach GenerateAll().
+bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error) {
+    std::istringstream ss(parameter);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        if (token == "schema_only")
+            out->schema_only = true;
+        else if (token == "ts")
+            out->ts = true;
+        else if (token == "ipc")
+            out->ipc = true;
+        else if (token == "accessor")
+            out->accessor = true;
+        else if (token == "rust")
+            out->rust = true;
+        // Unknown tokens are ignored, unchanged from the pre-existing behaviour
+        // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
+        // are claimed below and MUST parse.
+    }
+    return ParseMetadataRules(parameter, &out->metadata_rules, error);
+}
+
 // -----------------------------------------------------------------------
 // CodeGenerator interface
 // -----------------------------------------------------------------------
@@ -1786,28 +1553,15 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // artifact (C++ header / view / TS / IPC / RBA). Recursion stays skipped.
     if (!ValidateNoUnsupportedIr(file, error)) return false;
 
-    // Parse comma-separated options from --fletcher_opt=...
-    bool schema_only = false;
-    bool emit_ts = false;
-    bool emit_ipc = false;
-    bool emit_accessor = false;
-    bool emit_rust = false;
-    {
-        std::istringstream ss(parameter);
-        std::string token;
-        while (std::getline(ss, token, ',')) {
-            if (token == "schema_only")
-                schema_only = true;
-            else if (token == "ts")
-                emit_ts = true;
-            else if (token == "ipc")
-                emit_ipc = true;
-            else if (token == "accessor")
-                emit_accessor = true;
-            else if (token == "rust")
-                emit_rust = true;
-        }
-    }
+    // Parse comma-separated options from --fletcher_opt=... through the ONE
+    // tokenizer GenerateAll() also uses.
+    PluginOptions opts;
+    if (!ParsePluginParameter(parameter, &opts, error)) return false;
+    const bool schema_only = opts.schema_only;
+    const bool emit_ts = opts.ts;
+    const bool emit_ipc = opts.ipc;
+    const bool emit_accessor = opts.accessor;
+    const bool emit_rust = opts.rust;
 
     // GIR-13 (#121): compile --fletcher_opt=metadata_from_option=... into a
     // resolver. Rule errors are invocation-wide and file-independent (rule
@@ -1821,8 +1575,9 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // an unsupported field type in `file` is reported before a malformed rule is
     // even parsed. That is the order the design fixes; do not read the paragraph
     // above as a claim about ValidateNoUnsupportedIr.
-    std::vector<MetadataRule> metadata_rules;
-    if (!ParseMetadataRules(parameter, &metadata_rules, error)) return false;
+    // Parsed above by ParsePluginParameter — the rule syntax errors it reports
+    // surface at that call, preserving the diagnostic ordering described here.
+    std::vector<MetadataRule> metadata_rules = std::move(opts.metadata_rules);
 
     // No rules => NO resolver. Keeps `resolver == nullptr` literally synonymous
     // with "no metadata_from_option was passed" (which is what the byte-identical
@@ -1945,15 +1700,9 @@ bool ArrowRowGenerator::GenerateAll(
     // P1). It carries zero per-file/per-message content; the build.rs assembler
     // include!s it once directly under crate::fletcher_gen::__rba (N1). Only emit
     // when the `rust` opt is set.
-    bool emit_rust = false;
-    {
-        std::istringstream ss(parameter);
-        std::string token;
-        while (std::getline(ss, token, ',')) {
-            if (token == "rust") emit_rust = true;
-        }
-    }
-    if (emit_rust) {
+    PluginOptions opts;
+    if (!ParsePluginParameter(parameter, &opts, error)) return false;
+    if (opts.rust) {
         const std::string rba_content = EmitRustRbaHelpers();
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> rba_stream(
             context->Open("__rba.fletcher.rs"));

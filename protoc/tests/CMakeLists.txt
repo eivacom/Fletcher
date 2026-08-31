@@ -8,6 +8,7 @@ add_executable(fletcher_proto_plugin_tests
     test_ir.cpp
     test_schema_builder.cpp
     test_schema_visitor.cpp
+    test_schema_codec_lockstep.cpp
     test_option_metadata.cpp
     test_ts_visitor.cpp)
 
@@ -22,7 +23,12 @@ target_compile_definitions(fletcher_proto_plugin_tests PRIVATE
     SCHEMA_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 
 include(GoogleTest)
-gtest_discover_tests(fletcher_proto_plugin_tests DISCOVERY_MODE PRE_TEST)
+# TIMEOUT: every test in this suite runs in well under a second. The cap exists
+# so a re-regression of the flatten-cycle guard (which manifests as a hang or a
+# stack overflow inside BuildFieldIr, not an assertion failure) fails the job in
+# two minutes instead of stalling it for ctest's 25-minute default.
+gtest_discover_tests(fletcher_proto_plugin_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 120)
 
 # GIR-8 (#53) full-surface guard: assert the IR emitters (protoc/src, excluding
 # the read-only RBA emitter) contain zero `.ValueOrDie(`, so the "no unchecked
