@@ -28,12 +28,12 @@ suite a third-party driver author can run.
 
 ## Branch strategy
 
-- Base: `main`, after the GIR round's PR #125 merges. **Confirm the base at
-  kickoff** — PDA touches `pubsub/`, `core/`, both providers, the gateway and the
-  integration tests, i.e. almost the exact complement of GIR's `protoc/` footprint,
-  so overlap should be near zero, but verify rather than assume.
+- Base: **`main` at `8ef1d0e`** — the GIR PR #125 merge — so all of GIR is in the
+  base. Confirmed 2026-08-31 at branch creation. PDA touches `pubsub/`, `core/`,
+  both providers, the gateway and the integration tests: almost the exact
+  complement of GIR's `protoc/` footprint, so overlap is near zero.
+- Branch: `feature/protocol-driver-abi`, cut from `origin/main` on 2026-08-31.
 - Rebased, not merged (repo convention).
-- Branch: `feature/protocol-driver-abi`.
 - PR split, each independently reviewable:
   **PDA-1/PDA-2** (the guards) → **PDA-3** (the header, reviewed as a spec) →
   **PDA-4/PDA-5** (host + adapter, equivalence proof) → **PDA-6** (InProcess
