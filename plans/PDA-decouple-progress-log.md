@@ -221,3 +221,67 @@ remedy collides with locked decision 12.
 denies being a coverage claim; declared-vs-actual annotated; config baseline harnesses
 named (order-ambiguous, I mis-read them once); review files must be `-compliance.md` or
 the close gate cannot see them.
+
+---
+
+## PDA-DEC-2 — Copy-accounting oracle (2026-09-01) 🟢
+
+**What landed.** Zero-copy stops being prose. Suite `CopyAccounting` in the PDA-DEC-1
+harness decides copying by **address provenance** — encode-window base vs the pointer the
+subscriber callback receives — scored by a pure `Judge()`. Three in-process subjects
+(`SeamProbe`, `InProcessLoopback`, `InProcessViaPubSub`) plus a **live negative control**
+`StagingIsCaught`: a deliberately-copying provider the same `Judge()` must convict.
+Allocation counting was rejected in design (blind to Windows DLL CRTs; pool reuse hides
+copies). New public surface: **1**, `WriteBuffer::Data()`.
+
+**The finding that justified the review round.** `BorrowedAttachmentCostsExactlyOneCopy`
+shipped in cycle 1 asserting a **structural constant**: the harness itself made the
+copy, so the count was always 1 — it could not reach 0 when PDA-DEC-3 lands, nor 2 on
+a regression. Both reviewers found it independently; compliance proved it by swapping the
+provider and watching it stay green — PDA-DEC-1's lesson recurring inside the item built
+to prevent it. Fixed: `Publish` now builds the `Blob` itself, with a caller-owned blob
+riding along. Five mutations, each rebuilt and run, re-derived by the reviewer rather than
+taken on report: provider swap → red; copy removed → red at 0; extra copy → red at 2;
+window recycled → red as "P5 VIOLATED"; counter inert → red on `GrowableProbe`.
+
+**Residual, booked not escalated.** The pin goes red at 0 for any removal a *provider* can
+express, but cannot see PDA-DEC-3 adding a **parallel** borrowed-blob type beside an
+untouched `Blob`. A SFINAE probe for a guessed future ctor was rejected — a wrong guess
+keeps copying silently. Booked as a PDA-DEC-3 obligation; the re-check endorsed that call.
+
+**Verification.** `CopyAccounting` 7/7; full suite green on every target at baseline;
+`pubsub-conformance` **43/43** with XRCE ON and a live MicroXRCEAgent (`conformance_xrce` ran,
+not skipped); `gateway-fastdds-ts` 4/4 ×3, no row loss; `pubsub-arrow-fastdds` 4/4 at `-j1`
+(pre-existing domain-137 cross-talk). **Residuals, logged not fixed:** `LoanForDelivery`
+shares the row buffer's 4-slot rotation (loan liveness rests on an uncounted publish budget,
+unreachable today); `EncodeAccounted` misses a same-base realloc — report-only undercount.
+
+**Two false-green traps in our own verification, both now fixed in the config.** (1) `cmake
+--preset conan-default` does **not** reset a cached `FLETCHER_CONFORMANCE_XRCE=OFF`, so the
+first gate run silently dropped the XRCE entry and both XRCE subjects — 42 entries, all
+"green"; `-DFLETCHER_CONFORMANCE_XRCE=ON` is now explicit. (2) `-o run_tests=True` **can be
+a no-op**: every `package_id()` drops the option, so a cached binary is reused and ctest
+never runs — five packages said "Already installed!" with zero fresh evidence. Also: 35
+per-clause entries is **correct** — `CallbackNeverSeesNullSchema` is absent from the
+schema-less `InProcessLocal` by design, gated at link; an agent mis-called it a missing
+test and the tree disproved it.
+
+**Close gate:** PASS. **Cycle meter:** design 1/2 · fix 1 · launches 2/5 · owner touches 1.
+**Numbers:** declared +560/−5 · actual **+1182/−12** (+111%) · surface 1 as declared. Both
+reviews judged the overrun *not* scope creep (3rd subject owed by DEBT-1; fix-cycle growth
+is the blocking fix + 3 should-fixes); the implementer's "it's doc-comment" account was
+wrong — 493 lines were code, and the code reviewer counted them.
+
+**Owner decisions (verbatim in `plans/PDA-DEC-rulings.md`, entries 20–22):** refill
+movement permitted and published as a number; the guard claims the interface, not the
+transport; the receive-side copy pinned at exactly one — all three answered with the
+recommendation. The design raised a spec-vs-ruling tripwire on refill; the review found
+it was not real — §3.1 clause 1 sanctions movement inside a refill, and "a copy
+anywhere" was the ledger's editorial gloss, not the owner's prose.
+
+**Records corrected in place (no fix cycle):** the plan said the oracle "counts copies"; the
+design's `CopySubject` was stale and my first correction of it was *also* wrong (it is a
+`std::function` factory); no as-landed figure; the window-intact comment overclaimed. In the
+evidence file the known-accepted `pubsub-arrow-fastdds` line was restated as its authoritative
+`-j1` result so the gate's token scan would not read a documented non-regression as a failure
+— verbatim run preserved as `verify-PDA-DEC-2-raw.txt`.
