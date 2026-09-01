@@ -159,3 +159,23 @@ shape. **Applies to:** `docs/pubsub-interface-spec.md` §7 clause 3 — the "may
 "must" amendment lands in **this** PR, not deferred to PDA-DEC-9; PDA-DEC-1
 clause 8; and the loopback + XRCE conflict-handling divergence fixes, which are
 in-round work under the 2026-08-31 divergence ruling.
+
+## 2026-09-01 — The conformance suite ships with a documented blind spot *(selection)*
+> "Ship the guard, hunt elsewhere — Close this stage: the suite guards the delivery contract, with the blind spot and the evidence written into its README. The row-loss defect keeps its existing owner — the stage that turns on zero-copy receive, which is the feature it actually blocks — starting from the evidence table we now have. Cost: the conformance suite ships with a known blind spot. This is also the default if you don't answer."
+
+**Context:** PDA-DEC-1's design made the falsification a close gate — clause 6 had
+to go red against a provider with reader-side data-sharing re-enabled, or "the
+item is not done". It did not go red, twice: the harness-shape hypothesis was
+refuted by the `gateway-fastdds-ts` control (same shape, does reproduce) and the
+sentinel hypothesis by measurement after the sentinel was removed. The remaining
+untested candidate — several data-sharing endpoints coexisting in one participant
+— is unreachable from this harness because rung-1 item 5 gives the peer protocol
+no `subscribe` verb. The alternatives offered were extending the peer to a full
+participant inside this item, or a separate bounded hunt item.
+**Applies to:** PDA-DEC-1 closes with the blind spot recorded in
+`integration-tests/pubsub-conformance/README.md`; the design's falsification gate
+is **relieved by this ruling** and by nothing else. The receive-side data-sharing
+defect remains owned by **PDA-ABI-7 / PDA-ABI decision 10** ("answered, not
+stepped around", 2026-08-31), which starts from PDA-DEC-1's evidence table.
+`gateway-fastdds-ts` remains the only harness that reproduces the defect, on both
+platforms in CI — do not weaken or delete it.
