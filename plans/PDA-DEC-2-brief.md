@@ -57,4 +57,9 @@ permits growth (Decision 1); *the one copy the current attachment type forces on
 Declared net lines: +560 / −5 · new public surface: 1 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+*As landed (2026-09-01):* +1182 / −12 vs declared +560 / −5 — both reviews judged
+this not scope creep (3rd subject owed by DEBT-1; fix-cycle growth is the blocking
+fix + 3 should-fixes). Public surface 1, as declared. 1 design cycle, 1 fix cycle,
+2 implementer launches. Owner answered all 3 decisions with the recommendation.
+**Both reviews found the attachment pin could never fail; fixed — 0/1/2 now all
+reachable, each proved by mutation. Residual booked as a PDA-DEC-3 obligation.**
