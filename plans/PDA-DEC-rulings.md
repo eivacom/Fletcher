@@ -146,3 +146,16 @@ PDA-DEC-5, PDA-DEC-6, PDA-DEC-7. The existing provider implementations **are
 rewritten in this round** to follow the updated seam. Explicitly still: no ABI, not
 runtime-loadable. (Runtime *selection by name* is delivered; runtime *loading* is
 not.)
+
+## 2026-09-01 — Conflicting topic re-declaration is refused *(selection)*
+> "Refused, every protocol — Every protocol rejects the conflicting declaration with an error. Spec §7 clause 3 tightens from \"may be rejected\" to \"must be rejected\" in this PR. Consequence: the loopback stops silently overwriting and XRCE gains conflict handling — both are divergence fixes your 2026-08-31 ruling already put in this round. This is also the default if you don't answer."
+
+**Context:** PDA-DEC-1 design review cycle 1 raised an oracle-wins tripwire — the
+suite's clause 8 asserted rejection uniformly while spec §7 clause 3 said
+rejection "may" happen, and the three providers diverge today (Fast DDS throws;
+the gateway loopback silently overwrites; XRCE has no conflict handling). The
+offered alternative was uniform *acceptance* with the topic adopting the new
+shape. **Applies to:** `docs/pubsub-interface-spec.md` §7 clause 3 — the "may" →
+"must" amendment lands in **this** PR, not deferred to PDA-DEC-9; PDA-DEC-1
+clause 8; and the loopback + XRCE conflict-handling divergence fixes, which are
+in-round work under the 2026-08-31 divergence ruling.
