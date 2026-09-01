@@ -46,6 +46,7 @@ find_path(BOOST_INCLUDE_DIR boost/beast.hpp REQUIRED)
 # scratch or reaching across to src/ via relative paths.
 # ─────────────────────────────────────────────────────────────────────
 add_library(gateway_codec STATIC
+    src/args.cpp
     src/schema_codec.cpp
     src/publish_frame.cpp)
 target_include_directories(gateway_codec PUBLIC src)
