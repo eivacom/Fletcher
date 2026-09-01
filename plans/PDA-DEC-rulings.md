@@ -179,3 +179,42 @@ defect remains owned by **PDA-ABI-7 / PDA-ABI decision 10** ("answered, not
 stepped around", 2026-08-31), which starts from PDA-DEC-1's evidence table.
 `gateway-fastdds-ts` remains the only harness that reproduces the defect, on both
 platforms in CI — do not weaken or delete it.
+
+## 2026-09-01 — Buffer refill is not a zero-copy violation *(selection)*
+> "Permit, publish the number — Refill is allowed and its cost is measured and reported; every OTHER byte movement fails the guard. Spec §3.1 clause 1 already sanctions movement inside a refill, and the review agrees this ratifies your zero-copy ruling rather than trading against it."
+
+**Context:** PDA-DEC-2's design raised an oracle-wins tripwire — the 2026-08-31
+ruling's *Applies-to* gloss said "a copy anywhere on either path is a violation,
+not a trade", while spec §3.1 clause 4 says a growable buffer "refills". The
+PDA-DEC-2 architecture review found this is **not** a genuine contradiction: §3.1
+**clause 1** reads "must not move … *except inside a refill*", and §8 grounds the
+row claim in `FixedWriteBuffer`. The rejected alternative banned growable send
+buffers outright and made the in-process loopback non-conforming.
+**Applies to:** PDA-DEC-2's `Judge()`; spec §3.1, §8. **Clarifies** (does not
+supersede) the 2026-08-31 zero-copy ruling: the gloss "a copy anywhere" was
+editorial, not the owner's prose. Movement inside a refill is permitted and
+**published as a number**; every other byte movement is a violation.
+
+## 2026-09-01 — The copy-accounting guard claims the interface, not the transport *(selection)*
+> "Scope to the interface, say so plainly — Green means the interface performs no copies; the README states it proves nothing about a transport's internals. Honest about what is and isn't measured."
+
+**Context:** how much PDA-DEC-2's oracle should claim about DDS. Rejected: running
+the receive-side check against Fast DDS now (it would measure the currently-copying
+path and call the number evidence), and enabling DDS shared-memory receive to test
+it (which would reopen work the 2026-09-01 blind-spot ruling assigned to PDA-ABI-7).
+**Applies to:** PDA-DEC-2's subjects are in-process; the limit is written into
+`integration-tests/pubsub-conformance/README.md`, never implied. Consistent with
+the 2026-09-01 blind-spot ruling — the receive-side data-sharing defect stays owned
+by PDA-ABI-7.
+
+## 2026-09-01 — The known receive-side copy is pinned at exactly one *(selection)*
+> "Pin at one — Removing the copy turns this test red, forcing the next stage to come back and update the guard. Silence is how such a fix gets forgotten or half-landed."
+
+**Context:** the one §3.2 receive-side copy that PDA-DEC-3 exists to remove.
+Rejected: report-only, under which the fix could land silently or half-land.
+**Applies to:** PDA-DEC-2's `Judge()` asserts the receive-side count is exactly 1;
+PDA-DEC-3 must update the guard when it removes the copy. This is a
+**red-on-fix tripwire**, not an accepted divergence — the 2026-08-31 divergence
+ruling (which forbids pinning a divergence instead of fixing it) governs
+cross-provider divergences; this is a uniform `Blob` limitation §8 already records
+and decision 6 already assigns to PDA-DEC-3.
