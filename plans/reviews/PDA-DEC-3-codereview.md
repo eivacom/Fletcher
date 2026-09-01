@@ -283,3 +283,241 @@ that never resolves"; `Subscribe` still says "resolve the future immediately".
 subscription's schema future".
 RECORD: `copy_clauses.cpp` leg-3 trailing comment still reads "Standing proof
 that the \"1\" above is a measurement" after the pin became 0.
+
+---
+---
+
+# Re-check after fix cycle 1 - 2026-09-01
+
+**Range:** `60313db..a24dd8e` (27 files, +470/-155). Whole item vs `05d5a2c`: +2722/-565.
+**Method:** built and mutated, not read. The conformance harness was rebuilt from source at
+`a24dd8e` against the `a24dd8e` core/pubsub Conan packages; `pubsub-arrow` rebuilt; plus two
+standalone MSVC 14.44 probes (one over `envelope.hpp`/`Blob`, one compiling
+`pubsub/src/schema_arrival.cpp` directly so the `Wait` clamp could be mutated).
+
+**Verified independently:** `pubsub-conformance` **62/62** (XRCE ON, Agent up),
+`pubsub-arrow` **16/16**.
+
+**Verdict: all seven should-fix findings closed. 0 blocking / 2 should-fix / 3 nits new.**
+Both new should-fix items are about a *guard* claiming teeth it does not have; neither is a
+defect in shipped behaviour.
+
+## Status of my seven
+
+| # | finding | status |
+|---|---|---|
+| 1 | `discard_probe.cpp` stale; gate greens on neighbours | **CLOSED - mutation-verified** |
+| 2 | `retained_content_ok` vacuous | **CLOSED - mutation-verified; the fix is stronger than described** |
+| 3 | `Publisher` tier reports conflict untyped | **CLOSED** |
+| 4 | encoder failure: two statuses by QoS option | **CLOSED; the "pre-existing" claim checks out this time** |
+| 5 | `EnvelopeAttachmentCount` public / owner rule callable wrongly | **CLOSED - and the bad state is now unrepresentable** |
+| 6 | `Resolve(nullptr)` terminal settle undocumented | **CLOSED** |
+| 7 | huge-finite timeout | **product side CLOSED (defensively); the test that claims to pin it is vacuous - see N1** |
+
+---
+
+## S1 - closed, and the fix is load-bearing (measured)
+
+Three mutations against the rebuilt harness, 20 runs each.
+
+| configuration | `SeamVocabulary` forcing test |
+|---|---|
+| clean | **20/20 PASS** |
+| **MUT-A** - provider hands `Blob(std::make_shared<int>(0), loan_base_, loan_len_)` (bystander owner) | **20/20 FAIL** |
+| **MUT-A2** - bystander owner **and** the `0xDD` fill in `~Arena` removed | **20/20 PASS - undetected** |
+| **MUT-B** - a stray `static shared_ptr` keep-alive on the probe | **FAIL at the `weak_ptr` assert** |
+
+Answering the three questions put to me:
+
+**(a) A bystander owner fails only the ownership assertion.** Under MUT-A the sole failure is
+`seam_vocabulary.cpp:97` (`retained_content_ok`). `subject_released` (line 92), provenance
+`retained_data == published_data` (line 95), `attachment_copies == 0` and `row_copies == 0` all
+still pass, and the whole `CopyAccounting` suite stays **7/7 green**. The ownership claim is now
+isolated to the one assertion that means it.
+
+**(b) A re-introduced keep-alive trips the `weak_ptr` assert.** MUT-B fails at line 92 with the
+intended message, and because it is an `ASSERT_TRUE` it aborts before the now-vacuous assertions
+below it can report a misleading green.
+
+**(c) I could not find a third vacuity route.** Every other path fails closed: `retain_expected`
+empty gives `retained_content_ok == false`; nothing retained gives `retained.data() == nullptr`,
+so both fields stay at their defaults and both assertions fail; a zero-size blob gives a null
+`data()` by clause 5, likewise; `release_subject` absent leaves `subject_released` false and the
+`ASSERT` fires. `retain_expected` is a genuinely independent allocation (vector copy-assign from
+the harness `loaned`, then moved with the ledger), so the `memcmp(p, p, n)` route the implementer
+found is gone.
+
+**The poisoning cannot fake a pass, and it is not decorative.** It can only produce a mismatch,
+never a match - `retain_expected[0] == 0x07` and the compare is full-length. And MUT-A2 shows it
+is doing real work: with the fill removed, the freed arena bytes survive intact in the MSVC
+Release heap and the bystander-owner mutation goes **completely undetected, 20/20**. Without that
+destructor this leg would be luck rather than measurement.
+
+Instrumenting the clean build confirms the mechanism directly: at the moment the retained blob is
+read, `arena_deaths == 0` and `subject_released == 1` - the probe is gone and the arena is alive
+on the `Blob`'s reference alone.
+
+**Residual (nit N3).** The teeth come entirely from `~Arena` running. Any future change that keeps
+the `Arena` alive independently - a function-local `static`, a `shared_ptr` with a no-op deleter -
+restores MUT-A2's silence without touching a line of `seam_vocabulary.cpp`. `subject_released`
+guards the *provider's* death, not the arena's.
+
+## S2 - closed, and the new regex catches exactly the rot I found
+
+Verified by running the gate. The three `DeserializeEnvelope` discards sit at
+`discard_probe.cpp` lines 50, 51 and 52, and the build output carries `error C4834` at **50, 51
+and 52** - the probe now matches its own lines. No `error C2xxx`/`C3xxx` appears anywhere in the
+output. Test passes.
+
+Re-introducing the exact rot (`DeserializeEnvelope(bytes)` with the retired `const vector&`):
+
+```
+16: ...discard_probe.cpp(50,15): error C2665: 'fletcher::DeserializeEnvelope': no overloaded
+    function could convert all the argument types
+1/1 Test #16: NodiscardTest.CompileFailsOnDiscard ...***Failed
+    Error regular expression found in output. Regex=[error C2[0-9][0-9][0-9]|error C3[0-9][0-9][0-9]]
+```
+
+Red - despite the neighbouring lines still emitting `C4834`, which is precisely the failure mode
+that hid it last time. Restored gives green. `pubsub-arrow` 16/16.
+
+## S3 - closed, the re-anchoring is a strict strengthening
+
+`RefusedWith(status, call)` fails three ways the old `EXPECT_THROW(std::...)` did not: the call
+not being refused at all, a refusal carrying the wrong number, and a refusal carrying an
+*untyped* exception (with a message naming that as the thing the taxonomy replaces). Four tests
+migrated; none lost an assertion. `Publisher publisher(nullptr)` is spelled as a declaration, so
+there is no most-vexing-parse.
+
+## S4 - closed, and this time "pre-existing" holds up
+
+Checked rather than taken, since it was wrong once already:
+
+- `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow` exists at base
+  `05d5a2c:.../test_fast_dds_pubsub_provider.cpp:459` and today at line 472 - genuinely
+  test-pinned, not newly asserted.
+- The drop-and-log `catch (const std::overflow_error&)` in `serialize()` exists at base
+  (`05d5a2c:.../fletcher_sample_pub_sub_type.hpp:105`) - genuinely pre-existing.
+- At base, `sample_writer.hpp` threw a bare `std::runtime_error`, so no *taxonomy* asymmetry
+  existed to be pre-existing. What survives is a behavioural difference (throw vs drop-and-log),
+  which is exactly what the new comment claims.
+
+Encoder failure is now `kInternal` on both flows, so the QoS-selected split is gone.
+
+## S5 - closed, and the bad state is now unrepresentable
+
+`EnvelopeAttachmentCount` is in `namespace fletcher::internal`, the gateway's conditional dance is
+gone, and the two-argument `DeserializeEnvelope(const uint8_t*, size_t)` is a **restoration** -
+`git show 05d5a2c:core/include/fletcher/core/envelope.hpp` has that exact signature - so the
+surface did not grow. Every `PubSubStatusName` reference in the tree is now `internal::`-qualified.
+
+I verified the lifetime and aliasing of the new overload empirically (standalone MSVC probe
+against the packaged headers, 11/11 checks):
+
+- an **attachment-free** frame: the peek returns 0, the parse takes the null-owner branch, and
+  nothing beyond `Envelope::row` is copied - the claim holds;
+- a frame **with** attachments: the blob does **not** alias the caller's buffer, and its bytes still
+  read back correctly after that buffer is `memset` to `0x5A` **and freed** - the hazard this
+  overload exists to remove;
+- an empty attachment comes back `size()==0, data()==nullptr` (clause 5);
+- a corrupt attachment count is refused, not amplified into an allocation.
+
+I also tried to construct a frame where the peek and the parse disagree - peek says "no
+attachments", the parse then builds a non-empty blob with a null owner. **It is impossible by
+construction:** the peek returns 0 only when the buffer is too short (the parse then throws) or
+when the count field is literally 0 (the parse loops zero times). The two read the same field with
+the same arithmetic.
+
+## S6 - closed
+
+The header now states all three parts of the terminal refusal (throws `kInvalidArgument`, consumes
+the token, settles the arrival at `kInternal`), and
+`ResolverRefusesNullAndWaitRefusesNegativeTimeout` asserts the status of the throw, the resulting
+`kInternal`, and a non-empty `Message()`. Non-vacuous: it would fail if the arrival were left
+pending or settled `kOk`.
+
+## S7 - product side closed defensively; see N1 for the test
+
+---
+
+## New findings
+
+### N1 (should-fix) - the huge-finite-timeout test is vacuous, and cannot be made non-vacuous on MSVC
+
+*Confidence: high - measured two ways.*
+
+```cpp
+EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds(std::numeric_limits<int64_t>::max()), &out),
+          PubSubStatus::kSubscriptionEnded)
+    << "a huge finite timeout must wait, not overflow into an immediate kPending";
+```
+
+`abandoned` is **already settled** (its resolver was dropped), and `Wait` reads `timeout` only
+inside `if (!state_->settled)`. The call therefore returns before the clamp is ever consulted.
+Two proofs:
+
+1. Instrumented, it returns in **0 microseconds** - it never entered the wait at all.
+2. Compiling `pubsub/src/schema_arrival.cpp` standalone and mutating the clamp back to
+   `timeout == milliseconds::max()`, this exact assertion **still passes**.
+
+Worse for the claim: I also wrote the *non*-vacuous version (a genuinely pending arrival settled
+by another thread after 300 ms) and it passes with the clamp removed too - MSVC 14.44's `wait_for`
+clamps the deadline internally, so it blocked 308 ms either way. On this toolchain the clamp is
+**unfalsifiable**.
+
+The clamp itself is fine and worth keeping (other standard libraries have not always been so
+careful, which was the case I raised), but the assertion that claims to guard it guards nothing,
+and its message asserts a failure mode that does not occur here. Either drop the pretence and keep
+the clamp as documented defence, or assert it somewhere it can bite. Flagged rather than waved
+through because this is the fourth guard this round that passed for a reason other than the one it
+stated.
+
+### N2 (should-fix) - `RunCaptured` holds a dangling `CopyRunner&` after `release_subject()`
+
+*Confidence: high.*
+
+`RunBorrowedAttachmentRoundTrip` passes `*runner` by reference and then has `release_subject` do
+`runner.reset()`. From that point the `CopyRunner& runner` parameter inside `RunCaptured` is a
+dangling reference for the remainder of the function. Nothing touches it today -
+`runner.Unsubscribe(topic)` happens before the release - so this is not a live defect, but it is a
+use-after-free that any line added below the release acquires silently, in the one function whose
+job is to be trustworthy. Take the runner by `unique_ptr&`, or move the release to the caller
+after `RunCaptured` hands the retained blob back.
+
+### Nits
+
+- **N3.** The S1 teeth depend on `~Arena` running: a future `Arena` that outlives the provider (a
+  function-local `static`, a no-op deleter) silently restores MUT-A2's 20/20 silence, and
+  `subject_released` would not notice - it watches the provider, not the arena.
+- **N4.** Under a failing mutation the leg reads the freed arena (that is how it detects the
+  fault). Deterministic here because the destructor poisons first, but it would surface as a crash
+  rather than an assertion under ASan.
+- **N5.** `Blob(owner, ptr, 0)` now normalises `data` to null but still **retains `owner`**, so a
+  zero-length attachment can pin a whole transport body. No caller does this today (both parsers
+  use `Blob()` for empty). My earlier clause-5 nit is otherwise closed:
+  `Blob(std::vector<uint8_t>{})` and `Blob(nullptr, ptr, 0)` both come back `{nullptr, 0}`,
+  verified.
+
+My earlier nits are otherwise resolved: the `DBG` fprintf is gone, `std::forward` added,
+`body.reset()` moved after the parse (with the reason recorded), `RemainingBudget` uses
+`std::chrono::ceil`, double-subscribe is `kInvalidArgument` in both DDS providers, the XRCE
+`schema_resolved` shadow flag is gone (the optional is the flag), and the `SchemaArrival`
+thread-safety claim is now stated precisely.
+
+## The declared disagreement - I withdraw my nit; keep the overlap
+
+I asked for the `SeamVocabulary` / `CopyAccounting` leg-3 overlap to be collapsed. The measurement
+settles it against me: under **MUT-A**, `CopyAccounting` stays **7/7 green** while the
+`SeamVocabulary` forcing test goes red. Provenance and ownership are separately falsifiable, the
+two suites catch different defects, and collapsing them would have deleted the only assertion that
+survives a bystander owner. The duplicated staging control is the price of the forcing test
+standing on its own instrument, which is the right trade. Accepted as argued.
+
+## Note on the working tree
+
+Mid-review, `git status` briefly showed an uncommitted
+`if (false && segs.empty())  // MUTATION C: refusal removed` in
+`pubsub/include/fletcher/pubsub/internal/segments.hpp` - a live mutation marker in a shipped
+header. It was reverted while I worked and the tree is clean now (the section 3.5 test in
+`conformance_seam_vocabulary` was green throughout, so no packaged build ever carried it).
+Recorded only so nobody is surprised to meet it in a stash.

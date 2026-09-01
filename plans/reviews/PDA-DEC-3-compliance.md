@@ -300,3 +300,210 @@ is §5.1 versus the `overflow_error` mapping (S6).
   correct as they stand — the list over-reached, the work did not.
 - `Files-to-touch` also names `.claude/runbook.PDA-DEC.config.md`, which is untracked, so no diff
   can show it.
+
+---
+
+# Re-check — fix cycle 1 (`a24dd8e`), 2026-09-01
+
+Focused re-check of my own three blocking findings, plus the two things the coordinator asked me
+to re-derive by mutation. Diff `60313db..a24dd8e`. Working tree clean before and after.
+
+**Verdict: B1, B2 and B3 are all CLOSED. Nothing blocking remains.** One new
+specification-quality gap, introduced *by* the fix cycle and therefore not previously reviewed by
+anyone (N1 below); non-blocking, one sentence.
+
+## B1 — CLOSED. And my arithmetic was wrong; the coordinator is right.
+
+**I accept 62, and I withdraw "XRCE-ON is 71".** I applied `gtest_discover_tests` arithmetic to a
+target that is not discovered. `integration-tests/pubsub-conformance/CMakeLists.txt:261-270`
+registers the XRCE binary with a **single `add_test`**, and says why in the source:
+
+> `# A SINGLE ctest entry for the XRCE binary (the fastdds-xrce-interop precedent): one Agent binds`
+> `# one UDP port, and per-clause entries would pay ~24 Agent start/stop cycles for the same coverage.`
+
+So ON adds **+1 ctest entry / +24 gtest cases**, not +24 entries. Verified now:
+`FLETCHER_CONFORMANCE_XRCE:BOOL=ON`; `ctest -N` totals **62** = 47 `ProviderConformance` + 7
+`CopyAccounting` + 7 `SeamVocabulary` + 1 `conformance_xrce`. I should have read the registration
+before doing the sum — the count was the one part of B1 I asserted without checking its mechanism.
+
+The finding itself stands as made and is now discharged. **I re-ran the XRCE binary myself rather
+than accepting the report:**
+
+- `Release/conformance_xrce.exe` and `…_xrce_peer.exe` now carry the same build stamp as every
+  other conformance binary (**21:07**, commit 21:09). The 16:38 staleness is gone.
+- `./Release/conformance_xrce.exe` → **24/24 passed**, `XrceLocal` 12 and `XrceCrossProcess` 12,
+  in 14.3 s. Real Agent (`UDPv4Agent::init … port: 2019`), real client sessions —
+  `create_participant` / `create_datareader` / `destroy_session` for two distinct client keys.
+  Not a skip, not a stub.
+
+That exercises the XRCE receive path, which is what B1 was actually about: premise **P3**'s
+`payload`-vector-to-`shared_ptr` change, whose attachment `Blob`s alias that buffer and can outlive
+the call in `ts.pending`.
+
+## B2 — CLOSED at 8. Verified by enumeration, not by report.
+
+Every namespace-scope declaration added to a public header across the whole item
+(`05d5a2c` → `a24dd8e`, excluding `*/internal/*`) is one of:
+
+`Blob` · `PubSubStatus` · `PubSubError` · `TranslateSeamFailure` · `SchemaArrival` ·
+`SchemaResolver` · `SchemaCarriage` · `ImportArrowSchema` — **8, as ratified.** Nothing else leaked.
+
+- `PubSubStatusName` → `fletcher::internal`, `core/include/fletcher/core/internal/status_name.hpp`.
+  Zero product callers remain, and the header itself now records why it must never acquire one
+  ("the NUMBER is the contract"). The public definition is gone from `status.hpp`.
+- `TranslateSeamFailure` stays public, now carrying an explicit "PROVIDER-AUTHORING API, not caller
+  API" note that says *why* — a provider is a separate Conan package consuming this header. That is
+  the right disposition and it is now self-documenting. (It also picked up `std::forward<Fn>(fn)()`.)
+- **The peek is consolidated**, as I recommended: one `internal::EnvelopeAttachmentCount`, shared
+  with the Fast DDS codec instead of the same 14-line wire-header parse written twice.
+- `DeserializeEnvelope(const uint8_t*, size_t)` is a genuine **restoration** — I confirmed it at
+  `05d5a2c:core/include/fletcher/core/envelope.hpp:74`, same signature. The forbidding direction is
+  the better fix: there is now no way to call it and produce a blob nothing keeps alive, so the
+  null-owner rule is unrepresentable rather than documented.
+- Recorded so the 8 is ratified with eyes open, not by omission: `DeserializeEnvelope` **gained a
+  third overload** (`(owner, data, size)`). I do not count it — it is the changed-type form of an
+  existing function, the same category as `Blob` being reshaped and counted once — but the PM should
+  know it is there rather than discover it later.
+
+## B3 — CLOSED. My mutation was inert; I say so rather than claim a red I did not get.
+
+`SeamVocabulary.EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` is registered and green. It calls
+**all four** methods on a real `InProcessPubSubProvider` with an empty topic and requires
+`PubSubError` carrying `kInvalidArgument` from each, plus a positive control (a one-segment topic
+still works — the refusal is of *empty*, not of *short*).
+
+**I attempted the mutation the coordinator asked for and it did not fire — because my instrument
+could not reach the code.** I neutered `RequireSegments` in the working tree; the test stayed
+green. Cause, verified rather than assumed: the harness compiles and links against the **packaged**
+`fletcher-pubsub` from the Conan cache
+(`fletcher-pubsub_INCLUDE_DIRS_RELEASE = C:/Users/CTM/.conan2/p/b/fletc8cb90c1b2b051/p/include`),
+whose copy of `segments.hpp` I never touched — and `RequireSegments` is an `inline` header function
+already baked into the prebuilt provider library, so even editing the packaged header would not
+have reached `InProcessPubSubProvider`'s four methods. Falsifying this guard needs a package
+rebuild, not a source edit.
+
+I still call B3 closed, on stronger ground than a mutation: **the test is falsifying by
+construction.** Its `refused()` helper returns `true` *only* from
+`catch (const PubSubError& e)` when `e.status() == kInvalidArgument`, and falls through to
+`return false` when the call does not throw. A green result therefore *is* the evidence that the
+refusal fired on all four entry points; it cannot pass with the refusal absent.
+
+**Harness fact worth recording for future mutation work** (mine and anyone else's): header-only
+guards living in `fletcher-pubsub` cannot be falsified by editing the working tree from a
+conformance build. Both of my successful mutations below landed in `copy_accounting.cpp`, which the
+harness compiles from source, which is why they worked.
+
+## The ownership half of the forcing test — re-derived by mutation, both cases
+
+The instrument is materially better than what I reviewed. `retained_content_ok` now compares
+against harness-owned `retain_expected` (not the published address, which was
+`memcmp(p, p, n)`); the provider is **destroyed** before the retained blob is read, watched by a
+`weak_ptr` reported as `subject_released`; and `~Arena` fills its slots with `0xDD` so "the bytes
+happened to survive" is not a way to pass.
+
+**Mutation A — the owner is a bystander.** `Blob(arena_, loan_base_, loan_len_)` →
+`Blob(std::make_shared<const int>(0), loan_base_, loan_len_)`: the span still points at the arena,
+so provenance holds, but the owner keeps nothing alive. Rebuilt and ran:
+
+```
+seam_vocabulary.cpp(97): error: Value of: trip.ledger.retained_content_ok
+a blob kept past the delivery no longer reads back the published bytes — its owner does not keep
+[data, data+size) alive, which §3.2 requires of every Blob
+[  FAILED  ] SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy
+[       OK ] CopyAccounting.BorrowedAttachmentCostsNoCopies
+```
+
+**Exactly the required result, and it is *specific*:** the only assertion that fired is the
+ownership one at line 97. Provenance (line 95), `attachment_copies == 0`, the deep-copying negative
+control, and `subject_released` all still passed — and the copy pin, which measures copies rather
+than ownership, correctly stayed green, because a bystander owner is not a copy. The leg now fails
+only the claim it makes.
+
+**Mutation B — a keep-alive re-introduced.** Added `auto keepalive = provider;` before the release
+lambda:
+
+```
+seam_vocabulary.cpp(92): error: Value of: trip.ledger.subject_released
+the probe outlived the round trip, so the two ownership assertions below would hold whether or not
+the Blob owns anything — the guard is vacuous, not green
+```
+
+It fails **loudly and first**: `ASSERT_TRUE` is fatal, so the two downstream ownership assertions
+never run and cannot produce a misleading green. A keep-alive added later cannot quietly re-vacuate
+this guard. Both mutations reverted; `SeamVocabulary` 7/7, `CopyAccounting` 7/7,
+`conformance_inprocess` 11/11, `conformance_inprocess_carrying` 12/12, `conformance_xrce` 24/24.
+
+## S1–S6 — all six landed, and S6 landed better than I proposed
+
+Read as a specification, not as a diff. S1 now states the throw-versus-return asymmetry explicitly
+and names the failure ("a binding that reads … and forgets the catch gets an exception across
+FFI"). S2 states that `kOk`+null is the one `kOk` whose `out->owner` is null and **must not be
+released** — and names the wrong implementation that motivates saying so. S3 is **enforced**, not
+described: a zero-size `Blob` normalises `data` to null however it was built, so `size == 0` and
+`data == NULL` are now interchangeable at a C view; spec clause 5 says so. S4 documents all three
+parts of the terminal refusal and why the asymmetry is deliberate. S5 says "refuses" means
+"coerces to `kInternal`" in §5.1.
+
+**S6 is resolved better than my recommendation.** I suggested narrowing the `overflow_error` catch;
+the implementer instead made the rule normative **by type** in §5.1 and disclosed the consequence I
+would have hidden — a `RowEncoder` throwing `std::overflow_error` for its own reasons is reported
+the same way, and a non-`std::exception` type loses its identity. A rule stated with its cost is
+better for two independent boundary authors than a rule narrowed until the cost is invisible.
+
+## N1 — NEW, non-blocking: three descriptions of one timeout rule
+
+The fix cycle added `kEffectivelyForever = 1 << 42` ms (~139 years) to `SchemaArrival::Wait`: any
+timeout at or above it waits unbounded. The motivation is right and the defect it fixes is real (a
+large finite timeout overflowed `wait_for` into an immediate `kPending`). But the rule is now
+described three different ways:
+
+- **code**: a fixed threshold of 2^42 ms, the comment calling it "deliberately crude and enormous";
+- **header**: "any value too large to add to the clock without overflowing it" — an
+  overflow-derived threshold, which 2^42 ms is not (a steady_clock deadline does not overflow until
+  far beyond it);
+- **spec §3.4** (line 240): still only "`INT64_MAX` is the unbounded form, which in C++ is
+  `milliseconds::max()` and must be implemented as a deadline-free wait rather than
+  `wait_for(duration::max())`" — it does not mention a threshold at all.
+
+Behaviourally inert (nobody waits 139 years and means it), so not blocking. But §3.4 is the oracle
+two parallel rounds derive their C timeout convention from, and it is now the least accurate of the
+three. One sentence: *a timeout at or above ~2^42 ms is unbounded*, and align the header's
+"overflow" phrasing with the constant the code actually uses.
+
+## Nothing regressed in what I passed
+
+- **Retirements still simultaneous**: whole-tree grep at `a24dd8e` — `using Blob` 0,
+  `MakeReadySchemaFuture` 0, `ImportFromNano` 0, `std::async` 0, `shared_future` 0 in code (three
+  prose mentions only, all describing the retirement).
+- **Decision 14 still clean**: zero added lines matching `extern "C"` / `dlopen` / `LoadLibrary` /
+  version negotiation / vtable across the whole item.
+- **Deviations (a)–(d) all still hold.** (d) is now stronger than when I cleared it: the mapping is
+  normative in §5.1 rather than only in the header.
+- **`sample_writer.hpp`'s `kTransportFailure` → `kInternal` is correct, and I checked rather than
+  assumed**: `RecordSerializeError` has exactly one caller — the `catch (const std::exception&)`
+  for "the caller's encoder failed" — and the `overflow_error` arm deliberately does not record. So
+  the old status was wrong, and the change removes a cross-flow divergence in which the same
+  encoder bug was `kTransportFailure` on one publish flow and `kInternal` on the other, selected
+  invisibly by an option. That is a decision-11 divergence fix, not a weakening.
+- **A guard that had silently stopped guarding is fixed**: `pubsub-arrow/tests/discard_probe.cpp`'s
+  nodiscard probe had two lines turn into hard compile errors when `DeserializeEnvelope`'s overload
+  set changed in `60313db`, and the ctest entry kept passing on *other* lines' diagnostics.
+  `FAIL_REGULAR_EXPRESSION "error C2…|error C3…"` now separates a hard error from the promoted
+  C4834. Same class of defect as the vacuous ownership check, found and closed in the same cycle.
+
+**Budget, restated.** Whitespace-insensitive and excluding `plans/`, the whole item is now
+**+2722/−565** (fix cycle +522/−155) against a declared net +600. My earlier judgement stands
+unchanged: real scope, no padding, remedy is to correct the account rather than the work.
+
+## RECORD (re-check)
+
+- **Still open from my first review:** `fastdds-pubsub-provider/README.md:256` continues to tell
+  readers `Subscribe` "returns a `std::shared_future<SharedSchema>`" — the retired mechanism. It is
+  now the only place in the tree that describes the old API as current.
+- The brief to me said `EnvelopeAttachmentCount` was "deleted outright". It was **moved to
+  `fletcher::internal`** inside the same public header (`core/…/envelope.hpp`), not deleted. The
+  governance effect is what was intended — it is off the public surface, and there is precedent for
+  a `namespace internal` block in a public header (`schema_arrival.hpp` already has one) — but the
+  register should say "moved to `fletcher::internal`", not "deleted".
+- My own review contained an error, corrected above: "XRCE-ON is 71" was wrong; the figure is 62
+  ctest entries / +24 gtest cases behind one entry. The finding it accompanied was sound.
