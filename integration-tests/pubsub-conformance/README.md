@@ -159,38 +159,67 @@ Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §8
 milliseconds. `ctest -R 'CopyAccounting\.'` runs the whole oracle: seven entries.
 
 It decides, by **address provenance**, whether the payload bytes a subscriber
-sees are the very bytes the publisher wrote — for rows and for attachments. Four
-pointers per publish, compared. No counters, no allocator hooks, no sanitizer:
-counting catches only allocation-shaped copies, misses copies into a pooled or
-reused buffer, and on Windows does not interpose allocations made inside a
-provider DLL carrying its own CRT — blind exactly where a loaded driver will
-live. A copy into recycled storage still lands at a different address than the
-*live* encode window.
+sees are the very bytes the publisher wrote. **A copy** is payload bytes coming
+to exist at a second address, or moving to one, **by the provider** (and by the
+thin `Publisher`/`Subscriber` layer, where a subject routes through it), between
+the encoder's first write and the callback's return. Not a copy: the encode
+itself; anything a transport does once the bytes leave the seam; a window
+refill, below.
+
+Four addresses per publish, sampled while their storage is live and compared as
+integers. No counters, no allocator hooks, no sanitizer: counting catches only
+allocation-shaped copies, misses copies into a pooled or reused buffer, and on
+Windows does not interpose allocations inside a provider DLL carrying its own
+CRT — blind exactly where a loaded driver will live. A copy into recycled
+storage still lands at a different address than the *live* encode window.
 
 | Entry | What it is |
 |---|---|
 | `PublishAndReceivePerformNoPayloadCopies` × 3 subjects | the forcing test: row at 64 B and 4 KiB, plus two 1 KiB attachments |
 | `StagingIsCaught` | the **live negative control** — a deliberately-copying provider the same `Judge()` must score at `row_copies == 1`, `attachment_copies == 2` |
-| `BorrowedAttachmentCostsExactlyOneCopy` | the one §3.2 receive-side copy, **pinned at exactly one** |
-| `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable buffer, zero on a fixed one |
+| `BorrowedAttachmentCostsExactlyOneCopy` | the copy §3.2 forces on a provider's own borrowed memory, **pinned at exactly one** |
+| `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable window, zero on a fixed one |
 | `JudgeArithmeticIsSound` | the pure verdict function, without a provider |
 
 Subjects: `SeamProbe` (a fixed-arena provider in this harness — the positive
 control, proving the seam *permits* zero-copy), `InProcessLoopback` (the real
-`InProcessPubSubProvider`, called directly at the seam) and `InProcessViaPubSub`
-(the same provider reached through `Publisher` and `Subscriber`, so the layers
-*above* the seam are inside a measured path too). All three are same-process by
-construction: provenance is an address, and an address means nothing across an
-address space, so a cross-process or off-thread subject cannot be built here at
-all — and the ledger is deliberately unsynchronised to keep it that way.
+`InProcessPubSubProvider` at the seam) and `InProcessViaPubSub` (the same
+provider through `Publisher`/`Subscriber`, so the layers *above* the seam are
+measured too). All same-process by construction: an address means nothing across
+an address space, so a cross-process or off-thread subject cannot be built here
+at all, and the ledger is unsynchronised to keep it that way.
 
-**Refill is permitted and its cost is published, not failed.** Spec §3.1 clause 1
-says bytes already written "must not move or be flushed **except inside a
-refill**, which must preserve them verbatim", and the owner's 2026-09-01 ruling
-permits it on condition the number is reported. Every *other* byte movement fails
-the guard. The number is on stdout and in the JUnit XML; today
-`InProcessLoopback` relocates 3 times / 5632 bytes writing a 4 KiB row in 64-byte
-appends, and `SeamProbe` relocates nothing.
+**Refill is permitted and its cost is published, not failed** — §3.1 clause 1
+allows bytes to move "inside a refill, which must preserve them verbatim", and
+the owner's 2026-09-01 ruling permits it on condition the number is reported.
+Every *other* byte movement fails the guard. The number is on stdout and in the
+JUnit XML; today `InProcessLoopback` relocates 3 times / 5632 bytes writing a
+4 KiB row in 64-byte appends, and `SeamProbe` nothing. The counter's own liveness
+is pinned against a **harness-owned** growable window, never against a provider:
+pre-sizing a provider's send buffer is an improvement and must not turn a test on
+the instrument red.
+
+### `BorrowedAttachmentCostsExactlyOneCopy` — what it does and does not pin
+
+It is **not** a receive-side transport measurement; nothing here measures a
+transport. It measures a *provider* that already holds payload bytes in memory it
+owns — a stand-in for a transport-loaned sample — and must produce a `Blob` for
+them inside `Publish`. Today it cannot without copying: `Blob` points at a
+`vector`, and a `vector` owns its bytes (§3.2). A caller-owned blob rides the
+same publish and must cross untouched, so the total is three-valued and moves
+with provider behaviour both ways — **0** the seam gained the ability to carry
+borrowed memory, **1** today, **2** a provider copied bytes it was handed by
+`shared_ptr`. The suite proves that standing, by running the identical leg
+against the deep-copying probe and requiring 2.
+
+**PDA-DEC-3 removes the limitation; when it does, update this to demand 0 — do
+not delete the test.** The runtime half cannot see that land by itself, because
+no provider can escape a type-level limitation: the `static_assert` in
+`copy_accounting.hpp` is what turns the **build** red when `Blob` changes shape,
+including the backward-compatible shape where `Blob` becomes a class implicitly
+constructible from today's `shared_ptr`. **Residual, stated not hidden:** a
+PDA-DEC-3 that leaves `Blob` untouched and adds a *parallel* borrowed-blob type
+trips neither. Closing that needs the seam vocabulary PDA-DEC-3 owns.
 
 ### What green does NOT prove — read before trusting it
 
@@ -206,28 +235,25 @@ appends, and `SeamProbe` relocates nothing.
   `LoanedDeliversAttachments` and `DataSharing*` tests in the Fast DDS provider's
   own suite assert *delivery over* the loan path; none of them asserts the
   *absence of copies*. Do not read them as covering this ground.
-- **`BorrowedAttachmentCostsExactlyOneCopy` is a red-on-fix tripwire, not an
-  accepted divergence.** Today's `Blob = shared_ptr<const vector<uint8_t>>`
-  cannot alias foreign memory, so a provider handed borrowed transport memory
-  must copy it once. **PDA-DEC-3 removes that limitation, and when it does this
-  test goes red on purpose** — update the number there, do not delete the test.
-  Silence is how such a fix gets forgotten or half-lands.
 
 ### The premises a new subject must satisfy
 
 PDA-ABI is expected to register a driver-backed subject into this same shape.
 Two preconditions, and a subject that breaks either must not be registered:
 
-- **Synchronous delivery on the publishing thread.** The ledger has no lock
+- **P2 — synchronous delivery on the publishing thread.** The ledger has no lock
   because it needs none, and the delivery count is asserted `== 1` before any
-  verdict is read — so "nothing arrived" can never read as "no copies".
-- **Encode-window liveness.** The bytes `encode_base` names must remain
-  allocated and unfreed until the subscriber callback returns. That is what makes
-  provenance immune to allocator reuse: a live allocation cannot be handed out
-  twice, so a same-address copy would require free-then-allocate — and a freed
-  encode window handed to a callback is a use-after-free, a worse bug than a
-  copy. A subject that frees, recycles or pools its encode window before delivery
-  makes the measurement unsound.
+  verdict is read, so "nothing arrived" can never read as "no copies".
+- **P5 — encode-window liveness.** The bytes `encode_base` names must stay
+  allocated and unfreed until the callback returns. That is what makes provenance
+  immune to allocator reuse: a live allocation cannot be handed out twice, so a
+  same-address copy needs free-then-allocate — and a freed encode window handed
+  to a callback is a use-after-free, a worse bug than a copy. **Checked, not
+  merely stated:** every leg asserts the window still held the row when the
+  callback ran, so a recycled window that came back holding something else fails
+  as *itself*. Not airtight — a window freed and immediately re-handed the same
+  bytes at the same address is indistinguishable — which is why the precondition
+  still binds.
 
 ## Clause 2 and the axis gate
 

@@ -3,42 +3,12 @@
 //
 // The copy-accounting oracle: decides, by ADDRESS PROVENANCE, whether the
 // payload bytes a subscriber sees are the very bytes the publisher wrote — for
-// rows and for attachments. Oracle: docs/pubsub-interface-spec.md §8, §8.1,
-// §3.1, §3.2.
+// rows and for attachments. Contract: docs/pubsub-interface-spec.md §8.1.
 //
-// What counts as a copy, stated before anything is measured:
-//
-//  - **Payload bytes** are the bytes a RowEncoder writes, and the bytes of each
-//    attachment Blob.
-//  - **A copy** is those bytes coming to exist at a second address, or moving to
-//    a different address, BY THE PROVIDER (and by the thin Publisher/Subscriber
-//    layer, where a subject routes through it), between the encoder's first
-//    write and the subscriber callback's return.
-//  - **Not a copy:** the encode itself; anything a transport does with the bytes
-//    after they leave the seam (§8 scopes the property to the seam); and a
-//    window refill inside a provider's growable buffer, which §3.1 clause 1
-//    sanctions explicitly ("must not move ... except inside a refill, which must
-//    preserve them verbatim") and the owner's 2026-09-01 ruling permits with its
-//    cost PUBLISHED AS A NUMBER. Every other byte movement is a violation.
-//
-// Why provenance and not counting: allocation counting is blind to copies into a
-// pooled buffer and, on Windows, to allocations inside a provider DLL carrying
-// its own CRT — blind exactly where a loaded driver will live. Full argument in
-// README.md and plans/PDA-DEC-2-copy-accounting-oracle.md.
-//
-// Premises this instrument rests on — a subject that breaks one must not be
-// registered:
-//
-//  - **P2** every registered subject delivers SYNCHRONOUSLY on the publishing
-//    thread, so the ledger needs no lock and has none.
-//  - **P5 (liveness)** the bytes `encode_base` names remain allocated and
-//    unfreed until the subscriber callback returns. That is what makes address
-//    provenance immune to allocator reuse: a live allocation cannot be handed
-//    out twice, so a same-address copy would require free-then-allocate — and a
-//    freed encode window delivered to a callback is a use-after-free, a worse
-//    bug than a copy. A subject that frees, recycles or pools the encode window
-//    before delivery makes provenance unsound and MUST NOT be registered.
-//    STOP-AND-ASK before registering one.
+// The argument — what counts as a copy, why provenance and not counting, the
+// premises P2 (synchronous delivery) and P5 (encode-window liveness) a new
+// subject must satisfy, and what green does NOT prove — is written once, in
+// README.md, "The `CopyAccounting` suite". Declarations here cite it.
 
 #ifndef FLETCHER_CONFORMANCE_COPY_ACCOUNTING_HPP_
 #define FLETCHER_CONFORMANCE_COPY_ACCOUNTING_HPP_
@@ -52,6 +22,7 @@
 #include <memory>
 #include <ostream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "fletcher/conformance/subject.hpp"
@@ -59,53 +30,63 @@
 namespace fletcher {
 namespace conformance {
 
+/// Addresses are sampled into integers WHILE THE STORAGE IS LIVE and compared
+/// afterwards: using the pointer values themselves is implementation-defined
+/// once the storage dies ([basic.stc.general]/4), and the verdict is read after
+/// the round trip returns. 0 means "no address".
+using Address = uintptr_t;
+
 // ── The ledger ──────────────────────────────────────────────────────
 
-/// One attachment's provenance: where its bytes were when published, and where
-/// they were when delivered.
+/// One attachment's provenance: where its bytes were published and delivered.
+/// `delivered_data == 0` means the delivery carried nothing under this key,
+/// which Judge() scores as a copy.
 struct AttachmentTrace {
     std::string key;
-    const uint8_t* published_data = nullptr;
+    Address published_data = 0;
     size_t published_len = 0;
-    /// Null when the delivery carried no attachment under this key at all —
-    /// which Judge() scores as a copy, because absent bytes are certainly not
-    /// the same bytes.
-    const uint8_t* delivered_data = nullptr;
+    Address delivered_data = 0;
     size_t delivered_len = 0;
-    /// memcmp of the delivered bytes against the published ones. Read BEFORE
-    /// the verdict, so "arrived garbled" and "arrived at a second address" are
-    /// different failures.
+    /// memcmp against the published bytes, read BEFORE the verdict so
+    /// "garbled" and "at a second address" are different failures.
     bool content_ok = false;
 };
 
 /// Everything one publish→delivery round trip observed. Written on the
 /// publishing thread only (P2), so no lock.
 struct CopyLedger {
-    // -- encode side, sampled by the accounting encoder --
-    /// Window base after the encoder's LAST append, and the position then.
-    const uint8_t* encode_base = nullptr;
+    /// Encode side: the window base after the encoder's LAST append, and the
+    /// position then.
+    Address encode_base = 0;
     size_t encode_len = 0;
-    /// Appends across which the window base changed while `Position() > 0`,
-    /// i.e. a refill that relocated already-written bytes, and how many bytes
-    /// those relocations moved. Reported, never failed (2026-09-01 ruling).
+    /// Appends across which the base changed while `Position() > 0` — a refill
+    /// that relocated already-written bytes — and how many bytes moved.
+    /// Reported, never failed (2026-09-01 ruling).
     size_t refill_moves = 0;
     size_t refill_bytes = 0;
 
-    // -- delivery side, captured inside the subscriber callback --
-    /// Asserted `== 1` before any verdict is read: zero deliveries must never
-    /// read as "no copies" (rung-2 item 8).
+    /// Delivery side, captured inside the subscriber callback. `deliveries` is
+    /// asserted `== 1` before any verdict is read: zero deliveries must never
+    /// read as "no copies".
     size_t deliveries = 0;
-    const uint8_t* delivered_data = nullptr;
+    Address delivered_data = 0;
     size_t delivered_len = 0;
     bool row_content_ok = false;
+    /// P5 enforced rather than merely documented: the encode window still held
+    /// the row, byte for byte, when the callback ran. A subject that frees,
+    /// recycles or pools it before delivery would otherwise read as a silent
+    /// zero once the allocator handed the address back out.
+    bool window_intact = false;
+    /// What the DELIVERY carried — the published-side count comes from the
+    /// input map and so cannot catch a dropped entry.
+    size_t delivered_attachments = 0;
 
     std::vector<AttachmentTrace> attachments;
 };
 
 /// What Judge() decided. No subject-keyed expectation lives here, deliberately:
 /// every registered subject faces the same numbers, so a provider cannot
-/// declare its way to green (locked decision 11's forbidden pinned divergence
-/// wearing a trait).
+/// declare its way to green.
 struct CopyVerdict {
     size_t row_copies = 0;
     size_t attachment_copies = 0;
@@ -113,28 +94,18 @@ struct CopyVerdict {
     size_t refill_bytes = 0;
 };
 
-/// The whole decision, as a pure function of the ledger — so its arithmetic is
-/// testable without a provider, and so there is exactly ONE scoring path for
-/// every subject and for the negative control.
-///
-/// `row_copies` is 0 iff the delivered span is EXACTLY the encode window:
-/// `delivered_data == encode_base && delivered_len == encode_len`. Not
-/// containment. Containment degenerates to identity only when the lengths
-/// match, and for a shorter delivered range it admits an identity-preserving
-/// in-place `memmove` to the window base — every payload byte moved, the
-/// delivered address unchanged, and `memcmp` passing by construction. That is
-/// the one false-pass shape that needs no undefined behaviour. A subject that
-/// legitimately delivers a sub-range of its encode window must say why in the
-/// subject table before this rule is relaxed for it.
+/// The whole decision, as a pure function of the ledger — testable without a
+/// provider, and exactly ONE scoring path for every subject and control.
+/// `row_copies` is 0 iff the delivered span is EXACTLY the encode window; not
+/// containment, which for a shorter range admits an identity-preserving in-place
+/// `memmove` to the window base with `memcmp` passing by construction.
 CopyVerdict Judge(const CopyLedger& ledger);
 
 // ── Subjects ────────────────────────────────────────────────────────
 
-/// One provider, exercised one way, ALWAYS in this process and always
-/// synchronously (P2). There is no peer verb and the ledger is deliberately
-/// unsynchronised, so a cross-process or off-thread subject cannot be built at
-/// all — provenance is an address, and an address means nothing across an
-/// address space.
+/// One provider, exercised one way, ALWAYS in this process and synchronously
+/// (P2). No peer verb and an unsynchronised ledger, so a cross-process or
+/// off-thread subject cannot be built at all.
 class CopyRunner {
    public:
     virtual ~CopyRunner() = default;
@@ -145,9 +116,8 @@ class CopyRunner {
     virtual void Unsubscribe(const Topic& topic) = 0;
 };
 
-/// A gtest test PARAMETER, so it carries a label: gtest prints the parameter
-/// into the test's name, and printing a bare std::function falls back to a raw
-/// byte dump of uninitialised stack. The label keeps ctest names stable.
+/// A gtest test PARAMETER, so it carries a label: printing a bare std::function
+/// dumps uninitialised stack, and the label is what keeps ctest names stable.
 struct CopySubject {
     std::string label;
     std::function<std::unique_ptr<CopyRunner>()> make;
@@ -157,68 +127,42 @@ struct CopySubject {
 
 inline void PrintTo(const CopySubject& subject, std::ostream* os) { *os << subject.label; }
 
-/// The subjects the forcing test runs over. Compile-time, so a subject that
-/// stops being registered shows up as a missing entry in `ctest -N` rather than
-/// as a silent skip (there is no GTEST_SKIP anywhere in this suite).
-///
-///  - `SeamProbe`           — a fixed-arena provider in this harness: positive
-///                            control, proves the seam PERMITS zero-copy.
-///  - `InProcessLoopback`   — the real `InProcessPubSubProvider`, called
-///                            directly at the seam.
-///  - `InProcessViaPubSub`  — the same provider reached through `Publisher` and
-///                            `Subscriber`, so the layers ABOVE the seam are
-///                            inside a measured path too. §8 words the
-///                            attachment claim "publisher → provider →
-///                            subscriber"; without this subject nothing above
-///                            the seam is measured and a `std::vector`
-///                            materialised in `Subscriber`'s fan-out "for
-///                            safety" would be silent.
+/// The subjects the forcing test runs over (README has the table). Compile-time,
+/// so a subject that stops being registered shows up as a missing `ctest -N`
+/// entry rather than as a silent skip.
 const std::vector<CopySubject>& CopyAccountingSubjects();
 
-/// The live negative control: `SeamProbe`'s arena, plus a deliberate staging
-/// copy of the row and a deep copy of every blob. Scored by the SAME Judge(),
-/// through the SAME capture, and NOT in the list above — so rung-1 item 2
-/// ("every registered subject faces the same numbers") stays true while the
-/// control still exercises the whole instrument. It is the thing that fails if
-/// the instrument is stubbed, always-zero, or deleted.
+/// The live negative control: the probe plus a deliberate staging copy of the
+/// row and a deep copy of every blob, scored by the SAME Judge() through the
+/// SAME capture. Deliberately NOT in the list above.
 CopySubject StagingControlSubject();
+
+/// The refill control: a probe whose encode window is a HARNESS-OWNED growable
+/// buffer that relocates on every refill, so the counter's liveness is never
+/// pinned to a provider's allocation strategy.
+CopySubject GrowableControlSubject();
 
 // ── Running one round trip ──────────────────────────────────────────
 
-/// The payload the oracle publishes: a deterministic pattern, so a garbled
-/// delivery is distinguishable from a copied one.
+/// A deterministic pattern, so a garbled delivery is distinguishable from a
+/// copied one.
 std::vector<uint8_t> CopyPayload(size_t len);
 
-/// Row sizes the forcing test exercises.
-///
-/// 64 B is the ordinary case. 4 KiB exists to force a GROWABLE provider buffer
-/// to relocate its already-written bytes — which is the way row identity most
-/// plausibly breaks — and that only happens under the append pattern below.
+/// Row sizes: 64 B is the ordinary case; 4 KiB forces a growable window to
+/// relocate already-written bytes, which is how row identity most plausibly
+/// breaks. `kAppendChunk` is pinned because a single `Append(payload, 4096)`
+/// takes `VectorWriteBuffer`'s bulk path and relocates NOTHING.
 inline constexpr size_t kSmallRowBytes = 64;
 inline constexpr size_t kLargeRowBytes = 4096;
-
-/// Append granularity, pinned rather than left to chance.
-///
-/// `VectorWriteBuffer` has a `kChunk` of 256: a single `Append(payload, 4096)`
-/// takes its bulk path (one `reserve`, one `insert` into an empty buffer),
-/// relocates NOTHING, and reports `refill_bytes == 0` — leaving the 4 KiB leg
-/// indistinguishable from the 64 B one and the refill counter unevidenced.
-/// Sub-`kChunk` appends go through `Refill`→`Reserve` and reallocate at 512,
-/// 1536, 3584 …, relocating 512/1536/… bytes. So the oracle appends in 64-byte
-/// pieces and `refill_bytes > 0` is the EXPECTED observation on the 4 KiB leg
-/// for any growable buffer.
 inline constexpr size_t kAppendChunk = 64;
 
-/// Attachment leg: two entries, 1 KiB each. Two, not one, so
-/// `attachment_copies == 0` cannot be satisfied vacuously by an empty map, and
-/// so the control has a number (2) that a one-attachment run could not produce.
+/// Two attachments, not one, so `attachment_copies == 0` cannot be satisfied
+/// vacuously by an empty map.
 inline constexpr size_t kAttachmentBytes = 1024;
 inline constexpr size_t kAttachmentCount = 2;
 
-/// The outcome of one round trip: a ledger, or the reason there is none.
-///
-/// A provider that throws during publish is reported by name and never as a
-/// silent `row_copies == 0` (rung-2 item 9).
+/// The outcome of one round trip: a ledger, or the reason there is none. A
+/// provider that throws is reported by name, never as a silent `row_copies == 0`.
 struct RoundTrip {
     CopyLedger ledger;
     /// Empty on success; "<type>: <what>" if the subject threw.
@@ -226,26 +170,46 @@ struct RoundTrip {
 };
 
 /// Publish one row of `row_bytes` (in `kAppendChunk`-sized appends) plus
-/// `attachments` on `topic`, and capture the ledger.
-///
-/// The published attachment bytes are recorded from the caller's own Blobs, so
-/// leg 2 compares the delivered `data()` against the published `data()` and not
-/// against a re-derivation.
+/// `attachments` on `topic`, and capture the ledger. The published attachment
+/// addresses are taken from the caller's own Blobs, never re-derived.
 RoundTrip RunRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
                        const Attachments& attachments);
 
 /// Build `kAttachmentCount` attachments of `kAttachmentBytes` each.
 Attachments MakeCopyAttachments();
 
-/// Leg 3, borrowed receive memory: a `SeamProbe` that already holds payload
-/// bytes in its own arena — a stand-in for a transport-loaned sample — and must
-/// publish them as an `Attachments` entry.
+/// Leg 3 — the copy §3.2 forces on a provider holding payload bytes in memory
+/// IT owns (a stand-in for a transport-loaned sample).
 ///
-/// `Blob = shared_ptr<const vector<uint8_t>>` cannot alias foreign memory
-/// (§3.2), so the provider is FORCED to copy into a vector. This measures that
-/// forced copy at exactly one. PDA-DEC-3 removes the limitation; when it does,
-/// the test built on this goes red on purpose.
-RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic);
+/// The PROVIDER, not this harness, must produce the `Blob`: it injects the
+/// loaned entry into the delivered `Attachments` inside `Publish`, the only
+/// place the §3.2 limitation can bite. A caller-owned blob rides the same
+/// publish and must cross untouched, so the pinned total of 1 is three-valued
+/// and provider-dependent in both directions — 0 says the seam gained the
+/// ability to carry borrowed memory, 2 says a provider copied bytes it was
+/// handed by shared_ptr. `copying_provider` runs the identical leg against the
+/// deep-copying probe, which is how the test proves, standing rather than by
+/// inspection, that the number moves with provider behaviour.
+RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provider = false);
+
+/// The static half of leg 3's tripwire, and the reason the runtime pin above is
+/// not the whole story.
+///
+/// `Blob` points at a `vector`, and a `vector` owns its bytes; that is *why*
+/// borrowed memory costs a copy today. No provider can escape it, so no
+/// provider-side measurement can see PDA-DEC-3 land by itself. This can:
+/// PDA-DEC-3 must change what `Blob` IS — including in the backward-compatible
+/// shape where `Blob` becomes a class implicitly constructible from today's
+/// `shared_ptr`, which would leave every call site compiling.
+///
+/// RESIDUAL, stated rather than papered over: a PDA-DEC-3 that leaves `Blob`
+/// untouched and adds a PARALLEL borrowed-blob type trips neither this nor the
+/// runtime pin. Closing that needs the seam vocabulary PDA-DEC-3 itself owns.
+static_assert(std::is_same_v<Blob, std::shared_ptr<const std::vector<uint8_t>>>,
+              "Blob changed shape. If this is PDA-DEC-3 making borrowed transport memory "
+              "carryable, CopyAccounting.BorrowedAttachmentCostsExactlyOneCopy must be updated "
+              "to demand 0 copies, and spec §3.2/§8.1 with it. Do not relax this assertion to "
+              "restore the build.");
 
 }  // namespace conformance
 }  // namespace fletcher

@@ -137,13 +137,10 @@ C view must honour:
 3. **Bounds by subtraction, never addition** (`len > capacity - pos`), so a
    hostile length cannot wrap.
 4. A fixed-capacity buffer reports overflow; a growable one refills.
-5. **The window base is readable.** `Data()` returns it; only
-   `[Data(), Data() + Position())` is defined, and the pointer is invalidated by
-   any append that refills and by `VectorWriteBuffer::Finish()`. §3.1 already
-   declares the window to be `{data, capacity, pos}`, so this exposes nothing a C
-   view does not already have to honour — but without it, whether the bytes a
-   subscriber sees are the bytes the encoder wrote is unanswerable from outside a
-   provider, and §8.1 is not implementable.
+5. **The window base is readable** — `Data()`, over `[Data(), Data() + Position())`
+   only, invalidated by any refilling append and by `VectorWriteBuffer::Finish()`.
+   The window is already declared `{data, capacity, pos}`, so this adds no
+   obligation; without it §8.1 is not implementable from outside a provider.
 
 ### §3.2 — `Blob` / `Attachments` — shared ownership across the seam
 
@@ -396,33 +393,25 @@ it.
 
 ### §8.1 — It must be falsifiable
 
-"Zero-copy" is unverifiable by inspection and regresses silently. This round
-ships a **copy-accounting oracle** so the property is a failing test rather than
-an aspiration, and so both ABI rounds have a standing check they did not have to
-invent. It lives in `integration-tests/pubsub-conformance` as the
-`CopyAccounting` suite.
+"Zero-copy" is unverifiable by inspection and regresses silently, so this round
+ships a **copy-accounting oracle** — `integration-tests/pubsub-conformance`, the
+`CopyAccounting` suite — which both ABI rounds inherit rather than reinvent.
 
 The mechanism is **address provenance**, not counting: the window base after the
-encoder's last append (§3.1 clause 5) is compared for **strict equality** against
-the span delivered to the subscriber callback, and each delivered `Blob`'s
-`data()` against the published one. Content equality is asserted *before* the
-verdict, so "arrived garbled" and "arrived at a second address" are different
-failures. Two preconditions bound it, and a subject that breaks either is not
-measurable this way: delivery is **synchronous on the publishing thread**, and
-the encode window stays **allocated and unfreed until the callback returns** —
-which is what makes provenance immune to allocator reuse.
+encoder's last append (§3.1 clause 5) must equal, **strictly and span for span**,
+what the subscriber callback receives, and each delivered `Blob`'s `data()` the
+published one; content equality is checked first, so "garbled" and "at a second
+address" are different failures. It binds only where delivery is **synchronous on
+the publishing thread** and the encode window stays **allocated until the callback
+returns** — a subject breaking either is not measurable this way. Refill movement
+is permitted (§3.1 clause 1) and **reported as a number**; every other byte
+movement is a violation, and the copy §3.2 forces on a provider's own borrowed
+memory is pinned at **exactly one** so its removal turns the guard red.
 
-Movement inside a refill is permitted by §3.1 clause 1 and is **reported as a
-number**, not failed; every other byte movement is a violation. The one copy
-§3.2 forces on borrowed receive memory is pinned at **exactly one**, so removing
-it turns the guard red rather than letting the fix land silently.
-
-**Scope.** Green is evidence about *this seam* and about nothing else. It is not
-evidence about a transport's internals — not data-sharing, not loaned samples,
-not receive-side zero-copy. The oracle ships with a live negative control (a
-deliberately-copying provider the same verdict function must score as a
-violation), because a guard nobody has made go red is a guard nobody has
-measured.
+**Scope.** Green is evidence about *this seam* and nothing else — not about a
+transport's data-sharing, loaned samples or receive-side zero-copy. A live
+negative control ships with it: a guard nobody has made go red is a guard nobody
+has measured.
 
 ---
 
