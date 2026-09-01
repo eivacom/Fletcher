@@ -1,6 +1,6 @@
 # Protocol Driver ABI — Specification (oracle)
 
-Status: **proposed** (round **PDA-ABI**, token `ABI`). This is the authoritative
+Status: **proposed** (round **PDA-ABI**, token `PDA-ABI`). This is the authoritative
 spec for the pure-C protocol driver ABI. On any contradiction with the plan or a
 per-item design, **this document wins** — *except* where it concerns the seam,
 where [docs/pubsub-interface-spec.md](pubsub-interface-spec.md) wins over this

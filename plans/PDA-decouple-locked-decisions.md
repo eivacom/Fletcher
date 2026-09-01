@@ -1,4 +1,4 @@
-# PDA-decouple (`DEC`) — Locked Decisions
+# PDA-decouple — Locked Decisions
 
 Firm choices for preparing the pub/sub seam. The architect, architecture reviewer,
 implementer, and compliance reviewer must honor these; a proposed deviation is a
@@ -56,12 +56,12 @@ restricted to the seam, plus the ones the split itself forced (D1, D2, D3).
    `Blob = shared_ptr<const vector<uint8_t>>` forces a copy into a `vector`, so a
    provider that could hand over a transport's loaned sample cannot. Fixing that is
    the largest single thing standing between the seam and zero-copy receive. How
-   is DEC-3's design call; that it is fixed is not optional. Zero-copy receive
+   is PDA-DEC-3's design call; that it is fixed is not optional. Zero-copy receive
    itself is **delivered in PDA-ABI**, not here.
 
 7. **Zero-copy is required for rows AND attachments, and must be falsifiable.**
    It is a property *of the seam*: both ABI rounds inherit it and neither can
-   restore it if the seam loses it. A copy-accounting oracle (DEC-2) makes it a
+   restore it if the seam loses it. A copy-accounting oracle (PDA-DEC-2) makes it a
    test rather than an aspiration. Accepting a copy anywhere on the row or
    attachment path is a stop-and-ask.
 
@@ -89,7 +89,7 @@ restricted to the seam, plus the ones the split itself forced (D1, D2, D3).
     the transport, where an escaping exception terminates rather than unwinds.
 
 11. **Guard-first, and cross-provider divergences are FIXED in-round.** The
-    conformance suite (DEC-1) and the copy oracle (DEC-2) land **before** the
+    conformance suite (PDA-DEC-1) and the copy oracle (PDA-DEC-2) land **before** the
     vocabulary work. Divergences between the three providers are **expected** —
     they have never been mechanically compared — and are fixed so both ABI rounds
     build over consistent behaviour rather than a frozen inconsistency. A fix that

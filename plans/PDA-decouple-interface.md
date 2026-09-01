@@ -2,7 +2,7 @@
 
 Round plan + tracker for making `fletcher::PubSubProvider` a seam that a C ABI can
 be built against **on either side, independently and in parallel**. Round token
-**`DEC`**.
+**`PDA-DEC`**.
 
 Spec (oracle): [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md)
 — read it first; it wins on any conflict.
@@ -37,34 +37,34 @@ C-expressible** model.
 - Branch: `feature/protocol-driver-abi` (continues; renaming it mid-flight buys
   nothing and breaks the pushed history).
 - Rebased, not merged (repo convention).
-- PR split, each independently reviewable: **DEC-1/DEC-2** (the guards) →
-  **DEC-3** (the vocabulary, reviewed as a specification) → **DEC-4/DEC-5**
-  (registry + first built-in) → **DEC-6/DEC-7** (provider config migration) →
-  **DEC-8/DEC-9** (multi-instance, docs). No PR until green + reviewed; PR/merge
+- PR split, each independently reviewable: **PDA-DEC-1/PDA-DEC-2** (the guards) →
+  **PDA-DEC-3** (the vocabulary, reviewed as a specification) → **PDA-DEC-4/PDA-DEC-5**
+  (registry + first built-in) → **PDA-DEC-6/PDA-DEC-7** (provider config migration) →
+  **PDA-DEC-8/PDA-DEC-9** (multi-instance, docs). No PR until green + reviewed; PR/merge
   is the user's step.
 
 ## Sequencing
 
-Strictly linear. **The guards (DEC-1, DEC-2) MUST precede the vocabulary work** —
+Strictly linear. **The guards (PDA-DEC-1, PDA-DEC-2) MUST precede the vocabulary work** —
 they are what make the delivery contract and the zero-copy property falsifiable,
-and DEC-1 is expected to *change provider behaviour*, which must happen before the
+and PDA-DEC-1 is expected to *change provider behaviour*, which must happen before the
 seam is specified over it.
 
 ```
-DEC-1  conformance suite (incl. cross-process)  →  DEC-2  copy-accounting oracle   →
-DEC-3  the crossing vocabulary (spec review)    →  DEC-4  provider registry        →
-DEC-5  InProcess promoted to a built-in         →  DEC-6  Fast DDS via document    →
-DEC-7  XRCE via document                        →  DEC-8  multi-instance proof     →
-DEC-9  seam spec, taxonomy, TD entry, handoff
+PDA-DEC-1  conformance suite (incl. cross-process)  →  PDA-DEC-2  copy-accounting oracle   →
+PDA-DEC-3  the crossing vocabulary (spec review)    →  PDA-DEC-4  provider registry        →
+PDA-DEC-5  InProcess promoted to a built-in         →  PDA-DEC-6  Fast DDS via document    →
+PDA-DEC-7  XRCE via document                        →  PDA-DEC-8  multi-instance proof     →
+PDA-DEC-9  seam spec, taxonomy, TD entry, handoff
 ```
 
 Two notes on the shape:
 
-- **DEC-3 is reviewed as a specification.** It is where the ownership rules land,
+- **PDA-DEC-3 is reviewed as a specification.** It is where the ownership rules land,
   and the wording is the most expensive thing in the round to get wrong — two
   later rounds derive their C types from it without being able to consult each
   other.
-- **DEC-4 is the item that delivers requirement §0.1(2).** If it lands with a
+- **PDA-DEC-4 is the item that delivers requirement §0.1(2).** If it lands with a
   signature PDA-ABI has to widen to admit loading, the round has failed at its
   actual purpose even with every test green.
 
@@ -75,20 +75,20 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 
 | Item | Title | Kind | Forcing test | Status |
 |------|-------|------|--------------|--------|
-| DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | ⚪ |
-| DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
-| DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ DEC-2 green) | ⚪ |
-| DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
-| DEC-5 | `InProcessProvider` promoted out of `gateway/src/main.cpp` into a registered built-in | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
-| DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | ⚪ |
-| DEC-7 | XRCE configured by document (`key=value`) | 🟧 | `XrceConfig.DocumentConfiguresTransport` | ⚪ |
-| DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | ⚪ |
-| DEC-9 | Seam spec, exception taxonomy, TD entry, and the parallelism handoff | 📓 | docs review; handoff checklist complete (§DoD) | ⚪ |
+| PDA-DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | ⚪ |
+| PDA-DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
+| PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
+| PDA-DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
+| PDA-DEC-5 | `InProcessProvider` promoted out of `gateway/src/main.cpp` into a registered built-in | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
+| PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | ⚪ |
+| PDA-DEC-7 | XRCE configured by document (`key=value`) | 🟧 | `XrceConfig.DocumentConfiguresTransport` | ⚪ |
+| PDA-DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | ⚪ |
+| PDA-DEC-9 | Seam spec, exception taxonomy, TD entry, and the parallelism handoff | 📓 | docs review; handoff checklist complete (§DoD) | ⚪ |
 
-Suite shape: DEC-1/DEC-2 introduce a **provider-agnostic conformance harness**
+Suite shape: PDA-DEC-1/PDA-DEC-2 introduce a **provider-agnostic conformance harness**
 parameterised over a provider factory, so one TU runs against InProcess, Fast DDS
 and XRCE, and later against a driver-backed subject in PDA-ABI with no assertion
-changes. Its home and target names are DEC-1's design call — wire them into the
+changes. Its home and target names are PDA-DEC-1's design call — wire them into the
 runbook config's `inner_loop_cmd`/`full_suite_cmd` when it lands.
 
 ---
@@ -99,7 +99,7 @@ runbook config's `inner_loop_cmd`/`full_suite_cmd` when it lands.
 > [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md); the design
 > step expands per-item design docs from it.
 
-### DEC-1 — Conformance suite for the delivery contract
+### PDA-DEC-1 — Conformance suite for the delivery contract
 **Story.** As a maintainer about to freeze a seam two teams will build against in
 parallel, I have the delivery contract that is **prose** in `provider.hpp`
 expressed as executable assertions, run against all three providers, so I know
@@ -118,17 +118,17 @@ example of a defect that a 70-test single-process suite could not observe.
 would move **wire bytes** is a stop-and-ask. This item's size is not knowable up
 front — that was accepted deliberately. Hard prerequisite for everything after.
 
-### DEC-2 — Copy-accounting oracle
+### PDA-DEC-2 — Copy-accounting oracle
 **Story.** As a maintainer whose seam must preserve zero-copy for two ABI rounds
 that inherit it, I have an instrumented blob and write buffer that **count
 copies**, so the property is a failing test rather than an aspiration.
 **Forcing test.** `CopyAccounting.PublishAndReceivePerformNoPayloadCopies`.
 **Acceptance.** Spec §8.1. Counts the encode path (row bytes into the
 provider-supplied buffer) and the attachment path, and records the **baseline**
-— including the copy today's `Blob` forces on receive, which is the thing DEC-3
-has to make avoidable. Must be green before DEC-3.
+— including the copy today's `Blob` forces on receive, which is the thing PDA-DEC-3
+has to make avoidable. Must be green before PDA-DEC-3.
 
-### DEC-3 — The crossing vocabulary (reviewed as a specification)
+### PDA-DEC-3 — The crossing vocabulary (reviewed as a specification)
 **Story.** As an ABI author on either side of the seam, I can read the seam's
 headers and know, for every type that crosses, who owns the memory, for how long,
 and what my C boundary must do — without inventing anything and without consulting
@@ -143,9 +143,9 @@ red today, because `Blob` forces a copy into a `vector`, so a provider cannot ha
 over borrowed transport memory at all.
 **Acceptance.** Spec §3, §5. C++ changes only where a type has no C-expressible
 form; the method set is untouched (§2). Adding, removing or reordering interface
-methods is a stop-and-ask. DEC-1's suite and DEC-2's oracle stay green.
+methods is a stop-and-ask. PDA-DEC-1's suite and PDA-DEC-2's oracle stay green.
 
-### DEC-4 — The provider registry
+### PDA-DEC-4 — The provider registry
 **Story.** As an application or gateway operator I name the protocol I want in
 configuration, supply its settings as a document, and get a working provider —
 without linking that protocol's SDK and without my code knowing whether the
@@ -160,7 +160,7 @@ to add a *resolver* for path selectors without changing it (§4 clause 2). Path
 selectors need not resolve in this round; they must not be designed out. Fletcher
 gains **no config parser** (§4.2) — a stop-and-ask.
 
-### DEC-5 — `InProcessProvider` becomes a registered built-in
+### PDA-DEC-5 — `InProcessProvider` becomes a registered built-in
 **Story.** As a driver-author-to-be I read one small, complete provider that is
 selected the same way every other one is.
 **Content.** Promote it out of [gateway/src/main.cpp:72](../gateway/src/main.cpp#L72)
@@ -171,7 +171,7 @@ existing `--provider inprocess` behaviour unchanged.
 **Acceptance.** Spec §10. First proof the registry works. This component is later
 the body of PDA-ABI's reference driver, so it should read as an example.
 
-### DEC-6 — Fast DDS configured by document (the breaking change)
+### PDA-DEC-6 — Fast DDS configured by document (the breaking change)
 **Story.** As an operator I configure Fast DDS QoS at runtime through its native
 XML profile, named in my Fletcher configuration, with nothing of mine compiling
 against eProsima headers.
@@ -185,7 +185,7 @@ occurrences migrated and the provider's QoS tests rewritten against documents.
 vocabulary. The `__schema` companion channel stays non-configurable
 (Fletcher-internal, TD-005). Wire bytes unchanged.
 
-### DEC-7 — XRCE configured by document
+### PDA-DEC-7 — XRCE configured by document
 **Story.** The same, for the edge provider, without carrying a parser it cannot
 afford.
 **Content.** `key=value` document; `XrceConfig`'s POD fields become document keys.
@@ -194,15 +194,15 @@ afford.
 provider. A link-size check is *not* required here — the footprint proxy belongs
 to PDA-ABI, with the static-registration lane.
 
-### DEC-8 — Multi-instance proof
+### PDA-DEC-8 — Multi-instance proof
 **Story.** As an integrator I run two instances of the same provider, on two DDS
 domains, in one process, through the registry, and they do not interfere.
 **Forcing test.** `Registry.TwoInstancesTwoDomainsStayIsolated`.
-**Acceptance.** Spec §4 clause 3. Proves no global state crept into DEC-4. This is
+**Acceptance.** Spec §4 clause 3. Proves no global state crept into PDA-DEC-4. This is
 the primitive a future bridge composes and the property PDA-ABI's module/instance
 handles depend on — cheap now, expensive to retrofit.
 
-### DEC-9 — Seam spec, taxonomy, and the parallelism handoff
+### PDA-DEC-9 — Seam spec, taxonomy, and the parallelism handoff
 **Story.** As the maintainer starting two rounds at once, I have one document both
 of them mirror, and a written statement of what is frozen.
 **Content.** Finalise [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md)
@@ -225,9 +225,9 @@ without either needing an answer from the other.
 
 - **PDA-ABI** — [docs/protocol-driver-abi-spec.md](../docs/protocol-driver-abi-spec.md),
   [PDA-ABI-protocol-driver-abi.md](PDA-ABI-protocol-driver-abi.md). Adds a path
-  resolver to DEC-4's registry, the driver vtable and host callbacks, the loader,
+  resolver to PDA-DEC-4's registry, the driver vtable and host callbacks, the loader,
   the driver ports, and zero-copy receive.
-- **BIND-C# / BIND-Rust** — a C façade over `Publisher`/`Subscriber` plus DEC-4's
+- **BIND-C# / BIND-Rust** — a C façade over `Publisher`/`Subscriber` plus PDA-DEC-4's
   selection. Note selection is **binding** surface, not driver surface (spec §9).
 - Neither depends on the other. Neither may change the seam (spec §1).
 - Still downstream of GIR: **RIR** (RBA↔IR reconciliation), unaffected by this
@@ -235,10 +235,10 @@ without either needing an answer from the other.
 
 ## Definition of done (round)
 
-DEC-1..DEC-9 forcing tests 🟢; full component + integration suite green; **all
+PDA-DEC-1..PDA-DEC-9 forcing tests 🟢; full component + integration suite green; **all
 three providers agree** on the §7 contract with divergences fixed rather than
 pinned; the conformance suite has a **cross-process subject** for the DDS
-providers; DEC-2's oracle green **and** showing that borrowed transport memory can
+providers; PDA-DEC-2's oracle green **and** showing that borrowed transport memory can
 now cross without a copy; `FastDDSProviderOptions` retired with all 4 external
 sites migrated; `InProcessProvider` out of `gateway/src/main.cpp` and resolved as
 a built-in; two instances on two domains isolated; **wire format byte-identical**;

@@ -1,4 +1,4 @@
-# PDA-ABI (`ABI`) — Locked Decisions
+# PDA-ABI — Locked Decisions
 
 Firm choices for the protocol driver ABI. The architect, architecture reviewer,
 implementer, and compliance reviewer must honor these; a proposed deviation is a

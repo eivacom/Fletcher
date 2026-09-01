@@ -1,4 +1,4 @@
-# PDA-ABI (`ABI`) — Progress Log
+# PDA-ABI — Progress Log
 
 One section is appended per item by the runbook after it is green, reviewed,
 logged, and pushed. See

@@ -1,4 +1,4 @@
-# PDA-decouple (`DEC`) — Progress Log
+# PDA-decouple — Progress Log
 
 One section is appended per item by the runbook after it is green, reviewed,
 logged, and pushed. See [PDA-decouple-interface.md](PDA-decouple-interface.md) for
@@ -38,7 +38,6 @@ occurrences**, plus **39 provider-internal occurrences across 7 files** (24 of t
 in the provider's own QoS test TU) and **10** in XRCE. The external *file* count
 was right; the total churn was understated.
 
-<!-- Entries appended below by the round runbook -->
 
 ## Merged `feature/fastdds_modernization/19645` (2026-08-31, pre-round)
 
@@ -130,5 +129,34 @@ decision 12 and GIR's decision #2 both hold. clang-format (18.1.3) and the licen
 Pre-existing, untouched: `gateway-fastdds-ts`'s binary lookup does not know the MSVC multi-config
 layout (`build/gateway_build/Release/gateway.exe`, not `build/Release/gateway_build/`), so it needs
 `GATEWAY_BIN`/`FASTDDS_PEER_BIN` on this box. The merge changes nothing in that directory.
+
+## Starting baseline (2026-09-01, `e1868b2`)
+
+Full suite run on the Windows box before any round item, so a later failure can be
+classified as inherited or introduced. **Everything green.**
+
+| Subject | Result |
+|---|---|
+| core / arrow-bridge / pubsub / pubsub-arrow | 28 / 61 / 19 / 16 |
+| fastdds-pubsub-provider / xrcedds-pubsub-provider | 70 / 11 |
+| protoc | 99 unit + 3 test_package |
+| protoc-arrow-bridge / protoc-coverage | 91 / 20 |
+| pubsub-arrow-fastdds / fastdds-xrce-interop | 4 / 1 |
+| gateway-end-to-end | 21 |
+| gateway-fastdds-ts | 4/4 across **3 consecutive runs** |
+
+`ParityOracle.EncodeEqualsEncodeRowAndRoundTrips` green against the committed
+goldens — the wire contract is intact at the baseline, which is what decision 13
+must keep true. clang-format 18.1.3 and the license-header gate clean.
+
+Accepted skips at baseline: tsc/rustc-dependent checks (toolchain absent), the
+gated `ParityOracle.RegenerateGoldens`, XRCE tests needing a MicroXRCEAgent.
+`gateway-fastdds-ts` needs `GATEWAY_BIN`/`FASTDDS_PEER_BIN` on this box because its
+binary lookup does not know the MSVC multi-config layout — pre-existing, and a
+remediation owed before round close.
+
+**Anything outside this table is introduced by the round, not inherited.** In
+particular, intermittent row loss in `gateway-fastdds-ts` is the receive-side
+data-sharing defect signature (see the merge entry above), never flake.
 
 <!-- Entries appended below by the round runbook -->

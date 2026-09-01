@@ -1,6 +1,6 @@
 # The Pub/Sub Provider Interface — Specification (oracle)
 
-Status: **proposed** (round **PDA-decouple**, token `DEC`). This is the authoritative
+Status: **proposed** (round **PDA-decouple**, token `PDA-DEC`). This is the authoritative
 spec for the pub/sub provider interface — the seam between Fletcher and a
 protocol. On any contradiction with the plan or a per-item design, **this document
 wins**. Locked-decision digest:
@@ -158,7 +158,7 @@ so that both ABI rounds derive the same one:
 does not own — a transport's loaned sample, say — without copying it into a
 `vector`. Today's `Blob` cannot, so a receive path that borrows transport memory
 is forced to copy. Whether that is met by a custom-deleter `shared_ptr`, or by
-widening the type, is DEC-3's design call; that it is met is not optional, and it
+widening the type, is PDA-DEC-3's design call; that it is met is not optional, and it
 is the single largest thing standing between the seam and zero-copy receive.
 
 ### §3.3 — Schemas
@@ -183,7 +183,7 @@ their own bridge, and they would invent different ones.
 This round must give it a **normative C-expressible form** — a completion
 callback, or a poll-plus-wait pair, or an explicit handle — with the
 `shared_future` retained (if at all) as a C++ convenience *over* that form rather
-than as the contract. Which shape is DEC-3's design call. What is not optional:
+than as the contract. Which shape is PDA-DEC-3's design call. What is not optional:
 after this round, an ABI author must be able to implement schema arrival without
 inventing anything.
 
@@ -433,7 +433,7 @@ and its `shared_future` are consumed by 10 sites outside `provider.hpp` —
 `pubsub/src/subscriber.cpp` (5), `pubsub-arrow/src/subscriber_arrow.cpp` and its
 header (4), `gateway/src/{main,ws_session}.cpp` (3), plus both `test_package`
 examples and the `pubsub` / `pubsub-arrow` test suites. Same for any change to
-`Blob` under §3.2. So DEC-3 lands in `core/` and `pubsub/` **and** ripples up
+`Blob` under §3.2. So PDA-DEC-3 lands in `core/` and `pubsub/` **and** ripples up
 through `pubsub-arrow` and the gateway; the round is not "providers only" in
 either direction.
 

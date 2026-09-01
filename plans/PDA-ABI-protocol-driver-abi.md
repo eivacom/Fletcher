@@ -1,7 +1,7 @@
 # PDA-ABI — The Protocol Driver ABI — Execution Plan
 
 Round plan + tracker for the pure-C protocol driver ABI **below** the pub/sub seam.
-Round token **`ABI`**.
+Round token **`PDA-ABI`**.
 
 Spec (oracle): [docs/protocol-driver-abi-spec.md](../docs/protocol-driver-abi-spec.md).
 **Seam spec, which wins over it on anything about the interface:**
@@ -40,25 +40,25 @@ path the ABI makes expressible.
   `feature/protocol-driver-abi`; a fresh branch keeps the two rounds' PRs
   separable, and BIND's branch is independent of both).
 - Rebased, not merged (repo convention).
-- PR split: **ABI-1** (the header, reviewed as a spec) → **ABI-2/ABI-3** (host,
-  adapter, equivalence proof) → **ABI-4** (reference driver) → **ABI-5** (Fast DDS)
-  → **ABI-6** (XRCE + static lane) → **ABI-7** (zero-copy receive) → **ABI-8**
+- PR split: **PDA-ABI-1** (the header, reviewed as a spec) → **PDA-ABI-2/PDA-ABI-3** (host,
+  adapter, equivalence proof) → **PDA-ABI-4** (reference driver) → **PDA-ABI-5** (Fast DDS)
+  → **PDA-ABI-6** (XRCE + static lane) → **PDA-ABI-7** (zero-copy receive) → **PDA-ABI-8**
   (docs/TDs). No PR until green + reviewed; PR/merge is the user's step.
 
 ## Sequencing
 
 ```
-ABI-1  the C header (spec review, no impl)  →  ABI-2  loader + handles + adapter  →
-ABI-3  seam suite retargeted through the ABI →  ABI-4  InProcess reference driver  →
-ABI-5  Fast DDS driver                       →  ABI-6  XRCE driver + static lane   →
-ABI-7  zero-copy receive (loaned samples)    →  ABI-8  guide, TD entries, licensing
+PDA-ABI-1  the C header (spec review, no impl)  →  PDA-ABI-2  loader + handles + adapter  →
+PDA-ABI-3  seam suite retargeted through the ABI →  PDA-ABI-4  InProcess reference driver  →
+PDA-ABI-5  Fast DDS driver                       →  PDA-ABI-6  XRCE driver + static lane   →
+PDA-ABI-7  zero-copy receive (loaned samples)    →  PDA-ABI-8  guide, TD entries, licensing
 ```
 
-- **ABI-1 is reviewed as a specification, not code** — header plus policy, no
+- **PDA-ABI-1 is reviewed as a specification, not code** — header plus policy, no
   implementation. Its types are views of the seam's; getting the ownership wording
   wrong is the most expensive mistake available here, and a third-party driver
   author has nothing else to read.
-- **ABI-3 is the pivot.** Same assertions as the seam's suite, new subject. Pass
+- **PDA-ABI-3 is the pivot.** Same assertions as the seam's suite, new subject. Pass
   both and the ABI is behaviourally equivalent to the seam it implements.
 
 ## Work-item tracker
@@ -68,19 +68,19 @@ Kind: 🟪 spec · 🟦 host/adapter impl · 🟧 driver port · 🔬 equivalenc
 
 | Item | Title | Kind | Forcing test | Status |
 |------|-------|------|--------------|--------|
-| ABI-1 | The C header: driver vtable, host callbacks, version/compat policy | 🟪 | `AbiHeader.CompilesAsC99AndIsSelfContained` + review-as-spec (no impl) | ⚪ |
-| ABI-2 | Loader (explicit path) + static registry + module/instance handles + `DriverProvider` adapter | 🟦 | `DriverHost.PathSelectorResolvesThroughTheSeamRegistry` | ⚪ |
-| ABI-3 | The seam's conformance suite retargeted **through** the ABI | 🔬 | the seam clause set, unchanged, with a driver-backed subject (incl. cross-process) | ⚪ |
-| ABI-4 | InProcess reference driver | 🟧 | ABI-3 green against the InProcess **driver** | ⚪ |
-| ABI-5 | Fast DDS driver | 🟧 | ABI-3 green against the Fast DDS **driver**, config document unchanged from DEC-6 | ⚪ |
-| ABI-6 | XRCE driver + static-registration lane + footprint budget | 🟧 | `XrceDriver.StaticRegistrationNeedsNoLoader` + `Footprint.EdgeDriverWithinLinkBudget` | ⚪ |
-| ABI-7 | Zero-copy receive via loaned samples | ⚡ | `LoanedSamples.ReceivePathPerformsNoCopy` via the seam's copy oracle | ⚪ |
-| ABI-8 | Driver-author guide, TD entries, licensing intent | 📓 | docs review; TD reconciliation + licensing intent recorded | ⚪ |
+| PDA-ABI-1 | The C header: driver vtable, host callbacks, version/compat policy | 🟪 | `AbiHeader.CompilesAsC99AndIsSelfContained` + review-as-spec (no impl) | ⚪ |
+| PDA-ABI-2 | Loader (explicit path) + static registry + module/instance handles + `DriverProvider` adapter | 🟦 | `DriverHost.PathSelectorResolvesThroughTheSeamRegistry` | ⚪ |
+| PDA-ABI-3 | The seam's conformance suite retargeted **through** the ABI | 🔬 | the seam clause set, unchanged, with a driver-backed subject (incl. cross-process) | ⚪ |
+| PDA-ABI-4 | InProcess reference driver | 🟧 | PDA-ABI-3 green against the InProcess **driver** | ⚪ |
+| PDA-ABI-5 | Fast DDS driver | 🟧 | PDA-ABI-3 green against the Fast DDS **driver**, config document unchanged from PDA-DEC-6 | ⚪ |
+| PDA-ABI-6 | XRCE driver + static-registration lane + footprint budget | 🟧 | `XrceDriver.StaticRegistrationNeedsNoLoader` + `Footprint.EdgeDriverWithinLinkBudget` | ⚪ |
+| PDA-ABI-7 | Zero-copy receive via loaned samples | ⚡ | `LoanedSamples.ReceivePathPerformsNoCopy` via the seam's copy oracle | ⚪ |
+| PDA-ABI-8 | Driver-author guide, TD entries, licensing intent | 📓 | docs review; TD reconciliation + licensing intent recorded | ⚪ |
 
 Suite shape: this round adds **no new conformance assertions**. It reuses the
 harness PDA-decouple built, parameterised over a provider factory, with
 driver-backed subjects added. If an assertion has to change, something is
-underspecified — see ABI-3.
+underspecified — see PDA-ABI-3.
 
 ---
 
@@ -90,7 +90,7 @@ underspecified — see ABI-3.
 > and, for anything crossing the seam, in
 > [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md).
 
-### ABI-1 — The C header (reviewed as a specification)
+### PDA-ABI-1 — The C header (reviewed as a specification)
 **Story.** As a third-party driver author I read one self-contained C header and
 know exactly what to implement, what I may call, who owns which memory, and for
 how long.
@@ -107,7 +107,7 @@ pre-1.0 no-compatibility-promise and the deprecation policy must be stated in th
 header itself. The exception→status mapping must be exhaustive against the seam's
 published taxonomy.
 
-### ABI-2 — Host side: loading, handles, adapter
+### PDA-ABI-2 — Host side: loading, handles, adapter
 **Story.** As an operator I put a driver's path in my configuration and get a
 working provider, selected exactly like a built-in one.
 **Content.** Explicit-path loading (spec §2.1); the static-registration table;
@@ -123,7 +123,7 @@ seam spec, not a change made here. The copy oracle stays green across the adapte
 if the bridge introduces a copy, the adapter approach is not viable and that too
 is a stop-and-ask.
 
-### ABI-3 — The equivalence proof
+### PDA-ABI-3 — The equivalence proof
 **Story.** As a maintainer I run the *same* contract assertions against a
 driver-backed provider and see them pass, so I know the ABI is behaviourally
 equivalent to the seam it implements.
@@ -133,28 +133,28 @@ including the **cross-process** subject (seam §7.2).
 suite cannot express through the ABI is a defect in the header or in the seam — a
 stop-and-ask either way, not a relaxed test.
 
-### ABI-4 — InProcess reference driver
+### PDA-ABI-4 — InProcess reference driver
 **Story.** As a driver author I read one small, complete, real driver to learn the
 ABI.
 **Content.** Implement the component PDA-decouple promoted out of the gateway
-(DEC-5) as a driver. It becomes the conformance vehicle and the driver-author
+(PDA-DEC-5) as a driver. It becomes the conformance vehicle and the driver-author
 reference, so it should read as an example rather than as production plumbing.
-**Forcing test.** ABI-3 green against the InProcess **driver**.
+**Forcing test.** PDA-ABI-3 green against the InProcess **driver**.
 **Acceptance.** The gateway's `--provider inprocess` behaviour is unchanged, and
 resolves through the registry either as the built-in or as the driver.
 
-### ABI-5 — Fast DDS driver
+### PDA-ABI-5 — Fast DDS driver
 **Story.** As an operator I run Fast DDS as a loaded driver, configured by the same
 profile document I already use, with the gateway none the wiser.
 **Content.** Fast DDS behind the ABI. **The config document is unchanged from
-DEC-6** — the protocol-vocabulary problem was solved at the seam, so this item is
+PDA-DEC-6** — the protocol-vocabulary problem was solved at the seam, so this item is
 a port, not a redesign. Per-topic QoS remains per-topic profile names.
-**Forcing test.** ABI-3 green against the Fast DDS **driver**.
+**Forcing test.** PDA-ABI-3 green against the Fast DDS **driver**.
 **Acceptance.** Wire bytes unchanged. The `__schema` companion channel stays
 non-configurable (Fletcher-internal, TD-005). This is the port that exercises the
 ABI on the path the gateway actually uses.
 
-### ABI-6 — XRCE driver, static registration, footprint
+### PDA-ABI-6 — XRCE driver, static registration, footprint
 **Story.** As an MCU integrator I get the same driver contract with **no loader**,
 and CI tells me if someone makes the edge driver fat.
 **Content.** XRCE behind the ABI; the static-registration lane end-to-end (proving
@@ -166,14 +166,14 @@ build** — CI has no MCU lane and this item must not imply otherwise; its value
 failing when a heavyweight dependency appears. No JSON/YAML parser in the edge
 driver.
 
-### ABI-7 — Zero-copy receive via loaned samples
+### PDA-ABI-7 — Zero-copy receive via loaned samples
 **Story.** As a high-frequency consumer I receive transport-owned memory with no
 copy, and the loan is returned when I am done.
 **Content.** Use `release` as the `return_loan` hook (spec §3, §6) to eliminate the
 copy the seam's `Blob` used to force on receive — which PDA-decouple made
 avoidable (seam §3.2) but did not deliver.
 **Forcing test.** `LoanedSamples.ReceivePathPerformsNoCopy`, measured by the seam's
-copy oracle against the baseline DEC-2 recorded.
+copy oracle against the baseline PDA-DEC-2 recorded.
 **Acceptance.** Spec §6, §6.1. **The receive-side data-sharing defect must be
 answered, not stepped around**: re-enabling data-sharing without resolving the
 silent `TRANSIENT_LOCAL` sample loss would ship a known defect as a feature. It is
@@ -183,7 +183,7 @@ demonstrably *better* than the interface rather than merely equivalent, and it i
 also the only one touching Fast DDS internals, so it is the natural descope
 candidate; descoping is the user's call.
 
-### ABI-8 — Guide, TD entries, licensing intent
+### PDA-ABI-8 — Guide, TD entries, licensing intent
 **Story.** As a third-party driver author I have a guide; as a maintainer I have
 the architectural record straight.
 **Content.** Driver-author guide (including the random-access-not-a-stream
@@ -197,10 +197,10 @@ link them.
 
 ## Definition of done (round)
 
-ABI-1..ABI-8 forcing tests 🟢; full component + integration suite green; the seam's
+PDA-ABI-1..PDA-ABI-8 forcing tests 🟢; full component + integration suite green; the seam's
 conformance suite passing **through the ABI with identical assertions** and a
 cross-process subject; the copy oracle green and showing an *improvement* on
-receive (ABI-7) or an explicit, defaulted-safe deferral; all three providers
+receive (PDA-ABI-7) or an explicit, defaulted-safe deferral; all three providers
 running as drivers; static registration proven with no loader; the seam's registry
 signature **unchanged**; **wire format byte-identical**; and the TD reconciliation
 plus licensing intent recorded.
