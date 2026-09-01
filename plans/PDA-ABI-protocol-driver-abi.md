@@ -182,6 +182,20 @@ it says so, and provided the default stays safe. This is the item where the ABI 
 demonstrably *better* than the interface rather than merely equivalent, and it is
 also the only one touching Fast DDS internals, so it is the natural descope
 candidate; descoping is the user's call.
+**Start from PDA-DEC-1's evidence, not from scratch** (owner ruling 2026-09-01,
+`plans/PDA-DEC-rulings.md`). PDA-DEC-1 tried and failed to reproduce the defect in
+a purpose-built cross-process conformance harness, and its README carries the
+evidence table: two hypotheses refuted by measurement — the single-writer/
+single-reader harness shape (refuted by the `gateway-fastdds-ts` control, which
+shares that shape and *does* reproduce) and a sentinel publish forcing NACK/repair
+(refuted after removal). The remaining untested candidate is the **mix and count
+of data-sharing endpoints per participant**: the reproducing harness has a reader
+beside its writer on both ends, two topics and two `__schema` channels live, and
+its schema-propagation test fails in the *same* runs as its row test — so whatever
+is lost includes a retained `KEEP_LAST(1)` sample, pointing at endpoint mix rather
+than the row channel. Testing that needs a subscribing peer, which PDA-DEC-1's
+harness deliberately lacks. **`integration-tests/gateway-fastdds-ts` is the only
+harness that reproduces the defect — do not weaken or delete it.**
 
 ### PDA-ABI-8 — Guide, TD entries, licensing intent
 **Story.** As a third-party driver author I have a guide; as a maintainer I have

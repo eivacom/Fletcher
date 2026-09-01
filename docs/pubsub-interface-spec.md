@@ -18,8 +18,9 @@ Fletcher has one seam between the codec and a transport:
 `fletcher::PubSubProvider`
 ([pubsub/include/fletcher/pubsub/provider.hpp](../pubsub/include/fletcher/pubsub/provider.hpp)),
 four virtuals, three implementations (Fast DDS, XRCE-DDS, and an
-`InProcessProvider` that still lives inside
-[gateway/src/main.cpp](../gateway/src/main.cpp)).
+`InProcessProvider`, which PDA-DEC-1 lifted out of the gateway executable into
+[pubsub/src/in_process_provider.cpp](../pubsub/src/in_process_provider.cpp);
+it is not yet *registered* — that is PDA-DEC-5).
 
 Two things are queued **on opposite sides of that seam**:
 
@@ -437,9 +438,11 @@ examples and the `pubsub` / `pubsub-arrow` test suites. Same for any change to
 through `pubsub-arrow` and the gateway; the round is not "providers only" in
 either direction.
 
-`InProcessProvider` moves out of [gateway/src/main.cpp:72](../gateway/src/main.cpp#L72)
-into a real component and becomes a registered built-in — the first proof that
-§4's registry works, and later the body of PDA-ABI's reference driver.
+`InProcessProvider` moves out of the gateway executable into a real component
+and becomes a registered built-in — the first proof that §4's registry works, and
+later the body of PDA-ABI's reference driver. The **lift** landed in PDA-DEC-1
+(the conformance suite cannot link a type in an anonymous namespace inside a
+`main.cpp`); PDA-DEC-5 is the **registration**.
 
 ---
 

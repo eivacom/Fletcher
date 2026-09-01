@@ -243,7 +243,8 @@ proves no fix moved wire bytes; the ctest list proves no clause vanished.
 - **Item size is not knowable** (decision 11, by ruling). Sanctioned split shape: an
   individually large divergence fix becomes PDA-DEC-1b…n after this item; **PDA-DEC-1 does
   not close until they are green**, and no clause is ever disabled, skipped or
-  trait-declared to close it. ~1750 added lines is large for a guard and justified:
+  trait-declared to close it. ~1750 added lines is large for a guard and justified
+(actual at close: **+3429 / −194** — see the Stage Brief's "As landed"):
   greenfield twice over, clause set written once not three times.
 - **Plan-shape finding for the PM.** Lifting the loopback into `pubsub/` is scheduled in
   PDA-DEC-5 but needed *now* (anonymous namespace in a TU defining `main`). Moving it here
@@ -290,7 +291,7 @@ decision-11 fixes — conflict rejection in the loopback and in
 
 ## Numbers
 
-Declared net lines: **+1750 / −115** (+50 for the CI lane and the two conflict-rejection
+Declared net lines: **+1750 / −115** — *actual at close **+3429 / −194*** (+50 for the CI lane and the two conflict-rejection
 fixes; −115 corrects the earlier −70, which omitted both rationale blocks); excludes
 further decision-11 fixes, not knowable up front by ruling. **New public surface: 1** —
 `fletcher::InProcessPubSubProvider`, paid for by retiring the gateway-local
