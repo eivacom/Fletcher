@@ -427,6 +427,16 @@ alone, so those tests are substantially rewritten against profile documents;
 [docs/architecture-overview.md](architecture-overview.md) and the root
 [README.md](../README.md).
 
+**Consumers of the vocabulary change, which sit ABOVE the seam.** Giving schema
+arrival a C-expressible form (§3.4) is not confined to providers: `SubscriptionResult`
+and its `shared_future` are consumed by 10 sites outside `provider.hpp` —
+`pubsub/src/subscriber.cpp` (5), `pubsub-arrow/src/subscriber_arrow.cpp` and its
+header (4), `gateway/src/{main,ws_session}.cpp` (3), plus both `test_package`
+examples and the `pubsub` / `pubsub-arrow` test suites. Same for any change to
+`Blob` under §3.2. So DEC-3 lands in `core/` and `pubsub/` **and** ripples up
+through `pubsub-arrow` and the gateway; the round is not "providers only" in
+either direction.
+
 `InProcessProvider` moves out of [gateway/src/main.cpp:72](../gateway/src/main.cpp#L72)
 into a real component and becomes a registered built-in — the first proof that
 §4's registry works, and later the body of PDA-ABI's reference driver.
