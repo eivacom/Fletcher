@@ -135,11 +135,12 @@ front — that was accepted deliberately. Hard prerequisite for everything after
 
 ### PDA-DEC-2 — Copy-accounting oracle
 **Story.** As a maintainer whose seam must preserve zero-copy for two ABI rounds
-that inherit it, I have an instrumented blob and write buffer that **count
-copies**, so the property is a failing test rather than an aspiration.
+that inherit it, I have an instrumented blob and write buffer that decide copying by
+**address provenance**, so the property is a failing test rather than an aspiration.
 **Forcing test.** `CopyAccounting.PublishAndReceivePerformNoPayloadCopies`.
-**Acceptance.** Spec §8.1. Counts the encode path (row bytes into the
-provider-supplied buffer) and the attachment path, and records the **baseline**
+**Acceptance.** Spec §8.1. Judges the encode path (row bytes into the
+provider-supplied buffer) and the attachment path by comparing the encode-window
+base against the delivered pointer, and records the **baseline**
 — including the copy today's `Blob` forces on receive, which is the thing PDA-DEC-3
 has to make avoidable. Must be green before PDA-DEC-3.
 

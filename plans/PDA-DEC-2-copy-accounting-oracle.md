@@ -71,7 +71,7 @@ a different address than the live encode window.
 
 ### Subjects
 
-`CopySubject { std::string label; std::function<std::shared_ptr<PubSubProvider>()> make; }`
+`CopySubject { std::string label; std::unique_ptr<CopyRunner> runner; }`  *(as landed; the draft declared a `std::function` factory)*
 — same-process by construction. Registered:
 
 | Subject | What it is | Role |
@@ -294,4 +294,8 @@ changes is `WriteBuffer`, which gains an accessor rather than losing one.
 
 ## Numbers
 
-Declared net lines: **+560 / −5**. New public surface: **1** (`WriteBuffer::Data()`).
+Declared net lines: **+560 / −5**. **As landed: +1182 / −12** across `666ced8` +
+`581e28a` — reviewed by both step-4 agents and judged not scope creep (the third
+subject was owed by DEBT-1; the fix cycle's growth is the blocking falsifiability
+fix plus three should-fixes). New public surface: **1** (`WriteBuffer::Data()`),
+as declared.
