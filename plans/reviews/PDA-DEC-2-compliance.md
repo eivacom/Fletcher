@@ -289,3 +289,169 @@ weakness is finding 2.
 - The design's `Numbers` section still reads `+560 / −5`.
 - `plans/PDA-DEC-2-brief.md` was edited (DEBT-7) though the brief is not in the
   design's `Files-to-touch`.
+
+---
+
+# Re-check after fix cycle 1 — 2026-09-01
+
+Fix diff `666ced8..581e28a` (5 files), whole item `1f5d229..581e28a` (+1182/−12).
+Scope: my four findings and the four declared deviations only. Built
+`conformance_copy_accounting` and ran `ctest -R 'CopyAccounting\.'` at every step;
+7/7 green at `581e28a`, tree restored, `git status` clean, clang-format 18.1.3
+clean on all three changed C++ files.
+
+**Verdict: PASS.** All four findings closed. Nothing blocking.
+
+## Finding 1 (BLOCKING) — closed, re-derived by mutation
+
+`SeamProbeProvider::LoanForDelivery` now parks the bytes in an arena slot and
+`Publish` itself constructs the `Blob` from `loan_base_`; a caller-owned blob
+rides the same publish. That is the design's leg-3 shape (`SeamProbe` **delivers**
+an attachment whose bytes live in its arena, so **the provider must copy**).
+
+I re-derived five mutations rather than reading the report. Each was applied to a
+pristine tree, rebuilt, and run:
+
+| Mutation | Result |
+|---|---|
+| **A** — `DirectRunner(make_shared<InProcessPubSubProvider>())` (my own mutation from the first review, which then left the leg **green**) | **RED**: `delivered_attachments` 1 vs 2 |
+| **B** — PDA-DEC-3 simulated: provider holds the bytes in a `Blob` member and hands them over where they lie | **RED at 0**, on both the per-key `EXPECT_NE` and `attachment_copies`, with the message that names PDA-DEC-3 |
+| **C** — provider also deep-copies the caller-owned blob | **RED at 2**, "the provider copied a CALLER-OWNED blob (0x…→0x…)" |
+| **D** — `SeamProbe` recycles its encode window before delivery | **RED as "P5 VIOLATED"** on two entries, not as a copy count |
+| **E** — refill counter inert (`if (false) …`) | **RED on `GrowableProbe`** only |
+
+Mutation A is the decisive one: the exact swap that previously proved the leg
+provider-independent now fails. The leg is provider-dependent in both directions
+and three-valued (0/1/2), so the "1" is a measurement and not an arithmetic
+constant of the harness.
+
+The mislabel half of the finding is closed too. Spec §8.1 now reads "the copy §3.2
+forces on **a provider's own borrowed memory**", and the README opens the new
+section with "It is **not** a receive-side transport measurement; nothing here
+measures a transport." Both are now true of the code, and the narrowing is what
+the "Scope to the interface, say so plainly" ruling asks for.
+
+## Finding 2 — closed structurally
+
+`RefillMovementIsCountedNotFailed` no longer names `InProcessLoopback`; the string
+does not occur anywhere in `copy_clauses.cpp`. The growable direction runs against
+the harness-owned `GrowableProbeBuffer` (relocates on every refill by
+construction), the fixed direction against `SeamProbe`, and the failure message
+now says only "the refill counter is inert". Pre-sizing a provider's send buffer
+cannot turn any test red: the forcing test only *publishes* the number.
+
+Consequence, deliberate and correct: the README's "`InProcessLoopback` relocates
+3 times / 5632 bytes" is now an unasserted observation. That is the trade the
+finding asked for; the number is still printed on every run, so it is visible
+rather than pinned. No finding.
+
+## Finding 3 — closed on substance, budget met within one line
+
+Measured: `1f5d229..581e28a` on the spec is +21/−4. §3.1 clause 5 is **4 lines**
+(design said "a sentence" — it is two short ones). §8.1 is +17/−4, i.e. **net
++13** against the declared ≤12. A one-line overrun is not worth a cycle.
+
+Substance intact and, in one place, improved:
+
+- provenance over counting still ratified explicitly ("The mechanism is **address
+  provenance**, not counting");
+- **refill ruling** — "Refill movement is permitted (§3.1 clause 1) and **reported
+  as a number**; every other byte movement is a violation";
+- **scope ruling** — the **Scope.** paragraph survives intact, naming
+  data-sharing, loaned samples and receive-side zero-copy as out;
+- **pin-at-one ruling** — survives, and its subject is now correctly described;
+- P2/P5 preconditions and the live negative control both retained.
+
+Nothing was traded away to make the section shorter.
+
+## Finding 4 — consolidation is real; the code growth is the fixes
+
+Across the three TUs: comments **299 → 229**, code **493 → 609**, and the four
+quadruplicated arguments now have one home each (README for the mechanism,
+premises and scope; spec for the contract; headers cite). The header lost 108
+lines of restated argument and gained the `static_assert`.
+
+I accounted for the +116 code lines against the fixes: `ProbeMode` + three-way
+`Publish` and `LoanForDelivery` (blocking fix); the second attachment and its two
+traces plus `TraceNamed`/`Hex` and the new per-key assertions (blocking fix);
+`GrowableProbeBuffer` + `GrowableControlSubject` (finding 2); the `Address`/`At()`
+migration, `window_intact` and `delivered_attachments` (step-4b should-fixes); and
+the `static_assert`. That is the whole of it. No new scope: registered subjects
+still **3**, ctest entries still **7** (`ctest -N` confirms), no new provider,
+no new SDK link, no ABI.
+
+## Declared deviations — all four confirmed in-charter
+
+- **Two attachments on leg 3** — required by the fix: with one trace,
+  `attachment_copies` was confined to {0,1} and the value 2 was unrepresentable.
+  Mutation C shows 2 is now reachable. No extra ctest entry.
+- **`copying_provider` parameter** — a second call inside the same test, not a new
+  entry; it is the standing proof that the number moves with provider behaviour.
+- **`GrowableControlSubject`** — a control, deliberately *not* in
+  `CopyAccountingSubjects()`, so rung-1 item 2 ("every registered subject faces
+  the same numbers") still holds.
+- **`static_assert` on `Blob`** — compile-time, harness-local. Load-bearing in CI:
+  `core/**` is in the `integration-pubsub-conformance` path filter, so a
+  `core/include/fletcher/core/types.hpp` edit runs this lane and the build goes
+  red on both platforms.
+
+## The residual — correctly bounded, honestly stated, PM's call is right
+
+The claim is that "goes red when PDA-DEC-3 removes the copy, not merely as a
+compile break" is not fully constructible here. I agree, with one correction to
+the framing: mutation B shows the runtime half **does** go red at 0 for any
+removal observable at the provider. What is genuinely uncoverable is a PDA-DEC-3
+that leaves `Blob` alone and adds a *parallel* borrowed-blob type — in that world
+the pinned "1" remains a true statement about the old path, and the risk is that
+the feature lands with the guard un-updated, not that the guard reports a
+falsehood. So what is deferred is narrower than "the ruling".
+
+The rejected SFINAE probe for a guessed `Blob(owner, data, size)` was correctly
+rejected: a wrong guess keeps the leg green and silent, which is exactly the
+failure mode the "Pin at one" ruling exists to prevent. Closing the residual
+properly requires naming the vocabulary PDA-DEC-3 owns, which the round-split
+ruling ("should not do any development on any of the ABIs, only prepare for
+them") argues against doing here.
+
+**Recording it as an obligation on PDA-DEC-3 rather than escalating is the right
+call.** One caveat on completeness, in RECORD below.
+
+*Observation, not a finding:* one sub-case could be narrowed cheaply — a second
+`static_assert` on `Attachments`'s exact type would also catch
+`unordered_map<string, variant<Blob, BorrowedBlob>>`. It would still not catch a
+separate delivery overload, so it narrows rather than closes. Worth folding into
+PDA-DEC-3's obligation; not worth a cycle here.
+
+## Still-true, re-confirmed
+
+No ABI surface (decision 14) — grepped the fix diff for `extern "C"`, `dlopen`,
+`LoadLibrary`, `GetProcAddress`, `.so`/`.dll`, version negotiation: zero hits.
+Nothing branches on built-in vs loaded; the harness sees only `PubSubProvider`.
+`integration-tests/gateway-fastdds-ts` absent from the whole-item diff. Public
+surface **1** (`WriteBuffer::Data()`); the fix touched no `core/` file and the
+harness has no `install()` rule. `Files-to-delete: none` still holds and the
+converse still holds — no code deleted anywhere in the item. Rung-2 refusals were
+**strengthened**, not weakened: `COPY_MUST_DELIVER_CLEANLY` now refuses at the
+door on throw, `deliveries != 1`, P5 violation, wrong row length, garbled row,
+wrong delivered attachment count, MISSING attachment and garbled attachment —
+all before any verdict, with no fallback path. `.claude/runbook.PDA-DEC.config.md`
+(a Files-to-touch entry, gitignored) already carries `-R 'CopyAccounting\.'` and
+the 7-entry note.
+
+## RECORD
+
+- The PM's `CopySubject` correction at
+  `plans/PDA-DEC-2-copy-accounting-oracle.md:74` is itself inaccurate. It now
+  reads `CopySubject { std::string label; std::unique_ptr<CopyRunner> runner; }`;
+  the landed shape is a **factory** —
+  `std::function<std::unique_ptr<CopyRunner>()> make;` plus an `operator()()`.
+- The PDA-DEC-3 residual is written into `copy_accounting.hpp` and the harness
+  README but **not yet into `plans/PDA-decouple-interface.md`**. It belongs beside
+  the "PDA-DEC-3 owns InProcess schema arrival … do not lose it" bullet
+  (`:71-76`), because a PDA-DEC-3 that adds a parallel type may never open the
+  harness.
+- `plans/PDA-decouple-interface.md:92` — PDA-DEC-3's forcing-test cell reads
+  "(+ PDA-DEC-2 green)". With the pin at 1, a real PDA-DEC-3 must turn it **red**
+  and then update it; the cell should read "PDA-DEC-2 updated to 0 and green".
+- `plans/PDA-decouple-interface.md:91` — PDA-DEC-2 row still ⚪ (expected: the
+  close gate has not run).

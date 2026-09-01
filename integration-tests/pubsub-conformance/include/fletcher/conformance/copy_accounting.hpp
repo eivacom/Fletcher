@@ -73,9 +73,11 @@ struct CopyLedger {
     size_t delivered_len = 0;
     bool row_content_ok = false;
     /// P5 enforced rather than merely documented: the encode window still held
-    /// the row, byte for byte, when the callback ran. A subject that frees,
-    /// recycles or pools it before delivery would otherwise read as a silent
-    /// zero once the allocator handed the address back out.
+    /// the row, byte for byte, when the callback ran. This catches a subject that
+    /// clobbers or recycles the window before delivery, and relabels the failure
+    /// as a P5 violation instead of a copy count. It does NOT catch a window
+    /// freed and handed back at the same address with its bytes intact — see
+    /// "Not airtight" in the harness README.
     bool window_intact = false;
     /// What the DELIVERY carried — the published-side count comes from the
     /// input map and so cannot catch a dropped entry.

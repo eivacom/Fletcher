@@ -162,3 +162,120 @@ both), and its invalidation contract is stated.)*
 - README's "seven entries" and the per-entry table are accurate (`ctest -C Release -N -R 'CopyAccounting\.'` → 7).
 - README's "the number is on stdout and in the JUnit XML" is accurate — verified; gtest emits the `/`-bearing keys as `<property name=...>` attribute values, so the XML stays well-formed.
 - `docs/pubsub-interface-spec.md` §8.1 and the README both describe `BorrowedAttachmentCostsExactlyOneCopy` as a red-on-fix tripwire. That wording must change with B1, whichever exit is taken.
+
+---
+
+# Re-check after fix cycle 1 — 2026-09-01
+
+Diff `666ced8..581e28a` (the fix), whole item still `1f5d229..581e28a`.
+
+Built and mutation-tested `581e28a` in an isolated worktree (`/c/tmp/pda-dec2-rc`),
+because the shared tree was being mutated by the parallel 4a review at the time.
+Pristine: `conformance_copy_accounting.exe` 7/7, 0 ms. `clang-format 18.1.3
+--dry-run -Werror` clean on all three C++ files. Worktree restored.
+
+Counts: **0 blocking · 1 should-fix · 4 nits.**
+
+## The three original findings
+
+**B1 (blocking) — CLOSED.** The leg is genuinely falsifiable now, verified by
+building, not by report.
+
+- `SeamProbeProvider::Publish` constructs the `Blob` (`delivered.insert_or_assign(
+  loan_key_, std::make_shared<...>(loan_base_, loan_base_ + loan_len_))`). The
+  copy is provider code; the harness only parks bytes and records the arena base.
+- **0 is reachable.** I mutated `LoanForDelivery` to park the payload in a
+  provider-held `Blob` and `Publish` to hand that same `Blob` over (the shape a
+  seam that could carry borrowed memory would take). Result: red, both
+  `EXPECT_NE(loaned.delivered_data, loaned.published_data)` and
+  `attachment_copies` `Which is: 0 / Which is: 1`.
+- **2 is reachable** and is asserted standing, not by inspection, via the
+  `copying_provider` leg — which passes today at 2.
+- **The two attachments cannot mask each other.** I built the adversarial case
+  where the total stays 1 but is wrong in both halves (loaned delivered free,
+  owned deep-copied). `EXPECT_EQ(verdict.attachment_copies, 1)` did **not** fire —
+  it is the per-attachment `EXPECT_EQ(owned...)` / `EXPECT_NE(loaned...)` pair
+  that catches it, and it does, with the right nouns. The pinned total alone
+  would still have been a silent green; the fix put the weight in the right place.
+- The `static_assert` is true (`Blob` is exactly
+  `std::shared_ptr<const std::vector<uint8_t>>`, core/types.hpp:20) and load-
+  bearing, not decorative: it is the only thing that fires on the PDA-DEC-3 shape
+  no provider-side measurement can see. Its residual (a parallel borrowed-blob
+  type) is stated in the header rather than papered over.
+
+**S1 (dangling pointer comparison) — CLOSED.** `Address = uintptr_t` throughout;
+every comparison in `Judge()`, `JudgeArithmeticIsSound` and the leg-3 assertions
+is integer. The only pointer round-trips left (`reinterpret_cast<const uint8_t*>`
+in `MakeCapture` for the P5 memcmp and the attachment content memcmp) are *reads*,
+performed inside the callback where the storage is live by precondition, on values
+obtained from valid pointers of the same type — the round trip is guaranteed to
+recover the original value. No implementation-defined comparison remains.
+
+**S2 (P5 unchecked) — CLOSED as scoped.** The check is real and cannot be bypassed
+(it defaults `false`, is computed first in the callback, and is an `ASSERT_` ahead
+of the length and content checks). Verified: mutating the growable probe to recycle
+its window before delivery goes red as `P5 VIOLATED`, not as a copy count.
+
+I did also confirm the boundary of what it buys, since I am the one who proposed
+it: when `row_copies == 0`, `window_intact` is implied by `row_content_ok`, so the
+check is a **diagnostic relabel plus a catch for the clobbered window**, not a new
+detector. The exact silent green S2 named — window freed, allocator hands the same
+address back holding the row — still reads as zero; I built it and it passes green.
+The README says this in as many words ("Not airtight — a window freed and
+immediately re-handed the same bytes at the same address is indistinguishable"), so
+the record is honest. Only the header comment overstates it (see RECORD).
+
+## Should-fix
+
+### S3 — the loaned bytes' liveness rests on an uncounted publish budget; give the loan its own slot (confidence: high; materiality: low)
+
+`copy_accounting.cpp`, `Arena` / `LoanForDelivery`. The loan takes a slot from the
+same 4-slot rotation the row buffer draws from. "The loaned bytes and the row of
+one publish never share an address" is therefore true only because no provider in
+this suite publishes more than once; the 4th `Publish` on a loaned provider hands
+the row buffer back the loan's slot and the delivered `loaned` blob would carry row
+bytes. Nothing enforces or states the bound, and `kSlots` reads as a tuning
+constant rather than as a safety one.
+
+Unreachable today (one publish per provider, and the consequence would be a loud
+`arrived GARBLED`), so this is not a bug — it is machinery kept to tolerate a state
+that can be made unrepresentable. A dedicated `std::array<uint8_t, kSlotBytes>
+loan_slot_;` member, used by `LoanForDelivery` instead of `arena_.NextSlot()`,
+removes the coupling entirely and costs two lines. PDA-ABI is the plausible tripper,
+since a driver-backed subject is the first thing likely to publish twice.
+
+## Nits
+
+- A provider that frames the row into the same `WriteBuffer` (prefix, or a
+  pre-filled `VectorWriteBuffer`) makes `encode_len != expected_row.size()` and is
+  accused of `P5 VIOLATED` — a use-after-free diagnosis for a framing choice. Red
+  either way, wrong noun; worth a word in the message for PDA-ABI's sake.
+- `Arena::kSlots == 4` (32 KiB) still buys nothing: at most two slots are ever
+  live. Two would do, and with S3 applied, one.
+- The `copying_provider` bool default parameter reads as a flag at the two call
+  sites; an enum or a second named entry point would say which probe is running.
+- `EncodeAccounted`'s "refill with the same base" gap is a non-issue, and by a
+  stronger argument than the implementer's: a reallocation that returns the same
+  base *did not move the bytes*, so there is nothing to count. It is not specific
+  to `GrowableProbeBuffer`'s allocate-before-free — no allocator can produce the
+  missed case. Both directions are also asserted against harness-owned buffers, so
+  an undercount would fail loudly rather than under-report.
+
+## Volume
+
+The +117 net code lines are all fix: `GrowableProbeBuffer` and `ProbeMode::kGrowable`
+(the harness-owned refill control, which is also what stops a provider pre-sizing
+its send buffer from turning `RefillMovementIsCountedNotFailed` red), the rewritten
+loan/deliver path, `window_intact` + `delivered_attachments` capture, the second
+attachment and its per-key assertions, the `copying_provider` leg, `TraceNamed`/`Hex`,
+the `static_assert`. Comment lines went *down* 70. Six of my eight nits are also
+fixed in passing (`<mutex>`, the `LoanForDelivery` overflow check, `refill_bytes == 0`,
+the `RecordProperty` int narrowing, the published-side attachment count, MISSING vs
+GARBLED). No scope creep; nothing in the +117 fails to carry weight.
+
+## RECORD (for the PM; not blocking)
+
+- `copy_accounting.hpp`, `window_intact` comment: "would otherwise read as a silent
+  zero once the allocator handed the address back out" overclaims — that is precisely
+  the case the check still misses, as README's own "Not airtight" paragraph states
+  correctly. Align the header with the README.

@@ -74,6 +74,13 @@ Two notes on the shape:
   plumbing **and adds the sixth (schema-carrying loopback) subject** to the
   conformance suite. Recorded 2026-09-01 from the PDA-DEC-1 design review; do not
   lose it.
+- **PDA-DEC-3 must update PDA-DEC-2's borrowed-attachment pin.** That pin asserts
+  exactly one copy (owner ruling 2026-09-01) and goes red at 0 for any removal a
+  *provider* can express — mutation B proves it. The one shape it cannot see is
+  PDA-DEC-3 leaving `Blob` untouched and adding a **parallel** borrowed-blob type,
+  which would land silently. PM ruling 2026-09-01: booked here as a PDA-DEC-3
+  obligation rather than re-escalated; endorsed by the PDA-DEC-2 compliance
+  re-check. Do not close PDA-DEC-3 without updating that pin.
 - **PDA-DEC-5 is registration only.** PDA-DEC-1 lifts `InProcessProvider` out of
   `gateway/src/main.cpp` into `pubsub/`, because the class sits in an anonymous
   namespace inside an executable and is otherwise unlinkable by the suite — the
@@ -89,7 +96,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 |------|-------|------|--------------|--------|
 | PDA-DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | 🟢 |
 | PDA-DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
-| PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy — **plus the 6th (schema-carrying loopback) conformance subject** | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
+| PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy — **plus the 6th (schema-carrying loopback) conformance subject** | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2's attachment pin updated to 0 and green) | ⚪ |
 | PDA-DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
 | PDA-DEC-5 | `InProcessProvider` registered as a built-in (lifted into `pubsub/` by PDA-DEC-1) | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
 | PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | ⚪ |

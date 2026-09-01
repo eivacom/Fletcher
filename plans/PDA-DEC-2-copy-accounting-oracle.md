@@ -71,7 +71,7 @@ a different address than the live encode window.
 
 ### Subjects
 
-`CopySubject { std::string label; std::unique_ptr<CopyRunner> runner; }`  *(as landed; the draft declared a `std::function` factory)*
+`CopySubject { std::string label; std::function<std::unique_ptr<CopyRunner>()> make; }`  *(as landed)*
 — same-process by construction. Registered:
 
 | Subject | What it is | Role |
