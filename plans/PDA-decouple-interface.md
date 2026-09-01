@@ -68,6 +68,18 @@ Two notes on the shape:
   signature PDA-ABI has to widen to admit loading, the round has failed at its
   actual purpose even with every test green.
 
+- **PDA-DEC-3 owns InProcess schema arrival, and gains a suite subject.** PDA-DEC-1
+  exercises the loopback as a *schema-less* transport only (§7 permits that). Making
+  it schema-carrying needs plumbing PDA-DEC-3 would replace, so PDA-DEC-3 lands that
+  plumbing **and adds the sixth (schema-carrying loopback) subject** to the
+  conformance suite. Recorded 2026-09-01 from the PDA-DEC-1 design review; do not
+  lose it.
+- **PDA-DEC-5 is registration only.** PDA-DEC-1 lifts `InProcessProvider` out of
+  `gateway/src/main.cpp` into `pubsub/`, because the class sits in an anonymous
+  namespace inside an executable and is otherwise unlinkable by the suite — the
+  alternative was a duplicate PDA-DEC-5 would delete. Endorsed by the PDA-DEC-1
+  design review; PM ruling 2026-09-01.
+
 ## Work-item tracker
 
 Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + reviewed)
@@ -79,7 +91,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 | PDA-DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
 | PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
 | PDA-DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
-| PDA-DEC-5 | `InProcessProvider` promoted out of `gateway/src/main.cpp` into a registered built-in | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
+| PDA-DEC-5 | `InProcessProvider` registered as a built-in (lifted into `pubsub/` by PDA-DEC-1) | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
 | PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | ⚪ |
 | PDA-DEC-7 | XRCE configured by document (`key=value`) | 🟧 | `XrceConfig.DocumentConfiguresTransport` | ⚪ |
 | PDA-DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | ⚪ |
