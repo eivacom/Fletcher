@@ -74,6 +74,34 @@ class OwnedSchema {
 /// a const pointer to its ArrowSchema.  Safe to pass into callbacks
 /// and store across threads — the schema lives as long as any copy
 /// of the shared_ptr exists.
+///
+/// ── The normative rule (spec §3.3, which imports §3.2's clauses) ────────────
+///
+/// `ArrowSchema` is already the Arrow C Data Interface, so schema *content*
+/// crosses a C boundary for free and no Fletcher schema format is invented. What
+/// does not cross for free is the OWNERSHIP: the C Data Interface's `release` is
+/// **unique** ownership, while this handle is **shared** and is documented as
+/// storable by a callback across threads. So a SharedSchema crossing the seam is
+/// an owner-handle pair `{owner, const ArrowSchema*}` obeying §3.2's five
+/// clauses — retain/release safe from any thread, release never throwing or
+/// re-entering the seam, contents immutable once they cross, an argument
+/// borrowed for the call and a callee that keeps it taking its own reference.
+///
+/// **A boundary releases the OWNER HANDLE. It must never call the Arrow C Data
+/// Interface `release` on a shared schema** — that destroys the schema under
+/// every other holder, including holders in other languages. This is the one
+/// memory-unsafe reading available here, so it is written down rather than
+/// implied. `arrow::ImportSchema` consumes what it is given, which is why
+/// `fletcher::ImportArrowSchema` (pubsub-arrow) deep-copies first and why it is
+/// public: so no caller writes the unsafe conversion.
+///
+/// No shape change is owed: MakeSharedSchema below already returns the aliasing
+/// `SharedSchema(owner, owner->get())` — an owner plus a pointer — so it can
+/// already name a schema Fletcher did not allocate. §3.3 owed the written rule,
+/// not a reshape.
+///
+/// `CreateTopic` transfers ownership IN (by-value OwnedSchema); delivery to a
+/// subscriber callback BORROWS.
 using SharedSchema = std::shared_ptr<const ArrowSchema>;
 
 /// Creates a SharedSchema from an OwnedSchema (move semantics).

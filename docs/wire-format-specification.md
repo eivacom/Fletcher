@@ -161,7 +161,7 @@ The codec is completely unaware of attachments — they remain a transport-layer
 
 | Type | Definition | Purpose |
 |---|---|---|
-| `Blob` | `shared_ptr<const vector<uint8_t>>` | Zero-copy binary data |
+| `Blob` | `{shared_ptr<const void> owner, const uint8_t* data, size_t size}` | Zero-copy binary data, including bytes Fletcher did not allocate |
 | `Attachments` | `unordered_map<string, Blob>` | Key/value blob pairs |
 | `Envelope` | Row + Attachments bundle | Wire transport unit |
 

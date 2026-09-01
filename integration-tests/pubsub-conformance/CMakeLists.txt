@@ -142,6 +142,17 @@ target_link_libraries(conformance_inprocess PRIVATE
     conformance_clauses
     GTest::gtest_main)
 
+# The SAME loopback, constructed schema-CARRYING — the sixth subject. Its own
+# binary, because clause 2's axis gate is the link line and INSTANTIATE_TEST_SUITE_P
+# registers every clause in a binary against every subject in it; see
+# subjects/inprocess_carrying_main.cpp.
+add_executable(conformance_inprocess_carrying subjects/inprocess_carrying_main.cpp)
+target_link_libraries(conformance_inprocess_carrying PRIVATE
+    conformance_support
+    conformance_clauses
+    conformance_clauses_carried
+    GTest::gtest_main)
+
 # ── The copy-accounting oracle ──────────────────────────────────────
 # A SECOND suite in this harness, not a second harness: it inherits the CI lane,
 # the format/licence gates and the subject-parameterised shape a later ABI round
@@ -157,6 +168,25 @@ add_executable(conformance_copy_accounting
     src/copy_accounting.cpp
     src/copy_clauses.cpp)
 target_link_libraries(conformance_copy_accounting PRIVATE
+    conformance_support
+    GTest::gtest_main)
+
+# ── The seam-vocabulary suite ───────────────────────────────────────
+# A THIRD suite in this harness, for the same reasons the copy oracle is a
+# second one. It asserts what the crossing types make representable — ownership,
+# schema arrival, the status taxonomy — which no provider-parameterised clause
+# can reach: `InProcessLocal` is subject-axis kAbsent, so the loopback is never
+# handed a real schema by CONF_MUST_DECLARE, and only the gateway exercises that
+# path today (review debt C2-1).
+#
+# It links the copy oracle's instrument, not a second one, so there is exactly
+# one scoring path in this harness.
+#
+# Keeps gtest_main: it spawns no child and opens no pipe.
+add_executable(conformance_seam_vocabulary
+    src/seam_vocabulary.cpp
+    src/copy_accounting.cpp)
+target_link_libraries(conformance_seam_vocabulary PRIVATE
     conformance_support
     GTest::gtest_main)
 
@@ -212,10 +242,15 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(conformance_inprocess DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)
+gtest_discover_tests(conformance_inprocess_carrying DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 120)
 # No RESOURCE_LOCK: no domain, no port, no child, no shared state — the copy
 # oracle is safe to run fully parallel with everything else here. 60 s is two
 # orders of magnitude above what it costs; anything near it is a hang.
 gtest_discover_tests(conformance_copy_accounting DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+# Same shape, same reasoning: no domain, no port, no child.
+gtest_discover_tests(conformance_seam_vocabulary DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
 # and conformance_fastdds carries two subjects (domains 151 and 152). It also

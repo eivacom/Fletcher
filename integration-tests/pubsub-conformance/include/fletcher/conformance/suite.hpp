@@ -65,8 +65,8 @@ class ScopedSubscription {
     ScopedSubscription(const ScopedSubscription&) = delete;
     ScopedSubscription& operator=(const ScopedSubscription&) = delete;
 
-    /// The subscription's schema future (§7 clause 5).
-    const std::shared_future<SharedSchema>& Schema() const { return result_.schema; }
+    /// The subscription's schema arrival (§7 clause 5).
+    const SchemaArrival& Schema() const { return result_.schema; }
 
    private:
     ProviderSubject& subject_;
@@ -124,6 +124,17 @@ class ProviderConformance : public ::testing::TestWithParam<SubjectFactory> {
             deadline_ = std::chrono::steady_clock::now() + kClauseBudget;
         }
         return *deadline_;
+    }
+
+    /// What is left of `Deadline()`, as the duration a SchemaArrival wait takes.
+    /// Never negative — a budget already spent polls rather than being refused,
+    /// which is what the deadline form did too.
+    std::chrono::milliseconds RemainingBudget() {
+        const auto left = Deadline() - std::chrono::steady_clock::now();
+        if (left <= std::chrono::steady_clock::duration::zero()) {
+            return std::chrono::milliseconds::zero();
+        }
+        return std::chrono::duration_cast<std::chrono::milliseconds>(left);
     }
 
     /// Deadline for a wait that is EXPECTED to time out. Separate from

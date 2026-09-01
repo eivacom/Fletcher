@@ -11,6 +11,7 @@
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <mutex>
 #include <thread>
@@ -61,7 +62,7 @@ class MockProvider : public PubSubProvider {
         if (it != schemas_.end()) {
             schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {MakeReadySchemaFuture(std::move(schema))};
+        return {SchemaArrival::Ready(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -122,7 +123,11 @@ TEST(SubscriberArrowTest, SubscribeReturnsArrowSchema) {
     pub.CreateTopic(kTopic, TestSchema());
     SubscriberArrow::SubscribeResult result = sub.Subscribe(kTopic, [](ArrowRow, Attachments) {});
 
-    std::shared_ptr<arrow::Schema> sch = result.schema.get();
+    // Re-anchored: the Arrow tier hands back the seam's own arrival, and the
+    // caller converts with the one safe public conversion.
+    SharedSchema nano;
+    ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &nano), PubSubStatus::kOk);
+    std::shared_ptr<arrow::Schema> sch = ImportArrowSchema(nano);
     ASSERT_NE(sch, nullptr);
     EXPECT_EQ(sch->num_fields(), 2);
     EXPECT_EQ(sch->field(0)->name(), "x");
@@ -164,16 +169,21 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     static_cast<void>(
         sub.Subscribe(kTopic, [&](ArrowRow, const Attachments& att) { received_att = att; }));
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
+    const std::vector<uint8_t> payload{0xDE, 0xAD};
+    Blob blob{payload};
+    Attachments sent;
+    sent.emplace("img", blob);
 
     ArrowRow row = {
         std::make_shared<arrow::Int32Scalar>(1),
         std::make_shared<arrow::StringScalar>("a"),
     };
-    pub.Publish(kTopic, row, {{"img", blob}});
+    pub.Publish(kTopic, row, sent);
 
     ASSERT_EQ(received_att.count("img"), 1);
-    EXPECT_EQ(*received_att.at("img"), *blob);
+    // The kept copy names the very bytes that were published (§3.2).
+    EXPECT_EQ(received_att.at("img").data(), blob.data());
+    EXPECT_EQ(received_att.at("img").size(), payload.size());
 }
 
 TEST(PubSubArrowTest, PublishDirectPassthrough) {
@@ -344,9 +354,10 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     opt.timeout = std::chrono::minutes(10);
     static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xBE, 0xEF});
-    pub.Publish(kTopic, MakeRow(1, "a"), {{"img", blob}});  // row 0 has an attachment
-    pub.Publish(kTopic, MakeRow(2, "b"));                   // row 1 has none
+    Attachments sent;
+    sent.emplace("img", Blob{std::vector<uint8_t>{0xBE, 0xEF}});
+    pub.Publish(kTopic, MakeRow(1, "a"), sent);  // row 0 has an attachment
+    pub.Publish(kTopic, MakeRow(2, "b"));        // row 1 has none
 
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -368,13 +379,17 @@ TEST(SubscriberArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
     opt.timeout = std::chrono::minutes(10);
     auto result = sub.Subscribe(kTopic, sink.callback(), opt);
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x01});
-    pub.Publish(kTopic, MakeRow(1, "good"), {{"img", blob}});  // decodes fine
+    Blob blob{std::vector<uint8_t>{0x01}};
+    Attachments good;
+    good.emplace("img", blob);
+    Attachments orphan;
+    orphan.emplace("orphan", blob);
+    pub.Publish(kTopic, MakeRow(1, "good"), good);  // decodes fine
 
     // A truncated buffer (just the 1-byte null bitfield) underruns when the
     // int32 field is read, so DecodeRow throws and the row is dropped — and
     // its attachment is discarded with it.
-    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); }, {{"orphan", blob}});
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); }, orphan);
 
     sub.Unsubscribe(result.subscription_id);
 

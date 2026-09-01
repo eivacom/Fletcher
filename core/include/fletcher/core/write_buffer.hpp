@@ -17,6 +17,23 @@ namespace fletcher {
 
 // Sequential binary output with random-access patching. Appends are inline over a byte window the
 // subclass provides; only running out of room reaches the virtual slow path, bytes in hand.
+//
+// ── The normative rule for the crossing (spec §3.1), stated here because a C view on either side
+//    of the seam must derive the SAME one ───────────────────────────────────────────────────────
+//
+// The window is `{data, capacity, pos}` — `Data()` is its base, `Position()` how much has been
+// written. A window is **borrowed for the duration of the encode call** and must never be stored
+// past it: the buffer that owns it may be a transport's loaned payload, valid only while the
+// publish that lent it is running.
+//
+// A window means **one crossing per refill, not one per append**, which is the whole reason this
+// shape is the C-expressible one: a C encoder writes straight into `{data, capacity, pos}` and only
+// calls back when it runs out of room.
+//
+// Bytes already written must not move or be flushed **except inside a refill**, which preserves
+// them verbatim at a new base (Fletcher back-patches length prefixes and null bitfields below
+// `pos`). Refill movement is permitted and measured; every other byte movement is a zero-copy
+// violation (§8.1).
 class WriteBuffer {
    public:
     virtual ~WriteBuffer() = default;

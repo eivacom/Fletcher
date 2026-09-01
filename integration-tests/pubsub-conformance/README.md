@@ -32,6 +32,7 @@ re-deriving the rules.
   | Subject | Provider | Publisher lives | Schema mode | Retention |
   |---|---|---|---|---|
   | `InProcessLocal` | in-process loopback | this process | absent | drops |
+  | `InProcessCarrying` | in-process loopback, constructed `SchemaCarriage::kCarried` | this process | carried | drops |
   | `FastDdsLocal` | Fast DDS (domain 151) | this process | carried | retains |
   | `FastDdsCrossProcess` | Fast DDS (domain 152) | **a child process** | carried | retains |
   | `XrceLocal` | XRCE-DDS (domain 153, Agent :2019) | this process | carried | retains |
@@ -44,7 +45,16 @@ re-deriving the rules.
 - **Retention is keyed by provider**, not by subject
   (`RetentionForProvider`), so a provider's two subjects cannot disagree and
   clause 6 has no per-subject escape hatch. `schema_mode` *is* per subject: §7
-  clause 1 sanctions the same transport being exercised in both modes.
+  clause 1 sanctions the same transport being exercised in both modes, and the
+  loopback now is — `InProcessLocal` and `InProcessCarrying` are one provider in
+  its two construction-time modes.
+- **One binary per schema mode.** The two loopback subjects live in separate
+  binaries (`subjects/inprocess_main.cpp`, `subjects/inprocess_carrying_main.cpp`)
+  because clause 2's gate is the link line and `INSTANTIATE_TEST_SUITE_P`
+  registers *every* clause in a binary against *every* subject in it. Two schema
+  modes in one binary would run clause 2 against the schema-less one — present
+  and failing, where the design says it should be absent. See "Clause 2 and the
+  axis gate".
 - **Rows are 8 opaque bytes** (magic + seq) written straight into the
   provider-supplied `WriteBuffer`. No codec, no Arrow C++, no generated type —
   so the suite cannot see payload layout and no divergence it forces can be a
@@ -157,6 +167,7 @@ Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §8
 §8.1, §3.1, §3.2. A **second** suite in this harness, in its own binary
 (`conformance_copy_accounting`), linking no provider SDK and running in
 milliseconds. `ctest -R 'CopyAccounting\.'` runs the whole oracle: seven entries.
+A **third** suite, `SeamVocabulary`, is described at the bottom of this section.
 
 It decides, by **address provenance**, whether the payload bytes a subscriber
 sees are the very bytes the publisher wrote. **A copy** is payload bytes coming
@@ -177,7 +188,7 @@ storage still lands at a different address than the *live* encode window.
 |---|---|
 | `PublishAndReceivePerformNoPayloadCopies` × 3 subjects | the forcing test: row at 64 B and 4 KiB, plus two 1 KiB attachments |
 | `StagingIsCaught` | the **live negative control** — a deliberately-copying provider the same `Judge()` must score at `row_copies == 1`, `attachment_copies == 2` |
-| `BorrowedAttachmentCostsExactlyOneCopy` | the copy §3.2 forces on a provider's own borrowed memory, **pinned at exactly one** |
+| `BorrowedAttachmentCostsNoCopies` | a provider's own borrowed memory, **pinned at zero** — it was `…CostsExactlyOneCopy`, pinned at one, until PDA-DEC-3 removed the copy |
 | `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable window, zero on a fixed one |
 | `JudgeArithmeticIsSound` | the pure verdict function, without a provider |
 
@@ -199,27 +210,45 @@ is pinned against a **harness-owned** growable window, never against a provider:
 pre-sizing a provider's send buffer is an improvement and must not turn a test on
 the instrument red.
 
-### `BorrowedAttachmentCostsExactlyOneCopy` — what it does and does not pin
+### `BorrowedAttachmentCostsNoCopies` — what it does and does not pin
 
 It is **not** a receive-side transport measurement; nothing here measures a
 transport. It measures a *provider* that already holds payload bytes in memory it
 owns — a stand-in for a transport-loaned sample — and must produce a `Blob` for
-them inside `Publish`. Today it cannot without copying: `Blob` points at a
-`vector`, and a `vector` owns its bytes (§3.2). A caller-owned blob rides the
-same publish and must cross untouched, so the total is three-valued and moves
-with provider behaviour both ways — **0** the seam gained the ability to carry
-borrowed memory, **1** today, **2** a provider copied bytes it was handed by
-`shared_ptr`. The suite proves that standing, by running the identical leg
-against the deep-copying probe and requiring 2.
+them inside `Publish`. A caller-owned blob rides the same publish and must cross
+untouched, so the total is three-valued and moves with provider behaviour both
+ways: **0** today, **1** the seam has lost the ability to carry borrowed memory,
+**2** a provider copied bytes it was handed already shared. The suite proves that
+standing, by running the identical leg against the deep-copying probe and
+requiring 2.
 
-**PDA-DEC-3 removes the limitation; when it does, update this to demand 0 — do
-not delete the test.** The runtime half cannot see that land by itself, because
-no provider can escape a type-level limitation: the `static_assert` in
-`copy_accounting.hpp` is what turns the **build** red when `Blob` changes shape,
-including the backward-compatible shape where `Blob` becomes a class implicitly
-constructible from today's `shared_ptr`. **Residual, stated not hidden:** a
-PDA-DEC-3 that leaves `Blob` untouched and adds a *parallel* borrowed-blob type
-trips neither. Closing that needs the seam vocabulary PDA-DEC-3 owns.
+**This pin was 1, and the change from 1 to 0 is the point.** The owner's
+2026-09-01 ruling pinned the §3.2 copy at exactly one *so that removing it would
+turn this test red* — silence being how such a fix gets forgotten or half-landed.
+PDA-DEC-3 removed it: `Blob` stopped being a `shared_ptr` to a `vector` and became
+an owner plus a span, so a provider hands over bytes it already holds where they
+lie. The tripwire fired exactly as designed — the `static_assert` in
+`copy_accounting.hpp` stopped the **build** before any test ran — and the
+assertions here were updated deliberately, in the same change, with the rename
+visible in `ctest -N`.
+
+The residual the old text feared ("a PDA-DEC-3 that leaves `Blob` untouched and
+adds a *parallel* borrowed-blob type trips neither") did not happen and now
+cannot: the `static_assert`s in `copy_accounting.hpp` are the **inverse** of the
+old one — they fail the build if `Blob` goes back to the retired shape, if it
+loses its owner-plus-span constructor, or if a quiet conversion from the retired
+`shared_ptr` alias is bolted on. That last one is what would have re-created the
+coexistence window.
+
+**Zero is still a claim about the SEAM's capability, never about a transport.**
+It says the interface can carry memory it does not own without copying it. It
+says nothing about any transport's receive path, and two copies the tree still
+makes are in plain sight: `Envelope::row` is a `std::vector` copy on every XRCE
+and gateway receive, and Fast DDS's *loanable* read path materialises one owning
+copy per sample **that carries attachments** (down from one per attachment; an
+attachment-free sample still crosses with no copy at all), because the loan is
+returned when `Take` returns and a buffered pre-schema backlog can outlive it.
+§8/§11 assign that last one to the zero-copy-receive stage by name.
 
 ### What green does NOT prove — read before trusting it
 
@@ -263,6 +292,12 @@ into the carrying subjects' binaries only. So on a schema-less subject the claus
 is *absent from the ctest list* rather than present and skipped, and
 `GTEST_SKIP` appears nowhere in this suite. Absence is visible; a skip is not.
 
+This is why the two loopback subjects are in two binaries rather than two
+`INSTANTIATE_TEST_SUITE_P` lines in one. A gtest instantiation registers every
+`ProviderConformance` clause **in that binary** against its subject, so a single
+binary holding both modes would put clause 2 on the schema-less one. One binary
+per schema mode is what keeps "absent, not skipped" true.
+
 The mirror property for a schema-less transport — null throughout, never mixed —
 is clause 3, which runs on every subject.
 
@@ -272,16 +307,32 @@ does not carry one would be a contradiction, not a test. Clauses 7 and 8 are the
 exception — they observe only the *reply* to a declaration, so they declare the
 real A and B on every subject.
 
-## Handoff owed to PDA-DEC-3
+## The `SeamVocabulary` suite — the crossing types themselves
 
-The loopback is exercised **only** as a schema-less transport. Making it
-schema-carrying needs a real promise, a pre-schema queue and an ordered flush
-inside the exact class PDA-DEC-3 replaces (spec §3.4 retires the `shared_future`
-as the contract), so it is not built twice. **When PDA-DEC-3 lands, a sixth
-subject — a schema-carrying loopback — joins this suite: one
-`INSTANTIATE_TEST_SUITE_P` line in `subjects/inprocess_main.cpp` and one
-`schema_mode` value. No new clause.** Also recorded in
-`plans/PDA-decouple-interface.md`.
+Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
+§3.3, §3.4, §5.1, §7 clause 1. A **third** suite in this harness, in its own
+binary (`conformance_seam_vocabulary`), six entries, no provider SDK.
+
+It asserts what the crossing *types* make representable, which no
+provider-parameterised clause can reach:
+
+| Entry | What it pins |
+|---|---|
+| `BorrowedTransportMemoryCrossesWithoutCopy` | §3.2: a provider hands over its own bytes where they lie, and a blob kept past the delivery still names them — so the owner is real, not a span with no keeper |
+| `AbandonedSubscriptionReportsNoSchemaWillArrive` | §3.4: a subscription torn down before its schema arrives says `kSubscriptionEnded`, distinct from `kOk`+null ("this transport carries no schemas"), and the unbounded wait still returns |
+| `BlobRefusesBytesNothingOwns` | §3.2 rung 1: no view-only `Blob` exists to build |
+| `ErrorRefusesEveryNonFailureStatus` | §5.1: a failure can never carry `kOk`, `kPending` or `kSubscriptionEnded` |
+| `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
+| `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
+
+The last one is here rather than in `ProviderConformance` for a specific reason,
+worth stating because it is the kind of gap that otherwise goes unnoticed: **no
+conformance subject reaches that path.** `InProcessLocal` carries subject axis
+`kAbsent`, so `CONF_MUST_DECLARE` never hands the loopback a real schema, and
+`InProcessCarrying` is schema-carrying from the start. The only caller that
+declares a schema on a schema-*less*-mode loopback is the gateway, which has no
+subject. The forcing test borrows `CopyAccounting`'s instrument outright rather
+than growing a second one, so this harness still has exactly one scoring path.
 
 ## Building and running
 

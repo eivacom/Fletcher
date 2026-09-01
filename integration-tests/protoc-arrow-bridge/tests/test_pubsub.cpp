@@ -87,11 +87,11 @@ class MockPubSubProvider : public PubSubProvider {
         subscribers[segments] = std::move(callback);
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
-                return {MakeReadySchemaFuture(
+                return {fletcher::SchemaArrival::Ready(
                     MakeSharedSchema(OwnedSchema::DeepCopy(ct.schema.get())))};
             }
         }
-        return {MakeReadySchemaFuture(nullptr)};
+        return {fletcher::SchemaArrival::Ready(nullptr)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -238,14 +238,19 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
 
-    auto blob =
-        std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
-    pub.Publish(row, {{"image", blob}});
+    const std::vector<uint8_t> payload{0xDE, 0xAD, 0xBE, 0xEF};
+    fletcher::Blob blob{payload};
+    fletcher::Attachments sent;
+    sent.emplace("image", blob);
+    pub.Publish(row, sent);
 
     EXPECT_EQ(received.device_id(), 42);
     ASSERT_EQ(received_att.size(), 1u);
     ASSERT_EQ(received_att.count("image"), 1u);
-    EXPECT_EQ(*received_att.at("image"), (std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF}));
+    // The generated publisher hands the blob through; a Blob copy retains the
+    // owner, so the delivered bytes are the very bytes published (§3.2).
+    EXPECT_EQ(received_att.at("image").data(), blob.data());
+    EXPECT_EQ(received_att.at("image").size(), payload.size());
 }
 
 TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {

@@ -11,29 +11,13 @@
 #include <condition_variable>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
-#include <future>
+#include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 
 namespace fletcher {
-
-namespace {
-
-std::shared_ptr<arrow::Schema> ImportFromNano(const ArrowSchema* schema) {
-    if (!schema || !schema->release) {
-        return nullptr;
-    }
-    OwnedSchema copy = OwnedSchema::DeepCopy(schema);
-    auto result = arrow::ImportSchema(copy.get());
-    if (!result.ok()) {
-        throw std::runtime_error("SubscriberArrow: ImportSchema: " + result.status().ToString());
-    }
-    return *result;
-}
-
-}  // anonymous namespace
 
 // -----------------------------------------------------------------------
 // RecordBatchBatcher — accumulates decoded rows into RecordBatches and
@@ -302,19 +286,12 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         sub_topic_[result.subscription_id] = key;
     }
 
-    // Subscribe is non-blocking. The SharedSchema -> arrow::Schema conversion is
-    // deferred until the caller reads the future: the deferred task runs on the
-    // caller's thread at .get() time and blocks only then (if at all). The
-    // provider resolves the underlying schema future when the companion
-    // /__schema sample arrives — independent of any data — so this is correct
-    // for subscriber-first (no publisher yet) without ever blocking Subscribe.
-    std::shared_future<std::shared_ptr<arrow::Schema>> schema_future =
-        std::async(std::launch::deferred, [pf = result.schema]() -> std::shared_ptr<arrow::Schema> {
-            SharedSchema nano = pf.get();
-            return nano ? ImportFromNano(nano.get()) : nullptr;
-        }).share();
-
-    return {result.subscription_id, std::move(schema_future)};
+    // Subscribe is non-blocking, and the arrival is handed straight back: no
+    // deferred task wraps it any more, because the seam's own SchemaArrival is
+    // already the non-blocking, deadline-bearing wait. A caller that wants an
+    // arrow::Schema calls fletcher::ImportArrowSchema on what the wait yields —
+    // one mechanism, the same one a C#/Rust caller uses.
+    return {result.subscription_id, result.schema};
 }
 
 // -----------------------------------------------------------------------
@@ -374,17 +351,11 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         sub_topic_[result.subscription_id] = key;
     }
 
-    // Subscribe is non-blocking (mirrors the ArrowRow overload). The
-    // SharedSchema -> arrow::Schema conversion is deferred to .get() time on the
-    // caller's thread, and the batcher receives the schema lazily from the first
-    // decodable sample above — so this works for subscriber-first without
-    // blocking and without dropping the first window for want of a schema.
-    std::shared_future<std::shared_ptr<arrow::Schema>> schema_future =
-        std::async(std::launch::deferred, [pf = result.schema]() -> std::shared_ptr<arrow::Schema> {
-            SharedSchema nano = pf.get();
-            return nano ? ImportFromNano(nano.get()) : nullptr;
-        }).share();
-    return {result.subscription_id, std::move(schema_future)};
+    // Subscribe is non-blocking (mirrors the ArrowRow overload). The batcher
+    // receives the schema lazily from the first decodable sample above, so this
+    // works subscriber-first without blocking and without dropping the first
+    // window for want of a schema.
+    return {result.subscription_id, result.schema};
 }
 
 Codec* SubscriberArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
@@ -394,7 +365,7 @@ Codec* SubscriberArrow::AcquireCodec(const std::string& key, const SharedSchema&
     if (!schema) return nullptr;
     std::shared_ptr<arrow::Schema> arrow_schema;
     try {
-        arrow_schema = ImportFromNano(schema.get());
+        arrow_schema = ImportArrowSchema(schema);
     } catch (...) {
         return nullptr;
     }

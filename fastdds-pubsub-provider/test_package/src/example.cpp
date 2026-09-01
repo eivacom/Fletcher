@@ -44,7 +44,12 @@ int main() {
             }
         });
 
-    if (!result.schema.valid()) {
+    // One waiting mechanism, with a deadline and a typed outcome.
+    SharedSchema schema;
+    PubSubStatus st = result.schema.Wait(std::chrono::seconds(5), &schema);
+    std::fprintf(stderr, "DBG status=%s msg=%s\n", PubSubStatusName(st),
+                 result.schema.Message().c_str());
+    if (st != PubSubStatus::kOk || !schema) {
         std::fputs("FAIL: schema not received from publisher\n", stderr);
         return 1;
     }

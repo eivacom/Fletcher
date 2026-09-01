@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <fletcher/core/types.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,14 @@ struct PublishData {
 struct ReceivedData {
     std::vector<uint8_t> decoded_row;
     Attachments decoded_attachments;
+
+    // Owns the bytes `decoded_attachments` alias (§3.2): one copy of the sample body, taken ONLY
+    // when the sample carries attachments, replacing the copy-per-attachment this path used to
+    // make. Fast DDS may recycle the payload the moment deserialize() returns, so the blobs cannot
+    // simply point at it — but they can point into this, which lives as long as any of them does.
+    //
+    // Null for an attachment-free sample, which is the hot path: it pays nothing for this.
+    std::shared_ptr<const std::vector<uint8_t>> body;
 };
 
 }  // namespace internal

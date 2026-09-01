@@ -5,6 +5,7 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
@@ -58,7 +59,7 @@ class MockProvider : public PubSubProvider {
         if (it != schemas_.end()) {
             schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {MakeReadySchemaFuture(std::move(schema))};
+        return {SchemaArrival::Ready(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -220,8 +221,9 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
 
     Subscriber::SubscribeResult result = subscriber.Subscribe(
         kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
-    ASSERT_TRUE(result.schema.valid());
-    SharedSchema sch = result.schema.get();
+    // Re-anchored to the one waiting mechanism: a TYPED outcome, not a future.
+    SharedSchema sch;
+    ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
     ASSERT_TRUE(sch);
     EXPECT_EQ(sch->n_children, 1);
     EXPECT_EQ(std::string(sch->children[0]->name), "x");
@@ -330,13 +332,19 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
         received_att = att;
     });
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
+    const std::vector<uint8_t> payload{0xDE, 0xAD};
+    Blob blob{payload};
 
-    publisher.Publish(kTopic, MakeTestEncoder(99), {{"img", blob}});
+    Attachments sent;
+    sent.emplace("img", blob);
+    publisher.Publish(kTopic, MakeTestEncoder(99), sent);
 
     EXPECT_EQ(received_value, 99);
     ASSERT_EQ(received_att.count("img"), 1u);
-    EXPECT_EQ(*received_att.at("img"), *blob);
+    // A Blob kept past the borrow window still names the very bytes that were
+    // published — the copy is the shared owner, not the payload (§3.2).
+    EXPECT_EQ(received_att.at("img").data(), blob.data());
+    EXPECT_EQ(received_att.at("img").size(), payload.size());
 }
 
 // Fan-out used to iterate an unordered_map of every subscription in the process, so the order

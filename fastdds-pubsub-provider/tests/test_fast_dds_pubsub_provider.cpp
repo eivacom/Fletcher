@@ -24,6 +24,20 @@
 using namespace fletcher;
 using namespace eprosima::fastdds::dds;
 
+namespace {
+
+// The one waiting mechanism (spec §3.4). Deliberately spelled out rather than
+// hidden: a test that wants the schema states its budget and reads a TYPED
+// outcome, exactly as a C#/Rust caller would.
+SharedSchema AwaitSchema(const SubscriptionResult& result, std::chrono::milliseconds budget) {
+    SharedSchema schema;
+    EXPECT_EQ(result.schema.Wait(budget, &schema), PubSubStatus::kOk)
+        << "schema arrival: " << result.schema.Message();
+    return schema;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -232,8 +246,7 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
             if (len >= 5) received.store(DecodeRow(data));
         });
 
-    ASSERT_TRUE(result.schema.valid());
-    SharedSchema sch = result.schema.get();
+    SharedSchema sch = AwaitSchema(result, std::chrono::seconds(5));
     ASSERT_TRUE(sch);
     ASSERT_EQ(sch->n_children, 1);
     EXPECT_EQ(std::string(sch->children[0]->name), "x");
@@ -355,7 +368,7 @@ TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"loaned", "x"}, MakeEncoder(42));
 
@@ -379,7 +392,7 @@ TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"dynamic", "reader"}, MakeEncoder(57));
 
@@ -418,7 +431,7 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"datasharing", "x"}, MakeEncoder(31));
 
@@ -445,7 +458,7 @@ TEST(FastDDSPubSubProviderTest, DataSharingTypeIsAcceptedForDataSharing) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"datasharing", "on"}, MakeEncoder(29));
 
@@ -488,7 +501,7 @@ TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"bounded", "datasharing"}, MakeEncoder(23));
 
@@ -508,9 +521,18 @@ TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
         std::vector<uint8_t> blob(bound + 16, 0x5A);
         buf.Append(blob.data(), blob.size());
     };
+    // Re-anchored to the seam's taxonomy (spec §5.1): the failure is the SAME
+    // failure, but it now crosses as the one error type carrying a stable number
+    // a binding can map, instead of as a bare std::overflow_error only C++ can
+    // read. The number matters here — kPayloadTooLarge tells a caller to raise
+    // the bound or split the row; kInternal would tell it nothing.
     for (int i = 0; i < 15; ++i) {
-        EXPECT_THROW(pub_provider.Publish({"loaned", "oversized"}, oversized), std::overflow_error)
-            << "attempt " << i;
+        try {
+            pub_provider.Publish({"loaned", "oversized"}, oversized);
+            ADD_FAILURE() << "attempt " << i << ": an oversized row was accepted";
+        } catch (const PubSubError& e) {
+            EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge) << "attempt " << i;
+        }
     }
 
     EXPECT_NO_THROW(pub_provider.Publish({"loaned", "oversized"}, MakeEncoder(3)));
@@ -534,7 +556,7 @@ TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoan
             if (deliveries.fetch_add(1) < 15) throw std::runtime_error("callback failure");
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     for (int32_t i = 0; i < 40; ++i) {
         pub_provider.Publish({"loaned", "throwing"}, MakeEncoder(i));
@@ -559,7 +581,7 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
             if (deliveries.fetch_add(1) < 5) throw std::runtime_error("callback failure");
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     for (int32_t i = 0; i < 20; ++i) {
         pub_provider.Publish({"datasharing", "throwing"}, MakeEncoder(i));
@@ -582,13 +604,15 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
         {"loaned", "attachments"},
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
             auto it = att.find("sidecar");
-            if (it != att.end() && it->second) blob_seen = *it->second;
+            if (it != att.end()) {
+                blob_seen.assign(it->second.data(), it->second.data() + it->second.size());
+            }
             if (len >= 5) received.store(DecodeRow(data));
         });
-    ASSERT_TRUE(result.schema.get());
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     Attachments att;
-    att["sidecar"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+    att["sidecar"] = Blob{std::vector<uint8_t>{1, 2, 3}};
     pub_provider.Publish({"loaned", "attachments"}, MakeEncoder(7), att);
 
     EXPECT_EQ(AwaitRow(received), 7);
@@ -790,17 +814,19 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
             cv.notify_all();
         });
 
-    // No publisher has announced the schema yet, so the future is unresolved.
-    EXPECT_TRUE(result.schema.valid());
-    EXPECT_EQ(result.schema.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    // No publisher has announced the schema yet, so the arrival is PENDING —
+    // which is a distinct answer from "this transport carries no schemas" and
+    // from "this subscription is over".
+    SharedSchema polled;
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+    EXPECT_EQ(polled, nullptr) << "*out is untouched unless the answer is kOk";
 
     // A publisher appears and publishes.
     pub_provider.CreateTopic({"subfirst", "x"}, MakeSchema());
     pub_provider.Publish({"subfirst", "x"}, MakeEncoder(99));
 
-    // The schema future now resolves with a non-null schema.
-    ASSERT_EQ(result.schema.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-    SharedSchema fut_schema = result.schema.get();
+    // The arrival now answers kOk with a non-null schema.
+    SharedSchema fut_schema = AwaitSchema(result, std::chrono::seconds(5));
     ASSERT_TRUE(fut_schema);
     EXPECT_EQ(fut_schema->n_children, 1);
 
@@ -1064,6 +1090,7 @@ TEST(OrderedDeliveryTest, BacklogIsCappedAndDropsOldest) {
 // ---------------------------------------------------------------------------
 
 namespace {
+
 std::vector<uint8_t> DeliveryRow(int32_t value) {
     std::vector<uint8_t> row(5);
     row[0] = 0x00;
@@ -1204,8 +1231,7 @@ TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) second.store(DecodeRow(data));
         });
-    ASSERT_TRUE(again.schema.valid());
-    ASSERT_TRUE(again.schema.get());
+    ASSERT_TRUE(AwaitSchema(again, std::chrono::seconds(5)));
 
     pub_provider.Publish({"resub", "x"}, MakeEncoder(2));
     EXPECT_EQ(AwaitRow(second), 2);

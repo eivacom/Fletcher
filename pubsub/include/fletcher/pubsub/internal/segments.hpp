@@ -8,11 +8,21 @@
 #ifndef FLETCHER_INCLUDE_PUBSUB_INTERNAL_SEGMENTS_HPP_
 #define FLETCHER_INCLUDE_PUBSUB_INTERNAL_SEGMENTS_HPP_
 
+#include <fletcher/core/status.hpp>
 #include <string>
 #include <vector>
 
 namespace fletcher {
 namespace internal {
+
+// §3.5, rung 2: an empty segment list is illegal at every seam entry point. One check, in the one
+// function all three providers already route every topic through — no default topic, no recovery.
+inline void RequireSegments(const std::vector<std::string>& segs) {
+    if (segs.empty()) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "topic: an empty segment list names no topic");
+    }
+}
 
 // Joins into `out`, reusing its capacity. For the publish path, where building a fresh std::string
 // to index the topic map was a malloc and a free on every sample.
@@ -21,10 +31,8 @@ namespace internal {
 // empty string where it used to copy-construct from segs[0], which costs a reallocation and showed
 // up as ~2.5% on bench_pubsub_fanout's BM_CreateTopic_Redeclare. Six duplicated lines are cheaper.
 inline void JoinSegmentsInto(std::string& out, const std::vector<std::string>& segs) {
+    RequireSegments(segs);
     out.clear();
-    if (segs.empty()) {
-        return;
-    }
     out += segs[0];
     for (size_t i = 1; i < segs.size(); ++i) {
         out += '/';
@@ -33,9 +41,7 @@ inline void JoinSegmentsInto(std::string& out, const std::vector<std::string>& s
 }
 
 inline std::string JoinSegments(const std::vector<std::string>& segs) {
-    if (segs.empty()) {
-        return {};
-    }
+    RequireSegments(segs);
     std::string out = segs[0];
     for (size_t i = 1; i < segs.size(); ++i) {
         out += '/';

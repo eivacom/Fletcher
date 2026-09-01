@@ -335,7 +335,7 @@ void BM_ReadFlow_Loaned(benchmark::State& state) {
         const uint8_t* decoded = nullptr;
         uint32_t decoded_len = 0;
         if (!fletcher::internal::ParseEnvelopeBody(
-                fletcher::internal::SampleBody(sample.data()),
+                nullptr, fletcher::internal::SampleBody(sample.data()),
                 fletcher::internal::ReadSampleLength(sample.data()), decoded, decoded_len,
                 attachments)) {
             state.SkipWithError("parse failed");
@@ -422,7 +422,7 @@ BENCHMARK(BM_Deliver_Offer)->FLETCHER_ROW_SIZES;
 void BM_Deliver_ParseAttachments(benchmark::State& state) {
     const int count = static_cast<int>(state.range(0));
     const std::vector<uint8_t> row(214, 0xAB);
-    const auto blob = std::make_shared<const std::vector<uint8_t>>(64, 0xCD);
+    const fletcher::Blob blob{std::vector<uint8_t>(64, 0xCD)};
 
     fletcher::Attachments sent;
     for (int i = 0; i < count; ++i) sent["attachment_" + std::to_string(i)] = blob;
@@ -436,12 +436,18 @@ void BM_Deliver_ParseAttachments(benchmark::State& state) {
 
     // One Attachments across iterations, as the listener has: ParseEnvelopeBody clears and refills
     // it, so its buckets stay warm the way they do in the real read loop.
+    //
+    // The owner is hoisted out of the loop, unlike in the real listener, which takes one copy of
+    // the body per sample carrying attachments. What this arm measures is the PARSE — the
+    // per-attachment copies it used to make are what PDA-DEC-3 removed.
+    const auto owner =
+        std::make_shared<const std::vector<uint8_t>>(sample->body, sample->body + sample->length);
     fletcher::Attachments decoded_attachments;
     for (auto _ : state) {
         benchmark::ClobberMemory();
         const uint8_t* decoded = nullptr;
         uint32_t decoded_len = 0;
-        if (!fletcher::internal::ParseEnvelopeBody(sample->body, sample->length, decoded,
+        if (!fletcher::internal::ParseEnvelopeBody(owner, owner->data(), sample->length, decoded,
                                                    decoded_len, decoded_attachments)) {
             state.SkipWithError("parse failed");
             break;
@@ -564,8 +570,9 @@ void BM_BatchRoundTrip_CurrentLoaned(benchmark::State& state) {
 
             const uint8_t* decoded = nullptr;
             uint32_t decoded_len = 0;
-            if (!fletcher::internal::ParseEnvelopeBody(sample->body, sample->length, decoded,
-                                                       decoded_len, attachments)) {
+            // No attachments on this arm, so no owner is needed and no copy is taken.
+            if (!fletcher::internal::ParseEnvelopeBody(nullptr, sample->body, sample->length,
+                                                       decoded, decoded_len, attachments)) {
                 state.SkipWithError("parse failed");
                 break;
             }

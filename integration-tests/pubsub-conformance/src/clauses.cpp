@@ -278,15 +278,20 @@ TEST_P(ProviderConformance, SubscribeNeverBlocksSchemaArrivesLater) {
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForSeq(1, Deadline())) << "the row never arrived";
 
+    SharedSchema arrived;
+    const PubSubStatus status = sub.Schema().Wait(RemainingBudget(), &arrived);
     if (Carried()) {
-        ASSERT_EQ(sub.Schema().wait_until(Deadline()), std::future_status::ready)
-            << "the schema future never resolved";
-        EXPECT_NE(sub.Schema().get(), nullptr);
+        ASSERT_EQ(status, PubSubStatus::kOk)
+            << "the schema arrival never answered kOk: " << PubSubStatusName(status) << " ("
+            << sub.Schema().Message() << ")";
+        EXPECT_NE(arrived, nullptr);
     } else {
-        // §7 clause 1's sanctioned schema-less transport: null throughout, and
-        // resolved rather than left pending, so a waiter never hangs.
-        ASSERT_EQ(sub.Schema().wait_until(Deadline()), std::future_status::ready);
-        EXPECT_EQ(sub.Schema().get(), nullptr);
+        // §7 clause 1's sanctioned schema-less transport: kOk with a NULL schema,
+        // answered rather than left pending, so a waiter never hangs — and
+        // distinct from kSubscriptionEnded, which would mean something else
+        // entirely.
+        ASSERT_EQ(status, PubSubStatus::kOk) << PubSubStatusName(status);
+        EXPECT_EQ(arrived, nullptr);
     }
 }
 

@@ -146,15 +146,21 @@ TEST(XrceProviderTest, EnvelopeXrceUsesSameWireFormatAsFastDds) {
     Envelope env;
     env.row = {0x01, 0x02, 0x03};
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
-    env.attachments["sensor"] = blob;
+    const std::vector<uint8_t> payload{0xDE, 0xAD};
+    env.attachments["sensor"] = Blob{payload};
 
-    auto wire = SerializeEnvelope(env);
+    // Parsing needs an OWNER for the bytes now: the restored attachments alias
+    // them rather than being copied out (§3.2).
+    auto wire = std::make_shared<const std::vector<uint8_t>>(SerializeEnvelope(env));
     auto restored = DeserializeEnvelope(wire);
 
     EXPECT_EQ(restored.row, env.row);
     ASSERT_EQ(restored.attachments.size(), 1);
-    EXPECT_EQ(*restored.attachments.at("sensor"), *blob);
+    const Blob& sensor = restored.attachments.at("sensor");
+    ASSERT_EQ(sensor.size(), payload.size());
+    EXPECT_EQ(std::memcmp(sensor.data(), payload.data(), payload.size()), 0);
+    EXPECT_GE(sensor.data(), wire->data());
+    EXPECT_LT(sensor.data(), wire->data() + wire->size());
 }
 
 TEST(XrceProviderTest, EnvelopeWireFormatLayout) {

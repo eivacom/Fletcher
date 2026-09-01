@@ -16,7 +16,9 @@
 #include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
 #include <fastdds/dds/topic/TopicDescription.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <memory>
 #include <utility>
+#include <vector>
 
 #include "envelope_codec.hpp"
 #include "fletcher_sample.hpp"
@@ -179,8 +181,23 @@ class LoanableDataReaderListener : public DataReaderListenerBase {
                 }
                 const uint8_t* row = nullptr;
                 uint32_t row_len = 0;
+                const uint8_t* body = SampleBody(sample);
 
-                if (!ParseEnvelopeBody(SampleBody(sample), length, row, row_len, attachments)) {
+                // The loan is returned when Take() returns, and the pre-schema backlog can outlive
+                // it, so attachments cannot alias the loaned payload itself. A sample that carries
+                // any therefore costs ONE owning copy of its body — down from one copy per
+                // attachment — and the blobs alias that. §8/§11 assign removing this last copy to
+                // the loaned-sample stage by name.
+                //
+                // A sample with NO attachments — the hot path, and the one the loanable reader
+                // exists for — is untouched: no owner, no copy, the row delivered where it lies.
+                std::shared_ptr<const std::vector<uint8_t>> owned;
+                if (PeekAttachmentCount(body, length) > 0) {
+                    owned = std::make_shared<const std::vector<uint8_t>>(body, body + length);
+                    body = owned->data();
+                }
+
+                if (!ParseEnvelopeBody(owned, body, length, row, row_len, attachments)) {
                     EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
                                          "reader on '" << reader->get_topicdescription()->get_name()
                                                        << "' dropped a sample: malformed envelope");

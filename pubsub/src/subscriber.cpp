@@ -39,9 +39,9 @@ struct Subscriber::Impl {
     struct TopicState {
         std::vector<std::string> segments;
         FanoutPtr fanout = std::make_shared<Fanout>();
-        // The provider's schema future, cached so fan-out subscribers to the
-        // same topic all share it (shared_future is copyable).
-        std::shared_future<SharedSchema> schema_future;
+        // The provider's schema arrival, cached so fan-out subscribers to the
+        // same topic all share it (SchemaArrival is copyable).
+        SchemaArrival schema_arrival;
         bool provider_subscribed = false;
     };
 
@@ -66,10 +66,10 @@ struct Subscriber::Impl {
 
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
-    std::shared_future<SharedSchema> EnsureProviderSubscription(
-        const std::string& key, TopicState& ts, std::unique_lock<std::mutex>& lock) {
+    SchemaArrival EnsureProviderSubscription(const std::string& key, TopicState& ts,
+                                             std::unique_lock<std::mutex>& lock) {
         if (ts.provider_subscribed) {
-            return ts.schema_future;
+            return ts.schema_arrival;
         }
 
         std::vector<std::string> segments = ts.segments;
@@ -97,9 +97,9 @@ struct Subscriber::Impl {
 
         TopicState& current = topic_it->second;
         current.provider_subscribed = true;
-        // Cache the provider's schema future so fan-out subscribers share it.
-        current.schema_future = result.schema;
-        return current.schema_future;
+        // Cache the provider's schema arrival so fan-out subscribers share it.
+        current.schema_arrival = result.schema;
+        return current.schema_arrival;
     }
 };
 
@@ -144,7 +144,7 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
     Impl::RewriteEntries(it->second,
                          [&](std::vector<Impl::Entry>& v) { v.push_back({id, std::move(cb)}); });
 
-    std::shared_future<SharedSchema> schema;
+    SchemaArrival schema;
     try {
         schema = impl_->EnsureProviderSubscription(key, it->second, lock);
     } catch (...) {

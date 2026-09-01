@@ -35,8 +35,9 @@ enum class SchemaId { kNone, kA, kB };
 /// Does this subject's transport carry schemas of its own?
 ///
 /// A *usage* axis, chosen per subject: spec §7 clause 1 explicitly sanctions a
-/// transport that passes null throughout, and the same transport may later be
-/// exercised in both modes (PDA-DEC-3 adds a schema-carrying loopback subject).
+/// transport that passes null throughout, and the same transport is exercised in
+/// both modes — the loopback registers `InProcessLocal` (kAbsent) and
+/// `InProcessCarrying` (kCarried), one provider, two usages, same clauses.
 enum class SchemaMode { kCarried, kAbsent };
 
 /// Does this transport replay rows published before a subscriber existed?
@@ -71,8 +72,12 @@ enum class Outcome {
 };
 
 /// The reply to a DeclareTopic / PublishRow call. `detail` is "<type>: <what>"
-/// for a provider refusal — which is all a clause may assert about it, because
-/// the seam has no exception taxonomy yet (PDA-DEC-3/9 invents one).
+/// for a provider refusal. The seam now HAS an exception taxonomy — every
+/// provider throws PubSubError carrying a stable PubSubStatus (spec §5.1) — but
+/// the clauses deliberately still assert only THAT a call was refused: a
+/// cross-process subject can only carry a string back over its pipe, so asserting
+/// on the status here would make the local and remote subjects test different
+/// things. Pinning the numbers is `SeamVocabulary`s job.
 struct Reply {
     Outcome outcome = Outcome::kOk;
     std::string detail;
@@ -135,9 +140,11 @@ class ProviderSubject {
     virtual void Unsubscribe(const Topic& topic) = 0;
 };
 
-/// "<type>: <what>" for `e`. Deliberately not a type a clause can switch on:
-/// the seam has no exception taxonomy yet, so a clause asserts THAT the
-/// provider refused, never which way.
+/// "<type>: <what>" for `e`, with the numbered status appended when `e` is a
+/// PubSubError — which, after PDA-DEC-3, it always is when it came from a
+/// provider. Still not a type a clause switches on (see Reply): it is a
+/// diagnostic string, so a cross-process subject can carry the same information
+/// back over its pipe that a local one has in hand.
 std::string DescribeException(const std::exception& e);
 
 /// Built fresh for every clause, so no clause inherits another's topics,

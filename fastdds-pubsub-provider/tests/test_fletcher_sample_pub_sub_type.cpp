@@ -383,7 +383,7 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(32);
     fletcher::Attachments sent;
-    sent["sidecar"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{1, 2, 3});
+    sent["sidecar"] = fletcher::Blob{std::vector<uint8_t>{1, 2, 3}};
     Publishing publishing(row, sent);
 
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -393,7 +393,15 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
     ASSERT_TRUE(type.deserialize(payload, &received));
     EXPECT_EQ(received.decoded_row, row);
     ASSERT_EQ(received.decoded_attachments.count("sidecar"), 1u);
-    EXPECT_EQ(*received.decoded_attachments.at("sidecar"), std::vector<uint8_t>({1, 2, 3}));
+    const fletcher::Blob& sidecar = received.decoded_attachments.at("sidecar");
+    ASSERT_EQ(sidecar.size(), 3u);
+    EXPECT_EQ(std::vector<uint8_t>(sidecar.data(), sidecar.data() + sidecar.size()),
+              std::vector<uint8_t>({1, 2, 3}));
+    // The decoded attachment aliases the ONE body copy ReceivedData now owns
+    // (§3.2), instead of being a copy of its own.
+    ASSERT_NE(received.body, nullptr);
+    EXPECT_GE(sidecar.data(), received.body->data());
+    EXPECT_LT(sidecar.data(), received.body->data() + received.body->size());
 }
 
 TEST(FletcherSamplePubSubTypeTest, RoundTripsAnXcdr2Payload) {

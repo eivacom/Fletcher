@@ -5,51 +5,40 @@
 #define FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
+#include <fletcher/core/status.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <functional>
-#include <future>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "fletcher/pubsub/owned_schema.hpp"
+#include "fletcher/pubsub/schema_arrival.hpp"
 
 namespace fletcher {
 
 /// Result returned by PubSubProvider::Subscribe.
 ///
-/// `schema` is a future for the topic's schema. Subscribe never blocks to
-/// obtain it: the future resolves once the schema is known — immediately for
-/// providers that already hold it, or asynchronously when a publisher announces
-/// it (late-joining subscribers).
+/// `schema` is a waitable handle for the topic's schema. Subscribe never blocks
+/// to obtain it: the arrival is answered once the schema is known — immediately
+/// for providers that already hold it, or asynchronously when a publisher
+/// announces it (late-joining subscribers).
 ///
-/// What it resolves WITH follows the transport's schema mode, and the two are
-/// never mixed (§7 clause 1 of docs/pubsub-interface-spec.md):
-///  - a schema-**carrying** transport resolves it with a non-null SharedSchema;
-///  - a transport that carries no schemas at all — the in-process loopback,
-///    where the client brings its own — resolves it with **null**.
+/// What it answers WITH follows the transport's schema mode, and the two are
+/// never mixed within one subscription (§7 clause 1 of
+/// docs/pubsub-interface-spec.md):
+///  - a schema-**carrying** transport answers kOk with a non-null SharedSchema;
+///  - a transport that carries no schemas — the in-process loopback in its
+///    default mode, where the client brings its own — answers kOk with **null**.
 ///
-/// Either way it does resolve, so a consumer that waits never hangs. Consumers
-/// may ignore the future, or wait on it (`get()`/`wait_for()`) if they need the
-/// schema out-of-band; the per-sample SharedSchema delivered to the
-/// SubscribeCallback carries the schema for each row.
+/// A subscription torn down before either happens is answered
+/// kSubscriptionEnded, so a consumer that waits never hangs and never mistakes
+/// "this subscription is over" for "this transport has no schemas". See
+/// SchemaArrival for the whole outcome set.
 struct SubscriptionResult {
-    std::shared_future<SharedSchema> schema;
+    SchemaArrival schema;
 };
-
-/// Build a SubscriptionResult schema future that is already resolved with
-/// `schema`. For providers that know the schema synchronously at Subscribe
-/// time (in-process loopback, mocks, and — for now — publisher-first DDS).
-///
-/// `schema` may legitimately be null: that is how a schema-less transport
-/// resolves the future (see SubscriptionResult), and it is why this returns a
-/// resolved-with-null future rather than refusing.
-inline std::shared_future<SharedSchema> MakeReadySchemaFuture(SharedSchema schema) {
-    std::promise<SharedSchema> p;
-    p.set_value(std::move(schema));
-    return p.get_future().share();
-}
 
 /// Abstract transport provider for pub/sub.
 ///
@@ -59,7 +48,18 @@ inline std::shared_future<SharedSchema> MakeReadySchemaFuture(SharedSchema schem
 /// on top of this interface.
 ///
 /// Topic names are represented as a list of string segments so that
-/// the provider can join them with any separator it prefers.
+/// the provider can join them with any separator it prefers. **An empty segment
+/// list is illegal** and is refused with PubSubStatus::kInvalidArgument by every
+/// method that takes one — there is no default topic and no recovery (§3.5).
+/// C form: a pointer-and-count of pointer-and-length pairs, borrowed for the
+/// duration of the call; a callee that keeps a segment copies its bytes. As
+/// everywhere in this vocabulary, the C form is conceptual — no layout
+/// compatibility is implied and each boundary constructs its own.
+///
+/// **Failure.** Every method here reports failure by throwing PubSubError,
+/// which carries a stable numbered PubSubStatus (spec §5.1, see
+/// fletcher/core/status.hpp). A provider translates at its own entry points, so
+/// no untyped exception — not even std::bad_alloc — leaves the seam.
 ///
 /// Provider semantics: ONE callback per topic. Fan-out (multiple
 /// local subscribers to the same topic) is handled by the Subscriber
@@ -110,9 +110,12 @@ class PubSubProvider {
     ///    schema. A subscriber may Subscribe before any publisher exists; the
     ///    schema then arrives asynchronously, and the provider buffers data
     ///    that arrives ahead of it and delivers that data only once the schema
-    ///    is known. A transport that carries no schemas at all - the gateway's in-process
-    ///    loopback, where the client brings its own - passes null throughout instead, and
-    ///    must never mix the two.
+    ///    is known. A transport that carries no schemas for a topic - the
+    ///    gateway's in-process loopback in its default mode, where the client
+    ///    brings its own - passes null throughout instead. **The two are never
+    ///    mixed within one subscription**: whichever a subscription's first
+    ///    delivery would carry is what every delivery on it carries, for its
+    ///    whole life.
     ///  - **Per-writer order.** Samples from a single writer reach the callback
     ///    in the order they were published. This holds across the schema
     ///    handoff too: the buffered pre-schema backlog is delivered before —
@@ -126,10 +129,16 @@ class PubSubProvider {
 
     /// Subscribe to a named topic. **Never blocks**: a subscriber may subscribe
     /// before any publisher exists, and the returned SubscriptionResult carries
-    /// a *future* for the schema rather than the schema itself — see
-    /// SubscriptionResult for what it resolves with, and when. Delivery obeys
+    /// a waitable *arrival* for the schema rather than the schema itself — see
+    /// SubscriptionResult for what it answers with, and when. Delivery obeys
     /// the SubscribeCallback contract above (schema-before-data, per-writer
     /// order).
+    ///
+    /// **A subscription's schema mode is fixed when Subscribe returns** and is
+    /// exactly what its SchemaArrival reports: a declaration made after a
+    /// subscription exists never reaches that subscription. §7 clause 1's "never
+    /// mix" is a property of the subscription, so a client can decode one stream
+    /// one way for its whole life.
     ///
     /// `data` may point into a buffer the transport owns rather than a copy of one — that is a
     /// provider-local optimisation, not part of this contract. Either way the pointer is only

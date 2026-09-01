@@ -66,9 +66,9 @@ class LegacyFletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
             for (const auto& [key, blob] : att) {
                 buf.AppendFixed(static_cast<uint32_t>(key.size()));
                 buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-                uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+                uint32_t blob_len = static_cast<uint32_t>(blob.size());
                 buf.AppendFixed(blob_len);
-                if (blob_len > 0) buf.Append(blob->data(), blob_len);
+                if (blob_len > 0) buf.Append(blob.data(), blob_len);
             }
 
             // Patch CDR sequence length.
@@ -122,8 +122,7 @@ class LegacyFletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
                 std::memcpy(&blob_len, ptr + pos, 4);
                 pos += 4;
                 if (pos + blob_len > total) return false;
-                auto blob =
-                    std::make_shared<const std::vector<uint8_t>>(ptr + pos, ptr + pos + blob_len);
+                auto blob = fletcher::Blob(std::vector<uint8_t>(ptr + pos, ptr + pos + blob_len));
                 pos += blob_len;
                 d->decoded_attachments[std::move(key)] = std::move(blob);
             }

@@ -7,7 +7,9 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "fletcher/core/types.hpp"
@@ -39,8 +41,7 @@ struct Envelope {
 [[nodiscard]] inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
     // Pre-compute total size.
     size_t total = 4 + env.row.size() + 4;
-    for (const auto& [key, blob] : env.attachments)
-        total += 4 + key.size() + 4 + (blob ? blob->size() : 0);
+    for (const auto& [key, blob] : env.attachments) total += 4 + key.size() + 4 + blob.size();
 
     std::vector<uint8_t> buf;
     buf.reserve(total);
@@ -63,15 +64,45 @@ struct Envelope {
     for (const auto& [key, blob] : env.attachments) {
         append_u32(static_cast<uint32_t>(key.size()));
         append_bytes(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-        const uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+        const auto blob_len = static_cast<uint32_t>(blob.size());
         append_u32(blob_len);
-        if (blob_len > 0) append_bytes(blob->data(), blob_len);
+        if (blob_len > 0) append_bytes(blob.data(), blob_len);
     }
 
     return buf;
 }
 
-[[nodiscard]] inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
+// How many attachments the buffer claims, without parsing them. 0 for a buffer that carries none
+// or is too short to say.
+//
+// Exists so a receive path can decide whether it needs a shared OWNER for these bytes before it
+// pays for one: an attachment-free envelope needs none, and passing a null owner for one is legal.
+[[nodiscard]] inline uint32_t EnvelopeAttachmentCount(const uint8_t* data, size_t size) {
+    if (size < 4) return 0;
+    uint32_t row_len = 0;
+    std::memcpy(&row_len, data, 4);
+    if (row_len > size - 4) return 0;
+    const size_t pos = 4 + static_cast<size_t>(row_len);
+    if (size - pos < 4) return 0;
+    uint32_t count = 0;
+    std::memcpy(&count, data + pos, 4);
+    return count;
+}
+
+// Parse `[data, data+size)` into an Envelope whose attachment blobs ALIAS that
+// buffer — `owner` is what keeps it alive, and every Blob produced here takes
+// its own reference to it (spec §3.2). No attachment byte is copied.
+//
+// The caller must therefore hand over a shared owner for the bytes it is
+// parsing: a receive path whose payload lives in a local `std::vector` makes
+// that vector a `shared_ptr` first. `Envelope::row` is still a copy — the
+// residue §8/§11 assign to the zero-copy-receive stage.
+//
+// `owner` may be null ONLY for a buffer carrying no attachments — see
+// EnvelopeAttachmentCount above. A buffer that claims attachments with no owner to hand them is
+// refused with kInvalidArgument rather than producing blobs nothing keeps alive.
+[[nodiscard]] inline Envelope DeserializeEnvelope(std::shared_ptr<const void> owner,
+                                                  const uint8_t* data, size_t size) {
     if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
 
     size_t pos = 0;
@@ -105,7 +136,10 @@ struct Envelope {
         const uint32_t blob_len = read_u32();
         if (pos + blob_len > size)
             throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
-        auto blob = std::make_shared<const std::vector<uint8_t>>(data + pos, data + pos + blob_len);
+        // Where the bytes lie, not a copy of them: the caller's `owner` keeps
+        // them alive for as long as this Blob (or any copy of it) exists. An
+        // empty attachment carries no pointer at all, per §3.2 clause 5.
+        Blob blob = blob_len > 0 ? Blob(owner, data + pos, blob_len) : Blob();
         pos += blob_len;
 
         attachments[std::move(key)] = std::move(blob);
@@ -114,8 +148,12 @@ struct Envelope {
     return Envelope{std::move(row), std::move(attachments)};
 }
 
-[[nodiscard]] inline Envelope DeserializeEnvelope(const std::vector<uint8_t>& buf) {
-    return DeserializeEnvelope(buf.data(), buf.size());
+// Convenience form for a buffer Fletcher already holds in shared storage: the
+// vector is its own owner.
+[[nodiscard]] inline Envelope DeserializeEnvelope(
+    const std::shared_ptr<const std::vector<uint8_t>>& buf) {
+    if (!buf) throw std::invalid_argument("DeserializeEnvelope: null buffer");
+    return DeserializeEnvelope(buf, buf->data(), buf->size());
 }
 
 }  // namespace fletcher

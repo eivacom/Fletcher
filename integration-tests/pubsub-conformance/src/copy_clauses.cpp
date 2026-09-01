@@ -161,16 +161,22 @@ TEST(CopyAccounting, StagingIsCaught) {
         << " deep-copied attachments it was handed on a plate";
 }
 
-// ── Leg 3: the one copy §3.2 forces on borrowed memory ──────────────
+// ── Leg 3: borrowed memory now costs NOTHING ────────────────────────
 //
-// PINNED AT EXACTLY ONE (owner ruling 2026-09-01). The PROVIDER, not this test,
-// must produce a `Blob` for bytes it already holds, and today it cannot without
-// copying; a caller-owned blob rides the same publish and must cross untouched,
-// so the total is three-valued and moves with provider behaviour both ways.
-// PDA-DEC-3 owns removing the limitation, and the static_assert in
-// copy_accounting.hpp is what turns the BUILD red when it does. README has the
-// full argument and the residual.
-TEST(CopyAccounting, BorrowedAttachmentCostsExactlyOneCopy) {
+// **This pin was 1 and is now 0, and the change is the point.** The owner's
+// 2026-09-01 ruling pinned the §3.2 copy at exactly one so that removing it
+// would turn this test RED and force the stage that removed it to come back
+// here — silence being how such a fix gets forgotten or half-landed. PDA-DEC-3
+// removed it: `Blob` became an owner plus a span, so a provider hands over bytes
+// it already holds where they lie. The tripwire fired as designed (the
+// static_assert in copy_accounting.hpp stopped the BUILD first), and this is the
+// deliberate, visible update it demanded.
+//
+// Everything else about the leg is unchanged: the PROVIDER, not this test, must
+// produce the `Blob`; a caller-owned blob rides the same publish and must cross
+// untouched; and the number stays three-valued, because the identical leg against
+// a deep-copying provider still scores 2.
+TEST(CopyAccounting, BorrowedAttachmentCostsNoCopies) {
     RoundTrip trip = RunBorrowedAttachmentRoundTrip(FreshTopic("CopyAccountingBorrowed"));
     COPY_MUST_DELIVER_CLEANLY(trip, kSmallRowBytes, static_cast<size_t>(2));
 
@@ -180,15 +186,16 @@ TEST(CopyAccounting, BorrowedAttachmentCostsExactlyOneCopy) {
         << Hex(owned.delivered_data) << "); only borrowed memory may cost a copy";
 
     const AttachmentTrace& loaned = TraceNamed(trip.ledger, "loaned");
-    EXPECT_NE(loaned.delivered_data, loaned.published_data)
-        << "the provider delivered its own arena bytes where they lay. If PDA-DEC-3 has landed "
-           "and `Blob` can alias foreign memory, this test must be updated to demand 0 copies, "
-           "and spec §3.2/§8.1 with it — do not delete the test";
+    EXPECT_EQ(loaned.delivered_data, loaned.published_data)
+        << "the provider copied its own arena bytes (" << Hex(loaned.published_data) << " -> "
+        << Hex(loaned.delivered_data)
+        << ") instead of handing them over where they lay; §3.2's owner-plus-span is what "
+           "removed that copy and this number is what guards it";
 
     const CopyVerdict verdict = Judge(trip.ledger);
     EXPECT_EQ(verdict.row_copies, static_cast<size_t>(0)) << "the row leg is unaffected by §3.2";
-    EXPECT_EQ(verdict.attachment_copies, static_cast<size_t>(1))
-        << "spec §3.2 forces exactly one copy of borrowed memory today";
+    EXPECT_EQ(verdict.attachment_copies, static_cast<size_t>(0))
+        << "the seam still costs a copy to carry memory it does not own";
 
     // Standing proof that the "1" above is a measurement of the provider and
     // not an arithmetic constant of the harness: the identical leg, against a

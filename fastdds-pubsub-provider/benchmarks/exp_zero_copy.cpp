@@ -95,7 +95,9 @@ void PingPong(const char* label, bool loan, bool sharing, size_t row_bytes, uint
             if (len >= sizeof(seq)) std::memcpy(&seq, data, sizeof(seq));
             arrived.store(seq, std::memory_order_release);
         });
-    if (!result.schema.valid() || !result.schema.get()) {
+    SharedSchema topic_schema;
+    if (result.schema.Wait(std::chrono::seconds(5), &topic_schema) != PubSubStatus::kOk ||
+        !topic_schema) {
         std::printf("  %-26s SCHEMA HANDOFF FAILED\n", label);
         return;
     }

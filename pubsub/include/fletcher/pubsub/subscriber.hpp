@@ -6,7 +6,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,13 +35,14 @@ class Subscriber {
     Subscriber(const Subscriber&) = delete;
     Subscriber& operator=(const Subscriber&) = delete;
 
-    /// Result returned by Subscribe. `schema` is a future for the topic's
-    /// schema (see SubscriptionResult): non-blocking, resolves with a
-    /// non-null SharedSchema once known. Shared across fan-out subscribers
-    /// to the same topic.
+    /// Result returned by Subscribe. `schema` is a waitable arrival for the
+    /// topic's schema (see SubscriptionResult and SchemaArrival): non-blocking,
+    /// answered once the schema is known. Shared across fan-out subscribers to
+    /// the same topic — they observe one provider subscription, so they observe
+    /// one arrival.
     struct SubscribeResult {
         uint64_t subscription_id;
-        std::shared_future<SharedSchema> schema;
+        SchemaArrival schema;
     };
 
     /// User callback. The first parameter is the subscription_id this

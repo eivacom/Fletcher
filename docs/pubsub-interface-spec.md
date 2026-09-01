@@ -144,9 +144,16 @@ C view must honour:
 
 ### §3.2 — `Blob` / `Attachments` — shared ownership across the seam
 
-`Blob = shared_ptr<const vector<uint8_t>>`, `Attachments = unordered_map<string, Blob>`
+`Blob` is an **owner plus a span** — `{shared_ptr<const void> owner, const uint8_t* data,
+size_t size}` — and `Attachments = unordered_map<string, Blob>`
 ([core/include/fletcher/core/types.hpp](../core/include/fletcher/core/types.hpp)).
-The `shared_ptr` is what gives zero-copy publisher → provider → subscriber today.
+Shared ownership is what gives zero-copy publisher → provider → subscriber, and
+naming the bytes separately from what keeps them alive is what lets the seam
+carry memory Fletcher did not allocate.
+
+It was `shared_ptr<const vector<uint8_t>>` until PDA-DEC-3. That could only ever
+name bytes Fletcher had allocated, which is why the "Consequence" paragraph below
+was not met.
 
 The C-expressible form of shared ownership is a **handle plus retain/release**.
 This round does not write that C form — it **states the contract it must satisfy**
@@ -159,12 +166,23 @@ so that both ABI rounds derive the same one:
 4. Release must not throw and must not re-enter the seam.
 5. Empty is representable with a null data pointer and zero length.
 
-**Consequence this round must deliver:** the seam must be able to carry memory it
-does not own — a transport's loaned sample, say — without copying it into a
-`vector`. Today's `Blob` cannot, so a receive path that borrows transport memory
-is forced to copy. Whether that is met by a custom-deleter `shared_ptr`, or by
-widening the type, is PDA-DEC-3's design call; that it is met is not optional, and it
-is the single largest thing standing between the seam and zero-copy receive.
+**Consequence, DELIVERED by PDA-DEC-3:** the seam carries memory it does not own —
+a transport's loaned sample, say — without copying it into a `vector`. The one
+general constructor is `Blob(owner, data, size)`; there is deliberately **no
+view-only form** (non-null `data` with a null `owner` is refused with
+`kInvalidArgument`), so clause 1 above is exactly true and a C boundary implements
+"keep it" as `retain(owner)`. There is also deliberately **no conversion from the
+retired `shared_ptr` alias**: that would have left every call site compiling and
+its copy in place, a coexistence window in a change whose whole point is that
+there is none.
+
+The C form is **conceptual, never a memory image**. `shared_ptr<const void>` is
+two words and a control block; a C `{void*, const uint8_t*, size_t}` is not a
+reinterpretation of it, and no layout compatibility is implied or permitted — a
+boundary *constructs* a `Blob` from the three fields. This is also why the two ABI
+rounds need no shared C header: they never exchange a struct with each other, they
+each wrap the same C++ value from their own side, so their C spellings may differ
+freely.
 
 ### §3.3 — Schemas
 
@@ -181,23 +199,58 @@ subscriber callback **borrows**.
 
 ### §3.4 — The schema future — the one type with no obvious C form
 
-`SubscriptionResult::schema` is a `std::shared_future<SharedSchema>`. A future is
-the least C-expressible thing at the seam: both ABI rounds would otherwise invent
-their own bridge, and they would invent different ones.
+`SubscriptionResult::schema` was a `std::shared_future<SharedSchema>`. A future is
+the least C-expressible thing at the seam: both ABI rounds would otherwise have
+invented their own bridge, and they would have invented different ones.
 
-This round must give it a **normative C-expressible form** — a completion
-callback, or a poll-plus-wait pair, or an explicit handle — with the
-`shared_future` retained (if at all) as a C++ convenience *over* that form rather
-than as the contract. Which shape is PDA-DEC-3's design call. What is not optional:
-after this round, an ABI author must be able to implement schema arrival without
-inventing anything.
+PDA-DEC-3 replaced it with `SchemaArrival` — a copyable, thread-safe waitable
+handle with a single-use `SchemaResolver` on the write end
+([pubsub/include/fletcher/pubsub/schema_arrival.hpp](../pubsub/include/fletcher/pubsub/schema_arrival.hpp)).
+There is **one waiting mechanism**: the `shared_future` is retired, not kept as a
+C++ convenience beside it, so the path a C#/Rust caller uses is the path the
+tree's own tests exercise.
+
+`Wait(timeout, out)` returns a **typed** outcome, never a bare bool:
+
+| Outcome | Meaning | `*out` |
+|---|---|---|
+| `kOk` + non-null | the schema arrived | written |
+| `kOk` + null | **RESERVED**: this transport carries no schemas at all (§7 clause 1) | written null |
+| `kPending` | not yet, within `timeout` | untouched |
+| `kSubscriptionEnded` | no schema will ever arrive — the subscription is gone | untouched |
+| anything else | the provider failed to produce one | untouched |
+
+The second and the fourth are different facts that demand opposite handling at a
+subscriber, and §7's failure mode for guessing wrong is silent wrong-slot
+decoding. So `SchemaArrival::Ready(nullptr)` is the **only** producer of
+`kOk` + null; `SchemaResolver::Resolve` refuses a null schema. A resolver is
+move-only with two `&&`-qualified terminal calls and a destructor that is itself
+the third outcome, so "resolved twice" and "resolved never" are both
+unrepresentable — which is what makes an unbounded wait safe to offer.
+
+C form: `fl_status wait(arrival, int64_t timeout_ms, fl_schema* out)`, where
+`fl_schema` is §3.2's owner-handle pair `{owner, const ArrowSchema*}` and **not**
+a bare `ArrowSchema*`. On `kOk` the handle is a **new reference the caller
+releases**. A boundary releases the *owner handle* and must **never** call the
+Arrow C Data Interface `release` on a shared schema — that destroys it under every
+other holder. `timeout_ms < 0` is refused with `kInvalidArgument` (so "negative
+means forever" cannot be invented by one round and not the other); `INT64_MAX` is
+the unbounded form, which in C++ is `milliseconds::max()` and must be implemented
+as a deadline-free wait rather than `wait_for(duration::max())`, which overflows.
+
+The **semantics** above are pinned; the spelling is illustrative. Each ABI round
+writes both sides of its own boundary and chooses its own names and layout — there
+is no shared C header (§1).
 
 ### §3.5 — Topic segments
 
-`std::vector<std::string>` today, so the provider may join with any separator.
-Fine as a C++ signature; the seam must state the C form (a pointer-and-count of
-pointer-and-length pairs, borrowed for the call) so both boundaries agree, and
-must state whether an empty segment list is legal.
+`std::vector<std::string>`, so the provider may join with any separator. Fine as a
+C++ signature; the C form is a **pointer-and-count of pointer-and-length pairs,
+borrowed for the duration of the call** — a callee that keeps a segment copies its
+bytes. **An empty segment list is illegal** and is refused with
+`kInvalidArgument` by every method that takes one: there is no default topic and
+no recovery. The check lives once, in `internal::RequireSegments`, which all three
+providers already route every topic through.
 
 ---
 
@@ -271,11 +324,30 @@ Recoverable errors throw (HARD's H-INV-2), and that stays: it is the idiom the
 whole C++ surface uses. Exceptions cannot cross C, so **each** C boundary
 translates — independently, in its own round.
 
-For that to yield the same statuses on both sides, this round must publish a
-**stable exception taxonomy**: the set of exception types the seam may throw, and
-what each means. Without it, the two ABI rounds will map failures differently and
-an application will see a different error for the same cause depending on which
-side reported it.
+For that to yield the same statuses on both sides, the seam publishes a **stable
+exception taxonomy**, and PDA-DEC-3 delivered it as **one error type carrying one
+stable numbered cause** rather than a set of types plus a prose map (owner ruling
+2026-09-01): `PubSubError` over `PubSubStatus`
+([core/include/fletcher/core/status.hpp](../core/include/fletcher/core/status.hpp)).
+Two independent bindings cannot mirror an assortment of standard exception types
+without drifting, which is the drift this round exists to stop.
+
+- `PubSubStatus` values are **fixed integers, appended only, never reordered or
+  reused**, pinned one enumerator at a time by `static_assert` — a reorder fails
+  the build rather than silently re-labelling every error an already-deployed
+  binding has seen. `kOk = 0` exists because both C boundaries need a success
+  value in the same enum (§5.2).
+- `PubSubError` **refuses** `kOk`, `kPending` and `kSubscriptionEnded`: the first
+  would let a boundary report a failed call as a success, and the other two are
+  §2 wait outcomes rather than failures.
+- **Every seam entry point translates.** Each provider wraps its four methods, so
+  the only exception that leaves is a `PubSubError`; anything else — including
+  `std::bad_alloc` or a transport SDK's own type — becomes `kInternal` carrying
+  the original `what()`. A taxonomy that lets an untyped exception through is not
+  one.
+- `PubSubError` derives from `std::runtime_error`, so existing
+  `catch (const std::exception&)` sites are unaffected. Messages are unchanged;
+  what moved is branching on the error *type*, which is now branching on a number.
 
 ### §5.2 — Consistency of idiom, not of code
 
@@ -326,9 +398,28 @@ The contract:
 1. **Schema before data.** A callback is never invoked with a null schema. A
    subscriber may subscribe before any publisher exists; data arriving ahead of
    the schema is **buffered** and delivered once the schema is known. A transport
-   that carries no schemas at all — the gateway's in-process loopback, where the
-   client brings its own — passes null throughout instead, and must never mix the
-   two.
+   that carries no schemas for a topic — the gateway's in-process loopback in its
+   default mode, where the client brings its own — passes null throughout
+   instead.
+
+   **The two are never mixed WITHIN ONE SUBSCRIPTION.** Restated per subscription
+   by PDA-DEC-3 (owner ruling 2026-09-01), and stronger than the instance-wide
+   reading it replaces: a subscription's schema is fixed when `Subscribe` returns
+   and is exactly what its `SchemaArrival` reports, so **a declaration made after
+   a subscription exists never reaches that subscription** — it reaches only new
+   ones. The loopback used to cache a `CreateTopic` schema and hand it to whatever
+   subscription was live, which flipped a live subscription from null to non-null
+   mid-stream: a client decoding one stream two ways with no signal, which is
+   silent wrong data rather than an error. The clause also binds the DDS
+   providers, at no cost — schema-before-data already makes every delivery there
+   non-null.
+
+   The loopback is **not** a transport that "carries no schemas at all": it
+   carries the ones a publisher declared on that instance, and it can be
+   constructed schema-carrying outright
+   (`InProcessPubSubProvider::SchemaCarriage`), in which case it upholds
+   schema-before-data by refusal — `CreateTopic` requires a schema and publishing
+   to an undeclared topic is `kTopicNotDeclared`.
 2. **Per-writer order**, holding **across the schema handoff**: the buffered
    pre-schema backlog is delivered before, and never interleaved with, samples
    arriving live afterwards.
@@ -388,8 +479,15 @@ it.
 - **Rows:** already there, via `Publish`'s inversion and `FixedWriteBuffer`.
 - **Attachments:** already there publisher → provider → subscriber, via
   `shared_ptr`.
-- **Receive:** *not* there. Today's `Blob` forces a copy into a `vector`, so a
-  provider that could hand over borrowed transport memory cannot (§3.2).
+- **Receive:** the *seam* no longer stands in the way — `Blob` is an owner plus a
+  span, so a provider hands over borrowed transport memory where it lies (§3.2,
+  delivered by PDA-DEC-3). What is still not there is the transport half: Fast
+  DDS's loanable read path materialises one owning copy per sample **that carries
+  attachments** (down from one per attachment; an attachment-free sample is
+  untouched) because the loan is returned when `Take` returns and a buffered
+  pre-schema backlog can outlive it, and `Envelope::row` is still a `vector` copy
+  on every XRCE and gateway receive. §11 assigns the loaned-sample path to
+  PDA-ABI by name.
 
 ### §8.1 — It must be falsifiable
 
@@ -405,8 +503,12 @@ address" are different failures. It binds only where delivery is **synchronous o
 the publishing thread** and the encode window stays **allocated until the callback
 returns** — a subject breaking either is not measurable this way. Refill movement
 is permitted (§3.1 clause 1) and **reported as a number**; every other byte
-movement is a violation, and the copy §3.2 forces on a provider's own borrowed
-memory is pinned at **exactly one** so its removal turns the guard red.
+movement is a violation, and the copy §3.2 used to force on a provider's own
+borrowed memory is pinned at **zero** — it was pinned at exactly one so that its
+removal would turn the guard red, which is what happened when PDA-DEC-3 removed
+it (`CopyAccounting.BorrowedAttachmentCostsNoCopies`, renamed from
+`…CostsExactlyOneCopy`). A third suite, `SeamVocabulary`, pins what the crossing
+types make representable rather than what a provider does.
 
 **Scope.** Green is evidence about *this seam* and nothing else — not about a
 transport's data-sharing, loaned samples or receive-side zero-copy. A live

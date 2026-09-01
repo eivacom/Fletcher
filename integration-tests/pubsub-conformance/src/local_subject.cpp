@@ -6,6 +6,7 @@
 // it holds a PubSubProvider, so this TU links no provider and neither does the
 // clause library it belongs to.
 
+#include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
@@ -20,7 +21,15 @@ namespace fletcher {
 namespace conformance {
 
 std::string DescribeException(const std::exception& e) {
-    return std::string(typeid(e).name()) + ": " + e.what();
+    std::string out = std::string(typeid(e).name()) + ": " + e.what();
+    // The seam's numbered cause, carried into the string so a cross-process
+    // subject can send back exactly what a local one saw (spec §5.1).
+    if (const auto* typed = dynamic_cast<const PubSubError*>(&e)) {
+        out += " [status=";
+        out += PubSubStatusName(typed->status());
+        out += "]";
+    }
+    return out;
 }
 
 namespace {

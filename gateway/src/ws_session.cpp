@@ -9,9 +9,10 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
-#include <future>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <vector>
 
 #include "publish_frame.hpp"
 #include "schema_codec.hpp"
@@ -221,26 +222,22 @@ void WsSession::OnSubscribe(const std::string& topic) {
         {"subId", std::to_string(sub_id)},
         {"topic", topic},
     };
-    // The schema future resolves asynchronously for late-joining DDS
-    // subscribers; only forward it in the subscribed response when it is
-    // already available (publisher-first / in-process loopback). Otherwise
-    // the client relies on its own schema (e.g. protoc-generated).
-    if (result.schema.valid() &&
-        result.schema.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        // A ready future can still hold an exception — e.g. the provider breaks
-        // the promise when a subscription is dropped before the schema arrives.
-        // Omit the schema fields in that case rather than letting get() throw
-        // and tear down the session.
-        try {
-            SharedSchema schema = result.schema.get();
-            if (schema) {
-                auto ipc_bytes = SerializeSchemaIpc(schema.get());
-                response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-                response["schema"] = gateway::ArrowSchemaToJson(schema.get());
-            }
-        } catch (const std::exception&) {
-            // No schema available — fall through with routing-only response.
-        }
+    // The schema arrives asynchronously for late-joining DDS subscribers; only
+    // forward it in the subscribed response when it is already in hand
+    // (publisher-first / in-process loopback). Otherwise the client relies on its
+    // own schema (e.g. protoc-generated).
+    //
+    // A zero timeout POLLS — Subscribe must not block, and neither must this. The
+    // three answers this used to distinguish by catching an exception out of
+    // get() are now three values: kOk with a schema, kOk with null (this
+    // transport carries no schemas — the client brings its own), and anything
+    // else (not yet, or this subscription is already over). Only the first has
+    // anything to send.
+    SharedSchema schema;
+    if (result.schema.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kOk && schema) {
+        auto ipc_bytes = SerializeSchemaIpc(schema.get());
+        response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+        response["schema"] = gateway::ArrowSchemaToJson(schema.get());
     }
     SendText(response.dump());
 }
@@ -257,7 +254,19 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     // that parser rejects.
     auto parts = gateway::ParsePublishFrame(data, len);
     auto segments = SplitTopic(parts.topic);
-    auto envelope = DeserializeEnvelope(parts.envelope_data, parts.envelope_size);
+
+    // The frame bytes belong to the read buffer, which is reused the moment this
+    // handler returns — so an attachment that ALIASES them (spec §3.2) needs an
+    // owner that outlives the publish. One copy of the envelope, taken once,
+    // replaces the copy this path used to make of every attachment; a frame with
+    // no attachments needs no owner and still takes no copy at all.
+    std::shared_ptr<const std::vector<uint8_t>> owner;
+    if (EnvelopeAttachmentCount(parts.envelope_data, parts.envelope_size) > 0) {
+        owner = std::make_shared<const std::vector<uint8_t>>(
+            parts.envelope_data, parts.envelope_data + parts.envelope_size);
+    }
+    auto envelope = DeserializeEnvelope(owner, owner ? owner->data() : parts.envelope_data,
+                                        parts.envelope_size);
 
     publisher_->Publish(
         segments,

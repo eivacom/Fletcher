@@ -11,8 +11,8 @@
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <functional>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -43,9 +43,18 @@ class SubscriberArrow {
 
     struct SubscribeResult {
         uint64_t subscription_id;
-        // Future for the topic's Arrow schema (see SubscriptionResult):
-        // non-blocking, resolves with a non-null schema once known.
-        std::shared_future<std::shared_ptr<arrow::Schema>> schema;
+        // The topic's schema arrival, in the seam's own vocabulary (see
+        // SchemaArrival): non-blocking, one waiting mechanism for C++ and for a
+        // C#/Rust caller alike.
+        //
+        // It used to be an Arrow-typed future. It is not any more, deliberately:
+        // a `shared_future<shared_ptr<arrow::Schema>>` is the least
+        // C-expressible thing at the seam, and keeping an Arrow-typed one here
+        // would have been a second waiting mechanism beside the seam's. Callers
+        // that want an `arrow::Schema` convert with `fletcher::ImportArrowSchema`
+        // — the one safe conversion, now public precisely so that this change
+        // does not hand anyone the unsafe one.
+        SchemaArrival schema;
     };
 
     /// Subscribe with ArrowRow delivery.

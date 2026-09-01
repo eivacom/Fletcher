@@ -13,10 +13,11 @@ int main() {
     Envelope env;
     env.row = {0x01, 0x02, 0x03};
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
-    env.attachments["sensor"] = blob;
+    const std::vector<uint8_t> payload{0xDE, 0xAD};
+    env.attachments["sensor"] = Blob{payload};
 
-    auto wire = SerializeEnvelope(env);
+    // Parsing needs an owner for the bytes: the attachments alias them.
+    auto wire = std::make_shared<const std::vector<uint8_t>>(SerializeEnvelope(env));
     auto restored = DeserializeEnvelope(wire);
 
     if (restored.row != env.row) {
@@ -29,7 +30,9 @@ int main() {
         return 1;
     }
 
-    if (*restored.attachments.at("sensor") != *blob) {
+    const Blob& sensor = restored.attachments.at("sensor");
+    if (sensor.size() != payload.size() ||
+        std::memcmp(sensor.data(), payload.data(), payload.size()) != 0) {
         std::fputs("FAIL: attachment data mismatch after round-trip\n", stderr);
         return 1;
     }

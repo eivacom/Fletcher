@@ -20,6 +20,7 @@
 #include <fastdds/rtps/common/SerializedPayload.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -152,11 +153,26 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         const uint32_t length = ReadSampleLength(payload.data + header);
         if (length > payload.length - header - kSampleLengthPrefix) return false;
 
+        const uint8_t* body = SampleBody(payload.data + header);
         const uint8_t* row = nullptr;
         uint32_t row_len = 0;
-        if (!ParseEnvelopeBody(SampleBody(payload.data + header), length, row, row_len,
-                               d->decoded_attachments)) {
-            return false;
+
+        // The attachments this produces ALIAS whatever they are parsed out of, so a sample that
+        // carries any needs an owner that outlives this call — Fast DDS may recycle `payload` as
+        // soon as we return. One copy of the body, taken once, replaces the copy-per-attachment
+        // that used to happen here. A sample with no attachments needs no owner and takes no copy.
+        if (PeekAttachmentCount(body, length) > 0) {
+            auto owned = std::make_shared<const std::vector<uint8_t>>(body, body + length);
+            if (!ParseEnvelopeBody(owned, owned->data(), length, row, row_len,
+                                   d->decoded_attachments)) {
+                return false;
+            }
+            d->body = std::move(owned);
+        } else {
+            d->body.reset();
+            if (!ParseEnvelopeBody(nullptr, body, length, row, row_len, d->decoded_attachments)) {
+                return false;
+            }
         }
 
         // Deliver raw row bytes — no decoding, no Arrow dependency.

@@ -12,6 +12,7 @@
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -39,15 +40,40 @@ inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncode
     for (const auto& [key, blob] : attachments) {
         buf.AppendFixed(static_cast<uint32_t>(key.size()));
         buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-        uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+        auto blob_len = static_cast<uint32_t>(blob.size());
         buf.AppendFixed(blob_len);
-        if (blob_len > 0) buf.Append(blob->data(), blob_len);
+        if (blob_len > 0) buf.Append(blob.data(), blob_len);
     }
 }
 
-// Reverse of EncodeEnvelopeBody. `row` views `ptr`; attachment blobs are copied.
-inline bool ParseEnvelopeBody(const uint8_t* ptr, size_t total, const uint8_t*& row,
-                              uint32_t& row_len, Attachments& attachments) {
+// How many attachments the body claims, without parsing them. 0 for a body that carries none or
+// whose count field is not there at all.
+//
+// Exists so a receive path can decide whether it needs a shared OWNER for these bytes before it
+// pays for one: an attachment-free sample — the hot path, and every sample the benchmarks measure —
+// still crosses with no copy of any kind.
+inline uint32_t PeekAttachmentCount(const uint8_t* ptr, size_t total) {
+    if (total < 4) return 0;
+    uint32_t row_len = 0;
+    std::memcpy(&row_len, ptr, 4);
+    if (row_len > total - 4) return 0;
+    const size_t pos = 4 + static_cast<size_t>(row_len);
+    if (total - pos < 4) return 0;
+    uint32_t att_count = 0;
+    std::memcpy(&att_count, ptr + pos, 4);
+    return att_count;
+}
+
+// Reverse of EncodeEnvelopeBody. `row` views `ptr`, and so do the attachment blobs: `owner` is what
+// keeps `[ptr, ptr+total)` alive, and every Blob produced here takes its own reference to it
+// (§3.2). No attachment byte is copied.
+//
+// `owner` may be null ONLY for a body with no attachments — `PeekAttachmentCount` above is how a
+// caller finds that out cheaply. A body that claims attachments with no owner to hand them is
+// refused (returns false) rather than producing blobs nothing keeps alive.
+inline bool ParseEnvelopeBody(const std::shared_ptr<const void>& owner, const uint8_t* ptr,
+                              size_t total, const uint8_t*& row, uint32_t& row_len,
+                              Attachments& attachments) {
     if (total < 4) return false;
     std::memcpy(&row_len, ptr, 4);
     // Checks subtract, never add: `pos + len` can wrap on a 32-bit size_t. pos <= total throughout.
@@ -75,8 +101,8 @@ inline bool ParseEnvelopeBody(const uint8_t* ptr, size_t total, const uint8_t*& 
             std::memcpy(&blob_len, ptr + pos, 4);
             pos += 4;
             if (blob_len > total - pos) return false;
-            auto blob =
-                std::make_shared<const std::vector<uint8_t>>(ptr + pos, ptr + pos + blob_len);
+            if (blob_len > 0 && !owner) return false;
+            Blob blob = blob_len > 0 ? Blob(owner, ptr + pos, blob_len) : Blob();
             pos += blob_len;
             attachments.insert_or_assign(std::move(key), std::move(blob));
         }

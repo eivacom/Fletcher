@@ -69,9 +69,9 @@ class SampleWriter : public SampleWriterBase {
         // to the flow-controller thread, and this check would then run before serialize() and miss
         // the failure.
         if (!transport.serialize_error.empty()) {
-            throw std::runtime_error("FastDDS: failed to publish to '" +
-                                     writer->get_topic()->get_name() +
-                                     "': " + transport.serialize_error);
+            throw PubSubError(PubSubStatus::kTransportFailure,
+                              "FastDDS: failed to publish to '" + writer->get_topic()->get_name() +
+                                  "': " + transport.serialize_error);
         }
         if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,

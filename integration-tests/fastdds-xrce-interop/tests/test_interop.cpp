@@ -28,9 +28,9 @@
 #include <cstring>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -50,6 +50,20 @@ using namespace fletcher;
 using namespace std::chrono_literals;
 
 namespace {
+
+// The Arrow tier no longer hands back an arrow::Schema: it hands back the seam's
+// own SchemaArrival (one waiting mechanism, spec §3.4), and a caller that wants
+// an arrow::Schema converts with fletcher::ImportArrowSchema — the one safe
+// conversion, public precisely so nobody writes the unsafe one. Spelled out here
+// once, so every call site below reads the same way.
+std::shared_ptr<arrow::Schema> AwaitArrowSchema(const SchemaArrival& arrival,
+                                                std::chrono::milliseconds budget) {
+    SharedSchema nano;
+    const PubSubStatus status = arrival.Wait(budget, &nano);
+    EXPECT_EQ(status, PubSubStatus::kOk)
+        << "schema arrival: " << PubSubStatusName(status) << " " << arrival.Message();
+    return ImportArrowSchema(nano);
+}
 
 constexpr uint32_t kDdsDomain = 145;
 constexpr const char* kAgentIp = "127.0.0.1";
@@ -298,7 +312,8 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // /__schema must round-trip the full schema including Arrow
     // KeyValueMetadata — anything weaker would let a CDR length-prefix
     // off-by-N or schema-IPC bug slip past the test.
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
@@ -361,7 +376,8 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
         cv.notify_all();
     });
 
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 
@@ -427,8 +443,10 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
         rx_rows.push_back(std::move(row));
         cv.notify_all();
     });
-    EXPECT_NE(result.schema.wait_for(0s), std::future_status::ready)
-        << "schema future must not be ready before any publisher announces it";
+    SharedSchema not_yet;
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &not_yet), PubSubStatus::kPending)
+        << "the schema arrival must be PENDING before any publisher announces one - not kOk with "
+           "a null schema, which would mean this transport carries no schemas at all";
 
     // Bring up the FastDDS publisher and publish a known set of rows.
     fastdds_pub.CreateTopic(topic, schema);
@@ -442,8 +460,9 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
         fastdds_pub.Publish(topic, SensorRow(id, temp, label));
     }
 
-    // The future resolves once /__schema arrives — guaranteed non-null.
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    // The arrival answers once /__schema arrives — guaranteed non-null.
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
 

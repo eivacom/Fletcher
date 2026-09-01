@@ -6,16 +6,18 @@
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SCHEMA_CHANNEL_HPP_
 
 #include <atomic>
-#include <exception>
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/subscriber/DataReader.hpp>
 #include <fastdds/dds/subscriber/DataReaderListener.hpp>
 #include <fastdds/dds/subscriber/SampleInfo.hpp>
+#include <fletcher/core/status.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
+#include <fletcher/pubsub/schema_arrival.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <functional>
-#include <future>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "transport_data.hpp"
@@ -23,29 +25,49 @@
 namespace fletcher {
 namespace internal {
 
-// Per-subscription schema handoff. The promise is resolved by the SchemaListener
+// Per-subscription schema handoff. The arrival is resolved by the SchemaListener
 // (on a FastDDS thread) when the companion __schema sample arrives; the caller
-// gets the shared_future. Guarded by its OWN mutex — NEVER the provider mutex —
+// gets the SchemaArrival. Guarded by its OWN mutex — NEVER the provider mutex —
 // so this FastDDS-thread callback can never contend with the provider lock the
 // application thread holds while inside a FastDDS API (which would invert with
 // FastDDS' internal subscriber mutex and deadlock).
+//
+// The resolver is single-use by construction, so "resolved twice" is
+// unrepresentable rather than guarded by a `resolved` flag; this mutex now only
+// serialises the two threads that might reach for the one token.
 struct SchemaChannel {
+    SchemaChannel() {
+        auto pair = SchemaArrival::Create();
+        arrival = std::move(pair.first);
+        resolver.emplace(std::move(pair.second));
+    }
+
     std::mutex m;
-    std::promise<SharedSchema> promise;
-    std::shared_future<SharedSchema> future;
-    bool resolved = false;
+    SchemaArrival arrival;
+    std::optional<SchemaResolver> resolver;
 
     void Resolve(SharedSchema schema) {
-        std::lock_guard<std::mutex> lk(m);
-        if (resolved) return;
-        promise.set_value(std::move(schema));
-        resolved = true;
+        std::optional<SchemaResolver> token;
+        {
+            std::lock_guard<std::mutex> lk(m);
+            if (!resolver.has_value()) return;
+            token = std::move(resolver);
+            resolver.reset();
+        }
+        std::move(*token).Resolve(std::move(schema));
     }
-    void Break(std::exception_ptr error) {
-        std::lock_guard<std::mutex> lk(m);
-        if (resolved) return;
-        promise.set_exception(std::move(error));
-        resolved = true;
+
+    // Unsubscribed before the schema arrived. Dropping the token unresolved IS
+    // the outcome — kSubscriptionEnded — which is what the broken promise used
+    // to say by throwing out of get(), only now it is a value a binding can read
+    // and cannot confuse with "this transport carries no schemas".
+    void Break() {
+        std::optional<SchemaResolver> token;
+        {
+            std::lock_guard<std::mutex> lk(m);
+            token = std::move(resolver);
+            resolver.reset();
+        }
     }
 };
 

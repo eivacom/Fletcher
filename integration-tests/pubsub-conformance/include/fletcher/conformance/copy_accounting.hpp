@@ -83,6 +83,17 @@ struct CopyLedger {
     /// input map and so cannot catch a dropped entry.
     size_t delivered_attachments = 0;
 
+    /// INPUT. When non-empty, the capture keeps its own copy of the attachment
+    /// delivered under this key — §3.2 clause 1's "a callee that keeps it takes
+    /// its own reference" — and the two fields below are read AFTER the callback
+    /// has returned. Empty means the leg is not run.
+    std::string retain_key;
+    /// Where the retained bytes live once the delivery call is over, and whether
+    /// they still read back byte for byte. A blob whose bytes die with the
+    /// callback cannot satisfy both: either the owner is real, or it is not.
+    Address retained_data = 0;
+    bool retained_content_ok = false;
+
     std::vector<AttachmentTrace> attachments;
 };
 
@@ -194,24 +205,30 @@ Attachments MakeCopyAttachments();
 /// inspection, that the number moves with provider behaviour.
 RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provider = false);
 
-/// The static half of leg 3's tripwire, and the reason the runtime pin above is
-/// not the whole story.
+/// The static half of leg 3, and the reason the runtime pin is not the whole
+/// story.
 ///
-/// `Blob` points at a `vector`, and a `vector` owns its bytes; that is *why*
-/// borrowed memory costs a copy today. No provider can escape it, so no
-/// provider-side measurement can see PDA-DEC-3 land by itself. This can:
-/// PDA-DEC-3 must change what `Blob` IS — including in the backward-compatible
-/// shape where `Blob` becomes a class implicitly constructible from today's
-/// `shared_ptr`, which would leave every call site compiling.
+/// The tripwire this REPLACES said: `Blob` points at a `vector`, and a `vector`
+/// owns its bytes, so borrowed memory cost a copy no provider could escape — and
+/// it named the residual it feared, "a PDA-DEC-3 that leaves `Blob` untouched and
+/// adds a PARALLEL borrowed-blob type trips neither this nor the runtime pin".
 ///
-/// RESIDUAL, stated rather than papered over: a PDA-DEC-3 that leaves `Blob`
-/// untouched and adds a PARALLEL borrowed-blob type trips neither this nor the
-/// runtime pin. Closing that needs the seam vocabulary PDA-DEC-3 itself owns.
-static_assert(std::is_same_v<Blob, std::shared_ptr<const std::vector<uint8_t>>>,
-              "Blob changed shape. If this is PDA-DEC-3 making borrowed transport memory "
-              "carryable, CopyAccounting.BorrowedAttachmentCostsExactlyOneCopy must be updated "
-              "to demand 0 copies, and spec §3.2/§8.1 with it. Do not relax this assertion to "
-              "restore the build.");
+/// PDA-DEC-3 did the opposite: `Blob` ITSELF became an owner plus a span, with no
+/// conversion from the retired alias, so the change was source-breaking and no
+/// parallel type exists. These assertions are the inverse of the old one — not a
+/// relaxation of it, which its own text forbids. They fail the BUILD if anyone
+/// puts the old shape back, or bolts a quiet conversion onto the new one.
+static_assert(!std::is_same_v<Blob, std::shared_ptr<const std::vector<uint8_t>>>,
+              "Blob is back to being a shared_ptr to a vector, so the seam can no longer carry "
+              "memory it does not own and CopyAccounting.BorrowedAttachmentCostsNoCopies is "
+              "measuring nothing. Do not relax this assertion to restore the build.");
+static_assert(std::is_constructible_v<Blob, std::shared_ptr<const void>, const uint8_t*, size_t>,
+              "Blob lost its owner-plus-span constructor — the one thing that lets a transport "
+              "hand over its own bytes where they lie (spec 3.2).");
+static_assert(!std::is_convertible_v<std::shared_ptr<const std::vector<uint8_t>>, Blob>,
+              "Blob gained a conversion from the retired alias. That is the coexistence window "
+              "this change exists not to have: every old call site would compile again and keep "
+              "its copy, unnoticed.");
 
 }  // namespace conformance
 }  // namespace fletcher
