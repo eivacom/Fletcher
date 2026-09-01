@@ -168,10 +168,10 @@ no skips, and the existing "XRCE tests … skip without one" line does **not** e
 **including its Agent cache step**. Without it the round's first guard never runs on the
 shared lane while the same PR deletes a test that runs there on both platforms — green
 with no signal. Three measured repo gotchas, so they are not rediscovered red:
-(1) **every `ci.integration-test.*.yml` job uses `sparse-checkout`**, so a new
-cross-directory dependency must be added to *every* job that builds a consumer or the
-build fails on a missing target — here the new `pubsub/` loopback source, which the
-gateway jobs also need; this bit the RBA round in two jobs at once. (2) **Licence-header
+(1) **every `ci.integration-test.*.yml` job uses `sparse-checkout`**, so the new lane's own
+list must name `pubsub`, both providers and `integration-tests/pubsub-conformance` or the
+build fails on a missing target; the gateway/pubsub jobs already check out `pubsub`
+(`ci.gateway.yml:42`), so the loopback move needs no edit there. (2) **Licence-header
 and format gates scan the whole tree, not the diff**: every new tracked file needs
 `SPDX-License-Identifier: LGPL-3.0-or-later` + `Copyright (C) 2026 The Fletcher Authors`
 in its first 10 lines (`//` for C/C++/TS, `#` for CMake/YAML); no JSON fixture is added,
@@ -232,7 +232,7 @@ Premise "the loopback lift is mechanical" is **discharged**: its only dependenci
 | Test | Turned green by | Red for the right reason before |
 |---|---|---|
 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` (all 5 subjects) | clause 1 in `src/clauses.cpp` + the five instantiations | Today it cannot even be named: no provider-agnostic harness and no cross-process subject exist. After the harness lands but before divergence fixes it fails on whichever subject violates the handoff, and the ctest name says which. |
-| §7 clause set (clauses 2–12, all subjects) | one clause each, listed above | Each is red on any provider that diverges; failure names clause **and** subject, which is the divergence list. Clause 8 is red on the loopback (silent overwrite) and XRCE (no conflict handling) until this item's two fixes land. Clause 6 on `FastDdsCrossProcess` is proven red-capable by the falsification procedure while `FastDdsLocal` stays green — precisely §7.2's point. |
+| §7 clause set + §6.1 (clauses 2–12, all subjects) | one clause each, listed above | Each is red on any provider that diverges; failure names clause **and** subject, which is the divergence list. Clause 8 is red on the loopback (silent overwrite) and XRCE (no conflict handling) until this item's two fixes land. Clause 6 on `FastDdsCrossProcess` is proven red-capable by the falsification procedure while `FastDdsLocal` stays green — precisely §7.2's point. |
 
 Machine checks proving the rest for free: the clause library's link line names no provider,
 so a provider header cannot resolve; `ParityOracle.EncodeEqualsEncodeRowAndRoundTrips`
@@ -271,7 +271,7 @@ New elsewhere: `pubsub/{include/fletcher/pubsub/in_process_provider.hpp,src/in_p
 and `.github/workflows/ci.integration-test.pubsub-conformance.yml`. Changed:
 **`docs/pubsub-interface-spec.md`** (§7 clause 3, "may" → "**must** be rejected" — the
 owner's ruling, one line, in this PR), `.github/workflows/ci.pr.yml` (path filter + job
-entry) and the `sparse-checkout` lists of every job building a gateway/pubsub consumer,
+entry; the new lane carries its own `sparse-checkout` list),
 `pubsub/CMakeLists.txt`, `gateway/src/main.cpp` (drop the local class, include the new
 header), `.claude/runbook.PDA-DEC.config.md` (commands + baseline). Plus the two named
 decision-11 fixes — conflict rejection in the loopback and in

@@ -242,3 +242,196 @@ supports.
 line) are real and are the right substitutes.
 
 Two NITs were fixed silently in the design doc, line-neutral.
+
+---
+
+# Cycle 2 (final) — reviewed at `154a1a2`
+
+**Verdict: APPROVE-WITH-DEBT(6).** All three cycle-1 BLOCKERs are closed, and all eleven
+cycle-1 DEBT items were folded in. Nothing in the revision contradicts the spec, the rulings
+ledger (now 19 entries, including the 2026-09-01 "Refused, every protocol" selection), or
+locked decisions 1-14. No BLOCKER stands, so there is no framed question owed to the owner.
+The register below is for the implementer; **DEBT-C2-1 must land in this PR** because it is
+the other half of the owner's ruling.
+
+## BLOCKER 1 — §7 clause 3 "may" → "must": **closed**
+
+- The amendment lands **here**, not in PDA-DEC-9: design l.78-93 states the ruling, l.272-273
+  puts `docs/pubsub-interface-spec.md` in Files-to-touch as a one-line change, and
+  Files-to-delete l.288 records "the word *may* in §7 clause 3". Clause 8's authority now reads
+  "§7.3 **as amended below**" (l.61) — it asserts *against* the oracle rather than ahead of it.
+- Both consequent divergence fixes are named as **owned by this item**, with the evidence:
+  loopback silently overwrites (`gateway/src/main.cpp:78-80`, l.84-85), XRCE gains conflict
+  handling, Fast DDS already refuses. They appear in Files-to-touch (l.277-278) and in the
+  forcing-test mapping as "red until this item's two fixes land" (l.235), which is the right
+  place for them.
+- Brief: the change is now its own `CHANGED` interface row (l.15) and decision 1 is recorded as
+  answered (l.32-33). The misleading option (b) is gone.
+
+**The "does anything else depend on the old reading?" sweep.** I searched the whole tree
+(excluding `docs/archive/**`) for `may reject` / `may be rejected` / `conflict`:
+
+- **Inside the spec: nothing else.** §7 clause 3 (l.330-331) is the only occurrence; §5.1, §7.1,
+  §9, §10 and §11 carry no optionality about re-declaration.
+- **`docs/protocol-driver-abi-spec.md:221`** already has `FLETCHER_ERR_SCHEMA_CONFLICT /*
+  re-declaration with a different schema */` — consistent with "must", nothing owed.
+- **`fastdds-pubsub-provider/README.md:255`** documents the check as unconditional — consistent.
+- **One residual, and it is the seam's own header:**
+  `pubsub/include/fletcher/pubsub/provider.hpp:68` says *"providers **may** reject a
+  re-declaration with a conflicting schema"*, and it is **not** in Files-to-touch. §7's own
+  preamble says this contract is "prose in `provider.hpp`", locked decision 5 requires the
+  normative rule to live in the header, and PDA-ABI driver authors read the header, not the plan.
+  Left alone, the PR ships a header contradicting the spec it amended in the same commit.
+  This is **DEBT-C2-1**, not a BLOCKER: it is one word plus one Files-to-touch line, needs no
+  redesign, and the failure mode is a loud clause-8 red plus a doc contradiction rather than a
+  silent wrong answer. It would be a poor use of the owner's one framed question.
+
+## BLOCKER 2 — five subjects, loopback schema-less: **closed**
+
+Design l.8-14 and l.86-93. The justification is the right one (§7 clause 1's last sentence names
+the loopback as the null-throughout transport) and the reason for not doing it now is stated
+correctly (a promise + pre-schema queue + ordered flush inside the exact class PDA-DEC-3's §3.4
+replaces — a construct scheduled for deletion). The handoff is written, and names what returns:
+one `INSTANTIATE_TEST_SUITE_P` line plus one trait value, no new clause. The brief tells the
+owner plainly (l.16, l.46-47), and the cycle-1 "MOVED (behaviour identical)" claim — which was
+false once decision 11's fixes are counted — is gone, replaced by an explicit `CHANGED` row.
+
+**Clause-set completeness over the five subjects, checked:** InProcess `{kAbsent, kDrops}`;
+FastDds Local + CrossProcess `{kCarried, kRetains}`; Xrce Local + CrossProcess `{kCarried, …}`.
+
+- Clause 2 (`kCarried`-gated) runs on 4 subjects / 2 providers — that is §7 clause 1's own
+  carve-out, not a gap.
+- Clause 3 carries the mirror for the one `kAbsent` subject, so §7 clause 1's last sentence
+  keeps its only possible coverage.
+- Clauses 1, 4-12 run on all five / all three providers.
+- **No clause became unexercised by any provider**, and no §7 sentence lost its clause. The
+  mapping I verified in cycle 1 still holds, with §7.3 now satisfied *by* the oracle rather than
+  in tension with it.
+
+## BLOCKER 3 — CI: **closed**
+
+`.github/workflows/ci.integration-test.pubsub-conformance.yml` and the `ci.pr.yml` path-filter/
+job entry are both in Files-to-touch (l.271-274), mirroring
+`ci.integration-test.fastdds-xrce-interop.yml` **including its Agent cache step** — which is the
+right model: that file's restore/save split exists precisely so a partial Agent install from a
+failed run is never cached under the exact key (`:103-148`). Files-to-delete l.286-287 now states
+that the deleted Fast DDS test's CI coverage is replaced in the same PR, so coverage is not
+net-reduced. Two of the three "measured gotchas" check out exactly (whole-tree licence-header and
+format scans; clang-format pinned at 18.1.3); the third was mis-targeted and I corrected it as a
+NIT — see the NIT note at the end.
+
+## Re-checked as design changes
+
+**Traits keyed by provider (design l.24, l.38-39, rung-1 item 3) — the claim holds for clause 6.**
+One `ProviderTraits` row per provider makes `FastDdsLocal` and `FastDdsCrossProcess` unable to
+disagree, and `FastDdsLocal`'s exactly-N assertion (the property the deleted test pins today)
+forces the row to `kRetainsPreSubscribe` — so the cross-process subject *must* expect N and the
+defect's "often just the newest sample" fails. Setting the row to `kDrops` instead fails the
+in-process subject. **The cycle-1 hole is genuinely closed**, and the XRCE case where no single
+value works is correctly routed to premise 3's stop-and-ask rather than to a third enum value.
+One consequence the revision did not notice — **DEBT-C2-2**.
+
+**Clause 12 `DeliveryIsSerializedPerSubscription` — §6-faithful, weakly exercisable.**
+Fidelity is right: §6 clause 1 says "delivery is **serialized per subscription**; the thread may
+differ between samples", and the header's third delivery bullet (`provider.hpp:106-108`) says
+"never two deliveries in flight for the same subscription". Counting callback **overlap** (l.74)
+asserts exactly that, and asserting nothing about thread identity is the correct non-assertion —
+a clause that pinned the thread would contradict §6 clause 1's own second half. It is also
+correctly grouped with clauses 7 and 9 as cardinality-only. What the design does not say is that
+clause 12 can only *observe* overlap, never provoke it, and on the cross-process subjects it
+cannot provoke it at all because the peer pipe is one request/reply at a time — see
+**DEBT-C2-3**. That is the same honest limitation the design already records for clause 1, and it
+is worth the same sentence. Not a fidelity defect: the property clause 12 protects is a future
+driver that dispatches per-sample onto a pool, and it will catch that.
+
+## Numbers
+
+- **`−115`: honest.** 57 (`main.cpp:72-128`) + 10 (rationale comment) + ~46 (the Fast DDS test
+  with its block, `:345-391`) + the amended word ≈ 115. Matches what I measured independently.
+- **`+1750`: understated by roughly 150.** The `+50` attributed to "the CI lane and the two
+  conflict-rejection fixes" cannot cover a workflow that mirrors a **156-line** file including a
+  two-job matrix, sparse-checkout lists and a split cache restore/save, plus a `ci.pr.yml` job
+  entry, plus clause 12, plus the trait table. See **DEBT-C2-5**. No net-lines budget exists in
+  the round config, and the ruling makes the item's size unknowable, so this is accounting, not
+  a breach.
+- **New public surface 1: honest, and now one consistent reading.** `pubsub/` ships in a Conan
+  package, so `fletcher::InProcessPubSubProvider` is genuinely the only product-visible addition;
+  `integration-tests/**` ships in none, so the harness's `ProviderSubject`, `ProviderTraits`,
+  `SchemaId`, `Topic` and `FLETCHER_CONFORMANCE_XRCE` are correctly excluded. The stated rule
+  (l.297-298) is applied uniformly, which is what cycle-1 DEBT-11 asked for.
+- Budgets: design 298/300, brief 56/60 — inside, after two line-neutral NIT fixes below.
+
+## Cycle-1 DEBT: all 11 folded in
+
+Traits by provider (D1) l.24/38-39 · inner-loop provider components (D2) l.150-153 · baseline
+`70`→`69` in the same commit (D3) l.160-162 · `−115` correction (D4) l.293-294 · own
+`AGENT_PREFIX`, shared `AGENT_INSTALL_DIR` (D5) l.135-138 · single ctest entry for the XRCE
+binary + `--gtest_output=xml` grouping + one `RESOURCE_LOCK` per binary (D6) l.128-144 · clause 1
+cannot force the window (D7) l.253-257 · clauses 7/9 cardinality-only (D8) l.72-76 · clause 12
+added (D9) l.63-65 · out-of-tree divergence exit (D10) premise 3, l.220-224 · one surface reading
+(D11) l.297-298.
+
+## DEBT register — cycle 2 (for the implementer)
+
+**DEBT-C2-1 — `provider.hpp:68`'s "may reject" must change in this PR.** Add
+`pubsub/include/fletcher/pubsub/provider.hpp` to Files-to-touch and edit lines 67-69 —
+*"providers **may** reject a re-declaration with a conflicting schema"* → *must*. It is the same
+sentence the owner ruled on, in the file §7 itself calls the contract's current home, and locked
+decision 5 puts the normative rule in the header. Shipping the amended spec beside an unamended
+header is the one way this ruling can still be half-landed.
+
+**DEBT-C2-2 — key *retention* by provider, but leave *schema_mode* per subject.** "ONE row per
+PROVIDER" (l.24) over-rotates: the design's own PDA-DEC-3 handoff (l.91-93) adds a
+schema-carrying loopback subject with "one trait row", which under a strictly per-provider table
+gives the InProcess provider two rows differing in `schema_mode` — exactly what rung-1 item 3
+declares unrepresentable. The escape hatch that keying closes is on the **retention** axis only
+(clause 6); `schema_mode` is a *usage* axis and §7 clause 1 explicitly sanctions one transport
+being exercised in both modes. So: retention keyed by provider, `schema_mode` chosen per subject,
+and narrow rung-1 item 3 to "a provider's subjects disagreeing on **retention**". Clause 6's hole
+stays closed either way, and the promised handoff stops colliding with a forbidden-cases entry.
+
+**DEBT-C2-3 — say that clause 12 observes overlap and cannot force it.** The peer protocol is one
+request/reply at a time, so a clause cannot issue two concurrent publishes to a cross-process
+subject at all; on those subjects clause 12 is an observation, not a proof. Give it clause 1's
+honesty note in the harness README. Cheap teeth on the in-process subjects: have the **local**
+subjects publish from two threads (representable — `PublishRow` is a direct call there), which is
+a real assertion against the loopback, whose `Publish` holds `mu_` across the callback
+(`main.cpp:90-101`).
+
+**DEBT-C2-4 — reuse the conflict comparison that already ships above the seam, and note the
+gateway path is unaffected.** `Publisher::CreateTopic` (`pubsub/src/publisher.cpp:46-78`) already
+implements this exact check: it compares Arrow-IPC bytes, treats "no schema at all" as empty
+bytes that still conflict with a schema-bearing declaration, and treats a schema that cannot be
+IPC-encoded as unprovable ("such topics accept any re-declaration", `:26-29`). The loopback's new
+provider-level check should not invent a different comparison. Two consequences worth knowing
+before starting: (a) clause 8's A-vs-B pair is plainly encodable, so the unprovable case never
+reaches it and "must be rejected" is not weakened by it; (b) the gateway cannot regress —
+`Publisher` throws on a conflict and *returns early* on an identical re-declaration (`:68-76`),
+so the provider never sees either through the gateway, and
+`integration-tests/gateway-end-to-end`'s `createTopic schema conflict` test (which runs in both
+provider contexts, `end-to-end.test.ts:373-388`) is untouched by the loopback fix.
+
+**DEBT-C2-5 — two Files-to-touch entries owed, both one line.** `plans/PDA-decouple-interface.md`:
+the design says the PDA-DEC-3 handoff is "Also in the plan" (l.93) and the brief says it is
+"recorded there so it is not forgotten" (l.47), but PDA-DEC-3's tracker entry says nothing about a
+schema-carrying loopback subject and the plan is not in the change list — the PM's ruled handoff
+would otherwise live only in this design doc. And re-declare nearer **+1900 / −115** once the
+156-line CI lane is counted.
+
+**DEBT-C2-6 (informational, nothing owed) — the sparse-checkout gotcha was mis-targeted.** Every
+`ci.integration-test.*.yml` job does use `sparse-checkout`, but the gateway/pubsub jobs already
+check out `pubsub` (`ci.gateway.yml:42-48`, `:110-113`), so moving the loopback from
+`gateway/src/main.cpp` into `pubsub/` needs **no** edit to any existing job's list. What does need
+one is the new lane's own list (`pubsub`, both providers, `integration-tests/pubsub-conformance`,
+`.conan-profiles`, `.github`). I corrected the paragraph and the Files-to-touch phrase in place so
+nobody hunts for a change that is not needed.
+
+## NITs fixed silently in cycle 2 (all line-neutral)
+
+1. The sparse-checkout gotcha (l.170-174) and the matching Files-to-touch phrase — a verifiable
+   tree claim that was wrong; see DEBT-C2-6.
+2. Forcing-test mapping row 2 was labelled "§7 clause set (clauses 2-12)" while clause 12's
+   authority is §6 clause 1 — now reads "§7 clause set + §6.1".
+
+No hand-composed post-change ledger appears in the revision; the machine checks it names are
+still the real ones.
