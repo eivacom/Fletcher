@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <exception>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -63,6 +64,11 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
         return 1;
     }
 
+    // Every peer writes its replies into a pipe whose reader may already be
+    // gone. Done here rather than in each peer's main so no peer can forget it,
+    // and before READY so it covers the very first write.
+    IgnoreSigPipeOnce();
+
     WriteReply("READY");
 
     std::string line;
@@ -90,8 +96,22 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
                 std::string joined;
                 std::string which;
                 in >> joined >> which;
-                provider->CreateTopic(SplitTopic(joined),
-                                      MakeConformanceSchema(ParseSchemaId(which)));
+                // Building the schema is the HARNESS's work, so a failure here
+                // gets the third reply form rather than "err". Reported as
+                // "err" it would reach the parent as kRefusedByProvider and
+                // satisfy clause 8, which asserts refused() precisely so that a
+                // broken harness cannot satisfy it. Same reasoning as
+                // local_subject.cpp; the peer path needs it too, or the hole is
+                // only half closed.
+                OwnedSchema built;
+                try {
+                    built = MakeConformanceSchema(ParseSchemaId(which));
+                } catch (const std::exception& e) {
+                    WriteReply(prefix +
+                               "harness peer: cannot build schema: " + DescribeException(e));
+                    continue;
+                }
+                provider->CreateTopic(SplitTopic(joined), std::move(built));
                 WriteReply(prefix + "ok");
             } else if (verb == "publish") {
                 std::string joined;

@@ -14,10 +14,12 @@
 #else
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstring>
 #endif
 
@@ -199,14 +201,12 @@ struct ChildProcess::Platform {
 
 ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string>& args)
     : plat_(std::make_unique<Platform>()) {
-    // Writing to a dead child must return nullopt, which is what this class
-    // promises and what the refusal ladder requires. Without this, SIGPIPE's
-    // default disposition TERMINATES the whole gtest binary on the next
-    // WriteLine after the peer dies: no named clause failure, no remaining
-    // clauses in that binary, just exit=141. Process-wide and idempotent, so
-    // several ChildProcess instances setting it is harmless.
-    std::signal(SIGPIPE, SIG_IGN);
-
+    // SIGPIPE's disposition is NOT set here. Writing to a dead child must
+    // return nullopt rather than kill the process, but this constructor runs
+    // with the provider's DDS/XRCE threads already alive, and std::signal is
+    // formally unspecified in a multi-threaded process. Each binary calls
+    // IgnoreSigPipeOnce() from main instead, before any thread exists (see
+    // fixtures.hpp). WriteLine's EPIPE handling below is the other half.
     int in_pipe[2];
     int out_pipe[2];
     if (pipe(in_pipe) != 0) {
@@ -243,11 +243,29 @@ ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string
         // Everything above stderr goes: the parent's provider was constructed
         // BEFORE the spawn (make() is a constructor argument), so without this
         // the peer inherits its DDS/XRCE sockets and shared-memory handles.
-        // close() is async-signal-safe, which is all that may run between fork
-        // and execv in a multi-threaded parent.
-        const long max_fd = sysconf(_SC_OPEN_MAX);
-        for (int fd = STDERR_FILENO + 1; fd < static_cast<int>(max_fd > 0 ? max_fd : 1024); ++fd) {
-            close(fd);
+        //
+        // close_range() where the kernel has it (5.9+), because the fallback
+        // costs one syscall per POSSIBLE descriptor: measured 32 / 60 / 504 ms
+        // per five spawns at RLIMIT_NOFILE 4096 / 65536 / 1048576, and CI
+        // containers sit at the high end. Reached through syscall() rather than
+        // the glibc wrapper so it needs no glibc 2.34, and a raw syscall is
+        // usable between fork and execv where a libc wrapper may not be.
+        bool closed = false;
+#if defined(__linux__) && defined(SYS_close_range)
+        closed =
+            syscall(SYS_close_range, static_cast<unsigned int>(STDERR_FILENO + 1), ~0U, 0) == 0;
+#endif
+        if (!closed) {
+            // Older kernels. Iterated as `long` and bounded by INT_MAX:
+            // sysconf can report a limit that does not fit an int, and
+            // narrowing it was undefined.
+            long limit = sysconf(_SC_OPEN_MAX);
+            if (limit <= 0) {
+                limit = 1024;
+            }
+            for (long fd = STDERR_FILENO + 1; fd < limit && fd <= INT_MAX; ++fd) {
+                close(static_cast<int>(fd));
+            }
         }
         execv(exe.c_str(), argv.data());
         _exit(127);

@@ -24,9 +24,14 @@ using PeerProviderFactory = std::function<std::shared_ptr<PubSubProvider>(int ar
 /// on this process's stdout cannot be mistaken for a reply and desync the
 /// stream permanently:
 ///
-///     <tag> create <joined/topic> <A|B|none>   -> <tag> ok | <tag> err <type>: <what>
-///     <tag> publish <joined/topic> <seq>       -> <tag> ok | <tag> err <type>: <what>
-///     <tag> quit                               -> <tag> ok
+///     <tag> create <joined/topic> <A|B|none>  -> <tag> ok | err <...> | harness <...>
+///     <tag> publish <joined/topic> <seq>      -> <tag> ok | err <...>
+///     <tag> quit                              -> <tag> ok
+///
+/// Three reply forms, not two. `err` means the PROVIDER refused; `harness` means
+/// this process failed at something that is the harness's own job (building a
+/// schema). The distinction is load-bearing: a clause asserting a refusal must
+/// not be satisfiable by our own code breaking.
 ///
 /// There is deliberately no `subscribe` verb: the peer publishes and cannot
 /// observe. Process exit code 0 on a clean EOF, 1 if the provider could not be

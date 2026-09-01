@@ -67,6 +67,21 @@ std::optional<uint32_t> DecodeRow(const uint8_t* data, size_t len);
 /// A topic no other clause, subject or process uses.
 Topic FreshTopic(const std::string& clause);
 
+/// Ignore SIGPIPE for this process, exactly once. No-op on Windows.
+///
+/// Writing to a pipe whose reader has gone must be a return value, not process
+/// death: a peer child that crashed has to surface as the deadline nullopt the
+/// refusal ladder needs, not as exit=141 with no clause named and the rest of
+/// the binary unrun.
+///
+/// **Call it from `main`, before any thread exists.** std::signal is formally
+/// unspecified in a multi-threaded process, and ChildProcess is constructed
+/// while the provider's DDS/XRCE threads are already running — so setting the
+/// disposition there was unspecified even though it worked. Every binary that
+/// spawns a child or writes to a pipe calls this; std::call_once makes a second
+/// call harmless rather than a second signal() call.
+void IgnoreSigPipeOnce();
+
 // ── Collecting deliveries ───────────────────────────────────────────
 /// Records what a subscription actually saw, and nothing else: the seq, whether
 /// the schema was non-null, and how many callbacks were ever in flight at once.

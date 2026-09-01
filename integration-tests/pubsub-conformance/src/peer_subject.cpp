@@ -100,6 +100,12 @@ class PeerSubject : public ProviderSubject {
         if (reply->rfind("err ", 0) == 0) {
             return Reply::Refused(reply->substr(4));
         }
+        // The peer's own third form: it failed at something that is the
+        // harness's job (building a schema), which is not evidence about the
+        // provider and must not satisfy a clause asserting refused().
+        if (reply->rfind("harness ", 0) == 0) {
+            return Reply::HarnessFailure(reply->substr(8));
+        }
         return Reply::HarnessFailure("peer: unparseable reply " + *reply + " to: " + request);
     }
 

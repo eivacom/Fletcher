@@ -134,6 +134,8 @@ target_link_libraries(conformance_clauses_carried PUBLIC conformance_support GTe
 # ── Subject binaries ────────────────────────────────────────────────
 # The in-process loopback: schema-LESS (§7 clause 1's last sentence), so no
 # clause-2 TU.
+# Keeps gtest_main: it spawns no child and opens no pipe, so it has no SIGPIPE
+# hazard to disarm.
 add_executable(conformance_inprocess subjects/inprocess_main.cpp)
 target_link_libraries(conformance_inprocess PRIVATE
     conformance_support
@@ -152,7 +154,9 @@ target_link_libraries(conformance_fastdds PRIVATE
     conformance_clauses
     conformance_clauses_carried
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
-    GTest::gtest_main)
+    # gtest, NOT gtest_main: this binary spawns a peer child, so it defines its
+    # own main to set SIGPIPE's disposition before any thread exists.
+    GTest::gtest)
 target_compile_definitions(conformance_fastdds PRIVATE
     CONFORMANCE_FASTDDS_PEER="$<TARGET_FILE:conformance_fastdds_peer>")
 add_dependencies(conformance_fastdds conformance_fastdds_peer)
@@ -170,7 +174,8 @@ if(FLETCHER_CONFORMANCE_XRCE)
         conformance_clauses
         conformance_clauses_carried
         fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider
-        GTest::gtest_main)
+        # gtest, NOT gtest_main - see conformance_fastdds above.
+        GTest::gtest)
     target_compile_definitions(conformance_xrce PRIVATE
         CONFORMANCE_XRCE_PEER="$<TARGET_FILE:conformance_xrce_peer>"
         MICRO_XRCE_AGENT_PATH="${AGENT_BINARY}"

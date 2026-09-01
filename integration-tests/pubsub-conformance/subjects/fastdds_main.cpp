@@ -46,3 +46,12 @@ INSTANTIATE_TEST_SUITE_P(FastDdsCrossProcess, ProviderConformance,
 
 }  // namespace conformance
 }  // namespace fletcher
+
+// Own main rather than gtest_main: SIGPIPE's disposition has to be set before
+// any thread exists, and this binary spawns a peer child whose death must reach
+// a clause as a typed failure rather than as exit=141.
+int main(int argc, char** argv) {
+    fletcher::conformance::IgnoreSigPipeOnce();
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

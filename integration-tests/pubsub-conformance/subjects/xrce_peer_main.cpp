@@ -37,8 +37,12 @@ int main(int argc, char** argv) {
                     config.agent_port = static_cast<uint16_t>(std::stoul(args[++i]));
                 } else if (arg == "--session-key-base" && i + 1 < count) {
                     const uint32_t base = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
+                    // 24 bits of pid, not 12: a 12-bit slice collided on any
+                    // 4096-multiple pid gap, which is one wrap of the pid space.
+                    // The bases are an octet apart, so this cannot reach the
+                    // next role's range.
                     config.session_key =
-                        base + (static_cast<uint32_t>(FLETCHER_GETPID()) & 0x0FFFu);
+                        base + (static_cast<uint32_t>(FLETCHER_GETPID()) & 0x00FFFFFFu);
                 }
             }
             return std::make_shared<fletcher::XrceDDSPubSubProvider>(config);

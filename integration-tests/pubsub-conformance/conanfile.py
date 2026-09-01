@@ -23,6 +23,15 @@ class PubsubConformanceIntegrationConan(ConanFile):
     own 70-test suite was green throughout a shipped receive-side
     data-sharing defect for exactly that reason.
 
+    KNOWN BLIND SPOT, so nobody reads the paragraph above as more than it
+    is: this suite does NOT reproduce that particular defect. Clause 6
+    stayed green 12/12 against a provider with the defect deliberately
+    restored, while integration-tests/gateway-fastdds-ts failed against
+    the same package. The evidence table and both refuted hypotheses are
+    in README.md; the hunt is owned by PDA-ABI-7 (zero-copy receive), per
+    the owner's 2026-09-01 ruling. The suite guards the delivery
+    contract, which it does; it is not a data-sharing regression test.
+
     Deliberately does NOT require fletcher-pubsub-arrow: no Arrow C++,
     no codec, no generated types. Rows are 8 opaque bytes, so the suite
     cannot see payload layout and no divergence it forces can be a

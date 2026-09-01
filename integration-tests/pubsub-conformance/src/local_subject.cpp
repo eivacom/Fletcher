@@ -7,6 +7,7 @@
 // clause library it belongs to.
 
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
 #include <string>
 #include <typeinfo>
@@ -31,12 +32,27 @@ class LocalSubject : public ProviderSubject {
 
     const ProviderTraits& Traits() const override { return traits_; }
 
-    // On a local subject every failure IS the provider refusing: there is no
-    // pipe, no child and no deadline between the clause and CreateTopic, so
-    // Outcome::kHarnessFailure is unreachable here by construction.
     Reply DeclareTopic(const Topic& topic, SchemaId schema) override {
+        // Building the schema is OUR work, not the provider's, so it is done
+        // outside the try and a failure here is a kHarnessFailure. Inside the
+        // try it would have been reported as kRefusedByProvider, and clause 8 —
+        // which asserts refused() precisely so that a broken harness cannot
+        // satisfy it — would have passed because nanoarrow failed on our side.
+        // That is the exact false-pass class the three-valued Reply exists to
+        // eliminate, so it must not be reachable through the schema builder
+        // either.
+        OwnedSchema built;
         try {
-            provider_->CreateTopic(topic, MakeConformanceSchema(schema));
+            built = MakeConformanceSchema(schema);
+        } catch (const std::exception& e) {
+            return Reply::HarnessFailure("conformance: cannot build schema: " +
+                                         DescribeException(e));
+        }
+
+        // Past this point every failure IS the provider refusing: there is no
+        // pipe, no child and no deadline between here and CreateTopic.
+        try {
+            provider_->CreateTopic(topic, std::move(built));
             return Reply::Ok();
         } catch (const std::exception& e) {
             return Reply::Refused(DescribeException(e));

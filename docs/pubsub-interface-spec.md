@@ -359,6 +359,20 @@ So the suite must have a **cross-process subject** for the DDS providers. A
 conformance suite that cannot observe the transport would certify the seam on
 evidence that does not cover it.
 
+**This clause requires a cross-process subject; it does not claim that such a
+subject observes every transport defect, and PDA-DEC-1 measured that it does
+not.** The suite landed with the required cross-process subjects, but repeated
+falsification could not make it fail against a provider with the receive-side
+data-sharing defect deliberately re-enabled, while
+`integration-tests/gateway-fastdds-ts` failed in the same session against the same
+build. Two hypotheses were refuted by measurement; the remaining candidate is the
+mix and count of data-sharing endpoints per participant, which needs a subscribing
+peer this harness does not have. The evidence table lives in
+`integration-tests/pubsub-conformance/README.md`, the defect is owned by
+**PDA-ABI-7**, and the owner ruled on 2026-09-01 that the suite ships with the
+blind spot documented (`plans/PDA-DEC-rulings.md`). **Do not read a green
+conformance run as evidence about that defect class.**
+
 ---
 
 ## §8 — Zero-copy is a property of the seam

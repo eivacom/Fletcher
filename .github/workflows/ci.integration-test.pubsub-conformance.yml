@@ -29,6 +29,13 @@ on:
 # transport at all — the provider's own suite stayed green through a shipped
 # receive-side data-sharing defect for exactly that reason (§7.2).
 #
+# KNOWN BLIND SPOT: this lane does NOT guard against that particular defect. It
+# stayed green against a provider with the defect deliberately restored, while
+# ci.integration-test.gateway-fastdds-ts fails against the same build. Evidence
+# and both refuted hypotheses: integration-tests/pubsub-conformance/README.md.
+# The hunt is owned by PDA-ABI-7. So a green run here means the delivery contract
+# holds; it does not mean receive-side data-sharing is safe.
+#
 # Deliberately does not check out arrow-bridge / pubsub-arrow: the harness
 # requires no Arrow C++ and no codec.
 

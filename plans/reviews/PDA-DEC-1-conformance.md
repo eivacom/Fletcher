@@ -422,3 +422,235 @@ scope creep, and the only part of it that crossed a declared gate is the pipe he
   `fletcher-pubsub` package. One clause — "`include/**/internal/` is not public surface"
   — makes the count of 1 self-evidently right instead of requiring the `segments.hpp`
   precedent to be recalled.
+
+---
+
+# Fix cycle 1 verification
+
+Verified at `34172e8` (`git diff adc4f1f..34172e8`, 22 files, +1423 / −207; 424 of the
+adds are this review file and 301 the step-4b review, so ~700 lines of real change).
+Working tree clean. This is a verification pass over my five blocking findings plus a check
+that the restructuring did not introduce new departures — not a re-review of what cycle 0
+cleared.
+
+**Verdict: all five blocking findings discharged. Conformant enough to close under the
+2026-09-01 "Ship the guard, hunt elsewhere" ruling.** Three new low findings, all in the
+never-run POSIX branch or in disclosure reach; none blocking. Two new record items.
+
+## The five findings
+
+### C1 — DISCHARGED, and I was wrong about the cause
+
+The sentinel is gone. `src/clauses.cpp` clause 6 is now the approved sequence verbatim —
+declare, publish N, subscribe, **no publish of any kind past that line** — and it is
+*stronger* than what the design specified, not weaker:
+
+- `kRetains`: `EXPECT_TRUE(WaitForCount(kBacklog, Deadline()))`; `kDrops`:
+  `EXPECT_FALSE(WaitForCount(1, SettleDeadline()))` — the clause 9/11 pattern, so the
+  dropping case pays its budget rather than being handed a deterministic end.
+- The all-or-nothing equality is then asserted **independently of which wait ran**
+  (`EXPECT_EQ(replayed, Retains() ? kBacklog : 0u)`), so no count between 0 and N passes
+  under either trait value. `Foreign() == 0` was added too.
+- Retention is still keyed by provider, so the escape hatch stays closed.
+
+My NACK/repair mechanism was mechanically sound and is refuted as *the* cause by
+measurement (still green 12/12 without the sentinel, against the same falsified package
+that turned `gateway-fastdds-ts` red 2/4 twice in four runs). I accept that. The removal
+stands on its own footing — it was a deviation from the approved clause body — and the
+clause comment records the refutation at the point of the code, which is the right place
+for it. **The design's "if it does not go red, the item is not done" gate is relieved by
+the owner's ruling and I do not carry it forward.**
+
+### C2 — DISCHARGED
+
+The causal claim I flagged is gone. What replaced it is better than a correction: the
+paragraph now **leads** with the guard against the wrong inheritance ("This is an OPEN
+question, not a closed one. Do not read the paragraph below as a reason to distrust
+cross-process conformance subjects in general — that reading has been measured and
+refuted"), gives a three-row measurement table, names both hypotheses as refuted with the
+evidence that refutes each, and names three remaining candidates in priority order. See
+the sufficiency assessment below.
+
+### C3 — accepted and recorded by the PM. Closed; not re-raised.
+
+### C4 — DISCHARGED
+
+`src/child_process.cpp`, POSIX constructor: `std::signal(SIGPIPE, SIG_IGN)` (process-wide,
+idempotent, documented as such), and `WriteLine` now returns on `EPIPE` and every other
+write error with a comment tying it to the bounded `ReadLine` that turns it into `nullopt`
+→ `Outcome::kHarnessFailure` → clause failure. The refusal ladder's rung 2 item 9 is
+restored on the platform where it was broken.
+
+Two unrequested hardenings in the same file, both correct: the forked child now closes
+every descriptor above stderr before `execv` (the parent's provider is constructed *before*
+the spawn, so the peer was inheriting the parent's DDS sockets and shared-memory handles —
+a real cross-process hygiene defect, and `close()` is async-signal-safe so it is legal
+between `fork` and `execv`), and the parent's pipe ends get `FD_CLOEXEC`. See N2 for the
+one risk that came with it.
+
+### C5 — DISCHARGED, and the widening does **not** overreach
+
+`provider.hpp` now states both schema modes on `SubscriptionResult`, that it resolves
+either way so a waiter never hangs, and why `MakeReadySchemaFuture(null)` is legitimate.
+That is §7 clause 1 restated, nothing more.
+
+I checked the two *new* obligations against all three shipped providers rather than taking
+the prose at face value:
+
+- *"Unsubscribing a topic with no subscription is a no-op, not an error"* — true in all
+  three: `if (it == topics.end()) return;` in `InProcessPubSubProvider`,
+  `FastDDSPubSubProvider` and `XrceDDSPubSubProvider`. This is load-bearing now, because
+  `ScopedSubscription`'s destructor calls it unconditionally.
+- *"a provider that delivers from its own thread must not let a delivery already in flight
+  outlive the call"* — also true in all three, by three different mechanisms: the loopback
+  holds `mu` across the callback; FastDDS deletes both readers outside the lock and
+  documents that "deleting the schema reader first waits for any in-flight schema delivery
+  to finish"; XRCE dispatches under `impl_->mu` ("single recursive-mutex pump model"), so
+  `Unsubscribe`'s `lock_guard` cannot be taken while a delivery is running. It is a
+  sharpening of §7 clause 6 rather than a new promise, and it is the only reading under
+  which clause 11 means anything. Not overreach.
+
+The `Subscribe` re-anchor also deletes a sentence that was simply false ("Returns the
+schema that the publisher provided") — it returns a future. `schema_conflict.hpp`'s
+released-`ArrowSchema` widening is now recorded as a decision, which closes my L3.
+
+## Is the README's disclosure honest and sufficient? — Yes, with three one-line gaps
+
+Judged as the artifact the ruling rests on, so: hard.
+
+**What it gets right, and these are the load-bearing ones.** Both hypotheses are named
+*and* refuted with the evidence that refutes each, so neither can be re-offered as an
+explanation. The measurement table separates the sentinel and sentinel-free runs, so a
+reader can see that removing the sentinel changed nothing. The control sits in the same
+table, which is what makes "the defect is live and reproducible" checkable rather than
+asserted. The reproduction procedure includes the trap that would produce a false green
+("check the source in the resolved Conan package folder, not just that a build ran") — that
+one sentence is what makes the next round's re-run trustworthy. The remaining candidates
+are ordered, and one carries new evidence I had not seen: the *schema*-propagation test
+fails in the same runs, so a retained `KEEP_LAST(1)` sample is lost too, which points at
+the number and mix of data-sharing endpoints per participant rather than at the row
+channel. And it states plainly that the first candidate **cannot be tested from this
+harness as designed**, because the peer protocol has no `subscribe` verb, and that changing
+that is a design decision — handing the choice up instead of quietly widening the peer
+protocol. That last paragraph is the difference between a disclosure and an excuse.
+
+**No implied coverage remains in the README itself.** "Do not read it as covering that
+defect class" survives, and clause 6's residual value is stated exactly: it "fails on any
+partial replay it *does* observe, under either trait value".
+
+**The three gaps, one line each (N3 below):** the evidence table names no platform or
+Fast DDS version, so a later round cannot tell the measurement is Windows / Fast DDS 3.4.0
+and that Linux is untested for this defect; it names no owning stage, so the table has no
+addressee now that the ruling has given it one (PDA-ABI-7 / PDA-ABI decision 10); and the
+disclosure lives **only** in the README, while `conanfile.py`'s docstring and the CI lane's
+header comment still juxtapose "the provider's own suite stayed green through a shipped
+receive-side data-sharing defect" with "the cross-process subjects are the point" and carry
+no pointer to the blind spot — a reader of either file takes away coverage the suite does
+not have.
+
+## Did the restructuring break anything? — No conformance departure found
+
+**Clause bodies, checked against what the design says each asserts.**
+
+- **Clause 8** improved most. `EXPECT_TRUE(reply.refused())`, not "not ok": a dead peer, an
+  expired deadline or a garbled reply are `Outcome::kHarnessFailure` and can no longer
+  satisfy the one clause the loopback and XRCE conflict fixes exist to satisfy. That is
+  rung 2 item 9 applied to a *negative* clause, which cycle 0 did not have. It still
+  asserts only *that* the provider refused — `detail` is a printed string, never switched
+  on, and `Outcome` distinguishes provider-refusal from harness-failure, not one exception
+  type from another, so rung 2 item 10 is intact and no exception taxonomy has been started
+  ahead of PDA-DEC-3/9. The three-valued `Reply` is harness-local, in
+  `integration-tests/**`, and ships in no package.
+- **Clause 9** still asserts cardinality only: `EXPECT_FALSE(WaitForCount(2, Settle))` plus
+  `Count() == 1`, with the second `Subscribe` allowed to throw or to replace and no winner
+  asserted. DEBT-8 holds. The `std::optional<ScopedSubscription> second` keeps the second
+  registration alive to the end of the clause; its destructor unsubscribes the shared topic
+  and `first`'s call then no-ops, which is safe given the idempotence verified above.
+- **Clause 11** correctly keeps an **explicit** `Subject().Unsubscribe(topic)` — the
+  behaviour under test — with the scope exit as an idempotent second call, and says so in a
+  comment. The assertion is unchanged. Had the RAII conversion swallowed that call into
+  scope exit, §7 clause 6 would have lost its only forcing test; it did not.
+- Clauses 1, 3, 4, 5, 7, 10, 12 and 2: assertions byte-identical apart from `sub.schema` →
+  `sub.Schema()`. Clause 12's error capture works because `Reply` default-constructs to
+  `kOk`.
+- All 12 clause names unchanged; 11 in `clauses.cpp`, 1 in `clauses_carried.cpp`. The
+  generated ctest files still list 11 entries for `conformance_inprocess` and 24 for
+  `conformance_fastdds`, so the axis gate and the 36-entry / 59-case shape are intact. No
+  `GTEST_SKIP` in any source.
+
+**`ScopedSubscription` — the ordering invariant holds everywhere.** Mechanically checked
+all 12 clauses: the `Collector` is declared before the subscription in every one, so reverse
+destruction order tears the subscription down first. The destructor swallows exceptions
+(required — `Unsubscribe` may throw, and a throwing destructor during a failed clause would
+terminate), and `Subscribe`'s `[[nodiscard]]` is satisfied by the stored `result_`.
+
+**Other changes, none of them a departure.** `Deadline()` is now anchored at the first wait
+rather than at `SetUp`; the design's stated property is "one shared deadline" and that is
+preserved (memoised per fixture instance, fresh per test), no negative wait uses it, and no
+assertion is weakened — only harness round-trip time stops eating the budget. `hold_us_`
+became atomic and is set before `Subscribe`. Traits are now composed inside the factory
+lambda, so `RetentionForProvider`'s throw-on-unknown-provider surfaces as a readable
+failure instead of `std::terminate` before `main` — a rung-2 improvement, with the
+provider-keyed table untouched. `RejectUnsendableTopic` closes a real hole (a segment
+containing `/`, space or tab would have reached the peer as a different topic) and reports
+it as a harness failure, not a refusal. The peer protocol is tagged end to end with `quit`
+included, and there is still **no `subscribe` verb**, so rung-1 item 5 holds.
+`peer_main.cpp` moved out of `conformance_support` into `conformance_peer_loop`, linked only
+into the peer binaries — tighter than cycle 0 and closer to "link narrowly". XRCE session
+keys are now unique per client per run with non-overlapping bases (parent 0x51511000 /
+0x51513000 + n, child 0x51512000 + pid&0xFFF, max 0x51512FFF), and the Agent environment
+gained a `SpawnedAgentAlive()` guard so the suite refuses to certify against a leftover
+foreign Agent on port 2019 — a strengthening of rung 2 item 8, which also now names the
+path on POSIX, closing my L2. CI/CMake changes are caching and `TIMEOUT` properties only;
+the sparse-checkout lists, path filters and `pr-gate` wiring I cleared are untouched.
+`clang-format` 18.1.3 is clean on all changed C++ files, and scope greps for `extern "C"`,
+`dlopen`, `LoadLibrary`/`GetProcAddress`, version negotiation and any JSON/YAML dependency
+return nothing but my own review prose.
+
+## New findings (low — none blocking)
+
+### N1 — On a local subject a harness schema-construction failure still reports as a provider refusal
+
+`src/local_subject.cpp`: the comment says `Outcome::kHarnessFailure` is "unreachable here by
+construction", but `MakeConformanceSchema(schema)` is evaluated **inside** the `try` and
+throws `std::runtime_error("conformance: ArrowSchemaSetTypeStruct failed")` on nanoarrow
+failure. That is a harness failure mapped to `kRefusedByProvider` — the one reachable
+violation of the invariant this cycle introduced, on the exact path clause 8 asserts.
+Vanishingly unlikely, but the point of the three-valued `Reply` is that likelihood is not
+the test. *Fix: build the schema on the line before the `try`.*
+
+### N2 — The forked child's descriptor-close loop is bounded by `sysconf(_SC_OPEN_MAX)`
+
+`src/child_process.cpp`, POSIX: the loop runs to the soft `RLIMIT_NOFILE`. In a container
+that is commonly 1048576 and can be far larger, giving ~10^6 `close()` syscalls per peer
+spawn (~26 spawns a run) between `fork` and `execv` — Linux only, in the branch whose first
+execution is this lane. It cannot deadlock, but on an unlucky limit it can eat the 45 s peer
+startup budget. *Fix: cap the loop (e.g. `min(max_fd, 4096)`) or use `close_range(2)` where
+available.*
+
+### N3 — Three one-line gaps in the artifact the ruling rests on
+
+(a) The README's evidence table states no platform or Fast DDS version, so a later round
+cannot see that the measurement is Windows / 3.4.0 and Linux is untested. (b) It names no
+owning stage; per the ruling the table's addressee is PDA-ABI-7 / PDA-ABI decision 10.
+(c) The disclosure exists only in the README:
+`integration-tests/pubsub-conformance/conanfile.py` (docstring) and
+`.github/workflows/ci.integration-test.pubsub-conformance.yml` (header comment) both still
+pair the shipped defect with "the cross-process subjects are the point" and carry no
+pointer to the blind spot, so a reader of either file infers coverage the suite does not
+have. *Fix: one clause in each of the three places.*
+
+## New RECORD items (PM's to fix in place)
+
+- **Retraction of my own cycle-0 record item.** I reported the README's ctest name format
+  as wrong. It was right; I had checked only the *gtest* name. Verified in the generated
+  `build/conformance_inprocess[1]_tests-Release.cmake`: the ctest name really is
+  `<Subject>/ProviderConformance.<Clause>/<Subject>` while the `--gtest_filter` it invokes
+  is `.../<Clause>/0`, because `gtest_discover_tests` substitutes the printed parameter for
+  the index. The fix cycle now documents **both** names and why they differ, which is more
+  accurate than what either of us had. Nothing owed; strike the item.
+- `docs/pubsub-interface-spec.md` §7.2 cites the receive-side data-sharing defect as the
+  motivation for requiring a cross-process subject. The requirement is satisfied literally
+  and the residual gap is accepted by ruling, but the oracle now reads as a coverage claim
+  to anyone who does not also open the harness README. One cross-reference to the
+  blind-spot table keeps the oracle honest.

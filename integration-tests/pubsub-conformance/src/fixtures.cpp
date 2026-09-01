@@ -4,8 +4,10 @@
 #include "fletcher/conformance/fixtures.hpp"
 
 #include <atomic>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -155,6 +157,16 @@ bool Collector::WaitForSeq(uint32_t seq, std::chrono::steady_clock::time_point d
             }
         }
         return false;
+    });
+}
+
+// ── Signal disposition ──────────────────────────────────────
+void IgnoreSigPipeOnce() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+#ifndef _WIN32
+        std::signal(SIGPIPE, SIG_IGN);
+#endif
     });
 }
 

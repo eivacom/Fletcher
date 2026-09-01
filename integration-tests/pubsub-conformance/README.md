@@ -93,6 +93,19 @@ surfaced immediately.
   read the paragraph below as a reason to distrust cross-process conformance
   subjects in general — that reading has been measured and refuted.
 
+  **Owning stage: PDA-ABI-7** (zero-copy receive), which is the feature the
+  defect actually blocks. Its plan entry —
+  [plans/PDA-ABI-protocol-driver-abi.md](../../plans/PDA-ABI-protocol-driver-abi.md),
+  §PDA-ABI-7 — carries the handoff and says to start from the evidence below
+  rather than from scratch (owner ruling 2026-09-01, "Ship the guard, hunt
+  elsewhere"). Read that entry for what is owed; this section is the evidence,
+  and the two are deliberately not duplicates.
+
+  **Measured on:** Windows 11 (26200), MSVC 19.44 / VS 2022, Release,
+  Fast DDS **3.4.0** (the Conan pin), single machine, 2026-09-01. Nothing here
+  has been reproduced on Linux, and the ratio of red runs is load-sensitive, so
+  treat the counts as existence proofs rather than rates.
+
   The falsification the design mandates was run twice, and the control was run
   beside it each time. Procedure: temporarily revert the reader-side
   `qos.data_sharing().off()` in `fastdds-pubsub-provider/src/qos_defaults.cpp`,
@@ -129,7 +142,10 @@ surfaced immediately.
   Note the first candidate cannot be tested from this harness as designed: it
   would need the peer child to subscribe, and the design deliberately gives the
   peer protocol **no `subscribe` verb** (a peer publishes and cannot observe).
-  Changing that is a design decision, not an implementation one.
+  Changing that is a design decision for PDA-ABI-7, not an implementation one.
+
+  `integration-tests/gateway-fastdds-ts` is the only harness that reproduces the
+  defect. **Do not weaken or delete it.**
 
   Meanwhile: clause 6 is all-or-nothing, so it fails on any partial replay it
   *does* observe, under either trait value — but do not read it as covering that

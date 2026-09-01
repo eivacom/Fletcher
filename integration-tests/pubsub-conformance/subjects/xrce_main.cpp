@@ -49,17 +49,23 @@ constexpr const char* kAgentIp = "127.0.0.1";
 /// UDP. So keys are handed out from one counter at subject-construction time and
 /// never reused within a run.
 ///
-/// The bases keep the four roles distinguishable in an Agent log: subscriber
-/// sides in 0x5151_1xxx / 0x5151_3xxx, publisher sides in 0x5151_2xxx.
-constexpr uint32_t kLocalSessionBase = 0x51511000u;
-constexpr uint32_t kPeerSubscriberSessionBase = 0x51513000u;
-constexpr uint32_t kPeerPublisherSessionBase = 0x51512000u;
-/// The probe in WaitUntilReachable, which is alive only before any subject.
-constexpr uint32_t kProbeSessionKey = 0x5151FFFFu;
+/// One byte per role in the top octet, 24 bits of room underneath. The peer
+/// child derives its key from its own pid, and a 12-bit slice of that collided
+/// on any 4096-multiple pid gap — which is one wrap of the pid space, not a
+/// remote possibility on a long-lived runner. 24 bits covers Linux's default
+/// 22-bit pid_max outright and every practical Windows pid.
+constexpr uint32_t kLocalSessionBase = 0x51000000u;
+constexpr uint32_t kPeerSubscriberSessionBase = 0x52000000u;
+constexpr uint32_t kPeerPublisherSessionBase = 0x53000000u;
+/// The mask the peer applies to its pid; also the ceiling on a parent-side
+/// counter, though only ~13 of those are handed out per run.
+constexpr uint32_t kSessionKeyMask = 0x00FFFFFFu;
+/// The probe in WaitUntilReachable, alive only before any subject exists.
+constexpr uint32_t kProbeSessionKey = 0x50FFFFFFu;
 
 uint32_t NextSessionKey(uint32_t base) {
     static std::atomic<uint32_t> counter{0};
-    return base + counter.fetch_add(1);
+    return base + (counter.fetch_add(1) & kSessionKeyMask);
 }
 
 XrceConfig XrceConfigFor(uint32_t session_key) {
@@ -200,7 +206,14 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
             return false;
         }
         int status = 0;
-        return waitpid(pid_, &status, WNOHANG) == 0;
+        if (waitpid(pid_, &status, WNOHANG) == 0) {
+            return true;
+        }
+        // Reaped here, so clear it: leaving pid_ set would send KillAgent a
+        // SIGTERM to a pid this process no longer owns and then block in a
+        // waitpid that can never return.
+        pid_ = -1;
+        return false;
 #endif
     }
 
@@ -286,3 +299,12 @@ INSTANTIATE_TEST_SUITE_P(
 
 }  // namespace conformance
 }  // namespace fletcher
+
+// Own main rather than gtest_main: SIGPIPE's disposition has to be set before
+// any thread exists, and this binary spawns a peer child whose death must reach
+// a clause as a typed failure rather than as exit=141.
+int main(int argc, char** argv) {
+    fletcher::conformance::IgnoreSigPipeOnce();
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}
