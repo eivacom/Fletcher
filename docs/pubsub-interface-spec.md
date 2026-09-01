@@ -238,7 +238,11 @@ releases**. A boundary releases the *owner handle* and must **never** call the
 Arrow C Data Interface `release` on a shared schema — that destroys it under every
 other holder. `timeout_ms < 0` is refused with `kInvalidArgument` (so "negative
 means forever" cannot be invented by one round and not the other); `INT64_MAX` is
-the unbounded form, which in C++ is `milliseconds::max()` and must be implemented
+the unbounded form, which in C++ is `milliseconds::max()`. So must any timeout at
+or above a large implementation-defined threshold (~139 years in this tree): a
+deadline computed as `now + timeout` overflows well below `milliseconds::max()`
+and would return IMMEDIATELY, so a binding spelling "forever" as a very large
+finite number must get a wait, never a poll. It must be implemented
 as a deadline-free wait rather than `wait_for(duration::max())`, which overflows.
 
 The **semantics** above are pinned; the spelling is illustrative. Each ABI round

@@ -67,7 +67,7 @@ class SchemaResolver;
 /// would destroy it under every other holder. On kOk the handle is a NEW
 /// reference the caller releases, matching `Blob`'s retain/release idiom.
 /// `timeout_ms < 0` is refused with kInvalidArgument; `INT64_MAX` — and any value
-/// too large to add to the clock without overflowing it — is the unbounded form.
+/// at or above a deliberately crude ~139-year threshold — is the unbounded form.
 ///
 /// **How a refusal is delivered differs by side, and this is the one place the
 /// two must not be read as the same thing.** In C++ a refused argument (negative
@@ -107,8 +107,9 @@ class SchemaArrival {
     /// **throw** `PubSubError` rather than returning; see the class comment for
     /// why, and for what the C form does instead.
     ///
-    /// A timeout so large that a deadline would overflow the clock is treated as
-    /// unbounded, not as an instant poll — "a very large number" is how a caller
+    /// A timeout at or above ~139 years is treated as unbounded, not as an instant
+    /// poll. The threshold is crude on purpose and sits far below the point where
+    /// `now + timeout` overflows: "a very large number" is how a caller
     /// that cannot name `milliseconds::max()` spells "forever", and answering it
     /// with an immediate kPending would be a silent lie.
     [[nodiscard]] PubSubStatus Wait(std::chrono::milliseconds timeout, SharedSchema* out) const;
