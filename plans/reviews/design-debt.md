@@ -53,3 +53,22 @@ loanable-read residue is an in-scope reduction, **not** a decision-7 stop-and-as
 | DEBT-7 | When the pin flips to 0, the conformance README must keep saying the number is about the seam's capability, never about a transport's receive path (`Envelope::row` is still copied per sample). | review §DEBT-7 |
 | DEBT-8 | Forward note for PDA-DEC-5: `SchemaMode` must arrive through §4.1's opaque document, not a second construction API. | review §DEBT-8 |
 | DEBT-9 | "The triple *is* the C form" risks a layout reading of `shared_ptr<const void>`. One sentence: conceptual only, no layout compatibility, the boundary *constructs* a `Blob`. | review §DEBT-9 |
+
+### Cycle 2 (`078ed4a`) — APPROVE-WITH-DEBT(9), no BLOCKERs
+
+B1/B2/B3 closed; B4 closed by the PM (waiver 7 additions / 5 simultaneous
+retirements). Cycle-1 DEBT 1-7 and 9 are folded into revision 2 and **closed**;
+DEBT-8 is carried forward below as C2-9. The nine items below are open and owed by
+the implementer.
+
+| Id | Owed | Where |
+|----|------|-------|
+| C2-1 | **Must land in this PR.** Replace "latched at its first delivery" with the rule stated beside it — *a declaration made after a subscription exists never reaches that subscription; the schema is fixed when `Subscribe` returns and equals what its `SchemaArrival` reports*. **And add a named test:** no subject reaches this path (`InProcessLocal` is subject-axis `kAbsent`, so the loopback is never handed a real schema; only the gateway exercises it, and it has no subject). ~20 lines in `seam_vocabulary.cpp`. | re-review §B3, §C2-1 |
+| C2-2 | `Resolve(nullptr)` is not refused, so `kOk`+null — reserved for schema-less transports — is reachable from a carrying provider, re-opening B1's conflation. Forbid: `Resolve` refuses a null schema; `Ready(nullptr)` stays the only producer. | re-review §C2-2 |
+| C2-3 | Enum comment claims "8/9 are §2 outcomes, never thrown", but `PubSubError` refuses only `kOk`/`kPending`. Refuse `kSubscriptionEnded` too, or drop the claim. | re-review §C2-3 |
+| C2-4 | Negative timeout is refused only "at a C boundary"; a negative `std::chrono::milliseconds` silently polls. Make `Wait` refuse it with the same status. | re-review §C2-4 |
+| C2-5 | Say whether `wait`'s `*out` owner handle is a new reference the caller releases or a borrow. Not an interop hazard (each round writes both sides of its own boundary) — an idiom gap. | re-review §C2-5 |
+| C2-6 | Reconcile "C form, pinned" with §1's "their C shapes may differ freely": semantics pinned, spelling illustrative, each round picks its own names and layout (decision 2). | re-review §C2-6 |
+| C2-7 | `ImportArrowSchema` is now public API; state its behaviour for a null or release-less schema (`ImportFromNano` returned `nullptr`). | re-review §C2-7 |
+| C2-8 | `kOk`+null does not say whether `*out` is written null or left untouched, unlike the other outcomes. One word. | re-review §C2-8 |
+| C2-9 | Carried forward (cycle-1 DEBT-8): forward note for PDA-DEC-5 — `SchemaCarriage` must arrive through §4.1's opaque document, not a second construction API. | review §DEBT-8 |
