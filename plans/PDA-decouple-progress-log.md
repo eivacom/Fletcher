@@ -160,3 +160,65 @@ particular, intermittent row loss in `gateway-fastdds-ts` is the receive-side
 data-sharing defect signature (see the merge entry above), never flake.
 
 <!-- Entries appended below by the round runbook -->
+
+## PDA-DEC-1 — Conformance suite for the delivery contract (2026-09-01)
+
+**Forcing test:** `ProviderConformance.SchemaBeforeDataAcrossHandoff` → 🟢 (⚪→🔴→🟢).
+Red for the right reason first: XRCE refused every subscriber-first declaration.
+**Design:** `plans/PDA-DEC-1-conformance-suite.md` · **Brief:** `plans/PDA-DEC-1-brief.md`
+
+**What landed:** spec §7 plus §6 clause 1 are now 12 executable clauses over five
+subjects — InProcess, Fast DDS and XRCE local, Fast DDS and XRCE cross-process, the
+latter publishing from a child process over a tagged line pipe. A new protocol
+inherits the suite by registering a subject, not by copying tests.
+
+**Interfaces:** NEW `integration-tests/pubsub-conformance/` + CI lane · NEW
+`fletcher::InProcessPubSubProvider` (public surface 1) · CHANGED spec §7 clause 3:
+conflicting re-declaration **must** be refused, not may · DELETED the gateway's
+private loopback provider.
+**Deleted:** `retired: FastDDSPubSubProviderTest.DefaultQosReplaysEveryRetainedRowToALateJoiner`
+— replaced by `LateJoinerBacklogIsAllOrNothing` in-process *and* cross-process, its CI
+coverage landing in the new lane in the same change. Also the 68-line gateway-local
+provider, and the word "may" in spec §7.3 and `provider.hpp`.
+
+**Divergences fixed in-round (3 distinct, 7 clause×subject pairs), no wire bytes moved,
+nothing pinned:** loopback silently overwrote a conflicting schema; XRCE refused
+identical re-declaration; XRCE refused every subscriber-first declaration. Plus a
+latent defect: the XRCE provider never declared `ws2_32`, resolving only because
+consumers also linked Fast DDS.
+
+**Reviews:** design `APPROVE-WITH-DEBT(6)` (3 BLOCKERs in cycle 1) · compliance `PASS`
+(5 blocking resolved) · code `0 blocking / 10 should-fix resolved / 3 nits accepted`.
+Two defects they caught and tests did not: a use-after-free where a background delivery
+could `Record` into a destroyed stack-local collector, and a `SIGPIPE` that killed the
+test binary instead of returning the documented `nullopt`.
+Full: `plans/reviews/PDA-DEC-1-{design-review,compliance,codereview,verification}.md`.
+
+**Verification:** conformance 36/36 twice; full suite green at `a963211`. Residuals:
+`pubsub-arrow-fastdds` 1–2 of 4 under 28-way parallelism — **pre-existing** (shared
+domain 137 + shared topic names, `-j1` green, absent from this diff) — plus inherited
+toolchain/Agent skips. **Every component package was cached from a `run_tests=False`
+build and needed a forced rebuild before its unit suite ran at all.**
+
+**The falsification gate was never met.** Clause 6 had to go red against a provider
+with reader-side data-sharing re-enabled; it did not, twice — the harness-shape
+hypothesis refuted by the `gateway-fastdds-ts` control (same shape, does reproduce),
+the sentinel hypothesis by measurement after removal. Owner ruled: ship the guard,
+blind spot documented, defect owned by **PDA-ABI-7**, which now carries the evidence
+handoff. `gateway-fastdds-ts` is the only harness that reproduces it — do not weaken it.
+
+**Close gate:** PASS. **Cycle meter:** design 2/2 · fix cycles 2 · implementer launches
+3/5 · owner touches 3. **Numbers:** declared +1750/−115 · actual **+3652/−201** (+108%,
+ordered work under-costed) · public surface 1.
+
+**Owner decisions:** re-declaration refused by every protocol (spec amended here); suite
+ships with the blind spot. Both verbatim in `plans/PDA-DEC-rulings.md`.
+**PM plan-shape calls:** the `InProcessProvider` lift moved here from PDA-DEC-5 (a type
+in an anonymous namespace inside a `main.cpp` is unlinkable), so PDA-DEC-5 shrinks to
+registration; the loopback ships schema-**less**, PDA-DEC-3 owning its schema arrival
+and the 6th subject; the 415-line pipe helper accepted over the ~250 premise, whose
+remedy collides with locked decision 12.
+**Records corrected:** spec §0/§10 no longer site the loopback in the gateway; §7.2 now
+denies being a coverage claim; declared-vs-actual annotated; config baseline harnesses
+named (order-ambiguous, I mis-read them once); review files must be `-compliance.md` or
+the close gate cannot see them.

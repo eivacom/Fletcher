@@ -51,6 +51,11 @@ Net lines +1750 / −115 (excluding the unknowable protocol fixes) · new public
 design cycles 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-01):*
+**+3652 / −201** vs declared +1750/−115 — the overrun is ordered work under-costed
+(the mirrored CI lane, the two-platform pipe helper, three divergence fixes not one).
+Unpredicted: `InProcessProvider`'s lift moved here from PDA-DEC-5; the loopback ships
+schema-**less** (its schema arrival is PDA-DEC-3's, with the 6th subject); XRCE gained
+two provider fixes and a missing `ws2_32`. **The falsification never went red** — the
+suite guards the contract but not that defect class, owned now by PDA-ABI-7 (ruling
+2026-09-01). Design cycles 2/2 · fix cycles 2 · implementer launches 3/5.

@@ -87,7 +87,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 
 | Item | Title | Kind | Forcing test | Status |
 |------|-------|------|--------------|--------|
-| PDA-DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | ⚪ |
+| PDA-DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | 🟢 |
 | PDA-DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
 | PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy — **plus the 6th (schema-carrying loopback) conformance subject** | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
 | PDA-DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
