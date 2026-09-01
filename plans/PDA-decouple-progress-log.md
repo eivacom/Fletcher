@@ -1,36 +1,44 @@
-# PDA — Progress Log
+# PDA-decouple (`DEC`) — Progress Log
 
 One section is appended per item by the runbook after it is green, reviewed,
-logged, and pushed. See
-[PDA-protocol-driver-abi.md](PDA-protocol-driver-abi.md) for the tracker and
-[../docs/protocol-driver-abi-spec.md](../docs/protocol-driver-abi-spec.md) for the
-oracle.
+logged, and pushed. See [PDA-decouple-interface.md](PDA-decouple-interface.md) for
+the tracker and [../docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md)
+for the oracle.
 
-## Round kickoff (2026-08-31)
+## Round history (2026-08-31 / 2026-09-01)
 
-Round designed on 2026-08-31. Decisions L1–L7 were answered by the maintainer in
-the design conversation; L8–L10 in the follow-up scope questions. The design
-session was lost before any artifact was written; it was recovered from the
-session transcript and the design is preserved verbatim at
-`c:\tmp\PDA-abi-design-recovered.txt`.
+Designed 2026-08-31 as a **single** round `PDA` covering the seam and the C ABI
+together. The design session was lost before writing any artifact and was recovered
+from its transcript (`c:\tmp\PDA-abi-design-recovered.txt`).
 
-Two citation errors in the recovered design were corrected while writing the spec
-and must not be reintroduced:
+**Split by the maintainer on 2026-09-01** into **PDA-decouple** (this round — the
+seam) and **PDA-ABI** (the C boundary below it), so that PDA-ABI and
+BIND-C#/BIND-Rust can then run **in parallel and meet only at the seam spec**. The
+split also corrected a real error in the original design: it had claimed the driver
+ABI and the binding ABI must share a literal buffer struct and "cannot be designed
+independently". That was wrong — a built-in provider hands the encoder a plain C++
+`WriteBuffer&` with no ABI object in the path, so a binding defined over
+driver-ABI types would have worked only for loaded drivers, breaking the
+built-in/loaded transparency the maintainer required. Both C boundaries now mirror
+the **seam** independently.
+
+Two citation errors from the recovered design were corrected in the specs and must
+not be reintroduced:
 
 - The MCU `<75 KB` Flash figure comes from **TD-004** (rationale) and **TD-007**
   (context) — *not* TD-005, which is schema transport via companion topics.
 - The recorded dynamic-linking skepticism is **TD-007's** "alternatives
-  considered", and it is narrower than it first reads: it rejected dynamic linking
-  as a way to make **Arrow C++** optional in the edge/server tier split, not
-  plugin ABIs in general. The counter-argument PDA-11 owes is correspondingly
-  narrower — see spec §11.1.
+  considered", and it is narrower than it reads: it rejected dynamic linking as a
+  way to make **Arrow C++** optional in the edge/server tier split, not plugin ABIs
+  in general. The counter-argument PDA-ABI owes is correspondingly narrower.
 
-One estimate was also corrected: the Fast DDS config blast radius was recorded in
-the design conversation as "4 code sites and 2 docs". Measured, it is **4 external
-consumer files / 19 occurrences**, plus **39 provider-internal occurrences across
-7 files** (24 of them in the provider's own QoS test TU, which is substantially
-rewritten) and **10** in XRCE. The file count for *external* consumers was right;
-the total churn was understated. See spec §10.
+One estimate was also corrected: the Fast DDS config blast radius was recorded as
+"4 code sites and 2 docs". Measured, it is **4 external consumer files / 19
+occurrences**, plus **39 provider-internal occurrences across 7 files** (24 of them
+in the provider's own QoS test TU) and **10** in XRCE. The external *file* count
+was right; the total churn was understated.
+
+<!-- Entries appended below by the round runbook -->
 
 ## Merged `feature/fastdds_modernization/19645` (2026-08-31, pre-round)
 
