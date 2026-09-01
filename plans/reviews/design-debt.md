@@ -72,3 +72,26 @@ the implementer.
 | C2-7 | `ImportArrowSchema` is now public API; state its behaviour for a null or release-less schema (`ImportFromNano` returned `nullptr`). | re-review §C2-7 |
 | C2-8 | `kOk`+null does not say whether `*out` is written null or left untouched, unlike the other outcomes. One word. | re-review §C2-8 |
 | C2-9 | Carried forward (cycle-1 DEBT-8): forward note for PDA-DEC-5 — `SchemaCarriage` must arrive through §4.1's opaque document, not a second construction API. | review §DEBT-8 |
+
+## PDA-DEC-4 — provider registry (APPROVE-WITH-DEBT(10), cycle 1 of 2)
+
+Review: [PDA-DEC-4-design-review.md](PDA-DEC-4-design-review.md). No BLOCKERs. Two
+rulings the implementer may rely on **without stop-and-asking**: premise **P2** is
+answered — §4 clause 2 is satisfied under *both* readings, because `SetPathResolver`
+lands and is exercised in this item, so PDA-ABI adds no registry method (review §A);
+and rung-1 item 1's "unrepresentable" is an overclaim whose *substance* nevertheless
+holds (review §B). Surface waiver (5 vs 3) is the PM's; the config already names this
+item as the expected exception.
+
+| Id | Owed | Where |
+|----|------|-------|
+| DEBT-1 | **The substantive one.** The resolver seat has no lifetime rule, while the design sanctions destroying the registry with providers still live. One normative sentence beside `SetPathResolver`: a resolver must keep everything the returned provider depends on — including a loaded module — alive as long as that provider lives, independently of the registry's and the resolver's lifetime. Otherwise PDA-ABI's natural module cache unloads a `.so` under a running provider. | review §DEBT-1 |
+| DEBT-2 | Make the §4 clause 2 amendment freeze the **whole** registry surface (`Create`, `Register`, `SetPathResolver`; PDA-ABI adds no method, it calls one), and rewrite P2 to record the ruling instead of a stop-and-ask. | review §DEBT-2 |
+| DEBT-3 | Pin the whole signature, not the return type: `static_assert(std::is_same_v<decltype(&ProviderRegistry::Create), std::shared_ptr<PubSubProvider> (ProviderRegistry::*)(const ProviderSelector&, const ProviderConfig&) const>)`. A return-type assert cannot see a defaulted third parameter or a dropped `const` — the exact widening this item exists to prevent. | review §DEBT-3 |
+| DEBT-4 | A second `SetPathResolver` silently replaces the first. The design's own case-10 reasoning applies verbatim — refuse it with `kInvalidArgument`, or say why replacement is legal. | review §DEBT-4 |
+| DEBT-5 | State the **selector's** C form (§3.5: pointer + length, borrowed, length authoritative) as the design already does for `document` — §4 selection is binding-visible surface — and refuse an embedded NUL at `Parse`, or a length-carrying binding hands PDA-ABI's `dlopen` a truncated path that loads a different library with no signal. | review §DEBT-5 |
+| DEBT-6 | Soften rung-1 item 1: the classification rule is public and pure, so a caller can re-derive name-vs-path (== built-in-vs-loaded) in one line, and RTTI on the returned provider is always available. Claim instead that the seam offers no way to ask and no caller has cause to; what decision 3 guarantees is that the built-in → loaded move is a **config** edit, never a caller edit. | review §DEBT-6 |
+| DEBT-7 | Forbidden case 5's machine check is "no **transport SDK** is reachable", not "no provider header": `in_process_provider.hpp` is inside `fletcher-pubsub` and PDA-DEC-5 will link it into this very suite. | review §DEBT-7 |
+| DEBT-8 | `kNotSupported`'s message should say the selector was classified as a *path* and name the first offending character/offset — trailing whitespace or a CRLF from a config file is the realistic misclassification, and "this build cannot load drivers" reads as an infrastructure fault rather than a typo. | review §DEBT-8 |
+| DEBT-9 | Forward note for PDA-DEC-7: the seam's `domain_id` is `uint32_t`, `XrceConfig::domain_id` is `uint16_t`. Refuse out-of-range, never narrow — a truncated domain id is a wrong answer with no error. | review §DEBT-9 |
+| DEBT-10 | Records: (a) "providers are constructed at four sites in tree (§10)" is false — §10 counts four *config-consuming files* and predates PDA-DEC-1/2/3; PDA-DEC-6/7 should re-measure. (b) `provider.hpp:68-70` still documents configuration as "a provider-specific Options struct"; update here or book against PDA-DEC-6/7. | review §DEBT-10 |
