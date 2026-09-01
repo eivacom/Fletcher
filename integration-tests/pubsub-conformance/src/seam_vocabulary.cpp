@@ -18,6 +18,7 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -81,8 +82,16 @@ TEST(SeamVocabulary, BorrowedTransportMemoryCrossesWithoutCopy) {
     EXPECT_EQ(owned.delivered_data, owned.published_data)
         << "a CALLER-owned blob was copied as well; that path was already zero-copy";
 
-    // Ownership, not just aliasing: read the kept blob after the callback and
-    // after Unsubscribe.
+    // Ownership, not just aliasing. The two claims below are read after the
+    // callback, after Unsubscribe, and after the PROVIDER ITSELF HAS BEEN
+    // DESTROYED — so the Blob's own owner is the only thing that can still be
+    // keeping the arena alive. Read with the provider still up they would pass
+    // for a span with no owner at all, which is the case they claim to
+    // distinguish; the arena also scribbles 0xDD over its slots on destruction,
+    // so "the bytes happened to survive" is not a way to pass either.
+    ASSERT_TRUE(trip.ledger.subject_released)
+        << "the probe outlived the round trip, so the two ownership assertions below would hold "
+           "whether or not the Blob owns anything — the guard is vacuous, not green";
     EXPECT_EQ(trip.ledger.retained_data, loaned.published_data)
         << "a blob kept past the delivery no longer names the provider's bytes";
     EXPECT_TRUE(trip.ledger.retained_content_ok)
@@ -113,13 +122,18 @@ TEST(SeamVocabulary, BorrowedTransportMemoryCrossesWithoutCopy) {
 // broken promise surfaced as a THROWN get(), and a bool-returning wait could
 // not tell the two apart at all.
 TEST(SeamVocabulary, AbandonedSubscriptionReportsNoSchemaWillArrive) {
-    SharedSchema out;
+    // Pre-loaded with a NON-null schema, deliberately. "*out is untouched" is a
+    // claim about writing, and against a null `out` it passes whether Wait leaves
+    // it alone or writes null into it — which is no test at all.
+    const SharedSchema sentinel = MakeSharedSchema(MakeConformanceSchema(SchemaId::kA));
+    ASSERT_NE(sentinel, nullptr);
+    SharedSchema out = sentinel;
 
     {
         auto [arrival, resolver] = SchemaArrival::Create();
         // Nothing has happened yet: pending, and the out param is untouched.
         EXPECT_EQ(arrival.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kPending);
-        EXPECT_EQ(out, nullptr);
+        EXPECT_EQ(out, sentinel) << "*out was written on a non-kOk outcome";
     }
     // The resolver died unresolved. That IS the third terminal outcome.
     SchemaArrival abandoned;
@@ -129,18 +143,24 @@ TEST(SeamVocabulary, AbandonedSubscriptionReportsNoSchemaWillArrive) {
     }
     EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kSubscriptionEnded)
         << "an abandoned subscription must say so, not hang and not report success";
-    EXPECT_EQ(out, nullptr) << "*out is untouched for every outcome except kOk";
+    EXPECT_EQ(out, sentinel) << "*out is untouched for every outcome except kOk";
 
-    // Even the unbounded wait returns, which is what makes it safe to offer.
+    // Even the unbounded wait returns, which is what makes it safe to offer. So
+    // does a huge-but-finite one, which is how a binding spells "effectively
+    // forever" when it cannot name milliseconds::max().
     EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds::max(), &out),
               PubSubStatus::kSubscriptionEnded);
+    EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds(std::numeric_limits<int64_t>::max()), &out),
+              PubSubStatus::kSubscriptionEnded)
+        << "a huge finite timeout must wait, not overflow into an immediate kPending";
 
     // ...and it is NOT the same answer as a schema-less transport's.
     SchemaArrival schemaless = SchemaArrival::Ready(nullptr);
     EXPECT_EQ(schemaless.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kOk)
         << "kOk + null is how a transport says it carries no schemas; conflating it with "
            "kSubscriptionEnded is the silent-wrong-slot-decoding failure §7 names";
-    EXPECT_EQ(out, nullptr);
+    EXPECT_EQ(out, nullptr) << "kOk WRITES *out, including the null of a schema-less transport — "
+                               "a caller must not be left reading a stale schema";
 }
 
 // ── §3.2 rung 1 — an unowned blob is unrepresentable ────────────────
@@ -203,9 +223,18 @@ TEST(SeamVocabulary, ResolverRefusesNullAndWaitRefusesNegativeTimeout) {
     SharedSchema out;
 
     auto [arrival, resolver] = SchemaArrival::Create();
-    EXPECT_THROW(std::move(resolver).Resolve(nullptr), PubSubError)
-        << "a carrying provider resolved with null, which is kOk+null — the meaning reserved "
-           "for a transport that carries no schemas at all";
+    try {
+        std::move(resolver).Resolve(nullptr);
+        ADD_FAILURE() << "a carrying provider resolved with null, which is kOk+null — the meaning "
+                         "reserved for a transport that carries no schemas at all";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+    }
+    // The refusal is TERMINAL, and the header says so: the token is consumed and
+    // the arrival settles at kInternal, so a waiter learns of the provider bug
+    // instead of blocking on an arrival that will never be resolved again.
+    EXPECT_EQ(arrival.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kInternal);
+    EXPECT_FALSE(arrival.Message().empty());
 
     // A negative timeout silently polled before it was refused, so "negative
     // means forever" could have been invented by one boundary and not the other.
@@ -272,6 +301,50 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
     out = nullptr;
     EXPECT_EQ(second.schema.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kOk);
     EXPECT_NE(out, nullptr) << "a subscription created after the declaration must see it";
+}
+
+// ── §3.5 rung 2 — an empty topic names no topic ─────────────────────
+//
+// One check, no default topic, no recovery. It is a BEHAVIOUR change as well as
+// a new rule: `JoinSegments({})` used to return `""`, a perfectly legal topic
+// key, so an empty segment list silently published to and subscribed from a
+// topic named "". It is reachable from outside the process — the gateway's
+// `SplitTopic("")` yields an empty vector — which is why it is refused at the
+// door rather than trusted not to happen.
+//
+// Asserted on every one of the four methods: the check lives in one place
+// (`internal::RequireSegments`), and this is what says all four still route
+// through it.
+TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
+    InProcessPubSubProvider provider;
+    const Topic none;
+
+    auto refused = [](auto&& call) {
+        try {
+            call();
+        } catch (const PubSubError& e) {
+            return e.status() == PubSubStatus::kInvalidArgument;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+
+    EXPECT_TRUE(refused([&] { provider.CreateTopic(none, MakeConformanceSchema(SchemaId::kA)); }))
+        << "CreateTopic accepted an empty topic";
+    EXPECT_TRUE(refused([&] {
+        provider.Publish(none, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
+    })) << "Publish accepted an empty topic";
+    EXPECT_TRUE(refused([&] {
+        static_cast<void>(provider.Subscribe(
+            none, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    })) << "Subscribe accepted an empty topic";
+    EXPECT_TRUE(refused([&] { provider.Unsubscribe(none); }))
+        << "Unsubscribe accepted an empty topic";
+
+    // And a one-segment topic is still perfectly ordinary — the refusal is of
+    // EMPTY, not of short.
+    EXPECT_NO_THROW(provider.CreateTopic({"solo"}, OwnedSchema{}));
 }
 
 }  // namespace conformance

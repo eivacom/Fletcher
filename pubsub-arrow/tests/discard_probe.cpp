@@ -29,14 +29,27 @@
 #include <fletcher/pubsub/subscriber.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#include <memory>
 #include <vector>
 
+// PDA-DEC-3 changed DeserializeEnvelope's overload set (the `const std::vector&`
+// form is gone; a shared-owner form arrived). Both lines here silently became
+// hard COMPILE errors rather than nodiscard diagnostics — and this TU is expected
+// to fail to build, so the CTest entry kept passing on the diagnostics emitted by
+// the OTHER lines in the same file. The probe had stopped guarding
+// DeserializeEnvelope entirely and could not say so.
+//
+// Migrated to the surviving overloads. Each discard below must be a call that
+// COMPILES, so that the only reason a diagnostic appears is the missing
+// [[nodiscard]] — that is the whole polarity of this file.
 void DiscardCore(fletcher::PositionalReader& reader, const fletcher::Envelope& envelope,
+                 const std::shared_ptr<const std::vector<uint8_t>>& owned_bytes,
                  const std::vector<uint8_t>& bytes) {
     reader.IsNull(0);
     fletcher::SerializeEnvelope(envelope);
-    fletcher::DeserializeEnvelope(bytes);
+    fletcher::DeserializeEnvelope(owned_bytes);
     fletcher::DeserializeEnvelope(bytes.data(), bytes.size());
+    fletcher::DeserializeEnvelope(owned_bytes, bytes.data(), bytes.size());
 }
 
 void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscriber,

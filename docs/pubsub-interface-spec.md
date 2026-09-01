@@ -164,7 +164,10 @@ so that both ABI rounds derive the same one:
 2. Bytes are **immutable** once they cross.
 3. Reference operations must be safe from **any thread**, concurrently.
 4. Release must not throw and must not re-enter the seam.
-5. Empty is representable with a null data pointer and zero length.
+5. Empty is representable with a null data pointer and zero length, and Fletcher
+   **enforces** it: a zero-size blob normalises its pointer to null however it was
+   built, so a C view may test `size == 0` and `data == NULL` interchangeably. A
+   zero-size blob also needs no owner — there is no byte to keep alive.
 
 **Consequence, DELIVERED by PDA-DEC-3:** the seam carries memory it does not own —
 a transport's loaned sample, say — without copying it into a `vector`. The one
@@ -339,12 +342,28 @@ without drifting, which is the drift this round exists to stop.
   value in the same enum (§5.2).
 - `PubSubError` **refuses** `kOk`, `kPending` and `kSubscriptionEnded`: the first
   would let a boundary report a failed call as a success, and the other two are
-  §2 wait outcomes rather than failures.
+  §2 wait outcomes rather than failures. "Refuses" means **coerces to
+  `kInternal`**, not "throws on construction" — a boundary must reproduce that,
+  and throwing from inside a throw expression would be worse than a mislabelled
+  status. The property is the same either way: no failure ever carries a
+  non-failure number.
 - **Every seam entry point translates.** Each provider wraps its four methods, so
   the only exception that leaves is a `PubSubError`; anything else — including
   `std::bad_alloc` or a transport SDK's own type — becomes `kInternal` carrying
   the original `what()`. A taxonomy that lets an untyped exception through is not
   one.
+- **One mapping rule, and it is normative** because a C driver author must
+  reproduce it or drift: a `std::overflow_error` escaping a seam entry point
+  becomes **`kPayloadTooLarge`**, not `kInternal`. `WriteBuffer`'s fixed-capacity
+  overflow is its only source in the tree, and it is the only producer of that
+  status — without the rule, taxonomy entry 4 is unreachable and a row that does
+  not fit the transport's bound degrades to "internal", which tells a caller
+  nothing it can act on. The rule is by TYPE, so it is stated rather than
+  narrowed: a `RowEncoder` that throws `std::overflow_error` for reasons of its
+  own is reported the same way. A `SubscribeCallback` or `RowEncoder` throwing a
+  non-`std::exception` type loses its identity entirely and arrives as
+  `kInternal` — the price of a boundary that cannot let an untyped exception
+  through.
 - `PubSubError` derives from `std::runtime_error`, so existing
   `catch (const std::exception&)` sites are unaffected. Messages are unchanged;
   what moved is branching on the error *type*, which is now branching on a number.

@@ -311,21 +311,41 @@ real A and B on every subject.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
 §3.3, §3.4, §5.1, §7 clause 1. A **third** suite in this harness, in its own
-binary (`conformance_seam_vocabulary`), six entries, no provider SDK.
+binary (`conformance_seam_vocabulary`), seven entries, no provider SDK.
 
 It asserts what the crossing *types* make representable, which no
 provider-parameterised clause can reach:
 
 | Entry | What it pins |
 |---|---|
-| `BorrowedTransportMemoryCrossesWithoutCopy` | §3.2: a provider hands over its own bytes where they lie, and a blob kept past the delivery still names them — so the owner is real, not a span with no keeper |
+| `BorrowedTransportMemoryCrossesWithoutCopy` | §3.2: a provider hands over its own bytes where they lie, and a blob kept past the delivery — **after the provider itself has been destroyed** — still names *and reads back* those bytes, so the owner is real rather than a span with no keeper |
 | `AbandonedSubscriptionReportsNoSchemaWillArrive` | §3.4: a subscription torn down before its schema arrives says `kSubscriptionEnded`, distinct from `kOk`+null ("this transport carries no schemas"), and the unbounded wait still returns |
 | `BlobRefusesBytesNothingOwns` | §3.2 rung 1: no view-only `Blob` exists to build |
 | `ErrorRefusesEveryNonFailureStatus` | §5.1: a failure can never carry `kOk`, `kPending` or `kSubscriptionEnded` |
 | `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
+| `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
 
-The last one is here rather than in `ProviderConformance` for a specific reason,
+**How the ownership half is kept honest.** It was vacuous twice, and both shapes
+are worth knowing because they recur:
+
+1. The provider outlived the round trip, so the arena stayed alive whether or not
+   the `Blob` owned it. Fixed by destroying the probe *inside* the round trip,
+   before the retained blob is read, and asserting (`subject_released`, backed by
+   a `weak_ptr`) that it really died — so a keep-alive added later fails loudly
+   instead of quietly re-emptying the claim.
+2. The content check compared the retained bytes against the *published address*
+   — which, when provenance holds, is the same buffer: `memcmp(p, p, n)`, true for
+   a dead owner too. Fixed by comparing against harness-owned storage
+   (`CopyLedger::retain_expected`). `Arena` also fills its slots with `0xDD` on
+   destruction, so "the bytes happened to survive the free" is not a way to pass.
+
+Both were found by mutation, not by reading: giving the delivered blob an owner
+unrelated to the arena leaves provenance intact and must fail the ownership half
+alone. It now does, at the `retained_content_ok` assertion. Restoring the copy
+instead fails the provenance half in both this suite and `CopyAccounting`.
+
+The `LaterDeclaration…` clause is here rather than in `ProviderConformance` for a specific reason,
 worth stating because it is the kind of gap that otherwise goes unnoticed: **no
 conformance subject reaches that path.** `InProcessLocal` carries subject axis
 `kAbsent`, so `CONF_MUST_DECLARE` never hands the loopback a real schema, and

@@ -9,6 +9,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <fletcher/core/envelope.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider.hpp>
@@ -46,22 +47,14 @@ inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncode
     }
 }
 
-// How many attachments the body claims, without parsing them. 0 for a body that carries none or
-// whose count field is not there at all.
+// The same peek core uses, re-exported into this namespace so the read paths below read as one
+// vocabulary. Deliberately NOT a second implementation: it is the same parse of the same wire
+// header, and two copies of it are two chances to disagree about the layout.
 //
-// Exists so a receive path can decide whether it needs a shared OWNER for these bytes before it
-// pays for one: an attachment-free sample — the hot path, and every sample the benchmarks measure —
-// still crosses with no copy of any kind.
+// Its job here: an attachment-free sample - the hot path, and every sample the benchmarks
+// measure - needs no shared owner and takes no copy of any kind.
 inline uint32_t PeekAttachmentCount(const uint8_t* ptr, size_t total) {
-    if (total < 4) return 0;
-    uint32_t row_len = 0;
-    std::memcpy(&row_len, ptr, 4);
-    if (row_len > total - 4) return 0;
-    const size_t pos = 4 + static_cast<size_t>(row_len);
-    if (total - pos < 4) return 0;
-    uint32_t att_count = 0;
-    std::memcpy(&att_count, ptr + pos, 4);
-    return att_count;
+    return EnvelopeAttachmentCount(ptr, total);
 }
 
 // Reverse of EncodeEnvelopeBody. `row` views `ptr`, and so do the attachment blobs: `owner` is what

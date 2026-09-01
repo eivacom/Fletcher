@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fletcher/core/internal/status_name.hpp>
 #include <optional>
 #include <string>
 #include <thread>
@@ -282,15 +283,15 @@ TEST_P(ProviderConformance, SubscribeNeverBlocksSchemaArrivesLater) {
     const PubSubStatus status = sub.Schema().Wait(RemainingBudget(), &arrived);
     if (Carried()) {
         ASSERT_EQ(status, PubSubStatus::kOk)
-            << "the schema arrival never answered kOk: " << PubSubStatusName(status) << " ("
-            << sub.Schema().Message() << ")";
+            << "the schema arrival never answered kOk: " << internal::PubSubStatusName(status)
+            << " (" << sub.Schema().Message() << ")";
         EXPECT_NE(arrived, nullptr);
     } else {
         // §7 clause 1's sanctioned schema-less transport: kOk with a NULL schema,
         // answered rather than left pending, so a waiter never hangs — and
         // distinct from kSubscriptionEnded, which would mean something else
         // entirely.
-        ASSERT_EQ(status, PubSubStatus::kOk) << PubSubStatusName(status);
+        ASSERT_EQ(status, PubSubStatus::kOk) << internal::PubSubStatusName(status);
         EXPECT_EQ(arrived, nullptr);
     }
 }

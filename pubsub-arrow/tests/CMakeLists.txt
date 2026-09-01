@@ -66,5 +66,19 @@ add_test(
             --target discard_probe_tu
             --config $<CONFIG>)
 
+# FAIL_REGULAR_EXPRESSION is the fix for how this gate rotted once already: the TU
+# is EXPECTED not to build, so a line that stops being a discard and becomes a hard
+# compile error is invisible — the entry keeps passing on the diagnostics the OTHER
+# lines emit. That is exactly what happened when PDA-DEC-3 changed
+# DeserializeEnvelope's overload set: two probe lines became C3861/C2664 and the
+# probe silently stopped guarding that function.
+#
+# MSVC hard errors are C2xxx/C3xxx; the promoted nodiscard warning is C4834, so the
+# two are distinguishable by code and this cannot self-match. FAIL wins over PASS in
+# ctest, so any hard error now turns the entry red instead of hiding behind a
+# neighbouring diagnostic. Inert on gcc/clang, which report `error: ignoring return
+# value` for the same promotion — those platforms keep the PASS-only behaviour the
+# comment at the top of this file already qualifies.
 set_tests_properties(NodiscardTest.CompileFailsOnDiscard PROPERTIES
-    PASS_REGULAR_EXPRESSION "C4834|ignoring return value")
+    PASS_REGULAR_EXPRESSION "C4834|ignoring return value"
+    FAIL_REGULAR_EXPRESSION "error C2[0-9][0-9][0-9]|error C3[0-9][0-9][0-9]")

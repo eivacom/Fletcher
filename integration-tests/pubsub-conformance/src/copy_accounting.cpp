@@ -15,6 +15,7 @@
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,13 @@ class Arena {
         uint8_t* base = slots_[cursor_].data();
         cursor_ = (cursor_ + 1) % kSlots;
         return base;
+    }
+
+    /// Scribbles on the way out, so "the owner died and the bytes happen to still
+    /// be there" is not a way to pass. Without this the ownership leg would rely
+    /// on an allocator not reusing the block — which is luck, not a measurement.
+    ~Arena() {
+        for (auto& slot : slots_) slot.fill(0xDD);
     }
 
    private:
@@ -330,8 +338,11 @@ PubSubProvider::SubscribeCallback MakeCapture(CopyLedger& ledger,
     };
 }
 
+/// `release_subject`, when supplied, destroys the provider and the runner after the
+/// round trip and before the retained blob is read — see CopyLedger::retained_data.
 RoundTrip RunCaptured(CopyRunner& runner, const Topic& topic, const std::vector<uint8_t>& payload,
-                      const Attachments& attachments, CopyLedger ledger) {
+                      const Attachments& attachments, CopyLedger ledger,
+                      const std::function<bool()>& release_subject = {}) {
     RoundTrip trip;
     trip.ledger = std::move(ledger);
 
@@ -354,21 +365,26 @@ RoundTrip RunCaptured(CopyRunner& runner, const Topic& topic, const std::vector<
     }
     runner.Unsubscribe(topic);
 
-    // AFTER the callback, after Unsubscribe: if the blob's owner is real these
-    // bytes are still readable, still at the address they were published at.
+    // The subject dies HERE, before anything below reads the retained blob. From
+    // this point the only thing that can be keeping the loaned bytes alive is the
+    // Blob's own owner — which is the whole claim.
+    if (release_subject) {
+        trip.ledger.subject_released = release_subject();
+    }
+
+    // AFTER the callback, after Unsubscribe, after the provider is gone: if the
+    // blob's owner is real these bytes are still readable, still at the address
+    // they were published at.
     if (!trip.ledger.retain_key.empty() && retained.data() != nullptr) {
         trip.ledger.retained_data = At(retained.data());
-        const AttachmentTrace* trace = nullptr;
-        for (const AttachmentTrace& t : trip.ledger.attachments) {
-            if (t.key == trip.ledger.retain_key) trace = &t;
-        }
-        if (trace != nullptr) {
-            const auto* published = reinterpret_cast<const uint8_t*>(trace->published_data);
-            trip.ledger.retained_content_ok =
-                retained.size() == trace->published_len &&
-                (trace->published_len == 0 ||
-                 std::memcmp(retained.data(), published, trace->published_len) == 0);
-        }
+        // Compared against the HARNESS's own copy of the expected bytes, never
+        // against the published address — see CopyLedger::retain_expected. The
+        // published address is where the retained blob points, so comparing the
+        // two is memcmp(p, p, n) and passes for a dead owner too.
+        const std::vector<uint8_t>& expected = trip.ledger.retain_expected;
+        trip.ledger.retained_content_ok =
+            !expected.empty() && retained.size() == expected.size() &&
+            std::memcmp(retained.data(), expected.data(), expected.size()) == 0;
     }
     return trip;
 }
@@ -436,6 +452,10 @@ RoundTrip RunRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
 RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provider) {
     auto provider = std::make_shared<SeamProbeProvider>(copying_provider ? ProbeMode::kStaging
                                                                          : ProbeMode::kZeroCopy);
+    // Watched, not merely dropped: the release below reports whether the probe
+    // actually died, so a stray keep-alive shows up as a failed assertion rather
+    // than as a leg that quietly stops testing anything.
+    std::weak_ptr<SeamProbeProvider> watch = provider;
 
     // Bytes the provider already holds, where a transport's loaned sample would
     // be. The provider turns them into a Blob inside Publish; the harness never
@@ -460,6 +480,7 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
     // The borrowed entry is the one kept past the callback: it is the entry whose
     // bytes the provider does not own a `vector` of.
     ledger.retain_key = "loaned";
+    ledger.retain_expected = loaned;
 
     AttachmentTrace borrowed;
     borrowed.key = "loaned";
@@ -469,9 +490,14 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
     borrowed.published_len = loaned.size();
     ledger.attachments.push_back(std::move(borrowed));
 
-    DirectRunner runner(provider);
+    auto runner = std::make_unique<DirectRunner>(provider);
     const std::vector<uint8_t> payload = CopyPayload(kSmallRowBytes);
-    return RunCaptured(runner, topic, payload, attachments, std::move(ledger));
+    auto release = [&]() -> bool {
+        runner.reset();
+        provider.reset();
+        return watch.expired();
+    };
+    return RunCaptured(*runner, topic, payload, attachments, std::move(ledger), release);
 }
 
 const std::vector<CopySubject>& CopyAccountingSubjects() {

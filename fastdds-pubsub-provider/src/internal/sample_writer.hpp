@@ -69,9 +69,21 @@ class SampleWriter : public SampleWriterBase {
         // to the flow-controller thread, and this check would then run before serialize() and miss
         // the failure.
         if (!transport.serialize_error.empty()) {
-            throw PubSubError(PubSubStatus::kTransportFailure,
-                              "FastDDS: failed to publish to '" + writer->get_topic()->get_name() +
-                                  "': " + transport.serialize_error);
+            // kInternal, NOT kTransportFailure: the only thing that records here is the catch in
+            // serialize() for "the caller's encoder threw", and the transport is blameless for
+            // that. It used to say kTransportFailure, which meant the SAME deterministic bug in a
+            // caller's RowEncoder was reported as a transport failure on this flow and an internal
+            // failure on the loaned flow — selected by the `loan_publish` option, invisibly. A
+            // binding that retries kTransportFailure would have retried that one forever.
+            //
+            // The one asymmetry left is deliberate and test-pinned: an OVERSIZED row throws
+            // kPayloadTooLarge on the loaned flow (which encodes in front of write()) and is
+            // dropped-and-logged here (see serialize()'s overflow catch and
+            // FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow). That is a
+            // pre-existing behavioural difference, not a taxonomy one.
+            throw PubSubError(PubSubStatus::kInternal, "FastDDS: failed to publish to '" +
+                                                           writer->get_topic()->get_name() +
+                                                           "': " + transport.serialize_error);
         }
         if (rc != eprosima::fastdds::dds::RETCODE_OK) {
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,

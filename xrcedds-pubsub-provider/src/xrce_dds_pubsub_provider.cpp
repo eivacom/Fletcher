@@ -94,9 +94,15 @@ struct XrceDDSPubSubProvider::Impl {
         // OnTopic): the arrival is resolved when the schema arrives, and
         // data that arrives before the schema is buffered in `pending` so the
         // callback is never invoked with a null schema.
+        //
+        // The arrival, and the ONE thing that can end it. There is deliberately no
+        // separate resolved-flag beside these: the optional IS the flag —
+        // engaged means "this subscription is still waiting", and whichever path
+        // consumes the token is the one that settled the question. Fast DDS's
+        // SchemaChannel dropped its equivalent flag for the same reason; two sources
+        // of truth for one fact is one too many.
         SchemaArrival schema_arrival;
         std::optional<SchemaResolver> schema_resolver;
-        bool schema_resolved = false;
         std::vector<Envelope> pending;
     };
 
@@ -214,7 +220,11 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             auto tit = impl->topics.find(sit->second);
             if (tit == impl->topics.end()) return;
             auto& ts = tit->second;
-            if (ts.schema_resolved) return;  // __schema is KEEP_LAST(1); ignore repeats.
+            // __schema is KEEP_LAST(1)/TRANSIENT_LOCAL, so repeats are expected; a
+            // consumed token means this subscription's schema question is already
+            // settled (arrived, or the subscription ended), and no live subscription
+            // means there is nobody to tell either way.
+            if (!ts.schema_resolver.has_value()) return;
 
             // NOTHING in the schema-resolution sequence below may throw out of
             // the XRCE session callback thread. OnTopic is invoked from inside
@@ -229,7 +239,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             //   * MakeSharedSchema — allocates;
             //   * resolving the arrival — allocation, and a refusal if the
             //     schema were somehow null.
-            // On any failure schema_resolved stays false and we return, so the
+            // On any failure the token is NOT consumed and we return, so the
             // retained TRANSIENT_LOCAL/KEEP_LAST(1) __schema sample is
             // redelivered and resolution is retried.
             try {
@@ -237,12 +247,18 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
                 if (!schema) return;
                 ts.schema = OwnedSchema::DeepCopy(schema.get());
                 ts.shared_schema = MakeSharedSchema(std::move(schema));
-                if (ts.schema_resolver.has_value()) {
-                    std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
-                    ts.schema_resolver.reset();
-                    std::move(*token).Resolve(ts.shared_schema);
-                }
-                ts.schema_resolved = true;
+                std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
+                ts.schema_resolver.reset();
+                // Resolved while holding impl_->mu, unlike the other two providers,
+                // and that is this provider's model rather than an oversight: XRCE
+                // has a single recursive-mutex session pump, OnTopic is already
+                // entered with the lock held, and it dispatches user callbacks under
+                // it a few lines below. Safe because a waiter never takes impl_->mu
+                // in order to wait — SchemaArrival has its own mutex — so there is no
+                // inversion to have. Fast DDS resolves outside its lock because its
+                // listener runs on a foreign thread that would otherwise invert with
+                // the Fast DDS subscriber mutex.
+                std::move(*token).Resolve(ts.shared_schema);
             } catch (...) {
                 return;
             }
@@ -665,17 +681,17 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         auto& ts = impl_->topics[name];
         if (ts.has_reader)
-            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: already subscribed to: " + name);
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "XRCE: already subscribed to: " + name);
 
         // Subscribe is non-blocking and never throws when no publisher exists yet
         // (subscriber-first). The schema is delivered asynchronously: data that
         // arrives before it is buffered (see OnTopic) so the first callback is
-        // never invoked with a null schema. A fresh promise/future is wired up for
-        // this subscription.
+        // never invoked with a null schema. A fresh arrival and its single-use
+        // resolver are wired up for this subscription.
         auto arrival_pair = SchemaArrival::Create();
         ts.schema_arrival = std::move(arrival_pair.first);
         ts.schema_resolver.emplace(std::move(arrival_pair.second));
-        ts.schema_resolved = false;
 
         // If no participant yet (subscriber-side), create one + the data topic.
         // Publisher-side topics already did this in CreateTopic.
@@ -697,14 +713,11 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         if (ts.schema) {
             // Schema already known on this provider (publisher-side / cached):
-            // resolve the future immediately.
+            // answer the arrival immediately.
             ts.shared_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
-            {
-                std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
-                ts.schema_resolver.reset();
-                std::move(*token).Resolve(ts.shared_schema);
-            }
-            ts.schema_resolved = true;
+            std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
+            ts.schema_resolver.reset();
+            std::move(*token).Resolve(ts.shared_schema);
         } else if (ts.schema_reader_id.type == UXR_INVALID_ID) {
             // Subscriber-side: create a persistent companion __schema reader and
             // route its samples to OnTopic, which resolves the schema future when a
@@ -809,17 +822,13 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
 
         auto& ts = it->second;
 
-        // If the schema never arrived, break the promise so a consumer blocked on
-        // the future wakes up instead of waiting forever (and the promise is not
-        // destroyed unsatisfied).
-        if (!ts.schema_resolved) {
-            // Dropping the token unresolved IS the outcome - kSubscriptionEnded. It
-            // used to be a broken promise a waiting get() threw out of; it is now a
-            // value a binding reads, and one it cannot confuse with "this transport
-            // carries no schemas at all".
-            ts.schema_resolver.reset();
-            ts.schema_resolved = true;
-        }
+        // If the schema never arrived, end the arrival so a waiter wakes instead of
+        // waiting forever. Dropping the token unresolved IS the outcome —
+        // kSubscriptionEnded. It used to be a broken promise a waiting get() threw
+        // out of; it is now a value a binding reads, and one it cannot confuse with
+        // "this transport carries no schemas at all". Idempotent: a token already
+        // consumed by a resolution is simply absent.
+        ts.schema_resolver.reset();
 
         if (ts.schema_reader_id.type != UXR_INVALID_ID) {
             uxr_buffer_cancel_data(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
@@ -903,7 +912,12 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
     impl.schema_reader_to_topic[schema_reader_id] = topic_name;
 
     auto& ts = impl.topics[topic_name];
-    ts.schema_resolved = false;
+    // The scenario is "a schema arrives for a live subscription", so the topic must
+    // hold an unconsumed resolver — that optional is what OnTopic's schema branch
+    // gates on.
+    auto arrival_pair = SchemaArrival::Create();
+    ts.schema_arrival = std::move(arrival_pair.first);
+    ts.schema_resolver.emplace(std::move(arrival_pair.second));
 
     // Two buffered pending envelopes (subscriber-first backlog). No attachments.
     auto make_env = [](uint8_t tag) {

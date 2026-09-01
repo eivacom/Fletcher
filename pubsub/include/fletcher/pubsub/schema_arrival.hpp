@@ -28,8 +28,11 @@ struct SchemaArrivalState;
 
 class SchemaResolver;
 
-/// A waitable handle for a topic's schema. Copyable, thread-safe; every copy
-/// observes the same arrival.
+/// A waitable handle for a topic's schema. Copyable; every copy observes the same
+/// arrival, and distinct copies may be waited on concurrently from any thread.
+/// (That is the thread-safety claim, precisely: it is NOT a licence to assign to
+/// one SchemaArrival object from two threads, which races on the handle itself
+/// like any other value.)
 ///
 /// ── The outcome is TYPED, never a bare bool ─────────────────────────────────
 /// The three facts below are genuinely different and demand different handling
@@ -37,8 +40,13 @@ class SchemaResolver;
 ///
 ///   kOk + non-null       the schema arrived.
 ///   kOk + null           RESERVED: this transport carries no schemas at all —
-///                        the caller brings its own (§7 clause 1). `*out` is
-///                        written null.
+///                        the caller brings its own (§7 clause 1). `*out` IS
+///                        written, with null: a caller must not be left reading
+///                        whatever it passed in. At a C boundary this is the one
+///                        kOk on which `out->owner` is **null and must not be
+///                        released** — releasing it is the obvious way to
+///                        implement "on kOk, release the handle" and it is wrong
+///                        here.
 ///   kPending             not yet, within `timeout`. `*out` is untouched.
 ///   kSubscriptionEnded   no schema will EVER arrive: the subscription that
 ///                        would have produced it is gone. `*out` is untouched.
@@ -58,8 +66,18 @@ class SchemaResolver;
 /// **never** call the Arrow C Data Interface `release` on a shared schema, which
 /// would destroy it under every other holder. On kOk the handle is a NEW
 /// reference the caller releases, matching `Blob`'s retain/release idiom.
-/// `timeout_ms < 0` is refused with kInvalidArgument; `INT64_MAX` is the
-/// unbounded form.
+/// `timeout_ms < 0` is refused with kInvalidArgument; `INT64_MAX` — and any value
+/// too large to add to the clock without overflowing it — is the unbounded form.
+///
+/// **How a refusal is delivered differs by side, and this is the one place the
+/// two must not be read as the same thing.** In C++ a refused argument (negative
+/// timeout, null `out`) **throws** `PubSubError`; it is not returned, even though
+/// this function returns a `PubSubStatus`, because a returned status here would
+/// be indistinguishable from an outcome of the wait. At a C boundary the same
+/// refusal is **returned** as `fl_status`, because exceptions cannot cross — the
+/// status VALUE is identical either way, only the delivery differs. A binding
+/// that reads "refused with kInvalidArgument" as "returns kInvalidArgument" and
+/// forgets the catch gets an exception across FFI.
 ///
 /// The SEMANTICS above are pinned; the spelling is illustrative. Each ABI round
 /// writes both sides of its own boundary and picks its own names and layout
@@ -85,7 +103,14 @@ class SchemaArrival {
     ///
     /// A negative `timeout` is refused with kInvalidArgument — it silently
     /// polled otherwise, and "negative means forever" must not be inventable by
-    /// one boundary and not the other. `out` must not be null.
+    /// one boundary and not the other. `out` must not be null. Both refusals
+    /// **throw** `PubSubError` rather than returning; see the class comment for
+    /// why, and for what the C form does instead.
+    ///
+    /// A timeout so large that a deadline would overflow the clock is treated as
+    /// unbounded, not as an instant poll — "a very large number" is how a caller
+    /// that cannot name `milliseconds::max()` spells "forever", and answering it
+    /// with an immediate kPending would be a silent lie.
     [[nodiscard]] PubSubStatus Wait(std::chrono::milliseconds timeout, SharedSchema* out) const;
 
     /// The message that came with a failure outcome; empty otherwise. For
@@ -121,6 +146,15 @@ class SchemaResolver {
     /// The schema arrived. **Refuses null** with kInvalidArgument: kOk + null is
     /// reserved for a schema-less transport, and a carrying provider producing
     /// it would re-open exactly the conflation this type exists to close.
+    ///
+    /// The refusal is **terminal**, and a boundary implementing `resolve` must
+    /// reproduce all three parts: it throws `PubSubError(kInvalidArgument)` at
+    /// the caller, it CONSUMES the token, and it settles the arrival at
+    /// `kInternal` with a diagnostic message. So the resolver cannot be retried
+    /// with a valid schema, and a concurrent waiter is answered `kInternal`
+    /// rather than `kInvalidArgument`. That asymmetry is deliberate: a null
+    /// resolve is a bug in the provider, and leaving the arrival open would hang
+    /// every waiter on it until teardown instead of reporting the bug.
     void Resolve(SharedSchema schema) &&;
 
     /// The provider could not produce a schema. `status` must be a failure —

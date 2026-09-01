@@ -41,7 +41,11 @@ using EncodedRow = std::vector<uint8_t>;
 ///  3. The reference operations — the C form's `retain(owner)` / `release(owner)`
 ///     — must be safe from **any thread, concurrently**.
 ///  4. `release` must never throw and must never re-enter the seam.
-///  5. Empty is a null data pointer and a zero size.
+///  5. Empty is a null data pointer and a zero size — **enforced, not merely
+///     described**: a zero-size Blob normalises `data` to null however it was
+///     built, so a C view may test `size == 0` and `data == NULL`
+///     interchangeably. Documenting this without enforcing it would have been a
+///     trap, because `std::vector<uint8_t>{}.data()` is not required to be null.
 ///
 /// A blob passed as an argument is **borrowed for the duration of that call**; a
 /// callee that wants it afterwards copies the Blob, which retains.
@@ -72,14 +76,18 @@ class Blob {
     /// rule above: null `data` with a non-zero `size` (bytes that are not
     /// there), or non-null `data` with a null `owner` (bytes nothing keeps
     /// alive).
+    ///
+    /// A zero `size` needs no owner and keeps no pointer — there is no byte to
+    /// keep alive — so `(null, anything, 0)` is the empty Blob rather than a
+    /// refusal, and `data()` comes back null either way (clause 5).
     Blob(std::shared_ptr<const void> owner, const uint8_t* data, size_t size)
-        : owner_(std::move(owner)), data_(data), size_(size) {
-        if (data_ == nullptr && size_ != 0) {
+        : owner_(std::move(owner)), data_(size == 0 ? nullptr : data), size_(size) {
+        if (data == nullptr && size_ != 0) {
             throw PubSubError(
                 PubSubStatus::kInvalidArgument,
                 "Blob: a null data pointer cannot carry " + std::to_string(size_) + " bytes");
         }
-        if (data_ != nullptr && owner_ == nullptr) {
+        if (data != nullptr && size_ != 0 && owner_ == nullptr) {
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "Blob: bytes crossing the seam need an owner that keeps them alive; "
                               "there is no view-only Blob");
@@ -90,8 +98,10 @@ class Blob {
     /// general form with the owner filled in for you.
     explicit Blob(std::vector<uint8_t> bytes) {
         auto owned = std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
-        data_ = owned->data();
+        // Clause 5 again: an empty vector's data() is not required to be null, so
+        // it is normalised here rather than leaked into the invariant.
         size_ = owned->size();
+        data_ = size_ == 0 ? nullptr : owned->data();
         owner_ = std::move(owned);
     }
 

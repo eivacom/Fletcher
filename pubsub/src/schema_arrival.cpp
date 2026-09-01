@@ -77,10 +77,17 @@ PubSubStatus SchemaArrival::Wait(std::chrono::milliseconds timeout, SharedSchema
         if (timeout == std::chrono::milliseconds::zero()) {
             return PubSubStatus::kPending;
         }
-        if (timeout == std::chrono::milliseconds::max()) {
-            // The unbounded form. NOT wait_for(duration::max()): that overflows
-            // the implementation's internal time_point on common standard
-            // libraries and can return immediately.
+        // The unbounded form, and everything close enough to it to be meant that
+        // way. NOT just `== milliseconds::max()`: `wait_for` computes `now +
+        // timeout` and overflows the implementation's internal time_point well
+        // below that, returning IMMEDIATELY — so a binding that spells "forever"
+        // as a very large finite number (which the C form's INT64_MAX convention
+        // invites) would silently get a poll. The threshold is deliberately crude
+        // and enormous: a caller asking to wait longer than ~a century means
+        // forever.
+        constexpr std::chrono::milliseconds kEffectivelyForever{std::chrono::milliseconds::rep{1}
+                                                                << 42};  // ~139 years
+        if (timeout >= kEffectivelyForever) {
             state_->cv.wait(lock, [this] { return state_->settled; });
         } else {
             state_->cv.wait_for(lock, timeout, [this] { return state_->settled; });

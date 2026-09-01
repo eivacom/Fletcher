@@ -82,34 +82,6 @@ static_assert(static_cast<int32_t>(PubSubStatus::kPending) == 8, "PubSubStatus v
 static_assert(static_cast<int32_t>(PubSubStatus::kSubscriptionEnded) == 9,
               "PubSubStatus values are frozen");
 
-/// A stable, human-readable name for `status`. For messages and logs; the
-/// NUMBER is the contract, this is not.
-[[nodiscard]] inline const char* PubSubStatusName(PubSubStatus status) noexcept {
-    switch (status) {
-        case PubSubStatus::kOk:
-            return "ok";
-        case PubSubStatus::kInvalidArgument:
-            return "invalid_argument";
-        case PubSubStatus::kSchemaConflict:
-            return "schema_conflict";
-        case PubSubStatus::kTopicNotDeclared:
-            return "topic_not_declared";
-        case PubSubStatus::kPayloadTooLarge:
-            return "payload_too_large";
-        case PubSubStatus::kTransportFailure:
-            return "transport_failure";
-        case PubSubStatus::kNotSupported:
-            return "not_supported";
-        case PubSubStatus::kInternal:
-            return "internal";
-        case PubSubStatus::kPending:
-            return "pending";
-        case PubSubStatus::kSubscriptionEnded:
-            return "subscription_ended";
-    }
-    return "internal";
-}
-
 /// The ONE exception type the seam throws.
 ///
 /// Derives from std::runtime_error so every existing catch(const
@@ -147,6 +119,11 @@ class PubSubError : public std::runtime_error {
 /// Run `fn` at a seam entry point, so the only exception that can leave is a
 /// PubSubError.
 ///
+/// PROVIDER-AUTHORING API, not caller API. It is public because a provider is a
+/// separate Conan package consuming this header, and spec 5.1's "every seam
+/// entry point translates" is the obligation it implements - one implementation
+/// of that rule rather than one per package.
+///
 /// Spec §5.1 asks each C boundary to translate; that is only possible if what
 /// reaches the boundary is already typed. A std::bad_alloc, or a transport SDK's
 /// own exception type, escaping a provider would arrive at a boundary as
@@ -155,7 +132,7 @@ class PubSubError : public std::runtime_error {
 template <typename Fn>
 decltype(auto) TranslateSeamFailure(Fn&& fn) {
     try {
-        return fn();
+        return std::forward<Fn>(fn)();
     } catch (const PubSubError&) {
         throw;  // already typed — do not re-wrap and lose the cause
     } catch (const std::overflow_error& e) {

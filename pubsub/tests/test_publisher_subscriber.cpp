@@ -7,15 +7,41 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
 using namespace fletcher;
+
+namespace {
+
+// Re-anchored to the seam's taxonomy (spec §5.1): the tier ABOVE the seam now
+// reports the same causes by the same numbers the providers do, so these tests
+// assert the number rather than which std:: type happened to be thrown.
+::testing::AssertionResult RefusedWith(PubSubStatus want, const std::function<void()>& call) {
+    try {
+        call();
+    } catch (const PubSubError& e) {
+        if (e.status() == want) return ::testing::AssertionSuccess();
+        return ::testing::AssertionFailure()
+               << "refused with " << internal::PubSubStatusName(e.status()) << ", wanted "
+               << internal::PubSubStatusName(want) << " (" << e.what() << ")";
+    } catch (const std::exception& e) {
+        return ::testing::AssertionFailure()
+               << "refused with an untyped exception, which is what the taxonomy exists to "
+                  "replace: "
+               << e.what();
+    }
+    return ::testing::AssertionFailure() << "the call was not refused at all";
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Minimal in-process mock provider for testing Publisher/Subscriber.
@@ -143,7 +169,9 @@ TEST(PublisherTest, CreateTopicRejectsConflictingSchema) {
     Publisher publisher(mock);
 
     publisher.CreateTopic(kTopic, TestSchema());
-    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchemaB()), std::runtime_error);
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kSchemaConflict, [&] {
+        publisher.CreateTopic(kTopic, TestSchemaB());
+    })) << "a conflicting re-declaration must carry the same number here as it does at the seam";
 }
 
 TEST(PublisherTest, ListTopics) {
@@ -163,7 +191,9 @@ TEST(PublisherTest, ListTopics) {
     EXPECT_EQ(topics[1], "c/d");
 }
 
-TEST(PublisherTest, NullProviderThrows) { EXPECT_THROW(Publisher(nullptr), std::invalid_argument); }
+TEST(PublisherTest, NullProviderThrows) {
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [] { Publisher publisher(nullptr); }));
+}
 
 // ---------------------------------------------------------------------------
 // Subscriber tests
@@ -310,11 +340,12 @@ TEST(SubscriberTest, UnsubscribeUnknownIdThrows) {
     auto mock = std::make_shared<MockProvider>();
     Subscriber subscriber(mock);
 
-    EXPECT_THROW(subscriber.Unsubscribe(999), std::runtime_error);
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] { subscriber.Unsubscribe(999); }));
 }
 
 TEST(SubscriberTest, NullProviderThrows) {
-    EXPECT_THROW(Subscriber(nullptr), std::invalid_argument);
+    EXPECT_TRUE(
+        RefusedWith(PubSubStatus::kInvalidArgument, [] { Subscriber subscriber(nullptr); }));
 }
 
 TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {

@@ -41,6 +41,13 @@ using Address = uintptr_t;
 /// One attachment's provenance: where its bytes were published and delivered.
 /// `delivered_data == 0` means the delivery carried nothing under this key,
 /// which Judge() scores as a copy.
+///
+/// NOTE on `content_ok`: it compares the delivered bytes against the PUBLISHED
+/// ADDRESS, so when provenance holds it is comparing a buffer with itself and
+/// says nothing. That is deliberate and sufficient here — its job is to catch a
+/// COPY that garbled the bytes, which by definition sits at a second address —
+/// but it is not a liveness check. The liveness claim is `retained_content_ok`,
+/// which compares against harness-owned storage for exactly this reason.
 struct AttachmentTrace {
     std::string key;
     Address published_data = 0;
@@ -88,11 +95,31 @@ struct CopyLedger {
     /// its own reference" — and the two fields below are read AFTER the callback
     /// has returned. Empty means the leg is not run.
     std::string retain_key;
+    /// INPUT. What the retained bytes must still read back as, held by the
+    /// HARNESS in its own storage.
+    ///
+    /// It has to be an independent copy, and that is not a detail: the retained
+    /// blob's address IS the published address when provenance holds, so
+    /// comparing the two would be `memcmp(p, p, n)` — true by construction, for a
+    /// live owner and a dead one alike. Measured, not reasoned: a mutation that
+    /// gave the blob an owner unrelated to the arena left this leg green until
+    /// the comparand moved off the arena.
+    std::vector<uint8_t> retain_expected;
     /// Where the retained bytes live once the delivery call is over, and whether
     /// they still read back byte for byte. A blob whose bytes die with the
     /// callback cannot satisfy both: either the owner is real, or it is not.
+    ///
+    /// Read only AFTER the subject has been destroyed (`subject_released`), so
+    /// the `Blob`'s own owner is the only thing that can still be holding those
+    /// bytes. Read while the provider was alive, `retained_content_ok` would
+    /// pass for a span with no owner at all — the exact case it claims to
+    /// distinguish, and a vacuous guard.
     Address retained_data = 0;
     bool retained_content_ok = false;
+    /// The subject really was destroyed before the two fields above were read —
+    /// a `weak_ptr` to it had expired. Asserted by the tests, so that a keep-alive
+    /// added later cannot quietly make the ownership claim vacuous again.
+    bool subject_released = false;
 
     std::vector<AttachmentTrace> attachments;
 };

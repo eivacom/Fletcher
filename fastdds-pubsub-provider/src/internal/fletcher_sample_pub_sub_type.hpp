@@ -169,10 +169,15 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
             }
             d->body = std::move(owned);
         } else {
-            d->body.reset();
+            // Parse FIRST, release the previous body after: ParseEnvelopeBody clears
+            // decoded_attachments as its first act, so releasing the owner ahead of it
+            // would leave the map holding blobs whose owner had already been dropped.
+            // Safe either way today (each Blob holds its own reference), but the
+            // ordering should not be the thing keeping it safe.
             if (!ParseEnvelopeBody(nullptr, body, length, row, row_len, d->decoded_attachments)) {
                 return false;
             }
+            d->body.reset();
         }
 
         // Deliver raw row bytes — no decoding, no Arrow dependency.

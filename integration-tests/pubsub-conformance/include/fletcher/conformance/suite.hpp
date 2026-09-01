@@ -134,7 +134,9 @@ class ProviderConformance : public ::testing::TestWithParam<SubjectFactory> {
         if (left <= std::chrono::steady_clock::duration::zero()) {
             return std::chrono::milliseconds::zero();
         }
-        return std::chrono::duration_cast<std::chrono::milliseconds>(left);
+        // Rounded UP: duration_cast truncates, which turned the last sub-millisecond
+        // of a budget into a poll — `wait_until(Deadline())` never did that.
+        return std::chrono::ceil<std::chrono::milliseconds>(left);
     }
 
     /// Deadline for a wait that is EXPECTED to time out. Separate from

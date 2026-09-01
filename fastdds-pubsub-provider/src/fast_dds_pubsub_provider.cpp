@@ -397,7 +397,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         auto& ts = impl_->topics[name];
         if (ts.reader)
-            throw PubSubError(PubSubStatus::kNotSupported,
+            throw PubSubError(PubSubStatus::kInvalidArgument,
                               "FastDDS: already subscribed to: " + name);
 
         // Data DDS topic.

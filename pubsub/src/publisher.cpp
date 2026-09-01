@@ -4,6 +4,7 @@
 #include "fletcher/pubsub/publisher.hpp"
 
 #include <cstdint>
+#include <fletcher/core/status.hpp>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -24,7 +25,7 @@ struct Publisher::Impl {
 
 Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
-        throw std::invalid_argument("Publisher: provider must not be null");
+        throw PubSubError(PubSubStatus::kInvalidArgument, "Publisher: provider must not be null");
     }
     impl_->provider = std::move(provider);
 }
@@ -48,7 +49,13 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
             if (incoming.ConflictsWith(it->second)) {
-                throw std::runtime_error(
+                // The SAME numbered cause a provider reports for the same fact
+                // (spec §5.1). This tier short-circuits before the provider — it
+                // is the layer the gateway and PublisherArrow sit on, so it is
+                // where an application actually meets a schema conflict, and it
+                // must not be the one place the number goes missing.
+                throw PubSubError(
+                    PubSubStatus::kSchemaConflict,
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }
             return;  // identical (or non-comparable) re-declaration — no-op

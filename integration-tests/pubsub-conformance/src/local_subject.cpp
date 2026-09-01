@@ -6,6 +6,7 @@
 // it holds a PubSubProvider, so this TU links no provider and neither does the
 // clause library it belongs to.
 
+#include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
@@ -26,7 +27,7 @@ std::string DescribeException(const std::exception& e) {
     // subject can send back exactly what a local one saw (spec §5.1).
     if (const auto* typed = dynamic_cast<const PubSubError*>(&e)) {
         out += " [status=";
-        out += PubSubStatusName(typed->status());
+        out += internal::PubSubStatusName(typed->status());
         out += "]";
     }
     return out;

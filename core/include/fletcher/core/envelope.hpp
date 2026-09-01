@@ -72,11 +72,18 @@ struct Envelope {
     return buf;
 }
 
+namespace internal {
+
 // How many attachments the buffer claims, without parsing them. 0 for a buffer that carries none
 // or is too short to say.
 //
-// Exists so a receive path can decide whether it needs a shared OWNER for these bytes before it
-// pays for one: an attachment-free envelope needs none, and passing a null owner for one is legal.
+// INTERNAL, and deliberately so: it exists only so a parse can decide whether it needs a shared
+// OWNER for these bytes before it pays for one. A caller never has to reason about that — the
+// two-argument DeserializeEnvelope below does it for them, and the three-argument form is for the
+// receive path that already holds its bytes in shared storage and must not pay a second copy.
+//
+// Shared with the Fast DDS envelope codec rather than written twice: it is the same 14-line parse
+// of the same wire header, and two copies of it are two chances to disagree about the layout.
 [[nodiscard]] inline uint32_t EnvelopeAttachmentCount(const uint8_t* data, size_t size) {
     if (size < 4) return 0;
     uint32_t row_len = 0;
@@ -89,6 +96,8 @@ struct Envelope {
     return count;
 }
 
+}  // namespace internal
+
 // Parse `[data, data+size)` into an Envelope whose attachment blobs ALIAS that
 // buffer — `owner` is what keeps it alive, and every Blob produced here takes
 // its own reference to it (spec §3.2). No attachment byte is copied.
@@ -98,9 +107,15 @@ struct Envelope {
 // that vector a `shared_ptr` first. `Envelope::row` is still a copy — the
 // residue §8/§11 assign to the zero-copy-receive stage.
 //
-// `owner` may be null ONLY for a buffer carrying no attachments — see
-// EnvelopeAttachmentCount above. A buffer that claims attachments with no owner to hand them is
-// refused with kInvalidArgument rather than producing blobs nothing keeps alive.
+// `owner` may be null ONLY for a buffer carrying no attachments. A buffer that claims a non-empty
+// attachment with no owner to hand it is refused — with PubSubError(kInvalidArgument), from Blob's
+// own constructor, rather than by producing a blob nothing keeps alive. **Prefer the two-argument
+// overload below**, which cannot be called wrongly; this form is for a caller that already holds
+// the bytes in shared storage and would otherwise pay a second copy for them.
+//
+// Two exception types cross this function, and they are different failures: a malformed or
+// truncated buffer is std::invalid_argument (a wire problem), a non-empty attachment with no owner
+// is PubSubError(kInvalidArgument) (a caller problem).
 [[nodiscard]] inline Envelope DeserializeEnvelope(std::shared_ptr<const void> owner,
                                                   const uint8_t* data, size_t size) {
     if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
@@ -146,6 +161,22 @@ struct Envelope {
     }
 
     return Envelope{std::move(row), std::move(attachments)};
+}
+
+// Parse a buffer the caller does NOT hold in shared storage — a transport read buffer, a WebSocket
+// frame — and hand back attachments that stay valid after it returns.
+//
+// It takes ONE shared copy of the buffer, and **only when the envelope carries attachments**; an
+// attachment-free envelope is parsed in place and copies nothing beyond `Envelope::row`, which was
+// always an owning copy. That is byte-for-byte what every caller of the three-argument form used
+// to hand-roll, minus the chance of getting the owner rule wrong: there is no way to call this and
+// produce a blob nothing keeps alive.
+[[nodiscard]] inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
+    if (internal::EnvelopeAttachmentCount(data, size) == 0) {
+        return DeserializeEnvelope(nullptr, data, size);
+    }
+    auto owner = std::make_shared<const std::vector<uint8_t>>(data, data + size);
+    return DeserializeEnvelope(owner, owner->data(), size);
 }
 
 // Convenience form for a buffer Fletcher already holds in shared storage: the

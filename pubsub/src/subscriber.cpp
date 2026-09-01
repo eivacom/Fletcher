@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <fletcher/core/status.hpp>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -105,7 +106,7 @@ struct Subscriber::Impl {
 
 Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
-        throw std::invalid_argument("Subscriber: provider must not be null");
+        throw PubSubError(PubSubStatus::kInvalidArgument, "Subscriber: provider must not be null");
     }
     impl_->provider = std::move(provider);
 }
@@ -174,7 +175,10 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
 
         auto it = impl_->subscription_topic.find(subscription_id);
         if (it == impl_->subscription_topic.end()) {
-            throw std::runtime_error("Subscriber: unknown subscription ID");
+            // A caller error, and numbered like every other one (spec §5.1):
+            // the tier above the seam reports causes the same way the seam does.
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "Subscriber: unknown subscription ID");
         }
 
         const std::string key = it->second;

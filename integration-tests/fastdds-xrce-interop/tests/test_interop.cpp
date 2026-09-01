@@ -26,6 +26,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
@@ -61,7 +62,7 @@ std::shared_ptr<arrow::Schema> AwaitArrowSchema(const SchemaArrival& arrival,
     SharedSchema nano;
     const PubSubStatus status = arrival.Wait(budget, &nano);
     EXPECT_EQ(status, PubSubStatus::kOk)
-        << "schema arrival: " << PubSubStatusName(status) << " " << arrival.Message();
+        << "schema arrival: " << internal::PubSubStatusName(status) << " " << arrival.Message();
     return ImportArrowSchema(nano);
 }
 

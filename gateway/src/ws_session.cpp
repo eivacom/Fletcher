@@ -257,16 +257,11 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
 
     // The frame bytes belong to the read buffer, which is reused the moment this
     // handler returns — so an attachment that ALIASES them (spec §3.2) needs an
-    // owner that outlives the publish. One copy of the envelope, taken once,
-    // replaces the copy this path used to make of every attachment; a frame with
-    // no attachments needs no owner and still takes no copy at all.
-    std::shared_ptr<const std::vector<uint8_t>> owner;
-    if (EnvelopeAttachmentCount(parts.envelope_data, parts.envelope_size) > 0) {
-        owner = std::make_shared<const std::vector<uint8_t>>(
-            parts.envelope_data, parts.envelope_data + parts.envelope_size);
-    }
-    auto envelope = DeserializeEnvelope(owner, owner ? owner->data() : parts.envelope_data,
-                                        parts.envelope_size);
+    // owner that outlives the publish. This overload takes that owner itself, and
+    // only when the frame carries attachments: one copy of the envelope replaces
+    // the copy this path used to make of every attachment, and an
+    // attachment-free frame still copies nothing.
+    auto envelope = DeserializeEnvelope(parts.envelope_data, parts.envelope_size);
 
     publisher_->Publish(
         segments,
