@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -41,11 +42,25 @@ namespace {
 constexpr uint16_t kAgentPort = 2019;
 constexpr uint16_t kDdsDomain = 153;
 constexpr const char* kAgentIp = "127.0.0.1";
-/// Distinct session keys: the parent's subscriber-side client and the peer
-/// child's publisher-side client share one Agent.
-constexpr uint32_t kLocalSessionKey = 0x51510001u;
-constexpr uint32_t kPeerSubscriberSessionKey = 0x51510003u;
-constexpr uint32_t kPeerPublisherSessionKey = 0x51510004u;
+/// Session keys must be unique per client on one Agent, and every clause builds
+/// a fresh client against the same long-lived Agent. A constant per subject
+/// would mean 13 sequential sessions reusing one key, so each clause's
+/// create_session races the previous session's teardown — which travels over
+/// UDP. So keys are handed out from one counter at subject-construction time and
+/// never reused within a run.
+///
+/// The bases keep the four roles distinguishable in an Agent log: subscriber
+/// sides in 0x5151_1xxx / 0x5151_3xxx, publisher sides in 0x5151_2xxx.
+constexpr uint32_t kLocalSessionBase = 0x51511000u;
+constexpr uint32_t kPeerSubscriberSessionBase = 0x51513000u;
+constexpr uint32_t kPeerPublisherSessionBase = 0x51512000u;
+/// The probe in WaitUntilReachable, which is alive only before any subject.
+constexpr uint32_t kProbeSessionKey = 0x5151FFFFu;
+
+uint32_t NextSessionKey(uint32_t base) {
+    static std::atomic<uint32_t> counter{0};
+    return base + counter.fetch_add(1);
+}
 
 XrceConfig XrceConfigFor(uint32_t session_key) {
     XrceConfig config;
@@ -71,7 +86,10 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         ASSERT_NE(std::strlen(MICRO_XRCE_AGENT_PATH), 0u)
             << "MICRO_XRCE_AGENT_PATH is empty — the CMake option "
                "FLETCHER_CONFORMANCE_XRCE is ON but no Agent path was configured";
-        SpawnAgent();
+        // FAIL() only returns from the function it appears in, so SpawnAgent's
+        // failure has to be re-checked here or SetUp goes on to spend the full
+        // probe budget and reports the wrong thing.
+        ASSERT_NO_FATAL_FAILURE(SpawnAgent());
         WaitUntilReachable();
     }
 
@@ -109,6 +127,26 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
             const char* argv[] = {path.c_str(), "udp4", "-p", port_str.c_str(), nullptr};
             execv(path.c_str(), const_cast<char**>(argv));
             std::_Exit(127);
+        }
+        // fork() always succeeds even when the binary does not exist, so on this
+        // platform a missing Agent shows up only as the child's _Exit(127).
+        // Reap it here rather than letting WaitUntilReachable time out and blame
+        // the port: rung 2 item 8 says the subject fails NAMING THE PATH.
+        {
+            int status = 0;
+            const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            while (std::chrono::steady_clock::now() < give_up) {
+                if (waitpid(pid_, &status, WNOHANG) == pid_) {
+                    pid_ = -1;
+                    FAIL() << "the MicroXRCEAgent at " << path << " exited immediately"
+                           << (WIFEXITED(status)
+                                   ? " with status " + std::to_string(WEXITSTATUS(status))
+                                   : std::string(" on a signal"))
+                           << ". Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and "
+                              "know that the XRCE subjects then do not exist.";
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
         }
 #endif
     }
@@ -152,21 +190,46 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
     }
 #endif
 
+    /// True while the Agent WE spawned is still running.
+    bool SpawnedAgentAlive() {
+#ifdef _WIN32
+        return process_handle_ != nullptr &&
+               WaitForSingleObject(process_handle_, 0) == WAIT_TIMEOUT;
+#else
+        if (pid_ <= 0) {
+            return false;
+        }
+        int status = 0;
+        return waitpid(pid_, &status, WNOHANG) == 0;
+#endif
+    }
+
     void WaitUntilReachable() {
         std::string last_error;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (std::chrono::steady_clock::now() < deadline) {
             try {
-                XrceConfig probe_config = XrceConfigFor(0x5151FFFFu);
+                XrceConfig probe_config = XrceConfigFor(kProbeSessionKey);
                 probe_config.connect_timeout_ms = 2000;
                 XrceDDSPubSubProvider probe(probe_config);
+                // Something answered on the port. It has to be OUR Agent: a
+                // leftover Agent from an interrupted run holds the same port and
+                // would answer this probe happily, possibly on another DDS
+                // domain, and the whole suite would then certify against it.
+                ASSERT_TRUE(SpawnedAgentAlive())
+                    << "UDP " << kAgentIp << ":" << kAgentPort
+                    << " is answering but the MicroXRCEAgent this binary spawned ("
+                    << MICRO_XRCE_AGENT_PATH
+                    << ") is not running — something else already holds the port. Kill the "
+                       "leftover Agent; the suite will not run against a foreign one.";
                 return;
             } catch (const std::exception& e) {
                 last_error = e.what();
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
-        FAIL() << "the MicroXRCEAgent did not become reachable on " << kAgentIp << ":" << kAgentPort
+        FAIL() << "the MicroXRCEAgent at " << MICRO_XRCE_AGENT_PATH
+               << " did not become reachable on " << kAgentIp << ":" << kAgentPort
                << " within 20 s. Last probe error: " << last_error;
     }
 
@@ -204,16 +267,22 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 
 INSTANTIATE_TEST_SUITE_P(
     XrceLocal, ProviderConformance,
-    ::testing::Values(MakeLocalSubjectFactory("XrceLocal", "xrce", SchemaMode::kCarried,
-                                              [] { return MakeXrce(kLocalSessionKey); })));
+    ::testing::Values(MakeLocalSubjectFactory("XrceLocal", "xrce", SchemaMode::kCarried, [] {
+        return MakeXrce(NextSessionKey(kLocalSessionBase));
+    })));
 
 INSTANTIATE_TEST_SUITE_P(
     XrceCrossProcess, ProviderConformance,
     ::testing::Values(MakePeerSubjectFactory(
         "XrceCrossProcess", "xrce", SchemaMode::kCarried,
-        [] { return MakeXrce(kPeerSubscriberSessionKey); }, CONFORMANCE_XRCE_PEER,
+        [] { return MakeXrce(NextSessionKey(kPeerSubscriberSessionBase)); }, CONFORMANCE_XRCE_PEER,
+        // The peer's key is fixed per INSTANTIATE, so its clauses would reuse
+        // one key across 13 child processes. A placeholder the factory rewrites
+        // per instance is not expressible through MakePeerSubjectFactory's
+        // by-value args, so the peer takes a BASE and adds the pid of the child
+        // process itself — unique per child, which is what the Agent needs.
         {"--domain-id", std::to_string(kDdsDomain), "--agent-port", std::to_string(kAgentPort),
-         "--session-key", std::to_string(kPeerPublisherSessionKey)})));
+         "--session-key-base", std::to_string(kPeerPublisherSessionBase)})));
 
 }  // namespace conformance
 }  // namespace fletcher

@@ -37,10 +37,19 @@ class ChildProcess {
     ChildProcess(const ChildProcess&) = delete;
     ChildProcess& operator=(const ChildProcess&) = delete;
 
-    /// Writes `line` and returns the child's next line. Serialised: two threads
-    /// may call it, and they queue rather than interleave on the pipe. nullopt
-    /// on deadline or EOF.
-    std::optional<std::string> Request(const std::string& line,
+    /// Writes "<tag> <line>" and returns this request's reply with the tag
+    /// stripped. Serialised: two threads may call it, and they queue rather
+    /// than interleave on the pipe. nullopt on deadline or EOF.
+    ///
+    /// The tag is what keeps the stream from desyncing permanently. Without it,
+    /// Request returns whatever line the child produced next — so one line of
+    /// library logging on the child's stdout, or one late reply to a request
+    /// whose deadline had already expired, shifts every later reply by one and a
+    /// `create` that actually failed reports the previous request's `ok`. That
+    /// is a silent false pass. With it, an untagged or wrongly-tagged line is
+    /// not this request's reply and is discarded; a genuine desync then shows up
+    /// as the deadline, which fails the clause loudly.
+    std::optional<std::string> Request(const std::string& tag, const std::string& line,
                                        std::chrono::steady_clock::time_point deadline);
 
     /// Reads the child's next line without writing (the initial READY).

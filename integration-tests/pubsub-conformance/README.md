@@ -9,10 +9,23 @@ re-deriving the rules.
 ## Shape
 
 - **Clauses** live in `src/clauses.cpp` (plus `src/clauses_carried.cpp`, below),
-  one value-parameterised gtest suite named literally `ProviderConformance`. A
-  full test name reads `<Subject>/ProviderConformance.<Clause>/<Subject>`, so
-  `ctest -R 'ProviderConformance\.SchemaBeforeDataAcrossHandoff'` scopes to one
-  clause across every subject.
+  one value-parameterised gtest suite named literally `ProviderConformance`.
+  There are two names for each clause and they differ, which is worth knowing
+  before writing a filter:
+
+  - **gtest** (`--gtest_filter`, `--gtest_list_tests`):
+    `<Subject>/ProviderConformance.<Clause>/0` — the trailing `0` is the
+    parameter index, since the suite has one parameter per instantiation.
+  - **ctest** (`ctest -R`, `ctest -N`):
+    `<Subject>/ProviderConformance.<Clause>/<Subject>` — CMake's
+    `gtest_discover_tests` substitutes the *printed parameter* for the index, and
+    the parameter prints as the subject label (see `SubjectFactory::label`,
+    which exists so that name is stable rather than a dump of uninitialised
+    bytes).
+
+  Either way `ctest -R 'ProviderConformance\.SchemaBeforeDataAcrossHandoff'`
+  scopes to one clause across every subject, because the clause name sits
+  between the two varying parts.
 - **Subjects** are one provider exercised one way. Each is ~40 lines of
   registration in `subjects/`:
 
@@ -75,18 +88,52 @@ surfaced immediately.
   observation. On the two `*Local` subjects `PublishRow` is a direct call, the
   clause publishes from two threads, and the assertion is real (it is a genuine
   check on the loopback, whose `Publish` holds its mutex across the callback).
-- **Clause 6 is not proven able to catch the shipped data-sharing defect.** The
-  falsification the design mandated was run: reader-side `data_sharing().off()`
-  in `fastdds-pubsub-provider/src/qos_defaults.cpp` was temporarily reverted and
-  `FastDdsCrossProcess/ProviderConformance.LateJoinerBacklogIsAllOrNothing`
-  **passed 12/12** (and 8/8 with a 2 s late-joiner gap added), while
-  `integration-tests/gateway-fastdds-ts`, rebuilt against that same falsified
-  provider, failed with the documented signature (4/4, 4/4, then 2/4). So the
-  defect is live and reproducible, and this harness's single-writer /
-  single-reader cross-process shape does **not** reproduce it. Clause 6 will
-  fail on any partial replay it observes — it is all-or-nothing, so partial
-  fails under both trait values — but do not read it as covering that defect
-  class. Open finding, handed to the PM.
+- **Clause 6 is not proven able to catch the shipped data-sharing defect, and
+  nobody yet knows why.** This is an OPEN question, not a closed one. Do not
+  read the paragraph below as a reason to distrust cross-process conformance
+  subjects in general — that reading has been measured and refuted.
+
+  The falsification the design mandates was run twice, and the control was run
+  beside it each time. Procedure: temporarily revert the reader-side
+  `qos.data_sharing().off()` in `fastdds-pubsub-provider/src/qos_defaults.cpp`,
+  confirm the harness links that package (check the source in the resolved Conan
+  package folder, not just that a build ran), run, restore.
+
+  | Against the falsified provider | Result |
+  |---|---|
+  | `FastDdsCrossProcess/…LateJoinerBacklogIsAllOrNothing`, with a live sentinel row published after `Subscribe` | green 12/12 (and 8/8 with a 2 s late-joiner gap) |
+  | the same clause with the sentinel **removed** — the sequence as it ships now | green 12/12 |
+  | `integration-tests/gateway-fastdds-ts`, rebuilt against that same package | **red**, documented signature: 2/4 on runs 1 and 3, 4/4 on runs 2 and 4 |
+
+  Two hypotheses have been offered and both are now refuted by measurement:
+
+  1. *"A single-writer / single-reader cross-process shape cannot see this
+     class."* Refuted by the control: `gateway-fastdds-ts` has exactly that
+     shape and does reproduce.
+  2. *"The clause's own live sentinel row masked it"* — the sentinel came from
+     the same RELIABLE + KEEP_ALL writer, so waiting on it would force in-order
+     NACK/repair of the very gap the clause observes. Mechanically sound, and it
+     is why the sentinel was removed (it was also not in the approved design),
+     but refuted as *the* cause: the clause is still green 12/12 without it.
+
+  What still differs, and is untested here — the remaining candidates, in the
+  order worth trying: `gateway-fastdds-ts`'s peer participant holds a **reader**
+  (TsToCpp) beside its writer and the gateway holds both too, so several
+  data-sharing endpoints coexist per participant; the gateway's reader sits under
+  a `Subscriber` fan-out layer rather than directly on the provider; and two
+  topics plus two `__schema` channels are live rather than one of each. The
+  *schema*-propagation test fails in the same runs as the row test, so whatever
+  it is also loses a retained `KEEP_LAST(1)` sample — which points at the number
+  and mix of data-sharing endpoints rather than at the row channel.
+
+  Note the first candidate cannot be tested from this harness as designed: it
+  would need the peer child to subscribe, and the design deliberately gives the
+  peer protocol **no `subscribe` verb** (a peer publishes and cannot observe).
+  Changing that is a design decision, not an implementation one.
+
+  Meanwhile: clause 6 is all-or-nothing, so it fails on any partial replay it
+  *does* observe, under either trait value — but do not read it as covering that
+  defect class.
 
 ## Clause 2 and the axis gate
 
@@ -146,6 +193,32 @@ per binary, not per domain, because ctest properties apply target-wide and
 ctest entry (the interop precedent — one UDP port, and per-clause entries would
 pay ~24 Agent start/stop cycles).
 
-Every wait is a bounded predicate wait on one deadline per clause. There are no
-sleeps and no retries; the two waits that are *expected* to time out (clauses 9
-and 11 — nothing may arrive) pay `kSettleBudget` in full and say so.
+Every wait is a bounded predicate wait on one deadline per clause. That deadline
+is anchored at the clause's **first wait**, not at `SetUp`: on a cross-process
+subject the synchronous pipe round-trips before it (`PerWriterOrderIsMonotonic`
+makes 21) would otherwise spend the budget, and the wait would fail on harness
+throughput rather than on delivery behaviour. It is still one deadline per
+clause, so no clause can pass by spending several.
+
+There are no sleeps and no retries; the waits that are *expected* to time out
+(clauses 6-on-a-dropping-transport, 9 and 11 — nothing may arrive) pay
+`kSettleBudget` in full and say so.
+
+Clause 6 publishes **nothing** after `Subscribe`, deliberately: a live row from
+the same RELIABLE + KEEP_ALL writer would force in-order repair of the very gap
+the clause exists to observe. See the clause comment.
+
+A clause's `Collector` lives on the test-body stack and the provider outlives the
+test body, so every clause declares its `Collector` first and a
+`ScopedSubscription` second — destruction is reverse declaration order, so the
+subscription always ends before the storage its callback writes into. A trailing
+`Unsubscribe` cannot do that job: no `ASSERT_` failure path reaches it, so the
+bug would fire exactly when a clause fails.
+
+The peer protocol is **tagged**: each request carries an id and each reply echoes
+it. Untagged, one stray line on the child's stdout (a library log line, or a late
+reply to a request that already timed out) shifts every later reply by one
+forever, and a `create` that actually failed reports the previous request's
+`ok` — a silent false pass. And `DeclareTopic`/`PublishRow` return a three-valued
+`Reply`, so a negative clause asserts `refused()` and a dead peer or an expired
+deadline (`kHarnessFailure`) cannot satisfy it.

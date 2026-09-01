@@ -31,25 +31,28 @@ class LocalSubject : public ProviderSubject {
 
     const ProviderTraits& Traits() const override { return traits_; }
 
-    std::optional<std::string> DeclareTopic(const Topic& topic, SchemaId schema) override {
+    // On a local subject every failure IS the provider refusing: there is no
+    // pipe, no child and no deadline between the clause and CreateTopic, so
+    // Outcome::kHarnessFailure is unreachable here by construction.
+    Reply DeclareTopic(const Topic& topic, SchemaId schema) override {
         try {
             provider_->CreateTopic(topic, MakeConformanceSchema(schema));
-            return std::nullopt;
+            return Reply::Ok();
         } catch (const std::exception& e) {
-            return DescribeException(e);
+            return Reply::Refused(DescribeException(e));
         } catch (...) {
-            return std::string("unknown exception: CreateTopic");
+            return Reply::Refused("unknown exception: CreateTopic");
         }
     }
 
-    std::optional<std::string> PublishRow(const Topic& topic, uint32_t seq) override {
+    Reply PublishRow(const Topic& topic, uint32_t seq) override {
         try {
             provider_->Publish(topic, [seq](WriteBuffer& buf) { EncodeRow(buf, seq); });
-            return std::nullopt;
+            return Reply::Ok();
         } catch (const std::exception& e) {
-            return DescribeException(e);
+            return Reply::Refused(DescribeException(e));
         } catch (...) {
-            return std::string("unknown exception: Publish");
+            return Reply::Refused("unknown exception: Publish");
         }
     }
 
@@ -69,10 +72,14 @@ class LocalSubject : public ProviderSubject {
 SubjectFactory MakeLocalSubjectFactory(std::string label, std::string provider_name,
                                        SchemaMode schema_mode,
                                        std::function<std::shared_ptr<PubSubProvider>()> make) {
-    ProviderTraits traits = MakeTraits(std::move(provider_name), schema_mode);
-    return SubjectFactory{std::move(label), [traits, make]() -> std::unique_ptr<ProviderSubject> {
-                              return std::make_unique<LocalSubject>(traits, make());
-                          }};
+    // Traits are composed INSIDE the lambda, not here: this function runs during
+    // static initialisation (INSTANTIATE_TEST_SUITE_P), where
+    // RetentionForProvider's throw-on-unknown-provider would be a
+    // std::terminate before main instead of the readable message it composes.
+    return SubjectFactory{
+        std::move(label), [provider_name, schema_mode, make]() -> std::unique_ptr<ProviderSubject> {
+            return std::make_unique<LocalSubject>(MakeTraits(provider_name, schema_mode), make());
+        }};
 }
 
 }  // namespace conformance

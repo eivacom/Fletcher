@@ -88,7 +88,11 @@ class Collector {
     /// delivery has something to overlap with. A busy wait, not a sleep: a
     /// sleeping callback would be a provider-thread stall, which is not what is
     /// under test.
-    void SetHoldWindow(std::chrono::microseconds hold) { hold_ = hold; }
+    ///
+    /// Call before Subscribe. Atomic anyway: it is written by the test thread and
+    /// read by a provider thread, and "ordered by the Subscribe call in practice"
+    /// is not a memory model.
+    void SetHoldWindow(std::chrono::microseconds hold) { hold_us_.store(hold.count()); }
 
     std::vector<Delivery> Snapshot() const;
     size_t Count() const;
@@ -114,7 +118,7 @@ class Collector {
     std::atomic<size_t> in_flight_{0};
     std::atomic<size_t> max_in_flight_{0};
     std::atomic<size_t> foreign_{0};
-    std::chrono::microseconds hold_{0};
+    std::atomic<int64_t> hold_us_{0};
 };
 
 }  // namespace conformance

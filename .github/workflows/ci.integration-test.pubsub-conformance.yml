@@ -53,9 +53,27 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Restore the MicroXRCEAgent superbuild on Linux too. The harness's
+      # CMakeLists defaults the install dir into CMAKE_BINARY_DIR, which nothing
+      # persists, so without this the ~10-15 min superbuild ran on EVERY run of
+      # this lane. `conan build .` takes no -D, so the path comes in through
+      # FLETCHER_AGENT_INSTALL_DIR (see the harness CMakeLists) and has to live
+      # under the workspace: that is the only path mounted into the container.
+      #
+      # Restore/save are split so a partial install from a failed or cancelled
+      # run is never cached under the exact key — the CMake skip-guard would
+      # otherwise trust it. No prefix fallback, for the same reason.
+      - name: Restore MicroXRCEAgent build
+        id: agent-cache-linux
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: ${{ github.workspace }}/.uxa-install
+          key: microxrce-agent-conf-linux-${{ hashFiles('integration-tests/pubsub-conformance/CMakeLists.txt', '.conan-profiles/Linux-gcc13-x86_64-Release') }}
+
       - name: Build components and run the conformance suite
         run: |
           docker run --rm --network host -v ${{ github.workspace }}:/workspace -w /workspace \
+            -e FLETCHER_AGENT_INSTALL_DIR=/workspace/.uxa-install \
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
@@ -68,6 +86,13 @@ jobs:
                      echo '::group::conan build conformance suite (configure + build incl. MicroXRCEAgent + ctest)' && \
                      conan build . --build=missing -pr:a=\$PROFILE && \
                      echo '::endgroup::'"
+
+      - name: Save MicroXRCEAgent build
+        if: success() && steps.agent-cache-linux.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5.0.5
+        with:
+          path: ${{ github.workspace }}/.uxa-install
+          key: microxrce-agent-conf-linux-${{ hashFiles('integration-tests/pubsub-conformance/CMakeLists.txt', '.conan-profiles/Linux-gcc13-x86_64-Release') }}
 
   windows:
     runs-on: windows-2022

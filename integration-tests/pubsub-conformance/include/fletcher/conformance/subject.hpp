@@ -52,6 +52,43 @@ struct ProviderTraits {
     Retention retention;
 };
 
+/// The three outcomes of a DeclareTopic / PublishRow call.
+///
+/// Three, not two, and that is the whole point: a clause that asserts a
+/// REFUSAL must not be satisfiable by a HARNESS failure. Clause 8 asserts that
+/// a conflicting re-declaration is refused, and it is the clause the XRCE
+/// CreateTopic fix exists to satisfy — if a dead peer, an expired deadline or a
+/// garbled reply could satisfy it, the clause would pass exactly when the
+/// harness broke, which is worse than having no clause.
+enum class Outcome {
+    kOk,
+    /// The provider under test refused the call — an exception on a local
+    /// subject, an `err` reply from the peer on a cross-process one.
+    kRefusedByProvider,
+    /// The HARNESS failed: no reply within budget, EOF from a dead child, a
+    /// reply that could not be parsed. Never evidence about the provider.
+    kHarnessFailure,
+};
+
+/// The reply to a DeclareTopic / PublishRow call. `detail` is "<type>: <what>"
+/// for a provider refusal — which is all a clause may assert about it, because
+/// the seam has no exception taxonomy yet (PDA-DEC-3/9 invents one).
+struct Reply {
+    Outcome outcome = Outcome::kOk;
+    std::string detail;
+
+    [[nodiscard]] bool ok() const { return outcome == Outcome::kOk; }
+    [[nodiscard]] bool refused() const { return outcome == Outcome::kRefusedByProvider; }
+
+    static Reply Ok() { return Reply{Outcome::kOk, {}}; }
+    static Reply Refused(std::string why) {
+        return Reply{Outcome::kRefusedByProvider, std::move(why)};
+    }
+    static Reply HarnessFailure(std::string why) {
+        return Reply{Outcome::kHarnessFailure, std::move(why)};
+    }
+};
+
 /// Retention for `provider`, from a table keyed by provider name.
 ///
 /// Why a table and not a field a subject fills in: clause 6 asserts
@@ -60,7 +97,10 @@ struct ProviderTraits {
 /// "pinned divergence" wearing a trait. Keying by provider means a provider's
 /// cross-process subject inherits whatever its in-process subject claims.
 /// Throws for an unknown provider: a new subject must state its retention here,
-/// where both of its subjects see the same answer.
+/// where both of its subjects see the same answer. Never called during static
+/// initialisation — the subject factories build their traits inside the factory
+/// lambda, so an unknown provider surfaces as a readable test failure rather
+/// than a std::terminate before main.
 Retention RetentionForProvider(const std::string& provider);
 
 /// Compose traits. Retention comes from the table; only schema_mode is the
@@ -78,15 +118,14 @@ class ProviderSubject {
 
     virtual const ProviderTraits& Traits() const = 0;
 
-    /// Declare `topic` with `schema`. `std::nullopt` on success; otherwise the
-    /// failure as "<type>: <what>", which is all a clause may assert about it —
-    /// the seam has no exception taxonomy yet (PDA-DEC-3/9 invents one).
-    virtual std::optional<std::string> DeclareTopic(const Topic& topic, SchemaId schema) = 0;
+    /// Declare `topic` with `schema`. See Reply: a clause asserting a refusal
+    /// must test `refused()`, never merely "not ok".
+    virtual Reply DeclareTopic(const Topic& topic, SchemaId schema) = 0;
 
     /// Publish one row carrying `seq`. Same reply convention as DeclareTopic.
     /// Safe to call concurrently from several threads; a cross-process subject
     /// serialises them onto its single request/reply pipe.
-    virtual std::optional<std::string> PublishRow(const Topic& topic, uint32_t seq) = 0;
+    virtual Reply PublishRow(const Topic& topic, uint32_t seq) = 0;
 
     /// Subscribe on this process's instance. May throw — a clause that expects
     /// a second subscription to be refused catches it itself.
@@ -96,9 +135,9 @@ class ProviderSubject {
     virtual void Unsubscribe(const Topic& topic) = 0;
 };
 
-/// "<type>: <what>" for `e` — the whole reply vocabulary a clause gets, and
-/// deliberately not a type a clause can switch on: the seam has no exception
-/// taxonomy yet, so a clause asserts THAT a call failed, never which way.
+/// "<type>: <what>" for `e`. Deliberately not a type a clause can switch on:
+/// the seam has no exception taxonomy yet, so a clause asserts THAT the
+/// provider refused, never which way.
 std::string DescribeException(const std::exception& e);
 
 /// Built fresh for every clause, so no clause inherits another's topics,

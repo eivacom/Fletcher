@@ -591,6 +591,20 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
     auto& ts = it->second;
 
+    // Topic state exists is NOT the same as declared for publishing. Subscribe
+    // creates the entry lazily, and CreateTopic now takes a reference to it
+    // before anything that can throw, so an entry can exist with no DataWriter
+    // behind it: writer_id is then the default-constructed (invalid) object id.
+    // uxr_buffer_topic reports nothing to a caller, so publishing through it
+    // sent the row to an id that does not exist on the Agent and returned
+    // success — silent data loss. Refuse instead.
+    if (!ts.is_publisher) {
+        throw std::runtime_error(
+            "XRCE: topic not declared for publishing (call CreateTopic "
+            "first): " +
+            name);
+    }
+
     // Encode row bytes into a local buffer.
     VectorWriteBuffer row_buf;
     encoder(row_buf);
@@ -784,7 +798,16 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_subscriber_id);
         ts.schema_subscriber_id.type = UXR_INVALID_ID;
     }
-    if (ts.schema_topic_id.type != UXR_INVALID_ID) {
+    // The __schema TOPIC is shared between the two sides of one instance: a
+    // publisher declaring a topic a subscriber already created reuses this id
+    // rather than replacing it (see CreateTopic), and its schema DataWriter is
+    // attached to it. Deleting it here would leave that writer pointing at a
+    // topic that no longer exists on the Agent, with is_publisher already set so
+    // no later CreateTopic repairs it — the retained TRANSIENT_LOCAL schema
+    // sample then silently stops reaching any later subscriber. So only the side
+    // that owns it deletes it. Publisher-side entities are torn down with the
+    // session in the destructor, as they always were.
+    if (!ts.is_publisher && ts.schema_topic_id.type != UXR_INVALID_ID) {
         uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.schema_topic_id);
         ts.schema_topic_id.type = UXR_INVALID_ID;
     }

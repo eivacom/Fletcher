@@ -32,7 +32,8 @@ Topic SplitTopic(const std::string& joined) {
     return segments;
 }
 
-void Reply(const std::string& line) {
+// Named WriteReply, not Reply: conformance::Reply is the subject-side reply type.
+void WriteReply(const std::string& line) {
     std::printf("%s\n", line.c_str());
     std::fflush(stdout);
 }
@@ -62,7 +63,7 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
         return 1;
     }
 
-    Reply("READY");
+    WriteReply("READY");
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -70,13 +71,18 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
             line.pop_back();
         }
         std::istringstream in(line);
+        // Every reply echoes the request's tag; see peer.hpp. A request with no
+        // verb is ignored rather than answered, so a blank line cannot consume
+        // a tag the parent is waiting on.
+        std::string tag;
         std::string verb;
-        in >> verb;
-        if (verb.empty()) {
+        in >> tag >> verb;
+        if (tag.empty() || verb.empty()) {
             continue;
         }
+        const std::string prefix = tag + " ";
         if (verb == "quit") {
-            Reply("ok");
+            WriteReply(prefix + "ok");
             break;
         }
         try {
@@ -86,21 +92,21 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
                 in >> joined >> which;
                 provider->CreateTopic(SplitTopic(joined),
                                       MakeConformanceSchema(ParseSchemaId(which)));
-                Reply("ok");
+                WriteReply(prefix + "ok");
             } else if (verb == "publish") {
                 std::string joined;
                 uint32_t seq = 0;
                 in >> joined >> seq;
                 provider->Publish(SplitTopic(joined),
                                   [seq](WriteBuffer& buf) { EncodeRow(buf, seq); });
-                Reply("ok");
+                WriteReply(prefix + "ok");
             } else {
-                Reply("err peer: unknown verb: " + verb);
+                WriteReply(prefix + "err peer: unknown verb: " + verb);
             }
         } catch (const std::exception& e) {
-            Reply("err " + DescribeException(e));
+            WriteReply(prefix + "err " + DescribeException(e));
         } catch (...) {
-            Reply("err unknown exception: " + verb);
+            WriteReply(prefix + "err unknown exception: " + verb);
         }
     }
     return 0;

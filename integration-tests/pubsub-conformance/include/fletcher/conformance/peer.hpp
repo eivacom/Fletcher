@@ -19,11 +19,14 @@ namespace conformance {
 using PeerProviderFactory = std::function<std::shared_ptr<PubSubProvider>(int argc, char** argv)>;
 
 /// Constructs the provider, prints `READY` (the fastdds_peer convention), then
-/// serves one line per request on stdin until EOF or `quit`:
+/// serves one line per request on stdin until EOF or `quit`. Every request
+/// carries a tag as its first token and every reply echoes it, so a stray line
+/// on this process's stdout cannot be mistaken for a reply and desync the
+/// stream permanently:
 ///
-///     create <joined/topic> <A|B|none>   -> ok | err <type>: <what>
-///     publish <joined/topic> <seq>       -> ok | err <type>: <what>
-///     quit                               -> ok
+///     <tag> create <joined/topic> <A|B|none>   -> <tag> ok | <tag> err <type>: <what>
+///     <tag> publish <joined/topic> <seq>       -> <tag> ok | <tag> err <type>: <what>
+///     <tag> quit                               -> <tag> ok
 ///
 /// There is deliberately no `subscribe` verb: the peer publishes and cannot
 /// observe. Process exit code 0 on a clean EOF, 1 if the provider could not be

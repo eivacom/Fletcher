@@ -3,6 +3,7 @@
 //
 #include "child_process.hpp"
 
+#include <csignal>
 #include <stdexcept>
 #include <utility>
 
@@ -11,6 +12,7 @@
 #include <windows.h>
 // clang-format on
 #else
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -69,8 +71,15 @@ ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string
 
     HANDLE child_stdin_read = nullptr;
     HANDLE child_stdout_write = nullptr;
-    if (!CreatePipe(&child_stdin_read, &plat_->to_child, &sa, 0) ||
-        !CreatePipe(&plat_->from_child, &child_stdout_write, &sa, 0)) {
+    if (!CreatePipe(&child_stdin_read, &plat_->to_child, &sa, 0)) {
+        throw std::runtime_error("conformance: CreatePipe failed for peer " + exe);
+    }
+    if (!CreatePipe(&plat_->from_child, &child_stdout_write, &sa, 0)) {
+        // Close the first pair before unwinding; plat_ is not yet in a state
+        // Shutdown() can clean up from, since the pump thread does not exist.
+        CloseHandle(child_stdin_read);
+        CloseHandle(plat_->to_child);
+        plat_->to_child = nullptr;
         throw std::runtime_error("conformance: CreatePipe failed for peer " + exe);
     }
     // Our own ends must not be inherited, or the child holds them open and the
@@ -190,6 +199,14 @@ struct ChildProcess::Platform {
 
 ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string>& args)
     : plat_(std::make_unique<Platform>()) {
+    // Writing to a dead child must return nullopt, which is what this class
+    // promises and what the refusal ladder requires. Without this, SIGPIPE's
+    // default disposition TERMINATES the whole gtest binary on the next
+    // WriteLine after the peer dies: no named clause failure, no remaining
+    // clauses in that binary, just exit=141. Process-wide and idempotent, so
+    // several ChildProcess instances setting it is harmless.
+    std::signal(SIGPIPE, SIG_IGN);
+
     int in_pipe[2];
     int out_pipe[2];
     if (pipe(in_pipe) != 0) {
@@ -223,10 +240,15 @@ ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string
     if (pid == 0) {
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(out_pipe[1], STDOUT_FILENO);
-        close(in_pipe[0]);
-        close(in_pipe[1]);
-        close(out_pipe[0]);
-        close(out_pipe[1]);
+        // Everything above stderr goes: the parent's provider was constructed
+        // BEFORE the spawn (make() is a constructor argument), so without this
+        // the peer inherits its DDS/XRCE sockets and shared-memory handles.
+        // close() is async-signal-safe, which is all that may run between fork
+        // and execv in a multi-threaded parent.
+        const long max_fd = sysconf(_SC_OPEN_MAX);
+        for (int fd = STDERR_FILENO + 1; fd < static_cast<int>(max_fd > 0 ? max_fd : 1024); ++fd) {
+            close(fd);
+        }
         execv(exe.c_str(), argv.data());
         _exit(127);
     }
@@ -235,6 +257,11 @@ ChildProcess::ChildProcess(const std::string& exe, const std::vector<std::string
     plat_->to_child = in_pipe[1];
     plat_->from_child = out_pipe[0];
     plat_->pid = pid;
+    // Our ends must not survive into a LATER child: one holding another child's
+    // stdin write end means closing ours never produces EOF there, and teardown
+    // pays the full kill path instead of exiting cleanly.
+    fcntl(plat_->to_child, F_SETFD, FD_CLOEXEC);
+    fcntl(plat_->from_child, F_SETFD, FD_CLOEXEC);
 
     pump_ = std::thread([this] { PumpStdout(); });
 }
@@ -253,6 +280,9 @@ void ChildProcess::PumpStdout() {
             std::lock_guard lock(mu_);
             for (ssize_t i = 0; i < n; ++i) {
                 if (buf[i] == '\n') {
+                    if (!partial_.empty() && partial_.back() == '\r') {
+                        partial_.pop_back();
+                    }
                     lines_.push_back(std::move(partial_));
                     partial_.clear();
                 } else {
@@ -278,6 +308,11 @@ void ChildProcess::WriteLine(const std::string& line) {
             if (n < 0 && errno == EINTR) {
                 continue;
             }
+            // EPIPE (the child is gone) and every other write error are the same
+            // thing here: the request cannot be delivered. Return, and let the
+            // caller's bounded ReadLine turn it into the nullopt this class
+            // promises. SIGPIPE is ignored in the constructor, so EPIPE arrives
+            // as a return value rather than as process death.
             return;
         }
         off += static_cast<size_t>(n);
@@ -303,7 +338,10 @@ void ChildProcess::Shutdown() {
                 waitpid(plat_->pid, &status, 0);
                 break;
             }
-            std::this_thread::yield();
+            // Sleep, not yield: a tight waitpid(WNOHANG)+yield loop burned a
+            // whole core for the full 5 s on a hanging child, ~26 times a run,
+            // on the same loaded runner the suite needs to be quick on.
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         plat_->pid = -1;
     }
@@ -333,11 +371,23 @@ std::optional<std::string> ChildProcess::ReadLine(std::chrono::steady_clock::tim
     return line;
 }
 
-std::optional<std::string> ChildProcess::Request(const std::string& line,
+std::optional<std::string> ChildProcess::Request(const std::string& tag, const std::string& line,
                                                  std::chrono::steady_clock::time_point deadline) {
     std::lock_guard serialise(request_mu_);
-    WriteLine(line);
-    return ReadLine(deadline);
+    WriteLine(tag + " " + line);
+
+    const std::string prefix = tag + " ";
+    for (;;) {
+        std::optional<std::string> got = ReadLine(deadline);
+        if (!got.has_value()) {
+            return std::nullopt;  // deadline or EOF
+        }
+        if (got->rfind(prefix, 0) == 0) {
+            return got->substr(prefix.size());
+        }
+        // Not this request's reply: the child's own stdout noise, or a reply to
+        // a request that already timed out. Discarded, not mistaken for ours.
+    }
 }
 
 }  // namespace conformance

@@ -7,6 +7,7 @@
 // observe, and no clause needs it to, which is also what stops a clause
 // quietly turning a cross-process subject into an in-process one.
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -45,12 +46,20 @@ class PeerSubject : public ProviderSubject {
 
     const ProviderTraits& Traits() const override { return traits_; }
 
-    std::optional<std::string> DeclareTopic(const Topic& topic, SchemaId schema) override {
+    Reply DeclareTopic(const Topic& topic, SchemaId schema) override {
+        Reply unsendable = RejectUnsendableTopic(topic);
+        if (!unsendable.ok()) {
+            return unsendable;
+        }
         const char* which = schema == SchemaId::kA ? "A" : (schema == SchemaId::kB ? "B" : "none");
         return Exchange("create " + internal::JoinSegments(topic) + " " + which);
     }
 
-    std::optional<std::string> PublishRow(const Topic& topic, uint32_t seq) override {
+    Reply PublishRow(const Topic& topic, uint32_t seq) override {
+        Reply unsendable = RejectUnsendableTopic(topic);
+        if (!unsendable.ok()) {
+            return unsendable;
+        }
         return Exchange("publish " + internal::JoinSegments(topic) + " " + std::to_string(seq));
     }
 
@@ -61,27 +70,43 @@ class PeerSubject : public ProviderSubject {
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
 
    private:
-    /// One line out, one line back. A deadline expiry, an EOF or an unparseable
-    /// reply are all failures of the request — never a retry and never a
-    /// silently-degraded mode.
-    std::optional<std::string> Exchange(const std::string& request) {
+    /// The peer protocol joins segments with a slash and splits requests on
+    /// whitespace, so a segment containing either would arrive as a different
+    /// topic. FreshTopic never produces one; nothing forbade it, so this does —
+    /// loudly, as a harness failure, rather than as a mysterious missing row.
+    static Reply RejectUnsendableTopic(const Topic& topic) {
+        for (const std::string& segment : topic) {
+            if (segment.empty() || segment.find_first_of(" \t/") != std::string::npos) {
+                return Reply::HarnessFailure("peer: topic segment is not sendable over the pipe: " +
+                                             segment);
+            }
+        }
+        return Reply::Ok();
+    }
+
+    /// One tagged line out, one tagged line back. A deadline expiry, an EOF or
+    /// an unparseable reply are HARNESS failures, never evidence that the
+    /// provider refused — see Outcome. No retry, no reconnect, no partial mode.
+    Reply Exchange(const std::string& request) {
+        const std::string tag = "#" + std::to_string(next_tag_.fetch_add(1));
         std::optional<std::string> reply =
-            child_->Request(request, std::chrono::steady_clock::now() + kPeerRequestBudget);
+            child_->Request(tag, request, std::chrono::steady_clock::now() + kPeerRequestBudget);
         if (!reply.has_value()) {
-            return std::string("peer: no reply within budget for: ") + request;
+            return Reply::HarnessFailure("peer: no reply within budget for: " + request);
         }
         if (*reply == "ok") {
-            return std::nullopt;
+            return Reply::Ok();
         }
         if (reply->rfind("err ", 0) == 0) {
-            return reply->substr(4);
+            return Reply::Refused(reply->substr(4));
         }
-        return std::string("peer: unparseable reply '") + *reply + "' to: " + request;
+        return Reply::HarnessFailure("peer: unparseable reply " + *reply + " to: " + request);
     }
 
     ProviderTraits traits_;
     std::shared_ptr<PubSubProvider> provider_;
     std::unique_ptr<ChildProcess> child_;
+    std::atomic<uint64_t> next_tag_{1};
 };
 
 }  // namespace
@@ -90,12 +115,14 @@ SubjectFactory MakePeerSubjectFactory(std::string label, std::string provider_na
                                       SchemaMode schema_mode,
                                       std::function<std::shared_ptr<PubSubProvider>()> make,
                                       std::string peer_exe, std::vector<std::string> peer_args) {
-    ProviderTraits traits = MakeTraits(std::move(provider_name), schema_mode);
-    return SubjectFactory{
-        std::move(label),
-        [traits, make, peer_exe, peer_args]() -> std::unique_ptr<ProviderSubject> {
-            return std::make_unique<PeerSubject>(traits, make(), peer_exe, peer_args);
-        }};
+    // Traits composed inside the lambda — see MakeLocalSubjectFactory.
+    return SubjectFactory{std::move(label),
+                          [provider_name, schema_mode, make, peer_exe,
+                           peer_args]() -> std::unique_ptr<ProviderSubject> {
+                              return std::make_unique<PeerSubject>(
+                                  MakeTraits(provider_name, schema_mode), make(), peer_exe,
+                                  peer_args);
+                          }};
 }
 
 }  // namespace conformance

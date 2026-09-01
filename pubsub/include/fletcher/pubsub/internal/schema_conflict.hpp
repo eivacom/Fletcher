@@ -38,6 +38,14 @@ struct DeclaredSchema {
 
     /// Encode `schema` (may be null / empty, which yields empty bytes). Never
     /// throws: an unencodable schema becomes `encodable == false`.
+    ///
+    /// A **released** ArrowSchema (non-null pointer, null `release`) counts as
+    /// "no schema" here and is not handed to the IPC writer. That is a
+    /// deliberate widening of what `Publisher::CreateTopic` used to do — it
+    /// tested the owning `OwnedSchema` for validity and would have attempted the
+    /// encode on a released one. Treating a released schema as absent is the
+    /// safer of the two and keeps all three call sites identical; recorded here
+    /// so it reads as a decision rather than a side effect of the refactor.
     static DeclaredSchema Encode(const ArrowSchema* schema) {
         DeclaredSchema out;
         if (schema == nullptr || schema->release == nullptr) {

@@ -22,11 +22,14 @@ option(FLETCHER_CONFORMANCE_XRCE
 
 # ── MicroXRCEAgent ──────────────────────────────────────────────────
 # Its own PREFIX (a shared source+build tree collides when two harnesses
-# configure concurrently) but the SAME install dir as
+# configure concurrently) but on Windows the SAME install dir as
 # integration-tests/fastdds-xrce-interop — that install is what the CI cache
 # buys, so the ~10-15 min superbuild happens once per machine, not once per
-# harness. See that harness's CMakeLists for why the paths are short on Windows
-# and why UAGENT_USE_SYSTEM_FASTDDS is on.
+# harness. On Linux the default install dir is inside the build tree, which
+# nothing persists; the CI lane therefore points it at a cacheable workspace path
+# via FLETCHER_AGENT_INSTALL_DIR (below), since `conan build .` takes no -D.
+# See that harness's CMakeLists for why the paths are short on Windows and why
+# UAGENT_USE_SYSTEM_FASTDDS is on.
 if(FLETCHER_CONFORMANCE_XRCE)
     find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
     include(ExternalProject)
@@ -39,7 +42,20 @@ if(FLETCHER_CONFORMANCE_XRCE)
     else()
         set(AGENT_PREFIX "${CMAKE_BINARY_DIR}/microxrcedds_agent_proj-prefix" CACHE PATH
             "MicroXRCEAgent ExternalProject prefix")
-        set(AGENT_INSTALL_DIR "${CMAKE_BINARY_DIR}/microxrcedds_agent-install" CACHE PATH
+        # Default is inside the build tree, which nothing caches. The CI lane
+        # drives this harness through `conan build .` and so cannot pass -D, so
+        # the install dir is also settable from the environment: the Linux job
+        # points it at a workspace path it caches, and the ~10-15 min superbuild
+        # then happens once there too rather than on every run.
+        if(DEFINED ENV{FLETCHER_AGENT_INSTALL_DIR})
+            set(_agent_install_default "$ENV{FLETCHER_AGENT_INSTALL_DIR}")
+            message(STATUS
+                "MicroXRCEAgent install dir taken from FLETCHER_AGENT_INSTALL_DIR: "
+                "${_agent_install_default}")
+        else()
+            set(_agent_install_default "${CMAKE_BINARY_DIR}/microxrcedds_agent-install")
+        endif()
+        set(AGENT_INSTALL_DIR "${_agent_install_default}" CACHE PATH
             "MicroXRCEAgent install dir")
     endif()
 
@@ -89,8 +105,7 @@ add_library(conformance_support OBJECT
     src/fixtures.cpp
     src/local_subject.cpp
     src/peer_subject.cpp
-    src/child_process.cpp
-    src/peer_main.cpp)
+    src/child_process.cpp)
 target_include_directories(conformance_support PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -102,6 +117,11 @@ target_link_libraries(conformance_support PUBLIC fletcher-pubsub::fletcher-pubsu
 
 # NB an OBJECT library's objects are not propagated TRANSITIVELY, so every
 # subject binary lists conformance_support itself.
+# The peer children's request/reply loop, linked ONLY into the peer binaries —
+# it has no business in a subject binary.
+add_library(conformance_peer_loop OBJECT src/peer_main.cpp)
+target_link_libraries(conformance_peer_loop PUBLIC conformance_support)
+
 add_library(conformance_clauses OBJECT src/clauses.cpp)
 target_link_libraries(conformance_clauses PUBLIC conformance_support GTest::gtest)
 
@@ -123,6 +143,7 @@ target_link_libraries(conformance_inprocess PRIVATE
 add_executable(conformance_fastdds_peer subjects/fastdds_peer_main.cpp)
 target_link_libraries(conformance_fastdds_peer PRIVATE
     conformance_support
+    conformance_peer_loop
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)
 
 add_executable(conformance_fastdds subjects/fastdds_main.cpp)
@@ -140,6 +161,7 @@ if(FLETCHER_CONFORMANCE_XRCE)
     add_executable(conformance_xrce_peer subjects/xrce_peer_main.cpp)
     target_link_libraries(conformance_xrce_peer PRIVATE
         conformance_support
+        conformance_peer_loop
         fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
     add_executable(conformance_xrce subjects/xrce_main.cpp)
@@ -161,18 +183,26 @@ endif()
 # `ctest -R 'ProviderConformance\.<Clause>'` scopes to one clause across every
 # subject that has it — and so the list itself shows which (clause, subject)
 # pairs exist.
+# TIMEOUTs are stated rather than left to ctest's 1500 s default: a clause's own
+# budget is 20 s plus setup, and a peer spawn is bounded, so anything past a few
+# minutes is a hang and should be reported as one.
 include(GoogleTest)
-gtest_discover_tests(conformance_inprocess DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(conformance_inprocess DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 120)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
 # and conformance_fastdds carries two subjects (domains 151 and 152). It also
 # spawns a peer child, so two of its clauses must never run at once.
 gtest_discover_tests(conformance_fastdds DISCOVERY_MODE PRE_TEST
-    PROPERTIES RESOURCE_LOCK conformance_fastdds)
+    PROPERTIES RESOURCE_LOCK conformance_fastdds TIMEOUT 180)
 
 if(FLETCHER_CONFORMANCE_XRCE)
     # A SINGLE ctest entry for the XRCE binary (the fastdds-xrce-interop
     # precedent): one Agent binds one UDP port, and per-clause entries would pay
     # ~24 Agent start/stop cycles for the same coverage.
     add_test(NAME conformance_xrce COMMAND conformance_xrce)
-    set_tests_properties(conformance_xrce PROPERTIES RESOURCE_LOCK conformance_xrce)
+    # 24 clauses, ~26 peer spawns and one Agent handshake per session, in one
+    # process.
+    set_tests_properties(conformance_xrce PROPERTIES
+        RESOURCE_LOCK conformance_xrce
+        TIMEOUT 900)
 endif()

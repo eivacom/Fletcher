@@ -26,8 +26,7 @@ TEST_P(ProviderConformance, CallbackNeverSeesNullSchema) {
     constexpr uint32_t kRows = 3;
 
     Collector collector;
-    SubscriptionResult sub = Subject().Subscribe(topic, collector.Callback());
-    (void)sub;
+    ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
@@ -39,7 +38,6 @@ TEST_P(ProviderConformance, CallbackNeverSeesNullSchema) {
     for (const Collector::Delivery& d : collector.Snapshot()) {
         EXPECT_TRUE(d.had_schema) << "row " << d.seq << " was delivered with a null schema";
     }
-    Subject().Unsubscribe(topic);
 }
 
 }  // namespace conformance

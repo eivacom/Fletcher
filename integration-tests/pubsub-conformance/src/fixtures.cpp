@@ -100,8 +100,9 @@ void Collector::Record(const uint8_t* data, size_t len, bool had_schema) {
         }
     }
 
-    if (hold_.count() > 0) {
-        const auto until = std::chrono::steady_clock::now() + hold_;
+    const int64_t hold_us = hold_us_.load();
+    if (hold_us > 0) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(hold_us);
         while (std::chrono::steady_clock::now() < until) {
             std::this_thread::yield();
         }

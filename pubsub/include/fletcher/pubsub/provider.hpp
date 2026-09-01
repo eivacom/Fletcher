@@ -20,12 +20,20 @@ namespace fletcher {
 /// Result returned by PubSubProvider::Subscribe.
 ///
 /// `schema` is a future for the topic's schema. Subscribe never blocks to
-/// obtain it: the future resolves with a non-null SharedSchema once the
-/// schema is known — immediately for providers that already hold it, or
-/// asynchronously when a publisher announces it (late-joining subscribers).
-/// Consumers may ignore the future, or wait on it (`get()`/`wait_for()`) if
-/// they need the schema out-of-band. Either way the per-sample SharedSchema
-/// delivered to the SubscribeCallback carries the schema for each row.
+/// obtain it: the future resolves once the schema is known — immediately for
+/// providers that already hold it, or asynchronously when a publisher announces
+/// it (late-joining subscribers).
+///
+/// What it resolves WITH follows the transport's schema mode, and the two are
+/// never mixed (§7 clause 1 of docs/pubsub-interface-spec.md):
+///  - a schema-**carrying** transport resolves it with a non-null SharedSchema;
+///  - a transport that carries no schemas at all — the in-process loopback,
+///    where the client brings its own — resolves it with **null**.
+///
+/// Either way it does resolve, so a consumer that waits never hangs. Consumers
+/// may ignore the future, or wait on it (`get()`/`wait_for()`) if they need the
+/// schema out-of-band; the per-sample SharedSchema delivered to the
+/// SubscribeCallback carries the schema for each row.
 struct SubscriptionResult {
     std::shared_future<SharedSchema> schema;
 };
@@ -33,6 +41,10 @@ struct SubscriptionResult {
 /// Build a SubscriptionResult schema future that is already resolved with
 /// `schema`. For providers that know the schema synchronously at Subscribe
 /// time (in-process loopback, mocks, and — for now — publisher-first DDS).
+///
+/// `schema` may legitimately be null: that is how a schema-less transport
+/// resolves the future (see SubscriptionResult), and it is why this returns a
+/// resolved-with-null future rather than refusing.
 inline std::shared_future<SharedSchema> MakeReadySchemaFuture(SharedSchema schema) {
     std::promise<SharedSchema> p;
     p.set_value(std::move(schema));
@@ -112,9 +124,12 @@ class PubSubProvider {
         std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
                            const Attachments& attachments)>;
 
-    /// Subscribe to a named topic.  Returns the schema that the
-    /// publisher provided when it created the topic. Delivery obeys the
-    /// SubscribeCallback contract above (schema-before-data, per-writer order).
+    /// Subscribe to a named topic. **Never blocks**: a subscriber may subscribe
+    /// before any publisher exists, and the returned SubscriptionResult carries
+    /// a *future* for the schema rather than the schema itself — see
+    /// SubscriptionResult for what it resolves with, and when. Delivery obeys
+    /// the SubscribeCallback contract above (schema-before-data, per-writer
+    /// order).
     ///
     /// `data` may point into a buffer the transport owns rather than a copy of one — that is a
     /// provider-local optimisation, not part of this contract. Either way the pointer is only
@@ -122,7 +137,11 @@ class PubSubProvider {
     [[nodiscard]] virtual SubscriptionResult Subscribe(
         const std::vector<std::string>& topic_segments, SubscribeCallback callback) = 0;
 
-    /// Remove a previously registered subscription.
+    /// Remove a previously registered subscription. **Once this returns, no
+    /// further callback runs for that topic** (§7 clause 6): a provider that
+    /// delivers from its own thread must not let a delivery already in flight
+    /// outlive the call. Unsubscribing a topic with no subscription is a no-op,
+    /// not an error, so it is safe to call unconditionally on teardown.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
 };
 
