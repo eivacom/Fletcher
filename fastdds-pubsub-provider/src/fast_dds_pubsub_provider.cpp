@@ -248,7 +248,7 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     std::lock_guard lock(impl_->mu);
 
     // Idempotent, mirroring the in-process reference provider
-    // (InProcessProvider::CreateTopic): declaring a topic never fails on an
+    // (InProcessPubSubProvider::CreateTopic): declaring a topic never fails on an
     // existing one. The topic state may already exist because a subscriber
     // joined first (subscriber-first) and lazily created it without a schema,
     // or because a publisher already declared it. Attach the publisher side

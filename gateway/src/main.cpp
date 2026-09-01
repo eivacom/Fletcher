@@ -40,92 +40,18 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/pubsub/internal/segments.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "gateway.hpp"
 
 namespace {
-
-// ─────────────────────────────────────────────────────────────────────
-// InProcessProvider — the only provider implementation gateway ships
-// with right now. Topics are created on first subscribe or publish so
-// no pre-registration is needed.
-//
-// The provider caches the schema a publisher announced via
-// CreateTopic and hands it back to subscribers via SubscriptionResult.
-// Gateway forwards that schema to its WebSocket clients on subscribe,
-// but never inspects or validates it — pure passthrough.
-// ─────────────────────────────────────────────────────────────────────
-class InProcessProvider : public fletcher::PubSubProvider {
-   public:
-    void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema schema) override {
-        std::lock_guard lock(mu_);
-        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
-        if (schema) {
-            slot.schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(schema.get()));
-        }
-    }
-
-    // mu_ is held across the callback: one delivery at a time, so a callback must not re-enter.
-    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
-                 const fletcher::Attachments& attachments) override {
-        fletcher::VectorWriteBuffer wb;
-        encoder(wb);
-        const std::vector<uint8_t> buf = wb.Finish();
-
-        std::lock_guard lock(mu_);
-        auto [it, _] = topics_.try_emplace(fletcher::internal::JoinSegments(segments));
-        // Copy-to-locals before dispatch (HARD-4's pattern): a callback that re-enters
-        // Unsubscribe() would otherwise null the std::function being invoked. Dispatch stays
-        // under mu_ so the delivery contract's one-callback-at-a-time clause holds; mu_ is
-        // non-recursive, so a re-entering callback deadlocks rather than corrupting — which is
-        // what the contract forbids.
-        const SubscribeCallback cb = it->second.callback;
-        const fletcher::SharedSchema schema = it->second.schema;
-        if (cb) {
-            cb(buf.data(), buf.size(), schema, attachments);
-        }
-    }
-
-    fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                           SubscribeCallback callback) override {
-        std::lock_guard lock(mu_);
-        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
-        slot.callback = std::move(callback);
-        return {fletcher::MakeReadySchemaFuture(slot.schema)};
-    }
-
-    void Unsubscribe(const std::vector<std::string>& segments) override {
-        std::lock_guard lock(mu_);
-        auto it = topics_.find(fletcher::internal::JoinSegments(segments));
-        if (it != topics_.end()) {
-            it->second.callback = nullptr;
-        }
-    }
-
-   private:
-    struct TopicState {
-        SubscribeCallback callback;
-        // Null when nobody announced one; the gateway lets the client bring its own.
-        fletcher::SharedSchema schema;
-    };
-    std::mutex mu_;
-    std::unordered_map<std::string, TopicState> topics_;
-};
 
 struct Args {
     std::string bind_address = "0.0.0.0";
@@ -186,7 +112,7 @@ int main(int argc, char* argv[]) {
         dds_opts.domain_id = args.domain_id;
         provider = std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
     } else {
-        provider = std::make_shared<InProcessProvider>();
+        provider = std::make_shared<fletcher::InProcessPubSubProvider>();
     }
 
     auto publisher = std::make_shared<fletcher::Publisher>(provider);

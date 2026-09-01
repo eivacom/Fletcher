@@ -65,8 +65,10 @@ class PubSubProvider {
     /// ownership is transferred to the provider. Subscribers do not call this —
     /// they learn the schema out-of-band (see Subscribe). Re-declaring a topic
     /// with an identical schema is idempotent (so several publishers may share
-    /// one topic); providers may reject a re-declaration with a conflicting
-    /// schema.
+    /// one topic); a provider **must** reject a re-declaration with a
+    /// conflicting schema, by throwing (spec §7 clause 3 — "may" became "must"
+    /// with the 2026-09-01 ruling, so a provider that silently overwrote the
+    /// declared schema is now non-conforming).
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
                              OwnedSchema schema) = 0;
 

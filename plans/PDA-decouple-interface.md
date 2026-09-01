@@ -89,7 +89,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 |------|-------|------|--------------|--------|
 | PDA-DEC-1 | Conformance suite for the delivery contract, incl. a cross-process subject | 🟩 | `ProviderConformance.SchemaBeforeDataAcrossHandoff` + the §7 clause set, against all three providers | ⚪ |
 | PDA-DEC-2 | Copy-accounting oracle (makes zero-copy falsifiable) | 🟩 | `CopyAccounting.PublishAndReceivePerformNoPayloadCopies` | ⚪ |
-| PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
+| PDA-DEC-3 | The crossing vocabulary: ownership, schema arrival, exception taxonomy — **plus the 6th (schema-carrying loopback) conformance subject** | 🟪 | `SeamVocabulary.BorrowedTransportMemoryCrossesWithoutCopy` (+ PDA-DEC-2 green) | ⚪ |
 | PDA-DEC-4 | Provider registry — name-or-path selector, typed core + opaque document | 🟦 | `Registry.SelectsByNameWithoutCallerKnowingTheProvider` | ⚪ |
 | PDA-DEC-5 | `InProcessProvider` registered as a built-in (lifted into `pubsub/` by PDA-DEC-1) | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | ⚪ |
 | PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | ⚪ |
@@ -100,8 +100,11 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 Suite shape: PDA-DEC-1/PDA-DEC-2 introduce a **provider-agnostic conformance harness**
 parameterised over a provider factory, so one TU runs against InProcess, Fast DDS
 and XRCE, and later against a driver-backed subject in PDA-ABI with no assertion
-changes. Its home and target names are PDA-DEC-1's design call — wire them into the
-runbook config's `inner_loop_cmd`/`full_suite_cmd` when it lands.
+changes. **As landed (PDA-DEC-1):** `integration-tests/pubsub-conformance`, suite
+`ProviderConformance`, five subjects — `InProcessLocal`, `FastDdsLocal`,
+`FastDdsCrossProcess`, `XrceLocal`, `XrceCrossProcess` — with its own CI lane
+`ci.integration-test.pubsub-conformance`. Wired into the runbook config's
+`inner_loop_cmd`/`full_suite_cmd`.
 
 ---
 

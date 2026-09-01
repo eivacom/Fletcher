@@ -328,7 +328,7 @@ The contract:
    pre-schema backlog is delivered before, and never interleaved with, samples
    arriving live afterwards.
 3. **Idempotent re-declaration** with an identical schema; conflicting
-   re-declaration may be rejected.
+   re-declaration **must** be rejected.
 4. **One callback per topic per instance.** Local fan-out is `Subscriber`'s job.
 5. **Late joiners** get the schema asynchronously; `Subscribe` never blocks.
 6. **After `Unsubscribe` returns**, no further callback for that topic.

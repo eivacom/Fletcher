@@ -9,29 +9,17 @@
 #include <unordered_map>
 #include <vector>
 
+#include "fletcher/pubsub/internal/schema_conflict.hpp"
 #include "fletcher/pubsub/internal/segments.hpp"
-#include "fletcher/pubsub/schema_ipc.hpp"
 
 namespace fletcher {
 
 struct Publisher::Impl {
-    struct TopicState {
-        // The declared schema as Arrow IPC bytes, which is the only form it is ever needed in —
-        // comparing a re-declaration against it. Keeping the bytes rather than an OwnedSchema saves
-        // a deep copy per topic and one IPC encode per re-declaration.
-        //
-        // A declaration with no schema at all is empty bytes, which is a real value: re-declaring a
-        // schema-bearing topic without one stays a conflict, as it was before.
-        std::vector<uint8_t> schema_ipc;
-        // False only when a schema was supplied and could not be IPC-encoded (nanoarrow's writer
-        // rejects dictionary types, for one). A conflict cannot be proven either way against bytes
-        // that could not be produced, so such topics accept any re-declaration.
-        bool encodable = true;
-    };
-
     std::shared_ptr<PubSubProvider> provider;
     mutable std::mutex mu;
-    std::unordered_map<std::string, TopicState> topics;
+    // The declared schema per topic, as internal::DeclaredSchema — the same type, and the same
+    // comparison, the in-process provider uses for its own conflict check.
+    std::unordered_map<std::string, internal::DeclaredSchema> topics;
 };
 
 Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
@@ -53,22 +41,13 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
     // Encode before taking the lock, so the locked section is a byte compare rather than two IPC
     // encodes that every concurrent CreateTopic queues behind. A first declaration pays an encode
     // where it previously only deep-copied; see the FastDDS provider README, "Measured decisions".
-    Impl::TopicState incoming;
-    if (schema) {
-        try {
-            incoming.schema_ipc = SerializeSchemaIpc(schema.get());
-        } catch (const std::exception&) {
-            incoming.encodable = false;
-        }
-    }
+    internal::DeclaredSchema incoming = internal::DeclaredSchema::Encode(schema.get());
 
     {
         std::lock_guard lock(impl_->mu);
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
-            const bool conflicting = incoming.encodable && it->second.encodable &&
-                                     incoming.schema_ipc != it->second.schema_ipc;
-            if (conflicting) {
+            if (incoming.ConflictsWith(it->second)) {
                 throw std::runtime_error(
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }

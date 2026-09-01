@@ -28,6 +28,7 @@
 #include <exception>
 #include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/schema_conflict.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <future>
@@ -78,6 +79,12 @@ struct XrceDDSPubSubProvider::Impl {
 
         OwnedSchema schema;
         SharedSchema shared_schema;  // for callback delivery
+        // The declared schema as Arrow IPC bytes - the only form a conflict
+        // check needs. Set together with is_publisher, once the announcement is
+        // out, so a failed CreateTopic leaves nothing for a retry to match
+        // against. Uses the same comparison as Publisher and the in-process
+        // provider rather than a third one.
+        internal::DeclaredSchema declared;
         bool is_publisher = false;
         bool has_reader = false;
         PubSubProvider::SubscribeCallback callback;
@@ -442,31 +449,56 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
     std::string name = internal::JoinSegments(topic_segments);
+
+    // Encoded before the lock, so the locked section is a byte compare rather
+    // than an IPC encode every concurrent CreateTopic queues behind.
+    internal::DeclaredSchema incoming = internal::DeclaredSchema::Encode(schema.get());
+
     std::lock_guard lock(impl_->mu);
 
-    if (impl_->topics.count(name)) throw std::runtime_error("XRCE: topic already exists: " + name);
-
     auto& ts = impl_->topics[name];
-    ts.is_publisher = true;
 
-    // Allocate XRCE entity IDs.
+    // Re-declaration is idempotent for an identical schema (so several
+    // publishers may share one topic) and REFUSED for a conflicting one -
+    // spec section 7 clause 3, tightened from "may be rejected" to "must be
+    // rejected".
+    //
+    // This whole block used to be a throw on any existing topic state, which
+    // refused BOTH: an identical re-declaration the contract calls idempotent,
+    // and - because Subscribe creates the topic state lazily - every
+    // subscriber-first declaration, so a subscriber on this instance could
+    // never be joined by a publisher on it. Both are the same mistake: the
+    // presence of topic state was read as "already declared".
+    if (ts.is_publisher) {
+        if (incoming.ConflictsWith(ts.declared)) {
+            throw std::runtime_error("XRCE: topic already declared with a conflicting schema: " +
+                                     name);
+        }
+        return;  // identical (or non-comparable) re-declaration - no-op
+    }
+
+    // Allocate XRCE entity IDs. The participant and the data topic may already
+    // exist because a subscriber joined first (Subscribe creates them the same
+    // way); reuse them, and add only the publisher side.
     uint16_t base = impl_->AllocId();
-    ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
-    ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
+    if (ts.participant_id.type == UXR_INVALID_ID) {
+        ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
+        ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
+
+        // Create participant on the configured DDS domain.
+        uint16_t req_part = uxr_buffer_create_participant_bin(
+            &impl_->session, impl_->reliable_out, ts.participant_id, impl_->config.domain_id,
+            name.c_str(), UXR_REPLACE);
+        WaitForStatus(&impl_->session, req_part, "participant");
+
+        // Create topic.
+        uint16_t req_topic = uxr_buffer_create_topic_bin(
+            &impl_->session, impl_->reliable_out, ts.topic_id, ts.participant_id, name.c_str(),
+            impl_->type_name.c_str(), UXR_REPLACE);
+        WaitForStatus(&impl_->session, req_topic, "topic");
+    }
     ts.publisher_id = uxr_object_id(base, UXR_PUBLISHER_ID);
     ts.writer_id = uxr_object_id(base, UXR_DATAWRITER_ID);
-
-    // Create participant on the configured DDS domain.
-    uint16_t req_part =
-        uxr_buffer_create_participant_bin(&impl_->session, impl_->reliable_out, ts.participant_id,
-                                          impl_->config.domain_id, name.c_str(), UXR_REPLACE);
-    WaitForStatus(&impl_->session, req_part, "participant");
-
-    // Create topic.
-    uint16_t req_topic = uxr_buffer_create_topic_bin(&impl_->session, impl_->reliable_out,
-                                                     ts.topic_id, ts.participant_id, name.c_str(),
-                                                     impl_->type_name.c_str(), UXR_REPLACE);
-    WaitForStatus(&impl_->session, req_topic, "topic");
 
     // Create publisher + data writer.
     uint16_t req_pub = uxr_buffer_create_publisher_bin(
@@ -492,16 +524,21 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         ts.schema = OwnedSchema::DeepCopy(schema.get());
 
         uint16_t schema_base = impl_->AllocId();
-        ts.schema_topic_id = uxr_object_id(schema_base, UXR_TOPIC_ID);
         ts.schema_publisher_id = uxr_object_id(schema_base, UXR_PUBLISHER_ID);
         ts.schema_writer_id = uxr_object_id(schema_base, UXR_DATAWRITER_ID);
 
-        std::string schema_name = name + "/__schema";
+        // The __schema topic may already exist too - a subscriber-first reader
+        // created it to await the schema. Reuse it rather than replacing the id
+        // that reader is attached to.
+        if (ts.schema_topic_id.type == UXR_INVALID_ID) {
+            ts.schema_topic_id = uxr_object_id(schema_base, UXR_TOPIC_ID);
 
-        uint16_t req_st = uxr_buffer_create_topic_bin(
-            &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
-            schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
-        WaitForStatus(&impl_->session, req_st, "schema topic");
+            std::string schema_name = name + "/__schema";
+            uint16_t req_st = uxr_buffer_create_topic_bin(
+                &impl_->session, impl_->reliable_out, ts.schema_topic_id, ts.participant_id,
+                schema_name.c_str(), kSchemaTypeName, UXR_REPLACE);
+            WaitForStatus(&impl_->session, req_st, "schema topic");
+        }
 
         uint16_t req_sp =
             uxr_buffer_create_publisher_bin(&impl_->session, impl_->reliable_out,
@@ -536,6 +573,12 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                          static_cast<uint32_t>(wire.size()));
         uxr_run_session_until_confirm_delivery(&impl_->session, 1000);
     }
+
+    // Recorded only once the announcement is out, so a failed declaration
+    // leaves nothing for a retry to match against and nothing to
+    // short-circuit on. Mirrors the FastDDS provider.
+    ts.declared = std::move(incoming);
+    ts.is_publisher = true;
 }
 
 void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,

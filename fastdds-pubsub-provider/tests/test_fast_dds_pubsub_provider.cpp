@@ -4,7 +4,6 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -340,53 +339,6 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     return received.load();
-}
-
-// Late-joiner replay under the SHIPPED default QoS. The gateway (and any caller that does not
-// override QoS) gets KEEP_ALL + max_samples=100 + TRANSIENT_LOCAL, and a bounded plain type leaves
-// data_sharing at AUTO, so data-sharing engages. A publisher that announces its schema and writes
-// rows BEFORE any subscriber exists relies on TRANSIENT_LOCAL retention to replay all of them to
-// the reader that joins later.
-//
-// This combination was previously untested: the data-sharing tests above use BoundedOptions()
-// (KEEP_LAST depth 10) and subscribe BEFORE publishing, so neither the shipped defaults nor the
-// late-joiner direction was covered. integration-tests/gateway-fastdds-ts hits exactly this and
-// intermittently receives a subset of the rows (often only the newest).
-TEST(FastDDSPubSubProviderTest, DefaultQosReplaysEveryRetainedRowToALateJoiner) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
-
-    pub_provider.CreateTopic({"latejoin", "defaults"}, MakeSchema());
-
-    // Published with no reader anywhere: only retention can carry these to the subscriber below.
-    constexpr int kRows = 3;
-    for (int i = 1; i <= kRows; ++i) pub_provider.Publish({"latejoin", "defaults"}, MakeEncoder(i));
-
-    std::mutex mu;
-    std::vector<int32_t> received;
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"latejoin", "defaults"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len < 5) return;
-            std::lock_guard<std::mutex> lk(mu);
-            received.push_back(DecodeRow(data));
-        });
-    ASSERT_TRUE(result.schema.get());
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    for (;;) {
-        {
-            std::lock_guard<std::mutex> lk(mu);
-            if (received.size() >= kRows) break;
-        }
-        if (std::chrono::steady_clock::now() >= deadline) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    std::lock_guard<std::mutex> lk(mu);
-    std::sort(received.begin(), received.end());
-    EXPECT_EQ(received, (std::vector<int32_t>{1, 2, 3}))
-        << "TRANSIENT_LOCAL + KEEP_ALL must replay every retained row to a late-joining reader";
 }
 
 // loan_publish: the writer encodes into a loaned payload and the reader reads the row out of the

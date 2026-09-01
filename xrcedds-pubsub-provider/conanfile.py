@@ -91,6 +91,13 @@ class FletcherPubsubConan(ConanFile):
             "microcdr",
         ]
         self.cpp_info.includedirs = ["include"]
+        # microxrcedds_client's UDP/TCP transports call straight into Winsock, so
+        # a consumer linking THIS package alone (as the pub/sub conformance
+        # harness deliberately does — one provider per binary) has to be given
+        # ws2_32. It used to resolve by accident: every consumer also linked the
+        # Fast DDS provider, whose Conan package declares ws2_32 itself.
+        if self.settings.os == "Windows":
+            self.cpp_info.system_libs = ["ws2_32", "iphlpapi"]
         self.cpp_info.set_property("cmake_file_name", "fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_target_name", "fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_build_modules", [
