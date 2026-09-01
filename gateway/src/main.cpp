@@ -16,6 +16,16 @@
 //                          selects between them at runtime.
 //   --domain-id N          DDS domain id for the fastdds provider (default 0).
 //                          Ignored by the inprocess provider.
+//   --max-payload-bytes N  DDS payload bound for the fastdds provider
+//                          (default 1 MiB). Part of the DDS type name
+//                          (fletcher_<bytes>), so it must match every
+//                          peer on the bus exactly.
+//   --reader-qos P         fastdds reader QoS profile: "default"
+//                          (Fletcher profile: RELIABLE + KEEP_ALL +
+//                          TRANSIENT_LOCAL) or "volatile[:depth]"
+//                          (VOLATILE + KEEP_LAST(depth), default 32)
+//                          for high-rate streams where late joiners
+//                          must not replay history.
 //
 // The gateway is schema-agnostic. It knows nothing about topic schemas
 // or which topics exist before clients show up; clients establish
@@ -54,6 +64,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "args.hpp"
 #include "gateway.hpp"
 
 namespace {
@@ -130,63 +141,39 @@ class InProcessProvider : public fletcher::PubSubProvider {
     }
 };
 
-struct Args {
-    std::string bind_address = "0.0.0.0";
-    uint16_t port = 9090;
-    std::string provider = "inprocess";
-    uint32_t domain_id = 0;
-};
-
-Args ParseArgs(int argc, char* argv[]) {
-    Args a;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--port" && i + 1 < argc) {
-            a.port = static_cast<uint16_t>(std::stoi(argv[++i]));
-        } else if (arg == "--bind-address" && i + 1 < argc) {
-            a.bind_address = argv[++i];
-        } else if (arg == "--provider" && i + 1 < argc) {
-            a.provider = argv[++i];
-        } else if (arg == "--domain-id" && i + 1 < argc) {
-            a.domain_id = static_cast<uint32_t>(std::stoul(argv[++i]));
-        } else if (arg == "--version") {
-            std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
-            std::exit(0);
-        } else if (arg == "--help" || arg == "-h") {
-            std::printf(
-                "Usage: %s [--port N] [--bind-address ADDR] "
-                "[--provider inprocess|fastdds] [--domain-id N] [--version]\n",
-                argv[0]);
-            std::exit(0);
-        } else {
-            std::fprintf(stderr, "fletcher-gateway: unknown argument: %s\n", arg.c_str());
-            std::exit(2);
-        }
-    }
-    if (a.provider != "inprocess" && a.provider != "fastdds") {
-        std::fprintf(stderr,
-                     "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
-                     a.provider.c_str());
-        std::exit(2);
-    }
-    return a;
-}
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    Args args;
-    try {
-        args = ParseArgs(argc, argv);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "fletcher-gateway: bad CLI: %s\n", e.what());
+    std::string parse_error;
+    auto parsed = gateway::ParseArgs(argc, argv, parse_error);
+    if (!parsed) {
+        std::fprintf(stderr, "fletcher-gateway: %s\n", parse_error.c_str());
         return 2;
+    }
+    const gateway::Args& args = *parsed;
+    if (args.show_version) {
+        std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
+        return 0;
+    }
+    if (args.show_help) {
+        std::printf("Usage: %s %s\n", argv[0], gateway::UsageString());
+        return 0;
     }
 
     std::shared_ptr<fletcher::PubSubProvider> provider;
     if (args.provider == "fastdds") {
         fletcher::FastDDSProviderOptions dds_opts;
         dds_opts.domain_id = args.domain_id;
+        if (args.max_payload_bytes != 0) {
+            dds_opts.max_payload_bytes = args.max_payload_bytes;
+        }
+        if (args.reader_qos.use_volatile) {
+            auto qos = fletcher::internal::MakeFletcherDefaultReaderQos();
+            qos.durability().kind = eprosima::fastdds::dds::VOLATILE_DURABILITY_QOS;
+            qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
+            qos.history().depth = args.reader_qos.depth;
+            dds_opts.default_reader_qos = qos;
+        }
         provider = std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
     } else {
         provider = std::make_shared<InProcessProvider>();

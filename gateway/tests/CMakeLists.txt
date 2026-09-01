@@ -4,6 +4,7 @@
 find_package(GTest REQUIRED)
 
 add_executable(gateway_tests
+    test_args.cpp
     test_publish_frame.cpp
     test_schema_codec.cpp)
 
