@@ -56,4 +56,9 @@ mid-stream; a failure with no numbered cause, or one silently renumbered; an emp
 Declared net lines: +950 / −350 · new public surface: 7 (5 retired simultaneously) · design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+*As landed (2026-09-01):* +3338 / −1113 code (excl. `plans/`) vs declared +950/−350;
+the code reviewer counted it and found ~1071 genuinely new code lines — real scope,
+not padding. Public surface **8**, ratified: `PubSubStatusName` and
+`EnvelopeAttachmentCount` were pushed to `internal/` at step 4, the latter deleting an
+unchecked invariant with it. 2 design cycles, 2 fix cycles, 3 implementer launches,
+6 owner touches. Full suite green; `pubsub-conformance` 62/62 with XRCE on.

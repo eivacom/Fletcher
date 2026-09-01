@@ -285,3 +285,68 @@ design's `CopySubject` was stale and my first correction of it was *also* wrong 
 evidence file the known-accepted `pubsub-arrow-fastdds` line was restated as its authoritative
 `-j1` result so the gate's token scan would not read a documented non-regression as a failure
 — verbatim run preserved as `verify-PDA-DEC-2-raw.txt`.
+
+---
+
+## PDA-DEC-3 — The crossing vocabulary (2026-09-01) 🟢
+
+**What landed.** A vocabulary two ABI rounds can derive from without consulting each other.
+`Blob` becomes an owner-plus-span triple, so borrowed transport memory crosses without a
+copy — the copy PDA-DEC-2 pinned at one is gone. Schema arrival becomes `SchemaArrival`/
+`SchemaResolver` with a **typed** outcome keeping "schema-less" (`kOk`+null, reserved for
+that alone), "pending" and "subscription ended" distinct; the first design collapsed all
+three into one null, deleting a signal `ws_session.cpp` branches on today. Failure collapses
+to one `PubSubError` over a `static_assert`-pinned `PubSubStatus`. All three providers, the
+gateway and the Arrow tier were rewritten to it; the five retirements are simultaneous and
+source-breaking. The loopback gains `SchemaCarriage`, giving the 6th conformance subject.
+
+**Design took both cycles.** Four blockers in cycle 1, all closed in cycle 2, no escalation owed.
+The budget blocker was mine: waiver granted rather than the design's 3a/3b split, which would
+have stood up the coexistence bridge rung-1 item 9 forbids. Review settled premise P2
+(`SharedSchema` needs no reshaping) and confirmed the vocabulary is genuinely C-expressible —
+the two C boundaries never exchange structs; each wraps the same `Blob`.
+
+**Two vacuous guards here, the second invisible from reading.** The forcing test's ownership
+half passed with or without a real owner: first because the test kept the arena alive, then —
+once fixed — because it compared retained bytes against `published_data`, the *same buffer*
+when provenance holds (`memcmp(p, p, n)`). It now compares against a harness-owned
+expectation, and `Arena` poisons freed slots with `0xDD`; without that poisoning the reviewer
+measured the bystander mutation goes **wholly undetected**, the freed arena surviving intact
+in the MSVC release heap. Verified at 20 runs per configuration.
+**A third guard was deleted, not repaired.** The huge-finite-timeout assertion never read its
+timeout, and a corrected one *still* could not falsify the clamp — this MSVC's `wait_for`
+clamps internally. The clamp stays (it defends libraries that do not); the rule is written in
+four places including spec §3.4, which says it is pinned by no test and why a test would be
+worse than none.
+
+**Verification.** Full suite green everywhere. `pubsub-conformance` **62/62** with XRCE ON and
+a live Agent (`conformance_xrce` ran, not skipped); `gateway-fastdds-ts` 4/4 ×3, no row loss;
+`pubsub-arrow-fastdds` 4/4 at `-j1`. **Reviewers corrected both ways:** compliance's "XRCE-ON
+is 71" was a phantom (one Agent, one UDP port, so one ctest entry — I verified 62 with
+`ctest -N`); it accepted that and reported one of its own mutations inert, the harness linking
+the *packaged* library. The code reviewer withdrew its own collapse suggestion on measurement.
+Both counted the overrun themselves, as PDA-DEC-2 taught.
+
+**A fourth false-green trap, found by the gate run and now fixed in the config:** neither
+gateway harness builds its own C++ binary, so `npm test` alone runs whatever `gateway.exe` is
+in `build/`. Both predated this item's own gateway rewrite (one by ~9 h), so a literal run
+would have reported a convincing green over pre-rewrite code. The config now builds both
+first. Re-confirmed too: `-o run_tests=True` was a no-op for **6 of 7** components this run.
+
+**Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · launches 3/5 · owner touches 6.
+**Numbers:** declared +950/−350 · actual **+3338/−1113** code (excl. `plans/`), ~1071 of them
+genuinely new code — judged real scope, not padding. Surface **8**, ratified (waived 7 +
+`TranslateSeamFailure`): step 4 pushed `PubSubStatusName` and `EnvelopeAttachmentCount` into
+`internal/`, the latter deleting an unchecked invariant with it. `PubSubStatusName`'s
+"mechanically required" claim was false — zero product callers — and was withdrawn.
+
+**Owner decisions (verbatim, ledger 23–25):** a live subscription holds its schema mode
+rather than switching mid-stream (gateway `schemaIpc` unchanged); one error type with a stable
+numbered cause; one waiting mechanism, the C++-only future retired not deprecated.
+
+**Records corrected in place (no fix cycle):** `fastdds-pubsub-provider/README.md` was the last
+place presenting the retired `shared_future` API as current; `kEffectivelyForever` was described
+three ways, the public header justifying the threshold as the overflow point when it sits far
+below it. Evidence: the known-accepted `pubsub-arrow-fastdds` line restated as its authoritative
+`-j1` result so the gate's token scan would not read a non-regression as a failure — verbatim
+run preserved as `verify-PDA-DEC-3-raw.txt`.
