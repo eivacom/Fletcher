@@ -41,8 +41,13 @@ attachment, `published_data` and `delivered_data`.
 
 `CopyVerdict Judge(const CopyLedger&)` — a **pure function**:
 
-- `row_copies` = 0 if `[delivered_data, +delivered_len)` lies inside
-  `[encode_base, +encode_len)`, else 1.
+- `row_copies` = 0 iff `delivered_data == encode_base && delivered_len ==
+  encode_len` — **strict equality, not containment (DEBT-2)**. Containment
+  degenerates to identity only when the lengths match; for a shorter delivered
+  range it admits an identity-preserving in-place `memmove` to the window base,
+  where every payload byte has moved, the address is unchanged and `memcmp`
+  passes by construction. Both registered subjects satisfy strict equality today.
+  A subject delivering a sub-range must say why before the rule is relaxed.
 - `attachment_copies` = the number of attachments whose delivered `data()` is not
   the published `data()`.
 - `refill_bytes` passes through, reported.
@@ -75,9 +80,19 @@ a different address than the live encode window.
 | `InProcessLoopback` | the real `InProcessPubSubProvider` (`pubsub/`) | real-code subject |
 | `StagingProbe` | `SeamProbe` but copies the row into a scratch vector and deep-copies each blob | **negative control** (own test) |
 
+A third subject, `InProcessViaPubSub`, routes the same loopback through `Publisher`
+and `Subscriber` (**DEBT-1**), so the layers above the seam are measured too — §8
+words the attachment claim "publisher → provider → subscriber", and without it a
+`std::vector` materialised in `Subscriber`'s fan-out would be silent.
+
 Rows are exercised at **two sizes** — 64 B and 4 KiB — because a large row is what
 forces a growable provider buffer to relocate, and relocation is the way row
-identity plausibly breaks. Attachments: two entries, 1 KiB each.
+identity plausibly breaks. **The 4 KiB row is written in 64-byte appends
+(DEBT-5)**: one `Append(payload, 4096)` takes `VectorWriteBuffer`'s `len >= kChunk`
+bulk path, relocates nothing and reports `refill_bytes == 0`, which would leave the
+4 KiB leg indistinguishable from the 64 B one. Sub-`kChunk` appends reallocate at
+512/1536/3584, so `refill_bytes > 0` is **expected** there for a growable buffer
+(measured: 3 moves / 5632 B). Attachments: two entries, 1 KiB each.
 
 ### The legs
 
@@ -112,8 +127,10 @@ cross-process subject cannot be registered (below).
 
 ### The one public change
 
-`WriteBuffer::Data()` — `const uint8_t*`, the current window base, documented as
-valid until the next append that refills. Without it no copy accounting of any
+`WriteBuffer::Data()` — `const uint8_t*`, the current window base. Documented
+(**DEBT-6**) as: only `[Data(), Data() + Position())` is defined, and the pointer
+is invalidated both by an append that refills AND by `VectorWriteBuffer::Finish()`,
+which nulls it. Without it no copy accounting of any
 kind is possible from outside a provider. §3.1 already declares the window to be
 `{data, capacity, pos}` and that a C view must honour it, so this exposes nothing
 the spec does not already require to be visible. PDA-DEC-3 may fold it into a
@@ -190,8 +207,22 @@ Forcing test alone: `ctest -R 'CopyAccounting\.PublishAndReceivePerformNoPayload
   ledger's lock-free rung-1 argument dies and a synchronised ledger is a different
   design.
 - **P3 — `Attachments` crosses the seam by const-ref, with no map copy.**
-  Verified in `provider.hpp`. If false, leg 2 is red on landing — report it as a
-  genuine finding under locked decision 7; do not weaken the leg.
+  Verified in `provider.hpp:93-94`, `:123-125`. **Consequence corrected (DEBT-4):**
+  if the const-ref disappeared, leg 2 would NOT go red — a by-value map copy copies
+  `shared_ptr`s, so every blob's `data()` is unchanged and `attachment_copies == 0`
+  is the *correct* answer here. A map copy is a per-delivery allocation, not a
+  payload copy: raise it as a §3.2 finding in prose, not as a red leg.
+
+- **P5 — encode-window liveness (DEBT-3).** The bytes `encode_base` names remain
+  allocated and unfreed until the subscriber callback returns. That is what makes
+  address provenance immune to allocator reuse: a live allocation cannot be handed
+  out twice, so a same-address copy requires free-then-allocate — and a freed
+  encode window handed to a callback is a use-after-free, a worse bug than a copy.
+  Satisfied by every registered subject (`SeamProbe`'s arena is a member; the
+  loopback's `buf` is alive across `cb(...)`, `in_process_provider.cpp:76-89`).
+  **A subject that frees, recycles or pools its encode window before delivery
+  makes provenance unsound and must not be registered — STOP-AND-ASK first.**
+  PDA-ABI registers a driver-backed subject into this shape, so it is stated.
 - **P4 — Fast DDS receive-side zero-copy does not exist and receive-side
   data-sharing is off by default** (live defect, owned by PDA-ABI-7). If that
   changes mid-item, do **not** add a DDS subject here; PDA-ABI-7 registers it.

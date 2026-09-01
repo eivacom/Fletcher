@@ -51,6 +51,20 @@ class WriteBuffer {
 
     size_t Position() const { return pos_; }
 
+    // Base of the current window. Only `[Data(), Data() + Position())` is defined: the bytes
+    // written so far, in the order they were written. Bytes at or past `Position()` are whatever
+    // the last refill left there, and reading them is a bug.
+    //
+    // The pointer is INVALIDATED by any append that refills the window (a growable buffer
+    // reallocates, spec §3.1 clause 1 — the bytes are preserved verbatim, at a new address) and by
+    // `VectorWriteBuffer::Finish()`, which hands the bytes away and leaves this null. It is also
+    // null on a growable buffer before its first refill, when no window exists yet.
+    //
+    // Exists so copy accounting is possible from OUTSIDE a provider: whether the bytes a
+    // subscriber sees are the bytes the encoder wrote is an address question, and nothing else at
+    // the seam can answer it (spec §8.1).
+    const uint8_t* Data() const { return data_; }
+
     // Overwrite 4 bytes at a previous offset (for length prefixes).
     void PatchU32(size_t offset, uint32_t value) {
         if (offset + sizeof(value) > pos_)

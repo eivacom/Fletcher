@@ -142,6 +142,24 @@ target_link_libraries(conformance_inprocess PRIVATE
     conformance_clauses
     GTest::gtest_main)
 
+# ── The copy-accounting oracle ──────────────────────────────────────
+# A SECOND suite in this harness, not a second harness: it inherits the CI lane,
+# the format/licence gates and the subject-parameterised shape a later ABI round
+# registers a driver-backed subject into.
+#
+# Its own binary, and it links NO provider SDK — every subject is in-process by
+# construction (address provenance means nothing across an address space), so it
+# runs in milliseconds and no transport can slow or flake it.
+#
+# Keeps gtest_main: it spawns no child and opens no pipe, so it has no SIGPIPE
+# hazard to disarm.
+add_executable(conformance_copy_accounting
+    src/copy_accounting.cpp
+    src/copy_clauses.cpp)
+target_link_libraries(conformance_copy_accounting PRIVATE
+    conformance_support
+    GTest::gtest_main)
+
 add_executable(conformance_fastdds_peer subjects/fastdds_peer_main.cpp)
 target_link_libraries(conformance_fastdds_peer PRIVATE
     conformance_support
@@ -194,6 +212,11 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(conformance_inprocess DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)
+# No RESOURCE_LOCK: no domain, no port, no child, no shared state — the copy
+# oracle is safe to run fully parallel with everything else here. 60 s is two
+# orders of magnitude above what it costs; anything near it is a hang.
+gtest_discover_tests(conformance_copy_accounting DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
 # and conformance_fastdds carries two subjects (domains 151 and 152). It also
 # spawns a peer child, so two of its clauses must never run at once.

@@ -31,7 +31,7 @@ permits growth (Decision 1); *the one copy the current attachment type forces on
    movement. **Recommendation / default:** (b) — no growable buffer reaches zero for an
    arbitrary message size, and the check that catches real regressions is unaffected.
    *Background: your 2026-08-31 ruling says a copy anywhere is a violation; spec §3.1
-   clause 4 says "a growable one refills". Raised, not designed around.*
+   clause 1 says bytes "must not move ... except inside a refill". Raised, not designed around.*
 
 2. **How much should this guard claim about DDS?**
    Options: (a) run the receive-side check against Fast DDS now · (b) scope it to the

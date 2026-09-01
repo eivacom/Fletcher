@@ -151,6 +151,84 @@ surfaced immediately.
   *does* observe, under either trait value — but do not read it as covering that
   defect class.
 
+## The `CopyAccounting` suite — zero-copy, made falsifiable
+
+Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §8,
+§8.1, §3.1, §3.2. A **second** suite in this harness, in its own binary
+(`conformance_copy_accounting`), linking no provider SDK and running in
+milliseconds. `ctest -R 'CopyAccounting\.'` runs the whole oracle: seven entries.
+
+It decides, by **address provenance**, whether the payload bytes a subscriber
+sees are the very bytes the publisher wrote — for rows and for attachments. Four
+pointers per publish, compared. No counters, no allocator hooks, no sanitizer:
+counting catches only allocation-shaped copies, misses copies into a pooled or
+reused buffer, and on Windows does not interpose allocations made inside a
+provider DLL carrying its own CRT — blind exactly where a loaded driver will
+live. A copy into recycled storage still lands at a different address than the
+*live* encode window.
+
+| Entry | What it is |
+|---|---|
+| `PublishAndReceivePerformNoPayloadCopies` × 3 subjects | the forcing test: row at 64 B and 4 KiB, plus two 1 KiB attachments |
+| `StagingIsCaught` | the **live negative control** — a deliberately-copying provider the same `Judge()` must score at `row_copies == 1`, `attachment_copies == 2` |
+| `BorrowedAttachmentCostsExactlyOneCopy` | the one §3.2 receive-side copy, **pinned at exactly one** |
+| `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable buffer, zero on a fixed one |
+| `JudgeArithmeticIsSound` | the pure verdict function, without a provider |
+
+Subjects: `SeamProbe` (a fixed-arena provider in this harness — the positive
+control, proving the seam *permits* zero-copy), `InProcessLoopback` (the real
+`InProcessPubSubProvider`, called directly at the seam) and `InProcessViaPubSub`
+(the same provider reached through `Publisher` and `Subscriber`, so the layers
+*above* the seam are inside a measured path too). All three are same-process by
+construction: provenance is an address, and an address means nothing across an
+address space, so a cross-process or off-thread subject cannot be built here at
+all — and the ledger is deliberately unsynchronised to keep it that way.
+
+**Refill is permitted and its cost is published, not failed.** Spec §3.1 clause 1
+says bytes already written "must not move or be flushed **except inside a
+refill**, which must preserve them verbatim", and the owner's 2026-09-01 ruling
+permits it on condition the number is reported. Every *other* byte movement fails
+the guard. The number is on stdout and in the JUnit XML; today
+`InProcessLoopback` relocates 3 times / 5632 bytes writing a 4 KiB row in 64-byte
+appends, and `SeamProbe` relocates nothing.
+
+### What green does NOT prove — read before trusting it
+
+- **It proves nothing about any transport's internals.** Green means *the
+  interface* performs no copies. It is not evidence about Fast DDS or XRCE:
+  not about data-sharing, not about loaned samples, not about receive-side
+  zero-copy — none of which exist or are enabled today. Measuring the DDS
+  receive leg now would measure the serialize-and-copy path and report the
+  number as evidence, so it is **not measured** rather than measured wrongly
+  (owner ruling 2026-09-01, "Scope to the interface, say so plainly"; the
+  receive-side data-sharing defect is owned by PDA-ABI-7).
+- **The DDS/XRCE publish-side loan path is unmeasured.** The `LoanedRoundTrip`,
+  `LoanedDeliversAttachments` and `DataSharing*` tests in the Fast DDS provider's
+  own suite assert *delivery over* the loan path; none of them asserts the
+  *absence of copies*. Do not read them as covering this ground.
+- **`BorrowedAttachmentCostsExactlyOneCopy` is a red-on-fix tripwire, not an
+  accepted divergence.** Today's `Blob = shared_ptr<const vector<uint8_t>>`
+  cannot alias foreign memory, so a provider handed borrowed transport memory
+  must copy it once. **PDA-DEC-3 removes that limitation, and when it does this
+  test goes red on purpose** — update the number there, do not delete the test.
+  Silence is how such a fix gets forgotten or half-lands.
+
+### The premises a new subject must satisfy
+
+PDA-ABI is expected to register a driver-backed subject into this same shape.
+Two preconditions, and a subject that breaks either must not be registered:
+
+- **Synchronous delivery on the publishing thread.** The ledger has no lock
+  because it needs none, and the delivery count is asserted `== 1` before any
+  verdict is read — so "nothing arrived" can never read as "no copies".
+- **Encode-window liveness.** The bytes `encode_base` names must remain
+  allocated and unfreed until the subscriber callback returns. That is what makes
+  provenance immune to allocator reuse: a live allocation cannot be handed out
+  twice, so a same-address copy would require free-then-allocate — and a freed
+  encode window handed to a callback is a use-after-free, a worse bug than a
+  copy. A subject that frees, recycles or pools its encode window before delivery
+  makes the measurement unsound.
+
 ## Clause 2 and the axis gate
 
 `CallbackNeverSeesNullSchema` asserts a property of schema-*carrying*
