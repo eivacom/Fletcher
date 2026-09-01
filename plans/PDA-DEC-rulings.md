@@ -218,3 +218,40 @@ PDA-DEC-3 must update the guard when it removes the copy. This is a
 ruling (which forbids pinning a divergence instead of fixing it) governs
 cross-provider divergences; this is a uniform `Blob` limitation §8 already records
 and decision 6 already assigns to PDA-DEC-3.
+
+## 2026-09-01 — A live subscription's schema mode is held, not switched *(selection)*
+> "Hold until resubscribe — That subscription keeps getting no shape until the client resubscribes; a later announcement reaches only new subscriptions. Under the alternative a client decodes one stream two ways with no signal — silent wrong data rather than an error."
+
+**Context:** PDA-DEC-3. A gateway client that subscribes before any topic shape is
+announced gets none; today the loopback caches a `CreateTopic` schema and hands it
+to whatever subscription is live, so that subscription silently starts receiving a
+shape mid-stream — which spec §7 clause 1 already forbids. The rejected alternative
+was to permit the switch and loosen §7 clause 1.
+**Applies to:** `SchemaCarriage::kAsDeclared` (defined as today's behaviour —
+gateway `schemaIpc` is unchanged); the schema mode is **latched at first delivery**;
+and the §7 clause 1 amendment restating "never mix" **per subscription**, which
+lands in THIS PR. Review debt C2-1 (wording + the missing test) rides with it: no
+conformance subject reaches this path today, only the gateway does.
+
+## 2026-09-01 — One error type with a stable numbered cause *(selection)*
+> "One error, numbered cause — A single error type carrying a stable numbered cause, identical across protocols. Messages stay as they are; branching on error type moves into the code."
+
+**Context:** PDA-DEC-3's exception taxonomy (locked decision 10 requires it be
+published). Rejected: today's assorted standard error types plus a prose map, which
+two independent language bindings cannot mirror without drifting — the drift this
+round exists to stop.
+**Applies to:** `PubSubError` over `PubSubStatus` (fixed, append-only, pinned by
+`static_assert`); every seam entry point translates; `kInternal` is the total
+catch-all. This is what lets PDA-ABI and BIND proceed in parallel, since exceptions
+cannot cross a C boundary.
+
+## 2026-09-01 — One waiting mechanism, not two *(selection)*
+> "One mechanism only — C++ callers use the same wait a C#/Rust app uses. About 10 call sites updated here; Arrow-facing callers convert the shape themselves via the new public conversion."
+
+**Context:** PDA-DEC-3. Whether to keep the C++-only `shared_future` schema wait
+beside the new `SchemaArrival`. Rejected: keeping both — two mechanisms drift, and
+it leaves the binding path untested because no in-tree caller would exercise it.
+**Applies to:** the three `shared_future` schema members are **retired, not
+deprecated** (same shape as the 2026-08-31 `FastDDSProviderOptions` ruling);
+`SubscriberArrow::SubscribeResult::schema` becomes a `SchemaArrival`; the tree's
+only deep-copying import is made public as `ImportArrowSchema`.
