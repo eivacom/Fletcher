@@ -11,13 +11,14 @@ always in hand, never a row from "now" ahead of one from "before".
 ## Interfaces
 | Surface | Change | Why |
 |---|---|---|
-| Conformance suite (`integration-tests/pubsub-conformance`) | NEW | The contract becomes runnable; a new protocol inherits it by registering, not by copying tests. |
-| The gateway's built-in loopback protocol | MOVED (behaviour identical) | The suite must reach it; today it is buried inside the gateway executable. |
+| Conformance suite (`integration-tests/pubsub-conformance`), plus its own CI lane | NEW | The contract becomes runnable; a new protocol inherits it by registering, not by copying tests. |
+| Declaring a topic with a shape conflicting with an existing one | CHANGED — now **always** an error | Your ruling: the written contract tightens from "may be refused" to "must be refused". The loopback stops silently overwriting; the edge protocol gains the check. |
+| The gateway's built-in loopback protocol | MOVED, and exercised here only as a **schema-less** transport | The suite must reach it; carrying schemas needs plumbing a later stage replaces, so it is not built twice. |
 
 ## Deleted
 The gateway's private copy of the loopback protocol (replaced by the shared one), and
 one Fast DDS test that checked late-joiner replay **within one process** (replaced by
-the same check run in-process *and* across processes).
+the same check run in-process *and* across processes, on the new CI lane).
 
 ## Corner cases forbidden vs handled
 **Forbidden:** a test that claims to cross a process boundary but quietly does not ·
@@ -27,21 +28,13 @@ a test that reads wire bytes · a difference recorded as "known" instead of fixe
 never blocks, so waiting *is* the behaviour under test (one bounded deadline, no
 sleeps); and a transport carrying no schemas, which the contract explicitly allows.
 
-## Decisions for you
-1. **When a second publisher claims a topic with a different data shape, what does it
-   see?** (a) every protocol refuses it with an error · (b) each keeps today's
-   behaviour — the written contract permits either. **Recommendation / default:** a —
-   a silent mismatch decodes into the wrong fields with no error anywhere.
-   *Background: §7 clause 3 says "may" be rejected; (a) means PDA-DEC-9 makes it "must".*
-2. **A subscriber joins after rows were published. Is "some of them arrived" ever
-   acceptable?** (a) no — a transport replays all retained rows or none · (b) yes,
-   accept whatever each transport does. **Recommendation / default:** a — partial
-   silent loss is the defect this round already shipped once; (b) hides it.
-   *Background: all-or-nothing lets one check cover the loopback (retains nothing) and Fast DDS (retains everything) identically.*
-3. **A protocol the suite cannot exercise here — the edge one needs a helper service
-   — report or ignore?** (a) fail the run and name what is missing · (b) skip silently,
-   as today's tests do. **Recommendation / default:** a — a silent skip certifies a
-   protocol on no evidence, and the suite launches its own cached helper.
+## Decisions — all three answered, nothing open
+1. **A conflicting topic declaration is refused by every protocol** (your ruling,
+   2026-09-01), and the written contract is tightened to say so in this same change.
+2. **Partial late-joiner delivery is never acceptable** — a transport replays all
+   retained rows or none; anything between fails.
+3. **A protocol the suite cannot exercise fails the run loudly**, naming what is
+   missing, rather than skipping quietly as today's tests do.
 
 ## Risks accepted / debt carried
 - Size is **not knowable up front**, deliberately: every difference the suite finds
@@ -50,9 +43,12 @@ sleeps); and a transport carrying no schemas, which the contract explicitly allo
 - One such difference could need a change to the wire bytes — a hard stop, back to you.
 - The full suite is ~15 min slower on a fresh machine (a third-party helper service,
   built once and cached, shared with an existing suite).
+- The loopback is not checked as a schema-carrying transport until a later stage adds
+  the plumbing for it; recorded there so it is not forgotten.
 
 ## Numbers
-Net lines +1700 / −70 (excluding the unknowable protocol fixes) · new public surface 3 · design cycles 1/2
+Net lines +1750 / −115 (excluding the unknowable protocol fixes) · new public surface 1 ·
+design cycles 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
