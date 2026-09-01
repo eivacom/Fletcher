@@ -112,6 +112,13 @@ class SchemaArrival {
     /// `now + timeout` overflows: "a very large number" is how a caller
     /// that cannot name `milliseconds::max()` spells "forever", and answering it
     /// with an immediate kPending would be a silent lie.
+    ///
+    /// **A boundary must reproduce that, and it is the one rule here that NO test
+    /// in this tree pins.** Not an oversight: the standard library Fletcher builds
+    /// against on Windows clamps the deadline inside `wait_for`, so an
+    /// implementation with the rule and one without are indistinguishable there —
+    /// measured, both ways. It is guarded by being written down, here and in
+    /// schema_arrival.cpp, and not by a test that would pass either way.
     [[nodiscard]] PubSubStatus Wait(std::chrono::milliseconds timeout, SharedSchema* out) const;
 
     /// The message that came with a failure outcome; empty otherwise. For

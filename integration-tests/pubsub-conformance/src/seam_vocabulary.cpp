@@ -18,7 +18,6 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
-#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -145,14 +144,25 @@ TEST(SeamVocabulary, AbandonedSubscriptionReportsNoSchemaWillArrive) {
         << "an abandoned subscription must say so, not hang and not report success";
     EXPECT_EQ(out, sentinel) << "*out is untouched for every outcome except kOk";
 
-    // Even the unbounded wait returns, which is what makes it safe to offer. So
-    // does a huge-but-finite one, which is how a binding spells "effectively
-    // forever" when it cannot name milliseconds::max().
+    // Even an unbounded wait returns on an ended subscription, which is what makes
+    // an unbounded wait safe to offer at all. Note what this does and does NOT
+    // say: a settled arrival short-circuits before the timeout is looked at, so
+    // this asserts "a settled arrival answers immediately whatever you ask for",
+    // not anything about the waiting machinery.
+    //
+    // There is deliberately NO assertion here about the huge-finite-timeout clamp
+    // in Wait(). One was written and is removed: it called Wait on this same
+    // settled arrival, so it returned in ~0 us without ever consulting the
+    // timeout, and it passed with the clamp mutated away. The corrected version —
+    // a genuinely pending arrival settled from another thread — cannot falsify the
+    // clamp either, because MSVC 14.44's wait_for clamps the deadline internally,
+    // so it blocks for the same time with the clamp present or absent. The clamp
+    // guards standard libraries that overflow instead; see schema_arrival.cpp.
+    // **Do not "restore coverage" here.** A third guard that passes for a reason
+    // other than the one it states is worse than no guard: it spends the suite's
+    // credibility, which is the only thing it has.
     EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds::max(), &out),
               PubSubStatus::kSubscriptionEnded);
-    EXPECT_EQ(abandoned.Wait(std::chrono::milliseconds(std::numeric_limits<int64_t>::max()), &out),
-              PubSubStatus::kSubscriptionEnded)
-        << "a huge finite timeout must wait, not overflow into an immediate kPending";
 
     // ...and it is NOT the same answer as a schema-less transport's.
     SchemaArrival schemaless = SchemaArrival::Ready(nullptr);

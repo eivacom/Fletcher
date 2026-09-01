@@ -245,6 +245,13 @@ and would return IMMEDIATELY, so a binding spelling "forever" as a very large
 finite number must get a wait, never a poll. It must be implemented
 as a deadline-free wait rather than `wait_for(duration::max())`, which overflows.
 
+That last clause is normative and **pinned by no test in this tree**, which is
+stated rather than left to be discovered: the standard library Fletcher builds
+against on Windows clamps the deadline inside `wait_for`, so an implementation
+that honours the rule and one that does not behave identically there. It was
+measured both ways. It is guarded by being written down; a test asserting it here
+would pass for a reason other than the one it states, which is worse than none.
+
 The **semantics** above are pinned; the spelling is illustrative. Each ABI round
 writes both sides of its own boundary and chooses its own names and layout — there
 is no shared C header (§1).

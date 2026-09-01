@@ -15,7 +15,6 @@
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
-#include <functional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -338,18 +337,18 @@ PubSubProvider::SubscribeCallback MakeCapture(CopyLedger& ledger,
     };
 }
 
-/// `release_subject`, when supplied, destroys the provider and the runner after the
-/// round trip and before the retained blob is read — see CopyLedger::retained_data.
-RoundTrip RunCaptured(CopyRunner& runner, const Topic& topic, const std::vector<uint8_t>& payload,
-                      const Attachments& attachments, CopyLedger ledger,
-                      const std::function<bool()>& release_subject = {}) {
-    RoundTrip trip;
-    trip.ledger = std::move(ledger);
-
-    // Outlives the delivery below, so what it reports is read strictly after the
-    // callback returned and the transport's borrow window closed.
-    Blob retained;
-
+/// PHASE 1 — the only code in this file that may touch the subject.
+///
+/// It takes the runner by reference and NEVER releases anything, so there is no
+/// point inside it at which that reference is dead. It used to end with a
+/// `release_subject` hook that destroyed the runner: from that hook onwards the
+/// parameter was a dangling reference, and any line added below it would have
+/// acquired a use-after-free silently. Destruction now belongs to whoever OWNS
+/// the subject (see RunBorrowedAttachmentRoundTrip), which is the only place that
+/// can do it safely — so the bad state is not guarded against, it cannot be
+/// written.
+void DriveRoundTrip(CopyRunner& runner, const Topic& topic, const std::vector<uint8_t>& payload,
+                    const Attachments& attachments, RoundTrip& trip, Blob& retained) {
     runner.Subscribe(topic, MakeCapture(trip.ledger, payload, retained));
     try {
         runner.Publish(
@@ -364,29 +363,28 @@ RoundTrip RunCaptured(CopyRunner& runner, const Topic& topic, const std::vector<
         trip.error = "unknown exception";
     }
     runner.Unsubscribe(topic);
+}
 
-    // The subject dies HERE, before anything below reads the retained blob. From
-    // this point the only thing that can be keeping the loaned bytes alive is the
-    // Blob's own owner — which is the whole claim.
-    if (release_subject) {
-        trip.ledger.subject_released = release_subject();
-    }
+/// PHASE 2 — reads the blob the callback kept. **Deliberately has no subject
+/// parameter**: it is called once the subject is gone, and it must not be able to
+/// reach one even by accident.
+///
+/// For the borrowed leg the caller destroys the provider between the two phases,
+/// so what this reads is a blob whose own owner is the last thing keeping those
+/// bytes alive. Read with the provider still up, both fields below would pass for
+/// a span with no owner at all — the exact case they claim to distinguish.
+void ReadRetainedBlob(CopyLedger& ledger, const Blob& retained) {
+    if (ledger.retain_key.empty() || retained.data() == nullptr) return;
 
-    // AFTER the callback, after Unsubscribe, after the provider is gone: if the
-    // blob's owner is real these bytes are still readable, still at the address
-    // they were published at.
-    if (!trip.ledger.retain_key.empty() && retained.data() != nullptr) {
-        trip.ledger.retained_data = At(retained.data());
-        // Compared against the HARNESS's own copy of the expected bytes, never
-        // against the published address — see CopyLedger::retain_expected. The
-        // published address is where the retained blob points, so comparing the
-        // two is memcmp(p, p, n) and passes for a dead owner too.
-        const std::vector<uint8_t>& expected = trip.ledger.retain_expected;
-        trip.ledger.retained_content_ok =
-            !expected.empty() && retained.size() == expected.size() &&
-            std::memcmp(retained.data(), expected.data(), expected.size()) == 0;
-    }
-    return trip;
+    ledger.retained_data = At(retained.data());
+    // Compared against the HARNESS's own copy of the expected bytes, never
+    // against the published address — see CopyLedger::retain_expected. The
+    // published address is where the retained blob points, so comparing the
+    // two is memcmp(p, p, n) and passes for a dead owner too.
+    const std::vector<uint8_t>& expected = ledger.retain_expected;
+    ledger.retained_content_ok =
+        !expected.empty() && retained.size() == expected.size() &&
+        std::memcmp(retained.data(), expected.data(), expected.size()) == 0;
 }
 
 }  // namespace
@@ -446,7 +444,14 @@ RoundTrip RunRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
         trace.published_len = blob.size();
         ledger.attachments.push_back(std::move(trace));
     }
-    return RunCaptured(runner, topic, payload, attachments, std::move(ledger));
+    RoundTrip trip;
+    trip.ledger = std::move(ledger);
+    Blob retained;
+    DriveRoundTrip(runner, topic, payload, attachments, trip, retained);
+    // This path registers no retain_key, so phase 2 is a no-op; it is called
+    // anyway so both paths read the ledger through exactly one function.
+    ReadRetainedBlob(trip.ledger, retained);
+    return trip;
 }
 
 RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provider) {
@@ -454,7 +459,9 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
                                                                          : ProbeMode::kZeroCopy);
     // Watched, not merely dropped: the release below reports whether the probe
     // actually died, so a stray keep-alive shows up as a failed assertion rather
-    // than as a leg that quietly stops testing anything.
+    // than as a leg that quietly stops testing anything. A weak_ptr and nothing
+    // else — the runner takes the only strong reference, so destroying it is
+    // sufficient and this local cannot accidentally keep the arena alive.
     std::weak_ptr<SeamProbeProvider> watch = provider;
 
     // Bytes the provider already holds, where a transport's loaned sample would
@@ -490,14 +497,34 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
     borrowed.published_len = loaned.size();
     ledger.attachments.push_back(std::move(borrowed));
 
-    auto runner = std::make_unique<DirectRunner>(provider);
+    auto runner = std::make_unique<DirectRunner>(std::move(provider));
     const std::vector<uint8_t> payload = CopyPayload(kSmallRowBytes);
-    auto release = [&]() -> bool {
-        runner.reset();
-        provider.reset();
-        return watch.expired();
-    };
-    return RunCaptured(*runner, topic, payload, attachments, std::move(ledger), release);
+
+    RoundTrip trip;
+    trip.ledger = std::move(ledger);
+    // Outlives both phases, so what it reports is read strictly after the callback
+    // returned, after Unsubscribe, and after the subject below is destroyed.
+    Blob retained;
+
+    // Phase 1, in its own scope: `live` is the only name bound to the subject, and
+    // it does not exist past this brace. Nothing added after it can reach the
+    // runner even by mistake.
+    {
+        CopyRunner& live = *runner;
+        DriveRoundTrip(live, topic, payload, attachments, trip, retained);
+    }
+
+    // The subject dies HERE, in the function that owns it — the only place that
+    // can destroy it without leaving a dangling reference behind. `provider` was
+    // moved into the runner above, so this is the last strong reference; from now
+    // on the only thing that can be keeping the loaned bytes alive is the Blob's
+    // own owner, which is the whole claim.
+    runner.reset();
+    trip.ledger.subject_released = watch.expired();
+
+    // Phase 2 — reads the retained blob, with no way to reach a subject.
+    ReadRetainedBlob(trip.ledger, retained);
+    return trip;
 }
 
 const std::vector<CopySubject>& CopyAccountingSubjects() {

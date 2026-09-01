@@ -85,6 +85,17 @@ PubSubStatus SchemaArrival::Wait(std::chrono::milliseconds timeout, SharedSchema
         // invites) would silently get a poll. The threshold is deliberately crude
         // and enormous: a caller asking to wait longer than ~a century means
         // forever.
+        //
+        // **UNTESTED, deliberately, and this is the note that says why so nobody
+        // adds a guard that cannot guard.** No test asserts this branch, because
+        // on MSVC 14.44 it is unfalsifiable: that standard library's `wait_for`
+        // clamps the deadline internally, so removing the clamp below changes
+        // nothing observable — measured, with a genuinely pending arrival settled
+        // from another thread, blocking the same ~308 ms either way. The clamp is
+        // defence against the standard libraries that do NOT clamp, where the
+        // overflow returns immediately and a caller spelling "forever" as a large
+        // finite number silently gets a poll. Keep the clamp; do not write a test
+        // here that passes for a reason other than the one it states.
         constexpr std::chrono::milliseconds kEffectivelyForever{std::chrono::milliseconds::rep{1}
                                                                 << 42};  // ~139 years
         if (timeout >= kEffectivelyForever) {
