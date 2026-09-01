@@ -207,9 +207,8 @@ the sentinel hypothesis by measurement after removal. Owner ruled: ship the guar
 blind spot documented, defect owned by **PDA-ABI-7**, which now carries the evidence
 handoff. `gateway-fastdds-ts` is the only harness that reproduces it — do not weaken it.
 
-**Close gate:** PASS. **Cycle meter:** design 2/2 · fix cycles 2 · implementer launches
-3/5 · owner touches 3. **Numbers:** declared +1750/−115 · actual **+3652/−201** (+108%,
-ordered work under-costed) · public surface 1.
+**Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · launches 3/5 · owner touches 3.
+**Numbers:** declared +1750/−115 · actual **+3652/−201** (+108%, under-costed) · surface 1.
 
 **Owner decisions:** re-declaration refused by every protocol (spec amended here); suite
 ships with the blind spot. Both verbatim in `plans/PDA-DEC-rulings.md`.
