@@ -238,9 +238,9 @@ compiler (removing `Data()`), the control test (a broken instrument), and
   in the brief.
 - **No coexistence window.** Nothing in this item is scheduled for deletion in a
   later stage. `WriteBuffer::Data()` survives into PDA-DEC-3, possibly renamed.
-- **CI path filter:** `WriteBuffer::Data()` lands in `core/`; if `core/**` is not
-  in the `integration-pubsub-conformance` filter in `.github/workflows/ci.pr.yml`,
-  a later core change could break the oracle with the lane not running. Add it.
+- **CI path filter:** verified — `core/**` is already in the
+  `integration-pubsub-conformance` filter (`.github/workflows/ci.pr.yml:251`), so a
+  `WriteBuffer` change runs the lane. Nothing owed.
 - **Budget:** fits. No stage split proposed.
 
 ## Files-to-touch
@@ -253,7 +253,6 @@ compiler (removing `Data()`), the control test (a broken instrument), and
 - `integration-tests/pubsub-conformance/README.md` — what the oracle proves and, explicitly, what it does not.
 - `docs/pubsub-interface-spec.md` §8.1 — record the mechanism and its scope (≤12 lines); §3.1 gains a sentence for `Data()`.
 - `.claude/runbook.PDA-DEC.config.md` — `inner_loop_cmd` `-R 'CopyAccounting\.'`.
-- `.github/workflows/ci.pr.yml` — add `core/**` to the conformance path filter if absent.
 
 ## Files-to-delete
 
