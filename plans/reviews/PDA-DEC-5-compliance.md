@@ -178,3 +178,163 @@ durable.
   `TEST_PORT+8`; the duplicate-key input with an explicitly-passed expected quote; the
   no-document-route note in `main.cpp`).
 - The loopback ignoring `max_payload_bytes` (H1) is the design's disclosed residue, unchanged.
+
+---
+
+# Re-check — 2026-09-02, fix cycle 1 (`29fac8b..0f6dbe3`)
+
+Scope: my three findings, the coordinator's two questions (the `--help` ruling; NUL versus
+the seam sanction), and the still-true list. Everything below that says "executed" was run in
+an isolated scratch project that links the installed `fletcher-pubsub` package plus a private
+copy of `pubsub/src/in_process_provider.cpp`; the shared checkout and the shared build trees
+were not mutated.
+
+**Verdict: all three findings CLOSED. Nothing blocking.** One seam-contract question answered
+in the implementation's favour, with evidence. RECORD list at the end — including four stale
+README numbers the fix cycle created.
+
+## Finding 1 (BLOCKING) — CLOSED, re-derived by mutation
+
+Control at HEAD: **19/19 green**. Both halves of the finding re-derived, each executed:
+
+| Mutation | Result at HEAD |
+|---|---|
+| Delete the `if (!entry.empty() && entry.back() == '\r') entry.pop_back();` block | `InProcessDocumentToleratesCrlfAndBlankLines` **RED**, other 18 green — throws `unknown value for 'schema_carriage'` on `"carried\r"` |
+| Neuter the empty-entry skip (`&& document.empty()`) | same test **RED**, other 18 green — throws `document entry with no '=': ""` on the blank line |
+
+Both were 17/17 GREEN before this cycle, so the guard is genuinely new signal, not a
+restatement. The test's own comment predicted the exact failure mode (the exception escapes
+`MakeProvider` rather than a clean `EXPECT` returning false) and that is what happens. The
+composed case (`"\r\nschema_carriage=carried\r\n\r\n"`) covers an interior blank line, not
+only edges — stronger than the finding asked for. The three added `refuse` rows (empty value,
+leading whitespace, trailing whitespace) pin "nothing else is trimmed", which was previously
+prose in design §2 only. §4.1 of the spec now carries both tolerance rules, so the oracle no
+longer omits them either.
+
+## Finding 2 — CLOSED, and the ruling the coordinator asked for
+
+Verified against the post-fix binary (11:02:54): `--help` prints `[--provider NAME]` plus one
+sentence, with no enumeration; `--provider bogus` still prints
+`no built-in provider named "bogus"; available: fastdds, inprocess`. Both header comment
+blocks now state what this file registers *and disclaim being the authority for it*. Rung-1
+forbidden case 4 is satisfied: the gateway holds no list an operator or a third provider would
+have to keep in sync.
+
+**Ruling on "would a name-listing accessor breach the freeze?" — the implementer reached the
+right answer, and the header (not the `static_assert`) is the authority for it.**
+
+1. The `static_assert` at `provider_registry.hpp:287-295` pins **`Create`'s signature only**.
+   A `Names()` accessor would not trip it. So the reason as stated — "adding one would breach
+   the freeze PDA-DEC-4 pinned with a `static_assert`" — is slightly overbroad, and a later
+   implementer citing the `static_assert` for something it does not cover is how a machine
+   check gets believed past its range.
+2. The real authority is the prose freeze immediately above it, which **is** normative and
+   **is** breached: *"So is the rest of this class's public surface: `Create`, `Register`,
+   `SetPathResolver`, **and nothing else**."* (`provider_registry.hpp:250-253`). Adding a
+   fourth method is a stop-and-ask against the spec, not an edit — and this item's own premise
+   **P2** independently makes "this item adds a registry method" a STOP-AND-ASK. Doing it
+   inside a fix cycle, unasked, would have been a worse deviation than the finding it closed.
+3. **And the accessor is the wrong shape on the merits, which is the answer I would give even
+   if it were asked properly.** Once PDA-ABI installs a resolver, the set of *available*
+   providers is not enumerable: a path selector names a driver that is not in `factories_`.
+   A `Names()` could therefore only ever return the **built-ins**, handing code above the seam
+   a way to distinguish built-in from loaded — precisely what locked **decision 3** forbids
+   ("built-in versus loaded is invisible above the seam"). A registry whose refusal message
+   lists what it has, while exposing no enumeration API, is the shape that keeps that
+   invisible. So: not merely out of scope — it should be refused if proposed.
+
+Net: no change owed. If the PM wants the `main.cpp` comment to survive scrutiny, the one word
+worth changing is the authority it cites (the header's "and nothing else", not the
+`static_assert`). Record-level, listed below.
+
+## Finding 3 — CLOSED
+
+DEBT-4's disclosure landed at `gateway/src/main.cpp:123-130`, immediately above the `try` it
+describes, and says the sharp thing rather than the soft one: *"it is NOT the 'observably
+unchanged' this item's other half claims to be; said here because it is not said anywhere else
+durable."* That is adequate and better placed than `plans/` — it sits where a reader of the
+changed code meets it. Grepped the tree: the only surviving occurrences of the phrase are this
+disclosure, the debt register and the design review (both records of the debt itself), and
+design §H1, where it is a *citation* of the claim in the course of justifying a different
+residue, not a fresh assertion. No overclaim survives in the brief or the design.
+
+## New — the NUL refusal versus `provider_registry.hpp`'s explicit sanction
+
+**No contradiction. The refusal ratifies the sanction, and I measured that it does.**
+
+The sanction (`provider_registry.hpp:129-131`, spec §4.1) is about **representation**: the C
+form is pointer-plus-length, *the length is authoritative*, and the bytes may contain NUL. It
+binds the **seam** — Fletcher must carry those bytes to the provider without truncating. It
+does not oblige a provider to *accept* them: §4.2 assigns the format to the provider, §4.1
+calls the document "bytes Fletcher transports and does not read", and a provider refusing
+content its format cannot represent is rung-2 "refused typed at the door", which is the ladder
+this item is required to hold.
+
+The stronger point is that `Registry.InProcessRefusesADocumentContainingANul` is a **live
+machine check for the sanction**. Executed: modelling a NUL-truncating boundary between the
+seam and the factory (`ParseSchemaCarriage(std::string(config.document.c_str()))`) turns that
+test **RED at all three assertions** (`:709` status, `:712` "NUL", `:714` "offset 23") while
+the other 18 stay green — because the truncated document is simply `schema_carriage=carried`
+and constructs cleanly. Nothing else in the suite catches that. So if any future boundary ever
+treats `document` as a C string, this test is what fails. It defends §4.1's clause rather than
+eroding it, and PDA-ABI inherits that guard.
+
+One wording risk, not a defect: the new spec sentence *"A document containing an embedded NUL
+is refused, mirroring `ProviderSelector::Parse`"* has no explicit subject and sits fifteen
+lines below the seam-wide *"the bytes may contain NUL"*. It is inside the "As landed
+(PDA-DEC-5)" **loopback** paragraph, so it is correctly scoped in context — but this is the
+one document PDA-ABI, BIND and PDA-DEC-6/7 all read, and a reader arriving at it cold could
+take it as a seam rule and reproduce the refusal in the Fast DDS or XRCE reader, or worse, in
+a C boundary. Naming the subject ("The loopback refuses…") removes the ambiguity. RECORD.
+
+Adjacent observation, non-blocking and 4b's ground rather than mine: the comment justifies
+refusing NUL because the diagnostic channel cannot carry it, but `QuoteEntry` still emits every
+*other* control byte raw and unescaped — a `\r` in the middle of an entry, for instance, quotes
+to something visually identical to a valid entry (I saw exactly that in the mutation run:
+`unknown value for 'schema_carriage': "schema_carriage=carried"`). The argument for refusing
+NUL is sound on its own terms (truncation, not confusion) and the design never required
+escaping — it deliberately declined to share the registry's escaping `Quoted` under decision 8
+— so nothing is owed here. Noted only so the reasoning is not later generalised.
+
+## Still true — re-verified at HEAD
+
+`SchemaCarriage` exists in exactly one file, `pubsub/src/in_process_provider.cpp`, in an
+anonymous namespace; no header, test, subject, gateway path or back door reaches it, and the
+document remains the only route · `provider_registry.hpp` has a **zero-line diff** this cycle,
+so `Create`'s signature, the `static_assert` and the three-method freeze are untouched · no
+`extern "C"`, no C header, no loader (14) · the reader is still one static function in the
+provider TU, unshared and not promoted to a header — and `<sstream>` was **removed**, so its
+dependency set shrank to `<string>` (decision 8 held tighter than before) · no CMake or
+conanfile change anywhere in the cycle, so no dependency was added · the gateway still makes
+one `Create` call, holds one `shared_ptr<PubSubProvider>`, and names no concrete provider type
+after it (3) · `PubSubProvider`'s method set untouched (4) · no provider outside `pubsub/`
+touched; `FastDDSProviderOptions` / `XrceConfig` whole for PDA-DEC-6/7 · `gateway-fastdds-ts`
+untouched.
+
+## RECORD (this cycle) — PM fixes in place
+
+- **The README's Registry-suite header is stale in four ways, all created by this cycle**
+  (`integration-tests/pubsub-conformance/README.md:362-364`, `389-391`, `418-436`):
+  it still says **"17 entries"** (the suite is **19**); "for all but the **three** PDA-DEC-5
+  entries" (now **five**); the entry table has no rows for
+  `InProcessDocumentToleratesCrlfAndBlankLines` or `InProcessRefusesADocumentContainingANul`;
+  and `InProcessRefusesAnUnrecognisedDocumentEntry`'s row still lists four refusals where it
+  now asserts seven. The mutation paragraph likewise does not name the new tolerance, NUL or
+  no-trim mutations — which is a pity, because the NUL one (a truncating boundary) is the
+  best guard the suite gained. *Note this is the second consecutive item to leave a stale
+  count in this same paragraph; PDA-DEC-4's close corrected the same sentence.*
+- **The design still says "net −1" for public surface in two places** —
+  `plans/PDA-DEC-5-inprocess-builtin.md:252-253` (Risks bullet) and `:300-301` (## Numbers).
+  The brief was corrected at `243cea1`; the design's two copies were not. The strictest count
+  is **0** (+2/−2).
+- `gateway/src/main.cpp:88-91` cites the wrong authority for why the registry has no listing
+  accessor. The `static_assert` pins `Create`'s signature only; the binding text is
+  `provider_registry.hpp:250-253` ("`Create`, `Register`, `SetPathResolver`, and nothing
+  else"). Same conclusion, correct citation.
+- `docs/pubsub-interface-spec.md:395-396` — give the NUL sentence an explicit subject so it
+  cannot be read as a seam-wide rule fifteen lines under "the bytes may contain NUL".
+
+The four record items the PM reports as already fixed are confirmed fixed: the design's copy of
+the false `carried`-mode mutation claim is now a corrected parenthetical naming the review that
+disproved it; the brief's surface count reads "0 at its strictest"; the README's "Five of these
+mutations" is scoped to the list above it; and the public header no longer names `kCarried`.

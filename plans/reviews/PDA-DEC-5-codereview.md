@@ -142,3 +142,154 @@ not grow the surface, which is the substance of the claim.
 - `in_process_provider.hpp:62` still says "In `kCarried` a declaration with no schema is refused" — `kCarried` is no longer a public name.
 - The task brief describes three TS cases "impossible to pass against a stale `gateway.exe`"; the file's own comment correctly claims two (the READY case is a positive control, not a detector).
 - The account gives docs/README as +46; `--numstat` gives +48 (23 spec + 25 README).
+
+---
+
+# Re-check — fix cycle 1 (2026-09-02)
+
+**Range:** `29fac8b..0f6dbe3` (`a995f41` the fix, `243cea1` + `0f6dbe3` record-only).
+**Reviewer built:** isolated worktree at `/c/tmp/pda5rc2` (removed, tree left clean); `conan create`
+core + pubsub, conformance harness with `FLETCHER_CONFORMANCE_XRCE=OFF`, gateway harness rebuilt
+from HEAD. Shared Conan cache restored to pristine `fletcher-pubsub` and re-verified green after the
+last mutation.
+
+**Both of my should-fix findings are CLOSED.** One new should-fix (a survivor mutation), two nits,
+one RECORD line.
+
+## Confirmations asked for
+
+| Claim | Measured |
+|---|---|
+| `Registry.` 19/19 | **19/19 pass** |
+| Non-XRCE conformance 80/80 | **80/80 pass**, 28.9 s, no intermittents |
+| Gateway 24/24, binary postdating the cycle | **24/24**; my own `gateway.exe` built **2026-09-02T11:16:24** |
+| No new link dependency | **Confirmed** — `git diff --name-only 29fac8b..HEAD` touches no `CMakeLists.txt` and no `conanfile.py`; the TU's include set *shrank* (`<sstream>` gone) |
+| `Registry.InProcessResolvesAsABuiltIn` green and unchanged in meaning | **Confirmed** — `registry.cpp` is `98 / 0` in `--numstat`, purely additive; the forcing test's body is byte-identical |
+| Record fixes | All four correct, verified in the diff. The brief now reads "**0 at its strictest** (+2/−2)"; the design's false `carried`-mode mutation claim is retracted *and* explains itself; the README scoping is narrowed to "the mutations in the list above"; `in_process_provider.hpp` no longer names `kCarried` |
+
+## Finding 1 (CRLF / tolerance rules unguarded) — CLOSED
+
+Re-derived by building. Deleted the three-line CR-strip block, `conan create pubsub`, rebuilt the
+harness:
+
+    === MUT-A: delete the \r strip
+    Registry.InProcessDocumentToleratesCrlfAndBlankLines ... ***Failed
+    95% tests passed, 1 tests failed out of 19
+
+Exactly one entry red, and it is the new one. The guard is faithful: `is_carried` witnesses the mode
+through a refusal (`kTopicNotDeclared`) that is unreachable from `as_declared`, needs no accessor,
+and each of its four calls constructs a **fresh** provider, so the composed case is not riding on a
+previous one. The two new `refuse` rows close the empty-value and no-trimming gaps I listed. Design
+§2's tolerance rules are now measurements rather than claims.
+
+## Finding 2 (NUL) — CLOSED, and the truncation reproduced
+
+Taken in the forbidding direction, which is the right call. Deleting the check reproduces the
+failure mode **exactly** as described — I captured the message myself:
+
+    the refusal does not say why: InProcessPubSubProvider: unknown value for
+    'schema_carriage': "schema_carriage=carried
+
+Stops dead at the NUL: no `tail`, no closing quote. Note the first `EXPECT_EQ` still passed under
+that mutation (`kInvalidArgument` either way), which confirms the original grading — a diagnostic
+defect, not a wrong answer — and is exactly why the `Mentions(message, "NUL")` /
+`Mentions(message, "offset 23")` pair, not the status assertion, is what earns its place here.
+
+Answering the three specific questions:
+
+- **Is the refusal complete?** Yes. `ParseSchemaCarriage` has exactly one caller —
+  `InProcessPubSubProvider(const ProviderConfig&)`'s member-init list — and `config.document` is the
+  only route by which a NUL can reach any of the concatenated messages. There is no second entry
+  point, no lazy re-read, and the reader keeps no copy of the document. Every path that can see a
+  NUL passes the check first, because the check is the function's first statement.
+- **Is the offset correct?** Yes. `document.find('\0')` is a byte index into the same buffer the
+  message describes, with no adjustment applied — no off-by-one available. `schema_carriage=carried`
+  is 23 bytes and the test pins `offset 23`; reporting `nul + 1` would redden it.
+- **Did losing `QuoteEntry`'s stream lose escaping something relied on?** No. `QuoteEntry` never
+  escaped anything — the `ostringstream` was pure ceremony around two quote characters, and the
+  replacement concatenation is byte-identical in output. `provider_registry.cpp`'s `Quoted`, which
+  *does* escape and whose injectivity argument is load-bearing, is untouched and still the only
+  escaping helper. The comment now correctly says the NUL check is what makes plain concatenation
+  safe here.
+
+**Residual, deliberately not raised again:** a non-NUL control byte inside an entry (e.g. a CR in
+the middle of a key) still renders raw in the refusal, so on a terminal it can overwrite the start
+of the message. It cannot truncate and it cannot be reached except from a document the operator
+wrote. Below the bar.
+
+## NEW — should-fix: a survivor the 19 entries still miss (confidence: high, verified by building)
+
+**MUT-C — the `inprocess` factory memoises one instance per registry:**
+
+    void RegisterInProcessProvider(ProviderRegistry& registry) {
+        auto memo = std::make_shared<std::shared_ptr<InProcessPubSubProvider>>();
+        registry.Register("inprocess", [memo](const ProviderConfig& config) {
+            if (!*memo) *memo = std::make_shared<InProcessPubSubProvider>(config);
+            return std::static_pointer_cast<PubSubProvider>(*memo);
+        });
+    }
+
+**Result: `Registry.` 19/19 green, and the full non-XRCE conformance run 80/80 green.** Nothing in
+the tree sees it.
+
+Under that mutation the second and every later `Create` on one registry returns the **first**
+caller's instance, **in the first caller's mode**, silently ignoring its own `config.document`. That
+is a wrong answer with no signal: a host that builds one registry and makes an `as_declared`
+provider for one subsystem and a `carried` one for another gets one provider in one mode and no
+error. It is the precise hazard shape `provider_registry.hpp` already warns about in prose
+("`Create` never caches … several instances of one provider with different configurations are
+ordinary") — the registry enforces it on *its* side, and
+`Registry.EachCreateReturnsAnIndependentInstance` pins it, but both only for the *probe* factories.
+The one built-in factory the tree ships is unpinned, and it is the seat PDA-ABI is about to reach
+through by name. A mutable cache hosted at a factory seat is also the exact construct that produced
+two blocking bugs earlier in this round.
+
+The gap is structural and one sentence long: **no test creates two providers from one registry with
+two different documents.** All three original PDA-DEC-5 tests use one registry and one `Create`
+each; the new tolerance test does make four, but all four ask for `carried`, so a memo answers them
+all correctly.
+
+I verified the fix as well as the hole. Adding this to the end of
+`Registry.InProcessCarriageComesFromTheDocument` (~8 lines) is **red under MUT-C and green on
+pristine source** — both runs executed:
+
+    std::shared_ptr<PubSubProvider> plain = MakeProvider(registry, "inprocess", ProviderConfig{});
+    EXPECT_NE(plain.get(), provider.get())
+        << "two Creates on one registry returned the same instance";
+    EXPECT_NO_THROW(PublishRowTo(*plain, {"registry", "second-create"}, 0x1c))
+        << "the second Create inherited the first's carried mode";
+
+It costs nothing — the registry and the carrying provider are already in scope — and it converts
+"the mode comes from *this* document" from a one-shot into a per-call property, which is what the
+test's own name claims.
+
+## The `--help` change — judged
+
+**The conclusion is right; the reason recorded for it is not the binding one.** Dropping the
+enumeration is the correct call and I would not change the code.
+
+The cited constraint is wrong, though. The `static_assert` at the foot of `provider_registry.hpp`
+pins `decltype(&ProviderRegistry::Create)` and nothing else; adding a `Names()` accessor would
+compile straight through it. What actually forbids the accessor is the *prose* freeze two doc
+comments above — "So is the rest of this class's public surface: `Create`, `Register`,
+`SetPathResolver`, **and nothing else**" — which is stronger than the assert and does cover it.
+Worth correcting so nobody later discovers the assert does not fire and concludes the surface is
+open.
+
+And there **is** a way to derive the list without touching the frozen surface, which the reasoning
+should acknowledge before dismissing: the gateway is itself the code that registers both names, five
+lines below. A `std::vector<std::string> RegisterBuiltIns(ProviderRegistry&)` returning the names it
+just registered would give `--help` an enumeration that cannot drift, with `ProviderRegistry`
+untouched. Its real cost is not the freeze but ordering — `--help` is printed inside `ParseArgs`,
+which `std::exit(0)`s before any registry exists, so taking that route means building the registry
+before parsing arguments. For a two-name list that is a poor trade, and "`--provider NAME`, the
+refusal is the authority" is the better answer. Sound decision, wrong premise stated for it.
+
+## Nits (one line each)
+
+- Second survivor, lower value: allowing a duplicate `schema_carriage` when the two values are *identical* passes all 19 — the duplicate row uses `as_declared` then `carried`, so only the disagreeing half of "a duplicate key is refused" is pinned.
+- Nothing in either TS harness asserts `--help` or `--version` output, so the new usage line's promise ("exits 2 naming what this build supports") is backed only indirectly, by the `available:` assertion in the refusal case.
+
+## RECORD:
+
+- `integration-tests/pubsub-conformance/README.md:362` still says the registry binary has "17 entries" — it now has 19, and neither `InProcessDocumentToleratesCrlfAndBlankLines` nor `InProcessRefusesADocumentContainingANul` appears in that section's per-entry table or its mutation list.
