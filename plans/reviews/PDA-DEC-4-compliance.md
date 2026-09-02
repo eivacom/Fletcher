@@ -424,3 +424,123 @@ clause 2 now carries considerably more normative weight than a freeze clause usu
     "Mutation evidence" paragraph — so the suite's newly *mechanical* lifetime guarantee, the
     largest thing this cycle added, is absent from the document the design designates as
     "what the `Registry` suite claims".
+
+---
+
+# Re-check — fix cycle 2, `24c7f85..6ba466d` (2026-09-02)
+
+**S3-1 CLOSED · S3-2 CLOSED. Nothing blocking. The implementer's mutation method is sound.**
+
+Isolated worktree (`git worktree add C:/tmp/pda4-rc2 6ba466d`, removed afterwards), standalone
+build from that tree's sources against the packaged `fletcher-pubsub`, worktree headers first —
+the cached `provider_registry.hpp` is two cycles stale. Baseline **14/14**.
+
+## S3-1 — CLOSED, re-derived independently
+
+Swapping `Anchor`'s two members now reddens `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade`
+at `registry.cpp:672` **and** `:706` — both routes — **13 passed / 1 failed, nothing else
+moving**. Exactly the reported line numbers and split, from a different worktree and a different
+build tree.
+
+`ModuleUserProvider` is the right instrument, and the comment says why in one sentence: sampling
+the flag from the test body cannot see the ordering, because around `provider.reset()` it reads
+`false` then `true` whichever member the anchor releases first. The only observer inside the
+window is the provider's own destructor — and `~ModuleUserProvider()` runs before
+`~ProbeProvider()` and before the base, which is exactly where a real driver closes endpoints
+through module code. No production change, no new entry, count still 14.
+
+Siblings re-run unchanged: dropping the resolver keepalive → RED at `:623`; dropping the factory
+keepalive → RED at `:651`.
+
+**Nit, also guarded:** neutralising `Quoted`'s backslash/quote branch reddens
+`PathSelectorWithoutResolverIsRefusedAsUnsupported`. The
+`EXPECT_FALSE(Mentions(quoted, windows_path))` half is the load-bearing one — it separates
+"escaped" from "reproduced raw", which an `EXPECT_TRUE` on the escaped spelling alone would not.
+
+## S3-2 — CLOSED
+
+Read cold, as PDA-ABI, unable to ask:
+
+- **The general rule now does the work, not the list.** "The anchor reaches the provider `Create`
+  returned and nothing else" is a decidable criterion; the three items are examples under it.
+  That is why "not exhaustive" reads as honest rather than as a hedge — an implementer who meets
+  a fourth case can classify it without asking anyone. An open list under a closed rule is the
+  right repair.
+- **Residue 3 is precise enough to act on.** It names the types (`Blob`'s
+  `std::shared_ptr<const void>` owner, `SharedSchema`, a PDA-DEC-3 loan release), the anchor's
+  missing edge and *why* it is missing (a product of the provider, not the provider; does not
+  pass through `Create`'s return), the hazard (the deleter is module code and a caller routinely
+  holds one after the provider is gone), and the owner (PDA-ABI, because covering it means
+  changing what crosses the seam). Nothing is left to guess.
+- Dropping "because no seam can reach them" is correct: the reason is scope, not impossibility,
+  and the old wording asserted the stronger one.
+
+### The sibling sweep
+
+I swept the header and spec §4 for claims of the same shape — a completeness assertion a
+mechanism cannot support. Two results.
+
+1. **My RECORD-9 from cycle 1 is fixed, and fixed well.** "nothing above the seam can tell" is
+   gone; the header now states that `use_count`, `weak_ptr` and `owner_before` **do** observe the
+   anchor, and that this is "a rule about what callers may rely on, not a thing the type system
+   hides". That is the honest form of precisely the claim S3-2 was about.
+2. **One sibling remains** (RECORD-11, non-blocking): "they throw `PubSubError` carrying a stable
+   `PubSubStatus`, and **nothing else escapes**". By inspection, `KeepSeatAlive`'s
+   `make_shared<Anchor>`, `Register`'s `make_shared<Factory>`, `SetPathResolver`'s
+   `make_shared<PathResolver>`, `Parse`'s string work and `Refuse`'s `ostringstream` all sit
+   *outside* `TranslateSeamFailure`, so `std::bad_alloc` escapes untyped from all three methods.
+   Not blocking: pre-existing (cycle 1 widened it by exactly one allocation), OOM is its only
+   falsifier, and decision 10 has each C boundary translate independently.
+
+Everything else absolute in that header is either bounded by its own next sentence (the "every
+spelling of a shared library on every target" universal is immediately followed by "`myDriver` is
+the one misclassification") or is a normative constraint on future rounds rather than a claim
+about a mechanism's reach (the §4 clause 2 surface freeze, already booked as an observation).
+
+## The implementer's mutation method — sound evidence
+
+It is materially my own method: a standalone target compiling a mutated *copy* of
+`provider_registry.cpp` ahead of the packaged static library, with gtest and the library
+read-only from the Conan cache. Two properties make it sound. MSVC links every object file given
+on the command line and pulls a library member only to resolve an *undefined* symbol, so the
+mutated TU is provably the one running — a duplicate would be `LNK2005`, which does not occur.
+And mutating a copy leaves the shared cache untouched, which is this design's own named
+false-green trap; it is strictly safer than mutating in place, which is how a live
+`// MUTATION M2` came to be sitting in the shared checkout during my first pass.
+
+Two caveats, neither a finding: the harness must take the **header** from the tree rather than
+the cache (the cached one is two cycles stale here — I verified mine came from the worktree), and
+it exercises no CMake or link wiring, so it is evidence about behaviour only. The close gate
+still needs one real `conan create pubsub` + harness `ctest -R 'Registry\.'`. My re-derivation
+reproduced their exact line numbers and pass/fail split from an independent tree; two harnesses
+agreeing is the strongest cross-check available here.
+
+## Still true
+
+Public surface still exactly **5**; `ProviderRegistry` still exactly
+`Create` / `Register` / `SetPathResolver`; no `#include <dlfcn.h>` / `<windows.h>` and no
+`dlopen(` / `LoadLibrary` / `GetProcAddress` call anywhere in `pubsub/` (one prose mention);
+`ProviderConfig`'s fields are never named in the implementation, let alone read (decision 8);
+`provider.hpp` untouched by this cycle, so no `PubSubProvider` change; `gateway-fastdds-ts`
+untouched. Forcing test `Registry.SelectsByNameWithoutCallerKnowingTheProvider` at
+`registry.cpp:170` — zero lines touched by this diff, unchanged in meaning, green.
+
+## RECORD — this cycle
+
+11. `provider_registry.hpp` class comment: "they throw `PubSubError` carrying a stable
+    `PubSubStatus`, and **nothing else escapes**". The seam's *own* allocations are outside
+    `TranslateSeamFailure`, so `std::bad_alloc` does escape untyped. The accurate form is what
+    the rest of that sentence already implies: "nothing a factory or resolver throws escapes
+    untyped."
+12. Same paragraph: "The idiom that covers **1 and 2**…". It covers 1 — a `shared_from_this`
+    handle shares the provider's own control block, so the module outlives it — and is a starting
+    point for 3, but it cannot cover 2: a raw pointer handed to something that outlives the
+    provider dangles under any ownership idiom. One word — "covers 1".
+13. My RECORD-10 is **half** discharged. The README's count is corrected to 14, but its entry
+    table still has rows for only 12: `AResolverThatFailsIsReportedAsATypedSeamFailure` and
+    `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` have none, and the "Mutation evidence"
+    paragraph is verbatim from cycle 0, so it names none of the five strongest mutations now
+    guarding the suite (resolver translate, resolver null, both keepalives, the anchor's member
+    order). The mechanical lifetime guarantee — the largest thing cycles 1 and 2 added — is
+    absent from the document the design designates as "what the `Registry` suite claims".
+14. My RECORD-9 from cycle 1 is **closed** (see the sibling sweep above).

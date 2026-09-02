@@ -389,3 +389,145 @@ the name route.
   documented non-concurrent, so this fixed nothing — but it is strictly tighter. Neither
   seat has a self-assignment path: `Register` refuses a duplicate before touching the map,
   and `SetPathResolver` assigns only when the slot is empty.
+
+---
+
+# Re-check — fix cycle 2 (`24c7f85..6ba466d`), 2026-09-02
+
+Tightly scoped to R1 and the folded nit 1. Isolated worktree
+(`git worktree add /c/tmp/pda4-cr2-reviewer 6ba466d`, removed after); suite built standalone
+from worktree sources against a read-only `gtest/1.17.0`, so nothing of mine reached the
+shared Conan cache. Baseline: **14/14 green**.
+
+**Counts: 0 blocking · 0 should-fix · 0 nits. R1 closed. Nit 1 closed. One `RECORD:` line — and it is my error, not the implementer's.**
+
+## R1 — CLOSED, re-derived by building
+
+Swapping the two `Anchor` members reddens `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade`
+at `registry.cpp:672` and `:706`, both routes, **13/1**, nothing else moving — exactly as
+reported.
+
+```
+registry.cpp(672): Value of: module_was_loaded_at_my_death   Actual: false
+registry.cpp(706): Value of: module_was_loaded_at_my_death   Actual: false
+```
+
+### The new guard is not vacuous. I checked the three modes named, and a fourth.
+
+- **Destructor never runs → fails, not passes.** The flag is initialised `false` and only
+  the destructor ever writes it, so the polarity is fail-safe. Confirmed by mutation:
+  emptying `~ModuleUserProvider`'s body reddens the test. Had it been initialised `true`,
+  this guard would have been the fourth vacuous one in this item.
+- **Read before write is impossible.** The write happens synchronously inside
+  `provider.reset()` — that call drops the last handle, destroys the `Anchor`, destroys the
+  anchor's `provider` member, and runs `~ModuleUserProvider` before returning. Both
+  assertions follow it.
+- **Reordering cannot put them out of reach.** Both are `EXPECT_TRUE`, not `ASSERT`, so
+  neither can short-circuit the other, and both sit after the same `reset()`. Order is
+  immaterial.
+- **The fourth, and the one I expected to find a problem in: does the new assertion make
+  the old `EXPECT_TRUE(unloaded)` redundant?** No — they are orthogonal, and I proved it
+  both ways:
+
+  | mutation | `unloaded` (670/705) | `module_was_loaded_at_my_death` (672/706) |
+  |---|---|---|
+  | `Anchor` members swapped | green | **red** |
+  | seat leaked, never released | **red** | green |
+
+  Each catches precisely what the other misses, so the pair — and only the pair — pins
+  "the module was still loaded when the provider died, *and* it was unloaded afterwards".
+  Dropping either would reopen a hole. That is a better-constructed guard than the one I
+  proposed.
+
+### Fresh eyes on the probe itself
+
+It does work in a destructor, which is where this item's mechanism lives, so: the two raw
+pointers target test-body locals declared in the *enclosing* scope of the `reset()` that
+triggers the write, so neither can dangle; `~ModuleUserProvider` performs two dereferences
+and a `bool` store and the base performs a decrement plus trivial member destruction, none
+of which allocates or throws, and destructors are implicitly `noexcept`, so nothing here
+can throw during unwinding; the `override` keeps the virtual destructor chain intact, so
+deletion through `shared_ptr<PubSubProvider>` is correct. Nothing to report.
+
+## Nit 1 — CLOSED. The fix is correct and complete. My rationale for it was not.
+
+**The guard is real.** Reverting the escaping reddens
+`PathSelectorWithoutResolverIsRefusedAsUnsupported` alone, and *both* halves fire — the
+positive at `:318` and the `EXPECT_FALSE` at `:320`. The negative is the load-bearing one
+(it is what catches "escaped somewhere but also reproduced raw") and it is not satisfiable
+by an unescaped string: the needle is the literal text `"C:\\x64\\driver.dll"`, which an
+unescaped renderer cannot produce.
+
+**The escaping is complete and now injective.** I brute-forced it rather than reasoned:
+encode every string of length ≤ 4 over an alphabet containing every character that
+participates in an escape (`\`, `"`, `x`, hex digits, LF, 0xff) and look for two distinct
+inputs sharing one rendering.
+
+| encoder | colliding pairs | distinct renderings |
+|---|---|---|
+| old (pre-fix) | **2** | 16102 |
+| new (as landed) | **0** | 16104 |
+
+The old collisions are `"\x0a"` and `"\xff"` — each produced both by a literal
+four-character `\x0a` and by the single byte 0x0a. So the defect was real and the fix
+removes it entirely: every byte is covered (0x00–0x1f, 0x7f, 0x80–0xff as hex; 0x20–0x7e
+raw except the two escaped), the output is prefix-free, and a decoder recovers the input
+uniquely.
+
+**But the example I gave for it is wrong, and it has been copied into the tree.** I claimed
+`C:\x64\driver.dll` collided with `C:` + byte 0x64 + `\driver.dll`. It does not, and never
+did: 0x64 is `d`, a *printable* byte, so the old encoder rendered it raw as `d` and never as
+`\x64`. Measured:
+
+```
+A = C:\x64\driver.dll          OLD -> "C:\x64\driver.dll"
+B = C: + byte 0x64 + \driver.dll   OLD -> "C:d\driver.dll"      identical: no
+```
+
+The real ambiguity requires `NN` to denote a **non-printable** byte, so the colliding paths
+are those containing a literal `\x0a`, `\x1b`, `\x7f` or `\x80`–`\xff` — a hex-named build
+directory such as `C:\build\xff3a2b\driver.dll`, not `x64`. The consequence for this diff
+is nil: the change is right, and the test asserts that escaping happens and the raw form is
+absent, which is true and mutation-sensitive whichever path it uses. Only the stated reason
+is false, and it is false because I wrote it that way in cycle 1.
+
+RECORD: the `Quoted` comment in `provider_registry.cpp` and the comment above the new
+assertion in `registry.cpp` both say `C:\x64\driver.dll` would render its `\x64` as the
+escape for byte 0x64 — it would not, since 0x64 is printable; the real collision needs a
+non-printable byte (`\x0a`, `\xff`). Rationale only; code and guard are correct. Origin: my
+cycle-1 nit, not the implementer.
+
+## The method question: is the standalone mutation harness sound evidence here?
+
+**Yes, for these two changes** — and I say so having independently used the same technique
+and reproduced every reported result exactly (`:672`/`:706`, 13/1, and the `Quoted` revert).
+
+Why it is sound here: `core` is header-only and the registry TU has no link dependency, so
+a standalone binary compiles *the same two translation units* — `provider_registry.cpp` and
+`registry.cpp` — with the same compiler and the same standard as the real target. There is
+no packaging step in between that could change their meaning. It is also strictly safer
+than mutating through `conan create`, because a mutated package in the shared cache is
+visible to every other agent on this box, which is a hazard this round has already been
+bitten by.
+
+The limit worth stating plainly: it proves nothing about **build wiring**. It cannot see
+whether `provider_registry.cpp` is still in `fletcher-pubsub`'s source list, whether
+`conformance_registry` links what the CMakeLists claims, or whether `gtest_discover_tests`
+registers 14 entries under `Registry.`. A mutation harness is blind to anything that shows
+up only in packaging. For *this* diff that gap is empty — neither CMakeLists is touched and
+the TU gained no include — which is exactly why it suffices. It would not suffice for a
+change that touched the build files, and the unmutated green should still come from the
+real Conan-built harness, as it does.
+
+## Confirmations
+
+- `Registry.` is **14/14** with **no entry added** (14 `TEST(Registry,` in the file, same as
+  cycle 1); the two new assertions and the probe class landed inside existing entries.
+- The forcing test is `Registry.SelectsByNameWithoutCallerKnowingTheProvider`, still at
+  `registry.cpp:170`, green, and **untouched by this diff** — the test-file hunks are at
+  `:307+` and `:600+` only, so its meaning cannot have changed.
+- **Public surface still 5** — `Factory`, `PathResolver`, `Register`, `SetPathResolver`,
+  `Create` — plus the defaulted constructor and two deleted copy operations. Unchanged.
+- **No new link dependency:** this diff adds no `#include` to the TU at all and touches
+  neither CMakeLists.
+- Nit 3 correctly left logged and unfixed.
