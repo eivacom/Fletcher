@@ -38,8 +38,8 @@ setups that work today); an empty document meaning "all defaults"; a session key
 another client on one Agent (only the Agent sees that).
 
 ## Decisions for you   (none — three recorded as decided, 2026-09-02)
-1. **The payload cap that never capped anything is deleted.** *Authority:* the round's
-   delete-first default; nothing observable changes.
+1. **The payload cap that never capped anything is deleted.** *Authority:* verified P5 —
+   nothing sets or reads it — plus your 2026-09-01 rewrite-the-provider-code ruling.
 2. **Serial stays nameable but is refused distinctly** — "this build cannot do serial", not
    "unknown setting". *Authority:* your ruling that an unloadable driver fails unlike a typo.
 3. **The document is strict** — one setting per line, Windows line endings and blank lines fine,

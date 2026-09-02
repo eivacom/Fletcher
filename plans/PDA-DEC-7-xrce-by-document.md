@@ -54,8 +54,8 @@ They are **deleted, not keyed**: fixed constants in the provider (`kStreamHistor
 `kRunLoopQuantum = 10ms`), rung 1 — an operator cannot get them wrong because they cannot be
 said. Disclosed loss: the stream depth and pump quantum are no longer settable at all. If
 either is ever wanted it arrives as a key **with** its witness (the output buffer is
-`MTU × history`, reachable through `src/internal/xrce_test_hook.hpp`), never before.
-*Authority:* the round's delete-first lean default; nothing observable changes.
+`MTU × history`, reachable through a hook like `xrce_test_hook.hpp`), never before.
+*Authority:* verified P5 + the owner's 2026-09-01 rewrite-the-provider-code ruling.
 `connect_timeout_ms`, the only duration left, is `std::chrono::milliseconds` in
 `XrceSettings`, so it cannot be assigned from or to a neighbouring integer — the field-swap
 class is a compile error, not a test row.
@@ -140,11 +140,11 @@ its own witness: `transport`+`agent` in §6 row 1 through a real socket; `sessio
 ### 8. Decided, not open — recorded with authority
 
 1. **The inert `max_payload` cap is deleted.** A documented 512-byte cap read nowhere.
-   *Authority:* the round's delete-first lean default; nothing observable changes.
+   *Authority:* verified P5 + the owner's 2026-09-01 rewrite-the-provider-code ruling.
 2. **`transport=serial` is nameable but distinctly refused** — `kNotSupported`, separate from
    an unknown key's `kInvalidArgument`. *Authority:* the owner's 2026-09-02 ruling "Accept it,
    fail distinctly"; a valid-but-unsupported selection must not look like a typo.
-3. **Document tolerance is strict.** *Authority:* spec §4.1 as landed by PDA-DEC-6; the
+3. **Document tolerance is strict.** *Authority:* spec §4.1 as landed by PDA-DEC-5; the
    lenient alternative would contradict it.
 
 ## Corner cases forbidden
@@ -209,10 +209,11 @@ its own witness: `transport`+`agent` in §6 row 1 through a real socket; `sessio
   to 65536 (verified bit-for-bit in review). **STOP-AND-ASK** if the bound has to move.
 - **P4 — `Create`/`Register` suffice as frozen** (§4 clause 2); no `PubSubProvider` method is
   added, removed or reordered (decision 4). **STOP-AND-ASK** if a registry change looks needed.
-- **P5 — `max_payload`, `serial_*`, `stream_history`, `run_loop_ms` are set nowhere and read
-  nowhere in `src/`** (verified for the first two in review; the implementer greps the other
-  two before deleting). **STOP-AND-ASK** on any read or caller: the field then has behaviour
-  and deleting it is a disclosed loss, not a no-op.
+- **P5 — `max_payload` and `serial_*` are set and read nowhere in `src/`** (verified, cycle 1).
+  **STOP-AND-ASK** on any read — the field then has behaviour, so deleting it is a disclosed
+  loss. **`stream_history`/`run_loop_ms` sit OUTSIDE P5 and must not trip it:** cycle 2 measured
+  the provider reads both (`xrce_dds_pubsub_provider.cpp:352, 393, 396, 412`), set only by the
+  two retired echo-tests — hence the constants. Do not stop there.
 - **P6 — no out-of-tree caller constructs `XrceDDSPubSubProvider` with `XrceConfig`.**
   Retirement is the ruling's pattern; a deliberate break in a pilot-phase package.
 
@@ -224,11 +225,11 @@ already puts `../src` on the include path). No Agent in any row.
 | Test | Green by | Red for the right reason / mutation |
 |---|---|---|
 | **`XrceConfig.DocumentConfiguresTransport`** (forcing) | §6. Row 1 against a test-owned TCP listener: `transport=tcp`+`agent=127.0.0.1:<bound port>`+`connect_timeout_ms=0` → **the listener accepts**, then `kTransportFailure`. Control row: empty document → **no** connection (defaults are UDP:2018) | Does not compile before the change (no `ProviderConfig` ctor). **M1 ignore the document entirely** → row 1 never accepts → red. **M3 read `agent`'s host but keep port 2018** → row 1 never accepts → red. **M10 read `agent` but keep `transport=udp`** → no TCP connect → row 1 red. The port is ephemeral, so no build can hard-code its way green; the control row cannot be reddened by a build and is not claimed to be a build guard (DEBT-2) |
-| **`XrceConfig.EveryKeySetNonDefaultLandsWholeStruct`** (B1) | §7. One document setting **all four** keys non-default (`transport=tcp`, `agent=10.1.2.3:7401`, `session_key=305419896`, `connect_timeout_ms=250`) → `ParseXrceDocument` result **`==`** the expected `XrceSettings`, whole-struct | **M11 range-check a key and then use a hard-coded value** (the exact build B1 describes) → the parsed struct differs in that field → red. **M12 assign `connect_timeout_ms` from the wrong source** → red, and a wrong-*type* source no longer compiles (§2). A field added later and left unassigned is caught without editing the row |
+| **`XrceConfig.EveryKeySetNonDefaultLandsWholeStruct`** (B1) | §7. One document setting **all four** keys non-default (`transport=tcp`, `agent=10.1.2.3:7401`, `session_key=305419896`, `connect_timeout_ms=250`) → `ParseXrceDocument` result **`==`** the expected `XrceSettings`, whole-struct | **M11 range-check a key and then use a hard-coded value** (B1's build, reader half) → the parsed struct differs in that field → red. **M12 assign `connect_timeout_ms` from the wrong source** → red, and a wrong-*type* source no longer compiles (§2). A field added later and left unassigned is caught without editing the row |
 | `XrceConfig.DocumentRefusalsAreTypedAndQuoted` | Rung-2 items 9–13. One row per refusal, asserting the **status** and the quoted offending entry | M4 accept-and-default any single key → its row red. Stops a reader that fails to refuse; the *accept-and-discard* half is the row above |
 | `XrceConfig.ToleranceRulesMatchTheLoopback` | §3. CRLF entry, blank line, trailing newline accepted; ` agent =x`, `AGENT=`, `#comment` refused | M5 add trimming or comment support → red. Pins the two readers to spec §4.1, the single tolerance oracle for both |
 | `XrceConfig.PublishedDefaultsAreExact` | The README's starting-point block is **read from `README.md` on disk at run time** (path injected as a compile definition; `README.md` added to `conanfile.py`'s `exports_sources`, as `fastdds-pubsub-provider/conanfile.py:33-38` already does) and must parse to a default-constructed `XrceSettings`, compared **whole-struct**. Unreadable → **hard failure naming the path**, never `GTEST_SKIP` | M6 change a default in code or a key's spelling in the README → red. M13 bake the block in at configure time (`file(READ)`/`configure_file`) → re-creates PDA-DEC-6's held-copy defect, so it is forbidden, not tested |
-| `XrceConfig.SerialIsRefusedAsUnsupported` | Rung-2 item 12 — `kNotSupported`, no transport touched, sub-millisecond | M7 route serial into the transport switch → red (`kTransportFailure`, not `kNotSupported`). Replaces the ~1 s `SerialTransportNotImplemented` |
+| `XrceConfig.SerialIsRefusedAsUnsupported` | Rung-2 item 12 — `kNotSupported`, no transport touched, sub-millisecond | M7 route serial into the transport switch → red (`kTransportFailure`, not `kNotSupported`). Replaces `SerialTransportNotImplemented` |
 | `XrceConfig.AgentUnreachableIsATransportFailure` | §5 — the status, not just "it threw"; constructed through `RegisterXrceProvider` + `Create("xrce", cfg)`, so registration gets an Agent-free witness too. Replaces `ConstructorThrowsWithoutAgent` | M8 leave `std::runtime_error` → arrives as `kInternal` through the factory → red. M14 register under the wrong name → unknown name, `kInvalidArgument` → red in the provider's own CI |
 | `Registry.XrceResolvesAsABuiltIn` — in **`conformance_xrce`** | §1, mirroring `Registry.FastDdsResolvesAsABuiltIn`. `MakeProvider(registry, "xrce", cfg)` delivers a row through a base-typed handle | M9 register under `"xrcedds"` → unknown name → red. Not in `conformance_registry`, whose narrow link line is itself the "no transport SDK is reachable" guard |
 | The 24 existing `conformance_xrce` cases + 3 interop tests (**changed, not added**) | §6 — all now document-configured, Agent on 2019/domain 153 and 2018/domain 145 | M1/M3 redden all **24** conformance cases: no Agent on the default port 2018, no discovery on the default domain. The end-to-end proof for UDP and session key. The interop 3 run their Agent *on* the default port and differ only in `domain_id` (typed core), so they witness the core and the type name, not the document |
@@ -284,7 +285,7 @@ notes to this item) · `docs/pubsub-interface-spec.md` · root `README.md`.
 - **Tests retired, each replaced:** `XrceProviderTest.{DefaultValues,CustomValues}` (struct
   field defaults, including the inert one) → `PublishedDefaultsAreExact` + the whole-struct
   B1 row, strictly stronger; `SerialTransportNotImplemented` → `SerialIsRefusedAsUnsupported`
-  (typed status, ~1 s faster); `ConstructorThrowsWithoutAgent` →
+  (typed status; the ~1 s was the Agent row's); `ConstructorThrowsWithoutAgent` →
   `AgentUnreachableIsATransportFailure` (typed status, through the registry).
 
 ## Numbers
