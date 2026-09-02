@@ -286,6 +286,57 @@ the tree in cycle 1 — do not re-derive them:
 | DEBT-5 | The concurrent case must **join both publisher threads before either provider is destroyed** — §6 clause 5 requires quiescence ("no call in flight"), and a crash there is precisely the shm-orphaning path §7 claims the item adds none of (see BLOCKER 3). §7 currently covers subscriptions and callbacks but not the item's own threads. While there: keep the assertions on the main thread after the join — a gtest `ASSERT_*` inside a spawned thread only records a failure, it does not stop the case. | review §"the rest", B3 |
 | DEBT-6 | Declared **+460/−0** is optimistic once B1's fourth arrangement and B2's fix land; expect **~+540**. Not scope creep and no extra guards are being demanded — book the number so the close does not read as an overrun. | review §"budget" |
 
+### Cycle 2 (`02bc51b`) — APPROVE-WITH-DEBT(6), no BLOCKERs
+
+**B1, B2 and B3 are closed** and cycle-1 DEBT-1…6 are all folded into revision 1 and
+**closed**. Eight things the implementer may rely on **without re-asking**, on top of
+cycle 1's nine — all verified in cycle 2, do not re-derive them:
+- **B1 is closed at the class.** With one `kBound`, `domain_id` is the *only*
+  wire-visible difference: the data type name is `fletcher_<bound>`
+  (`payload_bound.hpp:63-65`), the schema companion type name is the constant
+  `SchemaBytes` and is explicitly bound-independent (`:67-68`), topic names are
+  identical by construction, **no partitions are set anywhere**, and both empty
+  documents make participant/writer/reader QoS byte-identical (`qos_defaults.cpp`).
+- **The round's reading of locked decision 13 is the product code's.**
+  `fast_dds_pubsub_provider.cpp:183-186` pairs the two verbatim, so P1b's citation is
+  accurate: the header states the fact, decision 13 freezes it.
+- **The same-domain crossing M1 and the control depend on is observed, not theorised.**
+  `test_profile_document.cpp:536-565` stands two participants on one domain and both
+  are discovered; `test_roundtrip.cpp:50`'s four tests share domain 137 *and* topic
+  names and do interfere.
+- **B2's drop is real.** The overflow is caught in `serialize()`
+  (`fletcher_sample_pub_sub_type.hpp:106-116`), `payload.length = 0` + `return false`,
+  so the change never enters history, `write()` returns non-OK, and `SampleWriter`
+  only logs (`sample_writer.hpp:59-93`). Dropped — not truncated, not late, not
+  refused elsewhere — and `Publish` returns normally.
+- **"A row after a dropped one is still delivered" is new coverage.**
+  `DataSharingOversizedRowDoesNotThrow` has no subscriber, so it pins no-throw only.
+  §2a's third row is a gain, and it reddens loudly if it is ever false.
+- **M6 reddens in either construction order** — low-bound first loses the high-bound
+  journal's middle marker; high-bound first gives the low-bound journal a third
+  marker. The row does not depend on which instance is built first.
+- **All six mutation mechanisms are confirmed in the tree**: `kSchemaConflict` at
+  `fast_dds_pubsub_provider.cpp:321-324`, `kInvalidArgument` "already subscribed to"
+  at `:433-435`, `kTransportFailure` on a second `register_type` under one name at
+  `:233-235`.
+- **Domains and counts.** 159/160 are unused (no match anywhere); 82 ctest entries
+  today reconciles exactly to 12+12+4+2+7+19+25+1 and 86 after; `conformance_fastdds`
+  goes 25 → 29 gtest cases; the design's `conformance_xrce` "1 / 27" is right and the
+  CMakeLists comment is the stale one. Entries and cases are not conflated anywhere.
+
+The design is at its 300-line cap, so **every item below lands in code, tests or the
+README — not in the design doc**, except items 1, 2 and 4, which are corrections to
+sentences already there and must not grow the file.
+
+| Id | Owed | Where |
+|----|------|-------|
+| C2-1 | **Must land in this PR — it is what gets published.** §8's claim folds §2a into the non-exchange claim ("with different domains — **and, separately, with different payload bounds** — exchange no rows"), but for that pair non-exchange is guaranteed by the type name (P1b) and the control's measured window licenses only the equal-bound pair; the design's own P1b says §2a "claims none". True but unearned, and it is the B1 defect surviving in prose. Split the paragraph: the domain pair claims no crossing inside the measured window, the bound pair claims **each instance honours its own bound** (a row over one instance's bound is dropped there and delivered on the other). Same split in the README. | re-review §DEBT-1 |
+| C2-2 | §3 ("differing only in that both instances sit on domain 156") and rung-1 case 1 ("differ only in `domain_id`, so nothing but the domain can be keeping them apart") are contradicted by the design's own forbidden case 4, which says the control uses **one** shape while the isolation case uses two. **Verified harmless — rely on this, do not re-derive it:** the schema shape is not part of the discovery key (the data type name is `fletcher_<bound>` alone), and the reader performs no row-against-schema validation — a schema only releases `OrderedDelivery`'s pre-schema backlog (`internal/data_reader_listener.hpp`). Record it as a premise beside P1b and correct the two "only" sentences. | re-review §DEBT-2 |
+| C2-3 | **Must land in this PR. The one residue that could fail silently.** Each journal is appended on a Fast DDS listener thread and compared on the main thread after `kSettle`. Unguarded, `push_back` racing the comparison is UB, and a foreign marker arriving during the read can be missed — a **green the arrangement did not earn**, which is this item's own defect class. `registry.cpp`'s `Journal` is unsynchronised only because its probes deliver synchronously on the caller's thread; the cross-thread idiom in this harness is `include/fletcher/conformance/fixtures.hpp:130`'s `std::mutex mu_`. One mutex per journal; compare a snapshot taken under it. | re-review §DEBT-3 |
+| C2-4 | M5's mechanism is still one step off. `Publish`'s scratch is `static thread_local` and persists across cases in the same binary and thread, and the 12 clause cases publish before the `Registry.` cases run — so under append semantics the first failure is likely A's **first** publish, not its second. Immaterial to P5 (any *named* assertion reddening satisfies it), but say so, or the recorded evidence reads as a missed prediction. | re-review §DEBT-4 |
+| C2-5 | README placement. `## The Registry suite` opens "in its own binary (`conformance_registry`), 19 entries", and the two existing `Registry.*ResolvesAsABuiltIn` cases that live in the provider binaries are not documented there at all. Introduce the four new cases under a sub-heading that names `conformance_fastdds` (PDA-DEC-6 DEBT-6's concern in the other direction), or that section's own count becomes misleading. | re-review §DEBT-5 |
+| C2-6 | Informational, nothing owed by this item. `integration-tests/pubsub-conformance/CMakeLists.txt:304-306` says `conformance_xrce` is 26 gtest cases; it is 27 (24 clause cases + 2 `ConformanceXrce` + 1 `Registry`), and the design's number is the correct one. Fix wherever it is cheapest — PDA-DEC-9 restates these counts anyway. Not a reason to grow this item's `Files-to-touch`. | re-review §DEBT-6 |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |
