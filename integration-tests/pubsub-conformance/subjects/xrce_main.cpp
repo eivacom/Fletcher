@@ -12,10 +12,11 @@
 // suite silently certifies two providers and calls it three.
 //
 // PDA-DEC-1H: and it is not enough that the Agent we spawned is ALIVE. The guard below
-// proves the OS records OUR child as the holder of the port being certified. Liveness alone
-// was a race, measured and reproduced by
-// `ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness` below, which is where that story is
-// written down.
+// proves, AT BRING-UP, that the OS records OUR child as the holder of the port being
+// certified — a one-shot snapshot in the environment's SetUp, not a running invariant, so an
+// Agent that appears after it is not caught. Liveness alone was a race, measured and
+// reproduced by `ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness` below, which is where
+// that story is written down.
 
 #include <gtest/gtest.h>
 
@@ -27,7 +28,6 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
-#include <iostream>
 #include <memory>
 #include <set>
 #include <string>
@@ -130,26 +130,51 @@ std::shared_ptr<PubSubProvider> MakeXrce(uint32_t session_key) {
 // dependency beyond a system library already on the box, no build option, and nothing an
 // operator has to remember to switch on.
 //
+// This block is byte-identical to the one in
+// `integration-tests/fastdds-xrce-interop/tests/test_interop.cpp` and is deliberately
+// duplicated rather than shared. NOT for a CI reason — both lanes already sparse-checkout and
+// path-filter the provider directories, so a shared header under one of them would cost no
+// workflow edits at all. The reason is that these two harnesses consume
+// `xrcedds-pubsub-provider` as a PACKAGE and reach outside their own directory for nothing, so
+// sharing would mean exporting a test-only header from a shipped package. Drift is guarded by
+// each harness carrying its own `AForeignAgentDoesNotSatisfyTheHarness`; see the longer note in
+// the interop copy.
+//
 // `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
 // while the OS lists no holder at all would mean the table cannot be trusted, and that
 // deserves its own sentence rather than being told as a leftover-Agent story.
+// `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
+// while the OS lists no holder at all would mean the table cannot be trusted, and that
+// deserves its own sentence rather than being told as a leftover-Agent story.
+//
+// There is deliberately NO "unprovable, carry on" state. Two different things used to share
+// one: a platform with no way to ask, and a platform whose query FAILED. The first is now a
+// COMPILE error (the `#error` below), the second is `kQueryFailed` — a REFUSAL that names the
+// OS error. An earlier revision of this guard folded both into a tolerated state that fell
+// back to bare liveness and returned success, which re-admitted, through the guard's own error
+// path, the exact defect the guard exists to close: a run certified without ownership proved.
 enum class PortOwnership {
     kOurs,          ///< The process we spawned holds it. The only pass.
     kSomeoneElses,  ///< Some other process holds it — a leftover Agent, typically.
     kNobody,        ///< The OS records no holder at all.
-    kUnprovable,    ///< This platform offers no way to ask.
+    kQueryFailed,   ///< The OS could not be asked. A refusal; `*query_error` says why.
 };
 
 #ifdef _WIN32
 /// The OS's own UDP table, filtered to `port`. IPv4 only: the Agent is started as `udp4`, so
 /// an IPv6 row on this port could not be the endpoint the suite certifies against.
-PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
+///
+/// `GetExtendedUdpTable` returns the OS error code directly rather than through
+/// `GetLastError()`, so `rc` IS the error a failure is reported with.
+PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* query_error) {
     // Sized, then read — and the table can grow between the two calls, hence the retry.
     for (int attempt = 0; attempt < 4; ++attempt) {
         DWORD size = 0;
         DWORD rc = GetExtendedUdpTable(nullptr, &size, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0);
         if (rc != ERROR_INSUFFICIENT_BUFFER && rc != NO_ERROR) {
-            return PortOwnership::kUnprovable;
+            *query_error =
+                "GetExtendedUdpTable failed sizing the table (error " + std::to_string(rc) + ")";
+            return PortOwnership::kQueryFailed;
         }
         std::vector<unsigned char> buffer(
             size < sizeof(MIB_UDPTABLE_OWNER_PID) ? sizeof(MIB_UDPTABLE_OWNER_PID) : size);
@@ -159,7 +184,9 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
             continue;
         }
         if (rc != NO_ERROR) {
-            return PortOwnership::kUnprovable;
+            *query_error =
+                "GetExtendedUdpTable failed reading the table (error " + std::to_string(rc) + ")";
+            return PortOwnership::kQueryFailed;
         }
         const auto* table = reinterpret_cast<const MIB_UDPTABLE_OWNER_PID*>(buffer.data());
         bool ours = false;
@@ -188,16 +215,22 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
         }
         return ours ? PortOwnership::kOurs : PortOwnership::kNobody;
     }
-    return PortOwnership::kUnprovable;
+    *query_error =
+        "GetExtendedUdpTable reported ERROR_INSUFFICIENT_BUFFER on four consecutive attempts";
+    return PortOwnership::kQueryFailed;
 }
 #elif defined(__linux__)
 /// The socket inodes bound to `port`, from /proc/net/udp and /proc/net/udp6. False only when
-/// NEITHER file could be opened — the one case where the question is genuinely unanswerable.
-bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes) {
+/// NEITHER file could be opened — the one case where the question could not be put at all,
+/// which is a refusal and not a pass.
+bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes, std::string* query_error) {
     bool read_any = false;
+    int last_errno = 0;
     for (const char* path : {"/proc/net/udp", "/proc/net/udp6"}) {
+        errno = 0;
         std::ifstream file(path);
         if (!file) {
+            last_errno = errno;
             continue;
         }
         read_any = true;
@@ -227,21 +260,31 @@ bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes) {
             inodes->insert(token[9]);
         }
     }
+    if (!read_any) {
+        *query_error = "neither /proc/net/udp nor /proc/net/udp6 could be opened (errno " +
+                       std::to_string(last_errno) + ": " + std::strerror(last_errno) + ")";
+    }
     return read_any;
 }
 
 /// The socket inodes `pid` has open. A pid that no longer exists holds no sockets, and that is
 /// a real answer rather than an unanswerable one — a dead child cannot be the port's owner. A
 /// PERMISSION refusal is the only unanswerable case, and it cannot arise for a child of this
-/// process (same real uid, nothing setuid in the picture).
-bool ProcessSocketInodes(int64_t pid, std::set<std::string>* inodes) {
+/// process (same real uid, nothing setuid in the picture); if it somehow does, it refuses.
+bool ProcessSocketInodes(int64_t pid, std::set<std::string>* inodes, std::string* query_error) {
     if (pid <= 0) {
         return true;
     }
     const std::string dir_path = "/proc/" + std::to_string(pid) + "/fd";
     DIR* dir = ::opendir(dir_path.c_str());
     if (dir == nullptr) {
-        return errno != EACCES;
+        if (errno == EACCES) {
+            *query_error = dir_path +
+                           " could not be read (EACCES), so the sockets our own child holds "
+                           "cannot be listed";
+            return false;
+        }
+        return true;
     }
     while (const dirent* entry = ::readdir(dir)) {
         char target[256];
@@ -260,17 +303,17 @@ bool ProcessSocketInodes(int64_t pid, std::set<std::string>* inodes) {
     return true;
 }
 
-PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
+PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* query_error) {
     std::set<std::string> port_inodes;
-    if (!UdpPortInodes(port, &port_inodes)) {
-        return PortOwnership::kUnprovable;
+    if (!UdpPortInodes(port, &port_inodes, query_error)) {
+        return PortOwnership::kQueryFailed;
     }
     if (port_inodes.empty()) {
         return PortOwnership::kNobody;
     }
     std::set<std::string> our_inodes;
-    if (!ProcessSocketInodes(our_pid, &our_inodes)) {
-        return PortOwnership::kUnprovable;
+    if (!ProcessSocketInodes(our_pid, &our_inodes, query_error)) {
+        return PortOwnership::kQueryFailed;
     }
     // Every socket on the port must be one of ours — the same "foreign beats ours" rule the
     // Windows branch applies, for the same reason.
@@ -282,9 +325,13 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
     return PortOwnership::kOurs;
 }
 #else
-PortOwnership UdpPortOwnership(uint16_t /*port*/, int64_t /*our_pid*/) {
-    return PortOwnership::kUnprovable;
-}
+// No runtime state to fall back to means no third platform can silently lose the guard:
+// porting one of the two queries above is a precondition for building this harness. This was a
+// runtime `kUnprovable` that degraded to liveness and PASSED; a build-time refusal is the same
+// decision, taken where somebody has to read it.
+// clang-format off
+#error "PDA-DEC-1H: no UDP port-ownership query for this platform. Port GetExtendedUdpTable (Windows) or /proc/net/udp (Linux) here rather than dropping the guard: this harness must not certify a run against an Agent it cannot prove it owns."
+// clang-format on
 #endif
 
 /// The one refusal an operator can act on, shared by every path that reaches it, so the
@@ -297,6 +344,19 @@ std::string ForeignAgentRefusal(uint16_t port, const std::string& observed) {
            "whole suite against itself, possibly on another DDS domain. Kill it (Windows: "
            "taskkill /IM MicroXRCEAgent.exe /F; POSIX: pkill MicroXRCEAgent) and re-run; the "
            "suite will not run against a foreign one.";
+}
+
+/// The refusal when the OS query itself failed. Deliberately NOT the foreign-Agent sentence:
+/// this one says ownership could not be established, which under this guard's rule is just as
+/// disqualifying. Falling back to "our child is still alive" here is precisely what this item
+/// measured as insufficient, so an unanswerable query fails the run out loud.
+std::string UnprovenOwnershipRefusal(uint16_t port, const std::string& query_error) {
+    return std::string("cannot establish which process holds UDP ") + kAgentIp + ":" +
+           std::to_string(port) + " — " + query_error +
+           ". The harness refuses rather than falling back to \"the Agent we spawned is still "
+           "alive\": that liveness check is the measured defect this guard replaced, so a "
+           "query that cannot be answered is a failed run and not a quiet one. If it persists, "
+           "the OS port table is unreadable on this machine and nothing can be certified here.";
 }
 
 // ── The Agent, for this binary's whole run ──────────────────────────
@@ -327,12 +387,18 @@ class OwnedAgent {
     OwnedAgent(const OwnedAgent&) = delete;
     OwnedAgent& operator=(const OwnedAgent&) = delete;
 
-    /// True only when an Agent answers `port` AND the OS records the child THIS object
-    /// spawned as the holder of it — or, on a platform that cannot be asked, when the child
-    /// is at least still alive and `ownership_unprovable()` says so out loud.
+    /// True only when an Agent answered `port` AND the OS records the child THIS object
+    /// spawned as the holder of it. There is no third answer: a platform that cannot be asked
+    /// does not compile, and a query that FAILS is a refusal like any other — so `proven()`
+    /// false always carries a `failure()` sentence to print.
+    ///
+    /// SCOPE: this is a BRING-UP proof, not a running invariant. It is a point-in-time
+    /// snapshot taken in the constructor and never re-taken, so a foreign Agent that appears
+    /// AFTER it is not caught here. What makes that acceptable is that such an Agent cannot
+    /// take a port our child already holds without our child dying first — not that the
+    /// window is shut.
     bool proven() const { return failure_.empty(); }
     const std::string& failure() const { return failure_; }
-    bool ownership_unprovable() const { return ownership_unprovable_; }
 
    private:
     std::string Spawn() {
@@ -401,8 +467,15 @@ class OwnedAgent {
         }
         char* env_strings = GetEnvironmentStringsA();
         if (env_strings == nullptr) {
-            ADD_FAILURE() << "GetEnvironmentStringsA returned null";
-            return {};
+            // No gtest macro here. This helper runs from a CONSTRUCTOR, including the two the
+            // forcing test makes, where a non-fatal failure would redden that test instead of
+            // the bring-up that actually failed. The child needs nothing from our environment
+            // except the augmented loader path, so hand it exactly that: an environment block
+            // is "K=V\0...\0\0", hence the two terminators.
+            std::string only_path = "PATH=" + new_path;
+            only_path.push_back('\0');
+            only_path.push_back('\0');
+            return only_path;
         }
         std::string block;
         bool path_written = false;
@@ -433,21 +506,39 @@ class OwnedAgent {
     /// ProveOwnership — but still what tells "nobody is there" from "somebody else is".
     bool Alive() {
 #ifdef _WIN32
-        return process_handle_ != nullptr &&
-               WaitForSingleObject(process_handle_, 0) == WAIT_TIMEOUT;
+        if (process_handle_ == nullptr) {
+            return false;
+        }
+        if (WaitForSingleObject(process_handle_, 0) == WAIT_TIMEOUT) {
+            return true;
+        }
+        // Exited, so drop the pid while keeping the handle (Kill still has to close it).
+        // Windows recycles pids: a pid held past its process's death could match a stranger's
+        // row in the UDP table and read back as kOurs, which is the one shape in which this
+        // guard could pass wrongly. Pid 0 matches nothing.
+        process_id_ = 0;
+        return false;
 #else
         if (pid_ <= 0) {
             return false;
         }
         int status = 0;
-        if (waitpid(pid_, &status, WNOHANG) == 0) {
+        const pid_t reaped = waitpid(pid_, &status, WNOHANG);
+        if (reaped == 0) {
             return true;
         }
         // Reaped here, so clear it: leaving pid_ set would send KillAgent a
         // SIGTERM to a pid this process no longer owns and then block in a
         // waitpid that can never return. The exit note is kept, because the pid is not.
-        exit_note_ = WIFEXITED(status) ? " with status " + std::to_string(WEXITSTATUS(status))
-                                       : std::string(" on a signal");
+        if (reaped < 0) {
+            // waitpid wrote nothing to `status` (ECHILD, say), so reading WIFEXITED off it
+            // would report "exited with status 0" for a failure to ask in the first place.
+            exit_note_ =
+                " (exit status unknown: waitpid failed, errno " + std::to_string(errno) + ")";
+        } else {
+            exit_note_ = WIFEXITED(status) ? " with status " + std::to_string(WEXITSTATUS(status))
+                                           : std::string(" on a signal");
+        }
         pid_ = -1;
         return false;
 #endif
@@ -465,27 +556,35 @@ class OwnedAgent {
     /// indistinguishable without asking who holds the port: a missing binary and a bind lost
     /// to a leftover Agent both surface as a child that exited at once.
     std::string DeadChildRefusal() {
-        if (UdpPortOwnership(port_, ProcessId()) == PortOwnership::kSomeoneElses) {
+        std::string query_error;
+        if (UdpPortOwnership(port_, ProcessId(), &query_error) == PortOwnership::kSomeoneElses) {
             return ForeignAgentRefusal(port_,
                                        "the Agent we spawned exited before it could bind and "
                                        "another process holds the port");
         }
+        // The child is dead either way, so a failed query cannot turn this into a pass — but
+        // it does subtract from what is known, so it is said rather than dropped.
+        const std::string aside =
+            query_error.empty()
+                ? std::string()
+                : " (and who holds the port could not be established: " + query_error + ")";
         return "the MicroXRCEAgent at " + std::string(MICRO_XRCE_AGENT_PATH) +
-               " exited immediately" + exit_note_ +
+               " exited immediately" + exit_note_ + aside +
                ". Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and know that "
                "the XRCE subjects then do not exist.";
     }
 
     /// The guard: an Agent answers the port, AND the OS says the process we started is the one
-    /// holding it. Liveness proved neither half.
+    /// holding it. Liveness proved neither half. Taken once, here, at bring-up.
     std::string ProveOwnership() {
         // `kNobody` right after a probe was answered means the table has not caught up, so it
         // is given a bounded second before it is believed. The normal path answers `kOurs`
         // first time round, so it costs one table read and no wait at all.
         PortOwnership ownership = PortOwnership::kNobody;
+        std::string query_error;
         const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         do {
-            ownership = UdpPortOwnership(port_, ProcessId());
+            ownership = UdpPortOwnership(port_, ProcessId(), &query_error);
             if (ownership != PortOwnership::kNobody) {
                 break;
             }
@@ -505,25 +604,18 @@ class OwnedAgent {
                     port_,
                     "an Agent answered it but the OS records no process holding it at all, so "
                     "ownership cannot be established");
-            case PortOwnership::kUnprovable:
-                break;
+            case PortOwnership::kQueryFailed:
+                // NOT "unknown, so proceed". This guard exists because an Agent whose
+                // ownership is unproved must not certify a run, and a query that failed has
+                // proved nothing. Falling back to liveness here — which an earlier revision
+                // did, with one INFO line and a pass — would re-admit the defect through the
+                // guard's own error path.
+                return UnprovenOwnershipRefusal(port_, query_error);
         }
-        // A counted, documented skip — this platform cannot answer the question, and refusing
-        // anyway would fail a run with nothing wrong. Windows and Linux both answer, which is
-        // every platform this project builds on; a third one gets this sentence rather than
-        // silently losing the guard. Liveness is all that is left, so it is still checked, it
-        // is named as the weaker thing it is, and the forcing test below counts the skip.
-        ownership_unprovable_ = true;
-        if (!Alive()) {
-            return DeadChildRefusal();
-        }
-        std::cout << "[   INFO   ] UDP port ownership is unprovable on this platform (neither "
-                     "GetExtendedUdpTable nor /proc/net/udp), so the Agent on "
-                  << kAgentIp << ":" << port_
-                  << " is only known to be ALIVE, not to be the one answering. A leftover "
-                     "Agent holding this port would not be detected here."
-                  << std::endl;
-        return {};
+        // Unreachable: every enumerator returns above. Kept so that adding an enumerator
+        // without handling it becomes a refusal rather than a silent pass.
+        return UnprovenOwnershipRefusal(
+            port_, "the port-ownership query gave an answer this guard cannot read");
     }
 
     std::string WaitUntilReachable() {
@@ -580,7 +672,6 @@ class OwnedAgent {
 
     uint16_t port_;
     std::string failure_;
-    bool ownership_unprovable_ = false;
     std::string exit_note_;
 #ifdef _WIN32
     HANDLE process_handle_ = nullptr;
@@ -651,19 +742,6 @@ TEST(ConformanceXrce, AForeignAgentDoesNotSatisfyTheHarness) {
     ASSERT_TRUE(incumbent.proven())
         << "the test could not stand up its own Agent on UDP " << kContestedPort
         << ", so it proves nothing about a foreign one: " << incumbent.failure();
-    if (incumbent.ownership_unprovable()) {
-        // A counted, documented skip — see the same shape in
-        // xrcedds-pubsub-provider/tests/test_xrce_document.cpp. On a platform where port
-        // ownership cannot be established, the bring-up falls back to liveness and would
-        // accept the incumbent by design, so asserting a refusal here would be a red with
-        // nothing wrong. Windows and Linux both answer, which is every platform this project
-        // builds on; the row stays registered so a third one gets this sentence instead of
-        // silently losing the coverage.
-        GTEST_SKIP() << "UDP port ownership is unprovable on this platform (neither "
-                        "GetExtendedUdpTable nor /proc/net/udp), so the bring-up cannot tell a "
-                        "foreign Agent from its own and this case cannot be asserted";
-    }
-
     OwnedAgent contender(kContestedPort);
     EXPECT_FALSE(contender.proven())
         << "the bring-up certified an Agent it does not own: a foreign Agent holds UDP "
