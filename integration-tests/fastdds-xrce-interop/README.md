@@ -23,7 +23,7 @@ Both directions of the bridge on a single shared DDS domain (different topic nam
 
 Both providers are configured through `ProviderConfig` (PDA-DEC-6, PDA-DEC-7): no
 typed Fast DDS options struct and no typed XRCE options struct exists any more.
-What these three tests witness is the seam's **typed core** and the registered
+What the three interop cases witness is the seam's **typed core** and the registered
 type name, not either provider's document — they run their Agent on the default
 UDP port with the default transport, and their one distinguishing setting is
 `domain_id` (145). The XRCE document carries only the session key, which has to
@@ -36,6 +36,10 @@ and a non-default domain (153).
 `MicroXRCEAgent` is built from source by this directory's `CMakeLists.txt` as an `ExternalProject` (with `UAGENT_SUPERBUILD=ON` so the Agent fetches its own fast-dds / fast-cdr / asio / tinyxml2 / micro-cdr in isolation from the Conan deps the test itself uses). The resulting binary path is injected as `MICRO_XRCE_AGENT_PATH` into the test binary.
 
 A gtest `Environment` fixture spawns the Agent (`fork`+`execv` on Linux, `CreateProcess` on Windows) before any test runs and kills it on tear-down. The fixture polls until the Agent's UDP port is reachable, with a 15-second deadline so it tolerates slow start-up under CI load.
+
+It then proves it **owns** that Agent (PDA-DEC-1H). Reachability alone is not enough and neither is the spawned Agent still running: a second `MicroXRCEAgent` aimed at a port a leftover already holds logs `bind error` and exits, but takes ~0.9 s to do it, while the leftover answers the reachability probe in milliseconds. This fixture asked neither question before that item, so a leftover Agent on 2018 satisfied it outright and all three interop cases could certify the bridge across a foreign Agent on another DDS domain. `SetUp` now requires the OS to record *this binary's child* as the holder of UDP 2018 (`GetExtendedUdpTable` on Windows, `/proc/net/udp` plus the child's `/proc/<pid>/fd` on Linux) and refuses with an operator-actionable message otherwise; where neither can be asked it falls back to liveness, says so on stdout, and the guard's own case records a counted skip.
+
+So there are **4 gtest cases in this one ctest entry**: the three interop directions plus `AForeignAgentDoesNotSatisfyTheHarness`, which deliberately puts two Agents on port **2118** (never 2018) inside its own scope, both RAII-owned so neither outlives the case. Its twin, asserting the same refusal in the same words, is `ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness` in `integration-tests/pubsub-conformance` — the two harnesses cannot share a source file (disjoint sparse checkouts and path filters in CI), so the guard is duplicated and the pair of tests is what keeps the copies from drifting.
 
 No `MicroXRCEAgent` install, no Docker sidecar, no manual `&`-in-another-terminal step. `cmake build && ctest` is the whole workflow on every platform.
 

@@ -130,8 +130,20 @@ target_link_libraries(integration_tests PRIVATE
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
     fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
+if(WIN32)
+    # PDA-DEC-1H: the Agent fixture proves that OUR child holds the UDP port the three interop
+    # cases run across, and on Windows that answer comes from GetExtendedUdpTable. A system
+    # library, not a new dependency: no package, no option, nothing to fetch. The POSIX side
+    # reads /proc and links nothing. The same two lines exist in
+    # integration-tests/pubsub-conformance/CMakeLists.txt.
+    target_link_libraries(integration_tests PRIVATE iphlpapi)
+endif()
+
 # A single ctest entry that runs all gtest cases inside one process.
 # This is intentional: the MicroXRCEAgent fixture binds UDP port 2018,
 # so two ctest-spawned processes would race for the port. Sharing one
 # process means one Agent setup/teardown for the whole suite.
+# 4 gtest cases in this one entry: the three interop directions plus
+# PDA-DEC-1H's `AForeignAgentDoesNotSatisfyTheHarness`, which stands up two
+# more Agents of its own on port 2118 inside its own scope.
 add_test(NAME integration_tests COMMAND integration_tests)
