@@ -338,3 +338,258 @@ Two honesty corrections to the implementer's framing:
   which was *replaced* rather than migrated. Correct on a careful reading, easy to misquote —
   and PDA-DEC-7 will cite this table.
 - The design's declared line budget (+780 / −310) understates the actual adds by ~2.9×.
+
+---
+
+# Cycle 2 re-review (2026-09-02) — independent, adversarial
+
+Fix pass reviewed: `git diff 6a66a15..7f6a310` (19 files, +1179/−96; **+661/−96**
+excluding the two review documents). Working tree clean at `7f6a310`. Cycle 1 above is
+the record of what was found and is not edited.
+
+Verdict: **PASS-WITH-FINDINGS(2)** — **0 blocking**. Both cycle-1 blockers are closed;
+F2/B1 is closed **by mutation, run here, in three directions**. Two non-blocking
+conformance items and six `RECORD` lines follow.
+
+## B1 / cycle-1 F2 — closed. Reproduced, not accepted.
+
+The guard is real. I ran it; I did not read it.
+
+| # | Mutation | Rebuild? | Result |
+|---|---|---|---|
+| 1 | `README.md:217` writer `<max_samples>100` → `101`, code untouched | **none** | **RED** — `test_profile_document.cpp(619)`, "no longer transcribes `MakeFletcherDefaultWriterQos()` exactly" |
+| 1b | `README.md:232` **reader** `<max_samples>` → `99`, code untouched | **none** | **RED** at line 628, on the reader half — both roles are live, not just the writer |
+| 2 | `qos_defaults.cpp:29` writer `max_samples = 100` → `103`, **README untouched** | yes (7 s incremental) | **RED** at line 619 |
+| 3 | the **packaged** route: the same edit to the *exported* README inside the Conan build folder | none | **RED**, then green again on restore |
+| 4 | README heading `#### The published starting point` renamed | none | **RED**, loudly: "found no fenced xml block under …" |
+
+Both directions redden, and the degradation modes are loud rather than silent: a missing
+README, an empty extraction, a renamed heading and a truncated block each hit an `ASSERT`
+before any comparison happens.
+
+**Exactly one copy of the XML in the repo.** `grep` for the transcribed `max_samples`
+line over the tree returns two hits, both inside the single fenced block
+(`README.md:217,232`); the test's `kPublishedStartingPoint` literal is gone, and
+`grep -rln fletcher_writer` finds no second transcription.
+
+**The packaged build reads the same file, not a stale copy.** The baked path in the
+in-tree binary is `…/fastdds-pubsub-provider/tests/../README.md`; in the Conan cache
+build it is `…/p/b/fletc68645fe78dff2/b/tests/../README.md` — the **exported** copy,
+which `diff` reports byte-identical to the tree's. Mutation 3 reddens that binary, so the
+cache build genuinely reads the exported file. Two further properties are worth naming as
+*good*: putting `README.md` in `exports_sources` puts it in the recipe revision, so a
+README edit invalidates the package rather than being papered over by a cached one; and
+if the export were dropped the file would be absent at the baked path and the test would
+fail on `ASSERT_FALSE(readme.empty())` — a loud failure, not a silent degradation. This is
+the "works in-tree, degrades in the cache" hat the charge warned about, and it is not
+being worn.
+
+## The other findings — each checked against the fix, not the claim
+
+Measured on the Conan cache build of `7f6a310`. (The in-tree
+`fastdds-pubsub-provider/build/` tree is orphaned: its `fletcher-pubsub` package folder
+was deleted by a concurrent `conan create`, so CMake cannot reconfigure there.
+Environment, not a finding.)
+
+- **Suite:** **85 ctest entries / 84 gtest cases, 84/84 green**, matching the PM's
+  authoritative numbers exactly. `FastDdsConfig.*` 23/23.
+  `SchemaBoundComesFromTheDocument` passes — cycle-1 F1 was environmental, as ruled.
+- **S2 — closed, executed.** `gateway.exe --provider-config <whitespace-only>` prints
+  `--provider-config <path> is empty; omit the flag to run on the provider's own defaults`
+  and exits **2**. I ran all five CLI cases against the built gateway rather than trusting
+  the TS assertions: missing file → `cannot read --provider-config`, exit 2; a
+  **directory** → `cannot read`, exit 2; whitespace-only → `is empty`, exit 2; a typo'd
+  `fletcher.max_schema_byte` document → the **provider's own** message quoting the
+  property, exit 2 (so the bytes really cross the seam); and
+  `--provider-config nope.xml --help` now prints help and exits **0** (the deferred read).
+  A valid anchor-only document starts and prints `READY 19193` — with **no
+  `[XMLPARSER Error]` line at all**, which is S3's fix where an operator would see it.
+- **S1 — closed.** Five cases in `end-to-end.test.ts` (the three ordered, plus the
+  directory and empty-file rows). Every stderr string they assert matches the real output
+  I reproduced above; the ports (`+9`, `+10`) collide with nothing; the watchdog stops a
+  refusal-that-stopped-refusing from burning the 30 s timeout. I did **not** run the TS
+  suite (npm + gateway harness is the concurrent agent's scope).
+- **F5 — closed, and bounded in both directions.** The refusal is real: for the two role
+  profiles it fires at construction, for a per-topic profile at the first endpoint, and
+  the three message assertions (`fletcher.loan_publish` + `data_writer` +
+  `fletcher_writer`) cannot be satisfied by the malformed-document message, which quotes
+  neither the property nor the endpoint element — so no most-vexing-parse-class vacuity
+  this time. I checked the over-reach direction by mutation: widening the predicate from
+  `fletcher.`-prefixed to *any* property reddens exactly
+  `AForeignPropertyInAnEndpointProfileIsAccepted` and nothing else, and
+  `ForeignPropertiesSurviveTheStrip` still passes. The `<qos>`-child placement really is
+  refused by Fast DDS's own parser — its line is in the log
+  (`Invalid element found into 'writerQosPoliciesType'. Name: propertiesPolicy`), so that
+  row is measured, not assumed. The only in-tree document carrying a `fletcher.*` property
+  (`benchmarks/exp_zero_copy.cpp`) puts it in the anchor, so nothing in the tree is
+  collaterally refused.
+- **S4 — the count of 13 is right and none was missed.** `git grep "ProviderConfig{0"` at
+  `6a66a15` gives **13** sites in 4 files (test_roundtrip **8**, test_interop 3,
+  fastdds_peer 1, fastdds_main 1) — cycle-1's counterpart missed four of the eight in
+  `test_roundtrip.cpp`. All 13 are designated-initialiser form at `7f6a310`; the only
+  surviving brace-inits are `ProviderConfig{}` and `ProviderConfig{.document = …}`, which
+  carry no positional hazard.
+- **S3 — the proof is sound; the numbers are slightly off (RECORD).** I judged the proof,
+  not the count. XML element names cannot carry an entity or character reference, so
+  `DocumentMayDefine{Writer,Reader}Profile` is a genuine superset test — `<data_writer>`
+  and `<publisher>` are the only two spellings `get_datawriter_qos_from_xml` resolves and
+  both contain the searched word, and a general entity expanding to a whole element would
+  need DTD support the parser does not have. `DocumentMayName`'s `&` escape hatch is **not
+  decorative**: I removed it and `FastDdsConfig.ALookupThatCannotSucceedIsNotAttempted`
+  went red on the `a&amp;b/topic` row, so the one case where the substring test is wrong is
+  guarded by a live test. Being wrong in the *other* direction costs a log line and never a
+  policy, which is the right asymmetry. One residue the stated proof does not name: F9.
+- **F4 — closed and falsifiable.** Disabling the reader ladder's topic-name lookup reddens
+  `ReaderPerTopicProfileOverridesTheDefault` and nothing else; the negative half (the same
+  document must **not** resolve that profile for a different topic) is asserted.
+- **F7 — closed and machine-checked.** `payload_bound.hpp` is included by the public
+  header, and `test_package/src/example.cpp` writes
+  `ProviderConfig{.max_payload_bytes = kPayloadBytes<64 * 1024>}`. That TU compiled and
+  linked at `7f6a310` (its `example.exe` is stamped 16:24, alongside the cache test
+  binary) with no Fast DDS include directories, so dropping the include again is a compile
+  error rather than prose. The bound still resolves to 65536, so the registered type name
+  is unchanged.
+- **F3 — the disclosure still reads true.** `src/internal/profile_document.hpp`'s MEASURED
+  note says the seeding mutation leaves the whole suite green because fast-dds 3.4
+  overwrites its output parameter, and that the form is mandated structurally rather than
+  asserted; the fix pass corrected the test comment that claimed the opposite. Accepted
+  debt, accurately described. Nothing more.
+
+## Converse check — what survived that should not have? Nothing new, and one thing died.
+
+- The test's own copy of the published XML block — the construct this fix pass exists to
+  delete — **is gone**, and there is no second copy anywhere in the tree.
+- **No second path to configure QoS from C++.** One constructor, one `ProviderConfig`; the
+  fix pass added no setter and no eProsima type to the installed header.
+- **No config parser or dependency in Fletcher.** `ExtractFencedXmlAfter` is a
+  seventeen-line markdown scan **in the test TU**; nothing like it exists under `src/`.
+- **No file access smuggled into shipped code.** `grep` for
+  `fstream|ifstream|fopen|std::filesystem` over `fastdds-pubsub-provider/{src,include}` and
+  `pubsub/{src,include}` returns **nothing**; the only occurrence is
+  `tests/test_profile_document.cpp`. The gateway remains the single place that opens a
+  file, and says so ("the ONLY file the gateway opens on a provider's behalf"). The
+  2026-09-02 ruling is honoured.
+- **No eProsima type or DDS vocabulary above the seam.** The Fast DDS XML in
+  `end-to-end.test.ts` is a test fixture in the operator's own format, which is exactly
+  where the ruling puts the convenience; no compiled code above the seam names an eProsima
+  type.
+- **No copy on the row or attachment path.** The new `DocumentMay*` scans and the new
+  refusal all run inside `Resolve{Writer,Reader}Qos`, reached only from lazy writer
+  creation (`fast_dds_pubsub_provider.cpp:401`) and `Subscribe` (`:449`) — once per topic
+  per role, under the lock, never per row.
+- **No Fletcher floor under a supplied profile.** The fresh-QoS-per-call form is intact for
+  all three roles; `MinimalProfileTakesFastDdsDefaultsNotFletchers` and
+  `AnAnchorOnlyDocumentResolvesToFletchersBuiltIn` both pass.
+- **`ProviderConfig`'s typed core is untouched** — the fix pass contains no `pubsub/` file
+  at all, so it is still exactly `{max_payload_bytes, domain_id}` plus the opaque document,
+  and PDA-DEC-4's `static_assert` on `&ProviderRegistry::Create` is undisturbed.
+- **No refusal became a recovery.** A per-topic refusal out of `Publish` leaves
+  `ts.writer` null, so the next `Publish` refuses identically; nothing falls back to a
+  default after refusing once.
+
+## NON-BLOCKING
+
+### F8 — the constructor's own stated invariant is now false, and the public surface does not disclose the new refusal
+
+`src/fast_dds_pubsub_provider.cpp:194-197` still opens with
+
+> "Everything the document decides is settled BEFORE the participant exists, so a
+> misconfigured provider is never constructed at all (rung-2, spec §5.1)."
+
+Fifty lines below it the fix pass calls
+`RefuseMisplacedFletcherPropertiesInRoleProfiles` **after** `create_participant`,
+`create_publisher` and `create_subscriber` — and for a profile named after a topic the
+refusal fires from `Publish` (writer) or `Subscribe` (reader), i.e. from a data-plane
+call, long after construction. The local comment on the new call is honest about this
+("as late as the Publisher and Subscriber allow"); the sentence above it is not, and it is
+the one a reader hits first. The public header's
+"── Refused in the constructor, all `kInvalidArgument` ──" list, which is the item's
+*documented surface*, omits the new refusal class altogether, and neither it nor spec
+§4.1's Fast DDS paragraph tells an operator that a misplaced key in a per-topic profile
+surfaces on the first publish rather than at start-up. Cycle 1 called a promise the code
+does not keep worse than no promise; this is a smaller instance of the same class, created
+by the fix pass.
+
+Behaviour is *stricter*, not weaker, and the spec sets no per-method status set, so nothing
+is violated — but the record is now wrong in the file that carries it.
+**Acceptable fix:** narrow the ctor sentence to the refusals it still covers, add one
+bullet to the header's refusal list naming the endpoint-profile case and where it fires,
+and one clause in spec §4.1.
+
+### F9 — the lookup-skip proof names one escape channel; there are two
+
+`DocumentMayName`'s comment states the rule as a proof: a profile named `N` occurs
+literally as `profile_name="N"` "UNLESS a character of it was spelled with an entity or
+character reference, which needs an `&`". XML attribute-value handling has a second
+channel the sentence does not name — whitespace normalisation (a tab/CR/LF inside an
+attribute value becomes a space; document-wide CR/CRLF becomes LF). A profile name
+Fletcher asks for as `"a b"` that the operator wrote as `profile_name="a<LF>b"` would
+resolve in Fast DDS while failing the substring test, and the lookup would be skipped — a
+silently different QoS, which is the failure the charge calls worse than log noise. It is
+close to unreachable (it needs a topic name containing whitespace *and* an operator who
+spelled that whitespace differently in the XML) and it is conditional on the parser
+actually normalising, which I could not verify from the binary package. But the text
+claims a proof, and a proof with an unnamed exit is a heuristic in better clothes.
+
+**Acceptable fix:** one line — widen the hatch to `document.find_first_of("&\t\r\n")`
+(it costs one extra lookup only on documents with a newline inside an attribute value,
+i.e. almost none), or name the second channel beside the `&` one in the comment and in the
+README residue.
+
+## Budget — cycle 1's verdict still holds, with one honesty correction repeated
+
+Fix pass, excluding the two review documents: **+661 / −96**. Split: tests + harness
+**+451 / −70** (68% of the adds), production (public header + `src/`) **+149 / −15**, docs
+**+34 / −9**. Every one of the findings closed here was ordered by a review, and four of
+them ordered a test by name, so this is still **review-mandated test mass, not stored
+complexity**, and the remedy is still a corrected number rather than scope reduction. Two
+qualifications worth naming:
+
+- The fix pass's production growth is **logic, not test mass**: `+132` lines in
+  `src/internal/profile_document.hpp` are two new guard predicates, a new refusal function
+  and its wiring. The resolution ladder the design describes as "a line-for-line
+  replacement of `Impl::Resolve{Writer,Reader}Qos`'s map lookup" is now a **gated** ladder
+  with a proof attached. It changes no answer (mutation-checked above) and it is disclosed
+  in the header and the README — but it is design shape the design does not describe, and
+  PDA-DEC-7 will read this file as the pattern for XRCE.
+- Item total is now roughly **+2890 / −717** against a declared **+780 / −310** (~3.7× on
+  adds). A fix pass that adds two thirds of a fresh item is worth naming once: it did so
+  because cycle 1 and 4b between them ordered five guards and a file-reading test, not
+  because scope drifted.
+
+## RECORD (PM corrects in place; never blocking, never a fix cycle)
+
+- **Cycle 1's production-accounting correction was repeated verbatim as an error.** The fix
+  pass is reported as "production `src/` + public header only +30/−9"; measured, it is
+  **+149 / −15**, because `src/internal/profile_document.hpp` (+132/−14) is again excluded
+  from "production". Cycle 1 made this exact correction against the original implementer's
+  "`src/` is only +75/−52".
+- **S3's numbers, measured by me on the whole provider binary at `7f6a310`:** **10**
+  `XMLPARSER Error` lines suite-wide, of which **1** contains "profile not found" — not
+  "7 → 0". That one is the deliberate no-anchor row of
+  `MalformedProfileDocumentIsRefused`, where the profile genuinely is absent and Fast DDS
+  logs it before the provider throws; every other line belongs to a negative test with a
+  genuinely malformed document. The substance holds and is the part that matters: **zero on
+  any happy path**, and a real `--provider fastdds --provider-config <valid>` start-up
+  prints nothing but `READY`.
+- **Spec §10's corrected header still does not reconcile with its own table.** It now reads
+  "8 files, 12 construction sites: 11 migrated … and the gateway's one replaced outright".
+  The table's own `Sites` column sums to **13** (reading "4 pairs" as 4), and actual
+  provider constructions in those eight files are **17** (test_roundtrip 8, test_interop 3,
+  fastdds_peer 1, fastdds_main 1, fastdds_peer_main 1, example.cpp 2, exp_zero_copy 3,
+  gateway 0) — the column mixes "pairs", helper functions and constructions. PDA-DEC-7 will
+  cite this table, so the counting convention wants stating once.
+- The other two in-place corrections **read true** against the tree: spec §10's "Docs:"
+  paragraph (both `README.md` and `docs/architecture-overview.md` carry no retired
+  vocabulary, and the only code they show is `make_shared<FastDDSPubSubProvider>()`, which
+  still compiles because the ctor's `ProviderConfig` argument is defaulted), and
+  `docs/architecture-overview.md` §7.4's include path.
+- `plans/PDA-DEC-6-brief.md:58`'s "*As landed (`<date>`…)*" footer is still the placeholder
+  cycle 1 recorded; unchanged by the fix pass.
+- Counts confirmed against the tree: **85 ctest entries / 84 gtest cases, 84/84 green**.
+- Environment, for whoever builds next: the in-tree `fastdds-pubsub-provider/build/` tree
+  cannot reconfigure — its `fletcher-pubsub` package folder
+  (`~/.conan2/p/b/fletcd3e11389427b8`) was removed by a concurrent `conan create`; use a
+  cache build folder or re-run `conan install`.
+  `C:\ProgramData\eprosima\fastdds_interprocess` was empty throughout and my runs leaked
+  nothing into it.

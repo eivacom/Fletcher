@@ -78,11 +78,22 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// consumed and stripped before the participant is created; every other property
 /// reaches Fast DDS untouched, which is what security plugins need.
 ///
-/// ── Refused in the constructor, all `kInvalidArgument` ──────────────────────
-/// A non-empty document that Fast DDS cannot parse, or that does not define
-/// `fletcher_participant`; an unknown or unparseable `fletcher.*` property; a
-/// non-zero `<domainId>` in the anchor disagreeing with `config.domain_id`; an
-/// unusable `max_payload_bytes`.
+/// ── Refused, all `kInvalidArgument` ─────────────────────────────────────────
+/// In the constructor, before the participant exists: a non-empty document that
+/// Fast DDS cannot parse, or that does not define `fletcher_participant`; an
+/// unknown or unparseable `fletcher.*` property; a non-zero `<domainId>` in the
+/// anchor disagreeing with `config.domain_id`; an unusable
+/// `max_payload_bytes`.
+///
+///  - **Later, not at construction:** a `fletcher.*` property placed in a
+///    writer or reader profile instead of the anchor is read by nobody, so it
+///    is refused rather than left inert — but only once the profile is
+///    resolved. For `fletcher_writer` / `fletcher_reader` that is still inside
+///    the constructor (after the Publisher and Subscriber exist); for a profile
+///    named after a topic it is that topic's **first endpoint use** — the first
+///    `Publish` or `Subscribe`, the first moment the name is known. **A
+///    provider that constructed is therefore not a provider whose every profile
+///    has been checked.**
 ///
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and is not configurable — a

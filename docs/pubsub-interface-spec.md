@@ -407,8 +407,15 @@ cannot express (`fletcher.loan_publish`, `fletcher.max_schema_bytes`) ride as
 vendor properties inside the anchor's `<rtps><propertiesPolicy>`, which is native
 Fast DDS XML, so there is still exactly one reader and one format. `domain_id`
 always wins over an anchor's `<domainId>`, and a non-zero disagreement is refused
-rather than silently resolved. The convenience of reading a document out of a
-file lives in the **gateway** (`--provider-config FILE`), never in Fletcher.
+rather than silently resolved. **Not every document refusal is a construction-time
+refusal, and a provider must say which are not:** the misplaced-`fletcher.*`-property
+refusal fires when the profile carrying it is resolved — inside the constructor for the
+two role profiles, but on a topic's first `Publish` / `Subscribe` for a profile named
+after that topic, which is the first moment its name is known. A constructed provider is
+therefore one whose *participant* configuration is good, not one whose whole document has
+been read, and the provider's public header states this rather than promising the
+stronger thing. The convenience of reading a document out of a file lives in the
+**gateway** (`--provider-config FILE`), never in Fletcher.
 
 **As landed** (PDA-DEC-5), the loopback is the other document reader in-tree:
 its document is a sequence of `\n`-separated `key=value` entries, and the only
@@ -702,17 +709,21 @@ retires. **Corrected** when PDA-DEC-6 migrated them: the earlier figure of "4
 files, 19 occurrences" was wrong in both halves — `test_interop.cpp` carried 3
 constructions rather than 9, and four further files construct the provider that
 the count omitted entirely. PDA-DEC-7 will cite this table for XRCE, so it is
-corrected rather than merely marked done. **8 files, 12 construction sites**: 11
-migrated to `ProviderConfig`, and the gateway's one **replaced outright** by
-`RegisterFastDDSProvider`, which is why it constructs nothing at all now:
+corrected rather than merely marked done. **8 files, 18 `ProviderConfig`
+constructions**, counted per file below and re-derivable with
+`grep -E 'ProviderConfig[[:space:]]*\{|ProviderConfig[[:space:]]+[a-z_]+[{;]'`.
+The earlier "12 construction sites" was itself wrong twice over: it counted
+`test_roundtrip.cpp`'s "4 pairs" as 4 rather than 8, and `fastdds_main.cpp` as 1
+rather than 2. The gateway's single construction now feeds
+`RegisterFastDDSProvider` rather than a concrete provider type:
 
 | Site | Sites | Status |
 |---|---|---|
-| [integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp](../integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp) | 4 pairs | migrated, PDA-DEC-6 |
+| [integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp](../integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp) | 8 | migrated, PDA-DEC-6 |
 | [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 3 | migrated, PDA-DEC-6 |
-| [gateway/src/main.cpp](../gateway/src/main.cpp) | 1 | replaced by `RegisterFastDDSProvider`, PDA-DEC-6 |
+| [gateway/src/main.cpp](../gateway/src/main.cpp) | 1 | migrated, PDA-DEC-6 — and the concrete provider type is gone from it entirely, replaced by `RegisterFastDDSProvider` |
 | [integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp](../integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp) | 1 | migrated, PDA-DEC-6 |
-| [integration-tests/pubsub-conformance/subjects/fastdds_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_main.cpp) | 1 | migrated, PDA-DEC-6 |
+| [integration-tests/pubsub-conformance/subjects/fastdds_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_main.cpp) | 2 | migrated, PDA-DEC-6 |
 | [integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp) | 1 | migrated, PDA-DEC-6 |
 | [fastdds-pubsub-provider/test_package/src/example.cpp](../fastdds-pubsub-provider/test_package/src/example.cpp) | 1 | migrated, PDA-DEC-6 — and it is the machine check that no eProsima type survives in the public header |
 | [fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp](../fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp) | 1 | migrated, PDA-DEC-6 — the in-tree proof the document expresses what the struct did |

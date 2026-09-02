@@ -192,10 +192,15 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
     : impl_(std::make_unique<Impl>()) {
     impl_->document = config.document;
 
-    // Everything the document decides is settled BEFORE the participant exists, so a
-    // misconfigured provider is never constructed at all (rung-2, spec §5.1). Refusals are
-    // `kInvalidArgument`: reached through a factory, a `std::invalid_argument` would arrive at
-    // the caller as `kInternal`, which tells an operator nothing.
+    // Everything the document decides about the PARTICIPANT — the payload bound, the anchor's
+    // `fletcher.*` properties, the domain — is settled below, before the participant exists
+    // (rung-2, spec §5.1). It is not the whole document: the misplaced-`fletcher.*` refusal needs
+    // a Publisher and a Subscriber and so runs at the end of this constructor, and for a profile
+    // named after a topic it runs on that topic's first endpoint, out of `Publish` / `Subscribe`.
+    // So a constructed provider is a provider whose participant configuration is good, not one
+    // whose every profile has been read (review 4c F8; the same list is in the public header).
+    // Refusals are `kInvalidArgument`: reached through a factory, a `std::invalid_argument` would
+    // arrive at the caller as `kInternal`, which tells an operator nothing.
     const uint32_t bound =
         config.max_payload_bytes == 0 ? kDefaultPayloadBytes : config.max_payload_bytes;
     if (!IsPayloadBound(bound)) {

@@ -931,12 +931,16 @@ TEST(FastDdsConfig, ReaderPerTopicProfileOverridesTheDefault) {
 // emits none, because a lookup that provably cannot succeed is not made. What is asserted here is
 // the PROOF the skip rests on, since a wrong skip would silently change a QoS:
 //
-//   * a profile named `N` occurs literally as `profile_name="N"` — UNLESS a character of it was
-//     written as an entity or character reference, which needs an `&`;
-//   * so a document with no `&` cannot name a profile that is not a substring of it;
-//   * and a document WITH an `&` is not reasoned about at all — it takes the lookup.
+//   * a profile named `N` occurs literally as `profile_name="N"` — UNLESS the name reached the
+//     parser through one of the TWO channels that let an attribute value differ from the text
+//     between its quotes: an entity or character reference, which needs an `&` in the document,
+//     or whitespace normalisation, which needs whitespace in the requested name (review 4c F9);
+//   * so a document with no `&`, asked for a name with no whitespace, cannot name a profile that
+//     is not a substring of it;
+//   * and either precondition takes the lookup, unreasoned.
 //
-// The last row is the one that matters: an escaped profile name still resolves.
+// The last two rows are the ones that matter: each channel's precondition sends the lookup to
+// Fast DDS rather than skipping it. Deleting either hatch reddens one of them.
 TEST(FastDdsConfig, ALookupThatCannotSucceedIsNotAttempted) {
     XmlProbe probe(kDomainProbe);
     ASSERT_TRUE(probe.ok());
@@ -967,6 +971,26 @@ TEST(FastDdsConfig, ALookupThatCannotSucceedIsNotAttempted) {
     EXPECT_EQ(resolved.durability().kind, VOLATILE_DURABILITY_QOS)
         << "a per-topic profile whose name is XML-escaped in the document stopped resolving - the "
            "lookup skip is no longer sound";
+
+    // The second channel (review 4c F9): XML's attribute-value rules can yield a literal tab/CR/LF
+    // inside the quotes as a space, and a CR/CRLF line end as an LF, so a profile the operator
+    // wrote as `profile_name="a<LF>b/topic"` can be NAMED `a b/topic` — which is not a literal
+    // substring of the document. The substring test alone would then skip a lookup that CAN
+    // succeed, silently changing a QoS. The precondition is whitespace in the REQUESTED name, not
+    // in the document: an ordinary document is full of LFs between elements, where they are not
+    // attribute values and normalise nothing, so scanning the document would skip no lookup at
+    // all. Drop the `find_first_of(" \t\r\n")` hatch and this row goes red.
+    //
+    // MEASURED on fast-dds/3.4.0: resolving `a b/topic` against this document MISSES, so this
+    // parser does not apply attribute-value normalisation today — the channel is latent, not
+    // live. That is not asserted here: pinning a parser behaviour Fletcher must not depend on
+    // either way is exactly what the hatch exists to avoid.
+    const std::string normalised = Document(
+        WriterProfile("a\nb/topic", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
+    EXPECT_EQ(normalised.find("a b/topic"), std::string::npos)
+        << "this row is vacuous unless the name really is absent as a literal";
+    EXPECT_TRUE(internal::DocumentMayName(normalised, "a b/topic"))
+        << "a name XML could have normalised out of the document's whitespace was not looked up";
 }
 
 // ===========================================================================

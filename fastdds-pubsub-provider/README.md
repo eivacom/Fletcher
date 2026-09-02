@@ -310,13 +310,16 @@ as absent.
   error anywhere.
 - **A profile's `resource_limits` can oversize the data-sharing segment.** Fletcher does not know
   your memory budget, so it does not second-guess the number; see the 5000-sample note above.
-- **A document containing an `&` anywhere may log one `[XMLPARSER Error] ... profile not found`
-  line per endpoint.** Fast DDS logs a profile miss at ERROR level, and the resolution ladder above
-  treats a miss as "try the next name". The provider skips a lookup that provably cannot succeed —
-  a profile named `N` occurs literally as `profile_name="N"` unless a character of it was written
-  as an XML entity or character reference — so an ordinary document produces no such line at all.
-  A document with an `&` cannot be reasoned about that way, so it takes the lookup and the log line
-  with it. Those lines are expected; the profile still resolves correctly.
+- **A document containing an `&` anywhere, or a topic whose name contains whitespace, may log one
+  `[XMLPARSER Error] ... profile not found` line per endpoint.** Fast DDS logs a profile miss at
+  ERROR level, and the resolution ladder above treats a miss as "try the next name". The provider
+  skips a lookup that provably cannot succeed — a profile named `N` occurs literally as
+  `profile_name="N"` unless the name came through one of the two channels that let an attribute
+  value differ from the text between its quotes: an XML entity or character reference, which needs
+  an `&` in the document, or attribute-value whitespace normalisation, which can only affect a
+  name that itself contains whitespace. Neither case is reasoned about — it takes the lookup and
+  the log line with it — so an ordinary document with ordinary topic names produces no such line
+  at all. Those lines are expected; the profile still resolves correctly.
 - **Every non-empty document loses the `FletcherParticipant` participant name** unless its anchor
   sets one, because the anchor *is* the participant's QoS. This is universal rather than exotic,
   and it is diagnostic-only — nothing in the tree keys on that name. Set

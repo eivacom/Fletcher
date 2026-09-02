@@ -150,13 +150,28 @@ inline FletcherProperties ConsumeFletcherProperties(
 ///
 /// This is a proof, not a heuristic, and it can only ever err towards asking Fast DDS anyway: a
 /// profile named `N` is written `profile_name="N"`, so `N` occurs literally in the document -
-/// UNLESS a character of it was spelled with an entity or character reference, which needs an
-/// `&`. A document with no `&` anywhere therefore cannot name a profile that is not a literal
-/// substring of it. A document containing an `&` is not reasoned about at all: it takes the
-/// lookup, and the log line with it. Nothing here decides a QoS — being wrong costs a log line,
-/// never a policy.
+/// UNLESS the name reached the parser through one of the **two** channels by which an attribute
+/// value can differ from the text between its quotes (review 4c F9): an entity or character
+/// reference, which needs an `&` **in the document**; or whitespace normalisation — a literal
+/// tab/CR/LF inside the quotes is yielded as a space, a CR/CRLF line end as an LF — which can
+/// only make the yielded name differ from the document text at a position where the **yielded
+/// name** holds whitespace. So a document with no `&`, asked for a name with no whitespace,
+/// cannot be naming a profile that is not a literal substring of it; either precondition sends
+/// the lookup to Fast DDS unconditionally, log line and all. The second is tested on the
+/// requested name and NOT on the document because an ordinary document is full of LFs between
+/// elements, where they are not attribute values and normalise nothing — scanning the document
+/// for them would skip no lookup at all and hand back the whole `[XMLPARSER Error]` flood this
+/// exists to remove. Nothing here decides a QoS — being wrong towards the lookup costs a log
+/// line, never a policy. MEASURED on fast-dds/3.4.0: asking for `a b/topic` against a document
+/// holding `profile_name="a<LF>b/topic"` misses, so that parser does not apply attribute-value
+/// normalisation today; the second hatch is completeness for a parser that does (and for line-end
+/// normalisation), and it costs one lookup only for a name that contains whitespace.
 inline bool DocumentMayName(const std::string& document, const std::string& profile_name) {
+    // Both hatches are load-bearing: dropping either skips a lookup that CAN succeed, which
+    // silently changes a QoS. `FastDdsConfig.ALookupThatCannotSucceedIsNotAttempted` reddens on
+    // the removal of either one.
     if (document.find('&') != std::string::npos) return true;  // cannot reason — ask Fast DDS
+    if (profile_name.find_first_of(" \t\r\n") != std::string::npos) return true;
     return document.find(profile_name) != std::string::npos;
 }
 
