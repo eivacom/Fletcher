@@ -1,0 +1,35 @@
+{
+    "version": "0.5",
+    "requires": [
+        "zlib/1.3.1#b8bc2603263cf7eccbd6e17e66b0ed76%1740062956.986",
+        "xsimd/13.0.0#3e7543dc526b0f612fe291e0f198c9dc%1741963007.54",
+        "thrift/0.20.0#065f29f7cafbf6ff2b48bbe8a52f1a87%1762454012.094",
+        "rapidjson/cci.20250205#dc3e0ac7034c35032b107673d9f9bae3%1782915569.79",
+        "openssl/1.1.1p#15f0be7e71c8ec58f29ab13871bedc6e%1724138807.928",
+        "mimalloc/2.1.7#f00858c2b30c82da326f913d82e49fed%1732702071.728",
+        "libevent/2.1.12#7a7a21762e2b4ed13d29aee3e10c19e7%1782915569.475",
+        "fletcher-pubsub-arrow/0.5.0-alpha#cc1475b31ab7df3c7c5e16900f93d9c8%1788348876.0301158",
+        "fletcher-pubsub/0.5.0-alpha#a52baabe374c2bad619cbb939b2fee60%1788167645.3386176",
+        "fletcher-core/0.5.0-alpha#0ebaca8c4ac0ce0ab594fe7332b684e1%1787834799.2537131",
+        "fletcher-arrow-bridge/0.5.0-alpha#c02b0860c3c539e907a9699b9ab86241%1788348850.5335164",
+        "bzip2/1.0.8#00b4a4658791c1f06914e087f0e792f5%1746112820.204",
+        "boost/1.85.0#a7a4487619b7f38aefaaa16b6bef373f%1762453980.002",
+        "benchmark/1.9.4#ce4403f7a24d3e1f907cd9da4b678be4%1749892625.885",
+        "arrow/23.0.1#acea0fb5ae51e678845c3c686fbd5618%1782915567.169"
+    ],
+    "build_requires": [
+        "winflexbison/2.5.25#f5f4bc7cad4eee391337d650c77decb6%1744043796.777",
+        "strawberryperl/5.32.1.1#8d114504d172cfea8ea1662d09b6333e%1754928865.479",
+        "nasm/2.15.05#f7d6a6f3b14f583e001d9ae84e8cd152%1746112851.478",
+        "cmake/4.1.2#6f844b9ec4e0e29d4f1232f9c5039901%1762453983.33",
+        "cmake/3.31.9#f9b9bb4bdfa37937619a33e9218703a6%1762453982.88",
+        "b2/5.3.3#107c15377719889654eb9a162a673975%1754928827.388"
+    ],
+    "python_requires": [],
+    "overrides": {
+        "zlib/[>=1.2.11 <2]": [
+            "zlib/1.3.1"
+        ]
+    },
+    "config_requires": []
+}

@@ -245,3 +245,5 @@ The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths al
 | `repeated T` | `list(T)` | |
 | `map<K,V>` | `map(K, V)` | |
 | nested `message` | `struct<...>` | |
+
+Each message also gets a free function `ToArrowRow()` and an `AppendTo(arrow::StructBuilder&, const Msg&)`, emitted into `<stem>.fletcher.arrow.pb.h`. `ToArrowRow()` builds every composite field (nested struct, repeated struct, nested list, map) through typed Arrow builders via `AppendTo` rather than one `arrow::Scalar` per element; `AppendTo` is also usable directly to fill a struct column (e.g. building a `RecordBatch` from many messages) without going through `ArrowRow` at all. `<Class>View` stays the scalar-based, one-row read view over an `ArrowRow` / `RecordBatch` row / `Table` row — for column-oriented access over a whole batch, use the generated accessor (`--fletcher_opt=accessor`) instead. The generated Arrow header depends on `fletcher/arrow_bridge/detail/arrow_result.hpp` (present since 0.5.0-alpha).

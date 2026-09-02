@@ -50,8 +50,8 @@ Status: ⚪ not-started · 🔴 in-progress · 🟢 done (forcing test green + r
 | HARD-3 | Surface discarded / swallowed errors | #54, #60 | `OwnedSchemaTest.DeepCopyFailureThrows` (+ serialize diag) | ⚪ |
 | HARD-4 | Provider lifetime & callback re-entrancy | #63, #62-res | `XrceProviderTest.ReentrantUnsubscribeNoUseAfterFree` | ⚪ |
 | HARD-5 | Document last-callback-after-Unsubscribe | #65 | *(docs — review-verified, not test-gated)* | ⚪ |
-| HARD-6 | `[[nodiscard]]` on public API | #56 | `NodiscardTest` (compile-fails-on-discard TU) | ⚪ |
-| HARD-7 | Consolidate duplicated helpers | #57 | existing suites green + single-definition check | ⚪ |
+| HARD-6 | `[[nodiscard]]` on public API | #56 | `NodiscardTest` (compile-fails-on-discard TU) | 🔴 |
+| HARD-7 | Consolidate duplicated helpers | #57 | existing suites green + single-definition check | 🔴 |
 
 Suite shape: reuses each component's existing test target
 (`arrow-bridge/tests/test_codec.cpp`, `pubsub/tests/test_publisher_subscriber.cpp`,
@@ -187,6 +187,15 @@ components still build.
 
 **Acceptance.** Spec HARD-6 acceptance.
 
+**Progress note (2026-09-02, branch `feature/fastdds_modernization/19645`).**
+`[[nodiscard]]` now sits on both `Codec::EncodeRow(const ArrowRow&) const` and
+both `Codec::DecodeRow` overloads (`arrow-bridge/include/fletcher/arrow_bridge/codec.hpp:53/55/56`)
+and on the new `BatchDecoder::Finish()`
+(`arrow-bridge/include/fletcher/arrow_bridge/batch_decoder.hpp:47`). Checked
+2026-09-02: `positional_io.hpp:267`, `envelope.hpp:39/74/117`, `subscriber.hpp:58`,
+`provider.hpp:103`, `publisher.hpp:42`, and `owned_schema.hpp:53` carry no
+`[[nodiscard]]` yet — still open. Not done; leave the row at 🔴.
+
 ### HARD-7 — Consolidate duplicated helpers (#57)
 
 **Story.** `JoinSegments`, `AppendFixed`, and `BitfieldBytes` each have a single
@@ -208,6 +217,44 @@ consolidation; a grep/build check confirms each helper has exactly one
 definition. No wire/generated output changes (byte-identity assertions green).
 
 **Acceptance.** Spec HARD-7 acceptance.
+
+**Progress note (2026-09-02, branch `feature/fastdds_modernization/19645`).**
+`codec.cpp`'s own copies of `AppendFixed`/`BitfieldBytes` are gone: `codec.cpp`
+now pulls `BitfieldBytes` and `ReadNullBit` via `using detail::BitfieldBytes;`
+/ `using detail::ReadNullBit;`, and the single arrow-bridge definition lives at
+`arrow-bridge/src/row_reader.hpp:51/54`, shared with the new
+`batch_decoder.cpp`. `JoinSegments` is still duplicated — checked 2026-09-02:
+`xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp:55` (free function),
+`PublisherArrow::JoinSegments` (`pubsub-arrow/src/publisher_arrow.cpp:87`,
+declared `publisher_arrow.hpp:61`), and `SubscriberArrow::JoinSegments`
+(`subscriber_arrow.cpp:455`, declared `subscriber_arrow.hpp:133`) are still
+their own definitions, none routed through
+`pubsub/include/fletcher/pubsub/internal/segments.hpp`. (`pubsub/src/publisher.cpp`,
+`subscriber.cpp`, and `fastdds_pubsub_provider.cpp` already call
+`internal::JoinSegments` — no work needed there.) `core`'s own two
+`PositionalWriter`/`PositionalReader` `BitfieldBytes` statics in
+`positional_io.hpp` are untouched. Not done; leave the row at 🔴.
+
+---
+
+## Note — generator `ValueOrDie` sites (2026-09-02, outside this round)
+
+Not a HARD-round item — no `HARD-x` row covers it, and it landed on a
+different branch (`feature/fastdds_modernization/19645`, not this round's
+base). Recorded here because it crosses the exact boundary HARD-2 drew:
+`protoc/src/generator.cpp`'s `ToArrowRow`-composite emitters now write
+`fletcher::detail::ValueOrThrow(...)` — the same helper HARD-2 added in
+`arrow-bridge/include/fletcher/arrow_bridge/detail/arrow_result.hpp` — instead
+of `.ValueOrDie()`, at the 9 generator-emitted sites building `ToArrowRow`'s
+composite fields. Those are exactly the class of site HARD-2 scoped out
+(H-INV-5 / locked decision #7: "the generator is untouched"; "the 25
+generator-emitted `.ValueOrDie()` sites... remain for the GEN round"). Also
+deleted as part of the same change: ~400 lines of emitters that had no caller
+in the generator at all (`EmitScalarHelper`, `ScalarEntry`,
+`EmitFieldExtraction` — an orphaned class-embedded `ToScalars`/`SetFromScalars_`
+design that never reached generated output). Neither change touches this round's
+runtime/pubsub scope or this plan's tracker; noted only so a future pass over
+generator `Result<T>` handling knows this ground is already covered.
 
 ---
 

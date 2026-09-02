@@ -10,7 +10,8 @@ find_package(Arrow CONFIG REQUIRED)
 add_library(fletcher-arrow-bridge STATIC
     src/codec.cpp
     src/scalar_codec.cpp
-    src/crs_utils.cpp)
+    src/crs_utils.cpp
+    src/batch_decoder.cpp)
 
 # C++ standard comes from the Conan profile (compiler.cppstd). This only
 # states the public minimum the headers require, propagated to consumers.

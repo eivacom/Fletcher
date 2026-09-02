@@ -428,412 +428,6 @@ void EmitGetters(std::ostringstream& o, const std::vector<FieldInfo>& fields) {
 }
 
 // -----------------------------------------------------------------------
-// Composite scalar helper methods
-// -----------------------------------------------------------------------
-
-void EmitScalarHelper(std::ostringstream& o, const FieldInfo& fi) {
-    const std::string fn = "Make" + fi.name + "Scalar_";
-
-    switch (fi.mapping.kind) {
-        case FieldKind::REPEATED_SCALAR:
-            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        " << fi.mapping.element.builder_type << " builder;\n"
-              << "        for (const auto& v : " << fi.name << "_)\n"
-              << "            (void)builder.Append(v);\n"
-              << "        return std::make_shared<arrow::ListScalar>(\n"
-              << "            *builder.Finish(),\n"
-              << "            arrow::list(arrow::field(\"item\", "
-              << fi.mapping.element.arrow_type_expr << ", true)));\n"
-              << "    }\n";
-            break;
-
-        case FieldKind::STRUCT:
-            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        auto type = arrow::struct_(" << fi.mapping.nested_class
-              << "Schema()->fields());\n";
-            if (fi.mapping.nullable) {
-                o << "        if (!" << fi.name << "_.has_value())\n"
-                  << "            return arrow::MakeNullScalar(type);\n"
-                  << "        return std::make_shared<arrow::StructScalar>(\n"
-                  << "            " << fi.name << "_->ToScalars(), type);\n";
-            } else {
-                o << "        auto values = " << fi.name << "_.has_value()\n"
-                  << "            ? " << fi.name << "_->ToScalars()\n"
-                  << "            : " << fi.mapping.nested_class << "().ToScalars();\n"
-                  << "        return std::make_shared<arrow::StructScalar>(\n"
-                  << "            std::move(values), type);\n";
-            }
-            o << "    }\n";
-            break;
-
-        case FieldKind::REPEATED_STRUCT:
-            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        auto type = arrow::struct_(" << fi.mapping.nested_class
-              << "Schema()->fields());\n"
-              << "        auto builder = arrow::MakeBuilder(type).ValueOrDie();\n"
-              << "        for (const auto& v : " << fi.name << "_) {\n"
-              << "            auto s = std::make_shared<arrow::StructScalar>(\n"
-              << "                v.ToScalars(), type);\n"
-              << "            (void)builder->AppendScalar(*s);\n"
-              << "        }\n"
-              << "        return std::make_shared<arrow::ListScalar>(\n"
-              << "            *builder->Finish(),\n"
-              << "            arrow::list(arrow::field(\"item\", type, true)));\n"
-              << "    }\n";
-            break;
-
-        case FieldKind::NESTED_LIST: {
-            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n";
-
-            // Nullable: return null scalar if not set.
-            if (fi.mapping.nullable) {
-                o << "        if (!" << fi.name << "_.has_value())\n"
-                  << "            return arrow::MakeNullScalar(" << ArrowTypeExpr(fi) << ");\n";
-            }
-
-            // Reference to the data — either *optional or the bare member.
-            std::string data_ref = fi.mapping.nullable ? ("(*" + fi.name + "_)") : (fi.name + "_");
-
-            o << "        auto coord_type = arrow::struct_(" << fi.mapping.nested_class
-              << "Schema()->fields());\n";
-
-            if (fi.mapping.list_depth == 2) {
-                // List<List<Struct>>
-                o << "        auto inner_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", coord_type, true));\n"
-                  << "        auto outer_builder = "
-                     "arrow::MakeBuilder(inner_list_type).ValueOrDie();\n"
-                  << "        for (const auto& ring : " << data_ref << ") {\n"
-                  << "            auto inner_builder = "
-                     "arrow::MakeBuilder(coord_type).ValueOrDie();\n"
-                  << "            for (const auto& v : ring) {\n"
-                  << "                auto s = std::make_shared<arrow::StructScalar>(\n"
-                  << "                    v.ToScalars(), coord_type);\n"
-                  << "                (void)inner_builder->AppendScalar(*s);\n"
-                  << "            }\n"
-                  << "            (void)outer_builder->AppendScalar(\n"
-                  << "                arrow::ListScalar(*inner_builder->Finish(), "
-                     "inner_list_type));\n"
-                  << "        }\n"
-                  << "        return std::make_shared<arrow::ListScalar>(\n"
-                  << "            *outer_builder->Finish());\n";
-            } else if (fi.mapping.list_depth == 3) {
-                // List<List<List<Struct>>>
-                o << "        auto ring_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", coord_type, true));\n"
-                  << "        auto poly_list_type = arrow::list(\n"
-                  << "            arrow::field(\"item\", ring_list_type, true));\n"
-                  << "        auto outer_builder = "
-                     "arrow::MakeBuilder(poly_list_type).ValueOrDie();\n"
-                  << "        for (const auto& poly : " << data_ref << ") {\n"
-                  << "            auto mid_builder = "
-                     "arrow::MakeBuilder(ring_list_type).ValueOrDie();\n"
-                  << "            for (const auto& ring : poly) {\n"
-                  << "                auto inner_builder = "
-                     "arrow::MakeBuilder(coord_type).ValueOrDie();\n"
-                  << "                for (const auto& v : ring) {\n"
-                  << "                    auto s = std::make_shared<arrow::StructScalar>(\n"
-                  << "                        v.ToScalars(), coord_type);\n"
-                  << "                    (void)inner_builder->AppendScalar(*s);\n"
-                  << "                }\n"
-                  << "                (void)mid_builder->AppendScalar(\n"
-                  << "                    arrow::ListScalar(*inner_builder->Finish(), "
-                     "ring_list_type));\n"
-                  << "            }\n"
-                  << "            (void)outer_builder->AppendScalar(\n"
-                  << "                arrow::ListScalar(*mid_builder->Finish(), poly_list_type));\n"
-                  << "        }\n"
-                  << "        return std::make_shared<arrow::ListScalar>(\n"
-                  << "            *outer_builder->Finish());\n";
-            }
-
-            o << "    }\n";
-            break;
-        }
-
-        case FieldKind::MAP: {
-            o << "    std::shared_ptr<arrow::Scalar> " << fn << "() const {\n"
-              << "        " << fi.mapping.map_key.builder_type << " key_builder;\n";
-
-            if (fi.mapping.map_value_is_message) {
-                o << "        auto val_type = arrow::struct_(" << fi.mapping.map_value_class
-                  << "Schema()->fields());\n"
-                  << "        auto val_builder = arrow::MakeBuilder(val_type).ValueOrDie();\n"
-                  << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
-                  << "            (void)key_builder.Append(k);\n"
-                  << "            auto s = std::make_shared<arrow::StructScalar>(\n"
-                  << "                v.ToScalars(), val_type);\n"
-                  << "            (void)val_builder->AppendScalar(*s);\n"
-                  << "        }\n"
-                  << "        auto keys = *key_builder.Finish();\n"
-                  << "        auto vals = *val_builder->Finish();\n";
-            } else {
-                o << "        " << fi.mapping.map_value.builder_type << " val_builder;\n"
-                  << "        for (const auto& [k, v] : " << fi.name << "_) {\n"
-                  << "            (void)key_builder.Append(k);\n"
-                  << "            (void)val_builder.Append(v);\n"
-                  << "        }\n"
-                  << "        auto keys = *key_builder.Finish();\n"
-                  << "        auto vals = *val_builder.Finish();\n";
-            }
-
-            if (fi.mapping.map_value_is_message) {
-                o << "        auto val_field = arrow::field(\"value\", val_type, true);\n"
-                  << "        auto kv = *arrow::StructArray::Make(\n"
-                  << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
-                  << ", false),\n"
-                  << "             val_field});\n"
-                  << "        return std::make_shared<arrow::MapScalar>(kv,\n"
-                  << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
-                  << ", val_field));\n";
-            } else {
-                o << "        auto val_field = arrow::field(\"value\", "
-                  << fi.mapping.map_value.arrow_type_expr << ", true);\n"
-                  << "        auto kv = *arrow::StructArray::Make(\n"
-                  << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", " << fi.mapping.map_key.arrow_type_expr
-                  << ", false),\n"
-                  << "             val_field});\n"
-                  << "        return std::make_shared<arrow::MapScalar>(kv,\n"
-                  << "            arrow::map(" << fi.mapping.map_key.arrow_type_expr
-                  << ", val_field));\n";
-            }
-            o << "    }\n";
-            break;
-        }
-
-        default:
-            break;  // SCALAR — no helper needed
-    }
-}
-
-// -----------------------------------------------------------------------
-// ToScalars() entry for one field
-// -----------------------------------------------------------------------
-
-std::string ScalarEntry(const FieldInfo& fi) {
-    if (fi.mapping.kind != FieldKind::SCALAR) {
-        // Composite types delegate to a helper method.
-        return "Make" + fi.name + "Scalar_()";
-    }
-
-    // Scalar field.
-    if (fi.mapping.nullable) {
-        const std::string ctor =
-            ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", "*" + fi.name + "_");
-        return fi.name + "_.has_value()\n" + "                ? std::shared_ptr<arrow::Scalar>(" +
-               ctor + ")\n" + "                : arrow::MakeNullScalar(" +
-               fi.mapping.scalar.arrow_type_expr + ")";
-    }
-
-    const std::string val = fi.name + "_.value_or(" + fi.mapping.scalar.default_value + ")";
-    return ReplaceAll(fi.mapping.scalar.scalar_ctor, "{val}", val);
-}
-
-// -----------------------------------------------------------------------
-// Field extraction for SetFromScalars_ / EncodedRow constructor
-// -----------------------------------------------------------------------
-
-void EmitFieldExtraction(std::ostringstream& o, const FieldInfo& fi, size_t idx) {
-    const std::string si = std::to_string(idx);
-
-    switch (fi.mapping.kind) {
-        case FieldKind::SCALAR: {
-            const auto& sc = fi.mapping.scalar;
-            std::string extract =
-                sc.value_is_buffer
-                    ? "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si +
-                          "]).value->ToString()"
-                    : "static_cast<const " + sc.scalar_type + "&>(*scalars[" + si + "]).value";
-            if (fi.mapping.nullable) {
-                o << "        if (scalars[" << si << "]->is_valid)\n"
-                  << "            " << fi.name << "_ = " << extract << ";\n"
-                  << "        else\n"
-                  << "            " << fi.name << "_.reset();\n";
-            } else {
-                o << "        " << fi.name << "_ = " << extract << ";\n";
-            }
-            break;
-        }
-
-        case FieldKind::STRUCT:
-            if (fi.mapping.nullable) {
-                o << "        if (scalars[" << si << "]->is_valid) {\n"
-                  << "            " << fi.name << "_.emplace();\n"
-                  << "            " << fi.name << "_->SetFromScalars_(\n"
-                  << "                static_cast<const arrow::StructScalar&>(\n"
-                  << "                    *scalars[" << si << "]).value);\n"
-                  << "        } else {\n"
-                  << "            " << fi.name << "_.reset();\n"
-                  << "        }\n";
-            } else {
-                o << "        " << fi.name << "_.emplace();\n"
-                  << "        " << fi.name << "_->SetFromScalars_(\n"
-                  << "            static_cast<const arrow::StructScalar&>(\n"
-                  << "                *scalars[" << si << "]).value);\n";
-            }
-            break;
-
-        case FieldKind::REPEATED_SCALAR: {
-            const auto& el = fi.mapping.element;
-            std::string extract =
-                el.value_is_buffer
-                    ? "static_cast<const " + el.scalar_type + "&>(*s).value->ToString()"
-                    : "static_cast<const " + el.scalar_type + "&>(*s).value";
-            o << "        {\n"
-              << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
-              << "                *scalars[" << si << "]);\n"
-              << "            " << fi.name << "_.clear();\n"
-              << "            " << fi.name << "_.reserve(ls.value->length());\n"
-              << "            for (int64_t j = 0; j < ls.value->length(); ++j) {\n"
-              << "                auto s = ls.value->GetScalar(j).ValueOrDie();\n"
-              << "                " << fi.name << "_.push_back(" << extract << ");\n"
-              << "            }\n"
-              << "        }\n";
-            break;
-        }
-
-        case FieldKind::REPEATED_STRUCT:
-            o << "        {\n"
-              << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
-              << "                *scalars[" << si << "]);\n"
-              << "            " << fi.name << "_.clear();\n"
-              << "            " << fi.name << "_.resize(ls.value->length());\n"
-              << "            for (int64_t j = 0; j < ls.value->length(); ++j) {\n"
-              << "                auto s = ls.value->GetScalar(j).ValueOrDie();\n"
-              << "                " << fi.name << "_[j].SetFromScalars_(\n"
-              << "                    static_cast<const arrow::StructScalar&>(*s).value);\n"
-              << "            }\n"
-              << "        }\n";
-            break;
-
-        case FieldKind::NESTED_LIST: {
-            // Nullable: check validity first.
-            if (fi.mapping.nullable) {
-                o << "        if (!scalars[" << si << "]->is_valid) {\n"
-                  << "            " << fi.name << "_.reset();\n"
-                  << "        } else {\n";
-            }
-
-            // Target reference — either the optional's emplaced value or the bare member.
-            std::string target = fi.mapping.nullable ? (fi.name + "_.emplace()") : (fi.name + "_");
-            // For nullable, .emplace() returns the reference, but subsequent access uses *optional.
-            std::string ref = fi.mapping.nullable ? ("(*" + fi.name + "_)") : (fi.name + "_");
-            std::string indent = fi.mapping.nullable ? "    " : "";
-
-            if (fi.mapping.list_depth == 2) {
-                o << indent << "        {\n"
-                  << indent
-                  << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
-                  << indent << "                *scalars[" << si << "]);\n"
-                  << indent << "            " << target << ";\n"
-                  << indent << "            " << ref << ".clear();\n"
-                  << indent << "            " << ref << ".resize(ls.value->length());\n"
-                  << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
-                  << indent
-                  << "                auto inner_s = ls.value->GetScalar(i).ValueOrDie();\n"
-                  << indent
-                  << "                const auto& inner_ls = static_cast<const "
-                     "arrow::ListScalar&>(*inner_s);\n"
-                  << indent << "                " << ref
-                  << "[i].resize(inner_ls.value->length());\n"
-                  << indent
-                  << "                for (int64_t j = 0; j < inner_ls.value->length(); ++j) {\n"
-                  << indent
-                  << "                    auto s = inner_ls.value->GetScalar(j).ValueOrDie();\n"
-                  << indent << "                    " << ref << "[i][j].SetFromScalars_(\n"
-                  << indent
-                  << "                        static_cast<const arrow::StructScalar&>(*s).value);\n"
-                  << indent << "                }\n"
-                  << indent << "            }\n"
-                  << indent << "        }\n";
-            } else if (fi.mapping.list_depth == 3) {
-                o << indent << "        {\n"
-                  << indent
-                  << "            const auto& ls = static_cast<const arrow::ListScalar&>(\n"
-                  << indent << "                *scalars[" << si << "]);\n"
-                  << indent << "            " << target << ";\n"
-                  << indent << "            " << ref << ".clear();\n"
-                  << indent << "            " << ref << ".resize(ls.value->length());\n"
-                  << indent << "            for (int64_t i = 0; i < ls.value->length(); ++i) {\n"
-                  << indent << "                auto mid_s = ls.value->GetScalar(i).ValueOrDie();\n"
-                  << indent
-                  << "                const auto& mid_ls = static_cast<const "
-                     "arrow::ListScalar&>(*mid_s);\n"
-                  << indent << "                " << ref << "[i].resize(mid_ls.value->length());\n"
-                  << indent
-                  << "                for (int64_t j = 0; j < mid_ls.value->length(); ++j) {\n"
-                  << indent
-                  << "                    auto inner_s = mid_ls.value->GetScalar(j).ValueOrDie();\n"
-                  << indent
-                  << "                    const auto& inner_ls = static_cast<const "
-                     "arrow::ListScalar&>(*inner_s);\n"
-                  << indent << "                    " << ref
-                  << "[i][j].resize(inner_ls.value->length());\n"
-                  << indent
-                  << "                    for (int64_t k = 0; k < inner_ls.value->length(); ++k) "
-                     "{\n"
-                  << indent
-                  << "                        auto s = inner_ls.value->GetScalar(k).ValueOrDie();\n"
-                  << indent << "                        " << ref << "[i][j][k].SetFromScalars_(\n"
-                  << indent
-                  << "                            static_cast<const "
-                     "arrow::StructScalar&>(*s).value);\n"
-                  << indent << "                    }\n"
-                  << indent << "                }\n"
-                  << indent << "            }\n"
-                  << indent << "        }\n";
-            }
-
-            if (fi.mapping.nullable) {
-                o << "        }\n";
-            }
-            break;
-        }
-
-        case FieldKind::MAP: {
-            std::string key_extract =
-                fi.mapping.map_key.value_is_buffer
-                    ? "static_cast<const " + fi.mapping.map_key.scalar_type +
-                          "&>(*ks).value->ToString()"
-                    : "static_cast<const " + fi.mapping.map_key.scalar_type + "&>(*ks).value";
-
-            o << "        {\n"
-              << "            const auto& ms = static_cast<const arrow::MapScalar&>(\n"
-              << "                *scalars[" << si << "]);\n"
-              << "            const auto& sa = static_cast<const arrow::StructArray&>(\n"
-              << "                *ms.value);\n"
-              << "            " << fi.name << "_.clear();\n"
-              << "            " << fi.name << "_.reserve(sa.length());\n"
-              << "            for (int64_t j = 0; j < sa.length(); ++j) {\n"
-              << "                auto ks = sa.field(0)->GetScalar(j).ValueOrDie();\n"
-              << "                auto vs = sa.field(1)->GetScalar(j).ValueOrDie();\n";
-
-            if (fi.mapping.map_value_is_message) {
-                o << "                " << fi.name << "_.emplace_back(\n"
-                  << "                    " << key_extract << ",\n"
-                  << "                    " << fi.mapping.map_value_class << "());\n"
-                  << "                " << fi.name << "_.back().second.SetFromScalars_(\n"
-                  << "                    static_cast<const arrow::StructScalar&>(*vs).value);\n";
-            } else {
-                std::string val_extract =
-                    fi.mapping.map_value.value_is_buffer
-                        ? "static_cast<const " + fi.mapping.map_value.scalar_type +
-                              "&>(*vs).value->ToString()"
-                        : "static_cast<const " + fi.mapping.map_value.scalar_type + "&>(*vs).value";
-                o << "                " << fi.name << "_.emplace_back(\n"
-                  << "                    " << key_extract << ", " << val_extract << ");\n";
-            }
-
-            o << "            }\n"
-              << "        }\n";
-            break;
-        }
-    }
-}
-
-// -----------------------------------------------------------------------
 // Gather supported fields from a message
 // -----------------------------------------------------------------------
 
@@ -1513,8 +1107,8 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
       << "    " << view_cls << "(const arrow::RecordBatch& batch, int64_t row) {\n"
       << "        scalars_.reserve(batch.num_columns());\n"
       << "        for (int i = 0; i < batch.num_columns(); ++i)\n"
-      << "            scalars_.push_back(\n"
-      << "                batch.column(i)->GetScalar(row).ValueOrDie());\n"
+      << "            scalars_.push_back(fletcher::detail::ValueOrThrow(\n"
+      << "                batch.column(i)->GetScalar(row), \"" << view_cls << ": GetScalar\"));\n"
       << "    }\n\n";
 
     // Constructor from Table + row index
@@ -1527,8 +1121,8 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
       << "            int64_t offset = row;\n"
       << "            for (const auto& chunk : chunked.chunks()) {\n"
       << "                if (offset < chunk->length()) {\n"
-      << "                    scalars_.push_back(\n"
-      << "                        chunk->GetScalar(offset).ValueOrDie());\n"
+      << "                    scalars_.push_back(fletcher::detail::ValueOrThrow(\n"
+      << "                        chunk->GetScalar(offset), \"" << view_cls << ": GetScalar\"));\n"
       << "                    break;\n"
       << "                }\n"
       << "                offset -= chunk->length();\n"
@@ -2659,6 +2253,180 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 }
 
 // -----------------------------------------------------------------------
+// AppendTo() free function generation
+//
+// Generates an inline free function per message that appends one message as
+// one element of a pre-built arrow::StructBuilder, driving the struct's
+// already-typed child builders directly (no per-element arrow::Scalar).
+// Found via ADL, and used recursively by nested STRUCT / REPEATED_STRUCT /
+// NESTED_LIST / MAP-message-value fields, and by ToArrowRow() itself for its
+// composite branches.
+// -----------------------------------------------------------------------
+
+std::string GenerateAppendTo(const std::string& cls, const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+    o << "/// Appends `msg` as one element of the struct builder `b` — typed child\n"
+      << "/// builders, no arrow::Scalar.  `b` must have been made for\n"
+      << "/// arrow::struct_(detail::ImportSchema(" << cls << "Schema())->fields()).\n"
+      << "inline arrow::Status AppendTo(arrow::StructBuilder& b, const " << cls << "& msg) {\n"
+      << "    ARROW_RETURN_NOT_OK(b.Append(true));\n";
+
+    for (size_t idx = 0; idx < fields.size(); ++idx) {
+        const auto& fi = fields[idx];
+        const std::string si = std::to_string(idx);
+        const std::string getter = "msg." + fi.name + "()";
+
+        switch (fi.mapping.kind) {
+            case FieldKind::SCALAR: {
+                const auto& sc = fi.mapping.scalar;
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& fb = static_cast<" << sc.builder_type << "&>(*b.field_builder("
+                  << si << "));\n";
+                if (fi.mapping.nullable) {
+                    o << "        if (" << getter << ".has_value()) "
+                      << "ARROW_RETURN_NOT_OK(fb.Append(*" << getter << "));\n"
+                      << "        else ARROW_RETURN_NOT_OK(fb.AppendNull());\n";
+                } else {
+                    o << "        ARROW_RETURN_NOT_OK(fb.Append(" << getter << "));\n";
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::STRUCT: {
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& sb = static_cast<arrow::StructBuilder&>(*b.field_builder(" << si
+                  << "));\n";
+                if (fi.mapping.nullable) {
+                    o << "        if (const auto* v = " << getter << ") "
+                      << "ARROW_RETURN_NOT_OK(AppendTo(sb, *v));\n"
+                      << "        else ARROW_RETURN_NOT_OK(sb.AppendNull());\n";
+                } else {
+                    o << "        ARROW_RETURN_NOT_OK(AppendTo(sb, " << getter << "));\n";
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::REPEATED_SCALAR: {
+                const auto& el = fi.mapping.element;
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& lb = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si
+                  << "));\n"
+                  << "        ARROW_RETURN_NOT_OK(lb.Append());\n"
+                  << "        auto& vb = static_cast<" << el.builder_type
+                  << "&>(*lb.value_builder());\n";
+                if (el.value_is_buffer) {
+                    o << "        for (const auto& v : " << getter
+                      << ") ARROW_RETURN_NOT_OK(vb.Append(v));\n";
+                } else {
+                    o << "        ARROW_RETURN_NOT_OK(vb.AppendValues(" << getter << "));\n";
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::REPEATED_STRUCT: {
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& lb = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si
+                  << "));\n"
+                  << "        ARROW_RETURN_NOT_OK(lb.Append());\n"
+                  << "        auto& sb = static_cast<arrow::StructBuilder&>(*lb.value_builder());\n"
+                  << "        for (const auto& v : " << getter
+                  << ") ARROW_RETURN_NOT_OK(AppendTo(sb, v));\n"
+                  << "    }\n";
+                break;
+            }
+
+            case FieldKind::NESTED_LIST: {
+                int depth = fi.mapping.list_depth;
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& lb0 = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si
+                  << "));\n";
+
+                std::string indent = "        ";
+                if (fi.mapping.nullable) {
+                    o << indent << "if (" << getter << " == nullptr) {\n"
+                      << indent << "    ARROW_RETURN_NOT_OK(lb0.AppendNull());\n"
+                      << indent << "} else {\n";
+                    indent += "    ";
+                }
+
+                std::string data_ref = fi.mapping.nullable ? ("*" + getter) : getter;
+
+                o << indent << "ARROW_RETURN_NOT_OK(lb0.Append());\n";
+                for (int d = 1; d < depth; ++d) {
+                    o << indent << "auto& lb" << d << " = static_cast<arrow::ListBuilder&>(*lb"
+                      << (d - 1) << ".value_builder());\n";
+                }
+                o << indent << "auto& sb = static_cast<arrow::StructBuilder&>(*lb" << (depth - 1)
+                  << ".value_builder());\n";
+
+                // Nested loops, one per list level above the innermost.
+                std::string src = data_ref;
+                for (int d = 0; d < depth - 1; ++d) {
+                    const std::string var = "l" + std::to_string(d);
+                    o << indent << "for (const auto& " << var << " : " << src << ") {\n";
+                    indent += "    ";
+                    o << indent << "ARROW_RETURN_NOT_OK(lb" << (d + 1) << ".Append());\n";
+                    src = var;
+                }
+                o << indent << "for (const auto& v : " << src
+                  << ") ARROW_RETURN_NOT_OK(AppendTo(sb, v));\n";
+                for (int d = 0; d < depth - 1; ++d) {
+                    indent.resize(indent.size() - 4);
+                    o << indent << "}\n";
+                }
+
+                if (fi.mapping.nullable) {
+                    o << "        }\n";
+                }
+                o << "    }\n";
+                break;
+            }
+
+            case FieldKind::MAP: {
+                const auto& mk = fi.mapping.map_key;
+                o << "    {\n"
+                  << "        // " << fi.name << "\n"
+                  << "        auto& mb = static_cast<arrow::MapBuilder&>(*b.field_builder(" << si
+                  << "));\n"
+                  << "        ARROW_RETURN_NOT_OK(mb.Append());\n"
+                  << "        auto& kb = static_cast<" << mk.builder_type
+                  << "&>(*mb.key_builder());\n";
+                if (fi.mapping.map_value_is_message) {
+                    o << "        auto& vsb = static_cast<arrow::StructBuilder&>(*mb.item_builder("
+                         "));\n"
+                      << "        for (const auto& [k, v] : " << getter << ") {\n"
+                      << "            ARROW_RETURN_NOT_OK(kb.Append(k));\n"
+                      << "            ARROW_RETURN_NOT_OK(AppendTo(vsb, v));\n"
+                      << "        }\n";
+                } else {
+                    const auto& mv = fi.mapping.map_value;
+                    o << "        auto& vb = static_cast<" << mv.builder_type
+                      << "&>(*mb.item_builder());\n"
+                      << "        for (const auto& [k, v] : " << getter << ") {\n"
+                      << "            ARROW_RETURN_NOT_OK(kb.Append(k));\n"
+                      << "            ARROW_RETURN_NOT_OK(vb.Append(v));\n"
+                      << "        }\n";
+                }
+                o << "    }\n";
+                break;
+            }
+        }
+    }
+
+    o << "    return arrow::Status::OK();\n"
+      << "}\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
 // ToArrowRow() free function generation
 //
 // Generates an inline free function per message that converts a nanoarrow
@@ -2729,11 +2497,18 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
             case FieldKind::REPEATED_SCALAR: {
                 const auto& el = fi.mapping.element;
                 o << "    {\n"
-                  << "        " << el.builder_type << " builder;\n"
-                  << "        for (const auto& v : " << getter << ")\n"
-                  << "            (void)builder.Append(v);\n"
-                  << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
-                  << "            *builder.Finish(),\n"
+                  << "        " << el.builder_type << " builder;\n";
+                if (el.value_is_buffer) {
+                    o << "        for (const auto& v : " << getter << ")\n"
+                      << "            detail::ThrowIfNotOk(builder.Append(v), \"ToArrowRow: "
+                         "Append\");\n";
+                } else {
+                    o << "        detail::ThrowIfNotOk(builder.AppendValues(" << getter
+                      << "), \"ToArrowRow: AppendValues\");\n";
+                }
+                o << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
+                  << "            fletcher::detail::ValueOrThrow(builder.Finish(), \"ToArrowRow: "
+                     "Finish\"),\n"
                   << "            arrow::list(arrow::field(\"item\", " << el.arrow_type_expr
                   << ", true))));\n"
                   << "    }\n";
@@ -2745,16 +2520,15 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                 o << "    {\n"
                   << "        auto type = arrow::struct_(\n"
                   << "            detail::ImportSchema(" << nc << "Schema())->fields());\n"
-                  << "        auto builder = arrow::MakeBuilder(type)"
-                     ".ValueOrDie();\n"
-                  << "        for (const auto& v : " << getter << ") {\n"
-                  << "            auto s = std::make_shared"
-                     "<arrow::StructScalar>(\n"
-                  << "                ToArrowRow(v), type);\n"
-                  << "            (void)builder->AppendScalar(*s);\n"
-                  << "        }\n"
+                  << "        auto builder = fletcher::detail::ValueOrThrow(\n"
+                  << "            arrow::MakeBuilder(type), \"ToArrowRow: MakeBuilder\");\n"
+                  << "        auto& sb = static_cast<arrow::StructBuilder&>(*builder);\n"
+                  << "        for (const auto& v : " << getter << ")\n"
+                  << "            detail::ThrowIfNotOk(AppendTo(sb, v), \"ToArrowRow: "
+                     "AppendTo\");\n"
                   << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
-                  << "            *builder->Finish(),\n"
+                  << "            fletcher::detail::ValueOrThrow(sb.Finish(), \"ToArrowRow: "
+                     "Finish\"),\n"
                   << "            arrow::list(arrow::field(\"item\", type,"
                      " true))));\n"
                   << "    }\n";
@@ -2781,25 +2555,22 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                              " inner_list_type, true))));\n"
                           << "        } else {\n";
                     }
-                    o << "        auto outer_builder = arrow::MakeBuilder"
-                         "(inner_list_type).ValueOrDie();\n"
+                    o << "        auto builder = fletcher::detail::ValueOrThrow(\n"
+                      << "            arrow::MakeBuilder(inner_list_type), \"ToArrowRow: "
+                         "MakeBuilder\");\n"
+                      << "        auto& lb = static_cast<arrow::ListBuilder&>(*builder);\n"
+                      << "        auto& sb = static_cast<arrow::StructBuilder&>"
+                         "(*lb.value_builder());\n"
                       << "        for (const auto& ring : " << data_ref << ") {\n"
-                      << "            auto inner_builder = arrow::MakeBuilder"
-                         "(coord_type).ValueOrDie();\n"
-                      << "            for (const auto& v : ring) {\n"
-                      << "                auto s = std::make_shared"
-                         "<arrow::StructScalar>(\n"
-                      << "                    ToArrowRow(v), coord_type);\n"
-                      << "                (void)inner_builder->AppendScalar"
-                         "(*s);\n"
-                      << "            }\n"
-                      << "            (void)outer_builder->AppendScalar(\n"
-                      << "                arrow::ListScalar(*inner_builder->"
-                         "Finish(), inner_list_type));\n"
+                      << "            detail::ThrowIfNotOk(lb.Append(), \"ToArrowRow: Append\");\n"
+                      << "            for (const auto& v : ring)\n"
+                      << "                detail::ThrowIfNotOk(AppendTo(sb, v), \"ToArrowRow: "
+                         "AppendTo\");\n"
                       << "        }\n"
                       << "        row.push_back(std::make_shared"
                          "<arrow::ListScalar>(\n"
-                      << "            *outer_builder->Finish()));\n";
+                      << "            fletcher::detail::ValueOrThrow(lb.Finish(), \"ToArrowRow: "
+                         "Finish\")));\n";
                 } else if (fi.mapping.list_depth == 3) {
                     o << "        auto ring_list_type = arrow::list(\n"
                       << "            arrow::field(\"item\", coord_type,"
@@ -2814,32 +2585,29 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                              " poly_list_type, true))));\n"
                           << "        } else {\n";
                     }
-                    o << "        auto outer_builder = arrow::MakeBuilder"
-                         "(poly_list_type).ValueOrDie();\n"
+                    o << "        auto builder = fletcher::detail::ValueOrThrow(\n"
+                      << "            arrow::MakeBuilder(poly_list_type), \"ToArrowRow: "
+                         "MakeBuilder\");\n"
+                      << "        auto& lb0 = static_cast<arrow::ListBuilder&>(*builder);\n"
+                      << "        auto& lb1 = static_cast<arrow::ListBuilder&>"
+                         "(*lb0.value_builder());\n"
+                      << "        auto& sb = static_cast<arrow::StructBuilder&>"
+                         "(*lb1.value_builder());\n"
                       << "        for (const auto& poly : " << data_ref << ") {\n"
-                      << "            auto mid_builder = arrow::MakeBuilder"
-                         "(ring_list_type).ValueOrDie();\n"
+                      << "            detail::ThrowIfNotOk(lb0.Append(), \"ToArrowRow: "
+                         "Append\");\n"
                       << "            for (const auto& ring : poly) {\n"
-                      << "                auto inner_builder = arrow::MakeBuilder"
-                         "(coord_type).ValueOrDie();\n"
-                      << "                for (const auto& v : ring) {\n"
-                      << "                    auto s = std::make_shared"
-                         "<arrow::StructScalar>(\n"
-                      << "                        ToArrowRow(v), coord_type);\n"
-                      << "                    (void)inner_builder->AppendScalar"
-                         "(*s);\n"
-                      << "                }\n"
-                      << "                (void)mid_builder->AppendScalar(\n"
-                      << "                    arrow::ListScalar("
-                         "*inner_builder->Finish(), ring_list_type));\n"
+                      << "                detail::ThrowIfNotOk(lb1.Append(), \"ToArrowRow: "
+                         "Append\");\n"
+                      << "                for (const auto& v : ring)\n"
+                      << "                    detail::ThrowIfNotOk(AppendTo(sb, v), "
+                         "\"ToArrowRow: AppendTo\");\n"
                       << "            }\n"
-                      << "            (void)outer_builder->AppendScalar(\n"
-                      << "                arrow::ListScalar(*mid_builder->"
-                         "Finish(), poly_list_type));\n"
                       << "        }\n"
                       << "        row.push_back(std::make_shared"
                          "<arrow::ListScalar>(\n"
-                      << "            *outer_builder->Finish()));\n";
+                      << "            fletcher::detail::ValueOrThrow(lb0.Finish(), \"ToArrowRow: "
+                         "Finish\")));\n";
                 }
 
                 if (fi.mapping.nullable) {
@@ -2858,26 +2626,33 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                     const auto& mvc = fi.mapping.map_value_class;
                     o << "        auto val_type = arrow::struct_(\n"
                       << "            detail::ImportSchema(" << mvc << "Schema())->fields());\n"
-                      << "        auto val_builder = arrow::MakeBuilder"
-                         "(val_type).ValueOrDie();\n"
+                      << "        auto val_builder = fletcher::detail::ValueOrThrow(\n"
+                      << "            arrow::MakeBuilder(val_type), \"ToArrowRow: "
+                         "MakeBuilder\");\n"
+                      << "        auto& vsb = static_cast<arrow::StructBuilder&>(*val_builder);\n"
                       << "        for (const auto& [k, v] : " << getter << ") {\n"
-                      << "            (void)key_builder.Append(k);\n"
-                      << "            auto s = std::make_shared"
-                         "<arrow::StructScalar>(\n"
-                      << "                ToArrowRow(v), val_type);\n"
-                      << "            (void)val_builder->AppendScalar(*s);\n"
+                      << "            detail::ThrowIfNotOk(key_builder.Append(k), \"ToArrowRow: "
+                         "Append\");\n"
+                      << "            detail::ThrowIfNotOk(AppendTo(vsb, v), \"ToArrowRow: "
+                         "AppendTo\");\n"
                       << "        }\n"
-                      << "        auto keys = *key_builder.Finish();\n"
-                      << "        auto vals = *val_builder->Finish();\n";
+                      << "        auto keys = fletcher::detail::ValueOrThrow(key_builder.Finish(), "
+                         "\"ToArrowRow: Finish\");\n"
+                      << "        auto vals = fletcher::detail::ValueOrThrow(vsb.Finish(), "
+                         "\"ToArrowRow: Finish\");\n";
                 } else {
                     const auto& mv = fi.mapping.map_value;
                     o << "        " << mv.builder_type << " val_builder;\n"
                       << "        for (const auto& [k, v] : " << getter << ") {\n"
-                      << "            (void)key_builder.Append(k);\n"
-                      << "            (void)val_builder.Append(v);\n"
+                      << "            detail::ThrowIfNotOk(key_builder.Append(k), \"ToArrowRow: "
+                         "Append\");\n"
+                      << "            detail::ThrowIfNotOk(val_builder.Append(v), \"ToArrowRow: "
+                         "Append\");\n"
                       << "        }\n"
-                      << "        auto keys = *key_builder.Finish();\n"
-                      << "        auto vals = *val_builder.Finish();\n";
+                      << "        auto keys = fletcher::detail::ValueOrThrow(key_builder.Finish(), "
+                         "\"ToArrowRow: Finish\");\n"
+                      << "        auto vals = fletcher::detail::ValueOrThrow(val_builder.Finish(), "
+                         "\"ToArrowRow: Finish\");\n";
                 }
 
                 if (fi.mapping.map_value_is_message) {
@@ -2887,10 +2662,12 @@ std::string GenerateToArrowRow(const std::string& cls, const std::vector<FieldIn
                     o << "        auto val_field = arrow::field(\"value\", "
                       << fi.mapping.map_value.arrow_type_expr << ", true);\n";
                 }
-                o << "        auto kv = *arrow::StructArray::Make(\n"
-                  << "            {keys, vals},\n"
-                  << "            {arrow::field(\"key\", " << mk.arrow_type_expr
-                  << ", false), val_field});\n"
+                o << "        auto kv = fletcher::detail::ValueOrThrow(\n"
+                  << "            arrow::StructArray::Make(\n"
+                  << "                {keys, vals},\n"
+                  << "                {arrow::field(\"key\", " << mk.arrow_type_expr
+                  << ", false), val_field}),\n"
+                  << "            \"ToArrowRow: StructArray::Make\");\n"
                   << "        row.push_back(std::make_shared"
                      "<arrow::MapScalar>(kv,\n"
                   << "            arrow::map(" << mk.arrow_type_expr << ", val_field)));\n"
@@ -2938,7 +2715,8 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <arrow/api.h>\n"
       << "#include <arrow/c/bridge.h>\n"
       << "#include <fletcher/arrow_bridge/arrow_row_view.hpp>\n"
-      << "#include <fletcher/arrow_bridge/codec.hpp>\n\n"
+      << "#include <fletcher/arrow_bridge/codec.hpp>\n"
+      << "#include <fletcher/arrow_bridge/detail/arrow_result.hpp>\n\n"
       << "#include \"" << OutputFilename(file->name()) << "\"\n";
 
     // Cross-file view includes (for nested view types from other proto files).
@@ -2960,6 +2738,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
       << "#include <cstdint>\n"
       << "#include <memory>\n"
       << "#include <optional>\n"
+      << "#include <stdexcept>\n"
       << "#include <string>\n"
       << "#include <string_view>\n"
       << "#include <vector>\n\n";
@@ -2986,6 +2765,12 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
           << "    auto result = arrow::ImportSchema(nano.get());\n"
           << "    return result.ok() ? *result : nullptr;\n"
           << "}\n"
+          << "/// Turns a failed arrow::Status into std::invalid_argument, the house type for a\n"
+          << "/// rejected value.\n"
+          << "inline void ThrowIfNotOk(const arrow::Status& st, const char* op) {\n"
+          << "    if (!st.ok()) throw std::invalid_argument(std::string(op) + \": \" + "
+             "st.ToString());\n"
+          << "}\n"
           << "}  // namespace detail\n"
           << "#endif\n\n";
     }
@@ -2999,6 +2784,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         const std::string view_cls = cls + "View";
 
         o << GenerateViewClass(view_cls, fields) << "\n";
+        o << GenerateAppendTo(cls, fields) << "\n";
         o << GenerateToArrowRow(cls, fields) << "\n";
     }
 

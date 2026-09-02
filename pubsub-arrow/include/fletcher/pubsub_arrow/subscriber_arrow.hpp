@@ -71,6 +71,10 @@ class SubscriberArrow {
 
     /// Subscribe with batched RecordBatch delivery (Arrow tier only).
     ///
+    /// Rows are decoded straight into Arrow builders (`BatchDecoder`); a
+    /// window that would overflow a 32-bit Arrow offset (utf8/binary/list
+    /// columns beyond 2 GiB) is flushed early with reason kRowLimit.
+    ///
     /// Decoded rows are accumulated and flushed to `callback` when
     /// `options.max_rows` is reached or `options.timeout` elapses since the
     /// first row/drop of the current batch — whichever comes first. A partial
@@ -81,6 +85,12 @@ class SubscriberArrow {
     /// contributes neither a row nor an attachment — the metadata identifying
     /// its attachment lived in that row. If a window contains only dropped
     /// rows, a zero-row batch is still delivered so the loss is reported.
+    ///
+    /// `batch` is null only when the topic's schema cannot be decoded into
+    /// columns (a dictionary below the top level, or an Arrow type
+    /// `BatchDecoder` rejects); every row is then counted in `rows_dropped`.
+    /// Otherwise it is never null, and may have zero rows when a window
+    /// contained only dropped rows.
     using RecordBatchCallback =
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;

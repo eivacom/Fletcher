@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <fletcher/core/positional_io.hpp>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,38 +25,20 @@ namespace fletcher {
 
 namespace {
 
-template <typename T>
-void AppendFixed(std::vector<uint8_t>& buf, T value) {
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
-    buf.insert(buf.end(), bytes, bytes + sizeof(T));
-}
-
-// Number of bytes needed for a null bitfield covering `n` items.
-// Takes int64_t so a wire-supplied uint32_t count never narrows to a negative
-// int (which would make the (n + 7) / 8 arithmetic produce garbage).
-size_t BitfieldBytes(int64_t n) { return static_cast<size_t>((n + 7) / 8); }
-
-// Write a null bitfield: bit i is 1 if the i-th item is null.
-void WriteNullBitfield(std::vector<uint8_t>& buf, const arrow::ScalarVector& scalars, int count) {
-    size_t nbytes = BitfieldBytes(count);
-    size_t start = buf.size();
-    buf.resize(start + nbytes, 0);
-    for (int i = 0; i < count; ++i) {
-        bool is_null = !scalars[i] || !scalars[i]->is_valid;
-        if (is_null) buf[start + i / 8] |= static_cast<uint8_t>(1u << (i % 8));
-    }
-}
-
-bool ReadNullBit(const uint8_t* bitfield, int index) {
-    return (bitfield[index / 8] >> (index % 8)) & 1u;
-}
+using detail::AllValid;
+using detail::AppendRun;
+using detail::BitfieldBytes;
+using detail::FixedWidth;
+using detail::ReadNullBit;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
 
-void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scalar,
-                           const arrow::DataType& type);
+void EncodeScalarValue(PositionalWriter& w, const arrow::Scalar& scalar,
+                       const arrow::DataType& type);
+void EncodeElement(PositionalWriter& w, const arrow::Array& arr, int64_t i,
+                   const arrow::DataType& type);
 std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
                                                      const std::shared_ptr<arrow::DataType>& type);
 
@@ -62,139 +46,372 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
 // Encode helpers
 // ---------------------------------------------------------------------------
 
-void EncodePositionalStruct(std::vector<uint8_t>& buf, const arrow::StructScalar& scalar,
-                            const arrow::StructType& stype) {
-    const int n = stype.num_fields();
-    arrow::ScalarVector children(n);
-    for (int i = 0; i < n; ++i) children[i] = scalar.value[static_cast<size_t>(i)];
+// A wire-supplied element/entry count is checked against this before it is narrowed to the
+// wire's uint32_t COUNT field — the wire format has no room for more.
+void CheckCountFits(int64_t count, const char* what) {
+    if (count > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
+        throw std::invalid_argument(std::string("Codec: ") + what + " exceeds 4 GiB limit");
+}
 
-    WriteNullBitfield(buf, children, n);
+// The walker below indexes an array's buffers directly (both the bulk fixed-width path and the
+// per-element accessors), unlike arrow::Array::GetScalar's checked access — so a caller-supplied
+// array whose structure doesn't match its own declared length (e.g. a child shorter than its
+// struct parent claims) is a raw out-of-bounds read here, not a caught Status. Validate() is
+// O(descendants), not O(elements) — it checks buffer sizes against declared lengths/offsets, not
+// element content — so this is one cheap call per top-level list/map value, not a per-element
+// cost, and it recursively covers every array nested inside `arr` too.
+void CheckStructurallyValid(const arrow::Array& arr, const char* what) {
+    auto st = arr.Validate();
+    if (!st.ok())
+        throw std::invalid_argument(std::string("Codec: malformed ") + what + ": " + st.ToString());
+}
 
-    for (int i = 0; i < n; ++i) {
-        const auto& child = children[i];
-        if (!child || !child->is_valid) continue;
-        EncodePositionalValue(buf, *child, *stype.field(i)->type());
+// PositionalWriter has no fixed-size-list primitive: same element bitfield as a list, no count.
+PositionalWriter::ListContext BeginFixedSizeList(WriteBuffer& buf, int32_t n) {
+    const size_t offset = buf.Position();
+    buf.AppendZeros(BitfieldBytes(n));
+    return PositionalWriter::ListContext{buf, offset, static_cast<uint32_t>(n)};
+}
+
+// The body of a list: element null bits, then the non-null payloads. An all-valid run of a
+// fixed-width type (not bool — Arrow packs bools into bits) goes out as one Append straight from
+// the values buffer.
+void EncodeElements(PositionalWriter& w, PositionalWriter::ListContext& lc, const arrow::Array& arr,
+                    int64_t start, int64_t count, const arrow::DataType& elem_type) {
+    bool any_null = false;
+    for (int64_t j = 0; j < count; ++j) {
+        if (arr.IsNull(start + j)) {
+            lc.SetElementNull(static_cast<uint32_t>(j));
+            any_null = true;
+        }
+    }
+    if (count == 0) return;
+    const int32_t width = FixedWidth(elem_type);
+    if (!any_null && width > 0 && elem_type.id() != arrow::Type::BOOL) {
+        // buffers[1] is the values buffer of every fixed-width layout (numeric, temporal,
+        // interval, decimal, fixed_size_binary); arr.offset() accounts for a sliced array,
+        // start for the list window.
+        const uint8_t* raw =
+            arr.data()->buffers[1]->data() + (arr.offset() + start) * static_cast<int64_t>(width);
+        w.buf().Append(raw, static_cast<size_t>(count) * static_cast<size_t>(width));
+        return;
+    }
+    for (int64_t j = 0; j < count; ++j) {
+        if (!arr.IsNull(start + j)) EncodeElement(w, arr, start + j, elem_type);
     }
 }
 
-void EncodeListElements(std::vector<uint8_t>& buf, const std::shared_ptr<arrow::Array>& arr,
-                        const arrow::DataType& elem_type) {
-    const int64_t count = arr->length();
+// Writes one non-null value of `type` at index `i` of `arr` (the schema element type; the array's
+// own type equals it by construction). Used for list/map/union elements, where Arrow has no
+// GetScalar-free per-value scalar type — only a typed array to index into.
+template <typename ArrowType>
+void AppendValue(PositionalWriter& w, const arrow::Array& arr, int64_t i) {
+    w.buf().AppendFixed(
+        static_cast<const typename arrow::TypeTraits<ArrowType>::ArrayType&>(arr).Value(i));
+}
 
-    // Write null bitfield for elements. Pass the int64_t count directly — a
-    // static_cast<int> would wrap negative for counts > INT_MAX and corrupt
-    // the bitfield size (the very narrowing this hardening removes).
-    size_t nbytes = BitfieldBytes(count);
-    size_t start = buf.size();
-    buf.resize(start + nbytes, 0);
-    for (int64_t i = 0; i < count; ++i) {
-        if (arr->IsNull(i)) buf[start + i / 8] |= static_cast<uint8_t>(1u << (i % 8));
-    }
+void EncodeElement(PositionalWriter& w, const arrow::Array& arr, int64_t i,
+                   const arrow::DataType& type) {
+    using T = arrow::Type;
 
-    // Write non-null element payloads.
-    for (int64_t i = 0; i < count; ++i) {
-        if (arr->IsNull(i)) continue;
-        auto elem = detail::ValueOrThrow(arr->GetScalar(i), "Codec: list GetScalar failed");
-        EncodePositionalValue(buf, *elem, elem_type);
+    switch (type.id()) {
+        case T::BOOL:
+            w.WriteBool(static_cast<const arrow::BooleanArray&>(arr).Value(i));
+            return;
+        case T::INT8:
+            AppendValue<arrow::Int8Type>(w, arr, i);
+            return;
+        case T::INT16:
+            AppendValue<arrow::Int16Type>(w, arr, i);
+            return;
+        case T::INT32:
+            AppendValue<arrow::Int32Type>(w, arr, i);
+            return;
+        case T::INT64:
+            AppendValue<arrow::Int64Type>(w, arr, i);
+            return;
+        case T::UINT8:
+            AppendValue<arrow::UInt8Type>(w, arr, i);
+            return;
+        case T::UINT16:
+            AppendValue<arrow::UInt16Type>(w, arr, i);
+            return;
+        case T::UINT32:
+            AppendValue<arrow::UInt32Type>(w, arr, i);
+            return;
+        case T::UINT64:
+            AppendValue<arrow::UInt64Type>(w, arr, i);
+            return;
+        case T::HALF_FLOAT:
+            AppendValue<arrow::HalfFloatType>(w, arr, i);
+            return;
+        case T::FLOAT:
+            AppendValue<arrow::FloatType>(w, arr, i);
+            return;
+        case T::DOUBLE:
+            AppendValue<arrow::DoubleType>(w, arr, i);
+            return;
+        case T::DATE32:
+            AppendValue<arrow::Date32Type>(w, arr, i);
+            return;
+        case T::DATE64:
+            AppendValue<arrow::Date64Type>(w, arr, i);
+            return;
+        case T::TIME32:
+            AppendValue<arrow::Time32Type>(w, arr, i);
+            return;
+        case T::TIME64:
+            AppendValue<arrow::Time64Type>(w, arr, i);
+            return;
+        case T::TIMESTAMP:
+            AppendValue<arrow::TimestampType>(w, arr, i);
+            return;
+        case T::DURATION:
+            AppendValue<arrow::DurationType>(w, arr, i);
+            return;
+        case T::INTERVAL_MONTHS:
+            AppendValue<arrow::MonthIntervalType>(w, arr, i);
+            return;
+        case T::INTERVAL_DAY_TIME:
+            AppendValue<arrow::DayTimeIntervalType>(w, arr, i);
+            return;
+        case T::INTERVAL_MONTH_DAY_NANO:
+            AppendValue<arrow::MonthDayNanoIntervalType>(w, arr, i);
+            return;
+        case T::DECIMAL128:
+        case T::DECIMAL256:
+        case T::FIXED_SIZE_BINARY: {
+            // Decimal128Array/Decimal256Array derive from FixedSizeBinaryArray; GetValue is
+            // offset-adjusted, and the bytes it returns are the same little-endian layout
+            // Decimal128::ToBytes/Decimal256::ToBytes produce.
+            const auto& a = static_cast<const arrow::FixedSizeBinaryArray&>(arr);
+            w.buf().Append(a.GetValue(i), static_cast<size_t>(a.byte_width()));
+            return;
+        }
+        case T::STRING:
+        case T::BINARY: {
+            auto v = static_cast<const arrow::BinaryArray&>(arr).GetView(i);
+            CheckCountFits(static_cast<int64_t>(v.size()), "variable-length element");
+            w.WriteBinary(reinterpret_cast<const uint8_t*>(v.data()), v.size());
+            return;
+        }
+        case T::LARGE_STRING:
+        case T::LARGE_BINARY: {
+            auto v = static_cast<const arrow::LargeBinaryArray&>(arr).GetView(i);
+            CheckCountFits(static_cast<int64_t>(v.size()), "variable-length element");
+            w.WriteBinary(reinterpret_cast<const uint8_t*>(v.data()), v.size());
+            return;
+        }
+        case T::STRING_VIEW:
+        case T::BINARY_VIEW: {
+            auto v = static_cast<const arrow::BinaryViewArray&>(arr).GetView(i);
+            CheckCountFits(static_cast<int64_t>(v.size()), "variable-length element");
+            w.WriteBinary(reinterpret_cast<const uint8_t*>(v.data()), v.size());
+            return;
+        }
+        case T::STRUCT: {
+            const auto& sa = static_cast<const arrow::StructArray&>(arr);
+            const auto& st = static_cast<const arrow::StructType&>(type);
+            PositionalWriter sw = w.BeginStruct(st.num_fields());
+            for (int k = 0; k < st.num_fields(); ++k) {
+                // field(k) is already windowed to the struct's own offset — index with the
+                // same i as the struct itself, never re-slice.
+                auto child = sa.field(k);
+                if (child->IsNull(i)) {
+                    sw.SetNull(k);
+                } else {
+                    EncodeElement(sw, *child, i, *st.field(k)->type());
+                }
+            }
+            return;
+        }
+        case T::LIST: {
+            const auto& la = static_cast<const arrow::ListArray&>(arr);
+            const auto& list_type = static_cast<const arrow::ListType&>(type);
+            const int64_t off = la.value_offset(i);
+            const int64_t len = la.value_length(i);
+            CheckCountFits(len, "list element count");
+            auto lc = w.BeginList(static_cast<uint32_t>(len));
+            // values() is the UNSLICED child — index it at off + j, not i + j.
+            EncodeElements(w, lc, *la.values(), off, len, *list_type.value_type());
+            return;
+        }
+        case T::LARGE_LIST: {
+            const auto& la = static_cast<const arrow::LargeListArray&>(arr);
+            const auto& list_type = static_cast<const arrow::LargeListType&>(type);
+            const int64_t off = la.value_offset(i);
+            const int64_t len = la.value_length(i);
+            CheckCountFits(len, "list element count");
+            auto lc = w.BeginList(static_cast<uint32_t>(len));
+            EncodeElements(w, lc, *la.values(), off, len, *list_type.value_type());
+            return;
+        }
+        case T::FIXED_SIZE_LIST: {
+            const auto& fa = static_cast<const arrow::FixedSizeListArray&>(arr);
+            const auto& fsl_type = static_cast<const arrow::FixedSizeListType&>(type);
+            const int32_t n = fsl_type.list_size();
+            auto lc = BeginFixedSizeList(w.buf(), n);
+            EncodeElements(w, lc, *fa.values(), fa.value_offset(i), n, *fsl_type.value_type());
+            return;
+        }
+        case T::MAP: {
+            const auto& ma = static_cast<const arrow::MapArray&>(arr);
+            const auto& map_type = static_cast<const arrow::MapType&>(type);
+            const int64_t off = ma.value_offset(i);
+            const int64_t len = ma.value_length(i);
+            CheckCountFits(len, "map entry count");
+            // keys()/items() are the flattened children — index at off + j.
+            const arrow::Array& keys = *ma.keys();
+            const arrow::Array& items = *ma.items();
+            auto mc = w.BeginMap(static_cast<uint32_t>(len));
+            for (int64_t j = 0; j < len; ++j) {
+                if (keys.IsNull(off + j))
+                    throw std::invalid_argument("Codec: map key must not be null");
+                EncodeElement(w, keys, off + j, *map_type.key_type());
+            }
+            auto vals = mc.BeginValues();
+            for (int64_t j = 0; j < len; ++j) {
+                if (items.IsNull(off + j))
+                    vals.SetElementNull(static_cast<uint32_t>(j));
+                else
+                    EncodeElement(w, items, off + j, *map_type.item_type());
+            }
+            return;
+        }
+        case T::SPARSE_UNION:
+        case T::DENSE_UNION: {
+            const auto& ua = static_cast<const arrow::UnionArray&>(arr);
+            const auto& utype = static_cast<const arrow::UnionType&>(type);
+            const int8_t code = ua.type_code(i);
+            const int child = ua.child_id(i);
+            w.buf().AppendFixed(code);
+            // UnionArray::field(): sparse is offset-adjusted (index i); dense is raw
+            // (index DenseUnionArray::value_offset(i), itself offset-adjusted).
+            const arrow::Array& c = *ua.field(child);
+            const int64_t idx =
+                type.id() == T::DENSE_UNION
+                    ? static_cast<const arrow::DenseUnionArray&>(arr).value_offset(i)
+                    : i;
+            EncodeElement(w, c, idx, *utype.field(child)->type());
+            return;
+        }
+        case T::DICTIONARY: {
+            const auto& da = static_cast<const arrow::DictionaryArray&>(arr);
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(type);
+            const int64_t idx = da.GetValueIndex(i);
+            const arrow::Array& dict = *da.dictionary();
+            if (dict.IsNull(idx)) throw std::invalid_argument("Codec: dictionary entry is null");
+            EncodeElement(w, dict, idx, *dict_type.value_type());
+            return;
+        }
+        default:
+            throw std::invalid_argument("Codec: unsupported Arrow type: " + type.ToString());
     }
 }
 
-void EncodePositionalValue(std::vector<uint8_t>& buf, const arrow::Scalar& scalar,
-                           const arrow::DataType& type) {
+// Writes one field/child value (which may itself be a nested composite) from its arrow::Scalar
+// representation. Used for the row's top-level fields and for a struct scalar's children, where
+// Arrow hands each field an individually-typed Scalar rather than an array + index.
+void EncodeScalarValue(PositionalWriter& w, const arrow::Scalar& scalar,
+                       const arrow::DataType& type) {
     using T = arrow::Type;
 
     switch (type.id()) {
         case T::STRUCT: {
             const auto& ss = static_cast<const arrow::StructScalar&>(scalar);
-            const auto& stype = static_cast<const arrow::StructType&>(type);
-            EncodePositionalStruct(buf, ss, stype);
+            const auto& st = static_cast<const arrow::StructType&>(type);
+            PositionalWriter sw = w.BeginStruct(st.num_fields());
+            for (int k = 0; k < st.num_fields(); ++k) {
+                const auto& child = ss.value[static_cast<size_t>(k)];
+                if (!child || !child->is_valid) {
+                    sw.SetNull(k);
+                } else {
+                    EncodeScalarValue(sw, *child, *st.field(k)->type());
+                }
+            }
             return;
         }
         case T::LIST:
         case T::LARGE_LIST: {
             const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
             const auto& list_type = static_cast<const arrow::BaseListType&>(type);
-            AppendFixed(buf, static_cast<uint32_t>(ls.value->length()));
-            EncodeListElements(buf, ls.value, *list_type.value_type());
+            const arrow::Array& arr = *ls.value;
+            CheckStructurallyValid(arr, "list value");
+            const int64_t count = arr.length();
+            CheckCountFits(count, "list element count");
+            auto lc = w.BeginList(static_cast<uint32_t>(count));
+            EncodeElements(w, lc, arr, 0, count, *list_type.value_type());
             return;
         }
         case T::FIXED_SIZE_LIST: {
             const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
             const auto& fsl_type = static_cast<const arrow::FixedSizeListType&>(type);
+            const arrow::Array& arr = *ls.value;
+            CheckStructurallyValid(arr, "fixed_size_list value");
+            const int32_t list_size = fsl_type.list_size();
+            if (arr.length() != list_size)
+                throw std::invalid_argument(
+                    "Codec: fixed_size_list value length (" + std::to_string(arr.length()) +
+                    ") does not match schema list_size (" + std::to_string(list_size) + ")");
             // No COUNT prefix — the fixed size is in the schema.
-            EncodeListElements(buf, ls.value, *fsl_type.value_type());
+            auto lc = BeginFixedSizeList(w.buf(), list_size);
+            EncodeElements(w, lc, arr, 0, list_size, *fsl_type.value_type());
             return;
         }
         case T::MAP: {
             const auto& ms = static_cast<const arrow::MapScalar&>(scalar);
             const auto& map_type = static_cast<const arrow::MapType&>(type);
-            auto struct_arr = std::static_pointer_cast<arrow::StructArray>(ms.value);
-            const int64_t count = struct_arr->length();
-            auto key_arr = struct_arr->field(0);
-            auto val_arr = struct_arr->field(1);
-
-            AppendFixed(buf, static_cast<uint32_t>(count));
-
+            const auto& entries = static_cast<const arrow::StructArray&>(*ms.value);
+            CheckStructurallyValid(entries, "map entries");
+            // entries.field(k) is windowed to the entries struct's own offset — index at j.
+            const arrow::Array& keys = *entries.field(0);
+            const arrow::Array& items = *entries.field(1);
+            const int64_t n = entries.length();
+            CheckCountFits(n, "map entry count");
+            auto mc = w.BeginMap(static_cast<uint32_t>(n));
             // Keys: no null bitfield (keys are never null).
-            for (int64_t i = 0; i < count; ++i) {
-                auto key =
-                    detail::ValueOrThrow(key_arr->GetScalar(i), "Codec: map key GetScalar failed");
-                EncodePositionalValue(buf, *key, *map_type.key_type());
+            for (int64_t j = 0; j < n; ++j) {
+                if (keys.IsNull(j)) throw std::invalid_argument("Codec: map key must not be null");
+                EncodeElement(w, keys, j, *map_type.key_type());
             }
-
-            // Values: null bitfield + payloads. Pass int64_t count directly
-            // (no narrowing static_cast<int>).
-            size_t nbytes = BitfieldBytes(count);
-            size_t start = buf.size();
-            buf.resize(start + nbytes, 0);
-            for (int64_t i = 0; i < count; ++i) {
-                if (val_arr->IsNull(i)) buf[start + i / 8] |= static_cast<uint8_t>(1u << (i % 8));
-            }
-            for (int64_t i = 0; i < count; ++i) {
-                if (val_arr->IsNull(i)) continue;
-                auto val = detail::ValueOrThrow(val_arr->GetScalar(i),
-                                                "Codec: map value GetScalar failed");
-                EncodePositionalValue(buf, *val, *map_type.item_type());
+            auto vals = mc.BeginValues();
+            for (int64_t j = 0; j < n; ++j) {
+                if (items.IsNull(j))
+                    vals.SetElementNull(static_cast<uint32_t>(j));
+                else
+                    EncodeElement(w, items, j, *map_type.item_type());
             }
             return;
         }
         case T::SPARSE_UNION: {
             const auto& us = static_cast<const arrow::SparseUnionScalar&>(scalar);
             const auto& union_type = static_cast<const arrow::SparseUnionType&>(type);
-            AppendFixed(buf, us.type_code);
-            const auto& codes = union_type.type_codes();
-            int child_id = -1;
-            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
-                if (codes[i] == us.type_code) {
-                    child_id = i;
-                    break;
-                }
-            }
+            const auto& ids = union_type.child_ids();
+            int child_id = (us.type_code < 0 || us.type_code >= static_cast<int>(ids.size()))
+                               ? -1
+                               : ids[static_cast<size_t>(us.type_code)];
             if (child_id < 0 || child_id >= static_cast<int>(us.value.size()))
                 throw std::invalid_argument("Codec: invalid sparse union type_code");
-            EncodePositionalValue(buf, *us.value[static_cast<size_t>(child_id)],
-                                  *union_type.field(child_id)->type());
+            w.buf().AppendFixed(us.type_code);
+            EncodeScalarValue(w, *us.value[static_cast<size_t>(child_id)],
+                              *union_type.field(child_id)->type());
             return;
         }
         case T::DENSE_UNION: {
             const auto& us = static_cast<const arrow::DenseUnionScalar&>(scalar);
             const auto& union_type = static_cast<const arrow::DenseUnionType&>(type);
-            AppendFixed(buf, us.type_code);
-            const auto& codes = union_type.type_codes();
-            int child_id = -1;
-            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
-                if (codes[i] == us.type_code) {
-                    child_id = i;
-                    break;
-                }
-            }
+            const auto& ids = union_type.child_ids();
+            int child_id = (us.type_code < 0 || us.type_code >= static_cast<int>(ids.size()))
+                               ? -1
+                               : ids[static_cast<size_t>(us.type_code)];
             if (child_id < 0) throw std::invalid_argument("Codec: invalid dense union type_code");
-            EncodePositionalValue(buf, *us.value, *union_type.field(child_id)->type());
+            w.buf().AppendFixed(us.type_code);
+            EncodeScalarValue(w, *us.value, *union_type.field(child_id)->type());
             return;
         }
         default:
             // Scalar — reuse the existing scalar encoder.
-            detail::EncodeScalar(buf, scalar);
+            detail::EncodeScalar(w.buf(), scalar);
             return;
     }
 }
@@ -221,57 +438,38 @@ std::shared_ptr<arrow::Scalar> DecodePositionalStruct(
     return std::make_shared<arrow::StructScalar>(std::move(children), type);
 }
 
-// A run of fixed-width elements with no nulls is laid out on the wire as `count` values back to back (EncodeListElements writes
-// each non-null element with AppendFixed), so the typed builder is filled straight from the buffer. The scalar path below costs
-// one heap-allocated arrow::Scalar and one virtual AppendScalar per element — ~13 300 allocations for a 2 667-point cloud row,
-// ~450 k/s at a 10 Hz 8 k-point cloud — which was the bridge's dominant CPU cost.
-template <typename ArrowType>
-void AppendPrimitiveRun(arrow::ArrayBuilder& builder, detail::Reader& r, int64_t count) {
-    using T = typename ArrowType::c_type;
-    auto& typed = static_cast<arrow::NumericBuilder<ArrowType>&>(builder);
-    const uint8_t* bytes = r.ReadBytes(static_cast<size_t>(count) * sizeof(T));
-    auto st = typed.Reserve(count);
-    if (!st.ok()) throw std::invalid_argument("Codec: builder Reserve failed: " + st.ToString());
-    for (int64_t i = 0; i < count; ++i) {
-        T v;
-        std::memcpy(&v, bytes + static_cast<size_t>(i) * sizeof(T), sizeof(T));
-        typed.UnsafeAppend(v);
-    }
-}
-
-bool DecodePrimitiveRun(arrow::ArrayBuilder& builder, detail::Reader& r, int64_t count,
-                        arrow::Type::type id) {
-    using T = arrow::Type;
-    switch (id) {
-        case T::INT8: AppendPrimitiveRun<arrow::Int8Type>(builder, r, count); return true;
-        case T::INT16: AppendPrimitiveRun<arrow::Int16Type>(builder, r, count); return true;
-        case T::INT32: AppendPrimitiveRun<arrow::Int32Type>(builder, r, count); return true;
-        case T::INT64: AppendPrimitiveRun<arrow::Int64Type>(builder, r, count); return true;
-        case T::UINT8: AppendPrimitiveRun<arrow::UInt8Type>(builder, r, count); return true;
-        case T::UINT16: AppendPrimitiveRun<arrow::UInt16Type>(builder, r, count); return true;
-        case T::UINT32: AppendPrimitiveRun<arrow::UInt32Type>(builder, r, count); return true;
-        case T::UINT64: AppendPrimitiveRun<arrow::UInt64Type>(builder, r, count); return true;
-        case T::FLOAT: AppendPrimitiveRun<arrow::FloatType>(builder, r, count); return true;
-        case T::DOUBLE: AppendPrimitiveRun<arrow::DoubleType>(builder, r, count); return true;
-        default: return false;
-    }
-}
-
-bool AllValid(const uint8_t* bitfield, int64_t count) {
-    const size_t bytes = BitfieldBytes(count);
-    for (size_t i = 0; i < bytes; ++i)
-        if (bitfield[i]) return false;
-    return true;
-}
-
 std::shared_ptr<arrow::Array> DecodeListElements(
     detail::Reader& r, int64_t count, const std::shared_ptr<arrow::DataType>& elem_type) {
+    // A DICTIONARY list element is transferred as its resolved value — the same contract as a
+    // top-level dictionary field (codec.hpp) — and DecodePositionalValue's default case already
+    // returns that plain value scalar for it. A DictionaryBuilder's AppendScalar requires an
+    // actual DictionaryScalar, so building one here and feeding it a value scalar corrupts memory
+    // instead of failing cleanly; build the value-typed array directly instead. The caller
+    // (DecodePositionalValue) types the resulting List/LargeList/FixedSizeListScalar to match.
+    if (elem_type->id() == arrow::Type::DICTIONARY) {
+        return DecodeListElements(
+            r, count, static_cast<const arrow::DictionaryType&>(*elem_type).value_type());
+    }
     const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
 
     auto builder =
         detail::ValueOrThrow(arrow::MakeBuilder(elem_type), "Codec: list MakeBuilder failed");
-    if (count > 0 && AllValid(bitfield, count) && DecodePrimitiveRun(*builder, r, count, elem_type->id()))
+
+    // A run of fixed-width elements with no nulls is laid out on the wire as `count` values back
+    // to back (EncodeElements writes an all-valid fixed-width run with one bulk Append), so for
+    // any fixed-width type the typed builder is filled straight from the buffer with one memcpy.
+    // The scalar path below costs one heap-allocated arrow::Scalar and one virtual AppendScalar per
+    // element — ~13 300 allocations for a 2 667-point cloud row, ~450 k/s at a 10 Hz 8 k-point
+    // cloud — which was the bridge's dominant CPU cost.
+    const int32_t width = FixedWidth(*elem_type);
+    if (count > 0 && width > 0 && AllValid(bitfield, count)) {
+        // Divide, never multiply: a wrapped `count * width` would pass ReadBytes' own check.
+        if (static_cast<uint64_t>(count) > r.remaining() / static_cast<size_t>(width))
+            throw std::invalid_argument("Codec: list payload exceeds remaining buffer");
+        const uint8_t* bytes = r.ReadBytes(static_cast<size_t>(count) * static_cast<size_t>(width));
+        AppendRun(*builder, elem_type->id(), bytes, count);
         return detail::ValueOrThrow(builder->Finish(), "Codec: list builder Finish failed");
+    }
     for (int64_t i = 0; i < count; ++i) {
         if (ReadNullBit(bitfield, static_cast<int>(i))) {
             auto st = builder->AppendNull();
@@ -307,15 +505,24 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
             if (BitfieldBytes(count) > r.remaining())
                 throw std::invalid_argument("Codec: list element count exceeds remaining buffer");
             auto arr = DecodeListElements(r, count, list_type.value_type());
-            if (type->id() == T::LIST) return std::make_shared<arrow::ListScalar>(arr, type);
-            return std::make_shared<arrow::LargeListScalar>(arr, type);
+            // A dictionary-valued list decodes to its resolved value array (see
+            // DecodeListElements); type the scalar to match what it actually holds rather than
+            // the schema's dictionary type.
+            const bool is_dict = list_type.value_type()->id() == arrow::Type::DICTIONARY;
+            if (type->id() == T::LIST) {
+                return std::make_shared<arrow::ListScalar>(
+                    arr, is_dict ? arrow::list(arr->type()) : type);
+            }
+            return std::make_shared<arrow::LargeListScalar>(
+                arr, is_dict ? arrow::large_list(arr->type()) : type);
         }
         case T::FIXED_SIZE_LIST: {
             const auto& fsl_type = static_cast<const arrow::FixedSizeListType&>(*type);
             int32_t count = fsl_type.list_size();
             auto arr = DecodeListElements(r, count, fsl_type.value_type());
-            auto actual_type = arrow::fixed_size_list(arr->type(), count);
-            return std::make_shared<arrow::FixedSizeListScalar>(arr, actual_type);
+            const bool is_dict = fsl_type.value_type()->id() == arrow::Type::DICTIONARY;
+            return std::make_shared<arrow::FixedSizeListScalar>(
+                arr, is_dict ? arrow::fixed_size_list(arr->type(), count) : type);
         }
         case T::MAP: {
             const auto& map_type = static_cast<const arrow::MapType&>(*type);
@@ -371,14 +578,10 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::SPARSE_UNION: {
             const auto& union_type = static_cast<const arrow::SparseUnionType&>(*type);
             int8_t type_code = r.Read<int8_t>();
-            const auto& codes = union_type.type_codes();
-            int child_id = -1;
-            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
-                if (codes[i] == type_code) {
-                    child_id = i;
-                    break;
-                }
-            }
+            const auto& ids = union_type.child_ids();
+            int child_id = (type_code < 0 || type_code >= static_cast<int>(ids.size()))
+                               ? -1
+                               : ids[static_cast<size_t>(type_code)];
             if (child_id < 0) throw std::invalid_argument("Codec: unknown sparse union type_code");
             auto active = DecodePositionalValue(r, union_type.field(child_id)->type());
             arrow::ScalarVector children;
@@ -392,14 +595,10 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
         case T::DENSE_UNION: {
             const auto& union_type = static_cast<const arrow::DenseUnionType&>(*type);
             int8_t type_code = r.Read<int8_t>();
-            const auto& codes = union_type.type_codes();
-            int child_id = -1;
-            for (int i = 0; i < static_cast<int>(codes.size()); ++i) {
-                if (codes[i] == type_code) {
-                    child_id = i;
-                    break;
-                }
-            }
+            const auto& ids = union_type.child_ids();
+            int child_id = (type_code < 0 || type_code >= static_cast<int>(ids.size()))
+                               ? -1
+                               : ids[static_cast<size_t>(type_code)];
             if (child_id < 0) throw std::invalid_argument("Codec: unknown dense union type_code");
             return std::make_shared<arrow::DenseUnionScalar>(
                 DecodePositionalValue(r, union_type.field(child_id)->type()), type_code, type);
@@ -418,7 +617,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
 
 Codec::Codec(std::shared_ptr<arrow::Schema> schema) : schema_(std::move(schema)) {}
 
-EncodedRow Codec::EncodeRow(const ArrowRow& values) const {
+void Codec::EncodeRow(const ArrowRow& values, WriteBuffer& out) const {
     const int num_fields = schema_->num_fields();
 
     if (static_cast<int>(values.size()) != num_fields)
@@ -426,35 +625,37 @@ EncodedRow Codec::EncodeRow(const ArrowRow& values) const {
             "Codec::EncodeRow: values.size() (" + std::to_string(values.size()) +
             ") does not match schema.num_fields() (" + std::to_string(num_fields) + ")");
 
-    std::vector<uint8_t> buf;
-    buf.reserve(128);
+    PositionalWriter w(out, num_fields);
 
-    // Null bitfield.
-    WriteNullBitfield(buf, values, num_fields);
-
-    // Payloads for non-null fields.
     for (int i = 0; i < num_fields; ++i) {
         const auto& scalar = values[i];
-        if (!scalar || !scalar->is_valid) continue;
+        if (!scalar || !scalar->is_valid) {
+            w.SetNull(i);
+            continue;
+        }
 
         const auto& field_type = *schema_->field(i)->type();
-        bool type_ok = scalar->type->id() == field_type.id();
+        bool type_ok = field_type.Equals(*scalar->type);
         if (!type_ok && field_type.id() == arrow::Type::DICTIONARY) {
             // A dictionary field may be supplied as a DictionaryScalar or as a
             // plain value-type scalar; it is transferred as its value type.
             const auto& value_type =
                 *static_cast<const arrow::DictionaryType&>(field_type).value_type();
-            type_ok = scalar->type->id() == value_type.id();
+            type_ok = value_type.Equals(*scalar->type);
         }
         if (!type_ok)
             throw std::invalid_argument(
                 "Codec::EncodeRow: type mismatch for field '" + schema_->field(i)->name() +
                 "': schema expects " + field_type.ToString() + ", got " + scalar->type->ToString());
 
-        EncodePositionalValue(buf, *scalar, field_type);
+        EncodeScalarValue(w, *scalar, field_type);
     }
+}
 
-    return buf;
+EncodedRow Codec::EncodeRow(const ArrowRow& values) const {
+    VectorWriteBuffer buf;
+    EncodeRow(values, buf);
+    return buf.Finish();
 }
 
 ArrowRow Codec::DecodeRow(const EncodedRow& buf) const { return DecodeRow(buf.data(), buf.size()); }

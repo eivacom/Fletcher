@@ -240,6 +240,7 @@ add_executable(integration_tests
     tests/test_flatten.cpp
     tests/test_native_roundtrip.cpp
     tests/test_nullability_consistency.cpp
+    tests/test_to_arrow_row.cpp
     tests/test_arrow_view.cpp
     tests/test_ipc_parity.cpp
     tests/test_metadata_options.cpp)

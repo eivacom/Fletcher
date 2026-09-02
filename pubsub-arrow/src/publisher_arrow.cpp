@@ -62,10 +62,17 @@ void PublisherArrow::Publish(const std::vector<std::string>& segments, const Arr
         codec = it->second.codec.get();
     }
 
-    std::vector<uint8_t> encoded = codec->EncodeRow(row);
+    // Encode here, not inside the RowEncoder: the non-loaned Fast DDS path runs the encoder inside
+    // serialize(), which turns any exception into a logged false, and a type mismatch must reach
+    // the caller as std::invalid_argument. The scratch keeps its capacity, so a warm thread
+    // allocates nothing per publish.
+    thread_local std::vector<uint8_t> scratch;
+    scratch.clear();
+    VectorWriteBuffer buf(std::move(scratch));
+    codec->EncodeRow(row, buf);
+    scratch = buf.Finish();
     publisher_->Publish(
-        segments,
-        [data = std::move(encoded)](WriteBuffer& buf) { buf.Append(data.data(), data.size()); },
+        segments, [&](WriteBuffer& out) { out.Append(scratch.data(), scratch.size()); },
         attachments);
 }
 

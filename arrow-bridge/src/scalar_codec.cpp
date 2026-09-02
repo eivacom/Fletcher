@@ -3,6 +3,7 @@
 //
 #include "scalar_codec.hpp"
 
+#include <arrow/buffer.h>
 #include <arrow/scalar.h>
 #include <arrow/type.h>
 
@@ -12,19 +13,10 @@
 #include <stdexcept>
 #include <string>
 
+#include "fletcher/arrow_bridge/detail/arrow_result.hpp"
+
 namespace fletcher {
 namespace {
-
-template <typename T>
-void AppendFixed(std::vector<uint8_t>& buf, T value) {
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
-    buf.insert(buf.end(), bytes, bytes + sizeof(T));
-}
-
-void AppendVariableLength(std::vector<uint8_t>& buf, const uint8_t* data, uint32_t len) {
-    AppendFixed(buf, len);
-    buf.insert(buf.end(), data, data + len);
-}
 
 // Dictionary columns are transferred as their value type per row (the indices
 // are a columnar optimisation that is reconstructed by the RecordBatch
@@ -55,44 +47,44 @@ void EnsureDictionaryValueSupported(const arrow::DataType& value_type) {
 
 namespace detail {
 
-void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
+void EncodeScalar(WriteBuffer& out, const arrow::Scalar& scalar) {
     using T = arrow::Type;
 
     switch (scalar.type->id()) {
         case T::BOOL: {
             auto v = static_cast<const arrow::BooleanScalar&>(scalar).value;
-            AppendFixed<uint8_t>(buf, v ? 1u : 0u);
+            out.AppendByte(v ? 1u : 0u);
             break;
         }
         case T::INT8:
-            AppendFixed(buf, static_cast<const arrow::Int8Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Int8Scalar&>(scalar).value);
             break;
         case T::INT16:
-            AppendFixed(buf, static_cast<const arrow::Int16Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Int16Scalar&>(scalar).value);
             break;
         case T::INT32:
-            AppendFixed(buf, static_cast<const arrow::Int32Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Int32Scalar&>(scalar).value);
             break;
         case T::INT64:
-            AppendFixed(buf, static_cast<const arrow::Int64Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Int64Scalar&>(scalar).value);
             break;
         case T::UINT8:
-            AppendFixed(buf, static_cast<const arrow::UInt8Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::UInt8Scalar&>(scalar).value);
             break;
         case T::UINT16:
-            AppendFixed(buf, static_cast<const arrow::UInt16Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::UInt16Scalar&>(scalar).value);
             break;
         case T::UINT32:
-            AppendFixed(buf, static_cast<const arrow::UInt32Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::UInt32Scalar&>(scalar).value);
             break;
         case T::UINT64:
-            AppendFixed(buf, static_cast<const arrow::UInt64Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::UInt64Scalar&>(scalar).value);
             break;
         case T::FLOAT:
-            AppendFixed(buf, static_cast<const arrow::FloatScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::FloatScalar&>(scalar).value);
             break;
         case T::DOUBLE:
-            AppendFixed(buf, static_cast<const arrow::DoubleScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::DoubleScalar&>(scalar).value);
             break;
 
         case T::STRING:
@@ -106,28 +98,29 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             if (raw_len < 0 || raw_len > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
                 throw std::invalid_argument(
                     "EncodeScalar: variable-length field exceeds 4 GiB limit");
-            AppendVariableLength(buf, reinterpret_cast<const uint8_t*>(s.value->data()),
-                                 static_cast<uint32_t>(raw_len));
+            out.AppendFixed(static_cast<uint32_t>(raw_len));
+            out.Append(reinterpret_cast<const uint8_t*>(s.value->data()),
+                       static_cast<size_t>(raw_len));
             break;
         }
 
         case T::DATE32:
-            AppendFixed(buf, static_cast<const arrow::Date32Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Date32Scalar&>(scalar).value);
             break;
         case T::DATE64:
-            AppendFixed(buf, static_cast<const arrow::Date64Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Date64Scalar&>(scalar).value);
             break;
         case T::TIMESTAMP:
-            AppendFixed(buf, static_cast<const arrow::TimestampScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::TimestampScalar&>(scalar).value);
             break;
         case T::TIME32:
-            AppendFixed(buf, static_cast<const arrow::Time32Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Time32Scalar&>(scalar).value);
             break;
         case T::TIME64:
-            AppendFixed(buf, static_cast<const arrow::Time64Scalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::Time64Scalar&>(scalar).value);
             break;
         case T::DURATION:
-            AppendFixed(buf, static_cast<const arrow::DurationScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::DurationScalar&>(scalar).value);
             break;
         case T::FIXED_SIZE_BINARY: {
             // Arrow's FixedSizeBinaryScalar constructor enforces
@@ -138,40 +131,40 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*scalar.type).byte_width();
             const auto* data = reinterpret_cast<const uint8_t*>(s.value->data());
-            buf.insert(buf.end(), data, data + byte_width);
+            out.Append(data, static_cast<size_t>(byte_width));
             break;
         }
         case T::HALF_FLOAT:
-            AppendFixed(buf, static_cast<const arrow::HalfFloatScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::HalfFloatScalar&>(scalar).value);
             break;
         case T::INTERVAL_MONTHS:
-            AppendFixed(buf, static_cast<const arrow::MonthIntervalScalar&>(scalar).value);
+            out.AppendFixed(static_cast<const arrow::MonthIntervalScalar&>(scalar).value);
             break;
         case T::INTERVAL_DAY_TIME: {
             const auto& v = static_cast<const arrow::DayTimeIntervalScalar&>(scalar).value;
-            AppendFixed(buf, v.days);
-            AppendFixed(buf, v.milliseconds);
+            out.AppendFixed(v.days);
+            out.AppendFixed(v.milliseconds);
             break;
         }
         case T::INTERVAL_MONTH_DAY_NANO: {
             const auto& v = static_cast<const arrow::MonthDayNanoIntervalScalar&>(scalar).value;
-            AppendFixed(buf, v.months);
-            AppendFixed(buf, v.days);
-            AppendFixed(buf, v.nanoseconds);
+            out.AppendFixed(v.months);
+            out.AppendFixed(v.days);
+            out.AppendFixed(v.nanoseconds);
             break;
         }
         case T::DECIMAL128: {
             const auto& v = static_cast<const arrow::Decimal128Scalar&>(scalar).value;
             uint8_t bytes[16];
             v.ToBytes(bytes);
-            buf.insert(buf.end(), bytes, bytes + 16);
+            out.Append(bytes, 16);
             break;
         }
         case T::DECIMAL256: {
             const auto& v = static_cast<const arrow::Decimal256Scalar&>(scalar).value;
             uint8_t bytes[32];
             v.ToBytes(bytes);
-            buf.insert(buf.end(), bytes, bytes + 32);
+            out.Append(bytes, 32);
             break;
         }
 
@@ -180,10 +173,10 @@ void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar) {
             const auto& dict_type = static_cast<const arrow::DictionaryType&>(*scalar.type);
             EnsureDictionaryValueSupported(*dict_type.value_type());
             auto value = static_cast<const arrow::DictionaryScalar&>(scalar).GetEncodedValue();
-            if (!value.ok())
-                throw std::invalid_argument("EncodeScalar: cannot resolve dictionary value: " +
-                                            value.status().ToString());
-            EncodeScalar(buf, **value);
+            if (!value.ok() || !(*value)->is_valid)
+                throw std::invalid_argument(
+                    "EncodeScalar: dictionary entry is null or unresolvable");
+            EncodeScalar(out, **value);
             break;
         }
 
@@ -228,21 +221,21 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
         case T::BINARY_VIEW: {
             uint32_t len = r.Read<uint32_t>();
             const uint8_t* ptr = r.ReadBytes(len);
-            auto ibuf =
-                arrow::Buffer::FromString(std::string(reinterpret_cast<const char*>(ptr), len));
+            auto ibuf = ValueOrThrow(arrow::AllocateBuffer(len), "DecodeScalar: AllocateBuffer");
+            if (len > 0) std::memcpy(ibuf->mutable_data(), ptr, len);
             switch (type->id()) {
                 case T::STRING:
-                    return std::make_shared<arrow::StringScalar>(ibuf);
+                    return std::make_shared<arrow::StringScalar>(std::move(ibuf));
                 case T::LARGE_STRING:
-                    return std::make_shared<arrow::LargeStringScalar>(ibuf);
+                    return std::make_shared<arrow::LargeStringScalar>(std::move(ibuf));
                 case T::BINARY:
-                    return std::make_shared<arrow::BinaryScalar>(ibuf);
+                    return std::make_shared<arrow::BinaryScalar>(std::move(ibuf));
                 case T::LARGE_BINARY:
-                    return std::make_shared<arrow::LargeBinaryScalar>(ibuf);
+                    return std::make_shared<arrow::LargeBinaryScalar>(std::move(ibuf));
                 case T::STRING_VIEW:
-                    return std::make_shared<arrow::StringViewScalar>(ibuf);
+                    return std::make_shared<arrow::StringViewScalar>(std::move(ibuf));
                 case T::BINARY_VIEW:
-                    return std::make_shared<arrow::BinaryViewScalar>(ibuf);
+                    return std::make_shared<arrow::BinaryViewScalar>(std::move(ibuf));
                 default:
                     throw std::invalid_argument("DecodeScalar: unsupported Arrow type: " +
                                                 type->ToString());
@@ -273,9 +266,10 @@ std::shared_ptr<arrow::Scalar> DecodeScalarFromReader(
             const int32_t byte_width =
                 static_cast<const arrow::FixedSizeBinaryType&>(*type).byte_width();
             const uint8_t* ptr = r.ReadBytes(byte_width);
-            auto ibuf = arrow::Buffer::FromString(
-                std::string(reinterpret_cast<const char*>(ptr), byte_width));
-            return std::make_shared<arrow::FixedSizeBinaryScalar>(ibuf, type);
+            auto ibuf =
+                ValueOrThrow(arrow::AllocateBuffer(byte_width), "DecodeScalar: AllocateBuffer");
+            if (byte_width > 0) std::memcpy(ibuf->mutable_data(), ptr, byte_width);
+            return std::make_shared<arrow::FixedSizeBinaryScalar>(std::move(ibuf), type);
         }
         case T::HALF_FLOAT:
             return std::make_shared<arrow::HalfFloatScalar>(r.Read<uint16_t>());

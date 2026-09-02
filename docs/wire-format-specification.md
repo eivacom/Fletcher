@@ -209,6 +209,14 @@ a `DictionaryArray` of the field's declared dictionary type. The dictionary
 **value type must be a primitive/scalar type** — nested value types
 (struct/list/map/union) are rejected with a clear error.
 
+The wire bytes are the same regardless of which side decodes them — always the
+value type, never indices. The re-fold above happens specifically in
+`BatchDecoder::Finish()`, and only for a dictionary field at the **top level**
+of the schema. A dictionary nested below the top level (inside a list, struct,
+or map) is rejected by that batched path at subscribe time; `Codec::DecodeRow`
+still decodes it, yielding the value type there too, same as a top-level
+dictionary field.
+
 ## Unsupported Types
 
 | Type | Reason |
