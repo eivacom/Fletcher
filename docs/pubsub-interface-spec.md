@@ -390,9 +390,15 @@ key is `schema_carriage` (`as_declared`, the default, or `carried`, §7 clause
 1's schema-before-data mode) — e.g. `document = "schema_carriage=carried"`.
 Fletcher copies and forwards those bytes exactly as any other provider's; the
 only code that reads them is `in_process_provider.cpp`, unshared and
-dependency-free, exactly as §4.2 requires. An unrecognised entry (unknown key,
-unknown value, no `=`, a duplicate key) is refused with `kInvalidArgument`,
-quoting the offending entry, so a misconfigured instance never exists.
+dependency-free, exactly as §4.2 requires. A trailing `\r` on an entry is
+stripped (a document authored on this project's primary platform is CRLF, and
+the 2026-09-02 configuration ruling requires the same text to mean the same
+thing in every build) and a blank entry — a blank line or a trailing newline —
+is skipped; nothing else is trimmed. A document containing an embedded NUL is
+refused, mirroring `ProviderSelector::Parse`. An unrecognised entry (unknown
+key, unknown value, no `=`, a duplicate key) is refused with
+`kInvalidArgument`, quoting the offending entry, so a misconfigured instance
+never exists.
 
 **The seam must carry no protocol vocabulary.** `FastDDSProviderOptions` embeds
 `eprosima::fastdds::dds::DataWriterQos`/`DataReaderQos` *plus per-topic maps of

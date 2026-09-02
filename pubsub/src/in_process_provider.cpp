@@ -8,7 +8,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -38,21 +37,21 @@ enum class SchemaCarriage {
     kCarried,
 };
 
-// Quote one document entry for a refusal message. Deliberately not the shared
-// `Quoted` helper in provider_registry.cpp (decision 8: no shared parser, no
-// dependency between a provider TU and the registry TU) — this is a handful of
-// lines over one key, not a format.
-std::string QuoteEntry(const std::string& entry) {
-    std::ostringstream out;
-    out << '"' << entry << '"';
-    return out.str();
-}
+// Quote one document entry for a refusal message. Plain concatenation, not
+// escaping: a document containing a NUL is refused before this is ever
+// called (see the check at the top of `ParseSchemaCarriage`), so there is no
+// byte here that could hide inside the quotes or truncate the message on its
+// way out through `PubSubError::what()`. Deliberately not the shared `Quoted`
+// helper in provider_registry.cpp (decision 8: no shared parser, no
+// dependency between a provider TU and the registry TU) — this is one line
+// over one key, not a format.
+std::string QuoteEntry(const std::string& entry) { return "\"" + entry + "\""; }
 
 // The loopback's own document reader (spec §4.2; owner ruling 2026-09-02: the
 // document is the provider's own format, and only the provider reads it).
 // Fletcher's seam still reads nothing — this function is reachable only from
 // this provider's own constructor, is unshared, and depends on nothing beyond
-// <string>/<sstream>.
+// <string>.
 //
 // Format: a sequence of `\n`-separated `key=value` entries. Empty document ->
 // the defaults. A trailing `\r` on an entry is stripped (H2: a document
@@ -62,7 +61,25 @@ std::string QuoteEntry(const std::string& entry) {
 // unknown key, an unknown value, an entry with no `=`, or a duplicate key — is
 // refused with `PubSubError(kInvalidArgument)` quoting the offending entry, so
 // a misconfigured loopback never exists (rung-2 case 6).
+//
+// A document containing an embedded NUL is refused up front, mirroring
+// `ProviderSelector::Parse` (`provider_registry.hpp`'s C form explicitly
+// sanctions a NUL inside `document` — the length is authoritative — so one
+// can legitimately reach here). This provider's key=value format has no
+// representation for one: matching is still byte-safe either way, but the
+// refusal MESSAGE is built by string concatenation into a
+// `std::runtime_error`, read back through `what()` -> `c_str()`, which stops
+// dead at the first NUL. Refusing here, once, is simpler and more honest than
+// quoting around a byte the diagnostic channel cannot carry.
 SchemaCarriage ParseSchemaCarriage(const std::string& document) {
+    const size_t nul = document.find('\0');
+    if (nul != std::string::npos) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "InProcessPubSubProvider: document contains a NUL at offset " +
+                              std::to_string(nul) +
+                              "; this provider's key=value format has no representation for one");
+    }
+
     SchemaCarriage carriage = SchemaCarriage::kAsDeclared;
     bool seen = false;
 

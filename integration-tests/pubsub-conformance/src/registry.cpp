@@ -615,6 +615,104 @@ TEST(Registry, InProcessRefusesAnUnrecognisedDocumentEntry) {
     // or "duplicate key -> kInvalidArgument" is a rule asserted by nothing.
     refuse("schema_carriage=as_declared\nschema_carriage=carried", "schema_carriage=carried",
           "a duplicate key");
+    // An empty value IS an unrecognised value (`"" != "as_declared"` and
+    // `"" != "carried"`) — already the door's behaviour, but asserted by
+    // nothing before this cycle. Mutation: treating an empty value as a
+    // no-op default reddens this.
+    refuse("schema_carriage=", "schema_carriage=", "an empty value");
+    // "Nothing else is trimmed" (design §2), pinned rather than assumed: a
+    // leading space makes the KEY " schema_carriage" (unknown key), and a
+    // trailing space makes the VALUE "carried " (unknown value). Mutation: a
+    // future trim added to either side would make one of these SUCCEED where
+    // it must be refused, reddening whichever row it trims.
+    refuse(" schema_carriage=carried", " schema_carriage=carried",
+          "leading whitespace is not trimmed");
+    refuse("schema_carriage=carried ", "schema_carriage=carried ",
+          "trailing whitespace on the value is not trimmed");
+}
+
+// ── The tolerance rules, proved by mutation rather than assumed ─────
+//
+// Design §2 commits to two rules beyond the four refusals above: a trailing
+// `\r` is stripped (H2 — a document authored on Windows must mean the same
+// thing as one authored on Linux), and a blank entry (a blank line or a
+// trailing newline) is skipped. Both were implemented and neither was
+// guarded — closed here. `is_carried` turns "did this document construct a
+// CARRYING instance" into one boolean: publish-before-declare on a carrying
+// instance is refused kTopicNotDeclared (proved by
+// `InProcessCarriageComesFromTheDocument` above), and that refusal is
+// unreachable from `as_declared`, so it is a faithful witness of the mode
+// with no accessor needed.
+TEST(Registry, InProcessDocumentToleratesCrlfAndBlankLines) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    auto is_carried = [&](const std::string& document) {
+        ProviderConfig config;
+        config.document = document;
+        std::shared_ptr<PubSubProvider> provider = MakeProvider(registry, "inprocess", config);
+        return RefusalOf(
+                   [&] {
+                       PublishRowTo(*provider, {"registry", "tolerance-probe"}, 0x1b);
+                   },
+                   "publish to an undeclared topic") == PubSubStatus::kTopicNotDeclared;
+    };
+
+    // Mutation: deleting the `\r`-strip block makes "carried\r" compare
+    // unequal to "carried", so THIS CONSTRUCTION THROWS (unknown value)
+    // instead of succeeding — `is_carried` never gets called, and the
+    // EXPECT_TRUE below fails because MakeProvider's exception escapes it.
+    EXPECT_TRUE(is_carried("schema_carriage=carried\r\n"))
+        << "a CRLF-terminated entry was not recognised as carried — the \\r strip regressed";
+
+    // Mutation: deleting the empty-entry skip makes the interior blank line
+    // fail "entry with no '='" (empty string, no '='), so this construction
+    // throws where it must succeed.
+    EXPECT_TRUE(is_carried("\nschema_carriage=carried"))
+        << "a leading blank line was not skipped — the empty-entry skip regressed";
+
+    // Same mutation, the OTHER shape it guards: a trailing newline produces a
+    // trailing empty entry via the same split.
+    EXPECT_TRUE(is_carried("schema_carriage=carried\n"))
+        << "a trailing newline was not skipped — the empty-entry skip regressed";
+
+    // Both rules at once, including a blank line strictly between two
+    // entries — not just at an edge.
+    EXPECT_TRUE(is_carried("\r\nschema_carriage=carried\r\n\r\n"))
+        << "CRLF and blank-line tolerance did not compose";
+}
+
+// The NUL refusal added by this fix cycle: `ProviderConfig::document`'s C
+// form sanctions an embedded NUL (`provider_registry.hpp`), so one can
+// legitimately reach this reader — and unlike every other refusal above, the
+// message here does NOT quote the raw entry (a `std::runtime_error`'s
+// `what()` -> `c_str()` stops dead at a NUL, so quoting one would silently
+// truncate the diagnostic an operator reads). Mutation: deleting the check
+// reddens this test AND turns
+// `Registry.AFactoryThatFailsIsReportedAsATypedSeamFailure`-style silent
+// truncation into a live bug — a NUL-bearing document would either match an
+// unrelated key/value pair by accident (it does not, here — the byte is
+// simply part of the compared string) or produce a refusal message that
+// stops mid-sentence.
+TEST(Registry, InProcessRefusesADocumentContainingANul) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    std::string document = "schema_carriage=carried";
+    document.push_back('\0');
+    document += "tail";
+    ProviderConfig config;
+    config.document = document;
+
+    EXPECT_EQ(RefusalOf([&] { return MakeProvider(registry, "inprocess", config); },
+                        "a document containing an embedded NUL"),
+              PubSubStatus::kInvalidArgument);
+    const std::string message =
+        MessageOf([&] { return MakeProvider(registry, "inprocess", config); });
+    EXPECT_TRUE(Mentions(message, "NUL"))
+        << "the refusal does not say why: " << message;
+    EXPECT_TRUE(Mentions(message, "offset 23"))
+        << "the refusal does not locate the NUL (offset 23, right after 'carried'): " << message;
 }
 
 // DEBT-4: swapping which loader EVERY path means is the same hazard as swapping

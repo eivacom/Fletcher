@@ -11,9 +11,13 @@
 // CLI:
 //   --port N               TCP port to listen on (default 9090).
 //   --bind-address ADDR    bind address (default 0.0.0.0).
-//   --provider TYPE        pub/sub provider: "inprocess" (default) or
-//                          "fastdds". Both are compiled in; the switch
-//                          selects between them at runtime.
+//   --provider NAME        pub/sub provider (default "inprocess"). This file
+//                          registers exactly two names, "inprocess" and
+//                          "fastdds" — but that list lives in the registry
+//                          below, NOT here: an unrecognised NAME is refused
+//                          at startup (exit 2) naming what IS registered, so
+//                          this comment is not the authority a third
+//                          provider would have to keep in sync.
 //   --domain-id N          DDS domain id for the fastdds provider (default 0).
 //                          Ignored by the inprocess provider.
 //
@@ -31,12 +35,15 @@
 //     (Windows SIGTERM semantics differ from POSIX).
 //
 // Provider note:
-//   The default provider is an in-process loopback (--provider inprocess),
-//   which only connects WebSocket clients on the same process. The
-//   DDS-backed provider (--provider fastdds) bridges the gateway to any
-//   FastDDS app on the same DDS domain, so a WebSocket client can pub/sub
-//   to data flowing over DDS. Both providers are always compiled into the
-//   exe; the switch selects between them at runtime.
+//   The default ("inprocess") is a loopback that only connects WebSocket
+//   clients on the same process. This file also registers a DDS-backed
+//   provider under "fastdds", which bridges the gateway to any FastDDS app on
+//   the same DDS domain, so a WebSocket client can pub/sub to data flowing
+//   over DDS. Both are always compiled into the exe, registered
+//   unconditionally, and selected at runtime by ONE registry lookup (spec
+//   §4) — this file keeps no separate list of valid names, and neither
+//   should a reader of this comment: the registry's own refusal, not this
+//   text, is what says which providers a given build has.
 
 #include <cstdio>
 #include <cstdlib>
@@ -78,9 +85,15 @@ Args ParseArgs(int argc, char* argv[]) {
             std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
             std::exit(0);
         } else if (arg == "--help" || arg == "-h") {
+            // "--provider NAME", not an enumerated grammar: the registry
+            // below is the single list, and an unrecognised NAME is refused
+            // at startup naming what IS registered, so this usage line does
+            // not duplicate it (rung-1 forbidden case 4).
             std::printf(
                 "Usage: %s [--port N] [--bind-address ADDR] "
-                "[--provider inprocess|fastdds] [--domain-id N] [--version]\n",
+                "[--provider NAME] [--domain-id N] [--version]\n"
+                "  --provider defaults to \"inprocess\"; an unrecognised NAME "
+                "exits 2 naming what this build supports.\n",
                 argv[0]);
             std::exit(0);
         } else {
@@ -107,6 +120,14 @@ int main(int argc, char* argv[]) {
 
     std::shared_ptr<fletcher::PubSubProvider> provider;
     try {
+        // DEBT-4 disclosure: this `try` is new. Before this item a Fast DDS
+        // construction failure was an uncaught exception escaping `main` (a
+        // crash/abort), not a clean exit — this one `catch` now turns it into
+        // the same "exit 2 plus a message" every other provider refusal gets.
+        // An improvement, and consistent with §5.1, but it is NOT the
+        // "observably unchanged" this item's other half claims to be; said
+        // here because it is not said anywhere else durable.
+        //
         // Both built-ins are registered UNCONDITIONALLY and before the
         // selector is looked at: registration states availability (a
         // link-time fact), `Create` performs selection (a runtime string).
