@@ -96,7 +96,8 @@ property PDA-DEC-8 then measures rather than establishes).
 
 ### 5. Configuration, and what Fletcher does with the document
 
-Nothing. `document` is copied and handed to the factory; the seam has no parser, no
+Nothing. `document` is copied into `ProviderConfig` and forwarded by value to the
+factory; the seam has no parser, no
 format, no dependency (decision 8, §4.2). Whether Fast DDS reads it as inline XML or as
 the name of an XML profile file is **the provider's** decision, in PDA-DEC-6. Its C form
 is §3.5's: a pointer and a length borrowed for the duration of the call, length
@@ -260,8 +261,9 @@ line (no provider SDK reachable); a `static_assert` that `Create` still returns 
 that it claims nothing about any transport) · `docs/pubsub-interface-spec.md` §4/§4.1
 (record the landed classification rule and the two refusal statuses; §4 clause 2 restated
 as "`Create` is frozen; a resolver is installed, not added to it") ·
-`.claude/runbook.PDA-DEC.config.md` (`inner_loop_cmd`'s `-R` scope becomes `Registry\.`; its
-`conan create` loop already builds `pubsub`).
+`pubsub/include/fletcher/pubsub/provider.hpp` (point at the new config type).
+*(The runbook config's `-R` scope also became `Registry\.`, but that file is
+gitignored, so the diff is 9 files, not 10.)*
 
 ## Files-to-delete
 
