@@ -65,9 +65,13 @@ struct SubscriptionResult {
 /// local subscribers to the same topic) is handled by the Subscriber
 /// class, not by providers.
 ///
-/// Provider-specific configuration (e.g. QoS) is supplied at provider
-/// construction time via a provider-specific Options struct. There is
-/// no per-call config parameter.
+/// Provider-specific configuration (e.g. QoS) is supplied when the provider is
+/// created, through `ProviderConfig` — a typed core of exactly
+/// `{max_payload_bytes, domain_id}` plus an opaque document in the provider's
+/// own format, which Fletcher transports and never reads (§4.1, §4.2, see
+/// provider_registry.hpp). There is no per-call config parameter, and no
+/// protocol-typed Options struct at this seam: `FastDDSProviderOptions` and
+/// `XrceConfig` are retired by PDA-DEC-6 and PDA-DEC-7 respectively.
 class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;

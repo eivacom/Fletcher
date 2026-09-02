@@ -13,7 +13,8 @@ add_library(fletcher-pubsub STATIC
     src/publisher.cpp
     src/subscriber.cpp
     src/schema_ipc.cpp
-    src/schema_arrival.cpp)
+    src/schema_arrival.cpp
+    src/provider_registry.cpp)
 
 # C++ standard comes from the Conan profile (compiler.cppstd). This only
 # states the public minimum the headers require, propagated to consumers.

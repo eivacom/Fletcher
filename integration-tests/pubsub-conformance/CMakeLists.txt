@@ -190,6 +190,28 @@ target_link_libraries(conformance_seam_vocabulary PRIVATE
     conformance_support
     GTest::gtest_main)
 
+# ── The provider-registry suite ─────────────────────────────────────
+# A FOURTH suite in this harness, for the reasons the copy oracle is a second
+# one: it asserts what a runtime *selector* decides (spec §4), which no
+# provider-parameterised clause can reach — every clause is handed a subject
+# that has already chosen.
+#
+# The link line is the machine check for the design's forbidden case 5: it names
+# `fletcher-pubsub` and NO transport SDK, so no DDS or XRCE vocabulary resolves
+# from here. (Precisely "no transport SDK", not "no provider header":
+# in_process_provider.hpp lives inside fletcher-pubsub and PDA-DEC-5 links this
+# very binary against it.)
+#
+# It does NOT link conformance_support: it needs no fixture, no subject and no
+# child, and a narrower link line is a stronger check.
+#
+# Keeps gtest_main: it spawns no child and opens no pipe.
+add_executable(conformance_registry src/registry.cpp)
+target_compile_features(conformance_registry PRIVATE cxx_std_20)
+target_link_libraries(conformance_registry PRIVATE
+    fletcher-pubsub::fletcher-pubsub
+    GTest::gtest_main)
+
 add_executable(conformance_fastdds_peer subjects/fastdds_peer_main.cpp)
 target_link_libraries(conformance_fastdds_peer PRIVATE
     conformance_support
@@ -251,6 +273,11 @@ gtest_discover_tests(conformance_copy_accounting DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # Same shape, same reasoning: no domain, no port, no child.
 gtest_discover_tests(conformance_seam_vocabulary DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+# Same again: the registry suite constructs no transport at all — every provider
+# in it is a probe defined in the test file — so it has no domain, no port and no
+# child either.
+gtest_discover_tests(conformance_registry DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
 # and conformance_fastdds carries two subjects (domains 151 and 152). It also

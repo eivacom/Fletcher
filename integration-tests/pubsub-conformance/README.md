@@ -354,6 +354,53 @@ declares a schema on a schema-*less*-mode loopback is the gateway, which has no
 subject. The forcing test borrows `CopyAccounting`'s instrument outright rather
 than growing a second one, so this harness still has exactly one scoring path.
 
+## The `Registry` suite — selection, not transport
+
+Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
+§4.1, §4.2. A **fourth** suite in this harness, in its own binary
+(`conformance_registry`), 12 entries, no provider SDK and — unlike the other
+three — **no provider at all**: every provider in it is a probe defined in the
+test file, so it constructs nothing that opens a socket, binds a port or joins a
+domain.
+
+**What green here means, precisely.** A string read at run time decides which
+provider a caller gets, the caller cannot tell which it got, and the same one
+call serves a built-in name and a driver path. **It claims nothing whatsoever
+about any transport** — not delivery, not ordering, not QoS, not zero-copy. The
+probes deliver a row synchronously into a journal because that is the only way to
+tell *which factory the registry reached*; the row is an instrument, not a
+delivery claim.
+
+| Entry | What it pins |
+|---|---|
+| `SelectsByNameWithoutCallerKnowingTheProvider` (forcing) | §4: two names, two providers, and the row surfaces under the tag the *name* maps to — **both directions**, so a `Create` that ignores the selector and returns its first factory is red |
+| `PathSelectorResolvesThroughTheSameCall` | §4 clause 2, made executable: a stand-in resolver stands where PDA-ABI's loader will, and a path reaches it through the **identical** caller helper with only the config string differing |
+| `PathSelectorWithoutResolverIsRefusedAsUnsupported` | the live negative control for the row above, plus the 2026-09-02 ruling's distinctness: a path with no resolver is `kNotSupported`, an unknown name is `kInvalidArgument`, and the message says which character made the string a path |
+| `UnknownNameIsRefusedWithTheAvailableNames` | a refusal names what *is* registered |
+| `DuplicateRegistrationIsRefused` / `SecondPathResolverIsRefusedAndTheFirstStillStands` | neither what a name means nor what every path resolves through may be silently swapped |
+| `EachCreateReturnsAnIndependentInstance` / `ProvidersOutliveTheRegistryThatMadeThem` | §4 clause 3: no cache, no global, and a registry may be destroyed while its providers run |
+| `SelectorShapeDecidesAndIsRefusedWhenItCannotMeanAnything` | the classification rule is total, disjoint and registry-independent; empty and embedded-NUL selectors are refused |
+| `RegistrationAndSelectionShareOneVocabulary` | one predicate for both, so a name cannot be registrable but unselectable |
+| `ConfigurationReachesTheProviderAndIsNeverRead` | §4.2: the document arrives byte-for-byte, NUL included, and Fletcher never parses it |
+| `AFactoryThatFailsIsReportedAsATypedSeamFailure` | §5.1 at this entry point, including a factory that returns null |
+
+**The link line is a machine check.** `conformance_registry` names
+`fletcher-pubsub` and no transport SDK, so no DDS or XRCE vocabulary resolves
+from it whatever the registry's implementation does. (Precisely "no transport
+SDK", not "no provider header" — `in_process_provider.hpp` lives *inside*
+`fletcher-pubsub`, and PDA-DEC-5 links this very binary against it.) The frozen
+`Create` signature is a second machine check: the `static_assert` is in the
+header, so this binary cannot build against a widened one.
+
+**Mutation evidence** (run at implementation, all against the whole suite):
+swapping the two registrations, making `Create` return its first factory, and
+making the probe stop recording each redden the forcing test; classifying every
+selector as a name, and a resolver that ignores its path argument, each redden
+`PathSelectorResolvesThroughTheSameCall`; handing back a provider instead of
+refusing reddens the negative control **while the positive path stays green**,
+which is what makes the control independent rather than a restatement; a
+last-wins `Register` and a memoizing `Create` redden one entry each.
+
 ## Building and running
 
 ```sh

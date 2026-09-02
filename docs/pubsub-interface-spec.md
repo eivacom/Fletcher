@@ -292,9 +292,38 @@ Normative:
    registry; a path is a driver library. Nothing above the registry may branch on
    which — that is requirement §0.1(2), and it is what lets a deployment move a
    protocol from built-in to loaded without touching a caller.
-2. **PDA-ABI adds a resolver, not a second API.** The registry's signature is
-   fixed here. If it needs to change to admit loading, it is underspecified now
-   and that is a stop-and-ask against this spec.
+
+   **The rule, as landed** (PDA-DEC-4, `ProviderSelector::Parse`): a **name** is
+   a non-empty string of `[A-Za-z0-9_-]` and nothing else; every other non-empty
+   string is a **path**; the empty string and a string containing an embedded NUL
+   are refused with `kInvalidArgument`. There is no trimming, no case folding, no
+   normalisation, and **the rule never consults the registry**, so a given string
+   means the same thing in every build. The same predicate validates a
+   registration, so a registered name is always selectable.
+
+   The two ways a selection can fail are **deliberately different statuses**,
+   because they are different operator actions (owner ruling 2026-09-02): an
+   unregistered *name* is `kInvalidArgument` listing what is registered — "no
+   such protocol here" — and a *path* in a build with no resolver installed is
+   `kNotSupported` — "this build cannot load drivers at all". Collapsing them
+   would make a typo and a driver path indistinguishable.
+2. **PDA-ABI adds a resolver, not a second API.** The registry's **whole public
+   surface** is fixed here — `Create`, `Register`, `SetPathResolver`, and nothing
+   else. PDA-ABI adds no method: it *calls* `SetPathResolver` with a resolver
+   built in its own component, so `dlopen` never enters `fletcher-pubsub`. The
+   path branch inside `Create` already exists and is already routed, and
+   PDA-DEC-4 proves it end-to-end with a stand-in resolver. If any of this needed
+   to change to admit loading, it is underspecified now and that is a
+   stop-and-ask against this spec. `Create`'s signature is pinned by a
+   `static_assert` on the member-pointer type, not on the return type: a
+   return-type check cannot see a defaulted extra parameter or a dropped `const`.
+
+   **The resolver's lifetime obligation is part of this clause.** A resolver must
+   keep everything the provider it returns depends on — including a loaded module
+   — alive for at least as long as that provider, independently of the registry's
+   lifetime and of its own. Clause 3 sanctions destroying a registry while its
+   providers run, so a module cache owned by the registry would unload code under
+   a live provider.
 3. **No global state.** The registry takes and returns explicit objects; multiple
    instances of the same provider with different configs must be ordinary. That
    the ABI round later needs module/instance handles is *its* business; the seam
@@ -308,9 +337,16 @@ Configuration at the seam is a small typed core plus an opaque blob:
 
 - **The typed core** is what Fletcher itself must reason about. Both shipping
   providers already have exactly `{max_payload_bytes, domain_id}`, so the core is
-  derived from evidence rather than invented.
+  derived from evidence rather than invented. It is **exactly those two fields**
+  and it is append-only; a later field never changes `Create`. Widening it
+  because one protocol wants a setting typed is a stop-and-ask (owner ruling
+  2026-09-02: "Fletcher keeps exactly payload size and domain"). `0` in
+  `max_payload_bytes` means *unset* — the provider's own default applies, and it
+  is safe to spell it that way because `IsPayloadBound(0)` is false everywhere.
 - **The document** is everything else — bytes Fletcher transports and does not
-  read.
+  read. C form: a pointer and a length borrowed for the duration of the call, the
+  **length authoritative** (the bytes may contain NUL); a provider that keeps it
+  copies it.
 
 **The seam must carry no protocol vocabulary.** `FastDDSProviderOptions` embeds
 `eprosima::fastdds::dds::DataWriterQos`/`DataReaderQos` *plus per-topic maps of

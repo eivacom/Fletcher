@@ -133,8 +133,10 @@ the object is read-only. No lock, so an MCU build pays nothing.
 4. *A cached or shared provider instance.* `Create` never memoizes and stores nothing, so
    "two selections silently share one transport" is not a state this type can reach.
 5. *Fletcher learning a protocol's vocabulary.* The only operations on `document` are copy
-   and forward; no parser, no dependency, and the registry TU links `fletcher-pubsub` only
-   — the compiler enforces that a provider header is unreachable from it.
+   and forward; no parser, no dependency, and the registry binary links `fletcher-pubsub`
+   and **no transport SDK** — the compiler enforces that no DDS or XRCE vocabulary is
+   reachable from it. (Not "no provider header": `in_process_provider.hpp` is *inside*
+   `fletcher-pubsub` and PDA-DEC-5 links this very binary against it. DEBT-7.)
 6. *A string that is ambiguously a name and a path.* The rule is total and disjoint, and
    independent of what is registered.
 
@@ -170,11 +172,11 @@ the object is read-only. No lock, so an MCU build pays nothing.
   therefore registered by explicit call. **STOP-AND-ASK** if review requires
   self-registration via static initialisers: that is global state (§4 clause 3) against a
   hazard this tree has already measured.
-- **P2 — "the registry's signature" in §4 clause 2 means `Create`'s.** Adding a resolver
-  *installation* point is what "adds a resolver, not a second API" sanctions.
-  **STOP-AND-ASK** if clause 2 is read as forbidding any new registry method in PDA-ABI —
-  then the resolver seat must be complete and callable here, which changes this item's
-  cost and is not something to design around silently. Raised as Brief decision 1.
+- **P2 — ANSWERED at review (§A); the stop-and-ask does NOT fire and must not be raised.**
+  Clause 2 is satisfied under *both* readings, because `SetPathResolver` lands and is
+  exercised in this item: PDA-ABI adds no registry method, it calls one that already
+  exists. As landed, the spec amendment freezes the **whole** registry surface —
+  `Create`, `Register`, `SetPathResolver` — not just `Create`'s signature (DEBT-2).
 - **P3 — the document is bytes Fletcher never interprets**, including whether it is
   content or a filename. **STOP-AND-ASK** if any provider migration needs Fletcher to
   resolve it (open a file, expand a variable): that is a config dependency, decision 8.
@@ -240,8 +242,10 @@ line (no provider SDK reachable); a `static_assert` that `Create` still returns 
   asserts a *delivered row under a tag* or a *specific status*, and each has a named
   mutation the implementer must run and report.
 - **Assumed, unverified:** no out-of-tree consumer constructs providers in a way this
-  registry would have to accommodate. Fletcher's providers are constructed at four sites in
-  tree (§10), all owned by later items in this round.
+  registry would have to accommodate. *Record correction (DEBT-10a): §10 counts four files
+  consuming the protocol-typed config, not four construction sites, and it predates
+  PDA-DEC-1/2/3 — the conformance harness alone now adds ~8. Harmless for an add-only item;
+  PDA-DEC-6/7 must re-measure rather than trust that table.*
 
 ## Files-to-touch
 
@@ -256,8 +260,8 @@ line (no provider SDK reachable); a `static_assert` that `Create` still returns 
 that it claims nothing about any transport) · `docs/pubsub-interface-spec.md` §4/§4.1
 (record the landed classification rule and the two refusal statuses; §4 clause 2 restated
 as "`Create` is frozen; a resolver is installed, not added to it") ·
-`.claude/runbook.PDA-DEC.config.md` (`inner_loop_cmd` gains the `Registry\.` scope and the
-`conan create pubsub` step).
+`.claude/runbook.PDA-DEC.config.md` (`inner_loop_cmd`'s `-R` scope becomes `Registry\.`; its
+`conan create` loop already builds `pubsub`).
 
 ## Files-to-delete
 
