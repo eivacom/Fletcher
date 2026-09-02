@@ -549,3 +549,71 @@ totals were misreported three times, always by excluding `src/internal/profile_d
 (+30/−9 claimed vs +149/−15 actual once) — a pattern, not a slip.
 **Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · implementer launches 3/5 ·
 owner touches 0.
+
+## PDA-DEC-7 — XRCE configured by document (`key=value`) (2026-09-02) 🟢
+
+**Forcing test:** `XrceConfig.DocumentConfiguresTransport` — green, asserting the connection
+arrives at the port the *document* named, on a test-owned listener.
+**Commits:** `c682be1` design · `c50f7e5` revision 1 · `5756e67` review cycle 2 ·
+`4baac0f` implementation · `33d7514` fix 1 · `8553b96` fix 2.
+
+**What landed.** XRCE is the built-in `xrce`, configured by a `key=value` document only it parses;
+`XrceConfig`/`XrceTransport` retired. Of twelve fields: five become four keys (`agent_ip`+`agent_port`
+collapse to one `agent=host:port`, so a half-address is unrepresentable), five deleted, two moved to
+the typed core. `connect_timeout_ms` is `chrono::milliseconds` and serial has no enumerator — both
+whole defect classes made uncompilable rather than checked.
+
+**A premise became a fact.** Neither design review could verify whether `uxr_init_tcp_transport`
+connects eagerly (client is FetchContent'd, no source in the repo). The implementer found it in the
+Conan build tree — blocking `connect()` inside init, both platforms — so the listener is a sound
+oracle and the assertion did not need the Agent gate.
+
+**The design's blocker, caught before code.** Review cycle 1: four of six keys had no guard that
+an accepted value lands anywhere — a build that range-checked them and then used hard-coded
+constants would have passed every row, and two keys had no witness in the tree at all. Closed by
+**shrinking**: those two keys deleted as constants, one whole-struct row witnessing the rest.
+
+**Then a fix introduced the round's worst bug.** Wiring `connect_timeout_ms` through was itself a
+design-review debt item; closing it mapped the budget with `floor((ms-1)/1000)` against a client
+that takes a *total attempt count* and, at zero, sends once without listening. **Every budget
+from 1–1000 ms could never connect, even to a healthy Agent**, reported as "is the Agent
+running?". Both step-4 reviewers found it independently. It survived because only `=0` was
+tested. Proved live both ways; the interior is now covered and reddens with 12 failures under
+the old mapping. **Lesson: a debt fix needs the same red-first discipline as the feature.**
+
+**And that fix shipped a guard that could not fail.** The socket-leak fix (no `Impl` destructor →
+one handle per failing construction, measured) landed with its probe *deleted after measuring*.
+The cycle-2 re-reviewer found the case in a stale binary and in no source file. Now landed, and
+it reddens: 200 handles leaked on UDP, 159 on TCP, when the close is suppressed. That is three
+unfalsifiable guards this round — the recurring failure mode, and worth a process note.
+
+**A divergence I created, and the ruling on it.** I directed whitespace inside an entry to be
+*refused* rather than kept-and-failed-later, making the XRCE reader stricter than PDA-DEC-5's,
+which the design had adopted "verbatim". Put to an independent reviewer as a possible violation
+of the 2026-08-31 divergence ruling. Verdict: **no violation, and nothing to pin** — the loopback's
+closed key and value sets already refuse every such entry, so the rule changes zero outcomes.
+Spec §4.1 was then corrected: stricter in *rule*, identical in *outcome*. Rule later extended to
+`0x7F`, which had been accepted while a comment claimed otherwise.
+
+**Verification.** Provider **16 ctest / 15 gtest** (was 11/10), genuinely compiled on both `conan
+create` passes. `pubsub-conformance` **82/82** with XRCE=ON explicit, `conformance_xrce` re-run
+standalone 25/25; interop 1/1 (3 cases); `pubsub` 19/19. No full suite — not mandated here
+(1/2/3/6 + close), and the last was one item ago at `7f6a310`.
+
+**Records corrected in place.** Spec §4 clause 4's "no caller names a concrete provider type",
+contradicted by five in-tree sites (now scoped to the gateway). The plan's field arithmetic, wrong
+twice — my own first correction dropped the two fields that moved to the typed core. Premise P5
+ordered a stop-and-ask on reads that *do* happen, so it would have halted step 3 on the design's own
+predicted finding. Plus a stale "24 clauses", a census summing nine of eight, and a mutation count
+of 11 that measured 12.
+
+**Routed out, unowned: `ROUND-1`.** `SpawnedAgentAlive()` accepts an Agent it did not start, so a
+stray MicroXRCEAgent serves a whole run at 25/25 PASSED — proved against a deliberately foreign
+Agent. **Every XRCE green since PDA-DEC-1 is conditional on "no stray Agent was listening".**
+PDA-DEC-1 is closed so nothing owns it; in the config and debt register, recommended for in-round
+fix before PDA-DEC-9 signs the handoff — both ABI rounds inherit this harness as their oracle.
+
+**Numbers.** Declared +1900/−400; actual **+1979/−247** over 20 files excluding `plans/` — **adds
+within 5%**, the first item this round to cost what it said. Production **+715/−121**. Surface
+**net −1 (+2/−3)**. **Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · implementer
+launches 3/5 · owner touches 0.

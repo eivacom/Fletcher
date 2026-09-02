@@ -57,4 +57,15 @@ another client on one Agent (only the Agent sees that).
 Net lines: +1900 / −400 · new public surface: −1 net (+2 / −3) · design cycles: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+*As landed (2026-09-02, PM):* **+1979 / −247** over 20 files excluding `plans/` (+2922/−256 with
+the design and review artifacts) vs declared +1900/−400 — **adds within 5% of declared**, the
+first item this round to cost what it said. Production `src/`+headers **+715/−121**. Surface
+**net −1 (+2/−3)** as declared. Two fix cycles, both from findings the brief did not predict:
+`connect_timeout_ms` was parsed and then dropped for a hard-coded value, so **every budget from
+1–1000 ms bought zero attempts and could never connect** (found independently by both step-4
+reviewers, proved live both ways); and the socket-leak fix then shipped with **no witness**,
+its probe deleted after measuring. Both now have tests that redden on regress. Added beyond the
+brief: refusal of whitespace and DEL inside an entry (unrepresentable, not documented), and the
+attempt arithmetic moved into the pure reader. Suite 10→15 gtest / 11→16 ctest; `conformance_xrce`
+24→25. Cycles: design 2/2 · fix 2 · implementer launches 3/5 · owner touches 0.
+**Routed out, unowned:** the harness cannot tell whose Agent it is talking to (debt ROUND-1).
