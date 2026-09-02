@@ -57,7 +57,8 @@ item removes. Both taken as recommended. Recorded here so the reasoning is visib
 - Fast DDS keeps its compiled-in settings one more stage (PDA-DEC-6 moves it).
 
 ## Numbers
-+270 / −60 · new public surface: 1 (two retired, net −1) · design cycles: 1/2
++270 / −60 · new public surface: **0 at its strictest** (+2/−2; the earlier "net −1"
+charged the retired constructor but not the added one) · design cycles: 1/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*

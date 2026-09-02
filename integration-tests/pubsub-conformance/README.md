@@ -435,8 +435,8 @@ would have passed with a message that only accidentally happened to contain the
 right substring, which is why that test's helper takes the expected quote
 explicitly rather than deriving it from the document.
 
-Five of these mutations left the suite fully green when the entries were first
-written, and were closed only after review; the four failure-seat and vocabulary
+Five of the mutations **in the list above** left the suite fully green when those
+entries were first written, and were closed only after review; the four failure-seat and vocabulary
 cases were all on the branch PDA-ABI fills, which is where coverage was thinnest
 precisely because the code there already worked.
 

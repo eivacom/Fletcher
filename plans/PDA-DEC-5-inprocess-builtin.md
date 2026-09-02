@@ -218,11 +218,13 @@ a **staleness detector**:
 
 1. **Unchanged behaviour** — `integration-tests/gateway-end-to-end` already runs
    its entire WebSocket battery once per provider via `describe.each`, including
-   `--provider inprocess`. It is not modified. Mutation: register `inprocess`
-   with the `carried` mode → the schema/publish cases go red, which proves the
-   gateway's provider genuinely comes from the registry and in the right mode.
-   Mutation: drop the `inprocess` registration → the gateway exits 2 at startup
-   and every in-process context goes red.
+   `--provider inprocess`. It is not modified. **Its load-bearing mutation is:
+   drop the `inprocess` registration** → the gateway exits 2 at startup and every
+   in-process context goes red. *(An earlier draft also claimed that registering
+   `inprocess` in the `carried` mode would redden the schema/publish cases. The
+   design review disproved it — every publish is preceded by `createTopic` with a
+   schema, and the undeclared-subscribe case passes on a pending arrival. The
+   carriage-mode proof belongs to the `Registry` suite, not this battery.)*
 2. **A new `provider selection` block** (outside the per-provider contexts, three
    cases, ~45 lines): spawn with `--provider bogus` → exit code 2 **and** stderr
    naming the registered providers in the registry's wording; spawn with
