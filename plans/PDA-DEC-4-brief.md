@@ -56,5 +56,9 @@ start* — reported at startup with a stable cause.
 Declared net lines: +640 / −25 · new public surface: 5 (waiver requested) · cycles 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, fix cycles used>.
+*As landed (2026-09-02):* +1411 / −9 (code + spec, excl. `plans/`) vs declared +640/−25;
+counted by the code reviewer, no unexplained bucket. Surface **5**, exactly the waiver.
+1 design cycle, 2 fix cycles, 5 implementer launches — **2 wrote nothing** (a wedged
+stream, then machine sleep), so 3 were productive. Six behaviours were asserted by
+nothing when first written, all found by mutation, all on the branch PDA-ABI fills;
+the lifetime rule became mechanical rather than prose.

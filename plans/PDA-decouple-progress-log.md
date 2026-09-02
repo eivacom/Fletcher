@@ -350,3 +350,71 @@ three ways, the public header justifying the threshold as the overflow point whe
 below it. Evidence: the known-accepted `pubsub-arrow-fastdds` line restated as its authoritative
 `-j1` result so the gate's token scan would not read a non-regression as a failure — verbatim
 run preserved as `verify-PDA-DEC-3-raw.txt`.
+
+---
+
+## PDA-DEC-4 — Provider registry (2026-09-02) 🟢
+
+**What landed.** One frozen call, `ProviderRegistry::Create(selector, config)`.
+`ProviderSelector::Parse` decides by shape (a name is `[A-Za-z0-9_-]+`, anything else a path),
+totally, disjointly, never consulting the registry — so a string means the same thing in every
+build. Config is the typed core `{max_payload_bytes, domain_id}` plus an opaque document
+Fletcher copies and never reads. Built-ins register by explicit call on a caller-owned object:
+no global table, no static-initialiser registration (the linker has been measured dropping
+those). Nothing cached; each `Create` is fresh.
+
+**The no-signature-change claim is executable, not prose.** The path branch exists and is
+routed **now**, refusing `kNotSupported` (distinct from an unknown name's
+`kInvalidArgument`) until a resolver is installed, and a test drives a stand-in resolver
+through the *identical* helper with only the config string differing. Compliance attacked the
+classification with 28 selectors built against the committed blobs and found no
+misclassification repairable by an overload, flag or disambiguator, and settled that a mutable
+module cache works against a `const Create`. **PDA-ABI will not need to widen this call.**
+
+**Six behaviours were asserted by nothing, every one on the branch PDA-ABI fills blind.**
+Found only by mutation: the resolver's exception translation and its null-return check; the
+path branch's config forwarding (a loaded driver would have come up silently on domain 0);
+the name alphabet's digits and capitals (normatively `[A-Za-z0-9_-]`, pinned only as
+`[a-z_-]`); and the load-bearing `Anchor` member order. Meanwhile the suite restated
+unknown-name→`kInvalidArgument` three times. **Coverage was thinnest exactly where the code
+already worked.** All six now redden; recorded in the harness README.
+
+**The lifetime rule became mechanical.** DEBT-1 was 15 lines of prose PDA-ABI had to honour;
+it is now a rule it cannot violate — both seats held by shared handle, `Create` returning an
+aliasing handle owning `Anchor{seat, provider}`, provider released first, so a driver's module
+outlives every provider it made whatever the author did. One allocation per `Create`;
+signature and surface untouched. **The code reviewer's own suggested form was wrong** — it
+cannot adopt the provider's control block (ASan: `heap-use-after-free`), so as published every
+`Create` would have returned a dangling handle. The implementer refused it; the reviewer
+verified and withdrew.
+
+**A specification defect no mechanism could catch.** Spec §4 clause 2 then called its residue
+list **exhaustive** — "two residues, because no seam can reach them" — in the one document
+PDA-ABI and BIND meet at, omitting the third and likeliest: handles the seam itself hands out
+(`Blob`'s owner, `SharedSchema`, loan releases), whose deleters are module code and outlive
+the provider — what PDA-ABI-7's zero-copy receive is built from. Fixed by naming it, dropping
+the false reasoning, and adding a closed rule so a fourth case is classifiable.
+
+**Verification.** core 28 / pubsub 19 / pubsub-arrow 16 / fastdds 69 / xrce 11;
+`pubsub-conformance` **76/76** with XRCE ON and a live Agent (`conformance_xrce` ran, not
+skipped). No full suite — mandated at items 1/2/3/6 and round close, and nothing existing
+changed behaviour. **4 of 5 components hit "Already installed!"** and needed forcing before
+ctest ran; the harness cache sat at `XRCE=OFF`. Both traps fired exactly as the config warns.
+
+**Owner decisions:** ledger 26–28 (unloadable path fails distinctly; shape decides name vs
+path; protocol-specific settings move into the document).
+**Close gate:** PASS. **Cycle meter:** design 1/2 · fix 2 · launches 5/5 · owner touches 3.
+**Numbers:** declared +640/−25 · actual **+1411/−9** (code + spec), counted by the code
+reviewer with no unexplained bucket; the header is 48 code lines to 182 of normative contract
+PDA-ABI implements against blind. Surface **5**, exactly the waiver. **Two launches wrote
+nothing** (a wedged stream, a machine sleep) so three were productive — not a thrash signal;
+the design was never revised.
+
+**Records corrected in place:** four overclaims (`provider.hpp`'s present-tense config claim;
+"nothing above the seam can tell" — `use_count`/`weak_ptr` do observe the anchor; "nothing
+else escapes" — `bad_alloc` does, untyped; "covers 1 and 2" — it cannot cover 2), plus the
+README's stale count and a mutation paragraph predating five of the suite's best guards.
+**And a false rationale relayed as fact:** the escaping fix was justified by
+`C:\x64\driver.dll` colliding with the escape for byte 0x64. It never did — 0x64 is `d`,
+printable, emitted raw. The defect was real (the encoding was not injective; a collision
+needs a non-printable byte); the stated reason was not, and had reached two comments.
