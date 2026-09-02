@@ -82,7 +82,8 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 /// Tolerance is strict (spec §4.1, as landed by PDA-DEC-5, the single oracle for both in-tree
 /// `key=value` readers): `\n`-separated entries, a trailing `\r` stripped, blank entries
 /// skipped, **nothing else trimmed**, no case folding, no comments — and, stronger than
-/// "nothing is trimmed", **any byte below `0x21` inside an entry is refused**. ` agent =x` and
+/// "nothing is trimmed", **any byte below `0x21`, or a `0x7F` (DEL), inside an entry is
+/// refused**. ` agent =x` and
 /// `agent= 127.0.0.1:2018` are both refused rather than trimmed or passed on: right setting,
 /// wrong place, said out loud, and a host with whitespace in it is unrepresentable rather than
 /// left for a resolver to reject. Entry separators are untouched by that rule, so CRLF

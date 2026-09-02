@@ -296,3 +296,361 @@ cross-platform listener is ~110 against ~250 — not from dropped coverage.
 - Mutations M1 and M11 applied in the cache build, rebuilt and run (results above), then
   reverted; the packaged `.lib` predates both mutations (packaged 19:08:03, mutations after
   19:09) and the final restored build is green 7/7. Repository working tree untouched.
+
+---
+
+# Cycle 2 re-review (2026-09-02)
+
+Independent, adversarial. Subject: the fix pass **`33d7514`** over `4baac0f`. Cycle 1
+(`PASS-WITH-FINDINGS(4)`) and `PDA-DEC-7-codereview.md` (1 blocking, 3 should-fix, 6 nits) read,
+not repeated. Every claim below was reproduced on this box — build, mutate, run, restore — not
+read. Working tree verified clean at start and at finish.
+
+**Verdict: PASS-WITH-FINDINGS(3).** The blocking B1 fix is real and I proved it live against an
+Agent. The socket leak is structurally closed and I measured zero leaked handles on both throw
+paths. S2, F4 and F2 all landed and do what they claim. **No blocking conformance defect. No
+ruling contradiction — including the one the owner asked about, on which the direction stands.**
+
+---
+
+## THE DIVERGENCE QUESTION — verdict: the ruling does NOT govern document tolerance. The direction stands. No stop-and-ask is owed.
+
+The ruling in question, verbatim:
+
+> "Fix in-round, before the ABI — Any divergence found is fixed as part of PDA-1/PDA-2 so all
+> three providers agree before the ABI wraps them. Means the ABI is defined over consistent
+> behaviour rather than freezing an inconsistency."
+> **Context:** what happens to divergences the conformance suite finds. **Applies to:**
+> PDA-DEC-1. [...] Pinning a divergence as known-divergent instead of fixing it is a violation.
+
+### The case that it DOES govern document tolerance (put as strongly as it deserves)
+
+1. The operative words are unqualified — "**Any** divergence", "**all three** providers agree" —
+   and the closing sentence is a flat prohibition with no carve-out.
+2. This round *itself* treated the two `key=value` readers as owing each other agreement. Design
+   §3: "The tolerance rules are PDA-DEC-5's, adopted **verbatim** ... **Spec §4.1 is the single
+   tolerance oracle for both readers**." Design §8 item 3: "Document tolerance is strict.
+   *Authority:* spec §4.1 as landed by PDA-DEC-5." A test is literally named
+   `ToleranceRulesMatchTheLoopback`. Against that framing, making one reader stricter and writing
+   the difference into the spec is textbook "pinning a divergence as known-divergent".
+3. The one ruling that *did* carve itself out of the divergence ruling drew the line the other
+   way: 2026-09-01 "Pin at one" says "the 2026-08-31 divergence ruling ... governs
+   **cross-provider** divergences; this is a uniform `Blob` limitation". XRCE-versus-loopback
+   tolerance is cross-provider on its face, so that carve-out does not shelter it.
+4. In-round precedent points at fixing: 2026-09-01 "Conflicting topic re-declaration is refused"
+   took a genuine three-way behavioural divergence and *fixed all three* rather than record it.
+
+### The case that it does NOT — and why it wins
+
+**(a) Scope, from the ruling's own recorded context.** The Context line is "what happens to
+divergences **the conformance suite finds**"; the Applies-to line is "**PDA-DEC-1**"; the
+rationale is "so the ABI is defined over consistent behaviour rather than freezing an
+inconsistency" — and what the ABI is defined over is the delivery contract. I checked
+mechanically whether the suite can even *find* a document divergence: it cannot, and cannot be
+made to without changing what it is. There is **no** `ProviderConformance` clause about documents.
+Every document row in the tree is provider-specific and lives outside the parameterised suite —
+`Registry.InProcessRefusesAnUnrecognisedDocumentEntry`,
+`Registry.InProcessDocumentToleratesCrlfAndBlankLines`,
+`Registry.InProcessRefusesADocumentContainingANul` in
+`integration-tests/pubsub-conformance/src/registry.cpp`, and `XrceConfig.*` in the provider's own
+suite. The suite's 24 clauses are the delivery contract; document syntax is not in them.
+
+**(b) The owner's own configuration rulings mandate per-protocol document syntax, so the broad
+reading makes two of the owner's rulings contradict each other.** 2026-08-31, configuration shape:
+"Everything else is an **opaque** JSON/YAML/XML blob **only the driver parses** — for Fast DDS that
+can be its native XML QoS profile". 2026-09-02: "**The XML text** — The setting carries the profile
+content." And spec §4.2, normative: "The document's format is the *provider's* — Fast DDS's native
+XML QoS profile, `key=value` for XRCE, JSON5 for a future Zenoh. One mechanism, **no uniform
+format**." XML tolerates whitespace inside elements as a matter of the format's definition;
+`key=value` refuses it. If the divergence ruling governed document tolerance, PDA-DEC would have
+been in violation from the moment Fast DDS's document became XML — by the owner's own instruction.
+A reading that puts two of the owner's rulings in conflict is the wrong reading of one of them.
+
+**(c) Decisively: nothing was pinned, because there is no divergent behaviour to pin.** I read
+every branch of the loopback reader (`pubsub/src/in_process_provider.cpp:75-131`) and enumerated
+the input space. The loopback has exactly **one** key (`schema_carriage`) matched by exact string
+equality, and **one** closed value set (`as_declared` | `carried`), also exact. Therefore, for any
+document entry containing a byte below `0x21`:
+
+- the byte is left of the `=` → `key != "schema_carriage"` → `PubSubError(kInvalidArgument)`,
+  quoting the entry;
+- the byte is right of the `=` → value in neither branch → `kInvalidArgument`, quoting the entry;
+- the entry has no `=` (including an all-whitespace entry) → `kInvalidArgument`, quoting the entry;
+- the byte is a trailing `\r`, or the entry is blank → stripped/skipped by **both** readers alike.
+
+And in the other direction: the *only* documents the loopback accepts are blank entries and
+exactly `schema_carriage=as_declared` / `schema_carriage=carried`. **None contains a byte below
+`0x21` inside an entry.** So adding the `0x21` rule to PDA-DEC-5's reader would change **no
+outcome for any input** — it would change only which sentence the message carries. The two readers
+accept the same set of documents and refuse the same set with the same status. XRCE's rule has
+independent force *only* where XRCE has a **free-form value** (`agent`'s host) and the loopback has
+**none**.
+
+There is consequently nothing "known-divergent" to fix: the remedy the owner feared owing — tighten
+PDA-DEC-5's reader to match — would buy exactly zero behavioural change while re-opening a closed
+item; and reverting S2 would restore a real defect (`agent= 127.0.0.1:2018` accepted with a space
+kept in the host, refused a layer down by the resolver H1 says Fletcher must know nothing about).
+Both remedies are worse than the landed state, which is the tell that the ruling was never pointed
+here.
+
+**Verdict.** The 2026-08-31 divergence ruling governs the **delivery contract** the conformance
+suite tests, not per-protocol document syntax; per-protocol document syntax is legitimately
+per-protocol by spec §4.2 and by two of the owner's own configuration rulings; and no observable
+divergence was created or recorded. **S2 is in scope, the direction stands, no stop-and-ask.**
+
+**But the sentence that landed overstates it, and that is finding F5.** "XRCE is **stricter on one
+point**" invites precisely the reading the owner was worried about, in the artefact PDA-DEC-8/9 and
+both ABI rounds inherit. See F5.
+
+---
+
+## Findings
+
+### F5 — spec §4.1 records a divergence that does not exist, in the sentence two ABI rounds inherit
+
+`docs/pubsub-interface-spec.md` §4.1 now reads:
+
+> XRCE is **stricter on one point**, because "nothing is trimmed" turned out to be weaker than it
+> sounds: any byte below `0x21` *inside* an entry — a space, a tab, a mid-entry CR — is refused
+> [...] A third `key=value` reader is judged against this paragraph, not against either
+> implementation.
+
+The rule statement matches the code exactly (verified below). What is wrong is the *framing*: by
+the enumeration in (c) above, the two readers refuse the same set of documents with the same
+status. XRCE is stricter in **rule**, not in **outcome**, and the difference is unobservable
+because the loopback has no free-form value for the rule to bite on. As written, the paragraph
+reads as a recorded cross-provider divergence — the thing the 2026-08-31 ruling forbids — and it is
+the paragraph a third reader and both ABI rounds will be judged against.
+
+The honest sentence is also the stronger one, and it is one sentence:
+
+> Both in-tree `key=value` readers refuse every entry containing a byte below `0x21`; XRCE states
+> that as one rule up front because it is the only one of the two with a free-form value (`agent`'s
+> host), where the loopback's closed key and value sets already refuse the same inputs. The rule
+> governs bytes inside an entry and never the separators between them.
+
+Same normative content for a third reader, no recorded divergence, and it stops a future reader of
+the spec from re-litigating the question. *Not blocking* — the code is right and the rule is stated
+correctly; the defect is that the oracle describes the rule's *status* wrongly.
+
+### F6 — the socket-leak fix landed with no witness, and its absence is not disclosed
+
+S1 is genuinely fixed and I measured it (below). But the thing that measured it is **gone from the
+tree**. The test binary the fixer built at 19:38 is still on disk and contains a case that no
+longer exists in any source file:
+
+```
+$ xrce_provider_tests.exe --gtest_list_tests   # binary of 19:38, pre-commit
+LeakProbe.
+  FailingConstructionDoesNotLeakTheSocket
+```
+
+and `xrcedds-pubsub-provider/build/Testing/Temporary/CTestCostData.txt` still lists it. `grep -rn
+LeakProbe` over the source tree finds it in no `.cpp`, `.hpp`, `.txt` or `.md`. So the "200 failing
+constructions → 0 handles leaked, versus 200 with the close suppressed" measurement was made with a
+throwaway probe that was deleted before commit.
+
+Compare B1, whose fix **did** land its table (`ConnectTimeoutBudgetBuysWholeAttempts`) — and whose
+own root cause the code review diagnosed as "the only arithmetic in this item that lived outside
+the reader, and it was the only arithmetic that was wrong ... it survived because only `=0` was
+tested". S1 is now the piece of this item with a correct implementation and no red-on-regress: an
+early `return`, a second close site, or a `catch` re-added above the destructor would restore the
+leak silently. The structural argument in the code (one close site, unwind-driven,
+`open_transport` read by both ends) is strong and I confirmed there is exactly one `uxr_close_*`
+call site in `src/`, so this is **DEBT-shaped, not blocking**. What is not acceptable as it stands
+is the *silence*: the design's fix-cycle-1 note says "S1. `Impl` gains a destructor, so the
+transport is closed on every constructor-throw path" and does not say that nothing watches it.
+Either land the probe (it is ~20 lines and needs no Agent — mine is reproduced below) or disclose
+the gap in the design's fix-cycle note as DEBT.
+
+### F7 — `ToleranceRulesMatchTheLoopback` and design §3's "adopted **verbatim**" now name something the code does not do
+
+Same class as cycle 1's F4 (a row whose *name* claims a third thing): the test named
+`ToleranceRulesMatchTheLoopback` now contains four rows that no loopback rule produces —
+
+```cpp
+ExpectRefused("agent= 127.0.0.1:2018",  ...);
+ExpectRefused("agent=127.0.0.1 :2018",  ...);
+ExpectRefused("session_key= 7",         ...);
+ExpectRefused("agent=127.0.0.1\r:2018", ...);
+```
+
+— and its own body comment says so ("ONE whitespace rule, and it refuses (fix cycle 1, review 4b
+S2)"), so the case simultaneously claims to match the loopback and documents its departure.
+`plans/PDA-DEC-7-xrce-by-document.md:76` still says "The tolerance rules are PDA-DEC-5's, adopted
+**verbatim**", contradicted by the tree; only the design's fix-cycle-1 appendix records S2, so the
+design body and its own appendix disagree. Under F5's framing the name is *recoverable* — the two
+readers do refuse the same documents — so the fix is small: rename to something like
+`ToleranceRulesMatchSpec41` (or keep the name and add "and where it is stricter, the loopback
+refuses the same inputs by its closed key/value sets"), and correct design §3's "verbatim" to
+"PDA-DEC-5's, with the whitespace rule stated once instead of arrived at four ways".
+
+---
+
+## Claims reproduced — build, mutate, run, restore
+
+Local build `xrcedds-pubsub-provider/build` (VS 17 2022, Release), rebuilt from `33d7514`.
+Baseline: **15/15 ctest green, 6.66 s.**
+
+1. **B1's mapping — proved live, in both directions.** I restored the exact old expression
+   (`max(0, (ms-1)/1000)`, spelled equivalently), rebuilt, and ran against a real Agent
+   (`C:/fl-uxa-install/bin/MicroXRCEAgent.exe udp4 -p 2018`) through a temporary probe:
+
+   | budget | ceiling (landed) | floor (mutation) |
+   |---|---|---|
+   | 250 ms | attempts=1, **connected** (7 ms) | attempts=0, **NO** — *"failed to create a session ... within 250 ms (is the Agent running?)"* while it was |
+   | 500 ms | attempts=1, **connected** (2 ms) | attempts=0, **NO** — same misattributed diagnostic |
+   | 1500 ms | attempts=2, **connected** (2 ms) | attempts=1, connected |
+   | 3000 ms | attempts=3, **connected** (2 ms) | attempts=2, connected |
+
+   The defect and the fix are both exactly as described. `ConnectTimeoutBudgetBuysWholeAttempts`
+   goes red under the old expression — **12** assertion failures, not the 11 reported (11
+   `EXPECT_EQ` rows plus the range-loop `ASSERT_GE` firing at `ms=1`, which then aborts the loop).
+   Restored and re-verified green.
+2. **Mapping edges.** `60000 → 60` is right (each attempt costs up to
+   `UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL` = 1000 ms, so 60 attempts ≈ the 60 s budget).
+   Above it is unreachable: the reader refuses `connect_timeout_ms=60001` with `kInvalidArgument`,
+   and that refusal is asserted **inside the same row** as the table, which is the right place for
+   it. Negative is impossible from the reader (parsed unsigned, then range-checked 0...60000) and
+   is handled anyway (`ms <= 0 → 0`). Overflow of `ms + 999` needs `ms > 2^63 - 1000`, unreachable
+   through the only caller and stated as a precondition in the header. `SessionAttempts` lives in
+   `src/internal/`, which `conanfile.py::package()` does not copy (only `include/`), so the
+   public-surface count (+2/-3, net -1) is unchanged.
+3. **The socket leak — measured, zero, on both post-init paths.** 200 failing constructions each,
+   `GetProcessHandleCount` before/after, after a 5-iteration warm-up:
+   - UDP, throw **after** transport init (session creation fails): `before=77 after=77 delta=0`.
+   - TCP, throw **after** transport init (connected to a test-owned listener that does not speak
+     XRCE, 205 accepts observed): `before=86 after=85 delta=-1`.
+
+   Path coverage checked by reading, not assumed: after transport init the only remaining throw
+   sites are the `comm == nullptr` `kInternal` belt and the `uxr_create_session_retries` failure —
+   both covered by `open_transport`, neither by `session_created`; and after `session_created =
+   true` the only remaining failure is `std::thread` construction, where `run_thread` is not
+   joinable and both conditionals still do the right thing. Exactly **one** `uxr_close_*` /
+   `uxr_delete_session` call site exists in `src/` (`xrce_dds_pubsub_provider.cpp:569,577,580`, all
+   inside `Impl::~Impl`), `~XrceDDSPubSubProvider` is `= default`, and `impl_` is a `unique_ptr`,
+   so no double-close is reachable. Four successful constructions plus destructions against a live
+   Agent completed clean, so the full-teardown path is not broken by the change.
+4. **S2 breaks no legitimate structure, and fires before the `=` split.** Confirmed by
+   construction, not by reading the code position: `"foo bar"` — an entry that is *both*
+   whitespace-bearing *and* has no `=` — is refused with the **whitespace** message, so the rule
+   is genuinely the first gate and nothing can slip through on the malformed-entry path.
+   `"transport=tcp\r\n"` still parses to `kTcp`; `""` and `"\n\r\n\n"` still parse to the defaults;
+   `"transport=tcp\rextra=1"` (mid-entry CR) is refused. Separators intact.
+5. **F4 — the assertion is live, and I made it fire.** With an Agent started on `udp4 -p 19999`,
+   `XrceConfig.AgentUnreachableIsATransportFailure` fails on exactly the intended line:
+   `test_xrce_document.cpp(662) ... something is answering XRCE on 127.0.0.1:19999`. With no Agent
+   it takes **1.04 s** (one whole awaited attempt) locally and 1.04 s in the packaged build, versus
+   ~0 at the old `=0`. The row now witnesses unreachability as its name claims, and it still
+   witnesses M8 (typed `kTransportFailure`) and M14 (registration under `xrce`).
+6. **F2 — spec §4.1 matches the code rule-for-rule.** `\n` split ok; single trailing-`\r` pop ok;
+   blank entry skipped ok; nothing else trimmed ok; no case folding ok; no comments ok; NUL refused
+   up front ok; byte `< 0x21` inside an entry refused, before the `=` split ok; separators
+   untouched ok. The framing of that last rule is F5.
+7. **Counts — 14 gtest / 15 ctest, measured three ways.** `--gtest_list_tests` = **14**;
+   `ctest -N` = **15** (`gtest_discover_tests` mints one entry per case, plus the MSVC nodiscard
+   probe); `ctest -C Release` ran **15/15**. The `conan create ... -o run_tests=True` cache build
+   that carries the fix (`fletc496600dfbe1af`, sources byte-identical to the repo's) shows
+   **15/15** in its `LastTest.log`. No off-by-one. `conformance_xrce`: one ctest entry, 25 gtest
+   cases, ran **25/25**.
+8. **Mandated full run, at HEAD.** `conformance_xrce` via ctest **1/1 (25 cases), 21.1 s**; the
+   binary by hand a further **3 x 25/25**; `fastdds-xrce-interop` **1/1 (3 cases)** after clearing
+   `C:\ProgramData\eprosima\fastdds_interprocess`. The conformance and interop binaries link the
+   packaged provider `fletc0adc67d4de9bb`, whose exported `src/` I diffed byte-for-byte against the
+   repo's — identical, ceiling mapping and `Impl::~Impl` both present. Not an "Already installed!".
+
+## Two things the fixer left — both reasons hold
+
+- **4b nit 3 (`transport=udp\ntransport=serial` reports duplicate-key, not `kNotSupported`).**
+  Reason holds, though not for the reason given. Reproduced both orders:
+  `transport=udp\ntransport=serial` → `kInvalidArgument` "duplicate document key";
+  `transport=serial\ntransport=udp` → `kNotSupported`. It is order-dependent. But the owner's
+  2026-09-02 "Accept it, fail distinctly" ruling protects a **valid selection** that this build
+  cannot honour; a document with a duplicated key is not a valid selection at all, and design
+  rung-2 item 9 independently requires a duplicate key to be `kInvalidArgument`. Reporting the
+  structural defect first is the operator-correct answer — they must fix the duplicate whatever the
+  value is. *Correction to the stated reason:* it is not "the first refusal in document order";
+  both candidate refusals are on the **same** entry, and the reader checks duplicate before value.
+  Say "structure before value" and the reason is exact.
+- **4b nit 6 (the drift guard reads the source-tree README at run time).** Reason holds, and it is
+  the design's explicit mandate, not a preference: the forcing-test mapping names M13 ("bake the
+  block in at configure time via `file(READ)`/`configure_file` → re-creates PDA-DEC-6's held-copy
+  defect") as **forbidden, not tested**, and `tests/CMakeLists.txt` restates it. Cycle 1
+  reproduced the guard reddening in the packaged build with no rebuild. Unreadable → hard failure
+  naming the path, never a skip. Conforming; the consequence (the test binary is not runnable out
+  of a package whose source tree is gone) is disclosed in the code review and is the correct trade
+  for the defect it kills.
+
+## The disclosed `conformance_xrce` anomaly — sound as to this item; the mechanism named is half right, and chasing it turned up a live false-pass hole that PDA-DEC-1 owns
+
+I could not reproduce it: **4 runs** (one by hand immediately after a green ctest run, then three
+back-to-back), all **25/25**. Judgement on the explanation:
+
+- The "port overlap" half is **not** what the guard would allow to *fail* — it is what the guard
+  fails to *catch*. `WaitUntilReachable`'s `SpawnedAgentAlive()` checks that the process this
+  binary spawned is still alive, **not that it owns UDP 2019**. I tested it: with a foreign Agent
+  of mine already holding `udp4 2019`, `conformance_xrce.exe` reported **25/25 PASSED** and the
+  foreign Agent's own log shows it served the entire run — `client_key: 0x50FFFFFF` (the probe),
+  `0x54000000` (`Registry.XrceResolvesAsABuiltIn`), 76 client create/destroy pairs. The guard's own
+  comment promises the opposite ("the suite will not run against a foreign one"). So port overlap
+  does not produce two spurious failures; it produces a **silent false pass**.
+- The "domain overlap" half is the credible mechanism for the two failures actually seen. Both are
+  delivery-shaped on DDS domain 153 (`Registry.XrceResolvesAsABuiltIn` publishes and receives a
+  row; `...SchemaModeIsUniformNeverMixed` asserts a subscription never sees two shapes). The Agent
+  is torn down with `TerminateProcess`/`SIGTERM`, so its Fast DDS participants never shut down
+  cleanly — which is exactly this box's known-accepted leaked-`fastdds_interprocess` hazard, and
+  stale endpoints on the same domain and topic names are precisely what would make a "never mixed"
+  clause see a foreign sample.
+
+**Conclusion for this item:** it does not hide an ordering or state defect introduced by `33d7514`,
+which touches nothing in the harness's Agent lifecycle; both failures are cross-run environment
+residue and the suite is deterministic across four consecutive runs.
+**Out of this item's scope but proved live, for the PM to route:** `SpawnedAgentAlive()`
+(`integration-tests/pubsub-conformance/subjects/xrce_main.cpp`, introduced by PDA-DEC-1 `a963211`,
+untouched here) does not detect a foreign Agent on the suite's port, so the XRCE conformance suite
+can certify against one and report green. Fix is one line — probe the spawned Agent's *ownership*
+of the port, or make failure-to-bind fatal.
+
+## Converse check — what survived that should not have
+
+Nothing from the fix pass. `kMsPerAttempt` exists only in the reader (the constructor's copy is
+gone, and the constructor now holds no arithmetic, per S3). The old
+`EXPECT_EQ(ParseXrceDocument(...).agent_host, " 127.0.0.1")` assertion — which pinned the behaviour
+S2 abolished — is gone, as is the README paragraph that explained it ("not trimmed either, and not
+second-guessed": no occurrence in the tree). The duplicated readiness-probe document in
+`xrce_main.cpp` is gone (nit 5). `~XrceDDSPubSubProvider`'s old teardown body is gone, not
+duplicated. Every file the fix touched is inside the design's `Files-to-touch`. The one thing that
+survived and should not have is covered by F7 (design §3's "verbatim"), and the one thing that did
+*not* survive and arguably should have is F6 (the leak probe).
+
+## RECORD (PM corrects in place; not blocking, no fix cycle)
+
+- The fix pass's reddening evidence says `ConnectTimeoutBudgetBuysWholeAttempts` fails with **11**
+  assertion failures under the old mapping; measured **12** (the range-loop `ASSERT_GE` is the
+  twelfth, and it aborts the loop).
+- `xrcedds-pubsub-provider/tests/test_xrce_document.cpp:6` — "**Six** of these eight cases touch
+  nothing but a pure function; the forcing case ... and the **two** constructor-refusal cases" is
+  6+1+2 = 9 of 8. The true split is 4 pure (`EveryKeySet...`, `ConnectTimeout...`,
+  `DocumentRefusals...`, `Tolerance...`) + 1 pure-plus-a-disk-read (`PublishedDefaultsAreExact`) +
+  1 forcing + 2 constructor. The pre-fix "five of these seven" was already wrong; the fix bumped
+  both numbers mechanically.
+- `integration-tests/pubsub-conformance/CMakeLists.txt:297` now reads "25 clauses (PDA-DEC-7 added
+  one)". It is **24 clauses plus one `Registry` case** — PDA-DEC-7 added a registry test, not a
+  clause. Cycle 1's RECORD said exactly that; the correction re-introduced the conflation.
+- `xrce_document.cpp`'s S2 comment says the rule catches "the space, the tab, and **every other
+  control byte**". It catches bytes below `0x21`; `0x7F` (DEL) is a control byte and is not caught
+  (measured: `agent=127.0.0.1:2018\x7f` falls through to the port parse — still refused, by a
+  different rule). Spec §4.1 and the README say "below `0x21`" and are accurate.
+- Measured, recorded here so nobody re-discovers it as a hang: `transport=tcp` towards a routable
+  but closed port costs **~2.0 s** per attempt inside `uxr_init_tcp_transport` and is **not**
+  bounded by `connect_timeout_ms` (the budget governs the session handshake, which is what the
+  header and README say, so nothing is contradicted). Pre-existing client behaviour; a loop of such
+  constructions is slow, not leaky (verified: no handle growth).
+- `agent=<non-ASCII>:2018` remains representable and is refused a layer down by the resolver
+  (measured: `agent=é:2018` parses, host kept verbatim). Consistent with H1 and with the `0x21`
+  rule as written; the README's "a host with whitespace in it is not representable" is precise and
+  should not be widened.
+- The owner's three record corrections are landed and correct: spec §4 clause 4 is re-scoped to the
+  gateway with the legitimate direct-construction sites named; the field arithmetic in
+  `plans/PDA-decouple-interface.md` now reads five-behind-four-keys / five deleted / two to the
+  typed core (= 12); the harness clause count was corrected (see the conflation above).

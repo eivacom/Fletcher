@@ -73,9 +73,16 @@ because one total rule beats two, and every caller builds keys with `std::to_str
 
 ### 3. One format, two readers — deliberately not one shared reader
 
-The tolerance rules are PDA-DEC-5's, adopted **verbatim**: `\n`-separated entries, a trailing
-`\r` stripped, blank entries skipped, nothing else trimmed, no case folding, no comments, an
-embedded NUL refused up front. **Spec §4.1 is the single tolerance oracle for both readers.**
+The tolerance rules are PDA-DEC-5's, **with the whitespace rule stated once instead of arrived
+at four ways** (fix cycle 1's S2, fix cycle 2's F7 — the design body said "verbatim" while the
+tree did not): `\n`-separated entries, a trailing `\r` stripped, blank entries skipped, nothing
+else trimmed, no case folding, no comments, an embedded NUL refused up front, and any byte below
+`0x21` — or a `0x7F` — inside an entry refused outright. The **outcomes** are PDA-DEC-5's and
+that is what is pinned: the loopback has one key matched by exact string equality and one closed
+value set, so it already refuses every document XRCE's whitespace rule refuses, and accepts none
+that XRCE refuses. Same documents in, same documents out, same status; there is no
+cross-provider divergence to record (review cycle 2's divergence verdict). **Spec §4.1 is the
+single tolerance oracle for both readers.**
 The *code* is not shared and cannot be: a shared reader belongs either in `pubsub/` —
 Fletcher carrying a config parser, decision 8's explicit stop-and-ask — or in a new component
 the `<75 KB` Flash target must link for 60 lines (§4.2). Review cycle 1 confirmed this is
@@ -227,10 +234,11 @@ already puts `../src` on the include path). No Agent in any row.
 | **`XrceConfig.DocumentConfiguresTransport`** (forcing) | §6. Row 1 against a test-owned TCP listener: `transport=tcp`+`agent=127.0.0.1:<bound port>`+`connect_timeout_ms=0` → **the listener accepts**, then `kTransportFailure`. Control row: empty document → **no** connection (defaults are UDP:2018) | Does not compile before the change (no `ProviderConfig` ctor). **M1 ignore the document entirely** → row 1 never accepts → red. **M3 read `agent`'s host but keep port 2018** → row 1 never accepts → red. **M10 read `agent` but keep `transport=udp`** → no TCP connect → row 1 red. The port is ephemeral, so no build can hard-code its way green; the control row cannot be reddened by a build and is not claimed to be a build guard (DEBT-2) |
 | **`XrceConfig.EveryKeySetNonDefaultLandsWholeStruct`** (B1) | §7. One document setting **all four** keys non-default (`transport=tcp`, `agent=10.1.2.3:7401`, `session_key=305419896`, `connect_timeout_ms=250`) → `ParseXrceDocument` result **`==`** the expected `XrceSettings`, whole-struct | **M11 range-check a key and then use a hard-coded value** (B1's build, reader half) → the parsed struct differs in that field → red. **M12 assign `connect_timeout_ms` from the wrong source** → red, and a wrong-*type* source no longer compiles (§2). A field added later and left unassigned is caught without editing the row |
 | `XrceConfig.DocumentRefusalsAreTypedAndQuoted` | Rung-2 items 9–13. One row per refusal, asserting the **status** and the quoted offending entry | M4 accept-and-default any single key → its row red. Stops a reader that fails to refuse; the *accept-and-discard* half is the row above |
-| `XrceConfig.ToleranceRulesMatchTheLoopback` | §3. CRLF entry, blank line, trailing newline accepted; ` agent =x`, `AGENT=`, `#comment` refused | M5 add trimming or comment support → red. Pins the two readers to spec §4.1, the single tolerance oracle for both |
+| `XrceConfig.ToleranceRefusesWhatTheLoopbackRefuses` | §3. CRLF entry, blank line, trailing newline accepted; ` agent =x`, `agent= x`, `agent=x\x7f`, `AGENT=`, `#comment` refused; a non-ASCII host accepted, marking the rule's other edge | M5 add trimming or comment support → red. **M15 narrow the byte rule back to `< 0x21`** → the DEL rows red (fix cycle 2, measured). Pins this reader to spec §4.1's refusals, the single tolerance oracle for both. Renamed in fix cycle 2: the old name claimed rule-identity with the loopback, which four of its rows do not have — the refusals coincide, the rules do not |
 | `XrceConfig.PublishedDefaultsAreExact` | The README's starting-point block is **read from `README.md` on disk at run time** (path injected as a compile definition; `README.md` added to `conanfile.py`'s `exports_sources`, as `fastdds-pubsub-provider/conanfile.py:33-38` already does) and must parse to a default-constructed `XrceSettings`, compared **whole-struct**. Unreadable → **hard failure naming the path**, never `GTEST_SKIP` | M6 change a default in code or a key's spelling in the README → red. M13 bake the block in at configure time (`file(READ)`/`configure_file`) → re-creates PDA-DEC-6's held-copy defect, so it is forbidden, not tested |
 | `XrceConfig.SerialIsRefusedAsUnsupported` | Rung-2 item 12 — `kNotSupported`, no transport touched, sub-millisecond | M7 route serial into the transport switch → red (`kTransportFailure`, not `kNotSupported`). Replaces `SerialTransportNotImplemented` |
 | `XrceConfig.AgentUnreachableIsATransportFailure` | §5 — the status, not just "it threw"; constructed through `RegisterXrceProvider` + `Create("xrce", cfg)`, so registration gets an Agent-free witness too. Replaces `ConstructorThrowsWithoutAgent` | M8 leave `std::runtime_error` → arrives as `kInternal` through the factory → red. M14 register under the wrong name → unknown name, `kInvalidArgument` → red in the provider's own CI |
+| **`XrceConfig.FailingConstructionDoesNotLeakTheTransport`** (fix cycle 2, F6) | Fix cycle 1's S1. 200 failing constructions on **each** of the two post-transport-init throw paths — UDP (init cannot fail, the session handshake does) and TCP against the test-owned listener that speaks no XRCE — with `GetProcessHandleCount` / `/proc/self/fd` read before and after a warm-up. Each iteration also asserts the throw is the **session** diagnostic, so the row cannot degrade into a probe of a transport that never opened | **M16 delete `Impl::~Impl`, empty its transport switch, or make the close conditional on `session_created` instead of `open_transport`** → measured **+200 handles (UDP) and +159 (TCP)** against a tolerance of 20 → red on both paths. A throw *after* `session_created` is unreachable from a test (only `std::thread` construction remains, needing a live Agent and an exhausted thread limit) and is not claimed; it stays covered structurally, by the single close site keying off `open_transport`. On a platform with neither handle probe the row is a counted, documented `GTEST_SKIP`, never a silent pass |
 | `Registry.XrceResolvesAsABuiltIn` — in **`conformance_xrce`** | §1, mirroring `Registry.FastDdsResolvesAsABuiltIn`. `MakeProvider(registry, "xrce", cfg)` delivers a row through a base-typed handle | M9 register under `"xrcedds"` → unknown name → red. Not in `conformance_registry`, whose narrow link line is itself the "no transport SDK is reachable" guard |
 | The 24 existing `conformance_xrce` cases + 3 interop tests (**changed, not added**) | §6 — all now document-configured, Agent on 2019/domain 153 and 2018/domain 145 | M1/M3 redden all **24** conformance cases: no Agent on the default port 2018, no discovery on the default domain. The end-to-end proof for UDP and session key. The interop 3 run their Agent *on* the default port and differ only in `domain_id` (typed core), so they witness the core and the type name, not the document |
 
@@ -285,10 +293,22 @@ design change:
   every larger one was an attempt short. Now a ceiling, and (S3) inside the pure reader as
   `internal::SessionAttempts`, so the constructor holds no arithmetic at all and the INTERIOR of
   the range is a table row, not just its ends. New test
-  `XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts` (8th case in the suite).
+  `XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts` (8th case in the suite), red under the old
+  expression with **12** assertion failures — 11 `EXPECT_EQ` rows plus the range-loop `ASSERT_GE`
+  firing at `ms=1`, which then aborts the loop (the fix pass reported 11; review cycle 2 measured
+  12).
 - **S1.** `Impl` gains a destructor, so the transport is closed on every constructor-throw path
   instead of only in `~XrceDDSPubSubProvider`, which does not run when the constructor throws.
-- **S2.** Any byte below `0x21` **inside an entry** is now refused, which makes
+  **It landed with NO test watching it**: the 200-construction handle measurement that proved it
+  was a throwaway probe, deleted before the commit, so an early `return`, a second close site or
+  a re-added `catch` would have restored the leak in silence. Fix cycle 2 (F6) lands that probe
+  as `XrceConfig.FailingConstructionDoesNotLeakTheTransport`, covering both post-init throw
+  paths; the mapping row above says what it reddens and by how much.
+- **S2.** Any byte below `0x21` **inside an entry** is now refused — extended in fix cycle 2 to
+  `0x7F` (DEL), the one control byte sitting *above* the printable range, which "below `0x21`"
+  therefore missed: `agent=127.0.0.1<DEL>:2018` used to parse, with a DEL kept inside the host.
+  Bytes `0x80`-`0xFF` stay deliberately untouched, so a non-ASCII hostname remains representable
+  and remains the resolver's business (H1). The rule makes
   `agent= 127.0.0.1:2018` unrepresentable rather than accepted-and-explained. This supersedes
   the cycle-1 note that value-side whitespace "dies in the port parse" (true of the port half
   only). Separators are untouched: `\n` splits, a trailing `\r` is stripped, blank entries are
@@ -325,5 +345,9 @@ guard ~90, defaults ~90, registry-routed refusal ~10), caller migrations ~150, R
 spec ~50, CMake + `conanfile.py` ~30; dropping two keys saves ~40, B1's row adds ~25.
 Provider suite **10 gtest cases − 4 retired + 7 new = 13** plus the MSVC nodiscard probe =
 **14 ctest entries** (fix cycle 1 adds `ConnectTimeoutBudgetBuysWholeAttempts`: **14 gtest
-cases / 15 ctest entries** as landed); `conformance_xrce` stays **one** entry, 24 → 25 gtest cases. New public
+cases / 15 ctest entries**; fix cycle 2 adds `FailingConstructionDoesNotLeakTheTransport`:
+**15 gtest cases / 16 ctest entries** as landed — the two counts differ because
+`gtest_discover_tests` mints one ctest entry per gtest case *plus* the MSVC nodiscard probe,
+which is a build rather than a gtest case); `conformance_xrce` stays **one** ctest entry and is
+**24 clauses plus one `Registry` case** = 25 gtest cases. New public
 surface **net −1** (+2 / −3), counted and confirmed. Cycles 2/2.

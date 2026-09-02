@@ -447,14 +447,15 @@ is stripped so a CRLF document means the same thing in every build, a blank
 entry — a blank line or the trailing newline — is skipped, and nothing else is
 trimmed; there is no case folding and no comment syntax; an embedded NUL is
 refused up front, for the same provider-level reason the loopback gives below.
-XRCE is **stricter on one point**, because "nothing is trimmed" turned out to be
-weaker than it sounds: any byte below `0x21` *inside* an entry — a space, a tab,
-a mid-entry CR — is refused, so `agent= 127.0.0.1:2018` is unrepresentable
-rather than accepted with a space in the host and rejected a layer down by a
-resolver Fletcher declines to know anything about (PDA-DEC-7 fix cycle 1). That
-rule governs bytes inside an entry and never the separators between entries. A
-third `key=value` reader is judged against this paragraph, not against either
-implementation. `XrceConfig` and its transport enum are
+Both in-tree `key=value` readers refuse every entry containing a byte below
+`0x21` or a `0x7F` (DEL); XRCE states that as one rule up front because it is the
+only one of the two with a free-form value (`agent`'s host), where the loopback's
+closed key and value sets already refuse the same inputs. So `agent= 127.0.0.1:2018` is
+unrepresentable rather than accepted with a space in the host and rejected a
+layer down by a resolver Fletcher declines to know anything about (PDA-DEC-7 fix
+cycle 1). The rule governs bytes inside an entry and never the separators
+between them. A third `key=value` reader is judged against this paragraph, not
+against either implementation. `XrceConfig` and its transport enum are
 **retired**, not deprecated, with no coexistence window (owner ruling
 2026-08-31), and five of its twelve fields are **deleted outright**: a payload
 cap nothing read, two serial settings reachable only through a transport that

@@ -94,9 +94,14 @@ XrceSettings ParseXrceDocument(const ProviderConfig& config) {
         if (entry.empty()) continue;
 
         // ONE rule, applied to the whole entry before the `=` is even looked for: no byte below
-        // 0x21 may appear INSIDE an entry. That is the space, the tab, and every other control
-        // byte - including a CR that is not the trailing one stripped just above (NUL never
-        // reaches here; it is refused up front).
+        // 0x21, and no 0x7F, may appear INSIDE an entry. That is the space, the tab, every
+        // control byte below the printable range - including a CR that is not the trailing one
+        // stripped just above (NUL never reaches here; it is refused up front) - and DEL, which
+        // is a control byte that happens to sit ABOVE the printable range and so is the one the
+        // "below 0x21" phrasing missed (fix cycle 2, review F6 RECORD). It is caught by the same
+        // rule rather than a second one, because there is no entry, key, address or number in
+        // which a DEL is legitimate. Bytes 0x80-0xFF are NOT touched: a non-ASCII hostname is
+        // the resolver's business (H1), and widening this to them would refuse setups that work.
         //
         // Forbidding beats documenting. Without this the format's real rule was not "nothing is
         // trimmed" but "nothing is trimmed, and whether whitespace is refused depends on which
@@ -112,9 +117,10 @@ XrceSettings ParseXrceDocument(const ProviderConfig& config) {
         // Nothing legal is lost: the entry SEPARATORS are handled above (a newline splits, a
         // trailing CR is stripped, a blank entry is skipped, so CRLF documents and blank lines
         // keep working), and no key, IPv4 literal, hostname or decimal number contains a byte
-        // below 0x21.
+        // below 0x21 or a DEL.
         for (const char c : entry) {
-            if (static_cast<unsigned char>(c) < 0x21u) {
+            const unsigned char byte = static_cast<unsigned char>(c);
+            if (byte < 0x21u || byte == 0x7Fu) {
                 Refuse(
                     "document entry contains a space or control byte; keys, values and the "
                     "address inside one are taken verbatim, so whitespace is refused rather "

@@ -13,7 +13,9 @@
 // helper: `in_process_provider.cpp:44-47` declines to share `Quoted` for the same reason. Do
 // not re-propose sharing it; design review cycle 1 confirmed it is forced, not convenient.
 // Drift is bounded by both readers' tolerance tests asserting the same spec §4.1 rows
-// (`XrceConfig.ToleranceRulesMatchTheLoopback` here).
+// (`XrceConfig.ToleranceRefusesWhatTheLoopbackRefuses` here - the name is about outcomes, not
+// rule-identity: this reader states the whitespace rule once where the loopback arrives at the
+// same refusals through its closed key and value sets).
 //
 // ── Tolerance: the loopback's rules, one of them made stricter ─────────────────────────────────
 // `\n`-separated entries; a trailing `\r` on an entry is stripped (a document authored
@@ -25,12 +27,14 @@
 // diagnostic channel cannot carry would be dishonest.
 //
 // One rule is STRONGER than "nothing is trimmed", because that rule turned out to be weaker
-// than it sounds: any byte below 0x21 INSIDE an entry — a space, a tab, a mid-entry CR — is
-// refused outright (fix cycle 1, review 4b S2). Trimming nothing left `agent= 127.0.0.1:2018`
-// representable, with the space kept in the host, to be rejected a layer down by the resolver
-// this provider deliberately knows nothing about (H1); refusing it here makes the state
-// unrepresentable instead of documented. It is a rule about bytes INSIDE an entry, never about
-// the separators between them, so CRLF documents and blank lines are unaffected.
+// than it sounds: any byte below 0x21 — and 0x7F, the one control byte that sits above the
+// printable range — INSIDE an entry, so a space, a tab, a mid-entry CR or a DEL, is refused
+// outright (fix cycle 1, review 4b S2; DEL added in fix cycle 2, review F6 RECORD). Bytes
+// 0x80-0xFF are NOT refused: a non-ASCII hostname is the resolver's business (H1). Trimming nothing
+// left `agent= 127.0.0.1:2018` representable, with the space kept in the host, to be rejected a
+// layer down by the resolver this provider deliberately knows nothing about (H1); refusing it here
+// makes the state unrepresentable instead of documented. It is a rule about bytes INSIDE an entry,
+// never about the separators between them, so CRLF documents and blank lines are unaffected.
 //
 // ── Everything else is refused, before any I/O ───────────────────────────────────────────────
 // An unknown key (including `stream_history` and `run_loop_ms`, which this item deleted — they

@@ -3,11 +3,18 @@
 //
 // The XRCE provider's configuration document (PDA-DEC-7): `key=value`, one setting per line.
 //
-// NO AGENT IN ANY ROW. Six of these eight cases touch nothing but a pure function; the forcing
-// case owns a plain TCP listening socket and the two constructor-refusal cases fail before or
-// during transport init. That is deliberate: the FORMAT is guarded here, in the provider's own
-// CI, and the TRANSPORT is guarded by the 24 Agent-gated `conformance_xrce` cases, which are
-// now document-configured and would all redden if the document stopped reaching the client.
+// NO AGENT IN ANY ROW. Nine cases, and the census sums (it did not before - "six of these
+// eight ... plus one plus two" was 9 of 8, review cycle 2 RECORD): FOUR touch nothing but the
+// pure reader (`EveryKeySetNonDefaultLandsWholeStruct`, `ConnectTimeoutBudgetBuysWholeAttempts`,
+// `DocumentRefusalsAreTypedAndQuoted`, `ToleranceRefusesWhatTheLoopbackRefuses`), ONE is the
+// pure reader plus a disk read (`PublishedDefaultsAreExact`), ONE is the forcing case and owns a
+// plain TCP listening socket, TWO are constructor-refusal cases that fail before or during
+// transport init (`SerialIsRefusedAsUnsupported`, `AgentUnreachableIsATransportFailure`), and
+// ONE constructs-and-fails hundreds of times on purpose to count OS handles
+// (`FailingConstructionDoesNotLeakTheTransport`). That is deliberate: the FORMAT is guarded
+// here, in the provider's own CI, and the TRANSPORT is guarded by the 24 Agent-gated
+// `conformance_xrce` cases, which are now document-configured and would all redden if the
+// document stopped reaching the client.
 //
 // Suite name is `XrceConfig` (the runbook's inner loop is `ctest -R '^XrceConfig\.'`), which is
 // also the name of the struct this item retired - the tests outlive the type.
@@ -32,12 +39,16 @@
 // clang-format off
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>  // GetProcessHandleCount, for the leak row below
 // clang-format on
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <dirent.h>  // /proc/self/fd, for the leak row below
+#endif
 #endif
 
 using namespace fletcher;
@@ -131,6 +142,32 @@ void ExpectRefused(const std::string& document, PubSubStatus expected_status,
 }
 
 // ---------------------------------------------------------------------------------------------
+// The process's open OS-handle count, or -1 where this platform offers no cheap way to ask.
+//
+// Only a DELTA is ever used, so a constant offset (the DIR handle, the "." and ".." entries) is
+// irrelevant. `GetProcessHandleCount` counts every kernel handle, so it sees a leaked socket;
+// `/proc/self/fd` counts every descriptor, likewise. Both are exact for the question asked -
+// "did N failed constructions leave N sockets behind" - because a leak here is one handle per
+// construction, i.e. hundreds, not one.
+// ---------------------------------------------------------------------------------------------
+int CountOpenHandles() {
+#ifdef _WIN32
+    DWORD count = 0;
+    if (GetProcessHandleCount(GetCurrentProcess(), &count) == 0) return -1;
+    return static_cast<int>(count);
+#elif defined(__linux__)
+    DIR* dir = ::opendir("/proc/self/fd");
+    if (dir == nullptr) return -1;
+    int count = 0;
+    while (::readdir(dir) != nullptr) ++count;
+    ::closedir(dir);
+    return count;
+#else
+    return -1;
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------
 // A test-owned TCP listener on an EPHEMERAL port.
 //
 // This is what makes the forcing case falsifiable, and it is structural rather than clever: the
@@ -146,7 +183,11 @@ void ExpectRefused(const std::string& document, PubSubStatus expected_status,
 // ---------------------------------------------------------------------------------------------
 class TcpListener {
    public:
-    TcpListener() {
+    // `hold_clients` is true for the forcing row, which needs the connection to stay up so the
+    // provider's failure is "nothing here speaks XRCE" rather than "the peer hung up". The leak
+    // row passes false: it makes hundreds of connections, and accepted sockets held in THIS
+    // process would be counted by the handle probe as growth the provider did not cause.
+    explicit TcpListener(bool hold_clients = true) : hold_clients_(hold_clients) {
 #ifdef _WIN32
         WSADATA wsa_data;
         wsa_ = (WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0);
@@ -182,7 +223,11 @@ class TcpListener {
                 // Held, not closed: closing immediately would let the client's connect()
                 // succeed and its first send() fail, which is a different story from "nothing
                 // behind this socket speaks XRCE".
-                clients_.push_back(client);
+                if (hold_clients_) {
+                    clients_.push_back(client);
+                } else {
+                    CloseOne(client);
+                }
             }
         });
     }
@@ -228,6 +273,7 @@ class TcpListener {
     Socket fd_ = -1;
 #endif
     uint16_t port_ = 0;
+    bool hold_clients_ = true;
     std::atomic<bool> stop_{false};
     std::atomic<int> accepted_{0};
     std::vector<Socket> clients_;
@@ -484,7 +530,7 @@ TEST(XrceConfig, DocumentRefusalsAreTypedAndQuoted) {
 }
 
 // =============================================================================================
-// Tolerance: the same rules as the loopback's reader, because there is one FORMAT
+// Tolerance: this reader refuses what the loopback's reader refuses, because there is one FORMAT
 // =============================================================================================
 //
 // Spec 4.1 (as landed by PDA-DEC-5) is the single tolerance oracle for both in-tree `key=value`
@@ -493,8 +539,18 @@ TEST(XrceConfig, DocumentRefusalsAreTypedAndQuoted) {
 // config parser in Fletcher, or add a component the <75 KB Flash target must link for sixty
 // lines), so this is how their drift is bounded.
 //
+// The name says REFUSES WHAT THE LOOPBACK REFUSES, not "the same rules", and the difference is
+// the point (review cycle 2 F7). XRCE states the whitespace rule ONCE, up front, because it is
+// the only one of the two readers with a free-form value (`agent`'s host); the loopback has one
+// key matched by exact string equality and one closed value set, so it already refuses every one
+// of the documents below - by its key lookup or its value lookup rather than by a whitespace
+// rule. Same documents accepted, same documents refused, same status; one reader needs one more
+// sentence to get there. What is NOT claimed is rule-identity: four of the rows below are
+// produced by no loopback rule at all, which is why the old name
+// `ToleranceRulesMatchTheLoopback` was retired - it named a third thing the code does not do.
+//
 // M5 - add trimming, case folding or comment support - reddens here.
-TEST(XrceConfig, ToleranceRulesMatchTheLoopback) {
+TEST(XrceConfig, ToleranceRefusesWhatTheLoopbackRefuses) {
     // Accepted: CRLF entries, blank lines, a trailing newline. All three occur in a document an
     // operator authored on this project's primary platform, and the same text must mean the same
     // thing in every build.
@@ -528,6 +584,27 @@ TEST(XrceConfig, ToleranceRulesMatchTheLoopback) {
     // to put a control byte in the middle of an address.
     ExpectRefused("agent=127.0.0.1\r:2018", PubSubStatus::kInvalidArgument,
                   "agent=127.0.0.1\r:2018");
+    // DEL (0x7F) is a control byte that sits ABOVE the printable range, so "below 0x21" missed
+    // it: this entry used to parse, keeping a DEL inside the host, and was then left to the
+    // resolver H1 says this provider knows nothing about - the same defect S2 closed for the
+    // space, in the one byte S2's phrasing let through (fix cycle 2, review F6 RECORD). The RULE
+    // was extended rather than the comment corrected: forbidding beats documenting, and a DEL
+    // inside a host, a key or a number is never legitimate.
+    ExpectRefused("agent=127.0.0.1\x7f:2018", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1\x7f:2018");
+    // Spelled in two pieces because a hex escape is greedy: "\x7f7" would be one out-of-range
+    // escape, not DEL followed by a digit.
+    ExpectRefused(
+        "session_key=\x7f"
+        "7",
+        PubSubStatus::kInvalidArgument,
+        "session_key=\x7f"
+        "7");
+    // The rule's OTHER edge is deliberately where it is: 0x80-0xFF are not touched, so a
+    // non-ASCII hostname stays representable and is the resolver's business (review cycle 2
+    // RECORD: do not widen this).
+    EXPECT_NO_THROW(ParseXrceDocument(ConfigWith("agent=h\xc3\xa9st:2018")));
+
     // ...and the SEPARATORS keep working, which is what this rule is careful not to touch: the
     // CRLF document accepted above already proves the trailing strip, and a blank-only document
     // is still the defaults.
@@ -669,4 +746,117 @@ TEST(XrceConfig, AgentUnreachableIsATransportFailure) {
     // registered under some other name than "xrce".
     EXPECT_EQ(refusal.message.find("no built-in provider named"), std::string::npos)
         << "\"xrce\" did not resolve through the registry: " << refusal.message;
+}
+
+// =============================================================================================
+// A construction that FAILS releases the transport it opened - counted, not argued
+// =============================================================================================
+//
+// This row exists because the fix it guards landed once with no witness (review cycle 2 F6).
+// Fix cycle 1's S1 gave `Impl` a destructor: before it, `uxr_close_*_transport` lived only in
+// `~XrceDDSPubSubProvider`, which DOES NOT RUN when the constructor throws, so every failed
+// construction leaked the socket it had just opened - and a provider whose Agent is down is
+// exactly the case an operator retries in a loop. The fix was measured by a throwaway probe and
+// the probe was deleted, which left the item with a correct implementation and nothing that
+// reddens if it regresses: an early `return`, a second close site, or a `catch` re-added above
+// the destructor would restore the leak in silence. This is that probe, landed.
+//
+// It counts HANDLES, not lines. The mutations it reddens, measured (see the fix report):
+//   * delete `Impl::~Impl`, or empty its transport-closing switch  -> ~one handle per failed
+//     construction, i.e. hundreds, versus a tolerance of tens.
+//   * make the close conditional on `session_created` instead of `open_transport` -> reddens on
+//     BOTH paths below, since neither creates a session.
+//
+// Both post-transport-init throw paths are exercised, and each asserts that it really is
+// post-init (the diagnostic must be the SESSION one): a mutation that made transport init itself
+// fail would otherwise turn this row into a probe of nothing.
+//   Path A  UDP: init cannot fail (connectionless), so the throw is the session handshake, with
+//                no Agent and no listener in the picture at all.
+//   Path B  TCP: init CONNECTS (blocking, inside init), to a test-owned listener that speaks no
+//                XRCE, so the transport is genuinely open when the session handshake throws.
+// `connect_timeout_ms=0` on both, so each iteration is one datagram and no wait.
+//
+// A throw AFTER `session_created = true` is not reachable from a test and is not claimed here:
+// the only remaining failure past that line is `std::thread` construction, which needs a live
+// Agent plus an exhausted thread limit. It is covered structurally instead - there is exactly
+// one close site, in the destructor, reached by unwinding, and it keys off `open_transport`,
+// which is set before the session exists. See the fix report.
+TEST(XrceConfig, FailingConstructionDoesNotLeakTheTransport) {
+    if (CountOpenHandles() < 0) {
+        // A counted, documented skip - the platform cannot answer the question, and asserting
+        // anyway would be a red with nothing wrong. Windows and Linux both answer, which is
+        // every platform this project builds on; the row is registered unconditionally so a
+        // third platform gets this sentence rather than silently losing the coverage.
+        GTEST_SKIP() << "no handle-count mechanism on this platform (neither "
+                        "GetProcessHandleCount nor /proc/self/fd), so a leak cannot be counted "
+                        "here; the close site is guarded structurally only";
+    }
+
+    TcpListener listener(/*hold_clients=*/false);
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    // Hundreds, so a one-per-construction leak dwarfs any incidental jitter; the tolerance below
+    // is a tenth of it. Each iteration is microseconds - nothing waits.
+    constexpr int kIterations = 200;
+    constexpr int kWarmup = 5;
+    constexpr int kTolerance = kIterations / 10;
+
+    struct Path {
+        const char* name;
+        std::string document;
+    };
+    const Path paths[] = {
+        {"UDP, throw at the session handshake", "agent=127.0.0.1:19999\nconnect_timeout_ms=0"},
+        {"TCP, connected to a listener that speaks no XRCE",
+         "transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+             "\nconnect_timeout_ms=0"}};
+
+    for (const Path& path : paths) {
+        // Warm up first: the first construction on each transport pays one-off costs (Winsock
+        // start-up, lazily created runtime handles) that are not leaks and must not be inside
+        // the measured window.
+        for (int i = 0; i < kWarmup; ++i) {
+            const Refusal warm =
+                Catch([&] { XrceDDSPubSubProvider provider(ConfigWith(path.document)); });
+            ASSERT_TRUE(warm.threw) << path.name
+                                    << ": this construction SUCCEEDED, so the row is "
+                                       "measuring the wrong thing entirely: "
+                                    << warm.message;
+        }
+
+        const int before = CountOpenHandles();
+        ASSERT_GE(before, 0) << path.name << ": the handle probe stopped answering";
+
+        int post_init_throws = 0;
+        std::string first_unexpected;
+        for (int i = 0; i < kIterations; ++i) {
+            const Refusal refusal =
+                Catch([&] { XrceDDSPubSubProvider provider(ConfigWith(path.document)); });
+            if (refusal.typed && refusal.status == PubSubStatus::kTransportFailure &&
+                refusal.message.find("failed to create a session") != std::string::npos) {
+                ++post_init_throws;
+            } else if (first_unexpected.empty()) {
+                first_unexpected = refusal.message;
+            }
+        }
+
+        const int after = CountOpenHandles();
+        ASSERT_GE(after, 0) << path.name << ": the handle probe stopped answering";
+
+        // The point of the row: the transport was open when the constructor threw, every time.
+        ASSERT_EQ(post_init_throws, kIterations)
+            << path.name
+            << ": these constructions did not fail at the SESSION handshake, so the transport was "
+               "never open and this row would prove nothing about closing it. First other "
+               "failure: "
+            << (first_unexpected.empty() ? std::string("(none recorded)") : first_unexpected);
+
+        EXPECT_LE(after - before, kTolerance)
+            << path.name << ": " << kIterations << " failed constructions leaked "
+            << (after - before) << " OS handles (" << before << " -> " << after
+            << "). A failing constructor must release the transport it opened - the close lives "
+               "in Impl::~Impl, which runs on a half-constructed Impl by unwinding; if it was "
+               "deleted, emptied, or made conditional on the session instead of the transport, "
+               "this is what that looks like";
+    }
 }

@@ -106,7 +106,8 @@ same thing everywhere, blank lines and a trailing newline skipped - and **nothin
 no case folding, no comments.
 
 One rule is stronger than "nothing is trimmed", because that rule is weaker than it sounds:
-**any byte below `0x21` inside an entry is refused** - a space, a tab, a mid-entry CR. So
+**any byte below `0x21`, or a `0x7F` (DEL), inside an entry is refused** - a space, a tab, a
+mid-entry CR, a DEL. So
 ` agent=x`, `agent =x`, `agent= 127.0.0.1:2018` and `agent=127.0.0.1:2018 ` are all refused by
 that one rule, rather than by whichever later check happened to catch them (and `AGENT=x` and
 `# a comment` are refused by the no-folding and no-comments rules above). A host with whitespace in it is not representable, so it cannot be handed to a resolver to
@@ -138,8 +139,9 @@ Each refusal is a `PubSubError` carrying a stable status (spec §5.1) and quotin
 entry:
 
 - **`kInvalidArgument`** - an embedded NUL; an entry with no `=`; an unknown key; a duplicate
-  key; an unknown value; a space or control byte anywhere inside an entry (` agent=x`,
-  `agent =x`, `agent= x:2018`); an `agent` without exactly one colon, with an empty host, or
+  key; an unknown value; a space or control byte anywhere inside an entry - below `0x21` or
+  `0x7F` (` agent=x`, `agent =x`, `agent= x:2018`), though not `0x80`-`0xFF`, so a non-ASCII
+  hostname stays representable and is the resolver's business; an `agent` without exactly one colon, with an empty host, or
   with a port outside 1-65535; a `connect_timeout_ms` above
   60000; a `session_key` above 4294967295; a `domain_id` above 65535; an unusable
   `max_payload_bytes`. Numbers are parsed wide and then range-checked per key, so no value is
