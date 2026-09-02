@@ -255,3 +255,46 @@ it leaves the binding path untested because no in-tree caller would exercise it.
 deprecated** (same shape as the 2026-08-31 `FastDDSProviderOptions` ruling);
 `SubscriberArrow::SubscribeResult::schema` becomes a `SchemaArrival`; the tree's
 only deep-copying import is made public as `ImportArrowSchema`.
+
+## 2026-09-02 — An unloadable driver path is a valid selection that fails distinctly *(selection)*
+> "Accept it, fail distinctly — The path is a valid selection and fails with a distinct \"this build cannot load drivers\" message, separate from an unknown name. This stage proves with a stand-in resolver that a real driver later arrives through the identical call."
+
+**Context:** PDA-DEC-4. Configuration can name a driver file that nothing in this
+build can load yet. Rejected: treating it as an unknown protocol name, under which
+a path and a typo look identical to an operator and the round's central promise —
+that PDA-ABI adds loading and changes nothing here — stays untested prose.
+**Applies to:** `ProviderRegistry::Create` refuses a path selector with
+`kNotSupported`, distinct from an unknown name's `kInvalidArgument`; the path
+branch exists and is routed **in this item**, exercised by
+`Registry.PathSelectorResolvesThroughTheSameCall` with a stand-in resolver and
+`Registry.PathSelectorWithoutResolverIsRefusedAsUnsupported` as its live negative
+control. This is what makes the no-signature-change claim executable rather than
+prose.
+
+## 2026-09-02 — The selector's shape decides name versus path *(selection)*
+> "The shape decides — A plain word like `fastdds` is a name; anything else, like `/opt/x.so`, is a path. One setting, the same rule in every build."
+
+**Context:** PDA-DEC-4. How one configuration string distinguishes a built-in
+protocol from a driver file. Rejected: an explicit `file:` prefix (every existing
+string and every operator must learn it, and a missing prefix silently means
+something else), and two separate settings — **disqualified** because it lets an
+application see which kind it has, the thing this round exists to prevent.
+**Applies to:** `ProviderSelector::Parse` classifies totally and disjointly (a name
+is `[A-Za-z0-9_-]+`; every other non-empty string is a path) and never consults the
+registry, so a string means the same thing in every build. The design review
+attacked the classification — drive letters, UNC paths, bare filenames, dotted
+names — and found no realistic driver path misclassifies, and no misclassification
+that would be repaired by widening the call rather than by an operator editing one
+string.
+
+## 2026-09-02 — Protocol-specific settings move into the protocol's own document *(selection)*
+> "Into the document — Fletcher keeps exactly payload size and domain; everything protocol-specific lives in the document only that protocol reads. Visible cost: XRCE settings that are typed struct fields today become document lines, and Fast DDS QoS follows two stages later."
+
+**Context:** PDA-DEC-4, whether the XRCE agent address stays a first-class Fletcher
+setting. Rejected: keeping it typed at the seam, which would leave Fletcher knowing
+one protocol's vocabulary — what the 2026-08-31 configuration ruling set out to
+prevent.
+**Applies to:** `ProviderConfig`'s typed core is exactly `{max_payload_bytes,
+domain_id}`; everything else is the opaque document Fletcher copies and never
+reads. Confirms the 2026-08-31 configuration ruling for PDA-DEC-7 (XRCE) and
+PDA-DEC-6 (Fast DDS QoS). The typed-field loss is accepted deliberately.
