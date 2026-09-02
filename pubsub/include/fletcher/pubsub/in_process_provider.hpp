@@ -60,8 +60,10 @@ class InProcessPubSubProvider : public PubSubProvider {
     /// subscribe AFTERWARDS get back through `SubscriptionResult` and on every
     /// delivery. Re-declaring with an identical schema is idempotent; a
     /// conflicting one throws `PubSubError(kSchemaConflict)` (spec §7 clause 3).
-    /// In `kCarried` a declaration with no schema is refused
+    /// Under `schema_carriage=carried` a declaration with no schema is refused
     /// (`kInvalidArgument`): a schema-carrying transport has nothing to carry.
+    /// (The mode is a document key; the enum that once spelled it is private to
+    /// the provider's own translation unit.)
     void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
