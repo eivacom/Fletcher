@@ -642,3 +642,73 @@ less red-first discipline than a feature**, which is the sharper version of the 
 Adjacent, same round: line-count reporting was wrong four times, always by excluding a new
 `src/internal/` header; and two consecutive progress-log entries (63 and 67 lines) exceeded the
 60-line budget. Both are candidates for the same retrospective, with numbers attached.
+
+## PDA-DEC-1H — the harness proves it owns the Agent answering the port (2026-09-03) 🟢
+
+**Forcing tests:** `AForeignAgentDoesNotSatisfyTheHarness` and
+`AFailedOwnershipQueryDoesNotSatisfyTheHarness`, one copy of each in **both** XRCE harnesses.
+**Commits:** `4d7d342` conformance fix · `5af2bfb` extended to interop · `ecc7b2c` fix 1 ·
+`de5d2cb` design+brief · `2cfa401` fix 2. Added to the round by owner ruling 2026-09-02
+(denominator 9 → 10). Closes debt `ROUND-1`.
+
+**Ran compressed by PM decision** — no architect step, no architecture-review cycle; the
+dispatch brief was the design, recorded afterwards and labelled as such. **The compliance
+reviewer's verdict on that call: defensible, but it left a gap** — two false premises reached
+the owner and the platform fork doubled unreviewed surface. Its recommendation is sharper than
+a rule and goes to the retrospective: *do not compress an item that forks by platform*; what
+saved this one was not a design doc but a reviewer told to re-derive its premises.
+
+**The mechanism, measured twice because the first measurement was wrong.** The PM hypothesis —
+a spawned Agent that fails to bind but stays alive — was refuted: it exits. The real cause is a
+race against a true-but-stale predicate: Windows `Spawn` has no reap loop (POSIX-only), so the
+first probe answers from the *leftover* Agent while the doomed child is still dying, leaving
+`WaitForSingleObject(handle,0) == WAIT_TIMEOUT` true when asked. **The ~876 ms child lifetime
+first published was an instrument artifact** — `Measure-Command { Start-Process -Wait }`, which
+reports 1025–1122 ms around `cmd /c exit`, so ~1 s was the wrapper's floor. Real OS lifetime is
+**28–89 ms over nine trials**, matching the Agent's own log (2.7 ms from `bind error` to `server
+stopped`). That **sharpens** the finding rather than softening it: the race is ~10–90 ms wide,
+so the pre-existing XRCE greens were a **coin flip**, not a near-certainty.
+
+**The fix.** Ownership of the certified endpoint, not liveness of a process:
+`GetExtendedUdpTable(UDP_TABLE_OWNER_PID)` vs the child's pid on Windows, `/proc/net/udp` inodes
+∩ the child's fds on Linux. Foreign beats ours, accumulated across the whole table so iteration
+order cannot invert it. Liveness demoted to a diagnostic. **No third state**: an unsupported
+platform is a *compile* refusal; a runtime query failure refuses.
+
+**Three defects the reviews found in the fix itself**, all closed with reddening proof:
+1. `kUnprovable` fell back to bare liveness and **returned success** — re-admitting this item's
+   own defect behind one stdout line. Deleted.
+2. That deletion then had **no standing guard** — nothing reached the refusal path, so restoring
+   the fallback reddened nothing. **The fourth unfalsifiable guard this round, inside the item
+   created to fix an unfalsifiable guard.** Now held by a one-pointer seam whose only assignment
+   in the tree is the test; restoring the fallback reddens both copies.
+3. "Byte-identical" was doing work it could not: Windows checked IPv4 only while Linux also read
+   `/proc/net/udp6` under a comment claiming one rule (Linux-only false *refusal*, never a false
+   pass). Closed by **narrowing** — dropping the v6 read — so the copies genuinely answer the
+   same question. Identity re-verified by sha256 over 221 lines, not by eye.
+
+**Also found: the interop harness was worse** — no liveness check at all, so a leftover Agent
+satisfied it outright, no race needed. Extending the fix there was a PM scope call under the
+owner's ruling. Duplicated rather than shared: the first reason recorded (a CI sparse-checkout
+cost) was **checked and false**, and the PM had repeated it to the owner; the true reason is
+package self-containment — sharing would export a test-only header from a shipped package.
+
+**Verification.** conformance **82 ctest entries / `conformance_xrce` 27 gtest cases**, 0
+skipped (was 25); interop **1 entry / 5 cases**, 0 skipped (was 3). Zero stray Agents before and
+after all seven runs — this item's own subject, so a leak would have been self-refuting.
+**No CI run exists on this branch, by design**: both lanes are `workflow_call` from
+PR-triggered `ci.pr.yml`, and opening the PR is the owner's step. The Linux path is therefore
+verified by local compilation only (WSL, g++ 13.3, `-Wall -Wextra` clean, 6/6 verdicts) — stated
+in the docs rather than implied as CI coverage. **Round-level consequence worth naming: eight
+items of Linux-side correctness have never run anywhere but locally on Windows.**
+
+**Process finding — the close gate cannot express mutation evidence.** The gate's failure-signature
+scan (`FAILED|panicked at|error[`) matched this item's *deliberate* reds, so an item that records
+the reddening proof the runbook demands elsewhere fails its own gate. Rephrased as "went RED",
+substance unchanged, and recorded here rather than silently worked around. For the retrospective.
+
+**Numbers.** Not declared up front (compressed) · **+1309 / −94** over `integration-tests/`;
+the `+1263/−246` first reported was a per-commit churn sum that double-counts rewritten lines —
+the **fourth** line-count misreport this round. Public surface **0**. **Close gate:** PASS on
+re-run. **Cycle meter:** design 0 (compressed) · fix 2 · implementer launches 3/5 · owner
+touches 1 (the ruling that created the item).

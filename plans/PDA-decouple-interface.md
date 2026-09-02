@@ -102,7 +102,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 | PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | 🟢 |
 | PDA-DEC-7 | XRCE configured by document (`key=value`) | 🟧 | `XrceConfig.DocumentConfiguresTransport` | 🟢 |
 | PDA-DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | ⚪ |
-| PDA-DEC-1H | **Harness proves it owns the Agent it talks to** — PDA-DEC-1's defect, found by PDA-DEC-7, added to the round by owner ruling 2026-09-02. Must land BEFORE PDA-DEC-9 signs the handoff. | 🔬 | `ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness` | ⚪ |
+| PDA-DEC-1H | **Harness proves it owns the Agent it talks to** — PDA-DEC-1's defect, found by PDA-DEC-7, added to the round by owner ruling 2026-09-02. Must land BEFORE PDA-DEC-9 signs the handoff. | 🔬 | `AForeignAgentDoesNotSatisfyTheHarness` + `AFailedOwnershipQueryDoesNotSatisfyTheHarness`, one copy in each XRCE harness | 🟢 |
 | PDA-DEC-9 | Seam spec, exception taxonomy, TD entry, and the parallelism handoff | 📓 | docs review; handoff checklist complete (§DoD) | ⚪ |
 
 Suite shape: PDA-DEC-1/PDA-DEC-2 introduce a **provider-agnostic conformance harness**
