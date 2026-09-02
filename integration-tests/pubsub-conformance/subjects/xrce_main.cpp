@@ -137,12 +137,14 @@ std::shared_ptr<PubSubProvider> MakeXrce(uint32_t session_key) {
 // workflow edits at all. The reason is that these two harnesses consume
 // `xrcedds-pubsub-provider` as a PACKAGE and reach outside their own directory for nothing, so
 // sharing would mean exporting a test-only header from a shipped package. Drift is guarded by
-// each harness carrying its own `AForeignAgentDoesNotSatisfyTheHarness`; see the longer note in
-// the interop copy.
+// each harness carrying its own `AForeignAgentDoesNotSatisfyTheHarness` and its own
+// `AFailedOwnershipQueryDoesNotSatisfyTheHarness` — which WILL guard the two copies once
+// each lane runs, and has not yet: both integration lanes are `workflow_call` from the
+// PR-triggered `ci.pr.yml` and this branch has had no CI run, so the pairing is checked
+// locally only and the Linux /proc half is verified by local compilation (g++ 13.3 under WSL,
+// `-Wall -Wextra` clean, correct verdicts on six machine states). See the longer note in the
+// interop copy.
 //
-// `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
-// while the OS lists no holder at all would mean the table cannot be trusted, and that
-// deserves its own sentence rather than being told as a leftover-Agent story.
 // `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
 // while the OS lists no holder at all would mean the table cannot be trusted, and that
 // deserves its own sentence rather than being told as a leftover-Agent story.
@@ -220,51 +222,54 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
     return PortOwnership::kQueryFailed;
 }
 #elif defined(__linux__)
-/// The socket inodes bound to `port`, from /proc/net/udp and /proc/net/udp6. False only when
-/// NEITHER file could be opened — the one case where the question could not be put at all,
-/// which is a refusal and not a pass.
+/// The socket inodes bound to `port`, from /proc/net/udp. IPv4 ONLY — the same row set the
+/// Windows branch asks for (AF_INET) and for the same reason: the Agent is started as `udp4`,
+/// so an IPv6 row on this port could not be the endpoint the suite certifies against.
+///
+/// /proc/net/udp6 is deliberately NOT read, and used to be. Reading it made this branch
+/// strictly stricter than the Windows one while both copies' comments claimed one rule: with
+/// our child holding 127.0.0.1:P and an unrelated process holding [::1]:P v6-only, Linux
+/// answered kSomeoneElses where Windows answered kOurs (compliance review F1, reproduced under
+/// WSL). That is a false REFUSAL and never a false pass, so nothing was ever certified
+/// wrongly — but two blocks presented as one rule have to BE one rule, and a narrower guard
+/// that is genuinely uniform beats a wider one that silently differs.
+///
+/// False only when the file could not be opened — the one case where the question could not be
+/// put at all, which is a refusal and not a pass.
 bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes, std::string* query_error) {
-    bool read_any = false;
-    int last_errno = 0;
-    for (const char* path : {"/proc/net/udp", "/proc/net/udp6"}) {
-        errno = 0;
-        std::ifstream file(path);
-        if (!file) {
-            last_errno = errno;
+    errno = 0;
+    std::ifstream file("/proc/net/udp");
+    if (!file) {
+        *query_error = "/proc/net/udp could not be opened (errno " + std::to_string(errno) + ": " +
+                       std::strerror(errno) + ")";
+        return false;
+    }
+    std::string line;
+    std::getline(file, line);  // The column header.
+    while (std::getline(file, line)) {
+        // sl / local_address / rem_address / st / tx_queue:rx_queue / tr:tm->when / retrnsmt /
+        // uid / timeout / inode — tx-rx and tr-tm are colon-joined into one field each, so
+        // `inode` is the tenth whitespace-separated token.
+        std::istringstream fields(line);
+        std::vector<std::string> token;
+        std::string one;
+        while (fields >> one) {
+            token.push_back(one);
+        }
+        if (token.size() < 10) {
             continue;
         }
-        read_any = true;
-        std::string line;
-        std::getline(file, line);  // The column header.
-        while (std::getline(file, line)) {
-            // sl / local_address / rem_address / st / tx_queue:rx_queue / tr:tm->when /
-            // retrnsmt / uid / timeout / inode — tx-rx and tr-tm are colon-joined into one
-            // field each, so `inode` is the tenth whitespace-separated token.
-            std::istringstream fields(line);
-            std::vector<std::string> token;
-            std::string one;
-            while (fields >> one) {
-                token.push_back(one);
-            }
-            if (token.size() < 10) {
-                continue;
-            }
-            const std::string& local = token[1];  // "0100007F:07E3" — the port in hex.
-            const size_t colon = local.rfind(':');
-            if (colon == std::string::npos) {
-                continue;
-            }
-            if (std::strtoul(local.c_str() + colon + 1, nullptr, 16) != port) {
-                continue;
-            }
-            inodes->insert(token[9]);
+        const std::string& local = token[1];  // "0100007F:07E3" — the port in hex.
+        const size_t colon = local.rfind(':');
+        if (colon == std::string::npos) {
+            continue;
         }
+        if (std::strtoul(local.c_str() + colon + 1, nullptr, 16) != port) {
+            continue;
+        }
+        inodes->insert(token[9]);
     }
-    if (!read_any) {
-        *query_error = "neither /proc/net/udp nor /proc/net/udp6 could be opened (errno " +
-                       std::to_string(last_errno) + ": " + std::strerror(last_errno) + ")";
-    }
-    return read_any;
+    return true;
 }
 
 /// The socket inodes `pid` has open. A pid that no longer exists holds no sockets, and that is
@@ -316,7 +321,8 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
         return PortOwnership::kQueryFailed;
     }
     // Every socket on the port must be one of ours — the same "foreign beats ours" rule the
-    // Windows branch applies, for the same reason.
+    // Windows branch applies, over the same row set (IPv4 only on both platforms, since the
+    // v6 read went), for the same reason.
     for (const std::string& inode : port_inodes) {
         if (our_inodes.count(inode) == 0) {
             return PortOwnership::kSomeoneElses;
@@ -333,6 +339,18 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
 #error "PDA-DEC-1H: no UDP port-ownership query for this platform. Port GetExtendedUdpTable (Windows) or /proc/net/udp (Linux) here rather than dropping the guard: this harness must not certify a run against an Agent it cannot prove it owns."
 // clang-format on
 #endif
+
+/// The query above, reached through ONE indirection so a test can force the `kQueryFailed`
+/// arm. That arm is this item's central deletion — an earlier revision fell back to bare
+/// liveness there and PASSED — and until this seam existed nothing in either harness reached
+/// it: re-introducing that fallback reddened NO test, so the refusal was safe only by
+/// inspection (compliance review F3). `AFailedOwnershipQueryDoesNotSatisfyTheHarness` swaps
+/// this pointer for a stub that fails, and asserts the refusal, so the fallback cannot come
+/// back unnoticed. The default is the real query; that one test is the only assignment in the
+/// tree, and no build option or environment variable can reach it.
+using UdpPortOwnershipQuery = PortOwnership (*)(uint16_t port, int64_t our_pid,
+                                                std::string* query_error);
+UdpPortOwnershipQuery g_udp_port_ownership_query = &UdpPortOwnership;
 
 /// The one refusal an operator can act on, shared by every path that reaches it, so the
 /// sentence does not depend on which platform noticed or on how it noticed.
@@ -557,7 +575,8 @@ class OwnedAgent {
     /// to a leftover Agent both surface as a child that exited at once.
     std::string DeadChildRefusal() {
         std::string query_error;
-        if (UdpPortOwnership(port_, ProcessId(), &query_error) == PortOwnership::kSomeoneElses) {
+        if (g_udp_port_ownership_query(port_, ProcessId(), &query_error) ==
+            PortOwnership::kSomeoneElses) {
             return ForeignAgentRefusal(port_,
                                        "the Agent we spawned exited before it could bind and "
                                        "another process holds the port");
@@ -584,7 +603,7 @@ class OwnedAgent {
         std::string query_error;
         const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         do {
-            ownership = UdpPortOwnership(port_, ProcessId(), &query_error);
+            ownership = g_udp_port_ownership_query(port_, ProcessId(), &query_error);
             if (ownership != PortOwnership::kNobody) {
                 break;
             }
@@ -632,9 +651,11 @@ class OwnedAgent {
                     XrceConfigFor(NextSessionKey(kProbeSessionBase), 2000, port_);
                 XrceDDSPubSubProvider probe(probe_config);
                 // Something answered. WHO answered is ProveOwnership's question, not this
-                // loop's — asking `Alive()` here WAS the defect: our own doomed child needs
-                // ~0.9 s to reach its bind error and exit, and a leftover answers this probe
-                // long before that, so liveness was still true and the suite ran on.
+                // loop's — asking `Alive()` here WAS the defect: our own doomed child takes
+                // TENS OF MILLISECONDS to reach its bind error and exit (measured 28-89 ms;
+                // see the note on the forcing test for the method and for the ~0.9 s figure
+                // this used to carry), and a leftover answers this probe inside that window,
+                // so liveness was still true and the suite ran on.
                 return {};
             } catch (const std::exception& e) {
                 last_error = e.what();
@@ -727,10 +748,25 @@ INSTANTIATE_TEST_SUITE_P(
 //
 // Measured on this project's primary platform before this test was written: a second
 // MicroXRCEAgent aimed at a port a first one already holds logs `bind error | port: N` and
-// EXITS — it does not stay alive. But it takes ~0.9 s to get there, while the incumbent answers
-// the reachability probe in milliseconds. So at the instant the guard asked
-// `WaitForSingleObject(handle, 0)`, our own doomed child was still running: both halves of a
-// liveness guard held, and the suite would certify its 25 cases against an Agent it does not own.
+// EXITS — it does not stay alive. It gets there in TENS OF MILLISECONDS.
+//
+// THE ~0.9 s THIS COMMENT USED TO CLAIM WAS A MEASUREMENT ARTIFACT, corrected here rather
+// than quietly dropped. It came from `Measure-Command { Start-Process -Wait }`, which times
+// PowerShell's launch-and-poll wrapper: that wrapper reports ~1,025 ms for `cmd /c exit`, a
+// process that does nothing, so the ~1 s was the instrument's floor and never the Agent.
+// What the number IS: the child's own OS lifetime, `Process.ExitTime - Process.StartTime`
+// read after `WaitForExit()`, with an incumbent holding the port — 28-89 ms over nine
+// trials in two independent sessions, which agrees with the Agent's own log (2.7 ms from
+// `bind error` to `server stopped`). A plausible number from the wrong instrument is worse
+// than no number.
+//
+// The correction makes the defect SHARPER. The incumbent answers the reachability probe in
+// milliseconds and the old guard's two probes were ~16 ms apart, so at the instant it asked
+// `WaitForSingleObject(handle, 0)` our own doomed child was still running — true in 7 of
+// those 9 trials. Both halves of a liveness guard held, and the suite would certify its
+// cases against an Agent it does not own. The race is ~10-90 ms wide, not ~900 ms: a coin
+// flip rather than a near-certainty, which is a materially different risk statement about
+// every XRCE green reported before this item.
 //
 // This runs that race deliberately. An Agent that IS ours on a port nothing else in the tree
 // uses, then a second bring-up against the same port — which must refuse, and must say what an
@@ -752,6 +788,47 @@ TEST(ConformanceXrce, AForeignAgentDoesNotSatisfyTheHarness) {
         << contender.failure();
     EXPECT_NE(contender.failure().find("Kill it"), std::string::npos)
         << "the refusal does not tell the operator what to do about it: " << contender.failure();
+}
+
+// -- A failed ownership query must refuse, not fall back (PDA-DEC-1H) --
+//
+// The guard's other arm, and this item's central deletion: when the OS query itself FAILS, an
+// earlier revision printed one INFO line, fell back to "the Agent we spawned is still alive"
+// and PASSED, re-admitting through the guard's own error path the exact defect the guard
+// exists to close. That deletion was proved once BY HAND — stub a failure, watch the ctest
+// entry fail, revert the stub — and the compliance review (F3) pointed out that a reverted
+// stub is evidence and not a guard: nothing in the tree reached `kQueryFailed`, so
+// re-introducing the fallback would have reddened nothing.
+//
+// This is that guard. The query is reached through one function pointer
+// (`g_udp_port_ownership_query`); this test points it at a stub that fails, stands up an Agent
+// that IS ours on a port nothing else uses, and requires the bring-up to refuse anyway. Make
+// `kQueryFailed` fall back to liveness and the first assertion reddens, because that Agent is
+// genuinely alive and genuinely ours — liveness is exactly what this guard refuses to
+// accept as proof. Its twin is `AFailedOwnershipQueryDoesNotSatisfyTheHarness` in
+// integration-tests/fastdds-xrce-interop/tests/test_interop.cpp.
+TEST(ConformanceXrce, AFailedOwnershipQueryDoesNotSatisfyTheHarness) {
+    // Restored by a destructor and not at the end of the body: an ASSERT below returns early,
+    // and a stub left installed would fail every later bring-up in this binary.
+    struct RestoreQuery {
+        ~RestoreQuery() { g_udp_port_ownership_query = &UdpPortOwnership; }
+    } restore_query;
+    g_udp_port_ownership_query = [](uint16_t, int64_t, std::string* query_error) {
+        *query_error = "the port-ownership query was forced to fail by this test";
+        return PortOwnership::kQueryFailed;
+    };
+
+    OwnedAgent agent(kContestedPort);
+    ASSERT_FALSE(agent.proven())
+        << "ownership could not be established and the bring-up passed anyway — that is the "
+           "fall-back-to-liveness this item deleted, and the Agent it would have certified is "
+           "only trusted because it is alive";
+    EXPECT_NE(agent.failure().find("cannot establish which process holds UDP"), std::string::npos)
+        << "the refusal does not say that ownership could not be established: " << agent.failure();
+    EXPECT_NE(agent.failure().find("forced to fail by this test"), std::string::npos)
+        << "the refusal does not carry the query error that caused it: " << agent.failure();
+    EXPECT_NE(agent.failure().find("refuses rather than falling back"), std::string::npos)
+        << "the refusal does not say it declined to fall back to liveness: " << agent.failure();
 }
 
 // -- XRCE resolves as a built-in NAME (spec section 4 clause 4) --------

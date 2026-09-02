@@ -474,8 +474,9 @@ superbuild happens once per machine and CI caches one unit; the
 tree collides when two harnesses configure concurrently.
 
 Isolation: fixed DDS domains 151/152/153 and Agent UDP ports 2019 (the suite's
-own Agent) and 2119 (`ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness`
-only, which deliberately puts two Agents on it), none of which
+own Agent) and 2119 (the two `ConformanceXrce` ownership guards only —
+`AForeignAgentDoesNotSatisfyTheHarness`, which deliberately puts two Agents on
+it, and `AFailedOwnershipQueryDoesNotSatisfyTheHarness`), none of which
 `fastdds-xrce-interop` (domain 145, port 2018) uses. `RESOURCE_LOCK` is one lock
 per binary, not per domain, because ctest properties apply target-wide and
 `conformance_fastdds` carries two subjects. The XRCE binary has a **single**
@@ -485,19 +486,51 @@ pay ~24 Agent start/stop cycles).
 The Agent guard proves **ownership of the port**, not liveness of a process
 (PDA-DEC-1H). Reaching the Agent is not enough and neither is the spawned
 Agent still running: a second `MicroXRCEAgent` aimed at a port a leftover
-already holds logs `bind error` and exits, but takes ~0.9 s to do it, while the
-leftover answers the reachability probe in milliseconds — so a liveness check
-was true at the instant it was asked and the suite would certify all 26 cases
-against a foreign Agent. `SetUp` therefore requires the OS to record *this
-binary's child* as the holder of UDP 2019 (`GetExtendedUdpTable` on Windows,
-`/proc/net/udp` plus the child's `/proc/<pid>/fd` on Linux), and refuses with an
+already holds logs `bind error` and exits — in **tens of milliseconds** — while the
+leftover answers the reachability probe in milliseconds and the old guard's two
+probes were only ~16 ms apart. So a liveness check was true at the instant it
+was asked, and the suite would certify all 27 cases against a foreign Agent.
+`SetUp` therefore requires the OS to record *this binary's child* as the holder
+of UDP 2019 (`GetExtendedUdpTable`, `AF_INET`, on Windows; `/proc/net/udp`
+intersected with the child's `/proc/<pid>/fd` on Linux — IPv4 only on both, so
+the two platforms answer the same question), and refuses with an
 operator-actionable message otherwise.
+
+**How the timing was measured, and the ~0.9 s figure this README used to
+carry.** That figure was a *measurement artifact* and is corrected here rather
+than quietly dropped. It came from `Measure-Command { Start-Process -Wait }`,
+which times PowerShell's launch-and-poll wrapper: the same wrapper reports
+~1,025 ms around `cmd /c exit`, a process that does nothing, so ~1 s is the
+instrument's floor and was never the Agent's lifetime. The real figure is the
+doomed child's own OS lifetime, `Process.ExitTime - Process.StartTime` read
+after `WaitForExit()` on a `Start-Process -PassThru` handle with an incumbent
+Agent holding the port: **28-89 ms across nine trials in two independent
+sessions**, which agrees with the Agent's own log (2.7 ms from `bind error` to
+`server stopped`). The correction makes the defect *sharper*: the race the old
+liveness guard lost is **~10-90 ms** wide, not ~900 ms, and the doomed child
+was still alive at the 16 ms mark in 7 of those 9 trials — a coin flip, not a
+near-certainty, so every XRCE green reported before this item was conditional
+on the wrong side of it. The derivation is written down because a plausible
+number from the wrong instrument is worse than no number.
 
 There is **no fallback**, by design. A platform with neither query fails to
 **compile** (`#error`), and a query that *fails at runtime* is a **refusal**
 naming the OS error — not "unknown, carry on". An earlier revision tolerated
 both cases with one stdout `INFO` line, a fall back to bare liveness, and a
-**pass**, which re-admitted this guard's own defect through its error path.
+**pass**, which re-admitted this guard's own defect through its error path. The
+`#error` arm is enforced by a compiler; the runtime arm is enforced by
+`ConformanceXrce.AFailedOwnershipQueryDoesNotSatisfyTheHarness`, which points
+the query's one indirection at a stub that fails and requires the bring-up to
+refuse an Agent that is genuinely alive and genuinely ours. Before that test
+existed, re-introducing the fallback reddened nothing.
+
+Both guards live in duplicate, one copy per XRCE harness, and each copy is
+guarded by its own equally-named test **in its own CI lane** — which will
+guard them once those lanes run, and has not yet: both integration lanes are
+`workflow_call` from the PR-triggered `ci.pr.yml`, so a branch without a PR has
+no run. Until then the Linux `/proc` half is verified by local compilation
+rather than by a lane (g++ 13.3 under WSL, `-Wall -Wextra` clean, correct
+verdicts on six machine states including a dead pid).
 
 **Scope: the proof is taken at bring-up only.** It is a point-in-time snapshot
 in `SetUp` and is never re-taken, so a foreign Agent that appears *after* it is

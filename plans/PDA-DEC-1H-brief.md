@@ -3,8 +3,11 @@
 **In one sentence:** the test harness that certifies XRCE conformance now proves the Agent
 answering the port is the one it started, instead of trusting that the process it launched is
 still alive.
-**Forcing test:** `AForeignAgentDoesNotSatisfyTheHarness`, one copy in each XRCE harness — with
-a stranger's Agent on the port, the harness must refuse to certify rather than run green.
+**Forcing tests:** `AForeignAgentDoesNotSatisfyTheHarness`, one copy in each XRCE harness —
+with a stranger's Agent on the port, the harness must refuse to certify rather than run green;
+and `AFailedOwnershipQueryDoesNotSatisfyTheHarness`, one copy in each — when the OS query
+itself cannot be answered, the harness must refuse rather than fall back to "our Agent is still
+alive".
 
 **Why this exists at all:** a reviewer on the previous item watched the suite report a full pass
 while served by an Agent nobody in the run had started. Every XRCE pass before this item was
@@ -20,7 +23,9 @@ to you earlier today.
 
 ## Deleted
 - The "cannot prove it, carry on" state. A platform with neither OS query now fails to
-  **compile**; a query that fails at runtime **refuses**. Behaviour gone, deliberately.
+  **compile**; a query that fails at runtime **refuses**. Behaviour gone, deliberately — and
+  as of fix cycle 2 the runtime half is held by a test that reddens if the fallback returns,
+  rather than by inspection alone.
 
 ## Corner cases forbidden vs handled
 **Forbidden:** certifying a run whose Agent we cannot prove we own; a stranger sharing the port
@@ -47,14 +52,21 @@ a harness that can report a vacuous green, and that reasoning covered both.
   (job objects / `PR_SET_PDEATHSIG`), and an unbounded `waitpid`. All pre-existing.
 
 ## Numbers
-Not declared up front (compressed cycle) · actual **+1263 / −246** · new public surface **0** ·
-design cycles 0 (compressed) · fix cycles 1
+Not declared up front (compressed cycle) · **net +1309 / −94** over `integration-tests/`
+(the **+1263 / −246** first reported was the sum of per-commit churn, which double-counts
+rewritten lines) · new public surface **0** · design cycles 0 (compressed) · fix cycles 2
 
 ---
-*As landed (2026-09-02, PM):* closed the round's **only known false-green vector**. The PM
-hypothesis about the mechanism was wrong and was refuted by measurement before any fix was built
-— an Agent that cannot bind exits in ~876 ms; the real cause was a race with a probe answering
-16 ms ahead of the doomed child's death. Cost of the compressed cycle, paid honestly: this brief
-and the design doc were written *after* the work, and a compliance review was run at close rather
-than skipped. conformance **82 ctest entries / 26 gtest cases in `conformance_xrce`**, 0 skipped;
-interop **1 entry / 4 cases**, 0 skipped; no stray Agents across six checks.
+*As landed (2026-09-02, PM; corrected 2026-09-03, fix cycle 2):* closed the round's **only
+known false-green vector**. The PM hypothesis about the mechanism was wrong and was refuted by
+measurement before any fix was built — an Agent that cannot bind **exits within tens of
+milliseconds** (28-89 ms of OS lifetime over nine trials). The ~876 ms first reported here was a
+`Measure-Command { Start-Process -Wait }` wrapper artifact, caught by the compliance review and
+corrected in the docs; the real cause was a race with a probe answering 16 ms ahead of the doomed
+child's death, and the corrected figure makes that race ~10-90 ms wide rather than ~900 ms — a
+coin flip, which is the sharper statement of the same defect. Cost of the compressed cycle, paid
+honestly: this brief and the design doc were written *after* the work, a compliance review was
+run at close rather than skipped, and its four findings — including the wrong number and an
+unguarded refusal arm — were closed in a second fix cycle. conformance **82 ctest entries / 27
+gtest cases in `conformance_xrce`**, 0 skipped; interop **1 entry / 5 cases**, 0 skipped; no
+stray Agents on any check.

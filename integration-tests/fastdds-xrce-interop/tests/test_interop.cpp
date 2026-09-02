@@ -18,17 +18,21 @@
 //
 // Each test uses its own XRCE session_key - a key is unique per client on
 // one Agent - so the cases can run against the same Agent without their
-// sessions colliding. Four cases live here: the three interop directions
-// and the fixture's own guard, `AForeignAgentDoesNotSatisfyTheHarness`.
+// sessions colliding. Five cases live here: the three interop directions
+// and the fixture's own two guards, `AForeignAgentDoesNotSatisfyTheHarness`
+// and `AFailedOwnershipQueryDoesNotSatisfyTheHarness`.
 //
 // PDA-DEC-1H: the fixture proves, AT BRING-UP, that it OWNS the Agent answering the port - a
 // one-shot snapshot in SetUp and not a running invariant, so an Agent that turns up after it
 // is not caught. Reaching an Agent is not enough, and neither is the spawned Agent still
 // running - a leftover Agent from an
 // interrupted run answers the reachability probe in milliseconds while our own child, which
-// lost the bind, takes ~0.9 s to exit. This fixture had no liveness check at ALL before this
-// item, so a leftover satisfied it outright. `AForeignAgentDoesNotSatisfyTheHarness` below is
-// the witness, and it is the same case, the same guard and the same refusal sentence as
+// lost the bind, takes tens of milliseconds to exit (28-89 ms measured; the ~0.9 s this note
+// used to claim was a PowerShell wrapper artifact - see the note on
+// `AForeignAgentDoesNotSatisfyTheHarness` below for the method). This fixture had no liveness check
+// at ALL before this item, so a leftover satisfied it outright.
+// `AForeignAgentDoesNotSatisfyTheHarness` below is the witness, and it is the same case, the same
+// guard and the same refusal sentence as
 // `integration-tests/pubsub-conformance/subjects/xrce_main.cpp` - see the note on
 // `UdpPortOwnership` for why the two are duplicated rather than shared.
 
@@ -189,12 +193,23 @@ ProviderConfig XrceConfigFor(uint32_t session_key, uint16_t agent_port = kAgentP
 // giving up that self-containment. Declining that trade for ~165 duplicated lines of
 // test-support code is the call taken here.
 //
-// The drift is therefore guarded BEHAVIOURALLY rather than by hope: each harness carries its
-// own `AForeignAgentDoesNotSatisfyTheHarness`, asserting the same refusal in the same words,
-// in its own CI lane. Break either copy and that copy's own test reddens. What that pairing
-// pins is "a foreign Agent is refused with operator-actionable text" - it would NOT catch the
-// two copies producing different refusals, since both refusal strings contain the substrings
-// asserted. The block below is byte-identical to the conformance file's, verified as such.
+// The drift is therefore guarded BEHAVIOURALLY: each harness carries its own
+// `AForeignAgentDoesNotSatisfyTheHarness` and its own
+// `AFailedOwnershipQueryDoesNotSatisfyTheHarness`, asserting the same refusals in the same
+// words, in its own CI lane. Break either copy and that copy's own tests redden.
+//
+// STATED IN THE TENSE IT DESERVES (compliance review F4): those lanes WILL guard the two
+// copies once they run, and they have not run yet. Both integration lanes are `workflow_call`
+// from the PR-triggered `ci.pr.yml`, and opening the PR is the owner's step, so this branch
+// has had no CI run at all - `gh run list --branch feature/protocol-driver-abi` is empty. By
+// design, not breakage, but it means the pairing is so far checked locally only, and the Linux
+// /proc half below is verified by local compilation rather than by a lane: g++ 13.3 under WSL,
+// `-Wall -Wextra` clean, correct verdicts on six machine states including a dead pid.
+//
+// What the pairing pins is "a foreign Agent is refused with operator-actionable text, and a
+// failed query is refused too" - it would NOT catch the two copies producing different
+// refusals, since both refusal strings contain the substrings asserted. The block below is
+// byte-identical to the conformance file's, verified as such.
 // -----------------------------------------------------------------
 // `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
 // while the OS lists no holder at all would mean the table cannot be trusted, and that
@@ -273,51 +288,54 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
     return PortOwnership::kQueryFailed;
 }
 #elif defined(__linux__)
-/// The socket inodes bound to `port`, from /proc/net/udp and /proc/net/udp6. False only when
-/// NEITHER file could be opened — the one case where the question could not be put at all,
-/// which is a refusal and not a pass.
+/// The socket inodes bound to `port`, from /proc/net/udp. IPv4 ONLY — the same row set the
+/// Windows branch asks for (AF_INET) and for the same reason: the Agent is started as `udp4`,
+/// so an IPv6 row on this port could not be the endpoint the suite certifies against.
+///
+/// /proc/net/udp6 is deliberately NOT read, and used to be. Reading it made this branch
+/// strictly stricter than the Windows one while both copies' comments claimed one rule: with
+/// our child holding 127.0.0.1:P and an unrelated process holding [::1]:P v6-only, Linux
+/// answered kSomeoneElses where Windows answered kOurs (compliance review F1, reproduced under
+/// WSL). That is a false REFUSAL and never a false pass, so nothing was ever certified
+/// wrongly — but two blocks presented as one rule have to BE one rule, and a narrower guard
+/// that is genuinely uniform beats a wider one that silently differs.
+///
+/// False only when the file could not be opened — the one case where the question could not be
+/// put at all, which is a refusal and not a pass.
 bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes, std::string* query_error) {
-    bool read_any = false;
-    int last_errno = 0;
-    for (const char* path : {"/proc/net/udp", "/proc/net/udp6"}) {
-        errno = 0;
-        std::ifstream file(path);
-        if (!file) {
-            last_errno = errno;
+    errno = 0;
+    std::ifstream file("/proc/net/udp");
+    if (!file) {
+        *query_error = "/proc/net/udp could not be opened (errno " + std::to_string(errno) + ": " +
+                       std::strerror(errno) + ")";
+        return false;
+    }
+    std::string line;
+    std::getline(file, line);  // The column header.
+    while (std::getline(file, line)) {
+        // sl / local_address / rem_address / st / tx_queue:rx_queue / tr:tm->when / retrnsmt /
+        // uid / timeout / inode — tx-rx and tr-tm are colon-joined into one field each, so
+        // `inode` is the tenth whitespace-separated token.
+        std::istringstream fields(line);
+        std::vector<std::string> token;
+        std::string one;
+        while (fields >> one) {
+            token.push_back(one);
+        }
+        if (token.size() < 10) {
             continue;
         }
-        read_any = true;
-        std::string line;
-        std::getline(file, line);  // The column header.
-        while (std::getline(file, line)) {
-            // sl / local_address / rem_address / st / tx_queue:rx_queue / tr:tm->when /
-            // retrnsmt / uid / timeout / inode — tx-rx and tr-tm are colon-joined into one
-            // field each, so `inode` is the tenth whitespace-separated token.
-            std::istringstream fields(line);
-            std::vector<std::string> token;
-            std::string one;
-            while (fields >> one) {
-                token.push_back(one);
-            }
-            if (token.size() < 10) {
-                continue;
-            }
-            const std::string& local = token[1];  // "0100007F:07E3" — the port in hex.
-            const size_t colon = local.rfind(':');
-            if (colon == std::string::npos) {
-                continue;
-            }
-            if (std::strtoul(local.c_str() + colon + 1, nullptr, 16) != port) {
-                continue;
-            }
-            inodes->insert(token[9]);
+        const std::string& local = token[1];  // "0100007F:07E3" — the port in hex.
+        const size_t colon = local.rfind(':');
+        if (colon == std::string::npos) {
+            continue;
         }
+        if (std::strtoul(local.c_str() + colon + 1, nullptr, 16) != port) {
+            continue;
+        }
+        inodes->insert(token[9]);
     }
-    if (!read_any) {
-        *query_error = "neither /proc/net/udp nor /proc/net/udp6 could be opened (errno " +
-                       std::to_string(last_errno) + ": " + std::strerror(last_errno) + ")";
-    }
-    return read_any;
+    return true;
 }
 
 /// The socket inodes `pid` has open. A pid that no longer exists holds no sockets, and that is
@@ -369,7 +387,8 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
         return PortOwnership::kQueryFailed;
     }
     // Every socket on the port must be one of ours — the same "foreign beats ours" rule the
-    // Windows branch applies, for the same reason.
+    // Windows branch applies, over the same row set (IPv4 only on both platforms, since the
+    // v6 read went), for the same reason.
     for (const std::string& inode : port_inodes) {
         if (our_inodes.count(inode) == 0) {
             return PortOwnership::kSomeoneElses;
@@ -386,6 +405,18 @@ PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid, std::string* quer
 #error "PDA-DEC-1H: no UDP port-ownership query for this platform. Port GetExtendedUdpTable (Windows) or /proc/net/udp (Linux) here rather than dropping the guard: this harness must not certify a run against an Agent it cannot prove it owns."
 // clang-format on
 #endif
+
+/// The query above, reached through ONE indirection so a test can force the `kQueryFailed`
+/// arm. That arm is this item's central deletion — an earlier revision fell back to bare
+/// liveness there and PASSED — and until this seam existed nothing in either harness reached
+/// it: re-introducing that fallback reddened NO test, so the refusal was safe only by
+/// inspection (compliance review F3). `AFailedOwnershipQueryDoesNotSatisfyTheHarness` swaps
+/// this pointer for a stub that fails, and asserts the refusal, so the fallback cannot come
+/// back unnoticed. The default is the real query; that one test is the only assignment in the
+/// tree, and no build option or environment variable can reach it.
+using UdpPortOwnershipQuery = PortOwnership (*)(uint16_t port, int64_t our_pid,
+                                                std::string* query_error);
+UdpPortOwnershipQuery g_udp_port_ownership_query = &UdpPortOwnership;
 
 /// The one refusal an operator can act on, shared by every path that reaches it, so the
 /// sentence does not depend on which platform noticed or on how it noticed.
@@ -625,7 +656,8 @@ class OwnedAgent {
     /// to a leftover Agent both surface as a child that exited at once.
     std::string DeadChildRefusal() {
         std::string query_error;
-        if (UdpPortOwnership(port_, ProcessId(), &query_error) == PortOwnership::kSomeoneElses) {
+        if (g_udp_port_ownership_query(port_, ProcessId(), &query_error) ==
+            PortOwnership::kSomeoneElses) {
             return ForeignAgentRefusal(port_,
                                        "the Agent we spawned exited before it could bind and "
                                        "another process holds the port");
@@ -651,7 +683,7 @@ class OwnedAgent {
         std::string query_error;
         const auto give_up = std::chrono::steady_clock::now() + 1s;
         do {
-            ownership = UdpPortOwnership(port_, ProcessId(), &query_error);
+            ownership = g_udp_port_ownership_query(port_, ProcessId(), &query_error);
             if (ownership != PortOwnership::kNobody) {
                 break;
             }
@@ -773,11 +805,22 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 // The fixture must own the Agent answering the port (PDA-DEC-1H).
 //
 // Measured on this project's primary platform: a second MicroXRCEAgent aimed at a port a
-// first one already holds logs `bind error | port: N` and EXITS - it does not stay alive. But
-// it takes ~0.9 s to get there, while the incumbent answers the reachability probe in
-// milliseconds. Before this item this fixture asked NEITHER question: any Agent that answered
-// UDP 2018 satisfied it, so all three interop cases could certify the XRCE/FastDDS bridge
-// across a leftover Agent on another DDS domain.
+// first one already holds logs `bind error | port: N` and EXITS - it does not stay alive. It
+// gets there in TENS OF MILLISECONDS.
+//
+// THE ~0.9 s THIS COMMENT USED TO CLAIM WAS A MEASUREMENT ARTIFACT, corrected here rather
+// than quietly dropped. It came from `Measure-Command { Start-Process -Wait }`, which times
+// PowerShell's launch-and-poll wrapper: that wrapper reports ~1,025 ms for `cmd /c exit`, a
+// process that does nothing, so the ~1 s was the instrument's floor and never the Agent.
+// What the number IS: the child's own OS lifetime, `Process.ExitTime - Process.StartTime`
+// read after `WaitForExit()`, with an incumbent holding the port - 28-89 ms over nine trials
+// in two independent sessions, agreeing with the Agent's own log (2.7 ms from `bind error` to
+// `server stopped`). A plausible number from the wrong instrument is worse than no number.
+//
+// The correction makes the defect sharper, and for THIS fixture it barely matters how wide
+// the race is: before this item the fixture asked NEITHER question, so any Agent that
+// answered UDP 2018 satisfied it outright and all three interop cases could certify the
+// XRCE/FastDDS bridge across a leftover Agent on another DDS domain, no race required.
 //
 // This runs the race deliberately. An Agent that IS ours on a port nothing else in the tree
 // uses, then a second bring-up against the same port - which must refuse, and must say what an
@@ -804,6 +847,49 @@ TEST(FastDdsXrceInteropTest, AForeignAgentDoesNotSatisfyTheHarness) {
         << contender.failure();
     EXPECT_NE(contender.failure().find("Kill it"), std::string::npos)
         << "the refusal does not tell the operator what to do about it: " << contender.failure();
+}
+
+// -----------------------------------------------------------------
+// A failed ownership query must refuse, not fall back (PDA-DEC-1H).
+//
+// The guard's other arm, and this item's central deletion: when the OS query itself FAILS, an
+// earlier revision printed one INFO line, fell back to "the Agent we spawned is still alive"
+// and PASSED, re-admitting through the guard's own error path the exact defect the guard
+// exists to close. That deletion was proved once BY HAND — stub a failure, watch the ctest
+// entry fail, revert the stub — and the compliance review (F3) pointed out that a reverted
+// stub is evidence and not a guard: nothing in the tree reached `kQueryFailed`, so
+// re-introducing the fallback would have reddened nothing.
+//
+// This is that guard. The query is reached through one function pointer
+// (`g_udp_port_ownership_query`); this test points it at a stub that fails, stands up an Agent
+// that IS ours on a port nothing else uses, and requires the bring-up to refuse anyway. Make
+// `kQueryFailed` fall back to liveness and the first assertion reddens, because that Agent is
+// genuinely alive and genuinely ours — liveness is exactly what this guard refuses to
+// accept as proof. Its twin is
+// `ConformanceXrce.AFailedOwnershipQueryDoesNotSatisfyTheHarness` in
+// integration-tests/pubsub-conformance/subjects/xrce_main.cpp.
+TEST(FastDdsXrceInteropTest, AFailedOwnershipQueryDoesNotSatisfyTheHarness) {
+    // Restored by a destructor and not at the end of the body: an ASSERT below returns early,
+    // and a stub left installed would fail every later bring-up in this binary.
+    struct RestoreQuery {
+        ~RestoreQuery() { g_udp_port_ownership_query = &UdpPortOwnership; }
+    } restore_query;
+    g_udp_port_ownership_query = [](uint16_t, int64_t, std::string* query_error) {
+        *query_error = "the port-ownership query was forced to fail by this test";
+        return PortOwnership::kQueryFailed;
+    };
+
+    OwnedAgent agent(kContestedPort);
+    ASSERT_FALSE(agent.proven())
+        << "ownership could not be established and the bring-up passed anyway — that is the "
+           "fall-back-to-liveness this item deleted, and the Agent it would have certified is "
+           "only trusted because it is alive";
+    EXPECT_NE(agent.failure().find("cannot establish which process holds UDP"), std::string::npos)
+        << "the refusal does not say that ownership could not be established: " << agent.failure();
+    EXPECT_NE(agent.failure().find("forced to fail by this test"), std::string::npos)
+        << "the refusal does not carry the query error that caused it: " << agent.failure();
+    EXPECT_NE(agent.failure().find("refuses rather than falling back"), std::string::npos)
+        << "the refusal does not say it declined to fall back to liveness: " << agent.failure();
 }
 
 // ─────────────────────────────────────────────────────────────────────
