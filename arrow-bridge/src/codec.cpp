@@ -221,12 +221,57 @@ std::shared_ptr<arrow::Scalar> DecodePositionalStruct(
     return std::make_shared<arrow::StructScalar>(std::move(children), type);
 }
 
+// A run of fixed-width elements with no nulls is laid out on the wire as `count` values back to back (EncodeListElements writes
+// each non-null element with AppendFixed), so the typed builder is filled straight from the buffer. The scalar path below costs
+// one heap-allocated arrow::Scalar and one virtual AppendScalar per element — ~13 300 allocations for a 2 667-point cloud row,
+// ~450 k/s at a 10 Hz 8 k-point cloud — which was the bridge's dominant CPU cost.
+template <typename ArrowType>
+void AppendPrimitiveRun(arrow::ArrayBuilder& builder, detail::Reader& r, int64_t count) {
+    using T = typename ArrowType::c_type;
+    auto& typed = static_cast<arrow::NumericBuilder<ArrowType>&>(builder);
+    const uint8_t* bytes = r.ReadBytes(static_cast<size_t>(count) * sizeof(T));
+    auto st = typed.Reserve(count);
+    if (!st.ok()) throw std::invalid_argument("Codec: builder Reserve failed: " + st.ToString());
+    for (int64_t i = 0; i < count; ++i) {
+        T v;
+        std::memcpy(&v, bytes + static_cast<size_t>(i) * sizeof(T), sizeof(T));
+        typed.UnsafeAppend(v);
+    }
+}
+
+bool DecodePrimitiveRun(arrow::ArrayBuilder& builder, detail::Reader& r, int64_t count,
+                        arrow::Type::type id) {
+    using T = arrow::Type;
+    switch (id) {
+        case T::INT8: AppendPrimitiveRun<arrow::Int8Type>(builder, r, count); return true;
+        case T::INT16: AppendPrimitiveRun<arrow::Int16Type>(builder, r, count); return true;
+        case T::INT32: AppendPrimitiveRun<arrow::Int32Type>(builder, r, count); return true;
+        case T::INT64: AppendPrimitiveRun<arrow::Int64Type>(builder, r, count); return true;
+        case T::UINT8: AppendPrimitiveRun<arrow::UInt8Type>(builder, r, count); return true;
+        case T::UINT16: AppendPrimitiveRun<arrow::UInt16Type>(builder, r, count); return true;
+        case T::UINT32: AppendPrimitiveRun<arrow::UInt32Type>(builder, r, count); return true;
+        case T::UINT64: AppendPrimitiveRun<arrow::UInt64Type>(builder, r, count); return true;
+        case T::FLOAT: AppendPrimitiveRun<arrow::FloatType>(builder, r, count); return true;
+        case T::DOUBLE: AppendPrimitiveRun<arrow::DoubleType>(builder, r, count); return true;
+        default: return false;
+    }
+}
+
+bool AllValid(const uint8_t* bitfield, int64_t count) {
+    const size_t bytes = BitfieldBytes(count);
+    for (size_t i = 0; i < bytes; ++i)
+        if (bitfield[i]) return false;
+    return true;
+}
+
 std::shared_ptr<arrow::Array> DecodeListElements(
     detail::Reader& r, int64_t count, const std::shared_ptr<arrow::DataType>& elem_type) {
     const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
 
     auto builder =
         detail::ValueOrThrow(arrow::MakeBuilder(elem_type), "Codec: list MakeBuilder failed");
+    if (count > 0 && AllValid(bitfield, count) && DecodePrimitiveRun(*builder, r, count, elem_type->id()))
+        return detail::ValueOrThrow(builder->Finish(), "Codec: list builder Finish failed");
     for (int64_t i = 0; i < count; ++i) {
         if (ReadNullBit(bitfield, static_cast<int>(i))) {
             auto st = builder->AppendNull();

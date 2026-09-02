@@ -7,6 +7,8 @@
 #include <arrow/c/bridge.h>
 #include <arrow/compute/api.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <fletcher/pubsub/owned_schema.hpp>
@@ -109,10 +111,14 @@ class SubscriberArrow::RecordBatchBatcher {
    private:
     bool HasPending() const { return !rows_.empty() || dropped_ > 0; }
 
-    // Arms the timeout deadline on the first event (row or drop) of a window.
+    // Arms the timeout deadline on the first event (row or drop) of a window. The deadline is anchored to the previous
+    // flush, not to the event: a stream that keeps delivering then flushes every `timeout_` (measured 65 ms per window at
+    // 30 Hz with a 33 ms timeout before — the window plus the stream's own inter-arrival gap), and a stream that has been
+    // idle longer than a window is delivered right away instead of waiting another one.
     void ArmTimer() {
         if (!has_deadline_ && HasPending()) {
-            deadline_ = std::chrono::steady_clock::now() + timeout_;
+            const auto now = std::chrono::steady_clock::now();
+            deadline_ = std::max(now + kMinWindow, last_flush_ + timeout_);
             has_deadline_ = true;
             cv_.notify_all();
         }
@@ -144,6 +150,7 @@ class SubscriberArrow::RecordBatchBatcher {
     // loss is reported. Caller holds `lk`; the callback runs with it released.
     void Flush(std::unique_lock<std::mutex>& lk, BatchStatus::Reason reason) {
         has_deadline_ = false;
+        last_flush_ = std::chrono::steady_clock::now();
         if (!ready_) return;                         // schema not set — cannot build
         if (rows_.empty() && dropped_ == 0) return;  // truly idle — nothing to deliver
 
@@ -241,6 +248,8 @@ class SubscriberArrow::RecordBatchBatcher {
     std::vector<Attachments> atts_;
     int64_t dropped_ = 0;
     std::chrono::steady_clock::time_point deadline_;
+    std::chrono::steady_clock::time_point last_flush_{std::chrono::steady_clock::now()};
+    static constexpr std::chrono::milliseconds kMinWindow{1};
     bool has_deadline_ = false;
     bool ready_ = false;
     bool stopped_ = false;
@@ -327,17 +336,24 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
                                                         options.timeout);
     auto schema_set = std::make_shared<std::once_flag>();
+    // The codec, once resolved, for this subscription's samples. Codecs live in `codecs_` for the SubscriberArrow's lifetime, so
+    // the pointer stays valid; without this every sample of every topic took the process-wide `mu_` and hashed the topic key.
+    auto cached_codec = std::make_shared<std::atomic<Codec*>>(nullptr);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
-        [this, key, batcher, schema_set](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                         const SharedSchema& schema, const Attachments& att) {
+        [this, key, batcher, schema_set, cached_codec](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
+                                                       const SharedSchema& schema, const Attachments& att) {
             // Lazy-init the codec from the per-message schema: in
             // subscriber-first mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before Subscribe
             // returns. If no codec can be built, count the message as dropped
             // so the loss is reported.
-            Codec* codec = AcquireCodec(key, schema);
+            Codec* codec = cached_codec->load(std::memory_order_acquire);
+            if (!codec) {
+                codec = AcquireCodec(key, schema);
+                if (codec) cached_codec->store(codec, std::memory_order_release);
+            }
             if (!codec) {
                 batcher->NoteDropped();
                 return;

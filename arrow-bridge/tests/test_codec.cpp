@@ -391,6 +391,33 @@ TEST(CodecTest, ListRoundtrip) {
     EXPECT_TRUE(decoded[0]->Equals(*list_scalar));
 }
 
+TEST(CodecTest, LargePrimitiveListRoundtripsThroughTheRunPath) {
+    // 2 667 floats = one point-cloud row under the 64 KiB DDS bound: the bulk path must produce exactly what the per-element
+    // path did, for every fixed-width element type, and a single null must send the list back down the scalar path
+    for (auto elem : {arrow::float32(), arrow::float64(), arrow::uint32(), arrow::int64(), arrow::uint8(), arrow::int16()}) {
+        auto schema = arrow::schema({arrow::field("xyz", arrow::list(elem))});
+        fletcher::Codec codec(schema);
+        std::unique_ptr<arrow::ArrayBuilder> builder;
+        ASSERT_TRUE(arrow::MakeBuilder(arrow::default_memory_pool(), elem, &builder).ok());
+        for (int i = 0; i < 2667 * 3; ++i) {
+            auto scalar = arrow::MakeScalar(elem, i % 250).ValueOrDie();
+            ASSERT_TRUE(builder->AppendScalar(*scalar).ok());
+        }
+        auto arr = builder->Finish().ValueOrDie();
+        auto list_scalar = std::make_shared<arrow::ListScalar>(arr);
+        auto decoded = codec.DecodeRow(codec.EncodeRow({list_scalar}));
+        ASSERT_EQ(decoded.size(), 1u);
+        EXPECT_TRUE(decoded[0]->Equals(*list_scalar)) << elem->ToString();
+    }
+    auto schema = arrow::schema({arrow::field("v", arrow::list(arrow::float32()))});
+    fletcher::Codec codec(schema);
+    arrow::FloatBuilder fb;
+    for (int i = 0; i < 100; ++i) ASSERT_TRUE((i == 57 ? fb.AppendNull() : fb.Append(static_cast<float>(i))).ok());
+    auto with_null = std::make_shared<arrow::ListScalar>(fb.Finish().ValueOrDie());
+    auto decoded = codec.DecodeRow(codec.EncodeRow({with_null}));
+    EXPECT_TRUE(decoded[0]->Equals(*with_null));
+}
+
 TEST(CodecTest, ListWithNulls) {
     auto list_type = arrow::list(arrow::int32());
     auto schema = arrow::schema({arrow::field("nums", list_type)});
