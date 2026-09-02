@@ -249,7 +249,10 @@ class ProviderRegistry {
     ///
     /// The returned handle also owns the factory or resolver that made it (the
     /// lifetime rule above); it is otherwise an ordinary
-    /// `shared_ptr<PubSubProvider>` and nothing above the seam can tell.
+    /// `shared_ptr<PubSubProvider>`. No in-tree caller can tell the difference,
+    /// and none should look: `use_count`, `weak_ptr` and `owner_before` do
+    /// observe the anchor, so this is a rule about what callers may rely on,
+    /// not a thing the type system hides.
     [[nodiscard]] std::shared_ptr<PubSubProvider> Create(const ProviderSelector& selector,
                                                          const ProviderConfig& config) const;
 

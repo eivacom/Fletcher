@@ -358,7 +358,7 @@ than growing a second one, so this harness still has exactly one scoring path.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
 §4.1, §4.2. A **fourth** suite in this harness, in its own binary
-(`conformance_registry`), 12 entries, no provider SDK and — unlike the other
+(`conformance_registry`), 14 entries, no provider SDK and — unlike the other
 three — **no provider at all**: every provider in it is a probe defined in the
 test file, so it constructs nothing that opens a socket, binds a port or joins a
 domain.
