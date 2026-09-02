@@ -61,6 +61,9 @@ item removes. Both taken as recommended. Recorded here so the reasoning is visib
 charged the retired constructor but not the added one) · design cycles: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-02):* +626 / −78 (code + spec, excl. `plans/`) vs declared +270/−60;
+both reviewers counted it — prose and mutation evidence, no scope creep. Surface **0**
+at its strictest, as declared once corrected. 1 design cycle, **2 fix cycles**, 3
+implementer launches. Two things the brief did not predict: the document reader's own
+tolerance rules had no guard (17/17 green under either mutation), and memoising one
+built-in per registry passed **19/19 and 80/80** — the property PDA-DEC-8 depends on.

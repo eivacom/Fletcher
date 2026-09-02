@@ -418,3 +418,70 @@ README's stale count and a mutation paragraph predating five of the suite's best
 `C:\x64\driver.dll` colliding with the escape for byte 0x64. It never did — 0x64 is `d`,
 printable, emitted raw. The defect was real (the encoding was not injective; a collision
 needs a non-printable byte); the stated reason was not, and had reached two comments.
+
+---
+
+## PDA-DEC-5 — `InProcessProvider` as a registered built-in (2026-09-02) 🟢
+
+**What landed.** `RegisterInProcessProvider` makes the loopback selectable as `inprocess`.
+**`SchemaCarriage` left the public header and its constructor overload was retired**, so
+the only construction API takes `ProviderConfig` and the mode arrives solely as the
+document key `schema_carriage=as_declared|carried` — PDA-DEC-4's document-key requirement
+made *structural*, with no second construction path and no back door (the enum survives
+only in the provider TU's anonymous namespace). The gateway dropped its `if`-chain **and
+its own name validation**, registers both names before the selector is read, and makes
+exactly one `Create`; exit code 2 preserved. This is the first real proof of the owner's
+"mix of built-in and runtime-loaded" — the built-in half now goes through the same call a
+loaded driver will.
+
+**The gateway half was proved, not asserted.** `npm test` runs whatever `gateway.exe` sits in
+`build/` — which produced a meaningless green earlier this round — so the design turned that
+weakness into a detector: provider-selection cases pinned to wording the *pre-change* binary
+cannot emit. Compliance ran both binaries and confirmed the old one emits none of the three
+pinned substrings, so a green `npm test` now **entails** a post-change binary. Red at
+10:17:30, green at 10:29:31; the gate binary (11:37:53) postdates HEAD (11:25:24).
+
+**Three more guards that asserted nothing — and one found after everything else passed.**
+The document reader's own `\r`-strip and blank-entry skip were **17/17 green** under either
+mutation, though without the strip a CRLF document is valid on Linux and refused on Windows
+— a silent cross-platform divergence in a file operators hand-edit on both. Then, after
+those closed, a survivor: **memoising one built-in instance per registry passed 19/19
+Registry and 80/80 conformance.** No test made two providers from one registry with two
+*different documents*; PDA-DEC-4 had pinned "each `Create` is fresh" only against a probe.
+That is exactly the property **PDA-DEC-8** exists to prove, so it would have surfaced there
+as a puzzling failure instead of here as ten lines.
+
+**A NUL fix taken in the forbidding direction.** A document NUL truncated the refusal message
+at `what()`. Rather than escaping it, the reader now refuses a NUL-bearing document at the
+door — which **deleted** `QuoteEntry` and the `<sstream>` include. The mutation reproduced the
+predicted truncation verbatim, and compliance measured this test as now the seam's *only*
+guard against a NUL-truncating boundary. No contradiction of the seam's NUL sanction: §4.2
+assigns the format to the provider, and the document stays length-authoritative.
+
+**`--help` deliberately not derived from the registry.** Both reviewers corrected the premise
+(the `static_assert` pins only `Create`'s signature) and reached the same conclusion by
+different routes. The binding reason is stronger: after PDA-ABI installs a resolver an
+enumeration could only list **built-ins**, handing code above the seam a
+built-in-versus-loaded distinction (decision 3). Recorded in `main.cpp`.
+
+**Verification.** core 28 / pubsub 19 / pubsub-arrow 16 / fastdds 69 / xrce 11;
+`pubsub-conformance` **81/81** with XRCE ON and a live Agent (`conformance_xrce` ran);
+`gateway-end-to-end` 24/24. No full suite — mandated at items 1/2/3/6 and round close.
+**4 of 5 components hit "Already installed!"** and needed forcing before ctest ran, again.
+`gateway-fastdds-ts` was excluded because its binary is stale (2026-09-01 22:05) — any
+green from it today would be vacuous, which is itself worth knowing before round close.
+
+**Close gate:** PASS. **Cycle meter:** design 1/2 · fix 2 · launches 3/5 · owner touches 0.
+**Numbers:** declared +270/−60 · actual **+626/−78** (code + spec), counted by both
+reviewers — prose and mutation evidence, no scope creep. Surface **0** at its strictest.
+
+**Owner touches: none.** Both Brief decisions were PM-decided — one already answered by spec
+§4.2 and the 2026-08-31 ruling, the other having no viable alternative, since keeping the old
+refusal message requires the gateway to retain the name list this item removes.
+
+**Records corrected in place:** the design's surviving copy of a mutation claim the review had
+disproved; the public surface being **0, not −1** in design and brief (the count charged the
+retired constructor but not the added one); a public header naming the now-private `kCarried`;
+spec §4.1's NUL sentence lacking a subject; the harness README stale four ways. **One reviewer
+record item did not survive checking** — `main.cpp` was said to cite the `static_assert`; it
+never did, and the comment was improved on the merits instead.
