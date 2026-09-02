@@ -23,10 +23,13 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/in_process_provider.hpp>
+#include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <memory>
@@ -122,6 +125,18 @@ void PublishRow(PubSubProvider& provider, uint8_t marker) {
     });
 }
 
+// Same encoding, an explicit topic — for the loopback tests below, where the
+// topic (not just the marker byte) decides which subscription sees the row.
+void PublishRowTo(PubSubProvider& provider, const std::vector<std::string>& topic,
+                  uint8_t marker) {
+    provider.Publish(topic, [marker](WriteBuffer& buffer) {
+        buffer.AppendByte(marker);
+        buffer.AppendByte('R');
+        buffer.AppendByte('O');
+        buffer.AppendByte('W');
+    });
+}
+
 std::vector<uint8_t> Row(uint8_t marker) { return {marker, 'R', 'O', 'W'}; }
 
 // The status of a call that must fail, or a gtest failure naming what happened
@@ -154,6 +169,22 @@ std::string MessageOf(Fn&& fn) {
 
 bool Mentions(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
+}
+
+// A minimal real schema — struct<seq:int32> — built with nanoarrow directly
+// rather than by linking conformance_support's fixtures: this binary's link
+// line (`fletcher-pubsub` and no transport SDK, no conformance_support) is
+// itself a machine check (design forbidden case 5), and pulling in the shared
+// fixture would weaken it for one convenience function.
+OwnedSchema MakeSchema() {
+    OwnedSchema s;
+    ArrowSchemaInit(s.get());
+    if (ArrowSchemaSetTypeStruct(s.get(), 1) != NANOARROW_OK) {
+        throw std::runtime_error("MakeSchema: ArrowSchemaSetTypeStruct failed");
+    }
+    ArrowSchemaSetName(s->children[0], "seq");
+    ArrowSchemaSetType(s->children[0], NANOARROW_TYPE_INT32);
+    return s;
 }
 
 }  // namespace
@@ -460,6 +491,130 @@ TEST(Registry, RegistrationAndSelectionShareOneVocabulary) {
     PublishRow(*mixed, 0xF7);
     ASSERT_EQ(journal->rows.size(), static_cast<size_t>(2));
     EXPECT_EQ(journal->rows[1].tag, "Fast2DDS-v1_x");
+}
+
+// ── PDA-DEC-5: the loopback becomes a built-in ──────────────────────
+//
+// THE FORCING TEST. `RegisterInProcessProvider` is the whole of §1's
+// registration; before it exists this file does not compile. Not greenable by
+// a non-null check: the row must arrive byte-identical THROUGH THE BASE-TYPED
+// HANDLE (no downcast to InProcessPubSubProvider anywhere below), and a
+// publish to a topic nobody declared must succeed — pinning the default mode
+// to as_declared without exposing an accessor for it.
+TEST(Registry, InProcessResolvesAsABuiltIn) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    const ProviderConfig config;  // empty document -> the defaults
+    std::shared_ptr<PubSubProvider> provider = MakeProvider(registry, "inprocess", config);
+    ASSERT_NE(provider, nullptr) << "\"inprocess\" did not resolve to a provider";
+
+    std::vector<uint8_t> received;
+    bool delivered = false;
+    SubscriptionResult result = provider->Subscribe(
+        {"registry", "probe"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            received.assign(data, data + len);
+            delivered = true;
+        });
+
+    // as_declared with nothing ever declared answers immediately with a null
+    // schema (kOk + null is the schema-less transport's answer, §7 clause 1) —
+    // not kPending, which is what a schema-carrying instance would do instead.
+    SharedSchema schema;
+    ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &schema), PubSubStatus::kOk);
+    EXPECT_EQ(schema, nullptr);
+
+    PublishRow(*provider, 0x17);
+    ASSERT_TRUE(delivered) << "the row never reached the subscriber";
+    EXPECT_EQ(received, Row(0x17)) << "the delivered bytes are not what was published";
+
+    // A SECOND, never-declared topic: the as_declared default has no
+    // CreateTopic requirement, so this must succeed rather than throw
+    // kTopicNotDeclared. Nothing here names InProcessPubSubProvider or its
+    // (private, post-PDA-DEC-5) carriage enum — the base-typed handle is the
+    // whole test.
+    EXPECT_NO_THROW(PublishRowTo(*provider, {"registry", "never-declared"}, 0x18));
+}
+
+// ── The live control for the forcing test's default-mode claim ─────
+//
+// Same helper, a document instead of nothing. If the document were ignored
+// this test goes red while the forcing test above stays green — neither alone
+// tells the whole story, together they pin that the MODE genuinely comes from
+// `config.document`, not from some other default baked into the factory.
+TEST(Registry, InProcessCarriageComesFromTheDocument) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    ProviderConfig config;
+    config.document = "schema_carriage=carried";
+    std::shared_ptr<PubSubProvider> provider = MakeProvider(registry, "inprocess", config);
+    ASSERT_NE(provider, nullptr);
+
+    // Schema-before-data, upheld by refusal: publishing before any
+    // CreateTopic is kTopicNotDeclared — the opposite of the forcing test's
+    // as_declared assertion above, over the identical registry call.
+    EXPECT_EQ(RefusalOf([&] { PublishRowTo(*provider, {"registry", "carried"}, 0x19); },
+                        "publish to an undeclared topic on a carrying instance"),
+              PubSubStatus::kTopicNotDeclared);
+
+    provider->CreateTopic({"registry", "carried"}, MakeSchema());
+
+    SharedSchema received_schema;
+    bool delivered = false;
+    SubscriptionResult result = provider->Subscribe(
+        {"registry", "carried"},
+        [&](const uint8_t*, size_t, const SharedSchema& schema, const Attachments&) {
+            received_schema = schema;
+            delivered = true;
+        });
+    SharedSchema arrived;
+    ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &arrived), PubSubStatus::kOk);
+    ASSERT_NE(arrived, nullptr) << "a carrying instance answered kOk with a null schema";
+
+    PublishRowTo(*provider, {"registry", "carried"}, 0x1a);
+    ASSERT_TRUE(delivered);
+    EXPECT_NE(received_schema, nullptr)
+        << "a carrying instance delivered a row with no schema attached";
+}
+
+// ── Rung-2 case 6: the document reader refuses at the door ──────────
+//
+// Every input here must fail with kInvalidArgument (not "threw something"),
+// quoting the offending entry — P1's converse obligation, and the machine
+// check that a `PubSubError` thrown by a factory reaches the caller intact.
+// M5 (design table): ignoring an unknown entry instead of refusing it reddens
+// this test.
+TEST(Registry, InProcessRefusesAnUnrecognisedDocumentEntry) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    // `offending_entry` is the ONE entry the reader must quote — for the
+    // duplicate-key case that is the SECOND occurrence, not the document's
+    // first line, so it is passed explicitly rather than derived.
+    auto refuse = [&](const std::string& document, const std::string& offending_entry,
+                      const char* what) {
+        ProviderConfig config;
+        config.document = document;
+        EXPECT_EQ(RefusalOf([&] { return MakeProvider(registry, "inprocess", config); }, what),
+                  PubSubStatus::kInvalidArgument);
+        const std::string message =
+            MessageOf([&] { return MakeProvider(registry, "inprocess", config); });
+        // The offending entry, quoted, must appear in the refusal — a message
+        // naming only "bad document" would leave an operator guessing which
+        // line of a multi-line document was wrong.
+        EXPECT_TRUE(Mentions(message, offending_entry))
+            << what << ": refusal does not quote the offending entry: " << message;
+    };
+
+    refuse("schema_carriage=Carried", "schema_carriage=Carried", "an unrecognised value");
+    refuse("nonsense=1", "nonsense=1", "an unrecognised key");
+    refuse("schema_carriage", "schema_carriage", "an entry with no '='");
+    // DEBT-3: the fourth rung-2 refusal — a duplicate key — needs its own case,
+    // or "duplicate key -> kInvalidArgument" is a rule asserted by nothing.
+    refuse("schema_carriage=as_declared\nschema_carriage=carried", "schema_carriage=carried",
+          "a duplicate key");
 }
 
 // DEBT-4: swapping which loader EVERY path means is the same hazard as swapping

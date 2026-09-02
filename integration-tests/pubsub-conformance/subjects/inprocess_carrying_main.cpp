@@ -34,7 +34,7 @@ INSTANTIATE_TEST_SUITE_P(InProcessCarrying, ProviderConformance,
                              "InProcessCarrying", "inprocess", SchemaMode::kCarried, [] {
                                  return std::shared_ptr<PubSubProvider>(
                                      std::make_shared<InProcessPubSubProvider>(
-                                         InProcessPubSubProvider::SchemaCarriage::kCarried));
+                                         ProviderConfig{.document = "schema_carriage=carried"}));
                              })));
 
 }  // namespace conformance

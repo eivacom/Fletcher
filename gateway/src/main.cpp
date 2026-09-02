@@ -40,8 +40,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fletcher/core/status.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
+#include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <iostream>
@@ -86,12 +88,9 @@ Args ParseArgs(int argc, char* argv[]) {
             std::exit(2);
         }
     }
-    if (a.provider != "inprocess" && a.provider != "fastdds") {
-        std::fprintf(stderr,
-                     "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
-                     a.provider.c_str());
-        std::exit(2);
-    }
+    // No provider-name validation here: the registry below is the single list
+    // (spec §4), and it refuses an unknown selector itself, naming what IS
+    // registered.
     return a;
 }
 
@@ -107,12 +106,34 @@ int main(int argc, char* argv[]) {
     }
 
     std::shared_ptr<fletcher::PubSubProvider> provider;
-    if (args.provider == "fastdds") {
-        fletcher::FastDDSProviderOptions dds_opts;
-        dds_opts.domain_id = args.domain_id;
-        provider = std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
-    } else {
-        provider = std::make_shared<fletcher::InProcessPubSubProvider>();
+    try {
+        // Both built-ins are registered UNCONDITIONALLY and before the
+        // selector is looked at: registration states availability (a
+        // link-time fact), `Create` performs selection (a runtime string).
+        // Branching registration on `args.provider` would put a selector
+        // branch back above the seam — exactly what locked decision 3
+        // forbids. The `fastdds` factory's closure is not called unless
+        // "fastdds" is selected, so an inprocess run costs exactly what it
+        // costs today.
+        fletcher::ProviderRegistry registry;
+        fletcher::RegisterInProcessProvider(registry);
+        registry.Register("fastdds", [](const fletcher::ProviderConfig& c) {
+            fletcher::FastDDSProviderOptions dds_opts;
+            dds_opts.domain_id = c.domain_id;
+            return std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
+        });
+
+        // DEBT-5 (PDA-DEC-5): the gateway has no CLI route for a provider
+        // document, so `document` is always empty here. That is correct for
+        // `inprocess` (its default IS today's behaviour), but a later stage
+        // moving Fast DDS QoS into the document (PDA-DEC-6) needs a way for an
+        // operator to supply one — no item currently owns adding that surface.
+        fletcher::ProviderConfig config;
+        config.domain_id = args.domain_id;
+        provider = registry.Create(fletcher::ProviderSelector::Parse(args.provider), config);
+    } catch (const fletcher::PubSubError& e) {
+        std::fprintf(stderr, "fletcher-gateway: %s\n", e.what());
+        return 2;
     }
 
     auto publisher = std::make_shared<fletcher::Publisher>(provider);

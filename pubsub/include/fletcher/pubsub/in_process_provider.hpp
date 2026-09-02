@@ -9,17 +9,36 @@
 #include <vector>
 
 #include "fletcher/pubsub/provider.hpp"
+#include "fletcher/pubsub/provider_registry.hpp"
 
 namespace fletcher {
+
+/// Make the loopback selectable as `"inprocess"` (spec §4 clause 4).
+///
+/// Idempotence is NOT offered: a second call is refused by
+/// `ProviderRegistry::Register` (`kInvalidArgument`) — a registry means one
+/// transport per name for its whole life, and this registration is no
+/// exception.
+void RegisterInProcessProvider(ProviderRegistry& registry);
 
 /// In-process loopback transport: a publish is delivered synchronously to a
 /// subscriber on the SAME provider instance, and nowhere else.
 ///
 /// Lifted out of the gateway, which is where it used to live as a private class,
-/// so that the conformance suite — and later the provider registry — can reach
-/// it. It is the reference implementation of the delivery contract in
-/// `provider.hpp`, in either of two schema modes chosen at construction (see
-/// SchemaCarriage).
+/// so that the conformance suite and the provider registry can reach it. It is
+/// the reference implementation of the delivery contract in `provider.hpp`, in
+/// either of §7 clause 1's two schema modes.
+///
+/// The mode is chosen by the single `schema_carriage` key in `config.document`
+/// (`as_declared`, the default — today's gateway behaviour — or `carried`,
+/// schema-before-data). It is the ONLY route: there is no second constructor
+/// and no accessor, so an object with an undecided mode never exists and a
+/// caller cannot pick the mode any other way (spec §4.1, §4.2, locked
+/// decision 8). An unrecognised document entry — unknown key, unknown value,
+/// an entry with no `=`, or a duplicate key — is refused in the constructor
+/// with `PubSubError(kInvalidArgument)`, quoting the offending entry. The
+/// typed core (`max_payload_bytes`, `domain_id`) is ignored, exactly as today's
+/// gateway documents `--domain-id` as ignored by this provider.
 ///
 /// Topics are created on first subscribe or publish, so no pre-registration is
 /// needed in the default mode. A publish to a topic nobody subscribed to is
@@ -31,39 +50,7 @@ namespace fletcher {
 /// that does deadlocks rather than corrupting state).
 class InProcessPubSubProvider : public PubSubProvider {
    public:
-    /// Which of §7 clause 1's two schema modes this instance is in. Fixed at
-    /// construction, so "never mix the two" is a property of the object.
-    ///
-    /// Named SchemaCarriage rather than SchemaMode because the conformance
-    /// harness already has a `SchemaMode` and would shadow this one where it
-    /// matters most — in the subject registration that chooses between them.
-    ///
-    /// Forward note for PDA-DEC-5: this must eventually arrive through §4.1's
-    /// typed-core-plus-opaque-document, NOT as a second construction API, or
-    /// decision 3's "one creation signature" is breached by this argument.
-    enum class SchemaCarriage {
-        /// **What the loopback has always done, and the default** — so the
-        /// gateway is unchanged and keeps sending `schemaIpc`. The topic carries
-        /// whatever schema a publisher declared **on this instance**, and null
-        /// for a topic nobody declared.
-        ///
-        /// A subscription's answer is fixed when `Subscribe` returns: a
-        /// declaration made afterwards never reaches it, and a later subscriber
-        /// gets the new one. Without that a live subscription silently flipped
-        /// from null to non-null mid-stream, which §7 clause 1 forbids and whose
-        /// failure mode is a client decoding one stream two ways with no signal.
-        kAsDeclared,
-        /// Schema-before-data, the mode a schema-carrying transport is in. Every
-        /// delivery carries a non-null schema, and the guarantee is upheld by
-        /// **refusal rather than by buffering**: `CreateTopic` requires a real
-        /// schema and `Publish` to an undeclared topic is kTopicNotDeclared. A
-        /// single-instance loopback delivers synchronously under one lock, so
-        /// there is no window in which a sample can arrive ahead of the schema
-        /// for a subscription to buffer.
-        kCarried,
-    };
-
-    explicit InProcessPubSubProvider(SchemaCarriage carriage = SchemaCarriage::kAsDeclared);
+    explicit InProcessPubSubProvider(const ProviderConfig& config = {});
     ~InProcessPubSubProvider() override;
 
     InProcessPubSubProvider(const InProcessPubSubProvider&) = delete;

@@ -32,7 +32,7 @@ re-deriving the rules.
   | Subject | Provider | Publisher lives | Schema mode | Retention |
   |---|---|---|---|---|
   | `InProcessLocal` | in-process loopback | this process | absent | drops |
-  | `InProcessCarrying` | in-process loopback, constructed `SchemaCarriage::kCarried` | this process | carried | drops |
+  | `InProcessCarrying` | in-process loopback, `document = "schema_carriage=carried"` | this process | carried | drops |
   | `FastDdsLocal` | Fast DDS (domain 151) | this process | carried | retains |
   | `FastDdsCrossProcess` | Fast DDS (domain 152) | **a child process** | carried | retains |
   | `XrceLocal` | XRCE-DDS (domain 153, Agent :2019) | this process | carried | retains |
@@ -47,7 +47,8 @@ re-deriving the rules.
   clause 6 has no per-subject escape hatch. `schema_mode` *is* per subject: §7
   clause 1 sanctions the same transport being exercised in both modes, and the
   loopback now is — `InProcessLocal` and `InProcessCarrying` are one provider in
-  its two construction-time modes.
+  its two modes, chosen (PDA-DEC-5) by the `schema_carriage` document key
+  rather than a construction-time argument — there is no second constructor.
 - **One binary per schema mode.** The two loopback subjects live in separate
   binaries (`subjects/inprocess_main.cpp`, `subjects/inprocess_carrying_main.cpp`)
   because clause 2's gate is the link line and `INSTANTIATE_TEST_SUITE_P`
@@ -358,10 +359,10 @@ than growing a second one, so this harness still has exactly one scoring path.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
 §4.1, §4.2. A **fourth** suite in this harness, in its own binary
-(`conformance_registry`), 14 entries, no provider SDK and — unlike the other
-three — **no provider at all**: every provider in it is a probe defined in the
-test file, so it constructs nothing that opens a socket, binds a port or joins a
-domain.
+(`conformance_registry`), 17 entries, no provider SDK — and, for all but the
+three PDA-DEC-5 entries below, **no provider at all**: every OTHER provider in
+it is a probe defined in the test file, so those constructs nothing that opens
+a socket, binds a port or joins a domain.
 
 **What green here means, precisely.** A string read at run time decides which
 provider a caller gets, the caller cannot tell which it got, and the same one
@@ -385,6 +386,9 @@ delivery claim.
 | `AFactoryThatFailsIsReportedAsATypedSeamFailure` | §5.1 at this entry point, including a factory that returns null |
 | `AResolverThatFailsIsReportedAsATypedSeamFailure` | §5.1 on the **resolver** seat — the branch PDA-ABI fills. Both shapes: a resolver that throws, and one that returns null |
 | `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` | the lifetime rule is **mechanical, not prose**: `Create` returns an aliasing handle owning `Anchor{seat, provider}`, so a factory's or resolver's module outlives every provider it made, whatever the author did. Pinned on **both** seats, and the probe records module-still-loaded *in its own destructor* — so the load-bearing member order is itself asserted |
+| `InProcessResolvesAsABuiltIn` (forcing, PDA-DEC-5) | §4 clause 4: `RegisterInProcessProvider` makes `"inprocess"` selectable; a row published through the **base-typed** `shared_ptr<PubSubProvider>` handle arrives byte-identical, and a publish to a **second, never-declared** topic succeeds — pinning the default `as_declared` mode without an accessor for it |
+| `InProcessCarriageComesFromTheDocument` | the live control for the row above: the identical registry call, `document = "schema_carriage=carried"`, and the opposite behaviour — publish-before-declare is refused `kTopicNotDeclared`, and a declared topic's delivery carries a non-null schema. Neither test alone proves the mode comes from the document |
+| `InProcessRefusesAnUnrecognisedDocumentEntry` | rung-2 case 6: an unrecognised value, an unrecognised key, an entry with no `=`, and a duplicate key are all refused `kInvalidArgument` quoting the offending entry — never "threw something", and never a silently-defaulted typo |
 
 **The link line is a machine check.** `conformance_registry` names
 `fletcher-pubsub` and no transport SDK, so no DDS or XRCE vocabulary resolves
@@ -415,6 +419,21 @@ keepalive reddens `AModuleHeldOnly…`, and so does **swapping `Anchor`'s two
 members** — the member order is load-bearing and is pinned, not merely
 commented. *Diagnostics:* reverting the backslash escaping reddens the refusal
 test alone. A last-wins `Register` and a memoizing `Create` redden one entry each.
+*The loopback built-in (PDA-DEC-5):* registering it under any other name reddens
+`InProcessResolvesAsABuiltIn` (unknown name); making the registered factory
+default to `carried` reddens it at the schema-arrival assertion (a forced
+carrying instance answers `Subscribe` `kPending`, never the immediate `kOk`+null
+the `as_declared` default gives when nothing was ever declared); dropping the
+delivery inside `Publish` reddens it at the delivery assertion instead.
+Parsing the `schema_carriage` key but hard-coding `as_declared` leaves the
+forcing test green while `InProcessCarriageComesFromTheDocument` goes red — the
+pair, not either alone, is what proves the mode comes from the document.
+Ignoring an unrecognised document entry instead of refusing it reddens
+`InProcessRefusesAnUnrecognisedDocumentEntry`; quoting the wrong entry for the
+duplicate-key case (the document's first line rather than the repeated key)
+would have passed with a message that only accidentally happened to contain the
+right substring, which is why that test's helper takes the expected quote
+explicitly rather than deriving it from the document.
 
 Five of these mutations left the suite fully green when the entries were first
 written, and were closed only after review; the four failure-seat and vocabulary

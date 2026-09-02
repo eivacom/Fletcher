@@ -359,7 +359,13 @@ Normative:
    the ABI round later needs module/instance handles is *its* business; the seam
    must simply not prevent it.
 4. **A built-in provider is registered, not hardcoded.** The gateway's
-   `--provider` becomes a registry lookup.
+   `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5): the
+   loopback is selectable under the name `inprocess`
+   (`RegisterInProcessProvider`), and the gateway registers it and `fastdds`
+   unconditionally, before the selector is looked at — registration states
+   *availability* (a link-time fact), `Create` performs *selection* (a runtime
+   string), and branching registration on the selector would put a selector
+   branch back above the seam.
 
 ### §4.1 — Configuration: typed core plus opaque document
 
@@ -377,6 +383,16 @@ Configuration at the seam is a small typed core plus an opaque blob:
   read. C form: a pointer and a length borrowed for the duration of the call, the
   **length authoritative** (the bytes may contain NUL); a provider that keeps it
   copies it.
+
+**As landed** (PDA-DEC-5), the loopback is the first document reader in-tree:
+its document is a sequence of `\n`-separated `key=value` entries, and the only
+key is `schema_carriage` (`as_declared`, the default, or `carried`, §7 clause
+1's schema-before-data mode) — e.g. `document = "schema_carriage=carried"`.
+Fletcher copies and forwards those bytes exactly as any other provider's; the
+only code that reads them is `in_process_provider.cpp`, unshared and
+dependency-free, exactly as §4.2 requires. An unrecognised entry (unknown key,
+unknown value, no `=`, a duplicate key) is refused with `kInvalidArgument`,
+quoting the offending entry, so a misconfigured instance never exists.
 
 **The seam must carry no protocol vocabulary.** `FastDDSProviderOptions` embeds
 `eprosima::fastdds::dds::DataWriterQos`/`DataReaderQos` *plus per-topic maps of
@@ -512,11 +528,12 @@ The contract:
    non-null.
 
    The loopback is **not** a transport that "carries no schemas at all": it
-   carries the ones a publisher declared on that instance, and it can be
-   constructed schema-carrying outright
-   (`InProcessPubSubProvider::SchemaCarriage`), in which case it upholds
-   schema-before-data by refusal — `CreateTopic` requires a schema and publishing
-   to an undeclared topic is `kTopicNotDeclared`.
+   carries the ones a publisher declared on that instance, and it can be put in
+   schema-carrying mode outright — **as landed** (PDA-DEC-5), via the
+   `schema_carriage=carried` document key (§4.1), not a second construction
+   API — in which case it upholds schema-before-data by refusal —
+   `CreateTopic` requires a schema and publishing to an undeclared topic is
+   `kTopicNotDeclared`.
 2. **Per-writer order**, holding **across the schema handoff**: the buffered
    pre-schema backlog is delivered before, and never interleaved with, samples
    arriving live afterwards.

@@ -148,6 +148,79 @@ async function stopGateway(child: ChildProcess): Promise<void> {
   });
 }
 
+// Spawn the gateway and collect its exit code plus everything it wrote to
+// stderr, for the refusal cases below — neither refusal ever prints READY, so
+// spawnGateway's READY-polling promise is the wrong shape for them.
+async function spawnGatewayExpectingExit(
+  args: string[],
+): Promise<{ code: number | null; stderr: string }> {
+  const bin = findGatewayBinary();
+  const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+  const code = await new Promise<number | null>((res) => {
+    child.on('exit', (c) => res(c));
+  });
+  return { code, stderr };
+}
+
+// ---------------------------------------------------------------------
+// PDA-DEC-5: the gateway's provider selection, PROVED not just asserted.
+//
+// "The gateway still works" is unfalsifiable against a stale binary: `npm
+// test` runs whatever gateway.exe already sits in build/, so a binary built
+// before this stage would pass the whole describe.each battery below
+// unchanged. The two refusal cases here are staleness DETECTORS, not just
+// assertions: the pre-PDA-DEC-5 binary refuses both an unknown name and a
+// path-shaped value through the SAME branch and the SAME message
+// (`unknown provider: ... (expected inprocess|fastdds)`), so neither case can
+// pass against it. Own port for the READY case (DEBT-2): TEST_PORT and
+// TEST_PORT + 3 are held by the two describe.each contexts below.
+// ---------------------------------------------------------------------
+describe('provider selection', () => {
+  it('an unregistered --provider name exits 2 naming what IS registered', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 6),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      'bogus',
+    ]);
+    expect(code).toBe(2);
+    // Wording the OLD binary cannot emit: it says "unknown provider: bogus
+    // (expected inprocess|fastdds)", which contains neither "available:" nor
+    // "no built-in provider named" — pinned to the registry's own phrasing
+    // (provider_registry.cpp), not to "names inprocess and fastdds somewhere",
+    // which the old message also satisfies.
+    expect(stderr).toContain('no built-in provider named');
+    expect(stderr).toContain('available:');
+  });
+
+  it('a path-shaped --provider value exits 2 saying this build cannot load drivers', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 7),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      './nope.so',
+    ]);
+    expect(code).toBe(2);
+    // The OLD binary's ONLY refusal message is "unknown provider: ... (expected
+    // inprocess|fastdds)", which never says "cannot load drivers" — this is the
+    // one case that cannot pass against any pre-PDA-DEC-5 gateway.exe.
+    expect(stderr).toContain('cannot load drivers');
+  });
+
+  it('--provider inprocess still resolves and prints READY', async () => {
+    const child = await spawnGateway({ name: 'inprocess', port: TEST_PORT + 8, roundtripMs: 5_000 });
+    await stopGateway(child);
+  });
+});
+
 // Each provider is its own test context, so `npm test` runs every case below
 // against both the in-process and FastDDS providers.
 describe.each(PROVIDERS)('gateway over $name provider', (cfg) => {

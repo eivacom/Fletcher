@@ -5,8 +5,11 @@
 
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -15,6 +18,107 @@
 #include "fletcher/pubsub/internal/segments.hpp"
 
 namespace fletcher {
+
+namespace {
+
+// Which of §7 clause 1's two schema modes an instance is in. No longer public
+// (PDA-DEC-5): the only route to it is the `schema_carriage` document key, so
+// an object with an undecided mode cannot exist and a caller cannot pick the
+// mode any other way.
+enum class SchemaCarriage {
+    // **What the loopback has always done, and the default** — so the gateway
+    // is unchanged and keeps sending `schemaIpc`. The topic carries whatever
+    // schema a publisher declared **on this instance**, and null for a topic
+    // nobody declared.
+    kAsDeclared,
+    // Schema-before-data, the mode a schema-carrying transport is in. Every
+    // delivery carries a non-null schema, upheld by refusal rather than by
+    // buffering: `CreateTopic` requires a real schema and `Publish` to an
+    // undeclared topic is kTopicNotDeclared.
+    kCarried,
+};
+
+// Quote one document entry for a refusal message. Deliberately not the shared
+// `Quoted` helper in provider_registry.cpp (decision 8: no shared parser, no
+// dependency between a provider TU and the registry TU) — this is a handful of
+// lines over one key, not a format.
+std::string QuoteEntry(const std::string& entry) {
+    std::ostringstream out;
+    out << '"' << entry << '"';
+    return out.str();
+}
+
+// The loopback's own document reader (spec §4.2; owner ruling 2026-09-02: the
+// document is the provider's own format, and only the provider reads it).
+// Fletcher's seam still reads nothing — this function is reachable only from
+// this provider's own constructor, is unshared, and depends on nothing beyond
+// <string>/<sstream>.
+//
+// Format: a sequence of `\n`-separated `key=value` entries. Empty document ->
+// the defaults. A trailing `\r` on an entry is stripped (H2: a document
+// written on Windows is CRLF, and the same text must mean the same thing on
+// every platform); nothing else is trimmed, no case folding, no comments. An
+// empty entry (`\n\n`, a trailing newline) is skipped. Anything else — an
+// unknown key, an unknown value, an entry with no `=`, or a duplicate key — is
+// refused with `PubSubError(kInvalidArgument)` quoting the offending entry, so
+// a misconfigured loopback never exists (rung-2 case 6).
+SchemaCarriage ParseSchemaCarriage(const std::string& document) {
+    SchemaCarriage carriage = SchemaCarriage::kAsDeclared;
+    bool seen = false;
+
+    size_t start = 0;
+    while (start <= document.size()) {
+        const size_t nl = document.find('\n', start);
+        const size_t end = (nl == std::string::npos) ? document.size() : nl;
+        std::string entry = document.substr(start, end - start);
+        if (!entry.empty() && entry.back() == '\r') {
+            entry.pop_back();
+        }
+        start = (nl == std::string::npos) ? document.size() + 1 : nl + 1;
+
+        if (entry.empty()) continue;
+
+        const size_t eq = entry.find('=');
+        if (eq == std::string::npos) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "InProcessPubSubProvider: document entry with no '=': " +
+                                  QuoteEntry(entry));
+        }
+        const std::string key = entry.substr(0, eq);
+        const std::string value = entry.substr(eq + 1);
+
+        if (key != "schema_carriage") {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "InProcessPubSubProvider: unknown document key: " +
+                                  QuoteEntry(entry));
+        }
+        if (seen) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "InProcessPubSubProvider: document key 'schema_carriage' given "
+                              "twice, at: " +
+                                  QuoteEntry(entry));
+        }
+        seen = true;
+        if (value == "as_declared") {
+            carriage = SchemaCarriage::kAsDeclared;
+        } else if (value == "carried") {
+            carriage = SchemaCarriage::kCarried;
+        } else {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "InProcessPubSubProvider: unknown value for 'schema_carriage': " +
+                                  QuoteEntry(entry));
+        }
+    }
+    return carriage;
+}
+
+}  // namespace
+
+void RegisterInProcessProvider(ProviderRegistry& registry) {
+    registry.Register("inprocess", [](const ProviderConfig& config) {
+        return std::make_shared<InProcessPubSubProvider>(config);
+    });
+}
 
 struct InProcessPubSubProvider::Impl {
     struct TopicState {
@@ -46,8 +150,8 @@ struct InProcessPubSubProvider::Impl {
     std::unordered_map<std::string, TopicState> topics;
 };
 
-InProcessPubSubProvider::InProcessPubSubProvider(SchemaCarriage carriage)
-    : impl_(std::make_unique<Impl>(carriage)) {}
+InProcessPubSubProvider::InProcessPubSubProvider(const ProviderConfig& config)
+    : impl_(std::make_unique<Impl>(ParseSchemaCarriage(config.document))) {}
 
 InProcessPubSubProvider::~InProcessPubSubProvider() = default;
 
