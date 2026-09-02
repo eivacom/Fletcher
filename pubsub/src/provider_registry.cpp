@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <fletcher/core/status.hpp>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -58,6 +59,31 @@ std::string Quoted(const std::string& text) {
     throw PubSubError(status, message);
 }
 
+// The lifetime rule, made mechanical (header: "Lifetime of what a factory or a
+// resolver captured"). The handle this returns owns BOTH the provider and the
+// callable that made it, so the callable — and whatever its closure captured,
+// including a loaded module — cannot be destroyed while a provider the seam
+// handed out is still alive, whatever the callable's author did.
+//
+// The member order is the load-bearing part: members are destroyed in reverse
+// declaration order, so `provider` (declared last) is released FIRST and the
+// seat only afterwards. The provider's own destructor therefore still runs with
+// its module loaded.
+template <typename Seat>
+std::shared_ptr<PubSubProvider> KeepSeatAlive(std::shared_ptr<PubSubProvider> provider,
+                                              std::shared_ptr<Seat> seat) {
+    struct Anchor {
+        std::shared_ptr<Seat> seat;
+        std::shared_ptr<PubSubProvider> provider;
+    };
+    PubSubProvider* const raw = provider.get();
+    auto anchor = std::make_shared<Anchor>(Anchor{std::move(seat), std::move(provider)});
+    // Aliasing: the caller gets a handle that points at the provider and owns
+    // the anchor. `Create`'s return type is unchanged, so nothing above the seam
+    // can tell, and the frozen signature is untouched.
+    return std::shared_ptr<PubSubProvider>(std::move(anchor), raw);
+}
+
 }  // namespace
 
 ProviderSelector ProviderSelector::Parse(std::string text) {
@@ -101,7 +127,10 @@ void ProviderRegistry::Register(std::string name, Factory factory) {
                "provider " + Quoted(name) +
                    " is already registered; a name means one transport for the life of a registry");
     }
-    factories_.emplace(std::move(name), std::move(factory));
+    // Held by shared handle so a provider can own the factory that made it —
+    // see KeepSeatAlive. The registry still keeps no reference to anything it
+    // MADE; this is a reference to what makes.
+    factories_.emplace(std::move(name), std::make_shared<Factory>(std::move(factory)));
 }
 
 void ProviderRegistry::SetPathResolver(PathResolver resolver) {
@@ -115,7 +144,7 @@ void ProviderRegistry::SetPathResolver(PathResolver resolver) {
                "a path resolver is already installed; replacing it would silently change what "
                "every driver path in this configuration resolves through");
     }
-    path_resolver_ = std::move(resolver);
+    path_resolver_ = std::make_shared<PathResolver>(std::move(resolver));
 }
 
 std::shared_ptr<PubSubProvider> ProviderRegistry::Create(const ProviderSelector& selector,
@@ -140,13 +169,14 @@ std::shared_ptr<PubSubProvider> ProviderRegistry::Create(const ProviderSelector&
         }
         // §5.1: whatever a caller-supplied factory throws leaves this seam as a
         // PubSubError, including std::bad_alloc.
+        std::shared_ptr<Factory> factory = entry->second;
         std::shared_ptr<PubSubProvider> provider =
-            TranslateSeamFailure([&] { return entry->second(config); });
+            TranslateSeamFailure([&] { return (*factory)(config); });
         if (!provider) {
             Refuse(PubSubStatus::kInternal, "the factory registered for provider " +
                                                 Quoted(selector.text_) + " returned no provider");
         }
-        return provider;
+        return KeepSeatAlive(std::move(provider), std::move(factory));
     }
 
     // A path. The branch exists and is routed HERE, in this item — PDA-ABI fills
@@ -164,13 +194,14 @@ std::shared_ptr<PubSubProvider> ProviderRegistry::Create(const ProviderSelector&
                "character";
         Refuse(PubSubStatus::kNotSupported, why.str());
     }
+    std::shared_ptr<PathResolver> resolver = path_resolver_;
     std::shared_ptr<PubSubProvider> provider =
-        TranslateSeamFailure([&] { return path_resolver_(selector.text_, config); });
+        TranslateSeamFailure([&] { return (*resolver)(selector.text_, config); });
     if (!provider) {
         Refuse(PubSubStatus::kInternal,
                "the path resolver returned no provider for " + Quoted(selector.text_));
     }
-    return provider;
+    return KeepSeatAlive(std::move(provider), std::move(resolver));
 }
 
 }  // namespace fletcher

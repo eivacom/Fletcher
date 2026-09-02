@@ -219,12 +219,25 @@ TEST(Registry, PathSelectorResolvesThroughTheSameCall) {
         return std::make_shared<ProbeProvider>("loaded", journal);
     });
 
-    const ProviderConfig config;
+    // Non-default on every field: "the caller's config arrived" has to be
+    // distinguishable from "a default-constructed one did". A resolver handed
+    // `ProviderConfig{}` would put a loaded driver on domain 0 with no payload
+    // bound, silently — a wrong answer rather than a failure.
+    ProviderConfig config;
+    config.max_payload_bytes = 65000;
+    config.domain_id = 151;
+    config.document = "<qos/>";
+    config.document.push_back('\0');
+    config.document += "tail";
     const std::string kPath = "/opt/fletcher/libstandin_driver.so";
 
     std::shared_ptr<PubSubProvider> built_in = MakeProvider(registry, "alpha", config);
     ASSERT_NE(built_in, nullptr);
     PublishRow(*built_in, 0xA1);
+
+    // So that what is asserted below is what the RESOLVER saw, not what the
+    // name branch left behind.
+    journal->last_config = ProviderConfig{};
 
     std::shared_ptr<PubSubProvider> loaded = MakeProvider(registry, kPath, config);
     ASSERT_NE(loaded, nullptr) << "the path selector produced nothing";
@@ -236,6 +249,17 @@ TEST(Registry, PathSelectorResolvesThroughTheSameCall) {
     EXPECT_EQ(journal->resolved_path, kPath)
         << "the resolver was handed `" << journal->resolved_path
         << "`, not the path the caller configured — a loader would open the wrong library";
+
+    // "with the identical config — only the string differs" is the claim this
+    // whole test makes; here it is asserted rather than commented.
+    EXPECT_EQ(journal->last_config.max_payload_bytes, 65000u)
+        << "the resolver was handed a payload bound of " << journal->last_config.max_payload_bytes
+        << ", not the caller's";
+    EXPECT_EQ(journal->last_config.domain_id, 151u)
+        << "the resolver was handed domain " << journal->last_config.domain_id
+        << ", not the caller's — a loaded driver would join the wrong domain with no error";
+    EXPECT_EQ(journal->last_config.document, config.document)
+        << "the document did not reach the resolver byte-for-byte";
 
     ASSERT_EQ(journal->rows.size(), static_cast<size_t>(2))
         << "one of the two selections delivered nothing";
@@ -408,6 +432,19 @@ TEST(Registry, RegistrationAndSelectionShareOneVocabulary) {
     PublishRow(*provider, 0xD4);
     ASSERT_EQ(journal->rows.size(), static_cast<size_t>(1));
     EXPECT_EQ(journal->rows[0].tag, "in-process");
+
+    // The alphabet is [A-Za-z0-9_-], not [a-z_-]. A build that quietly dropped
+    // the digits or the uppercase range would reclassify this name as a PATH:
+    // `Register` would refuse it, and a configuration saying `Fast2DDS-v1_x`
+    // would be told this build cannot load drivers. Every other entry in this
+    // file uses lowercase, `-` and `_` only, so nothing else would notice.
+    registry.Register("Fast2DDS-v1_x", ProbeFactory("Fast2DDS-v1_x", journal));
+    std::shared_ptr<PubSubProvider> mixed =
+        MakeProvider(registry, "Fast2DDS-v1_x", ProviderConfig{});
+    ASSERT_NE(mixed, nullptr) << "a name spelling the full alphabet did not select";
+    PublishRow(*mixed, 0xF7);
+    ASSERT_EQ(journal->rows.size(), static_cast<size_t>(2));
+    EXPECT_EQ(journal->rows[1].tag, "Fast2DDS-v1_x");
 }
 
 // DEBT-4: swapping which loader EVERY path means is the same hazard as swapping
@@ -497,6 +534,130 @@ TEST(Registry, AFactoryThatFailsIsReportedAsATypedSeamFailure) {
     EXPECT_EQ(RefusalOf([&] { return MakeProvider(registry, "overflower", config); },
                         "a factory throwing std::overflow_error"),
               PubSubStatus::kPayloadTooLarge);
+}
+
+// The resolver seat's failure path is normative — the header and spec §5.1 both
+// say "a factory **or resolver**" — and it is the branch PDA-ABI fills blind,
+// against a header it cannot see this file from. Without these entries, deleting
+// the `TranslateSeamFailure` around the resolver call, or deleting the
+// resolver's null check, leaves every other entry in this file green. One
+// registry per shape, because a second `SetPathResolver` is refused.
+TEST(Registry, AResolverThatFailsIsReportedAsATypedSeamFailure) {
+    const ProviderConfig config;
+    const std::string kPath = "./driver.so";
+
+    ProviderRegistry thrower;
+    thrower.SetPathResolver(
+        [](const std::string&, const ProviderConfig&) -> std::shared_ptr<PubSubProvider> {
+            throw std::runtime_error("the driver would not load");
+        });
+    EXPECT_EQ(RefusalOf([&] { return MakeProvider(thrower, kPath, config); },
+                        "a resolver throwing an untyped exception"),
+              PubSubStatus::kInternal);
+    EXPECT_TRUE(Mentions(MessageOf([&] { return MakeProvider(thrower, kPath, config); }),
+                         "the driver would not load"))
+        << "the loader's own message was lost on the way out of the seam, which is the one "
+           "diagnostic an operator has when a driver refuses to load";
+
+    ProviderRegistry typed_thrower;
+    typed_thrower.SetPathResolver(
+        [](const std::string&, const ProviderConfig&) -> std::shared_ptr<PubSubProvider> {
+            throw PubSubError(PubSubStatus::kTransportFailure, "no endpoint");
+        });
+    EXPECT_EQ(RefusalOf([&] { return MakeProvider(typed_thrower, kPath, config); },
+                        "a resolver throwing a PubSubError"),
+              PubSubStatus::kTransportFailure)
+        << "a resolver cannot choose its own status, so an unloadable driver cannot fail "
+           "distinctly (owner ruling 2026-09-02)";
+
+    ProviderRegistry null_returner;
+    null_returner.SetPathResolver([](const std::string&, const ProviderConfig&) {
+        return std::shared_ptr<PubSubProvider>{};
+    });
+    EXPECT_EQ(RefusalOf([&] { return MakeProvider(null_returner, kPath, config); },
+                        "a resolver returning null"),
+              PubSubStatus::kInternal)
+        << "Create handed the caller a null provider instead of refusing";
+}
+
+// ── The lifetime rule, enforced rather than asked for ───────────────
+//
+// DEBT-1's rule obliges a resolver OR a factory to keep a loaded module alive
+// for at least as long as the providers it made. This asserts the registry holds
+// them to it: the stand-in module is reachable only through the seam — the local
+// handle is gone and the registry itself is destroyed — and it must still be
+// loaded while a provider made from it is publishing, then be released when the
+// last such provider goes. Both routes PDA-ABI can take are covered, because
+// `Register("zenoh", factory_that_dlopens)` reaches a loaded driver by name.
+namespace {
+
+// Stands where a loaded module stands: the thing whose code the provider is
+// still executing. It records its own unload rather than crashing, because a
+// real use-after-unload is "not reliably loud".
+struct ModuleStandIn {
+    explicit ModuleStandIn(bool* unloaded) : unloaded_(unloaded) {}
+    ~ModuleStandIn() { *unloaded_ = true; }
+    bool* unloaded_;
+};
+
+}  // namespace
+
+TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
+    // (a) reached by PATH, through the resolver seat.
+    {
+        auto journal = std::make_shared<Journal>();
+        bool unloaded = false;
+        std::shared_ptr<PubSubProvider> provider;
+        {
+            ProviderRegistry registry;
+            auto module = std::make_shared<ModuleStandIn>(&unloaded);
+            // The resolver author does the WRONG thing on purpose: the module is
+            // captured by the resolver and not tied to the provider's ownership.
+            registry.SetPathResolver([module, journal](const std::string&, const ProviderConfig&) {
+                return std::make_shared<ProbeProvider>("loaded", journal);
+            });
+            provider = MakeProvider(registry, "./libstandin_driver.so", ProviderConfig{});
+            ASSERT_NE(provider, nullptr);
+        }  // the registry, and the caller's own handle on the module, are gone
+
+        EXPECT_FALSE(unloaded)
+            << "the module was unloaded while a provider made from it was still live: this is "
+               "the use-after-unload DEBT-1 describes, and prose did not stop it";
+        PublishRow(*provider, 0xF6);
+        ASSERT_EQ(journal->rows.size(), static_cast<size_t>(1));
+        EXPECT_EQ(journal->rows[0].tag, "loaded");
+
+        provider.reset();
+        EXPECT_TRUE(unloaded)
+            << "the module outlived the last provider that needed it, so nothing ever unloads it";
+    }
+
+    // (b) reached by NAME, through a factory — the linkage ruling's static half
+    // and `Register("zenoh", factory_that_dlopens)`.
+    {
+        auto journal = std::make_shared<Journal>();
+        bool unloaded = false;
+        std::shared_ptr<PubSubProvider> provider;
+        {
+            ProviderRegistry registry;
+            auto module = std::make_shared<ModuleStandIn>(&unloaded);
+            registry.Register("zenoh", [module, journal](const ProviderConfig&) {
+                return std::make_shared<ProbeProvider>("zenoh", journal);
+            });
+            provider = MakeProvider(registry, "zenoh", ProviderConfig{});
+            ASSERT_NE(provider, nullptr);
+        }
+
+        EXPECT_FALSE(unloaded)
+            << "a factory holding a module handle is the same use-after-unload by the other "
+               "route, and the registry owns `factories_` exactly as it owns the resolver";
+        PublishRow(*provider, 0xF8);
+        ASSERT_EQ(journal->rows.size(), static_cast<size_t>(1));
+        EXPECT_EQ(journal->rows[0].tag, "zenoh");
+
+        provider.reset();
+        EXPECT_TRUE(unloaded) << "the factory outlived the last provider it made";
+    }
 }
 
 }  // namespace conformance

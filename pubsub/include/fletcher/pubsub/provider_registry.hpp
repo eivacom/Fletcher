@@ -148,6 +148,31 @@ struct ProviderConfig {
 /// provider with different configurations are ordinary, and a registry may be
 /// destroyed while the providers it made are still running.
 ///
+/// ── Lifetime of what a factory or a resolver captured (normative) ───────────
+/// A **resolver or a factory** must keep everything the provider it returns
+/// depends on — including a loaded module and anything that module's code or
+/// data lives in — alive for **at least as long as that provider**,
+/// independently of this registry's lifetime and of its own. Destroying a
+/// registry while its providers run is sanctioned above, and both seats are
+/// reachable from a loaded module: PDA-ABI installs a resolver, and it also
+/// reaches a loaded driver by *name* through `Register("zenoh",
+/// factory_that_dlopens)` — the static half of the linkage ruling. A module
+/// handle parked in a cache with the registry's lifetime would unload code out
+/// from under a live provider, which is a use-after-unload and not reliably
+/// loud.
+///
+/// **This registry enforces the rule instead of asking for it.** A factory and
+/// a resolver are each held by shared handle, and every provider `Create`
+/// returns owns a copy of the handle that made it. The callable, and everything
+/// its closure captured, therefore outlives every provider handed out from it,
+/// whatever its author did — destroying this registry cannot unload a module a
+/// live provider is still running in. Two things stay the author's obligation
+/// because no seam can reach them: a handle the provider mints for *itself*
+/// (`shared_from_this`), and a raw pointer into module memory it hands to
+/// something that outlives it. The idiom that covers those too is to make the
+/// provider's own ownership release the module — a `shared_ptr` whose deleter
+/// unloads it — never a cache with the registry's lifetime.
+///
 /// ── Threading: populate, then share ─────────────────────────────────────────
 /// `Create` is `const` and safe to call concurrently. `Register` and
 /// `SetPathResolver` are **not**: the intended shape is one construction phase
@@ -180,25 +205,20 @@ class ProviderRegistry {
     /// registration, rather than at use. **Registering a name twice is refused**
     /// — there is no overwrite and no last-wins, because silently swapping which
     /// transport a name means is not a state this object may enter.
+    ///
+    /// The class comment's lifetime rule binds this seat as much as the
+    /// resolver's: a factory that closes over a loaded module is a loaded
+    /// driver reached by name, and the providers it makes hold it alive.
     void Register(std::string name, Factory factory);
 
     /// Install the resolver that answers **path** selectors. This is the seat
     /// PDA-ABI fills; in this build it is empty, and a path selector is refused
     /// with `kNotSupported`.
     ///
-    /// **Lifetime rule (normative).** A resolver must keep everything the
-    /// provider it returns depends on — including a loaded module and anything
-    /// that module's code or data lives in — alive for **at least as long as
-    /// that provider**, independently of this registry's lifetime and of the
-    /// resolver's own. A registry may be destroyed while the providers it made
-    /// are still running (that is the sanctioned "populate, then share" shape),
-    /// and destroying it destroys the resolver with it. A resolver that parks a
-    /// module handle in a cache the registry owns therefore unloads code out
-    /// from under a live provider, which is a use-after-unload and not reliably
-    /// loud. The idiom that satisfies this rule is to make the returned
-    /// provider's own ownership keep the module alive — e.g. a `shared_ptr`
-    /// whose deleter releases the module — never a cache with the registry's
-    /// lifetime.
+    /// The class comment's lifetime rule binds this seat: whatever the resolver
+    /// captured, including a loaded module, is kept alive by every provider it
+    /// makes, so destroying this registry cannot unload code a live provider is
+    /// running in.
     ///
     /// Installing a **second** resolver is refused with `kInvalidArgument`, for
     /// the reason a duplicate `Register` is: swapping which loader every path
@@ -226,14 +246,20 @@ class ProviderRegistry {
     ///    statuses (owner ruling 2026-09-02);
     ///  - a factory or resolver that returns null → `kInternal`, named;
     ///  - anything a factory or resolver throws → translated by §5.1's rule.
+    ///
+    /// The returned handle also owns the factory or resolver that made it (the
+    /// lifetime rule above); it is otherwise an ordinary
+    /// `shared_ptr<PubSubProvider>` and nothing above the seam can tell.
     [[nodiscard]] std::shared_ptr<PubSubProvider> Create(const ProviderSelector& selector,
                                                          const ProviderConfig& config) const;
 
    private:
     // Ordered, so the "available providers" in a refusal is stable and
-    // greppable rather than hash-order.
-    std::map<std::string, Factory> factories_;
-    PathResolver path_resolver_;
+    // greppable rather than hash-order. Held by shared handle, not by value, so
+    // a provider can own the callable that made it — the lifetime rule above is
+    // mechanical, not advisory.
+    std::map<std::string, std::shared_ptr<Factory>> factories_;
+    std::shared_ptr<PathResolver> path_resolver_;
 };
 
 // The frozen signature, pinned as a whole rather than by return type: a

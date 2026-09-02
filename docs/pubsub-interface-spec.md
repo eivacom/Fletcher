@@ -301,6 +301,14 @@ Normative:
    means the same thing in every build. The same predicate validates a
    registration, so a registered name is always selectable.
 
+   **C form of the selector** (§3.5's idiom, so a binding does not have to invent
+   one): a pointer and a length, borrowed for the duration of the call, the
+   **length authoritative** — the selector is bytes-plus-length, not a
+   NUL-terminated string, and the seam copies what it keeps. That is why an
+   embedded NUL is refused rather than tolerated: a NUL-terminated reading of
+   `"fastdds\0/../evil.so"` would classify as a path and reach a loader
+   truncated.
+
    The two ways a selection can fail are **deliberately different statuses**,
    because they are different operator actions (owner ruling 2026-09-02): an
    unregistered *name* is `kInvalidArgument` listing what is registered — "no
@@ -318,12 +326,25 @@ Normative:
    `static_assert` on the member-pointer type, not on the return type: a
    return-type check cannot see a defaulted extra parameter or a dropped `const`.
 
-   **The resolver's lifetime obligation is part of this clause.** A resolver must
-   keep everything the provider it returns depends on — including a loaded module
-   — alive for at least as long as that provider, independently of the registry's
-   lifetime and of its own. Clause 3 sanctions destroying a registry while its
-   providers run, so a module cache owned by the registry would unload code under
-   a live provider.
+   **The lifetime obligation on both seats is part of this clause.** A resolver
+   **or a factory** must keep everything the provider it returns depends on —
+   including a loaded module — alive for at least as long as that provider,
+   independently of the registry's lifetime and of its own. Clause 3 sanctions
+   destroying a registry while its providers run, so a module cache owned by the
+   registry would unload code under a live provider. It binds a *factory* because
+   a loaded driver is reachable by **name** too — `Register("zenoh",
+   factory_that_dlopens)`, which is also how the linkage ruling's static half
+   registers a driver on an MCU — and the registry owns `factories_` exactly as
+   it owns the resolver.
+
+   **PDA-DEC-4 makes this mechanical rather than advisory.** Both seats are held
+   by shared handle and every provider `Create` returns owns a copy of the handle
+   that made it, so the callable and everything its closure captured outlive
+   every provider handed out from it whatever its author did. PDA-ABI inherits
+   the guarantee instead of having to honour a paragraph. Two residues remain the
+   author's, because no seam can reach them: a handle the provider mints for
+   itself (`shared_from_this`) and a raw pointer into module memory handed to
+   something that outlives the provider.
 3. **No global state.** The registry takes and returns explicit objects; multiple
    instances of the same provider with different configs must be ordinary. That
    the ABI round later needs module/instance handles is *its* business; the seam
