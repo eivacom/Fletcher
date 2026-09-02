@@ -166,12 +166,27 @@ struct ProviderConfig {
 /// returns owns a copy of the handle that made it. The callable, and everything
 /// its closure captured, therefore outlives every provider handed out from it,
 /// whatever its author did — destroying this registry cannot unload a module a
-/// live provider is still running in. Two things stay the author's obligation
-/// because no seam can reach them: a handle the provider mints for *itself*
-/// (`shared_from_this`), and a raw pointer into module memory it hands to
-/// something that outlives it. The idiom that covers those too is to make the
-/// provider's own ownership release the module — a `shared_ptr` whose deleter
-/// unloads it — never a cache with the registry's lifetime.
+/// live provider is still running in.
+///
+/// **What the anchor does not reach.** It owns the provider `Create` returned
+/// and nothing else, so residues stay the author's. At least these three, and
+/// this list is *not* claimed exhaustive:
+///
+///  1. a handle the provider mints for *itself* (`shared_from_this`);
+///  2. a raw pointer into module memory it hands to something that outlives it;
+///  3. **any handle the seam itself carries out of the provider** — `Blob`'s
+///     `std::shared_ptr<const void>` owner (core `types.hpp`, locked decision 6
+///     / PDA-DEC-3), a `SharedSchema`, a PDA-DEC-3 loan release. These are
+///     products of the provider, not the provider, and they do not pass through
+///     `Create`'s return, so the anchor has no edge to them — while their
+///     deleters are module code and a caller routinely holds one after the
+///     provider is gone. This is the residue a zero-copy receive is built out
+///     of; covering it means changing what crosses the seam, which is PDA-ABI's
+///     to own and out of this registry's scope.
+///
+/// The idiom that covers 1 and 2, and is the starting point for 3, is to make
+/// the provider's own ownership release the module — a `shared_ptr` whose
+/// deleter unloads it — never a cache with the registry's lifetime.
 ///
 /// ── Threading: populate, then share ─────────────────────────────────────────
 /// `Create` is `const` and safe to call concurrently. `Register` and

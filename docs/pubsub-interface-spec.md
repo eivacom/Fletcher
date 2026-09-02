@@ -341,10 +341,19 @@ Normative:
    by shared handle and every provider `Create` returns owns a copy of the handle
    that made it, so the callable and everything its closure captured outlive
    every provider handed out from it whatever its author did. PDA-ABI inherits
-   the guarantee instead of having to honour a paragraph. Two residues remain the
-   author's, because no seam can reach them: a handle the provider mints for
-   itself (`shared_from_this`) and a raw pointer into module memory handed to
-   something that outlives the provider.
+   the guarantee instead of having to honour a paragraph.
+
+   **The anchor reaches the provider `Create` returned and nothing else**, so
+   residues remain the author's. At least these three, and the list is *not*
+   exhaustive: a handle the provider mints for itself (`shared_from_this`); a raw
+   pointer into module memory handed to something that outlives the provider; and
+   **any handle the seam itself carries out of a provider** — `Blob`'s
+   `shared_ptr<const void>` owner (§3.2 / decision 6), a `SharedSchema`, a loan
+   release. That third one is *not* the provider and does not pass through
+   `Create`'s return, so the anchor has no edge to it, while its deleter is module
+   code and a caller routinely holds one after the provider is gone. It is what a
+   zero-copy receive is made of, and covering it means changing what crosses the
+   seam — so it belongs to PDA-ABI, not to the registry.
 3. **No global state.** The registry takes and returns explicit objects; multiple
    instances of the same provider with different configs must be ordinary. That
    the ABI round later needs module/instance handles is *its* business; the seam
