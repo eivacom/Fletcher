@@ -235,6 +235,57 @@ README — not in the design doc.**
 | C2-6 | **Owner-facing.** Recorded decision 1's authority — "the round's delete-first lean default" (design §2, §8.1; Brief decision 1) — names no oracle: grepped, it appears nowhere in the spec, the locked decisions or the rulings ledger, only in review prose about coexistence bridges. The decision is authorized; cite what actually authorizes it: cycle 1's verified P5 (nothing in `src/` reads `max_payload`, so nothing observable changes) **and** the 2026-09-01 split ruling ("It should not do any development on any of the ABIs, only prepare for them"), which puts "make the cap real" outside the round. Fix the Brief before the owner reads a norm as a ruling. (§8.3's "as landed by PDA-DEC-6" → PDA-DEC-5 was corrected in place.) | re-review §"three decisions" |
 | C2-7 | `xrcedds-pubsub-provider/README.md:101`'s test-duration note names both retired tests and attributes ~1 s to `SerialTransportNotImplemented`, which cannot cost that — the serial arm throws at the transport switch (`:375-376`) before any session attempt; the ~1 s is `ConstructorThrowsWithoutAgent`'s single UDP attempt. The README rewrite replaces that note with the new wall-clock story (the 4-5 s forcing case). | re-review §NITs |
 
+## PDA-DEC-8 — multi-instance proof (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
+
+Review: [PDA-DEC-8-design-review.md](PDA-DEC-8-design-review.md). The six items
+below are DEBT and do **not** loop the design; the three BLOCKERs are in the review
+(B1 unequal payload bounds make the two instances undiscoverable on any domain, so
+M1 cannot redden and the positive control cannot cross; B2 an oversized row is not
+refused on the configured publish flow, so §2's assertion 3 is red on the
+unmutated tree; B3 the mutation gate has no clean-environment precondition and two
+rows plausibly kill the process, orphaning an shm segment).
+
+Nine things the implementer may rely on **without re-asking**, all verified against
+the tree in cycle 1 — do not re-derive them:
+- **The oracle citation is exact.** §4's third normative item is verbatim as the
+  design quotes it (`docs/pubsub-interface-spec.md:359-362`), and §4 clause 2's own
+  prose ("**Clause 3** sanctions destroying a registry while its providers run",
+  `:335`) confirms the spec numbers these items as clauses.
+- **Placement is right and smuggles nothing.** `conformance_registry` links
+  `fletcher-pubsub` + gtest only (`CMakeLists.txt:209-213`); `conformance_fastdds`
+  already links the provider (`:221-229`) and already carries `RESOURCE_LOCK
+  conformance_fastdds` + `TIMEOUT 180` (`:296-297`), applied per discovered entry —
+  so **P3 holds**.
+- **The suite arithmetic is right.** 81 discovered entries across the six
+  `build/*_tests-Release.cmake` files + 1 `add_test(conformance_xrce)` = 82 today;
+  three cases into a `gtest_discover_tests` target = 85 entries. Entries and cases
+  are not conflated.
+- **The domain census is accurate.** The tree uses 0, 7, 43, 91–99, 137, 145,
+  151–153; 154–158 are unused. Do not re-survey.
+- **P2 holds:** `test_profile_document.cpp:551-552` really does stand up two
+  providers in one process.
+- **Forbidden case 5 holds:** `ProviderRegistry` has no static member, no free
+  function with storage, and `Create` is `const`
+  (`provider_registry.hpp:277-287`).
+- **The scratch buffer is correctly identified.** `fast_dds_pubsub_provider.cpp:382`
+  is the provider's only `thread_local` and the only caller of
+  `internal::JoinSegmentsInto`.
+- **The control cannot rot into flakiness.** Default writer/reader QoS is RELIABLE +
+  KEEP_ALL + TRANSIENT_LOCAL (`qos_defaults.cpp:23-42`), so a late-matching reader
+  still gets the backlog; and with one shared `kSettle` the only pressure on the
+  number is toward widening, which strengthens the isolation claim.
+- **`PayloadBytes()` is a Fast DDS extension**, not on `PubSubProvider` — a
+  base-typed handle cannot ask a provider for its bound.
+
+| Id | Owed | Where |
+|----|------|-------|
+| DEBT-1 | §2's claim that the alternating single-thread sequence "is **the only** arrangement that reaches `Publish`'s `static thread_local` scratch buffer" is **false**, and M5's stated mechanism is wrong. `test_profile_document.cpp:556-557` already publishes to two different topic names through two different instances on one thread, so M5 is caught by an existing test; and with append semantics the first failure in the new sequence is **A's own second publish** (`pdadec8/shared` + `pdadec8/only-a` → `kTopicNotDeclared`), not B's lookup. Keep the row (it costs nothing) but correct both sentences, or the recorded evidence will not match the observation. | review §"row-by-row" |
+| DEBT-2 | M2/M3/M4's "Must redden" cells predict crossed markers; all three will actually redden by **typed refusal at declaration/subscription time** — `create_topic`/`register_type` returning null → `kTransportFailure` (M2), `kSchemaConflict` from `CreateTopic`'s different-IPC compare or "already subscribed to" from `Subscribe` (M3, M4). P5 is satisfied by any named assertion going red, but a mismatch between the predicted and observed mechanism is exactly what an implementer reads as "the mutation survived". Correct the column. | review §"row-by-row" |
+| DEBT-3 | M5 mutates `pubsub/include/fletcher/pubsub/internal/segments.hpp`, which **every** provider uses, so that row reddens most of the tree's pub/sub suites at once. Say so where the mutation set is described, and require the recorded evidence to name *these three cases'* failure rather than "the tree went red". | review §"row-by-row" |
+| DEBT-4 | §8's published claim names two exclusions (cross-host, vendor process-wide state) and should name a third: **intra-process delivery**. Locked decision 12 is explicit that "Fast DDS serves same-process endpoints over intra-process delivery, bypassing data-sharing and much of the transport", so what this arrangement proves isolated is the matching/routing layer, not the transport's shared-memory segments — and two instances in *separate* processes on one host do share those segments. One clause in the claim paragraph and one line in the README. If Brief decision 3 is put to the owner, it must carry this, because it changes what option (a) claims. | review §"the rest" |
+| DEBT-5 | The concurrent case must **join both publisher threads before either provider is destroyed** — §6 clause 5 requires quiescence ("no call in flight"), and a crash there is precisely the shm-orphaning path §7 claims the item adds none of (see BLOCKER 3). §7 currently covers subscriptions and callbacks but not the item's own threads. While there: keep the assertions on the main thread after the join — a gtest `ASSERT_*` inside a spawned thread only records a failure, it does not stop the case. | review §"the rest", B3 |
+| DEBT-6 | Declared **+460/−0** is optimistic once B1's fourth arrangement and B2's fix land; expect **~+540**. Not scope creep and no extra guards are being demanded — book the number so the close does not read as an overrun. | review §"budget" |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |
