@@ -577,6 +577,16 @@ TEST(Registry, InProcessCarriageComesFromTheDocument) {
     ASSERT_TRUE(delivered);
     EXPECT_NE(received_schema, nullptr)
         << "a carrying instance delivered a row with no schema attached";
+
+    // MUT-C: a factory that memoises one instance per registry would hand
+    // every LATER Create call this first, carrying instance — silently
+    // ignoring its own document. A second Create with a DIFFERENT (default,
+    // as_declared) config must be a fresh, independently-configured instance.
+    std::shared_ptr<PubSubProvider> second = MakeProvider(registry, "inprocess", ProviderConfig{});
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(second, provider) << "Create returned the same instance twice";
+    EXPECT_NO_THROW(PublishRowTo(*second, {"registry", "second-instance"}, 0x1c))
+        << "the second instance inherited the first's carrying mode instead of its own document";
 }
 
 // ── Rung-2 case 6: the document reader refuses at the door ──────────
