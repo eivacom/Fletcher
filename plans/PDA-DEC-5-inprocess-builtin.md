@@ -249,8 +249,10 @@ the data-sharing defect — do not weaken it).
   re-created for the harness to see the changed header. (3)
   `cmake --preset conan-default` does not reset a cached
   `FLETCHER_CONFORMANCE_XRCE` — pass it explicitly on the full run.
-- **Public surface.** +1 (`RegisterInProcessProvider`), paid for by retiring 2:
-  the public `SchemaCarriage` enum and the `SchemaCarriage` constructor. Net −1.
+- **Public surface.** **0 at its strictest** (+2/−2): adds `RegisterInProcessProvider`
+  and the replacing `ProviderConfig` constructor; retires the public `SchemaCarriage`
+  enum and the `SchemaCarriage` constructor. *(An earlier "net −1" charged the retired
+  constructor but not the added one; both step-4 reviewers corrected it.)*
 - **Coexistence windows: none created.** The `fastdds` closure's *body* is
   rewritten by PDA-DEC-6, but it is not a second path and nothing is scheduled for
   deletion.
@@ -298,5 +300,5 @@ No test is deleted: the carrying subject is converted, not retired.
 
 ## Numbers
 
-Declared net lines **+270 / −60**. New public surface **1**, retiring **2** (net
-**−1**). Design cycles used: 1/2.
+Declared net lines **+270 / −60**. New public surface **0 at its strictest** (+2/−2 —
+see §Public surface; the earlier "net −1" undercounted). Design cycles used: 1/2.

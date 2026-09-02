@@ -89,6 +89,12 @@ Args ParseArgs(int argc, char* argv[]) {
             // below is the single list, and an unrecognised NAME is refused
             // at startup naming what IS registered, so this usage line does
             // not duplicate it (rung-1 forbidden case 4).
+            // Nor is the list derived from the registry, and it must not be:
+            // once a path resolver is installed, an enumeration can only ever
+            // report BUILT-INS, which would hand code above the seam a way to
+            // tell built-in from loaded (decision 3). The registry's surface is
+            // frozen at Create/Register/SetPathResolver "and nothing else"
+            // (provider_registry.hpp) — a name-listing accessor is not a gap.
             std::printf(
                 "Usage: %s [--port N] [--bind-address ADDR] "
                 "[--provider NAME] [--domain-id N] [--version]\n"

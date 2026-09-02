@@ -394,8 +394,10 @@ dependency-free, exactly as §4.2 requires. A trailing `\r` on an entry is
 stripped (a document authored on this project's primary platform is CRLF, and
 the 2026-09-02 configuration ruling requires the same text to mean the same
 thing in every build) and a blank entry — a blank line or a trailing newline —
-is skipped; nothing else is trimmed. A document containing an embedded NUL is
-refused, mirroring `ProviderSelector::Parse`. An unrecognised entry (unknown
+is skipped; nothing else is trimmed. **This provider** refuses a document containing
+an embedded NUL, mirroring `ProviderSelector::Parse` — a provider-level rule about what
+its own format can represent, not a seam-level one: the seam's document is
+length-authoritative (§4.2) and carries a NUL unchanged. An unrecognised entry (unknown
 key, unknown value, no `=`, a duplicate key) is refused with
 `kInvalidArgument`, quoting the offending entry, so a misconfigured instance
 never exists.
