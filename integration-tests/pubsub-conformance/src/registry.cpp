@@ -307,6 +307,18 @@ TEST(Registry, PathSelectorWithoutResolverIsRefusedAsUnsupported) {
         << "the refusal does not say the selector was classified as a path: " << message;
     EXPECT_TRUE(Mentions(message, "offset 7"))
         << "the refusal does not locate the character that made it a path: " << message;
+
+    // `\xNN` is the diagnostic's OWN escape spelling, and `C:\x64\driver.dll` is
+    // an ordinary Windows driver path — so an unescaped backslash renders a real
+    // path identically to one holding the single byte 0x64, in the one message
+    // an operator reads when a driver will not load.
+    const std::string windows_path = "C:\\x64\\driver.dll";
+    const std::string quoted =
+        MessageOf([&] { return MakeProvider(registry, windows_path, config); });
+    EXPECT_TRUE(Mentions(quoted, "\"C:\\\\x64\\\\driver.dll\""))
+        << "the backslashes in a Windows driver path are not escaped: " << quoted;
+    EXPECT_FALSE(Mentions(quoted, windows_path))
+        << "the path is reproduced raw, so it reads as the escape for byte 0x64: " << quoted;
 }
 
 // ── The rest of the door ────────────────────────────────────────────
@@ -600,6 +612,30 @@ struct ModuleStandIn {
     bool* unloaded_;
 };
 
+// A provider that reads its module's state AT ITS OWN DESTRUCTION.
+//
+// Sampling the flag from the test body cannot see the ordering that makes the
+// mechanism work: around `provider.reset()` the flag reads false then true
+// whichever of the two the anchor releases first. The only observer inside the
+// window is the provider's own destructor — which is also the window that
+// matters, because that is where a real provider closes endpoints by calling
+// into module code. Reversing the anchor's members reddens this and nothing
+// else.
+class ModuleUserProvider : public ProbeProvider {
+   public:
+    ModuleUserProvider(std::string tag, std::shared_ptr<Journal> journal, const bool* unloaded,
+                       bool* module_was_loaded_at_my_death)
+        : ProbeProvider(std::move(tag), std::move(journal)),
+          unloaded_(unloaded),
+          module_was_loaded_at_my_death_(module_was_loaded_at_my_death) {}
+
+    ~ModuleUserProvider() override { *module_was_loaded_at_my_death_ = !*unloaded_; }
+
+   private:
+    const bool* unloaded_;
+    bool* module_was_loaded_at_my_death_;
+};
+
 }  // namespace
 
 TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
@@ -607,14 +643,17 @@ TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
     {
         auto journal = std::make_shared<Journal>();
         bool unloaded = false;
+        bool module_was_loaded_at_my_death = false;
         std::shared_ptr<PubSubProvider> provider;
         {
             ProviderRegistry registry;
             auto module = std::make_shared<ModuleStandIn>(&unloaded);
             // The resolver author does the WRONG thing on purpose: the module is
             // captured by the resolver and not tied to the provider's ownership.
-            registry.SetPathResolver([module, journal](const std::string&, const ProviderConfig&) {
-                return std::make_shared<ProbeProvider>("loaded", journal);
+            registry.SetPathResolver([module, journal, &unloaded, &module_was_loaded_at_my_death](
+                                         const std::string&, const ProviderConfig&) {
+                return std::make_shared<ModuleUserProvider>("loaded", journal, &unloaded,
+                                                            &module_was_loaded_at_my_death);
             });
             provider = MakeProvider(registry, "./libstandin_driver.so", ProviderConfig{});
             ASSERT_NE(provider, nullptr);
@@ -630,6 +669,10 @@ TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
         provider.reset();
         EXPECT_TRUE(unloaded)
             << "the module outlived the last provider that needed it, so nothing ever unloads it";
+        EXPECT_TRUE(module_was_loaded_at_my_death)
+            << "the provider's destructor ran after its module was already unloaded: the anchor "
+               "releases the seat before the provider, so a provider closing endpoints in its "
+               "destructor calls into unmapped module code";
     }
 
     // (b) reached by NAME, through a factory — the linkage ruling's static half
@@ -637,12 +680,15 @@ TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
     {
         auto journal = std::make_shared<Journal>();
         bool unloaded = false;
+        bool module_was_loaded_at_my_death = false;
         std::shared_ptr<PubSubProvider> provider;
         {
             ProviderRegistry registry;
             auto module = std::make_shared<ModuleStandIn>(&unloaded);
-            registry.Register("zenoh", [module, journal](const ProviderConfig&) {
-                return std::make_shared<ProbeProvider>("zenoh", journal);
+            registry.Register("zenoh", [module, journal, &unloaded,
+                                        &module_was_loaded_at_my_death](const ProviderConfig&) {
+                return std::make_shared<ModuleUserProvider>("zenoh", journal, &unloaded,
+                                                            &module_was_loaded_at_my_death);
             });
             provider = MakeProvider(registry, "zenoh", ProviderConfig{});
             ASSERT_NE(provider, nullptr);
@@ -657,6 +703,9 @@ TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
 
         provider.reset();
         EXPECT_TRUE(unloaded) << "the factory outlived the last provider it made";
+        EXPECT_TRUE(module_was_loaded_at_my_death)
+            << "by the name route too: the provider's destructor ran after the factory that "
+               "captured its module had already been released";
     }
 }
 

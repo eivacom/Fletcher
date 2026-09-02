@@ -39,12 +39,20 @@ size_t FirstNonNameChar(const std::string& text) {
 // A selector in a diagnostic, with control characters escaped. The realistic
 // misclassification is a trailing CRLF out of a configuration file, and a raw
 // CR in an error message hides exactly the character the operator must delete.
+//
+// A backslash and a quote are escaped too, and not for tidiness: `\x` is this
+// function's own escape spelling, so an ordinary Windows driver path such as
+// `C:\x64\driver.dll` would otherwise render its `\x64` as the escape for byte
+// 0x64 — a real path turned into a lie inside the one message an operator reads
+// when a driver will not load.
 std::string Quoted(const std::string& text) {
     std::ostringstream out;
     out << '"';
     for (const char c : text) {
         const auto byte = static_cast<unsigned char>(c);
-        if (byte >= 0x20 && byte < 0x7f) {
+        if (c == '\\' || c == '"') {
+            out << '\\' << c;
+        } else if (byte >= 0x20 && byte < 0x7f) {
             out << c;
         } else {
             static const char kHex[] = "0123456789abcdef";
