@@ -104,11 +104,31 @@ std::string ReadProviderDocument(const char* path) {
         std::fprintf(stderr, "fletcher-gateway: error reading --provider-config %s\n", path);
         std::exit(2);
     }
-    return buffer.str();
+    std::string document = buffer.str();
+
+    // An EMPTY file is refused, and with its own message. Every provider reads an empty document
+    // as "my own defaults", so a zero-length, truncated or wrong-but-empty file would otherwise
+    // start a gateway that applies none of the operator's intent and says nothing at all. Whoever
+    // passed --provider-config asked to be configured FROM THAT FILE; an empty read fails that
+    // request as squarely as an unreadable one, and this is the only place that can tell "no flag"
+    // from "flag, empty file" (review 4b S2, and the item's own rule: refuse at start-up so a
+    // misconfigured instance never exists). Whitespace-only counts as empty: it is what an editor
+    // leaves behind, and no provider's format has a meaning for it.
+    if (document.find_first_not_of(" \t\r\n\f\v") == std::string::npos) {
+        std::fprintf(stderr,
+                     "fletcher-gateway: --provider-config %s is empty; omit the flag to run on "
+                     "the provider's own defaults\n",
+                     path);
+        std::exit(2);
+    }
+    return document;
 }
 
 Args ParseArgs(int argc, char* argv[]) {
     Args a;
+    // The path is remembered and read AFTER the flag loop, so `--provider-config missing.xml
+    // --help` prints help instead of exiting 2 on a file the user never meant to use.
+    const char* document_path = nullptr;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) {
@@ -120,7 +140,7 @@ Args ParseArgs(int argc, char* argv[]) {
         } else if (arg == "--domain-id" && i + 1 < argc) {
             a.domain_id = static_cast<uint32_t>(std::stoul(argv[++i]));
         } else if (arg == "--provider-config" && i + 1 < argc) {
-            a.document = ReadProviderDocument(argv[++i]);
+            document_path = argv[++i];
         } else if (arg == "--version") {
             std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
             std::exit(0);
@@ -150,6 +170,7 @@ Args ParseArgs(int argc, char* argv[]) {
             std::exit(2);
         }
     }
+    if (document_path) a.document = ReadProviderDocument(document_path);
     // No provider-name validation here: the registry below is the single list
     // (spec §4), and it refuses an unknown selector itself, naming what IS
     // registered.

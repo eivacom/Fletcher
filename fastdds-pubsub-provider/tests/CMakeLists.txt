@@ -16,6 +16,13 @@ add_executable(fastdds_pubsub_tests
 target_include_directories(fastdds_pubsub_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
+# B1: `DefaultProfileTranscriptionIsExact` reads the published starting-point XML block out of
+# README.md itself rather than holding a copy of it, so editing either the README block or
+# `MakeFletcherDefault*Qos()` alone turns the test red. The README is exported by conanfile.py
+# so the cache build reads the same file the repository holds.
+target_compile_definitions(fastdds_pubsub_tests PRIVATE
+    FLETCHER_FASTDDS_README_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../README.md")
+
 target_link_libraries(fastdds_pubsub_tests PRIVATE
     GTest::gtest_main
     GTest::gmock

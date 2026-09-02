@@ -241,6 +241,15 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
     impl_->subscriber = impl_->participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
     if (!impl_->subscriber)
         throw PubSubError(PubSubStatus::kTransportFailure, "FastDDS: failed to create Subscriber");
+
+    // A `fletcher.*` property in a WRITER or READER profile is read by nobody, so it is refused
+    // rather than left inert (review 4a F5). The two role profiles are checked here, as late as
+    // the Publisher and Subscriber allow and still before any endpoint exists; a profile named
+    // after a topic is checked when that topic is created, which is the first moment its name is
+    // known (internal/profile_document.hpp). `~Impl` releases what this constructor already
+    // built when this throws.
+    internal::RefuseMisplacedFletcherPropertiesInRoleProfiles(*impl_->publisher, *impl_->subscriber,
+                                                              impl_->document);
 }
 
 // Destruction precondition (issue #63): no thread may be executing or about to

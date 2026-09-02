@@ -253,7 +253,7 @@ fletcher_gen::myapp::SensorReading restored(encoded);
 ### 7.4 Publish and subscribe
 
 ```cpp
-#include <fast_dds_pubsub_provider.hpp>
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 
 auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>();
 

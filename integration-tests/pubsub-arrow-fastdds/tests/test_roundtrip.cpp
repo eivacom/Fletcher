@@ -68,8 +68,10 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
 }  // namespace
 
 TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -123,8 +125,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -182,8 +186,10 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 //     sample, which is the subscriber-only mode for the batched path
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a delivery on the FastDDS listener
     // thread could otherwise touch destroyed locals during teardown.
@@ -282,8 +288,10 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
 // test's XrceSubscribeBeforeFastDDSPublish.
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kTestDomain, ""});
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     std::mutex mu;
     std::condition_variable cv;

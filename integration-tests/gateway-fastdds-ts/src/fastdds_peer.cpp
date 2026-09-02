@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
     // zero deliveries rather than as a warning.
     std::shared_ptr<fletcher::FastDDSPubSubProvider> provider =
         std::make_shared<fletcher::FastDDSPubSubProvider>(
-            fletcher::ProviderConfig{0, domain_id, ""});
+            fletcher::ProviderConfig{.domain_id = domain_id});
 
     // C++ -> TS : the generated publisher's constructor calls CreateTopic,
     // which announces the CppToTs schema on the DDS __schema channel so the

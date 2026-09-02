@@ -10,6 +10,12 @@
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
+// The bound advice below tells a caller to write `kPayloadBytes<N>`, so the header owes them the
+// declaration: nothing else here pulls it in, and an out-of-tree TU that takes the advice would
+// otherwise not compile (review 4a F7). Fletcher's own header - no eProsima, so the machine check
+// above is unaffected. `test_package/src/example.cpp` writes the idiom, so this include cannot be
+// dropped again in silence.
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <memory>
@@ -37,7 +43,8 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 ///    resolves to 65536. The bound is part of the registered DDS type name, so
 ///    two endpoints on different bounds do not discover each other at all. A
 ///    value `IsPayloadBound` rejects is refused with
-///    `PubSubError(kInvalidArgument)` before the participant exists.
+///    `PubSubError(kInvalidArgument)` before the participant exists. Write it
+///    as `kPayloadBytes<N>` to be told at compile time instead.
 ///  - `document` — **a Fast DDS XML profiles document, as text** (owner ruling
 ///    2026-09-02: the setting holds the XML itself, never a filename; the
 ///    gateway's `--provider-config FILE` is where reading a file lives). Fast

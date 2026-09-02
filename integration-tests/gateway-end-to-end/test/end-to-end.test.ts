@@ -10,7 +10,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FletcherClient,
@@ -86,12 +88,13 @@ function findGatewayBinary(): string {
   );
 }
 
-async function spawnGateway(cfg: ProviderConfig): Promise<ChildProcess> {
+async function spawnGateway(cfg: ProviderConfig, extraArgs: string[] = []): Promise<ChildProcess> {
   const bin = findGatewayBinary();
   const args = ['--port', String(cfg.port), '--bind-address', '127.0.0.1', '--provider', cfg.name];
   if (cfg.domainId) {
     args.push('--domain-id', cfg.domainId);
   }
+  args.push(...extraArgs);
   const child = spawn(bin, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -161,7 +164,16 @@ async function spawnGatewayExpectingExit(
     stderr += chunk.toString();
   });
   const code = await new Promise<number | null>((res) => {
-    child.on('exit', (c) => res(c));
+    // A refusal case that stops refusing does not hang the suite for the full test timeout: the
+    // watchdog kills a gateway that came up anyway, so the assertion below fails on the exit code
+    // with the stderr in hand rather than on a 30 s timeout with nothing.
+    const watchdog = setTimeout(() => {
+      if (!child.killed) child.kill('SIGKILL');
+    }, 10_000);
+    child.on('exit', (c) => {
+      clearTimeout(watchdog);
+      res(c);
+    });
   });
   return { code, stderr };
 }
@@ -216,7 +228,131 @@ describe('provider selection', () => {
   });
 
   it('--provider inprocess still resolves and prints READY', async () => {
-    const child = await spawnGateway({ name: 'inprocess', port: TEST_PORT + 8, roundtripMs: 5_000 });
+    const child = await spawnGateway({
+      name: 'inprocess',
+      port: TEST_PORT + 8,
+      roundtripMs: 5_000,
+    });
+    await stopGateway(child);
+  });
+});
+
+// ---------------------------------------------------------------------
+// PDA-DEC-6 fix cycle 1 (review 4b S1/S2): `--provider-config` is the ONLY
+// route by which the owner's charter requirement (b) - configure the driver
+// with protocol-specific setup at run time - is reachable from gateway.exe,
+// and nothing tested it. A regression here is silent in exactly the way that
+// matters: drop `config.document = args.document` and the gateway still
+// starts, still serves, and quietly runs on the provider's defaults.
+//
+// The property case is the one that proves the BYTES ARRIVE: the message it
+// asserts is the Fast DDS provider's own, so it cannot be produced by a
+// gateway that reads the file and forgets to forward it.
+// ---------------------------------------------------------------------
+describe('provider configuration', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'fletcher-provider-config-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function write(name: string, contents: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, contents);
+    return path;
+  }
+
+  const ANCHOR_ONLY = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">',
+    '  <profiles>',
+    '    <participant profile_name="fletcher_participant">',
+    '      <rtps>',
+    '        <propertiesPolicy>',
+    '          <properties>',
+    '            <property><name>PROPERTY_NAME</name><value>131072</value></property>',
+    '          </properties>',
+    '        </propertiesPolicy>',
+    '      </rtps>',
+    '    </participant>',
+    '  </profiles>',
+    '</dds>',
+  ].join('\n');
+
+  it('a missing --provider-config file exits 2', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      join(dir, 'does-not-exist.xml'),
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('cannot read --provider-config');
+  });
+
+  it('an unreadable --provider-config file exits 2', async () => {
+    // A DIRECTORY: the open fails on Windows and the read fails on Linux, so either message is
+    // correct - what matters is that it never falls through to "unconfigured".
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      dir,
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toMatch(/cannot read --provider-config|error reading --provider-config/);
+  });
+
+  it('an EMPTY --provider-config file exits 2 rather than meaning "unconfigured"', async () => {
+    // S2: an empty read is as much a failure as an unreadable one. Every provider reads an
+    // empty document as "my own defaults", so accepting this would start a gateway that
+    // applies none of the operator's intent and prints nothing at all.
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      write('empty.xml', '   \n\t\n'),
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('is empty');
+  });
+
+  it("a document the provider rejects exits 2, in the provider's own wording", async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      'fastdds',
+      '--domain-id',
+      '153',
+      '--provider-config',
+      write('bad-property.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_byte')),
+    ]);
+    expect(code).toBe(2);
+    // The Fast DDS provider's wording, not the gateway's: proof the bytes crossed the seam.
+    expect(stderr).toContain('fletcher.max_schema_byte');
+  });
+
+  it('a valid --provider-config document reaches the provider and the gateway starts', async () => {
+    const child = await spawnGateway(
+      { name: 'fastdds', port: TEST_PORT + 9, domainId: '154', roundtripMs: 15_000 },
+      [
+        '--provider-config',
+        write('good.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_bytes')),
+      ],
+    );
     await stopGateway(child);
   });
 });

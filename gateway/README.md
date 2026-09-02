@@ -38,7 +38,7 @@ Both providers are always compiled into the exe and the released binary; `--prov
 - for **`fastdds`**, the document is a [Fast DDS XML QoS profiles document](../fastdds-pubsub-provider/README.md#qos-configuration). Reserved profile names are `fletcher_participant` (mandatory in a non-empty document), `fletcher_writer`, `fletcher_reader`, and a profile named after the `/`-joined topic for a per-topic override. Note that **a supplied profile is that endpoint's whole quality-of-service** — start from the published starting-point block rather than from a bare profile.
 - for **`inprocess`**, it is `key=value` lines; the only key is `schema_carriage`.
 
-Without the flag the document is empty and each provider uses its own defaults, which for `fastdds` is Fletcher's profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`, with the resource limits and reader-side `data_sharing OFF` that profile carries). An unreadable `FILE` exits 2, as a bad `--provider` does; a document the provider rejects exits 2 with the provider's own message.
+Without the flag the document is empty and each provider uses its own defaults, which for `fastdds` is Fletcher's profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`, with the resource limits and reader-side `data_sharing OFF` that profile carries). An unreadable `FILE` exits 2, as a bad `--provider` does; a document the provider rejects exits 2 with the provider's own message. An **empty or whitespace-only** `FILE` also exits 2, with its own message: passing the flag asks to be configured from that file, and every provider reads an empty document as "my own defaults", so accepting it would start a gateway that applies none of your intent and says nothing. Omit the flag if that is what you want.
 
 ## Installing
 

@@ -702,8 +702,9 @@ retires. **Corrected** when PDA-DEC-6 migrated them: the earlier figure of "4
 files, 19 occurrences" was wrong in both halves — `test_interop.cpp` carried 3
 constructions rather than 9, and four further files construct the provider that
 the count omitted entirely. PDA-DEC-7 will cite this table for XRCE, so it is
-corrected rather than merely marked done. **8 files, 12 construction sites**, all
-migrated to `ProviderConfig`:
+corrected rather than merely marked done. **8 files, 12 construction sites**: 11
+migrated to `ProviderConfig`, and the gateway's one **replaced outright** by
+`RegisterFastDDSProvider`, which is why it constructs nothing at all now:
 
 | Site | Sites | Status |
 |---|---|---|
@@ -724,9 +725,16 @@ were re-anchored onto the `fletcher.max_schema_bytes` document property; and
 `internal/qos_defaults.hpp` left the installed tree for `src/internal/`.
 `xrcedds-pubsub-provider/` 10 across 4 files — **still owed, PDA-DEC-7**.
 
-**Docs:** both provider READMEs, plus the "implementing one interface" claims in
+**Docs:** the Fast DDS README's configuration section was rewritten and
+[gateway/README.md](../gateway/README.md) now documents `--provider-config`, both
+in PDA-DEC-6; the XRCE README is **still owed, PDA-DEC-7**.
 [docs/architecture-overview.md](architecture-overview.md) and the root
-[README.md](../README.md).
+[README.md](../README.md) were inspected in PDA-DEC-6 and carry no retired
+vocabulary — their "implementing one interface" claims stand, and the only code
+they show is `make_shared<FastDDSPubSubProvider>()`, which still compiles. The
+one edit made to either was §7.4's include path, wrong since #26 (it named the
+header unqualified rather than as it is packaged); PDA-DEC-6 corrected it in
+passing because the item is what put a machine check on that include tree.
 
 **Consumers of the vocabulary change, which sit ABOVE the seam.** Giving schema
 arrival a C-expressible form (§3.4) is not confined to providers: `SubscriptionResult`

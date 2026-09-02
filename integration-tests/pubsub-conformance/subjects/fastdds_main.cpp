@@ -33,7 +33,7 @@ constexpr uint32_t kPeerDomain = 152;
 constexpr uint32_t kRegistryDomain = 153;
 
 std::shared_ptr<PubSubProvider> MakeFastDds(uint32_t domain_id) {
-    return std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, domain_id, ""});
+    return std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = domain_id});
 }
 
 }  // namespace

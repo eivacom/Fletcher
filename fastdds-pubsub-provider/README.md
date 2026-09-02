@@ -196,9 +196,10 @@ The first three together implement "at-least-once" delivery within a single DDS 
 
 This is the **exact** XML transcription of the two profiles above. Copy it, change what you need,
 and the policies you leave alone stay where Fletcher put them. It is kept true setting-for-setting
-by `FastDdsConfig.DefaultProfileTranscriptionIsExact`, which compares the parsed result against
-`MakeFletcherDefault{Writer,Reader}Qos()` **whole-struct** — so this block cannot drift from the
-code without a test going red.
+by `FastDdsConfig.DefaultProfileTranscriptionIsExact`, which **reads the fenced block below out of
+this file**, parses it, and compares the result against `MakeFletcherDefault{Writer,Reader}Qos()`
+**whole-struct**. There is one copy of this XML in the repository and it is the one you are
+reading, so editing either this block or the code alone turns that test red.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -262,6 +263,15 @@ Both are provider-wide switches, which is what a participant profile is for. A `
 property that is not one of these two, or whose value does not parse, is **refused** — a typo'd
 `fletcher.loanpublish` must not be inert.
 
+**The anchor is the only place they are read, and putting one anywhere else is refused too.** A
+correctly spelled `fletcher.loan_publish` inside a `<data_writer>` or `<data_reader>` profile would
+do nothing at all, which is the same failure as the typo, so it is refused with `kInvalidArgument`
+quoting the property and the profile it sat in: at construction for `fletcher_writer` /
+`fletcher_reader`, and at the first endpoint on that topic for a per-topic profile, because a
+document can only be asked about a profile name and never enumerated. The other spelling someone
+tries — `<propertiesPolicy>` *inside* the profile's `<qos>` — is rejected by Fast DDS's own parser
+and takes the malformed-document refusal below.
+
 The two the provider consumes are **stripped before `create_participant`**, so a
 `<propagate>true</propagate>` on one cannot put a Fletcher key into DDS participant discovery data.
 Every other property reaches Fast DDS untouched: security plugins (`dds.sec.*`) need that.
@@ -300,6 +310,13 @@ as absent.
   error anywhere.
 - **A profile's `resource_limits` can oversize the data-sharing segment.** Fletcher does not know
   your memory budget, so it does not second-guess the number; see the 5000-sample note above.
+- **A document containing an `&` anywhere may log one `[XMLPARSER Error] ... profile not found`
+  line per endpoint.** Fast DDS logs a profile miss at ERROR level, and the resolution ladder above
+  treats a miss as "try the next name". The provider skips a lookup that provably cannot succeed —
+  a profile named `N` occurs literally as `profile_name="N"` unless a character of it was written
+  as an XML entity or character reference — so an ordinary document produces no such line at all.
+  A document with an `&` cannot be reasoned about that way, so it takes the lookup and the log line
+  with it. Those lines are expected; the profile still resolves correctly.
 - **Every non-empty document loses the `FletcherParticipant` participant name** unless its anchor
   sets one, because the anchor *is* the participant's QoS. This is universal rather than exotic,
   and it is diagnostic-only — nothing in the tree keys on that name. Set

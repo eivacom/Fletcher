@@ -32,8 +32,14 @@ int main() {
     // recipe drops `transitive_headers`, so it compiles with no Fast DDS include directories at
     // all. An eProsima type surviving in the installed header would be a compile error HERE
     // (PDA-DEC-6 §5, owner ruling 2026-08-31 "Fletcher never learns DDS vocabulary").
-    FastDDSPubSubProvider pub_provider(ProviderConfig{});
-    FastDDSPubSubProvider sub_provider(ProviderConfig{});
+    //
+    // The bound is written the way the header tells a caller to write it, so this TU is also the
+    // machine check for that advice: `kPayloadBytes<N>` lives in
+    // <fletcher/pubsub/payload_bound.hpp>, which the public header must include for an out-of-tree
+    // caller to compile (review 4a F7).
+    const ProviderConfig config{.max_payload_bytes = kPayloadBytes<64 * 1024>};
+    FastDDSPubSubProvider pub_provider(config);
+    FastDDSPubSubProvider sub_provider(config);
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 

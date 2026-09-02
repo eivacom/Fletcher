@@ -32,6 +32,10 @@ class FletcherPubsubConan(ConanFile):
 
     exports_sources = (
         "CMakeLists.txt",
+        # README.md is exported for the TESTS, not for documentation: B1's
+        # `DefaultProfileTranscriptionIsExact` reads the published starting-point XML block out
+        # of it, so the cache build must have the file the repository holds.
+        "README.md",
         "src/*",
         "include/*",
         "cmake/*",

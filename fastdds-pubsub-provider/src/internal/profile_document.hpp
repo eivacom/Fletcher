@@ -139,6 +139,68 @@ inline FletcherProperties ConsumeFletcherProperties(
     return out;
 }
 
+/// Could `document` possibly define a profile called `profile_name`?
+///
+/// Why this exists: `get_*_qos_from_xml` logs a miss at **ERROR** level
+/// (`[XMLPARSER Error] Publisher profile not found`), and the ladders below use a miss as
+/// ordinary control flow. Left alone, the most common document there is — an anchor plus one
+/// `fletcher.*` property — printed four `[XMLPARSER Error]` lines per topic on a **correct**
+/// configuration, which both alarms an operator reading a clean start-up and buries the one line
+/// that IS an error (review 4b S3). So a lookup that provably cannot succeed is not made at all.
+///
+/// This is a proof, not a heuristic, and it can only ever err towards asking Fast DDS anyway: a
+/// profile named `N` is written `profile_name="N"`, so `N` occurs literally in the document -
+/// UNLESS a character of it was spelled with an entity or character reference, which needs an
+/// `&`. A document with no `&` anywhere therefore cannot name a profile that is not a literal
+/// substring of it. A document containing an `&` is not reasoned about at all: it takes the
+/// lookup, and the log line with it. Nothing here decides a QoS — being wrong costs a log line,
+/// never a policy.
+inline bool DocumentMayName(const std::string& document, const std::string& profile_name) {
+    if (document.find('&') != std::string::npos) return true;  // cannot reason — ask Fast DDS
+    return document.find(profile_name) != std::string::npos;
+}
+
+/// Could `document` define ANY data-writer profile? One rung coarser than `DocumentMayName`, and
+/// it needs no `&` caveat: XML **element** names can never carry a reference, so a writer profile
+/// is a literal `<data_writer>` (or `<publisher>`, the pre-3.x spelling) and one of those two
+/// words occurs in the text. This is what keeps a document mentioning a topic name only inside a
+/// `<topic><name>` from probing for a writer profile named after that topic.
+inline bool DocumentMayDefineWriterProfile(const std::string& document) {
+    return document.find("writer") != std::string::npos ||
+           document.find("publisher") != std::string::npos;
+}
+
+/// The reader counterpart of `DocumentMayDefineWriterProfile`.
+inline bool DocumentMayDefineReaderProfile(const std::string& document) {
+    return document.find("reader") != std::string::npos ||
+           document.find("subscriber") != std::string::npos;
+}
+
+/// Refuse a `fletcher.*` property found on a resolved WRITER or READER profile.
+///
+/// The two Fletcher settings are provider-wide and are read from the participant anchor and
+/// nowhere else. A correctly spelled `fletcher.loan_publish` inside a `<data_writer>` profile is
+/// not a setting in a slightly odd place — it is silently inert, which is exactly the failure a
+/// *misspelled* name is already refused for (review 4a F5). MEASURED on fast-dds/3.4.0: a
+/// `<propertiesPolicy>` that is a direct child of `<data_writer>` / `<data_reader>` arrives in
+/// `Data{Writer,Reader}Qos::properties()`, so it is observable and therefore refused; the other
+/// placement, inside `<qos>`, is rejected by Fast DDS's own parser and so is already refused as a
+/// malformed document. Neither placement is inert any more.
+inline void RefuseFletcherPropertiesOutsideTheAnchor(
+    const eprosima::fastdds::dds::PropertyPolicyQos& properties, const char* element,
+    const std::string& profile_name) {
+    for (const auto& property : properties.properties()) {
+        if (property.name().rfind("fletcher.", 0) != 0) continue;
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            "FastDDS: property '" + property.name() + "' appears in the <" + element +
+                "> profile '" + profile_name +
+                "', where the provider never reads it, so it would have no effect at all. Both "
+                "'fletcher.' settings are provider-wide and are read ONLY from the anchor's "
+                "<rtps><propertiesPolicy> in <participant profile_name=\"fletcher_participant\">");
+    }
+}
+
 /// Resolve the participant QoS, the anchor, and the `fletcher.*` properties in one pass.
 ///
 /// An empty document is Fletcher's own participant: the Fast DDS default plus the
@@ -197,20 +259,34 @@ inline void ResolveParticipantQos(const std::string& document, uint32_t domain_i
 /// Writer QoS for `topic_name`: the profile named after the topic, then `fletcher_writer`, then
 /// Fletcher's built-in. Each lookup starts from a freshly default-constructed QoS — see the file
 /// comment; this is the form C2-1 mandates and it is not an optimisation to remove.
+///
+/// The `DocumentMay*` guards ahead of each lookup change no answer: they skip only a lookup that
+/// cannot succeed, whose one effect would be an `[XMLPARSER Error]` line on a correct
+/// configuration. Read the proofs above them before touching them.
 inline eprosima::fastdds::dds::DataWriterQos ResolveWriterQos(
     const eprosima::fastdds::dds::Publisher& publisher, const std::string& document,
     const std::string& topic_name) {
     using eprosima::fastdds::dds::DataWriterQos;
     using eprosima::fastdds::dds::RETCODE_OK;
 
-    if (!document.empty()) {
-        DataWriterQos per_topic;
-        if (publisher.get_datawriter_qos_from_xml(document, per_topic, topic_name) == RETCODE_OK) {
-            return per_topic;
+    if (!document.empty() && DocumentMayDefineWriterProfile(document)) {
+        if (DocumentMayName(document, topic_name)) {
+            DataWriterQos per_topic;
+            if (publisher.get_datawriter_qos_from_xml(document, per_topic, topic_name) ==
+                RETCODE_OK) {
+                RefuseFletcherPropertiesOutsideTheAnchor(per_topic.properties(), "data_writer",
+                                                         topic_name);
+                return per_topic;
+            }
         }
-        DataWriterQos role;
-        if (publisher.get_datawriter_qos_from_xml(document, role, kWriterProfile) == RETCODE_OK) {
-            return role;
+        if (DocumentMayName(document, kWriterProfile)) {
+            DataWriterQos role;
+            if (publisher.get_datawriter_qos_from_xml(document, role, kWriterProfile) ==
+                RETCODE_OK) {
+                RefuseFletcherPropertiesOutsideTheAnchor(role.properties(), "data_writer",
+                                                         kWriterProfile);
+                return role;
+            }
         }
     }
     return MakeFletcherDefaultWriterQos();
@@ -225,17 +301,59 @@ inline eprosima::fastdds::dds::DataReaderQos ResolveReaderQos(
     using eprosima::fastdds::dds::DataReaderQos;
     using eprosima::fastdds::dds::RETCODE_OK;
 
-    if (!document.empty()) {
-        DataReaderQos per_topic;
-        if (subscriber.get_datareader_qos_from_xml(document, per_topic, topic_name) == RETCODE_OK) {
-            return per_topic;
+    if (!document.empty() && DocumentMayDefineReaderProfile(document)) {
+        if (DocumentMayName(document, topic_name)) {
+            DataReaderQos per_topic;
+            if (subscriber.get_datareader_qos_from_xml(document, per_topic, topic_name) ==
+                RETCODE_OK) {
+                RefuseFletcherPropertiesOutsideTheAnchor(per_topic.properties(), "data_reader",
+                                                         topic_name);
+                return per_topic;
+            }
         }
-        DataReaderQos role;
-        if (subscriber.get_datareader_qos_from_xml(document, role, kReaderProfile) == RETCODE_OK) {
-            return role;
+        if (DocumentMayName(document, kReaderProfile)) {
+            DataReaderQos role;
+            if (subscriber.get_datareader_qos_from_xml(document, role, kReaderProfile) ==
+                RETCODE_OK) {
+                RefuseFletcherPropertiesOutsideTheAnchor(role.properties(), "data_reader",
+                                                         kReaderProfile);
+                return role;
+            }
         }
     }
     return MakeFletcherDefaultReaderQos();
+}
+
+/// Refuse a misplaced `fletcher.*` property in either ROLE profile, at construction.
+///
+/// A per-topic profile can only be checked when its topic is created — a document cannot be
+/// enumerated, only asked about a name — and `Resolve{Writer,Reader}Qos` do that. The two role
+/// profiles have names the provider knows up front, so the common case is refused before the
+/// participant exists (spec §5.1 rung 2), like every other document refusal in this item.
+inline void RefuseMisplacedFletcherPropertiesInRoleProfiles(
+    const eprosima::fastdds::dds::Publisher& publisher,
+    const eprosima::fastdds::dds::Subscriber& subscriber, const std::string& document) {
+    using eprosima::fastdds::dds::DataReaderQos;
+    using eprosima::fastdds::dds::DataWriterQos;
+    using eprosima::fastdds::dds::RETCODE_OK;
+
+    if (document.empty()) return;
+
+    if (DocumentMayDefineWriterProfile(document) && DocumentMayName(document, kWriterProfile)) {
+        DataWriterQos writer;
+        if (publisher.get_datawriter_qos_from_xml(document, writer, kWriterProfile) == RETCODE_OK) {
+            RefuseFletcherPropertiesOutsideTheAnchor(writer.properties(), "data_writer",
+                                                     kWriterProfile);
+        }
+    }
+    if (DocumentMayDefineReaderProfile(document) && DocumentMayName(document, kReaderProfile)) {
+        DataReaderQos reader;
+        if (subscriber.get_datareader_qos_from_xml(document, reader, kReaderProfile) ==
+            RETCODE_OK) {
+            RefuseFletcherPropertiesOutsideTheAnchor(reader.properties(), "data_reader",
+                                                     kReaderProfile);
+        }
+    }
 }
 
 }  // namespace internal
