@@ -389,7 +389,8 @@ delivery claim.
 | `InProcessResolvesAsABuiltIn` (forcing, PDA-DEC-5) | §4 clause 4: `RegisterInProcessProvider` makes `"inprocess"` selectable; a row published through the **base-typed** `shared_ptr<PubSubProvider>` handle arrives byte-identical, and a publish to a **second, never-declared** topic succeeds — pinning the default `as_declared` mode without an accessor for it |
 | `InProcessCarriageComesFromTheDocument` | the live control for the row above: the identical registry call, `document = "schema_carriage=carried"`, and the opposite behaviour — publish-before-declare is refused `kTopicNotDeclared`, and a declared topic's delivery carries a non-null schema. Neither test alone proves the mode comes from the document |
 | `InProcessRefusesAnUnrecognisedDocumentEntry` | rung-2 case 6: seven refusals — an unrecognised value, an unrecognised key, an entry with no `=`, a duplicate key, an empty value, and leading/trailing whitespace on key and value — all `kInvalidArgument` quoting the offending entry, never "threw something" and never a silently-defaulted typo |
-| `InProcessDocumentToleratesCrlfAndBlankLines` | the two tolerances the reader *adds* are the ones that had no guard: a trailing `` is stripped (so a CRLF document means the same on every platform — the 2026-09-02 ruling) and a blank entry is skipped. Covers CRLF, a leading blank line, an interior blank line, a trailing newline, and all composed |
+| `InProcessDocumentToleratesCrlfAndBlankLines` | the two tolerances the reader *adds* are the ones that had no guard: a trailing `
+` is stripped (so a CRLF document means the same on every platform — the 2026-09-02 ruling) and a blank entry is skipped. Covers CRLF, a leading blank line, an interior blank line, a trailing newline, and all composed |
 | `InProcessRefusesADocumentContainingANul` | a document carrying an embedded NUL is refused at the door with its offset, mirroring `ProviderSelector::Parse`. This is a **provider-format** rule, not a seam one — the seam's document stays length-authoritative and carries a NUL unchanged (§4.2). It is the suite's only guard against a NUL-truncating boundary |
 
 **The link line is a machine check.** `conformance_registry` names
@@ -436,7 +437,8 @@ duplicate-key case (the document's first line rather than the repeated key)
 would have passed with a message that only accidentally happened to contain the
 right substring, which is why that test's helper takes the expected quote
 explicitly rather than deriving it from the document. *(PDA-DEC-5)* Deleting the
-document reader's `` strip, or its blank-entry skip, each redden
+document reader's `
+` strip, or its blank-entry skip, each redden
 `InProcessDocumentToleratesCrlfAndBlankLines` alone — both were **fully green**
 across all 17 entries before those cases existed. Deleting the NUL refusal reddens
 `InProcessRefusesADocumentContainingANul` and reproduces the truncation it exists to
@@ -473,12 +475,27 @@ superbuild happens once per machine and CI caches one unit; the
 `ExternalProject` *prefix* is this harness's own, because a shared source+build
 tree collides when two harnesses configure concurrently.
 
-Isolation: fixed DDS domains 151/152/153 and Agent UDP port 2019, none of which
+Isolation: fixed DDS domains 151/152/153 and Agent UDP ports 2019 (the suite's
+own Agent) and 2119 (`ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness`
+only, which deliberately puts two Agents on it), none of which
 `fastdds-xrce-interop` (domain 145, port 2018) uses. `RESOURCE_LOCK` is one lock
 per binary, not per domain, because ctest properties apply target-wide and
 `conformance_fastdds` carries two subjects. The XRCE binary has a **single**
 ctest entry (the interop precedent — one UDP port, and per-clause entries would
 pay ~24 Agent start/stop cycles).
+
+The Agent guard proves **ownership of the port**, not liveness of a process
+(PDA-DEC-1H). Reaching the Agent is not enough and neither is the spawned
+Agent still running: a second `MicroXRCEAgent` aimed at a port a leftover
+already holds logs `bind error` and exits, but takes ~0.9 s to do it, while the
+leftover answers the reachability probe in milliseconds — so a liveness check
+was true at the instant it was asked and the suite would certify all 26 cases
+against a foreign Agent. `SetUp` therefore requires the OS to record *this
+binary's child* as the holder of UDP 2019 (`GetExtendedUdpTable` on Windows,
+`/proc/net/udp` plus the child's `/proc/<pid>/fd` on Linux), and refuses with an
+operator-actionable message otherwise. On a platform that can answer neither,
+the guard falls back to liveness, says so on stdout, and the forcing test
+records a counted skip — never silence.
 
 Every wait is a bounded predicate wait on one deadline per clause. That deadline
 is anchored at the clause's **first wait**, not at `SetUp`: on a cross-process

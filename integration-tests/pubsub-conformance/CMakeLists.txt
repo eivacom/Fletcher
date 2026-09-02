@@ -250,6 +250,13 @@ if(FLETCHER_CONFORMANCE_XRCE)
         fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider
         # gtest, NOT gtest_main - see conformance_fastdds above.
         GTest::gtest)
+    if(WIN32)
+        # PDA-DEC-1H: the Agent guard proves that OUR child holds the UDP port being
+        # certified, and on Windows that answer comes from GetExtendedUdpTable. A system
+        # library, not a new dependency: no package, no option, nothing to fetch. The POSIX
+        # side reads /proc and links nothing.
+        target_link_libraries(conformance_xrce PRIVATE iphlpapi)
+    endif()
     target_compile_definitions(conformance_xrce PRIVATE
         CONFORMANCE_XRCE_PEER="$<TARGET_FILE:conformance_xrce_peer>"
         MICRO_XRCE_AGENT_PATH="${AGENT_BINARY}"
@@ -294,8 +301,11 @@ if(FLETCHER_CONFORMANCE_XRCE)
     # precedent): one Agent binds one UDP port, and per-clause entries would pay
     # ~24 Agent start/stop cycles for the same coverage.
     add_test(NAME conformance_xrce COMMAND conformance_xrce)
-    # 24 clauses plus one `Registry` case (PDA-DEC-7 added the registry case, not a clause) =
-    # 25 gtest cases, ~26 peer spawns and one Agent handshake per session, in one process.
+    # 24 clauses plus one `Registry` case (PDA-DEC-7 added the registry case, not a clause)
+    # plus one `ConformanceXrce` case (PDA-DEC-1H's Agent-ownership guard, also not a clause) =
+    # 26 gtest cases, ~26 peer spawns and one Agent handshake per session, in one process.
+    # PDA-DEC-1H's case stands up two more Agents of its own on port 2119, inside its own
+    # scope, so it needs this entry's RESOURCE_LOCK as much as any clause does.
     set_tests_properties(conformance_xrce PROPERTIES
         RESOURCE_LOCK conformance_xrce
         TIMEOUT 900)

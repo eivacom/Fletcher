@@ -10,6 +10,12 @@
 // If the Agent binary is missing, SetUp FAILS naming the path it looked at.
 // It never skips: a protocol the suite cannot exercise has to be loud, or the
 // suite silently certifies two providers and calls it three.
+//
+// PDA-DEC-1H: and it is not enough that the Agent we spawned is ALIVE. The guard below
+// proves the OS records OUR child as the holder of the port being certified. Liveness alone
+// was a race, measured and reproduced by
+// `ConformanceXrce.AForeignAgentDoesNotSatisfyTheHarness` below, which is where that story is
+// written down.
 
 #include <gtest/gtest.h>
 
@@ -21,7 +27,9 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
+#include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,12 +38,25 @@
 
 #ifdef _WIN32
 // clang-format off
+// winsock2.h before windows.h (it has to win the WinSock version race), iphlpapi.h after both:
+// GetExtendedUdpTable's MIB_UDPTABLE_OWNER_PID needs the address-family constants. Nothing
+// here opens a socket, so ws2_32 is not linked - only iphlpapi is.
+#include <winsock2.h>
 #include <windows.h>
+#include <iphlpapi.h>
 // clang-format on
 #else
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+
+#ifdef __linux__
+#include <dirent.h>
+#include <errno.h>
+
+#include <fstream>
+#include <sstream>
 #endif
 
 namespace fletcher {
@@ -45,6 +66,11 @@ namespace {
 constexpr uint16_t kAgentPort = 2019;
 constexpr uint16_t kDdsDomain = 153;
 constexpr const char* kAgentIp = "127.0.0.1";
+/// The forcing test's own port, used by NOTHING else in the tree: 2018 is
+/// integration-tests/fastdds-xrce-interop, 2019 is this suite's real Agent, and both
+/// platforms' ephemeral ranges start far above this. The test needs a port it can put two
+/// Agents on deliberately without disturbing the Agent the rest of the run needs.
+constexpr uint16_t kContestedPort = 2119;
 /// Session keys must be unique per client on one Agent, and every clause builds
 /// a fresh client against the same long-lived Agent. A constant per subject
 /// would mean 13 sequential sessions reusing one key, so each clause's
@@ -66,8 +92,11 @@ constexpr uint32_t kRegistrySessionBase = 0x54000000u;
 /// The mask the peer applies to its pid; also the ceiling on a parent-side
 /// counter, though only ~13 of those are handed out per run.
 constexpr uint32_t kSessionKeyMask = 0x00FFFFFFu;
-/// The probe in WaitUntilReachable, alive only before any subject exists.
-constexpr uint32_t kProbeSessionKey = 0x50FFFFFFu;
+/// The reachability probe's base. A BASE and not one constant key, because the forcing test
+/// stands up more than one Agent and two of its probes hit the SAME Agent — reusing one key
+/// there would race the previous probe session's teardown over UDP, which is the very thing
+/// the per-clause counter above exists to avoid.
+constexpr uint32_t kProbeSessionBase = 0x50000000u;
 
 uint32_t NextSessionKey(uint32_t base) {
     static std::atomic<uint32_t> counter{0};
@@ -79,10 +108,11 @@ uint32_t NextSessionKey(uint32_t base) {
 // stays in the seam's typed core. These 24 cases are the document's end-to-end witness: with an
 // Agent on 2019 and discovery on domain 153, a build that stopped reading the document would
 // dial the default 127.0.0.1:2018 on domain 0 and every one of them would redden.
-ProviderConfig XrceConfigFor(uint32_t session_key, int connect_timeout_ms = 5000) {
+ProviderConfig XrceConfigFor(uint32_t session_key, int connect_timeout_ms = 5000,
+                             uint16_t agent_port = kAgentPort) {
     ProviderConfig config;
     config.domain_id = kDdsDomain;
-    config.document = std::string("agent=") + kAgentIp + ":" + std::to_string(kAgentPort) +
+    config.document = std::string("agent=") + kAgentIp + ":" + std::to_string(agent_port) +
                       "\nsession_key=" + std::to_string(session_key) +
                       "\nconnect_timeout_ms=" + std::to_string(connect_timeout_ms);
     return config;
@@ -92,29 +122,222 @@ std::shared_ptr<PubSubProvider> MakeXrce(uint32_t session_key) {
     return std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(session_key));
 }
 
+// ── Who holds the UDP port ──────────────────────────────────────────
+//
+// The question the harness has to answer is not "is our child alive" but "is our child the
+// process the OS records as the holder of the port we are about to certify". Both platforms
+// this project builds on can answer it from a table they already keep — no second Agent, no
+// dependency beyond a system library already on the box, no build option, and nothing an
+// operator has to remember to switch on.
+//
+// `kNobody` is kept apart from `kSomeoneElses` deliberately: an Agent that answered a probe
+// while the OS lists no holder at all would mean the table cannot be trusted, and that
+// deserves its own sentence rather than being told as a leftover-Agent story.
+enum class PortOwnership {
+    kOurs,          ///< The process we spawned holds it. The only pass.
+    kSomeoneElses,  ///< Some other process holds it — a leftover Agent, typically.
+    kNobody,        ///< The OS records no holder at all.
+    kUnprovable,    ///< This platform offers no way to ask.
+};
+
+#ifdef _WIN32
+/// The OS's own UDP table, filtered to `port`. IPv4 only: the Agent is started as `udp4`, so
+/// an IPv6 row on this port could not be the endpoint the suite certifies against.
+PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
+    // Sized, then read — and the table can grow between the two calls, hence the retry.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        DWORD size = 0;
+        DWORD rc = GetExtendedUdpTable(nullptr, &size, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0);
+        if (rc != ERROR_INSUFFICIENT_BUFFER && rc != NO_ERROR) {
+            return PortOwnership::kUnprovable;
+        }
+        std::vector<unsigned char> buffer(
+            size < sizeof(MIB_UDPTABLE_OWNER_PID) ? sizeof(MIB_UDPTABLE_OWNER_PID) : size);
+        size = static_cast<DWORD>(buffer.size());
+        rc = GetExtendedUdpTable(buffer.data(), &size, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0);
+        if (rc == ERROR_INSUFFICIENT_BUFFER) {
+            continue;
+        }
+        if (rc != NO_ERROR) {
+            return PortOwnership::kUnprovable;
+        }
+        const auto* table = reinterpret_cast<const MIB_UDPTABLE_OWNER_PID*>(buffer.data());
+        bool ours = false;
+        bool foreign = false;
+        for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+            const MIB_UDPROW_OWNER_PID& row = table->table[i];
+            // dwLocalPort carries the port in NETWORK byte order in its low two bytes. Swapped
+            // by hand rather than with ntohs, so this file needs no winsock link library.
+            const uint16_t row_port = static_cast<uint16_t>(((row.dwLocalPort & 0xFFu) << 8) |
+                                                            ((row.dwLocalPort >> 8) & 0xFFu));
+            if (row_port != port) {
+                continue;
+            }
+            if (static_cast<int64_t>(row.dwOwningPid) == our_pid) {
+                ours = true;
+            } else {
+                foreign = true;
+            }
+        }
+        // Foreign beats ours: a port two processes both appear on is not a port this harness
+        // can claim to own, whichever of them the datagrams actually reach. This is the case
+        // the brief warned about — under SO_REUSEADDR two UDP sockets can share a port and
+        // only one of them sees the traffic — and it is refused rather than guessed at.
+        if (foreign) {
+            return PortOwnership::kSomeoneElses;
+        }
+        return ours ? PortOwnership::kOurs : PortOwnership::kNobody;
+    }
+    return PortOwnership::kUnprovable;
+}
+#elif defined(__linux__)
+/// The socket inodes bound to `port`, from /proc/net/udp and /proc/net/udp6. False only when
+/// NEITHER file could be opened — the one case where the question is genuinely unanswerable.
+bool UdpPortInodes(uint16_t port, std::set<std::string>* inodes) {
+    bool read_any = false;
+    for (const char* path : {"/proc/net/udp", "/proc/net/udp6"}) {
+        std::ifstream file(path);
+        if (!file) {
+            continue;
+        }
+        read_any = true;
+        std::string line;
+        std::getline(file, line);  // The column header.
+        while (std::getline(file, line)) {
+            // sl / local_address / rem_address / st / tx_queue:rx_queue / tr:tm->when /
+            // retrnsmt / uid / timeout / inode — tx-rx and tr-tm are colon-joined into one
+            // field each, so `inode` is the tenth whitespace-separated token.
+            std::istringstream fields(line);
+            std::vector<std::string> token;
+            std::string one;
+            while (fields >> one) {
+                token.push_back(one);
+            }
+            if (token.size() < 10) {
+                continue;
+            }
+            const std::string& local = token[1];  // "0100007F:07E3" — the port in hex.
+            const size_t colon = local.rfind(':');
+            if (colon == std::string::npos) {
+                continue;
+            }
+            if (std::strtoul(local.c_str() + colon + 1, nullptr, 16) != port) {
+                continue;
+            }
+            inodes->insert(token[9]);
+        }
+    }
+    return read_any;
+}
+
+/// The socket inodes `pid` has open. A pid that no longer exists holds no sockets, and that is
+/// a real answer rather than an unanswerable one — a dead child cannot be the port's owner. A
+/// PERMISSION refusal is the only unanswerable case, and it cannot arise for a child of this
+/// process (same real uid, nothing setuid in the picture).
+bool ProcessSocketInodes(int64_t pid, std::set<std::string>* inodes) {
+    if (pid <= 0) {
+        return true;
+    }
+    const std::string dir_path = "/proc/" + std::to_string(pid) + "/fd";
+    DIR* dir = ::opendir(dir_path.c_str());
+    if (dir == nullptr) {
+        return errno != EACCES;
+    }
+    while (const dirent* entry = ::readdir(dir)) {
+        char target[256];
+        const std::string link = dir_path + "/" + entry->d_name;
+        const ssize_t len = ::readlink(link.c_str(), target, sizeof(target) - 1);
+        if (len <= 0) {
+            continue;
+        }
+        target[len] = '\0';
+        const std::string value(target);
+        if (value.compare(0, 8, "socket:[") == 0 && value.back() == ']') {
+            inodes->insert(value.substr(8, value.size() - 9));
+        }
+    }
+    ::closedir(dir);
+    return true;
+}
+
+PortOwnership UdpPortOwnership(uint16_t port, int64_t our_pid) {
+    std::set<std::string> port_inodes;
+    if (!UdpPortInodes(port, &port_inodes)) {
+        return PortOwnership::kUnprovable;
+    }
+    if (port_inodes.empty()) {
+        return PortOwnership::kNobody;
+    }
+    std::set<std::string> our_inodes;
+    if (!ProcessSocketInodes(our_pid, &our_inodes)) {
+        return PortOwnership::kUnprovable;
+    }
+    // Every socket on the port must be one of ours — the same "foreign beats ours" rule the
+    // Windows branch applies, for the same reason.
+    for (const std::string& inode : port_inodes) {
+        if (our_inodes.count(inode) == 0) {
+            return PortOwnership::kSomeoneElses;
+        }
+    }
+    return PortOwnership::kOurs;
+}
+#else
+PortOwnership UdpPortOwnership(uint16_t /*port*/, int64_t /*our_pid*/) {
+    return PortOwnership::kUnprovable;
+}
+#endif
+
+/// The one refusal an operator can act on, shared by every path that reaches it, so the
+/// sentence does not depend on which platform noticed or on how it noticed.
+std::string ForeignAgentRefusal(uint16_t port, const std::string& observed) {
+    return std::string("UDP ") + kAgentIp + ":" + std::to_string(port) +
+           " is not held by the MicroXRCEAgent this binary spawned (" + MICRO_XRCE_AGENT_PATH +
+           ") — " + observed +
+           ". A leftover Agent from an interrupted run answers this port and would certify the "
+           "whole suite against itself, possibly on another DDS domain. Kill it (Windows: "
+           "taskkill /IM MicroXRCEAgent.exe /F; POSIX: pkill MicroXRCEAgent) and re-run; the "
+           "suite will not run against a foreign one.";
+}
+
 // ── The Agent, for this binary's whole run ──────────────────────────
 // Lifted from integration-tests/fastdds-xrce-interop's fixture (same problem,
 // same two platforms): the child gets an augmented loader path, our own
 // environment is never touched.
-class MicroXRCEAgentEnv : public ::testing::Environment {
+//
+// It reports failure as a STRING rather than through gtest's macros, because the forcing test
+// below needs a bring-up that is EXPECTED to fail without that failing the test. RAII, not a
+// remembered call: the destructor kills the child, so an Agent cannot outlive the scope that
+// started it — the forcing test starts two and leaks neither.
+class OwnedAgent {
    public:
-    void SetUp() override {
-        ASSERT_NE(std::strlen(MICRO_XRCE_AGENT_PATH), 0u)
-            << "MICRO_XRCE_AGENT_PATH is empty — the CMake option "
-               "FLETCHER_CONFORMANCE_XRCE is ON but no Agent path was configured";
-        // FAIL() only returns from the function it appears in, so SpawnAgent's
-        // failure has to be re-checked here or SetUp goes on to spend the full
-        // probe budget and reports the wrong thing.
-        ASSERT_NO_FATAL_FAILURE(SpawnAgent());
-        WaitUntilReachable();
+    explicit OwnedAgent(uint16_t port) : port_(port) {
+        failure_ = Spawn();
+        if (!failure_.empty()) {
+            return;
+        }
+        failure_ = WaitUntilReachable();
+        if (!failure_.empty()) {
+            return;
+        }
+        failure_ = ProveOwnership();
     }
 
-    void TearDown() override { KillAgent(); }
+    ~OwnedAgent() { Kill(); }
+
+    OwnedAgent(const OwnedAgent&) = delete;
+    OwnedAgent& operator=(const OwnedAgent&) = delete;
+
+    /// True only when an Agent answers `port` AND the OS records the child THIS object
+    /// spawned as the holder of it — or, on a platform that cannot be asked, when the child
+    /// is at least still alive and `ownership_unprovable()` says so out loud.
+    bool proven() const { return failure_.empty(); }
+    const std::string& failure() const { return failure_; }
+    bool ownership_unprovable() const { return ownership_unprovable_; }
 
    private:
-    void SpawnAgent() {
+    std::string Spawn() {
         const std::string path = MICRO_XRCE_AGENT_PATH;
-        const std::string port_str = std::to_string(kAgentPort);
+        const std::string port_str = std::to_string(port_);
 #ifdef _WIN32
         std::string env_block = BuildChildEnvBlockWithAugmentedPath();
         std::string cmd = "\"" + path + "\" udp4 -p " + port_str;
@@ -123,17 +346,19 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         PROCESS_INFORMATION pi{};
         if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP,
                             env_block.data(), nullptr, &si, &pi)) {
-            FAIL() << "cannot start the MicroXRCEAgent at " << path << " (CreateProcess error "
-                   << GetLastError()
-                   << "). Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and know "
-                      "that the XRCE subjects then do not exist.";
+            return "cannot start the MicroXRCEAgent at " + path + " (CreateProcess error " +
+                   std::to_string(GetLastError()) +
+                   "). Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and know "
+                   "that the XRCE subjects then do not exist.";
         }
         process_handle_ = pi.hProcess;
+        process_id_ = pi.dwProcessId;
         CloseHandle(pi.hThread);
+        return {};
 #else
         pid_ = fork();
         if (pid_ < 0) {
-            FAIL() << "fork() failed spawning the MicroXRCEAgent";
+            return "fork() failed spawning the MicroXRCEAgent";
         }
         if (pid_ == 0) {
             const char* current = std::getenv("LD_LIBRARY_PATH");
@@ -148,22 +373,20 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         // platform a missing Agent shows up only as the child's _Exit(127).
         // Reap it here rather than letting WaitUntilReachable time out and blame
         // the port: rung 2 item 8 says the subject fails NAMING THE PATH.
+        //
+        // An Agent that LOST THE BIND to a leftover also lands here, and used to be reported
+        // as "build it" — advice about a binary that plainly exists. DeadChildRefusal asks
+        // who holds the port before it picks a story.
         {
-            int status = 0;
             const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             while (std::chrono::steady_clock::now() < give_up) {
-                if (waitpid(pid_, &status, WNOHANG) == pid_) {
-                    pid_ = -1;
-                    FAIL() << "the MicroXRCEAgent at " << path << " exited immediately"
-                           << (WIFEXITED(status)
-                                   ? " with status " + std::to_string(WEXITSTATUS(status))
-                                   : std::string(" on a signal"))
-                           << ". Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and "
-                              "know that the XRCE subjects then do not exist.";
+                if (!Alive()) {
+                    return DeadChildRefusal();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
         }
+        return {};
 #endif
     }
 
@@ -206,8 +429,9 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
     }
 #endif
 
-    /// True while the Agent WE spawned is still running.
-    bool SpawnedAgentAlive() {
+    /// True while the Agent WE spawned is still running. No longer the guard — see
+    /// ProveOwnership — but still what tells "nobody is there" from "somebody else is".
+    bool Alive() {
 #ifdef _WIN32
         return process_handle_ != nullptr &&
                WaitForSingleObject(process_handle_, 0) == WAIT_TIMEOUT;
@@ -221,13 +445,88 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         }
         // Reaped here, so clear it: leaving pid_ set would send KillAgent a
         // SIGTERM to a pid this process no longer owns and then block in a
-        // waitpid that can never return.
+        // waitpid that can never return. The exit note is kept, because the pid is not.
+        exit_note_ = WIFEXITED(status) ? " with status " + std::to_string(WEXITSTATUS(status))
+                                       : std::string(" on a signal");
         pid_ = -1;
         return false;
 #endif
     }
 
-    void WaitUntilReachable() {
+    int64_t ProcessId() const {
+#ifdef _WIN32
+        return static_cast<int64_t>(process_id_);
+#else
+        return static_cast<int64_t>(pid_);
+#endif
+    }
+
+    /// Our Agent is gone. WHY decides what the operator should do, and the two causes are
+    /// indistinguishable without asking who holds the port: a missing binary and a bind lost
+    /// to a leftover Agent both surface as a child that exited at once.
+    std::string DeadChildRefusal() {
+        if (UdpPortOwnership(port_, ProcessId()) == PortOwnership::kSomeoneElses) {
+            return ForeignAgentRefusal(port_,
+                                       "the Agent we spawned exited before it could bind and "
+                                       "another process holds the port");
+        }
+        return "the MicroXRCEAgent at " + std::string(MICRO_XRCE_AGENT_PATH) +
+               " exited immediately" + exit_note_ +
+               ". Build it, or configure with -DFLETCHER_CONFORMANCE_XRCE=OFF and know that "
+               "the XRCE subjects then do not exist.";
+    }
+
+    /// The guard: an Agent answers the port, AND the OS says the process we started is the one
+    /// holding it. Liveness proved neither half.
+    std::string ProveOwnership() {
+        // `kNobody` right after a probe was answered means the table has not caught up, so it
+        // is given a bounded second before it is believed. The normal path answers `kOurs`
+        // first time round, so it costs one table read and no wait at all.
+        PortOwnership ownership = PortOwnership::kNobody;
+        const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        do {
+            ownership = UdpPortOwnership(port_, ProcessId());
+            if (ownership != PortOwnership::kNobody) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        } while (std::chrono::steady_clock::now() < give_up);
+
+        switch (ownership) {
+            case PortOwnership::kOurs:
+                return {};
+            case PortOwnership::kSomeoneElses:
+                return ForeignAgentRefusal(port_,
+                                           "the OS records the port as held by another process, "
+                                           "not by our child (pid " +
+                                               std::to_string(ProcessId()) + ")");
+            case PortOwnership::kNobody:
+                return ForeignAgentRefusal(
+                    port_,
+                    "an Agent answered it but the OS records no process holding it at all, so "
+                    "ownership cannot be established");
+            case PortOwnership::kUnprovable:
+                break;
+        }
+        // A counted, documented skip — this platform cannot answer the question, and refusing
+        // anyway would fail a run with nothing wrong. Windows and Linux both answer, which is
+        // every platform this project builds on; a third one gets this sentence rather than
+        // silently losing the guard. Liveness is all that is left, so it is still checked, it
+        // is named as the weaker thing it is, and the forcing test below counts the skip.
+        ownership_unprovable_ = true;
+        if (!Alive()) {
+            return DeadChildRefusal();
+        }
+        std::cout << "[   INFO   ] UDP port ownership is unprovable on this platform (neither "
+                     "GetExtendedUdpTable nor /proc/net/udp), so the Agent on "
+                  << kAgentIp << ":" << port_
+                  << " is only known to be ALIVE, not to be the one answering. A leftover "
+                     "Agent holding this port would not be detected here."
+                  << std::endl;
+        return {};
+    }
+
+    std::string WaitUntilReachable() {
         std::string last_error;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (std::chrono::steady_clock::now() < deadline) {
@@ -237,36 +536,37 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
                 // `XrceConfigFor` exists to own (review 4b nit 5); a duplicate key is a
                 // refusal, so the shorter budget has to REPLACE the factory's, which is why
                 // the factory takes it as an argument.
-                const ProviderConfig probe_config = XrceConfigFor(kProbeSessionKey, 2000);
+                const ProviderConfig probe_config =
+                    XrceConfigFor(NextSessionKey(kProbeSessionBase), 2000, port_);
                 XrceDDSPubSubProvider probe(probe_config);
-                // Something answered on the port. It has to be OUR Agent: a
-                // leftover Agent from an interrupted run holds the same port and
-                // would answer this probe happily, possibly on another DDS
-                // domain, and the whole suite would then certify against it.
-                ASSERT_TRUE(SpawnedAgentAlive())
-                    << "UDP " << kAgentIp << ":" << kAgentPort
-                    << " is answering but the MicroXRCEAgent this binary spawned ("
-                    << MICRO_XRCE_AGENT_PATH
-                    << ") is not running — something else already holds the port. Kill the "
-                       "leftover Agent; the suite will not run against a foreign one.";
-                return;
+                // Something answered. WHO answered is ProveOwnership's question, not this
+                // loop's — asking `Alive()` here WAS the defect: our own doomed child needs
+                // ~0.9 s to reach its bind error and exit, and a leftover answers this probe
+                // long before that, so liveness was still true and the suite ran on.
+                return {};
             } catch (const std::exception& e) {
                 last_error = e.what();
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
+            // Nothing answered and our Agent is gone: no point spending the rest of the
+            // budget. The same two stories as at spawn time, told apart the same way.
+            if (!Alive()) {
+                return DeadChildRefusal();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        FAIL() << "the MicroXRCEAgent at " << MICRO_XRCE_AGENT_PATH
-               << " did not become reachable on " << kAgentIp << ":" << kAgentPort
-               << " within 20 s. Last probe error: " << last_error;
+        return "the MicroXRCEAgent at " + std::string(MICRO_XRCE_AGENT_PATH) +
+               " did not become reachable on " + kAgentIp + ":" + std::to_string(port_) +
+               " within 20 s. Last probe error: " + last_error;
     }
 
-    void KillAgent() {
+    void Kill() {
 #ifdef _WIN32
         if (process_handle_ != nullptr) {
             TerminateProcess(process_handle_, 0);
             WaitForSingleObject(process_handle_, 5000);
             CloseHandle(process_handle_);
             process_handle_ = nullptr;
+            process_id_ = 0;
         }
 #else
         if (pid_ > 0) {
@@ -278,11 +578,32 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
 #endif
     }
 
+    uint16_t port_;
+    std::string failure_;
+    bool ownership_unprovable_ = false;
+    std::string exit_note_;
 #ifdef _WIN32
     HANDLE process_handle_ = nullptr;
+    DWORD process_id_ = 0;
 #else
     pid_t pid_ = -1;
 #endif
+};
+
+class MicroXRCEAgentEnv : public ::testing::Environment {
+   public:
+    void SetUp() override {
+        ASSERT_NE(std::strlen(MICRO_XRCE_AGENT_PATH), 0u)
+            << "MICRO_XRCE_AGENT_PATH is empty — the CMake option "
+               "FLETCHER_CONFORMANCE_XRCE is ON but no Agent path was configured";
+        agent_ = std::make_unique<OwnedAgent>(kAgentPort);
+        ASSERT_TRUE(agent_->proven()) << agent_->failure();
+    }
+
+    void TearDown() override { agent_.reset(); }
+
+   private:
+    std::unique_ptr<OwnedAgent> agent_;
 };
 
 [[maybe_unused]] const bool kAgentRegistered = [] {
@@ -310,6 +631,50 @@ INSTANTIATE_TEST_SUITE_P(
         // process itself — unique per child, which is what the Agent needs.
         {"--domain-id", std::to_string(kDdsDomain), "--agent-port", std::to_string(kAgentPort),
          "--session-key-base", std::to_string(kPeerPublisherSessionBase)})));
+
+// -- The harness must own the Agent answering the port (PDA-DEC-1H) ----
+//
+// Measured on this project's primary platform before this test was written: a second
+// MicroXRCEAgent aimed at a port a first one already holds logs `bind error | port: N` and
+// EXITS — it does not stay alive. But it takes ~0.9 s to get there, while the incumbent answers
+// the reachability probe in milliseconds. So at the instant the guard asked
+// `WaitForSingleObject(handle, 0)`, our own doomed child was still running: both halves of a
+// liveness guard held, and the suite would certify its 25 cases against an Agent it does not own.
+//
+// This runs that race deliberately. An Agent that IS ours on a port nothing else in the tree
+// uses, then a second bring-up against the same port — which must refuse, and must say what an
+// operator should do about it. Both Agents are scoped objects, so both die when this function
+// leaves however it leaves: a leaked Agent is this item's own subject matter and would poison
+// every later run.
+TEST(ConformanceXrce, AForeignAgentDoesNotSatisfyTheHarness) {
+    OwnedAgent incumbent(kContestedPort);
+    ASSERT_TRUE(incumbent.proven())
+        << "the test could not stand up its own Agent on UDP " << kContestedPort
+        << ", so it proves nothing about a foreign one: " << incumbent.failure();
+    if (incumbent.ownership_unprovable()) {
+        // A counted, documented skip — see the same shape in
+        // xrcedds-pubsub-provider/tests/test_xrce_document.cpp. On a platform where port
+        // ownership cannot be established, the bring-up falls back to liveness and would
+        // accept the incumbent by design, so asserting a refusal here would be a red with
+        // nothing wrong. Windows and Linux both answer, which is every platform this project
+        // builds on; the row stays registered so a third one gets this sentence instead of
+        // silently losing the coverage.
+        GTEST_SKIP() << "UDP port ownership is unprovable on this platform (neither "
+                        "GetExtendedUdpTable nor /proc/net/udp), so the bring-up cannot tell a "
+                        "foreign Agent from its own and this case cannot be asserted";
+    }
+
+    OwnedAgent contender(kContestedPort);
+    EXPECT_FALSE(contender.proven())
+        << "the bring-up certified an Agent it does not own: a foreign Agent holds UDP "
+        << kContestedPort << " and the contender's own Agent could not have bound it";
+    EXPECT_NE(contender.failure().find("is not held by the MicroXRCEAgent this binary spawned"),
+              std::string::npos)
+        << "the refusal does not say that the port belongs to something else: "
+        << contender.failure();
+    EXPECT_NE(contender.failure().find("Kill it"), std::string::npos)
+        << "the refusal does not tell the operator what to do about it: " << contender.failure();
+}
 
 // -- XRCE resolves as a built-in NAME (spec section 4 clause 4) --------
 //
