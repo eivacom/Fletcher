@@ -162,3 +162,49 @@ domains. The five items below are open and owed by the implementer.
 | C2-3 | Sharpen P6's mutation-column sentence. "If the P6 row cannot be made red, P6 is false" has two readings (red under mutation M8, versus red against the unmutated build). Both lead to "stop", so it is not dangerous — but a stop-condition should not offer a choice. Say instead: *this row must PASS against the correct implementation; if it fails, the document was accepted, P6 is false — STOP-AND-ASK, and do not delete or weaken the row.* | re-review §B1 |
 | C2-4 | State the domain rule in the README **positively**, not as a residue to infer: *the deployment's domain always wins; an anchor's `<domainId>` must either match it or be absent, and an explicit `0` cannot be told from absent.* Consider having the rung-2 case 7 refusal message say the same, since that is where an operator meets the rule. | re-review §B2 |
 | C2-5 | §3's new promise — the two `fletcher.*` properties are stripped before `create_participant` and "every other property reaches Fast DDS untouched: security plugins need that" — is asserted by nothing. An over-reaching strip silently drops `dds.sec.*` and the participant comes up unsecured with no error. The strip is a testable unit (the test TU already puts `../src` on the include path, `tests/CMakeLists.txt:12-13`): one assert that a foreign property survives and the two `fletcher.*` ones do not. | re-review §"fifth silence" |
+
+## PDA-DEC-7 — XRCE by document (NEEDS-REWORK, 1 BLOCKER, cycle 1 of 2)
+
+Review: [PDA-DEC-7-design-review.md](PDA-DEC-7-design-review.md). The nine items below
+are DEBT and do **not** loop the design; the single BLOCKER (B1 — four of six document
+keys have no guard that an accepted value lands anywhere) is in the review.
+
+Five things the implementer may rely on **without re-asking**, all verified against the
+tree in review cycle 1 — do not re-derive them:
+- **P5 holds.** `max_payload` is read nowhere: header declaration + comment,
+  `README.md:21,53,66`, `test_xrce_provider.cpp:52,63,71`, and **nothing in `src/`**. Same
+  for `serial_device` / `serial_baudrate` (header + `README.md:64-65`). Delete both.
+- **P3 holds, exactly.** `kPayloadBytes<64*1024>` is 65536 (`payload_bound.hpp:56-58`),
+  `XrceConfig::payload_bound`'s default is that value (`…hpp:37`), and **no in-tree caller
+  sets it** (`xrce_main.cpp:71-79`, `test_interop.cpp:107-117`, `xrce_peer_main.cpp`). So
+  `max_payload_bytes == 0 → 65536` reproduces `FletcherTypeName(65536)` bit-for-bit. No
+  wire change, no stop-and-ask.
+- **P2 holds.** `TranslateSeamFailure` rethrows a `PubSubError` untouched
+  (`core/status.hpp:136`) and turns any other `std::exception` into `kInternal` (`:145`);
+  `PubSubError` derives from `std::runtime_error` (`:97`), so the surviving
+  `EXPECT_THROW(…, std::runtime_error)` rows do stay green. `kNotSupported` (6) and
+  `kTransportFailure` (5) exist and are frozen.
+- **§4.1's disclosure clause: nothing is owed.** All three deferral routes were checked
+  (Agent-dependent key, transport failure on first publish, anything the factory reaches
+  after construction). No XRCE key is topic-scoped; `domain_id` is typed core, not a
+  document key. The design's structural claim is correct as written.
+- **The unshared reader is forced, not convenient.** Decision 8 verbatim
+  (`PDA-decouple-locked-decisions.md:68-74`) plus the in-tree precedent at
+  `in_process_provider.cpp:44-47` (the same call already made for a one-line helper).
+  Do **not** propose a shared reader; it is a stop-and-ask.
+
+**P1 was not machine-verifiable here** (the client is FetchContent'd, no source on disk).
+Everything reachable is consistent with it. Confirm it in step 3's first ten minutes,
+before writing the listener — its stop condition changes the item's shape.
+
+| Id | Owed | Where |
+|----|------|-------|
+| DEBT-1 | **The substantive one.** `PublishedDefaultsAreExact` reads `README.md` off disk, but `xrcedds-pubsub-provider/conanfile.py`'s `exports_sources` does **not** include `README.md` and `conanfile.py` is not in `Files-to-touch` — so under `conan create` (the CI build mode, and the design's own mandated full run) the file does not exist. PDA-DEC-6 hit this and fixed it exactly once: `fastdds-pubsub-provider/conanfile.py:33-38`, *"README.md is exported for the TESTS, not for documentation"*. Add the export and the `Files-to-touch` line. **And mandate the failure mode:** unreadable → hard failure with the path in the message (`test_profile_document.cpp:595-598` is the shape), never `GTEST_SKIP`, and read at **run time** — a `configure_file`/`file(READ)` bake-in re-creates PDA-DEC-6's held-copy defect the disk read exists to kill. | review §B1 area, §DEBT |
+| DEBT-2 | §6's row 2 is a **harness control, not a build guard**, and the mutation column overstates it: "M2 hard-code tcp+port → row 2 red" is unachievable, because the port is ephemeral and chosen at run time, so no build can hard-code it. A build that hard-coded *tcp* while reading the address from the document passes rows 1-3. State row 2's real job (no stale accept latch, no cross-row or process-global state) and let row 1 carry the falsifiability — it does, strongly. Also note the row is environment-sensitive: an Agent on UDP 2018 (the interop suite's port) changes what row 2 *does*, though not what it asserts. | review §DEBT |
+| DEBT-3 | §1's "includes only `<fletcher/pubsub/provider.hpp>`" is wrong: `ProviderConfig` and `ProviderRegistry` are declared in `provider_registry.hpp` (`:100`, `:136`), which is why `fast_dds_pubsub_provider.hpp:19-20` includes both. And **keep `payload_bound.hpp`** if the new header keeps advising `kPayloadBytes<N>` — dropping it while keeping the advice is PDA-DEC-6 review 4a F7 verbatim, an out-of-tree TU that takes the advice fails to compile (`fast_dds_pubsub_provider.hpp:13-18` records the fix). | review §DEBT |
+| DEBT-4 | The one-colon `agent` rule makes **IPv6 unrepresentable** (`[::1]:2018` and `::1` both refused). This matches today's behaviour — the client is initialised `UXR_IPv4` at `xrce_dds_pubsub_provider.cpp:362,369` — so it is not a regression, but as written it is an **undisclosed** foreclosure sitting oddly beside H1's "Fletcher does not know what that client's resolver accepts". One README/H-list line: IPv4 literals and hostnames only; IPv6 is a separate change that also has to move off `UXR_IPv4`. | review §DEBT |
+| DEBT-5 | "M1/M3 also redden all 27" over-claims. The 3 interop tests run their Agent on the **default** port 2018 with the default transport (`test_interop.cpp:69-71`), and their only distinguishing setting is `domain_id` — which is **typed core, not the document**. So the document's end-to-end witness is the 24 `conformance_xrce` cases (Agent on 2019, `xrce_main.cpp:42-43`), and only they. Correct the count to 24 and say what the interop three actually witness (the typed core and the type name). | review §DEBT |
+| DEBT-6 | Give built-in **registration** an Agent-free witness: route `AgentUnreachableIsATransportFailure` through `RegisterXrceProvider(registry)` + `Create("xrce", cfg)` rather than a direct constructor call. Registering under the wrong name then reddens a row in the provider's own CI instead of only in the Agent-gated suite, and it makes M8's "arrives as `kInternal` through the factory" literally true. `Registry.XrceResolvesAsABuiltIn` keeps the row-delivery half. ~5 lines. | review §DEBT |
+| DEBT-7 | **PM-facing, before the owner is asked.** All three brief decisions are answerable from the ledger/spec: (1) option (b) is new behaviour, outside the 2026-09-01 split ruling's "prepare, don't develop"; (2) the brief itself cites the 2026-09-02 PDA-DEC-4 ruling that answers it; (3) is **already in spec §4.1** as landed, and its non-default option would force a spec amendment and split one format into two dialects. Strike or reframe as confirmations. | review §"brief" |
+| DEBT-8 | Net-lines realism: 1400 is the right order of magnitude and honestly derived, but the two largest line items are each ~1.5× under for this tree's comment density — the reader (~180 vs the loopback's ~90 for a *single* key) and the refusal table (~200 for 15-20 rows, against `test_profile_document.cpp`'s 1089 lines for the comparable job). Expect **~1900-2100** including B1's fix, the `conanfile.py` export and the extra `conformance_xrce` case. Also: the "11 → ~17 ctest entries" figure is high — 10 − 4 retired + 6 new + the MSVC nodiscard probe is 13 unless the refusal table splits per key. | review §DEBT |
+| DEBT-9 | Forcing-test wall clock. Row 1 should set `connect_timeout_ms=0` (→ 0 retries, one attempt: `xrce_dds_pubsub_provider.cpp:385-387`) or it costs ~3 s after the accept. Row 2 **cannot** shorten its own budget — an empty document sets nothing — so it pays the full default 3000 ms of `uxr_create_session_retries`. Budget the case at ~4-5 s and say so, since the retired `SerialTransportNotImplemented` / `ConstructorThrowsWithoutAgent` pair the README calls out at ~1 s each is what it replaces. | review §DEBT |
