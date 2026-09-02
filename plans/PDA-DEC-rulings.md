@@ -298,3 +298,32 @@ prevent.
 domain_id}`; everything else is the opaque document Fletcher copies and never
 reads. Confirms the 2026-08-31 configuration ruling for PDA-DEC-7 (XRCE) and
 PDA-DEC-6 (Fast DDS QoS). The typed-field loss is accepted deliberately.
+
+## 2026-09-02 — The configuration setting holds the XML itself, not a filename *(selection)*
+> "The XML text — The setting carries the profile content. The gateway grows a flag that reads a file for you, so operators keep the convenience. One setting, one meaning — and Fletcher never opens a file on a provider's behalf."
+
+**Context:** PDA-DEC-6. Rejected: a filename Fletcher opens (which puts file access and
+its failure modes into Fletcher for a provider-specific format), and accepting either by
+guessing (which makes leading-`<`-versus-path a silent switch, so a malformed path is
+read as XML or the reverse, with no error).
+**Applies to:** the Fast DDS provider's document is the XML profile text. The
+convenience of reading a file lives in the **gateway**, not in Fletcher or the seam.
+Consistent with the 2026-08-31 configuration ruling and decision 8 — the document is
+opaque to Fletcher and parsed only by the provider.
+
+## 2026-09-02 — A supplied profile is that endpoint's WHOLE quality-of-service *(selection)*
+> "Fast DDS's — the profile is the whole QoS. A supplied profile is that endpoint's complete quality-of-service; anything unmentioned takes the DDS default. We publish Fletcher's exact profile as a starting point, kept true setting-for-setting by a test."
+
+**Context:** PDA-DEC-6, what happens to a policy an operator's profile omits. Rejected:
+Fletcher's defaults staying underneath so a profile changes only what it mentions —
+friendlier, but it requires a fact **the XML API never reports**, namely which policies a
+document actually set, so it could be neither implemented reliably nor tested honestly.
+**Applies to:** the no-merge rule (design §2). This is why **silence is load-bearing** in
+this item, and why the omission guards exist. Fletcher's own defaults are published as a
+starting profile, pinned setting-for-setting by
+`DefaultProfileTranscriptionIsExact` — an in-process whole-struct equality, because
+discovery cannot observe `history` or `resource_limits`.
+**Note (review C2-1):** as designed, *nothing watched the policies a supplied profile
+omits*, so a build implementing either answer would have passed every row. The
+implementation must mandate the form (a fresh default-constructed QoS per call; the
+built-in only on the not-found branch) and assert it, or this ruling is unfalsifiable.
