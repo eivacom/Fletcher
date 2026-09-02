@@ -184,7 +184,7 @@ struct ProviderConfig {
 ///     of; covering it means changing what crosses the seam, which is PDA-ABI's
 ///     to own and out of this registry's scope.
 ///
-/// The idiom that covers 1 and 2, and is the starting point for 3, is to make
+/// The idiom that covers 1, and is the starting point for 3, is to make
 /// the provider's own ownership release the module — a `shared_ptr` whose
 /// deleter unloads it — never a cache with the registry's lifetime.
 ///
@@ -196,8 +196,12 @@ struct ProviderConfig {
 ///
 /// ── Failure ─────────────────────────────────────────────────────────────────
 /// All three methods are seam entry points, so §5.1 applies: they throw
-/// `PubSubError` carrying a stable `PubSubStatus`, and nothing else escapes —
-/// including an exception out of a caller-supplied factory or resolver.
+/// `PubSubError` carrying a stable `PubSubStatus` — including an exception out
+/// of a caller-supplied factory or resolver. One exception to "nothing else
+/// escapes": the seam's own allocations (the anchor, the two seat handles, the
+/// refusal's stream) sit outside that translation, so `std::bad_alloc` can
+/// escape untyped. Pre-existing and OOM-only; each C boundary translates
+/// independently.
 class ProviderRegistry {
    public:
     /// Makes one provider instance from a configuration. Supplied by whoever

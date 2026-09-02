@@ -308,17 +308,20 @@ TEST(Registry, PathSelectorWithoutResolverIsRefusedAsUnsupported) {
     EXPECT_TRUE(Mentions(message, "offset 7"))
         << "the refusal does not locate the character that made it a path: " << message;
 
-    // `\xNN` is the diagnostic's OWN escape spelling, and `C:\x64\driver.dll` is
-    // an ordinary Windows driver path — so an unescaped backslash renders a real
-    // path identically to one holding the single byte 0x64, in the one message
-    // an operator reads when a driver will not load.
+    // `\xNN` is the diagnostic's OWN escape spelling for a NON-PRINTABLE byte, so
+    // without escaping the backslash the encoding is not injective: a path
+    // containing `\`, `x`, `f`, `f` renders identically to one holding the single
+    // byte 0xFF, in the one message an operator reads when a driver will not
+    // load. (0x64 is `d`, printable, so it is emitted raw and never collides —
+    // this case pins the ordinary Windows path shape.)
     const std::string windows_path = "C:\\x64\\driver.dll";
     const std::string quoted =
         MessageOf([&] { return MakeProvider(registry, windows_path, config); });
     EXPECT_TRUE(Mentions(quoted, "\"C:\\\\x64\\\\driver.dll\""))
         << "the backslashes in a Windows driver path are not escaped: " << quoted;
     EXPECT_FALSE(Mentions(quoted, windows_path))
-        << "the path is reproduced raw, so it reads as the escape for byte 0x64: " << quoted;
+        << "the path is reproduced raw, so its backslash sequences are ambiguous "
+           "with the diagnostic's own escapes: " << quoted;
 }
 
 // ── The rest of the door ────────────────────────────────────────────

@@ -40,11 +40,15 @@ size_t FirstNonNameChar(const std::string& text) {
 // misclassification is a trailing CRLF out of a configuration file, and a raw
 // CR in an error message hides exactly the character the operator must delete.
 //
-// A backslash and a quote are escaped too, and not for tidiness: `\x` is this
-// function's own escape spelling, so an ordinary Windows driver path such as
-// `C:\x64\driver.dll` would otherwise render its `\x64` as the escape for byte
-// 0x64 — a real path turned into a lie inside the one message an operator reads
-// when a driver will not load.
+// A backslash and a quote are escaped too, and not for tidiness: `\xNN` is this
+// function's own escape spelling for a NON-PRINTABLE byte, so without escaping
+// the backslash the encoding is not injective — a path containing the four
+// characters `\`, `x`, `f`, `f` renders identically to one holding the single
+// byte 0xFF, a real path turned into a lie inside the one message an operator
+// reads when a driver will not load. (Printable bytes are emitted as
+// themselves, so `\x64` is NOT such a case: 0x64 is `d`.) Measured over all
+// strings of length <= 4 on an escape-relevant alphabet: 2 colliding pairs
+// before, 0 after.
 std::string Quoted(const std::string& text) {
     std::ostringstream out;
     out << '"';

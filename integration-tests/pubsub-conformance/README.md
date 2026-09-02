@@ -383,6 +383,8 @@ delivery claim.
 | `RegistrationAndSelectionShareOneVocabulary` | one predicate for both, so a name cannot be registrable but unselectable |
 | `ConfigurationReachesTheProviderAndIsNeverRead` | §4.2: the document arrives byte-for-byte, NUL included, and Fletcher never parses it |
 | `AFactoryThatFailsIsReportedAsATypedSeamFailure` | §5.1 at this entry point, including a factory that returns null |
+| `AResolverThatFailsIsReportedAsATypedSeamFailure` | §5.1 on the **resolver** seat — the branch PDA-ABI fills. Both shapes: a resolver that throws, and one that returns null |
+| `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` | the lifetime rule is **mechanical, not prose**: `Create` returns an aliasing handle owning `Anchor{seat, provider}`, so a factory's or resolver's module outlives every provider it made, whatever the author did. Pinned on **both** seats, and the probe records module-still-loaded *in its own destructor* — so the load-bearing member order is itself asserted |
 
 **The link line is a machine check.** `conformance_registry` names
 `fletcher-pubsub` and no transport SDK, so no DDS or XRCE vocabulary resolves
@@ -392,14 +394,32 @@ SDK", not "no provider header" — `in_process_provider.hpp` lives *inside*
 `Create` signature is a second machine check: the `static_assert` is in the
 header, so this binary cannot build against a widened one.
 
-**Mutation evidence** (run at implementation, all against the whole suite):
-swapping the two registrations, making `Create` return its first factory, and
-making the probe stop recording each redden the forcing test; classifying every
-selector as a name, and a resolver that ignores its path argument, each redden
-`PathSelectorResolvesThroughTheSameCall`; handing back a provider instead of
-refusing reddens the negative control **while the positive path stays green**,
-which is what makes the control independent rather than a restatement; a
-last-wins `Register` and a memoizing `Create` redden one entry each.
+**Mutation evidence** (every one applied singly against the whole suite, and
+each re-derived independently by a reviewer from a separate tree).
+*Selection:* swapping the two registrations, making `Create` return its first
+factory, and making the probe stop recording each redden the forcing test — and
+the first-factory mutation reddens it **only at the second direction**, which is
+why both are asserted; one direction alone would have passed while the registry
+ignored the name entirely. *Path:* classifying every selector as a name, and a
+resolver that ignores its path argument, each redden
+`PathSelectorResolvesThroughTheSameCall`; forwarding a default-constructed
+config there reddens it on `max_payload_bytes`; handing back a provider instead
+of refusing reddens the negative control **while the positive path stays green**,
+which is what makes the control independent rather than a restatement.
+*Vocabulary:* dropping `0-9` or `A-Z` from the name predicate reddens
+`RegistrationAndSelectionShareOneVocabulary` at offset 4 and offset 0 of
+`Fast2DDS-v1_x`. *Failure seats:* deleting the resolver's `TranslateSeamFailure`
+wrapper, and deleting its null check, each redden
+`AResolverThatFailsIsReportedAsATypedSeamFailure`. *Lifetime:* dropping either
+keepalive reddens `AModuleHeldOnly…`, and so does **swapping `Anchor`'s two
+members** — the member order is load-bearing and is pinned, not merely
+commented. *Diagnostics:* reverting the backslash escaping reddens the refusal
+test alone. A last-wins `Register` and a memoizing `Create` redden one entry each.
+
+Five of these mutations left the suite fully green when the entries were first
+written, and were closed only after review; the four failure-seat and vocabulary
+cases were all on the branch PDA-ABI fills, which is where coverage was thinnest
+precisely because the code there already worked.
 
 ## Building and running
 
