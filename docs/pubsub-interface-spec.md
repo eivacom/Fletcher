@@ -271,9 +271,11 @@ providers already route every topic through.
 
 ## §4 — Uniform provider selection (requirements §0.1(1) and (2))
 
-Today the choice is a hardcoded `if (args.provider == "fastdds")` at
-[gateway/src/main.cpp:183](../gateway/src/main.cpp#L183), and every caller links
-every provider it might select.
+Before this round the choice was a hardcoded `if (args.provider == "fastdds")`
+in [gateway/src/main.cpp](../gateway/src/main.cpp), and every caller linked every
+provider it might select. **As landed** (PDA-DEC-4/5/6) the gateway names no
+concrete provider type at all: it calls `RegisterInProcessProvider` and
+`RegisterFastDDSProvider`, then one `Create`.
 
 This round introduces a **provider registry**: one function that turns a
 *selector* plus a *configuration* into a `PubSubProvider`, with **built-in and
@@ -359,13 +361,19 @@ Normative:
    the ABI round later needs module/instance handles is *its* business; the seam
    must simply not prevent it.
 4. **A built-in provider is registered, not hardcoded.** The gateway's
-   `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5): the
-   loopback is selectable under the name `inprocess`
-   (`RegisterInProcessProvider`), and the gateway registers it and `fastdds`
+   `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5, PDA-DEC-6):
+   the loopback is selectable under the name `inprocess`
+   (`RegisterInProcessProvider`) and Fast DDS under the name `fastdds`
+   (`RegisterFastDDSProvider`, which lives in the provider's own component, so
+   the gateway names no concrete provider type). The gateway registers both
    unconditionally, before the selector is looked at — registration states
    *availability* (a link-time fact), `Create` performs *selection* (a runtime
    string), and branching registration on the selector would put a selector
-   branch back above the seam.
+   branch back above the seam. `Registry.FastDdsResolvesAsABuiltIn` (in
+   `conformance_fastdds`, deliberately not in `conformance_registry`, whose
+   narrow link line is itself the "no transport SDK is reachable" guard) proves
+   the name resolves and delivers a row through a base-typed handle. XRCE is
+   owed by PDA-DEC-7.
 
 ### §4.1 — Configuration: typed core plus opaque document
 
@@ -384,7 +392,25 @@ Configuration at the seam is a small typed core plus an opaque blob:
   **length authoritative** (the bytes may contain NUL); a provider that keeps it
   copies it.
 
-**As landed** (PDA-DEC-5), the loopback is the first document reader in-tree:
+**As landed** (PDA-DEC-6), Fast DDS's document is **its own native XML QoS
+profiles document, as text** — the setting carries the XML itself, never a
+filename (owner ruling 2026-09-02), and Fast DDS parses it through
+`get_participant_extended_qos_from_xml` / `get_datawriter_qos_from_xml` /
+`get_datareader_qos_from_xml`, which take a *string* and register nothing
+process-wide. Reserved profile names are `fletcher_participant` (**mandatory** in
+a non-empty document, because "malformed" and "no such profile" share one return
+code), `fletcher_writer`, `fletcher_reader`, and a profile named after the
+`/`-joined topic for a per-topic override. **A supplied profile is that
+endpoint's whole quality-of-service** — no merge, no floor — because the XML API
+cannot report which policies a document mentioned. The two settings a QoS profile
+cannot express (`fletcher.loan_publish`, `fletcher.max_schema_bytes`) ride as
+vendor properties inside the anchor's `<rtps><propertiesPolicy>`, which is native
+Fast DDS XML, so there is still exactly one reader and one format. `domain_id`
+always wins over an anchor's `<domainId>`, and a non-zero disagreement is refused
+rather than silently resolved. The convenience of reading a document out of a
+file lives in the **gateway** (`--provider-config FILE`), never in Fletcher.
+
+**As landed** (PDA-DEC-5), the loopback is the other document reader in-tree:
 its document is a sequence of `\n`-separated `key=value` entries, and the only
 key is `schema_carriage` (`as_declared`, the default, or `carried`, §7 clause
 1's schema-before-data mode) — e.g. `document = "schema_carriage=carried"`.
@@ -402,12 +428,17 @@ key, unknown value, no `=`, a duplicate key) is refused with
 `kInvalidArgument`, quoting the offending entry, so a misconfigured instance
 never exists.
 
-**The seam must carry no protocol vocabulary.** `FastDDSProviderOptions` embeds
+**The seam carries no protocol vocabulary — as landed, not as intended.** The
+deepest coupling in the system used to be `FastDDSProviderOptions`, which embedded
 `eprosima::fastdds::dds::DataWriterQos`/`DataReaderQos` *plus per-topic maps of
-them*, so configuring the transport today means compiling against Fast DDS
-headers. That is the deepest coupling in the system and it cannot survive a
-uniform registry: a caller selecting `"fastdds"` by name must be able to
-configure it without linking eProsima.
+them*, so configuring the transport meant compiling against Fast DDS headers.
+PDA-DEC-6 **retired** it — not deprecated it, and no coexistence window was
+created (owner ruling 2026-08-31, "XML profile config only — one way to do it").
+The check is mechanical rather than editorial: `fastdds-pubsub-provider` links
+fast-dds **PRIVATE** and its recipe drops `transitive_headers`, so its
+`test_package` compiles with no Fast DDS include directories at all and any
+eProsima type reappearing in the installed header is a compile error there.
+`XrceConfig` is the same shape of change, owed by PDA-DEC-7.
 
 ### §4.2 — Fletcher parses nothing (explicit non-goal)
 
@@ -667,19 +698,31 @@ the two are constantly conflated.
 Measured, excluding `docs/archive/**`:
 
 **External consumers of the protocol-typed config** that a uniform registry
-retires — 4 files, 19 occurrences:
+retires. **Corrected** when PDA-DEC-6 migrated them: the earlier figure of "4
+files, 19 occurrences" was wrong in both halves — `test_interop.cpp` carried 3
+constructions rather than 9, and four further files construct the provider that
+the count omitted entirely. PDA-DEC-7 will cite this table for XRCE, so it is
+corrected rather than merely marked done. **8 files, 12 construction sites**, all
+migrated to `ProviderConfig`:
 
-| Site | Occurrences |
-|---|---|
-| [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 9 |
-| [integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp](../integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp) | 8 |
-| [gateway/src/main.cpp](../gateway/src/main.cpp) | 1 |
-| [integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp](../integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp) | 1 |
+| Site | Sites | Status |
+|---|---|---|
+| [integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp](../integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp) | 4 pairs | migrated, PDA-DEC-6 |
+| [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 3 | migrated, PDA-DEC-6 |
+| [gateway/src/main.cpp](../gateway/src/main.cpp) | 1 | replaced by `RegisterFastDDSProvider`, PDA-DEC-6 |
+| [integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp](../integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp) | 1 | migrated, PDA-DEC-6 |
+| [integration-tests/pubsub-conformance/subjects/fastdds_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_main.cpp) | 1 | migrated, PDA-DEC-6 |
+| [integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp) | 1 | migrated, PDA-DEC-6 |
+| [fastdds-pubsub-provider/test_package/src/example.cpp](../fastdds-pubsub-provider/test_package/src/example.cpp) | 1 | migrated, PDA-DEC-6 — and it is the machine check that no eProsima type survives in the public header |
+| [fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp](../fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp) | 1 | migrated, PDA-DEC-6 — the in-tree proof the document expresses what the struct did |
 
 **Provider-internal churn** (part of the work, not external migration):
-`fastdds-pubsub-provider/` 39 occurrences across 7 files — 24 in its QoS test TU
-alone, so those tests are substantially rewritten against profile documents;
-`xrcedds-pubsub-provider/` 10 across 4 files.
+`fastdds-pubsub-provider/` — done in PDA-DEC-6. Five QoS tests that set a value
+and then only checked that a message arrived were retired and replaced by tests
+that read back what the endpoint *announced*; the two `max_schema_bytes` tests
+were re-anchored onto the `fletcher.max_schema_bytes` document property; and
+`internal/qos_defaults.hpp` left the installed tree for `src/internal/`.
+`xrcedds-pubsub-provider/` 10 across 4 files — **still owed, PDA-DEC-7**.
 
 **Docs:** both provider READMEs, plus the "implementing one interface" claims in
 [docs/architecture-overview.md](architecture-overview.md) and the root

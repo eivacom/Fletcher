@@ -1,122 +1,89 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
+// NOTHING eProsima may appear in this header. That is not a style rule: the CMake target links
+// fast-dds PRIVATE and the Conan recipe drops `transitive_headers`, so `test_package` compiles
+// with **no Fast DDS include directories at all** and any surviving `<fastdds/...>` here is a
+// compile error there. It is the machine check for the 2026-08-31 configuration ruling —
+// "Fletcher never learns DDS vocabulary" (PDA-DEC-6 §5).
 #ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
-#include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
-#include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
-#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/provider_registry.hpp>
 #include <memory>
 #include <string>
-#include <unordered_map>
-
-#include "fletcher/fastdds_pubsub_provider/internal/qos_defaults.hpp"
+#include <vector>
 
 namespace fletcher {
 
-/// Typed configuration for FastDDSPubSubProvider. All QoS settings
-/// are specified up-front; the provider is immutable with respect to
-/// configuration after construction.
+/// Make Fast DDS selectable as `"fastdds"` (spec §4 clause 4).
 ///
-/// Per-topic QoS overrides are keyed by the joined topic string
-/// ("a/b/c"). The provider looks up overrides first, then falls back
-/// to the instance defaults. The default values for default_writer_qos
-/// and default_reader_qos encode Fletcher's profile — see the
-/// fastdds-pubsub-provider README for what that profile contains.
-struct FastDDSProviderOptions {
-    /// DDS domain ID.
-    uint32_t domain_id = 0;
-
-    /// @brief Ceiling on the row payload of one sample: any positive multiple of 4.
-    ///
-    /// Checked by `IsPayloadBound`; the constructor throws otherwise, and nothing is rounded.
-    /// Write it as `kPayloadBytes<N>` to be told at compile time instead.
-    ///
-    /// The bound is part of the registered DDS type name, so endpoints on different bounds fail
-    /// to discover each other rather than dropping samples.
-    ///
-    /// @warning The expensive number in this header. A bounded type preallocates the whole bound
-    /// per history slot per endpoint, and a data-sharing writer reserves
-    /// `(max_samples + extra_samples) * (bound + 8)` bytes of shared segment up front. Nothing
-    /// caps that product; if it exceeds a 32-bit segment size Fast DDS uses the transport
-    /// instead. Bring `max_samples` down as the bound goes up.
-    uint32_t max_payload_bytes = kPayloadBytes<64 * 1024>;
-
-    /// @brief Maximum serialised Arrow IPC schema size, bounding the companion __schema channel.
-    ///
-    /// Any value: unlike `max_payload_bytes` this channel's type is not plain, so it need not
-    /// avoid padding. It reports itself bounded, which data-sharing asks for and which costs one
-    /// preallocated slot per endpoint here, since the channel is `KEEP_LAST(1)` and `CreateTopic`
-    /// announces a schema once per topic.
-    ///
-    /// @warning A PREALLOCATED pool cannot grow, so this matters at both ends: a schema larger
-    /// than a *receiving* endpoint's value is rejected rather than delivered, and that
-    /// subscriber's schema future never resolves. The reader reports `on_sample_rejected`.
-    uint32_t max_schema_bytes = 64 * 1024;
-
-    /// Publish out of a buffer the transport owns instead of encoding through one it then copies.
-    /// With data-sharing that buffer *is* the segment the subscriber reads from, so a same-machine
-    /// sample is never copied at all, and no `serialize()` runs on the publish path.
-    ///
-    /// A deployment switch, not a topic property: it says "my subscribers are on this box", and it
-    /// applies to every topic this provider publishes. Two things change when it is on:
-    ///   - Every sample crosses the wire at the full sample size. Fast DDS stamps a loaned payload
-    ///     `length = max_serialized_type_size` and nothing recomputes it, so a 214-byte row costs
-    ///     a whole `PayloadBytes()` to any reader off this host. A serialised sample is the same
-    ///     layout truncated after the bytes in use, so off, small rows stay small.
-    ///   - A row past `PayloadBytes()` throws out of Publish, where an unloaned writer fails the
-    ///     serialisation internally and drops the sample.
-    ///   - **The unused tail of every sample goes on the wire.** The loan is taken with
-    ///     `NO_LOAN_INITIALIZATION` and only the bytes in use are written, so the rest of the
-    ///     `PayloadBytes()` a remote reader receives is a **previous sample of this topic** —
-    ///     zeros the first time a slot is used, since Fast DDS's payload nodes come from `calloc`
-    ///     (`TopicPayloadPool`) and a data-sharing segment from the OS. Never unrelated process
-    ///     memory. Not zeroed per sample deliberately: a `memset` of the whole bound costs more
-    ///     than the copy this option exists to avoid. With data-sharing (subscribers on this box,
-    ///     which is what the option is for) nothing crosses a wire at all. Leave it off if
-    ///     subscribers are remote and one topic's samples must not leak into each other.
-    ///
-    /// Subscribers need no matching setting. Loans are not negotiated: the reader's own type gates
-    /// them (Fast DDS 3.4 `DataReaderImpl.cpp`), the writer's own gates `loan_sample`
-    /// (`DataWriterImpl.cpp`), and both publish paths write the same two fields in the same places.
-    /// Fletcher subscribers therefore always read out of the transport's buffer, whichever way the
-    /// publisher wrote it.
-    bool loan_publish = false;
-
-    /// Default DataWriter QoS applied to any topic without a per-topic
-    /// override.
-    eprosima::fastdds::dds::DataWriterQos default_writer_qos =
-        internal::MakeFletcherDefaultWriterQos();
-
-    /// Default DataReader QoS applied to any topic without a per-topic
-    /// override.
-    eprosima::fastdds::dds::DataReaderQos default_reader_qos =
-        internal::MakeFletcherDefaultReaderQos();
-
-    /// Per-topic DataWriter QoS overrides. Key: joined topic string.
-    std::unordered_map<std::string, eprosima::fastdds::dds::DataWriterQos> topic_writer_qos;
-
-    /// Per-topic DataReader QoS overrides. Key: joined topic string.
-    std::unordered_map<std::string, eprosima::fastdds::dds::DataReaderQos> topic_reader_qos;
-};
+/// Idempotence is NOT offered: a second call is refused by
+/// `ProviderRegistry::Register` (`kInvalidArgument`) — a registry means one
+/// transport per name for its whole life.
+void RegisterFastDDSProvider(ProviderRegistry& registry);
 
 /// PubSubProvider transport backed by eProsima Fast DDS.
 ///
-/// QoS configuration is supplied entirely via FastDDSProviderOptions
-/// at construction time. There are no runtime setters: this avoids
-/// timing bugs (e.g. setting QoS after the DataWriter has already
-/// been created) and keeps the provider's internal state immutable
-/// after construction.
+/// ── How it is configured (spec §4.1, owner rulings 2026-08-31 / 2026-09-02) ──
+/// `ProviderConfig` and nothing else. There are no runtime setters: QoS is fixed
+/// at construction, which is what stops "QoS set after the DataWriter exists"
+/// bugs.
 ///
-/// The companion schema channel (__schema topic) always uses RELIABLE +
-/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and is not configurable —
-/// Fletcher-internal implementation detail.
+///  - `domain_id` — the DDS domain, used exactly as given.
+///  - `max_payload_bytes` — the row payload ceiling; **0 means unset** and
+///    resolves to 65536. The bound is part of the registered DDS type name, so
+///    two endpoints on different bounds do not discover each other at all. A
+///    value `IsPayloadBound` rejects is refused with
+///    `PubSubError(kInvalidArgument)` before the participant exists.
+///  - `document` — **a Fast DDS XML profiles document, as text** (owner ruling
+///    2026-09-02: the setting holds the XML itself, never a filename; the
+///    gateway's `--provider-config FILE` is where reading a file lives). Fast
+///    DDS parses it; Fletcher gains no parser (locked decision 8). An empty
+///    document means "Fletcher's built-in profile everywhere", which is what
+///    every caller got before this existed.
+///
+/// ── What the document may say ───────────────────────────────────────────────
+/// Reserved profile names, and what each role falls back to when the document
+/// does not name one:
+///
+///  - **participant** — `fletcher_participant`, which a non-empty document
+///    MUST define; otherwise Fast DDS's default, named `FletcherParticipant`.
+///  - **data writer on topic `T`** — the profile named `T` (the `/`-joined
+///    topic), then `fletcher_writer`, then Fletcher's built-in writer profile.
+///  - **data reader on topic `T`** — the profile named `T`, then
+///    `fletcher_reader`, then Fletcher's built-in reader profile.
+///  - **the internal `__schema` channel** — no profile name is ever consulted
+///    for it; it keeps its own fixed QoS.
+///
+/// **A supplied profile is that endpoint's WHOLE quality-of-service.** Anything
+/// it leaves out takes *Fast DDS's* default, not Fletcher's: there is no merge
+/// and no floor (owner ruling 2026-09-02). The XML API returns a filled QoS and
+/// cannot report which policies a document mentioned, so an overlay rule would
+/// rest on a fact the substrate does not expose. The README publishes Fletcher's
+/// own profile as the copy-paste starting point.
+///
+/// The two settings a QoS profile cannot express live as vendor properties in
+/// the anchor's `<rtps><propertiesPolicy>`: `fletcher.loan_publish` (`true` /
+/// `false`) and `fletcher.max_schema_bytes` (a positive integer). Both are
+/// consumed and stripped before the participant is created; every other property
+/// reaches Fast DDS untouched, which is what security plugins need.
+///
+/// ── Refused in the constructor, all `kInvalidArgument` ──────────────────────
+/// A non-empty document that Fast DDS cannot parse, or that does not define
+/// `fletcher_participant`; an unknown or unparseable `fletcher.*` property; a
+/// non-zero `<domainId>` in the anchor disagreeing with `config.domain_id`; an
+/// unusable `max_payload_bytes`.
+///
+/// The companion schema channel (`__schema` topic) always uses RELIABLE +
+/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and is not configurable — a
+/// Fletcher-internal implementation detail, so no profile name is consulted for
+/// it.
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
-    explicit FastDDSPubSubProvider(FastDDSProviderOptions options);
+    explicit FastDDSPubSubProvider(const ProviderConfig& config = {});
 
     /// Destruction precondition: the caller must ensure the provider is
     /// quiescent — no thread executing or about to enter a public API on this
@@ -142,9 +109,9 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 
-    /// The payload bound in force — `FastDDSProviderOptions::max_payload_bytes` exactly as given,
-    /// since an unsupported one never gets past the constructor. It is the number in the registered
-    /// type name, and the size a row has to fit.
+    /// The payload bound in force — `ProviderConfig::max_payload_bytes` exactly as given, or
+    /// 65536 if it was 0 (unset). An unsupported one never gets past the constructor. It is the
+    /// number in the registered type name, and the size a row has to fit.
     uint32_t PayloadBytes() const;
 
    private:

@@ -72,7 +72,7 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
         }
     }
 
-    // Only fires on a reader given a DEADLINE through FastDDSProviderOptions.
+    // Only fires on a reader whose profile in the provider document gives it a DEADLINE.
     void on_requested_deadline_missed(
         eprosima::fastdds::dds::DataReader* reader,
         const eprosima::fastdds::dds::RequestedDeadlineMissedStatus& status) final {

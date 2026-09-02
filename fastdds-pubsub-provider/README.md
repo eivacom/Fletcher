@@ -2,7 +2,7 @@
 
 Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain with reliability settings tuned to minimise message loss.
 
-> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.0` from Conan Center). The provider's public API — `FastDDSProviderOptions` and the `eprosima::fastdds::dds` QoS types it exposes — is unchanged from the previous 2.14.x baseline; the v3 upgrade only touched the provider's internal `TopicDataType` implementation. Note v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you include the transitively-exposed Fast DDS headers directly (see [Consuming the package](#consuming-the-package)).
+> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.0` from Conan Center). The provider's public API names **no eProsima type at all**: it is configured by `fletcher::ProviderConfig` plus a Fast DDS XML profiles document, so the Fast DDS headers are *not* exposed transitively and a consumer never needs them (see [QoS configuration](#qos-configuration) and [Consuming the package](#consuming-the-package)). The XML you write is Fast DDS 3.4's own profiles grammar, and v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you paste profiles out of a 2.x application.
 
 ## How it works
 
@@ -53,7 +53,7 @@ Each flow is its own class over a shared base, mirroring how DDS itself splits t
 |---|---|---|
 | **Loanable** | `LoanableSampleWriter`: `loan_sample` → fill the length and the body → `write(sample)`. No `serialize()` runs at all; with shared memory the payload being filled *is* the one the reader reads. | `LoanableDataReaderListener`: `take(LoanableSequence&, SampleInfoSeq&)` → read the two fields in place → `return_loan`. |
 | **Plain** | `SampleWriter`: `write(&PublishData)` runs `serialize()`, writing the same layout **truncated after `length`** — so a small row stays small on the wire. | `DataReaderListener`: `take_next_sample(&ReceivedData, &SampleInfo)` — Fast DDS deserialises, which reads `length` out of the payload and needs nothing beyond the bytes that arrived. |
-| **Chosen by** | `FastDDSProviderOptions::loan_publish` — a preference. | `internal::CanLoanSamples(qos)` — a **precondition**, not a preference: reading a whole sample in place needs whole payload nodes, which only a `PREALLOCATED*` history memory policy guarantees. Under `DYNAMIC_RESERVE`/`DYNAMIC_REUSABLE` the pool sizes each node to what arrived, so a truncated sample leaves a node shorter than a whole one and `length` would steer reads past its end. |
+| **Chosen by** | the `fletcher.loan_publish` document property — a preference. | `internal::CanLoanSamples(qos)` — a **precondition**, not a preference: reading a whole sample in place needs whole payload nodes, which only a `PREALLOCATED*` history memory policy guarantees. Under `DYNAMIC_RESERVE`/`DYNAMIC_REUSABLE` the pool sizes each node to what arrived, so a truncated sample leaves a node shorter than a whole one and `length` would steer reads past its end. |
 
 Neither side is negotiated. `loan_sample` is gated by the *writer's* own type (`DataWriterImpl::loan_sample`) and the reader's loans by the *reader's* own type (`DataReaderImpl::enable`, where `is_plain` is computed from the type alone), so all four pairings interoperate — upstream regression-tests exactly that in `test/dds/communication/mix_zero_copy_communication.json`, and it branches on `zero_copy_` between exactly these two reader calls in `test/dds/communication/SubscriberModule.cpp`.
 
@@ -138,21 +138,184 @@ The `std::vector<std::string>` topic segments from `PubSubProvider` are joined w
 
 ### QoS configuration
 
-QoS is configured up-front via `FastDDSProviderOptions` at construction time. The Options struct has provider-instance defaults (`default_writer_qos`, `default_reader_qos`) and per-topic overrides (`topic_writer_qos`, `topic_reader_qos`). For a given topic, the per-topic override (if present) wins; otherwise the instance default is applied. There are no runtime setters — configuration is immutable after construction.
+QoS is configured up-front, at construction, by **a Fast DDS XML profiles document handed to the
+provider as text** in `fletcher::ProviderConfig::document`. There are no runtime setters and no
+typed C++ QoS API — one way to do it. Fletcher itself gains no parser and this provider gains no
+dependency: the document is passed straight to Fast DDS's own
+`get_participant_extended_qos_from_xml` / `get_datawriter_qos_from_xml` /
+`get_datareader_qos_from_xml`, which parse a *string* and return a QoS.
+
+`ProviderConfig` carries exactly three things:
+
+| Field | Meaning |
+|---|---|
+| `domain_id` | The DDS domain. Used exactly as given, and it always wins over the document. |
+| `max_payload_bytes` | The row payload ceiling. **0 means unset** and resolves to 65536. The bound is part of the registered DDS type name, so two endpoints on different bounds do not discover each other *at all*. |
+| `document` | The XML profiles document, as **text**. Empty means "Fletcher's built-in profile everywhere" — exactly what every caller got before this existed. |
+
+The setting holds the XML itself, never a filename: Fletcher never opens a file on a provider's
+behalf. If you want the convenience of a file, `fletcher-gateway` has `--provider-config FILE`,
+which reads the bytes and hands them over unexamined.
+
+#### Reserved profile names
+
+| Role | Profile looked up, in order | Falls back to |
+|---|---|---|
+| participant | `fletcher_participant` — **mandatory in a non-empty document** | Fast DDS's default, named `FletcherParticipant` |
+| data writer on topic `T` | `T` (the `/`-joined topic name), then `fletcher_writer` | Fletcher's built-in writer profile |
+| data reader on topic `T` | `T`, then `fletcher_reader` | Fletcher's built-in reader profile |
+| the internal `__schema` channel | *nothing, ever* | its own fixed QoS |
+
+A **per-topic override** is therefore just a profile named after the topic.
+
+#### A supplied profile is that endpoint's WHOLE quality-of-service
+
+There is no merge and no floor. Anything a profile you supply leaves out takes **Fast DDS's**
+default, not Fletcher's. This is not a convenience trade — the XML API returns a filled QoS and
+cannot report which policies the document actually mentioned, so an overlay rule would rest on a
+fact the substrate does not expose, and could be neither implemented reliably nor tested honestly.
+
+One rule instead: **supply a profile for a role, and you own that role's QoS.** Start from the
+block below rather than from a bare profile.
 
 #### Fletcher's default QoS profile
 
-If you construct `FastDDSPubSubProvider(FastDDSProviderOptions{})` without touching the QoS fields, both data DataWriter and DataReader get this profile:
+With an empty document, both the data DataWriter and the data DataReader get this profile:
 
 | Policy | Setting | Reason |
 |---|---|---|
 | `reliability` | `RELIABLE_RELIABILITY_QOS` | The middleware retransmits unacknowledged samples; no silent drops. |
 | `history` | `KEEP_ALL_HISTORY_QOS` | All samples are retained until every matched reader has acknowledged them. With `RELIABLE`, the writer blocks (rather than dropping) when the history is full. |
 | `durability` | `TRANSIENT_LOCAL_DURABILITY_QOS` | Samples published before a subscriber joins are replayed to that subscriber on discovery, so no data is lost during startup races. |
+| `resource_limits` | `max_samples` 100, `max_instances` 1, `max_samples_per_instance` 100 | The sample type is bounded and plain, so every endpoint reserves the whole payload bound per history slot. At Fast DDS's default 5000 that is gigabytes, which overflows the data-sharing segment's 32-bit size and silently drops the endpoint back to the transport. |
+| `data_sharing` (reader) | `OFF` | Receive-side data-sharing intermittently drops part of the `TRANSIENT_LOCAL` backlog to a late-joining reader, with no error anywhere. |
 
-These three policies together implement "at-least-once" delivery within a single DDS domain.
+The first three together implement "at-least-once" delivery within a single DDS domain.
 
-The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` + `TRANSIENT_LOCAL`. It is a Fletcher-internal implementation detail and not configurable.
+#### The published starting point
+
+This is the **exact** XML transcription of the two profiles above. Copy it, change what you need,
+and the policies you leave alone stay where Fletcher put them. It is kept true setting-for-setting
+by `FastDdsConfig.DefaultProfileTranscriptionIsExact`, which compares the parsed result against
+`MakeFletcherDefault{Writer,Reader}Qos()` **whole-struct** — so this block cannot drift from the
+code without a test going red.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant"/>
+    <data_writer profile_name="fletcher_writer">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fletcher_reader">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+        <data_sharing><kind>OFF</kind></data_sharing>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>
+```
+
+#### The two settings a QoS profile cannot express
+
+`loan_publish` (which publish path) and `max_schema_bytes` (the bound on the internal schema
+channel) are Fletcher's, not DDS's. Neither is a QoS policy, and a second document format for them
+would break "one way to do it", so they ride as **vendor properties inside the anchor's
+`<rtps><propertiesPolicy>`** — native Fast DDS XML, parsed by Fast DDS:
+
+```xml
+<participant profile_name="fletcher_participant">
+  <rtps>
+    <propertiesPolicy>
+      <properties>
+        <property><name>fletcher.loan_publish</name><value>true</value></property>
+        <property><name>fletcher.max_schema_bytes</name><value>131072</value></property>
+      </properties>
+    </propertiesPolicy>
+  </rtps>
+</participant>
+```
+
+Both are provider-wide switches, which is what a participant profile is for. A `fletcher.`-prefixed
+property that is not one of these two, or whose value does not parse, is **refused** — a typo'd
+`fletcher.loanpublish` must not be inert.
+
+The two the provider consumes are **stripped before `create_participant`**, so a
+`<propagate>true</propagate>` on one cannot put a Fletcher key into DDS participant discovery data.
+Every other property reaches Fast DDS untouched: security plugins (`dds.sec.*`) need that.
+
+#### Refused at construction
+
+All of these throw `PubSubError(kInvalidArgument)` **before** the DomainParticipant exists, so a
+misconfigured provider never exists at all:
+
+- a non-empty document Fast DDS cannot parse, or that does not define
+  `<participant profile_name="fletcher_participant">`. The anchor is mandatory even when it carries
+  no policies: Fast DDS reports "malformed XML" and "no such profile" with the *same* return code,
+  so without one profile a document must define, a broken document — or an XRCE `key=value`
+  document pasted into the wrong field — would resolve to "no profiles found" and run happily on
+  the defaults;
+- an unknown or unparseable `fletcher.*` property, quoting it;
+- a non-zero `<domainId>` in the anchor that disagrees with `ProviderConfig::domain_id`, quoting
+  both numbers;
+- a `max_payload_bytes` that cannot bound a payload (it must be a multiple of 4 within the
+  supported range).
+
+**The domain rule, stated positively:** the deployment's domain always wins. An anchor's
+`<domainId>` must either match `ProviderConfig::domain_id` or be absent. An explicit
+`<domainId>0</domainId>` cannot be told from absent — Fast DDS reports both as 0 — and is accepted
+as absent.
+
+#### Known limits of the document
+
+- **A per-topic profile whose name matches no topic is inert.** The XML API resolves a profile *by
+  name* and cannot enumerate what a document defines, so the provider cannot see, let alone
+  complain about, a profile it never asks for. Check the spelling against the `/`-joined topic name.
+- **A supplied reader profile can re-enable receive-side data-sharing,** which Fletcher's built-in
+  turns off. That is deliberate: a Fletcher floor underneath your profile would mean the document
+  does not really configure QoS. Be aware that data-sharing on the receive side has a measured
+  defect — part of the `TRANSIENT_LOCAL` backlog can be dropped to a late-joining reader with no
+  error anywhere.
+- **A profile's `resource_limits` can oversize the data-sharing segment.** Fletcher does not know
+  your memory budget, so it does not second-guess the number; see the 5000-sample note above.
+- **Every non-empty document loses the `FletcherParticipant` participant name** unless its anchor
+  sets one, because the anchor *is* the participant's QoS. This is universal rather than exotic,
+  and it is diagnostic-only — nothing in the tree keys on that name. Set
+  `<name>` in the anchor if you rely on it for tooling.
+
+#### Two Fast DDS defaults worth knowing
+
+"Anything unmentioned takes Fast DDS's default" means Fast DDS's, which is not always the DDS
+specification's. Measured on `fast-dds/3.4.0`: a writer profile that omits `durability` resolves to
+**TRANSIENT_LOCAL**, not the spec's VOLATILE — so it coincides with Fletcher's built-in. Reliability
+likewise (`RELIABLE` for a writer). The policies where Fletcher and Fast DDS genuinely differ are
+`history` and `resource_limits`, which is why the starting-point block spells both out.
+
+The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` +
+`TRANSIENT_LOCAL`. **No profile name is ever consulted for it**: it is a Fletcher-internal
+implementation detail and not configurable. Only `fletcher.max_schema_bytes` bounds it.
 
 ### Delivery guarantees
 
@@ -169,25 +332,61 @@ Both guarantees are enforced by routing every sample (buffered backlog and live)
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
-// Default options — Fletcher's profile on domain 0, 64 KiB max payload.
-auto provider = std::make_shared<FastDDSPubSubProvider>(FastDDSProviderOptions{});
+// Defaults — Fletcher's profile on domain 0, 64 KiB max payload.
+auto provider = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{});
 
-// Custom options — pick a DDS domain and tune QoS:
-FastDDSProviderOptions opts;
-opts.domain_id = 7;
-opts.default_writer_qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
-opts.default_writer_qos.history().depth = 10;
-auto custom = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
+// A DDS domain and nothing else: still Fletcher's built-in profile.
+ProviderConfig config;
+config.domain_id = 7;
+auto custom = std::make_shared<FastDDSPubSubProvider>(config);
 
-// Publishing out of the transport's own buffer, with the history
-// sized to the rows on the topic (see Zero-copy: the plain sample above).
-FastDDSProviderOptions fast;
-fast.loan_publish = true;
-fast.default_writer_qos.history().kind = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
-fast.default_writer_qos.history().depth = 10;
-fast.default_writer_qos.resource_limits().max_samples = 10;
-fast.default_writer_qos.resource_limits().allocated_samples = 10;
-auto shared = std::make_shared<FastDDSPubSubProvider>(std::move(fast));
+// Publishing out of the transport's own buffer, with the history sized to the
+// rows on the topic (see Zero-copy: the plain sample above). Note the writer
+// profile restates durability and reliability: a supplied profile is the WHOLE
+// QoS for its role, so anything it omits takes Fast DDS's default, not
+// Fletcher's.
+ProviderConfig loaned;
+loaned.document = R"XML(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps>
+        <propertiesPolicy>
+          <properties>
+            <property><name>fletcher.loan_publish</name><value>true</value></property>
+          </properties>
+        </propertiesPolicy>
+      </rtps>
+    </participant>
+    <data_writer profile_name="fletcher_writer">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
+        <resourceLimitsQos>
+          <max_samples>10</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>10</max_samples_per_instance>
+          <allocated_samples>10</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+  </profiles>
+</dds>)XML";
+auto shared = std::make_shared<FastDDSPubSubProvider>(loaned);
+```
+
+Or select it by name through the registry, which is how `fletcher-gateway` and any
+configuration-driven application do it — the caller then names no provider type at all:
+
+```cpp
+fletcher::ProviderRegistry registry;
+fletcher::RegisterFastDDSProvider(registry);   // registers "fastdds"
+
+std::shared_ptr<fletcher::PubSubProvider> p =
+    registry.Create(fletcher::ProviderSelector::Parse("fastdds"), config);
 ```
 
 The provider is passed to `fletcher::Publisher` / `fletcher::Subscriber` or to generated `<Msg>Publisher` / `<Msg>Subscriber` classes:
@@ -217,38 +416,61 @@ provider->Unsubscribe({"my", "topic"});
 
 ### Per-topic QoS overrides
 
-Set a different writer QoS per topic when you publish to several topics that each need their own profile. The map key is the joined topic string (segments joined with `/`); any topic not present in the map falls back to `default_writer_qos` / `default_reader_qos`.
+A per-topic override is a profile **named after the topic** — the `/`-joined topic string. It is
+looked up before `fletcher_writer` / `fletcher_reader`, and a topic with no profile of its own
+falls back to those, then to Fletcher's built-in.
 
-```cpp
-FastDDSProviderOptions opts;
+Remember the whole-QoS rule: each of these profiles is complete in itself, so each restates the
+policies it wants rather than inheriting them from `fletcher_writer`.
 
-// "telemetry/high-rate": shallow history, drop old samples.
-auto& fast = opts.topic_writer_qos["telemetry/high-rate"];
-fast = opts.default_writer_qos;
-fast.history().kind    = eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
-fast.history().depth   = 5;
-fast.durability().kind = eprosima::fastdds::dds::VOLATILE_DURABILITY_QOS;
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant"/>
 
-// "config/snapshot": keep everything, durable for late subscribers.
-auto& cfg = opts.topic_writer_qos["config/snapshot"];
-cfg = opts.default_writer_qos;
-cfg.history().kind    = eprosima::fastdds::dds::KEEP_ALL_HISTORY_QOS;
-cfg.durability().kind = eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
+    <!-- "telemetry/high-rate": shallow history, drop old samples. -->
+    <data_writer profile_name="telemetry/high-rate">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>5</depth></historyQos>
+      </topic>
+    </data_writer>
 
-// "ops/log": fire-and-forget, no reliability overhead.
-auto& log = opts.topic_writer_qos["ops/log"];
-log = opts.default_writer_qos;
-log.reliability().kind = eprosima::fastdds::dds::BEST_EFFORT_RELIABILITY_QOS;
+    <!-- "config/snapshot": keep everything, durable for late subscribers. -->
+    <data_writer profile_name="config/snapshot">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+      </topic>
+    </data_writer>
 
-auto provider = std::make_shared<FastDDSPubSubProvider>(std::move(opts));
-Publisher publisher(provider);
-publisher.CreateTopic({"telemetry", "high-rate"}, schema_a);  // uses 'fast'
-publisher.CreateTopic({"config", "snapshot"},   schema_b);    // uses 'cfg'
-publisher.CreateTopic({"ops", "log"},           schema_c);    // uses 'log'
-publisher.CreateTopic({"misc", "events"},       schema_d);    // uses default_writer_qos
+    <!-- "ops/log": fire-and-forget, no reliability overhead. -->
+    <data_writer profile_name="ops/log">
+      <qos>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+    </data_writer>
+
+    <!-- everything else on this instance -->
+    <data_writer profile_name="fletcher_writer">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+    </data_writer>
+  </profiles>
+</dds>
 ```
 
-`topic_reader_qos` works the same way on the subscriber side.
+`<data_reader>` profiles work the same way on the subscriber side. A profile whose name matches no
+topic is silently inert — see [Known limits of the document](#known-limits-of-the-document).
 
 ### Constraints
 
@@ -394,11 +616,15 @@ target_link_libraries(my_app PRIVATE
 target_link_libraries(my_app PRIVATE fletcher::fastdds-pubsub-provider)
 ```
 
-The `fastdds` link dependency is **public** to this library
-because `FastDDSProviderOptions` exposes `eprosima::fastdds::dds::DataWriterQos`
-and `eprosima::fastdds::dds::DataReaderQos` in its public API. Consumers
-get the FastDDS headers transitively and can include them directly when
-they need to construct or tune a QoS profile.
+The `fastdds` dependency is **linked PRIVATE and its headers are not exported**: the public
+header names no eProsima type, so nothing you write to configure this provider needs a Fast DDS
+header. That is enforced rather than merely intended — `test_package` compiles with **no Fast DDS
+include directories at all**, so any eProsima type creeping back into the installed header is a
+compile error there.
+
+The library is STATIC, so consumers still *link* the Fast DDS chain (`transitive_libs` is kept);
+they just do not *see* it. If your own code uses Fast DDS directly for its own reasons, require
+`fast-dds/3.4.0` explicitly — as `benchmarks/conanfile.py` does.
 
 ## CI pipeline
 

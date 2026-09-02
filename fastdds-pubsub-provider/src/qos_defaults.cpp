@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include "fletcher/fastdds_pubsub_provider/internal/qos_defaults.hpp"
+#include "internal/qos_defaults.hpp"
 
 namespace fletcher {
 namespace internal {

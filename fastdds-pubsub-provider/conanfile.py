@@ -42,10 +42,12 @@ class FletcherPubsubConan(ConanFile):
     def requirements(self):
         self.requires("fletcher-pubsub/0.5.0-alpha", transitive_headers=True)
         self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
-        # FastDDS headers are part of this package's public API
-        # (FastDDSProviderOptions exposes DataWriterQos / DataReaderQos),
-        # so downstream consumers must see them transitively.
-        self.requires("fast-dds/3.4.0", transitive_headers=True, transitive_libs=True)
+        # NO transitive_headers: the public header names no eProsima type (PDA-DEC-6), so a
+        # consumer configures this provider through ProviderConfig and an XML profiles document
+        # without ever seeing a Fast DDS header. Dropping it is what makes test_package a real
+        # check of that claim rather than a claim. transitive_libs STAYS -- the library is
+        # STATIC, so consumers still link the Fast DDS chain.
+        self.requires("fast-dds/3.4.0", transitive_libs=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 

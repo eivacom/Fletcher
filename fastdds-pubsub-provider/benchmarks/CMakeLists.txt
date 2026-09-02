@@ -6,6 +6,9 @@ project(fletcher-fastdds-pubsub-provider-benchmarks CXX)
 
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-core CONFIG REQUIRED)
+# Explicit, because the provider links fast-dds PRIVATE and no longer exports its headers: every
+# TU here includes <fastdds/...> directly (PDA-DEC-6 DEBT-4).
+find_package(fastdds CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 
 add_executable(bench_pub_sub_type bench_pub_sub_type.cpp)
@@ -27,5 +30,6 @@ foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy)
     target_link_libraries(
         ${_target}
         PRIVATE fletcher-core::fletcher-core
-                fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider)
+                fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+                fastdds)
 endforeach()

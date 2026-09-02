@@ -33,24 +33,80 @@ OwnedSchema MakeSchema() {
     return s;
 }
 
-FastDDSProviderOptions Options(bool loan, bool sharing, uint32_t bound, int32_t slots) {
-    FastDDSProviderOptions o;
-    o.domain_id = 43;
-    o.max_payload_bytes = bound;
-    o.loan_publish = loan;
-    o.default_writer_qos.resource_limits().max_samples = slots;
-    o.default_writer_qos.resource_limits().max_instances = 1;
-    o.default_writer_qos.resource_limits().max_samples_per_instance = slots;
-    o.default_writer_qos.resource_limits().allocated_samples = slots;
-    o.default_reader_qos.resource_limits().max_samples = slots;
-    o.default_reader_qos.resource_limits().max_instances = 1;
-    o.default_reader_qos.resource_limits().max_samples_per_instance = slots;
-    o.default_reader_qos.resource_limits().allocated_samples = slots;
-    if (!sharing) {
-        o.default_writer_qos.data_sharing().off();
-        o.default_reader_qos.data_sharing().off();
-    }
-    return o;
+// PDA-DEC-6 moved every knob below out of the retired `FastDDSProviderOptions` and into the
+// provider's own Fast DDS XML profiles document. This function is the item's own proof that the
+// document expresses what the struct did — resource limits, data-sharing, and the publish path —
+// and it is the only in-tree caller of `fletcher.loan_publish`.
+//
+// The durability / reliability / history lines are restated in full because **a supplied profile
+// is that endpoint's WHOLE quality-of-service** (owner ruling 2026-09-02): Fletcher's built-in
+// profile is not underneath it, so a profile that mentioned only `resourceLimitsQos` would take
+// Fast DDS's defaults for everything else — including a BEST_EFFORT reader, which would measure
+// something other than what this benchmark is about.
+std::string Document(bool loan, bool sharing, int32_t slots) {
+    const std::string limits = R"(
+        <historyQos><kind>KEEP_LAST</kind><depth>)" +
+                               std::to_string(slots) + R"(</depth></historyQos>
+        <resourceLimitsQos>
+          <max_samples>)" + std::to_string(slots) +
+                               R"(</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>)" +
+                               std::to_string(slots) + R"(</max_samples_per_instance>
+          <allocated_samples>)" +
+                               std::to_string(slots) +
+                               R"(</allocated_samples>
+        </resourceLimitsQos>)";
+    // AUTO is Fast DDS's own default, so "sharing" is the absence of an OFF line.
+    const std::string data_sharing = sharing ? "" : R"(
+        <data_sharing><kind>OFF</kind></data_sharing>)";
+    return R"(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps>
+        <propertiesPolicy>
+          <properties>
+            <property>
+              <name>fletcher.loan_publish</name>
+              <value>)" +
+           std::string(loan ? "true" : "false") +
+           R"(</value>
+            </property>
+          </properties>
+        </propertiesPolicy>
+      </rtps>
+    </participant>
+    <data_writer profile_name="fletcher_writer">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>)" +
+           data_sharing + R"(
+      </qos>
+      <topic>)" +
+           limits + R"(
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fletcher_reader">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>)" +
+           data_sharing + R"(
+      </qos>
+      <topic>)" +
+           limits + R"(
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>)";
+}
+
+ProviderConfig Options(bool loan, bool sharing, uint32_t bound, int32_t slots) {
+    ProviderConfig config;
+    config.domain_id = 43;
+    config.max_payload_bytes = bound;
+    config.document = Document(loan, sharing, slots);
+    return config;
 }
 
 double Percentile(std::vector<double>& v, double p) {

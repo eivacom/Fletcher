@@ -20,6 +20,19 @@
 //                          provider would have to keep in sync.
 //   --domain-id N          DDS domain id for the fastdds provider (default 0).
 //                          Ignored by the inprocess provider.
+//   --provider-config FILE read FILE and hand its contents to the selected
+//                          provider as its configuration document. The format
+//                          is the PROVIDER's, not the gateway's: a Fast DDS XML
+//                          QoS profiles document for "fastdds", `key=value`
+//                          lines for "inprocess". The gateway does not parse it,
+//                          does not validate it and does not know what it means
+//                          — it only reads the bytes, because Fletcher never
+//                          opens a file on a provider's behalf (owner ruling
+//                          2026-09-02: the configuration setting carries the
+//                          document itself, and the convenience of reading a
+//                          file lives HERE). An unreadable FILE exits 2, like a
+//                          bad selector; a document the provider rejects exits 2
+//                          with the provider's own message.
 //
 // The gateway is schema-agnostic. It knows nothing about topic schemas
 // or which topics exist before clients show up; clients establish
@@ -53,8 +66,10 @@
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -67,7 +82,30 @@ struct Args {
     uint16_t port = 9090;
     std::string provider = "inprocess";
     uint32_t domain_id = 0;
+    // The CONTENTS of --provider-config, not its path: what crosses the seam is
+    // the document itself (§4.1), so the file is read here and the name is not
+    // kept. Empty means "no document", which is every provider's own default.
+    std::string document;
 };
+
+// Read a provider document off disk. This is the ONLY file the gateway opens on
+// a provider's behalf, and it is opened in BINARY: the document is opaque bytes
+// (§4.2, C form: "the bytes may contain NUL"), so no newline translation and no
+// text-mode truncation at a stray 0x1A.
+std::string ReadProviderDocument(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "fletcher-gateway: cannot read --provider-config %s\n", path);
+        std::exit(2);
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    if (in.bad()) {
+        std::fprintf(stderr, "fletcher-gateway: error reading --provider-config %s\n", path);
+        std::exit(2);
+    }
+    return buffer.str();
+}
 
 Args ParseArgs(int argc, char* argv[]) {
     Args a;
@@ -81,6 +119,8 @@ Args ParseArgs(int argc, char* argv[]) {
             a.provider = argv[++i];
         } else if (arg == "--domain-id" && i + 1 < argc) {
             a.domain_id = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--provider-config" && i + 1 < argc) {
+            a.document = ReadProviderDocument(argv[++i]);
         } else if (arg == "--version") {
             std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
             std::exit(0);
@@ -97,9 +137,12 @@ Args ParseArgs(int argc, char* argv[]) {
             // (provider_registry.hpp) — a name-listing accessor is not a gap.
             std::printf(
                 "Usage: %s [--port N] [--bind-address ADDR] "
-                "[--provider NAME] [--domain-id N] [--version]\n"
+                "[--provider NAME] [--domain-id N] [--provider-config FILE] "
+                "[--version]\n"
                 "  --provider defaults to \"inprocess\"; an unrecognised NAME "
-                "exits 2 naming what this build supports.\n",
+                "exits 2 naming what this build supports.\n"
+                "  --provider-config FILE is passed to the provider verbatim, "
+                "in the provider's own format.\n",
                 argv[0]);
             std::exit(0);
         } else {
@@ -144,19 +187,22 @@ int main(int argc, char* argv[]) {
         // costs today.
         fletcher::ProviderRegistry registry;
         fletcher::RegisterInProcessProvider(registry);
-        registry.Register("fastdds", [](const fletcher::ProviderConfig& c) {
-            fletcher::FastDDSProviderOptions dds_opts;
-            dds_opts.domain_id = c.domain_id;
-            return std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
-        });
+        // PDA-DEC-6: the provider registers itself, so this file no longer names
+        // a concrete provider type at all — the last one went with the inline
+        // closure that used to translate `ProviderConfig` into a Fast
+        // DDS-specific options struct. Nothing here knows any DDS vocabulary.
+        fletcher::RegisterFastDDSProvider(registry);
 
-        // DEBT-5 (PDA-DEC-5): the gateway has no CLI route for a provider
-        // document, so `document` is always empty here. That is correct for
-        // `inprocess` (its default IS today's behaviour), but a later stage
-        // moving Fast DDS QoS into the document (PDA-DEC-6) needs a way for an
-        // operator to supply one — no item currently owns adding that surface.
+        // PDA-DEC-5 DEBT-5 is CLOSED here: `--provider-config FILE` is the route
+        // an operator uses to configure the selected provider, which is what
+        // makes charter requirement (b) — "there is a way for me to configure
+        // the driver with protocol-specific setup details at runtime" —
+        // reachable from gateway.exe. The gateway supplies bytes and nothing
+        // else: it neither knows nor checks the format, so ONE flag serves every
+        // provider this build has and every provider a later build adds.
         fletcher::ProviderConfig config;
         config.domain_id = args.domain_id;
+        config.document = args.document;
         provider = registry.Create(fletcher::ProviderSelector::Parse(args.provider), config);
     } catch (const fletcher::PubSubError& e) {
         std::fprintf(stderr, "fletcher-gateway: %s\n", e.what());

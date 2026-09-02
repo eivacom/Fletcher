@@ -28,8 +28,12 @@ static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
 }
 
 int main() {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    // ProviderConfig and nothing else — and this TU is the machine check for that: the package
+    // recipe drops `transitive_headers`, so it compiles with no Fast DDS include directories at
+    // all. An eProsima type surviving in the installed header would be a compile error HERE
+    // (PDA-DEC-6 §5, owner ruling 2026-08-31 "Fletcher never learns DDS vocabulary").
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 

@@ -46,10 +46,13 @@ uint32_t ParseDomainId(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
     const uint32_t domain_id = ParseDomainId(argc, argv);
 
-    fletcher::FastDDSProviderOptions options;
-    options.domain_id = domain_id;
+    // An EMPTY document, deliberately: this peer has to agree with the gateway on the
+    // registered DDS type name, and that name carries the payload bound. Both sides therefore
+    // resolve the unset bound to the same 65536 (PDA-DEC-6 §1) — a mismatch would show up as
+    // zero deliveries rather than as a warning.
     std::shared_ptr<fletcher::FastDDSPubSubProvider> provider =
-        std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(options));
+        std::make_shared<fletcher::FastDDSPubSubProvider>(
+            fletcher::ProviderConfig{0, domain_id, ""});
 
     // C++ -> TS : the generated publisher's constructor calls CreateTopic,
     // which announces the CppToTs schema on the DDS __schema channel so the

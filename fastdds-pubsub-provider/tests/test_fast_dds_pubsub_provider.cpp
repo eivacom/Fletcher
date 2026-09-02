@@ -8,6 +8,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <fastdds/dds/domain/DomainParticipant.hpp>
+#include <fastdds/dds/domain/DomainParticipantFactory.hpp>
+#include <fastdds/dds/subscriber/Subscriber.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <mutex>
@@ -19,6 +22,7 @@
 #include "internal/data_reader_listener.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/ordered_delivery.hpp"
+#include "internal/profile_document.hpp"
 #include "internal/transport_data.hpp"
 
 using namespace fletcher;
@@ -155,7 +159,7 @@ TEST(FletcherSamplePubSubTypeTest, SerializeDiagnosticDoesNotLeakBetweenPublishe
 // ---------------------------------------------------------------------------
 
 TEST(FastDDSPubSubProviderTest, ConstructDestruct) {
-    EXPECT_NO_THROW({ FastDDSPubSubProvider p(FastDDSProviderOptions{}); });
+    EXPECT_NO_THROW({ FastDDSPubSubProvider p(ProviderConfig{}); });
 }
 
 // #63 (HARD-4) — Destruction is a documented quiescence contract, not a
@@ -167,7 +171,7 @@ TEST(FastDDSPubSubProviderTest, ConstructDestruct) {
 // would be flaky and would not make that usage supported (HARD-4 design).
 TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
     EXPECT_NO_THROW({
-        FastDDSPubSubProvider provider(FastDDSProviderOptions{});
+        FastDDSPubSubProvider provider(ProviderConfig{});
         provider.CreateTopic({"quiescent", "teardown"}, MakeSchema());
 
         std::atomic<int32_t> received{-1};
@@ -187,7 +191,7 @@ TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
 }
 
 TEST(FastDDSPubSubProviderTest, CreateTopicSucceeds) {
-    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    FastDDSPubSubProvider p(ProviderConfig{});
     EXPECT_NO_THROW(p.CreateTopic({"create", "ok"}, MakeSchema()));
 }
 
@@ -196,7 +200,7 @@ TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
     // already-existing topic is a no-op, not an error. This lets a publisher
     // attach to a topic a subscriber created first (subscriber-first) and
     // makes repeated declarations harmless.
-    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    FastDDSPubSubProvider p(ProviderConfig{});
     p.CreateTopic({"create", "dup"}, MakeSchema());
     EXPECT_NO_THROW(p.CreateTopic({"create", "dup"}, MakeSchema()));
 }
@@ -204,13 +208,13 @@ TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
 TEST(FastDDSPubSubProviderTest, CreateTopicRejectsConflictingSchema) {
     // Idempotent re-declaration is fine, but declaring an existing topic with a
     // *different* schema is a genuine conflict and must not be silently dropped.
-    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    FastDDSPubSubProvider p(ProviderConfig{});
     p.CreateTopic({"create", "conflict"}, MakeSchema());
     EXPECT_THROW(p.CreateTopic({"create", "conflict"}, MakeOtherSchema()), std::runtime_error);
 }
 
 TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
-    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    FastDDSPubSubProvider p(ProviderConfig{});
     p.CreateTopic({"pub", "nosub"}, MakeSchema());
     EXPECT_NO_THROW(p.Publish({"pub", "nosub"}, MakeEncoder(1)));
 }
@@ -221,7 +225,7 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
 // which proves a benign no-reader write()==false (no serialize error) does NOT throw
 // — so the signal is the serialize diagnostic, not the write() return.
 TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
-    FastDDSPubSubProvider p(FastDDSProviderOptions{});
+    FastDDSPubSubProvider p(ProviderConfig{});
     p.CreateTopic({"pub", "encfail"}, MakeSchema());
     PubSubProvider::RowEncoder bad = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
     try {
@@ -234,8 +238,8 @@ TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
 }
 
 TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
     pub_provider.CreateTopic({"roundtrip", "x"}, MakeSchema());
 
@@ -268,73 +272,163 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 
 // The sample type is bounded and plain, so every endpoint reserves the whole payload bound per
 // history slot — which is what the resource limits here keep in check. The default memory policy
-// preallocates, so a reader built from these reads through loans; LoanPublishOptions() makes the
+// preallocates, so a reader built from these reads through loans; LoanPublishConfig() makes the
 // publish side loan too.
-static FastDDSProviderOptions BoundedOptions() {
-    FastDDSProviderOptions opts;
-    opts.default_writer_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    opts.default_writer_qos.history().depth = 10;
-    opts.default_writer_qos.resource_limits().max_samples = 10;
-    opts.default_writer_qos.resource_limits().allocated_samples = 10;
-    opts.default_reader_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    opts.default_reader_qos.history().depth = 10;
-    opts.default_reader_qos.resource_limits().max_samples = 10;
-    opts.default_reader_qos.resource_limits().allocated_samples = 10;
-    return opts;
+//
+// PDA-DEC-6 — these used to be typed `FastDDSProviderOptions` fields; they are now lines in the
+// provider's own Fast DDS XML profiles document. Note the durability / reliability /
+// data-sharing lines are restated in full: **a supplied profile is that endpoint's WHOLE QoS**
+// (owner ruling 2026-09-02), so Fletcher's built-in profile is NOT underneath these, and a
+// profile that mentioned only `historyQos` would silently take Fast DDS's defaults — a
+// BEST_EFFORT, data-sharing-AUTO reader, which is not what these tests are about.
+namespace {
+
+constexpr const char* kFletcherWriterQos = R"(
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>)";
+
+constexpr const char* kFletcherReaderQos = R"(
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+        <data_sharing><kind>OFF</kind></data_sharing>)";
+
+// Ten slots rather than Fletcher's published hundred: small enough that the loaned tests below
+// can exhaust the pool deliberately.
+constexpr const char* kTenSlots = R"(
+        <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
+        <resourceLimitsQos>
+          <max_samples>10</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>10</max_samples_per_instance>
+          <allocated_samples>10</allocated_samples>
+        </resourceLimitsQos>)";
+
+struct DocumentParts {
+    std::string writer_qos = kFletcherWriterQos;
+    std::string reader_qos = kFletcherReaderQos;
+    std::string writer_topic = kTenSlots;
+    // Children of <data_reader> that are not <qos>/<topic> — <historyMemoryPolicy>, say.
+    std::string reader_tail;
+    // Goes inside the mandatory <participant profile_name="fletcher_participant"> anchor: the
+    // two `fletcher.*` vendor properties live there.
+    std::string anchor_body;
+};
+
+std::string BoundedDocument(const DocumentParts& parts = {}) {
+    return std::string(R"(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">)") +
+           parts.anchor_body + R"(</participant>
+    <data_writer profile_name="fletcher_writer">
+      <qos>)" +
+           parts.writer_qos +
+           R"(
+      </qos>
+      <topic>)" +
+           parts.writer_topic +
+           R"(
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fletcher_reader">
+      <qos>)" +
+           parts.reader_qos +
+           R"(
+      </qos>
+      <topic>)" +
+           kTenSlots +
+           R"(
+      </topic>)" +
+           parts.reader_tail +
+           R"(
+    </data_reader>
+  </profiles>
+</dds>)";
 }
 
-static FastDDSProviderOptions LoanPublishOptions() {
-    FastDDSProviderOptions opts = BoundedOptions();
-    opts.loan_publish = true;
-    return opts;
+// One `fletcher.*` vendor property inside the anchor's <rtps><propertiesPolicy>. The two settings
+// a DDS QoS profile cannot express — which publish path, and the internal schema channel's bound
+// — ride here, because they are Fletcher's rather than DDS's (PDA-DEC-6 §3).
+std::string AnchorProperty(const std::string& name, const std::string& value) {
+    return R"(
+      <rtps>
+        <propertiesPolicy>
+          <properties>
+            <property><name>)" +
+           name + R"(</name><value>)" + value + R"(</value></property>
+          </properties>
+        </propertiesPolicy>
+      </rtps>)";
 }
 
-// The bound is a runtime option, and it is taken as given — PayloadBytes() is what a row has to fit
-// and what the registered type name carries.
+}  // namespace
+
+static ProviderConfig BoundedConfig(const DocumentParts& parts = {}) {
+    ProviderConfig config;
+    config.document = BoundedDocument(parts);
+    return config;
+}
+
+static ProviderConfig LoanPublishConfig() {
+    DocumentParts parts;
+    parts.anchor_body = AnchorProperty("fletcher.loan_publish", "true");
+    return BoundedConfig(parts);
+}
+
+// The bound is part of the typed core (spec §4.1) and is taken as given — PayloadBytes() is what
+// a row has to fit and what the registered type name carries.
 TEST(FastDDSPubSubProviderTest, ThePayloadBoundIsWhatWasAskedFor) {
-    FastDDSProviderOptions opts = BoundedOptions();
-    opts.max_payload_bytes = kPayloadBytes<128 * 1024>;
-    FastDDSPubSubProvider provider(opts);
+    ProviderConfig config = BoundedConfig();
+    config.max_payload_bytes = kPayloadBytes<128 * 1024>;
+    FastDDSPubSubProvider provider(config);
     EXPECT_EQ(provider.PayloadBytes(), 128u * 1024);
 }
 
 // Nothing is rounded, and 4-byte alignment is the whole rule; these values cannot work.
+//
+// Re-anchored by PDA-DEC-6: the refusal is the SAME refusal, but it now crosses as the seam's one
+// error type carrying a stable number (`kInvalidArgument`) rather than as a bare
+// `std::invalid_argument`, which through a registry factory would reach the caller as `kInternal`
+// and tell an operator nothing (spec §5.1). The `max_payload_bytes = 0` row is GONE from this
+// test on purpose: 0 now means *unset* and resolves to 65536, which
+// `FastDdsConfig.AnUnsetPayloadBoundResolvesToSixtyFourKiB` pins.
 TEST(FastDDSPubSubProviderTest, AnUnusablePayloadBoundIsRefused) {
-    FastDDSProviderOptions opts = BoundedOptions();
-    opts.max_payload_bytes = 100'001;  // not a multiple of 4, so the sample carries tail padding
-    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
-
-    opts.max_payload_bytes = 0;
-    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
+    ProviderConfig config = BoundedConfig();
+    config.max_payload_bytes = 100'001;  // not a multiple of 4, so the sample carries tail padding
+    EXPECT_THROW(FastDDSPubSubProvider provider(config), PubSubError);
 
     // Past where a sample's own size still fits the uint32 Fast DDS reports it in.
-    opts.max_payload_bytes = kMaxPayloadBytes + 4;
-    EXPECT_THROW(FastDDSPubSubProvider provider(opts), std::invalid_argument);
+    config.max_payload_bytes = kMaxPayloadBytes + 4;
+    EXPECT_THROW(FastDDSPubSubProvider provider(config), PubSubError);
 }
 
 // A bound that is not a power of two is ordinary.
 TEST(FastDDSPubSubProviderTest, ABoundThatIsNotAPowerOfTwoIsFine) {
-    FastDDSProviderOptions opts = BoundedOptions();
-    opts.max_payload_bytes = kPayloadBytes<100'000>;
-    FastDDSPubSubProvider provider(opts);
+    ProviderConfig config = BoundedConfig();
+    config.max_payload_bytes = kPayloadBytes<100'000>;
+    FastDDSPubSubProvider provider(config);
     EXPECT_EQ(provider.PayloadBytes(), 100'000u);
 }
 
 // Nothing caps a bound; a constructor allocates no pools, which are per endpoint.
 TEST(FastDDSPubSubProviderTest, ALargeBoundIsFine) {
-    FastDDSProviderOptions opts = BoundedOptions();
-    opts.max_payload_bytes = kPayloadBytes<8 * 1024 * 1024>;
-    EXPECT_NO_THROW(FastDDSPubSubProvider provider(opts));
+    ProviderConfig config = BoundedConfig();
+    config.max_payload_bytes = kPayloadBytes<8 * 1024 * 1024>;
+    EXPECT_NO_THROW(FastDDSPubSubProvider provider(config));
 
     // Well past where the old compiled set stopped.
-    FastDDSProviderOptions large = BoundedOptions();
+    ProviderConfig large = BoundedConfig();
     large.max_payload_bytes = kPayloadBytes<256 * 1024 * 1024>;
     EXPECT_NO_THROW(FastDDSPubSubProvider provider(large));
 
-    // And with Fast DDS's own default max_samples behind it, which the old check rejected outright.
-    FastDDSProviderOptions unbounded_limits = BoundedOptions();
+    // And with Fast DDS's own default max_samples behind it, which the old check rejected
+    // outright — now a line in the document rather than a field.
+    DocumentParts unbounded;
+    unbounded.writer_topic = R"(
+        <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
+        <resourceLimitsQos><max_samples>5000</max_samples></resourceLimitsQos>)";
+    ProviderConfig unbounded_limits = BoundedConfig(unbounded);
     unbounded_limits.max_payload_bytes = kPayloadBytes<8 * 1024 * 1024>;
-    unbounded_limits.default_writer_qos.resource_limits().max_samples = 5000;
     EXPECT_NO_THROW(FastDDSPubSubProvider provider(unbounded_limits));
 }
 
@@ -357,8 +451,8 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
 // loan_publish: the writer encodes into a loaned payload and the reader reads the row out of the
 // loan it takes, with no serialise/deserialise pair in between.
 TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
-    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
-    FastDDSPubSubProvider sub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
 
     pub_provider.CreateTopic({"loaned", "x"}, MakeSchema());
 
@@ -376,13 +470,34 @@ TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
 }
 
 // A non-preallocating reader gets nodes sized to what arrived, so it reads through copies.
+//
+// The memory policy is what gates the loaned read path, so the document line that sets it is
+// asserted directly rather than inferred from "a row arrived": a `<historyMemoryPolicy>` value
+// Fast DDS did not understand would leave the reader PREALLOCATED and this test would pass while
+// exercising the very path it exists to avoid.
 TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
-    FastDDSProviderOptions sub_opts = BoundedOptions();
-    sub_opts.default_reader_qos.endpoint().history_memory_policy =
-        eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE;
+    DocumentParts dynamic_reader;
+    dynamic_reader.reader_tail = R"(
+      <historyMemoryPolicy>DYNAMIC</historyMemoryPolicy>)";
+    const ProviderConfig sub_config = BoundedConfig(dynamic_reader);
+    {
+        DomainParticipant* probe = DomainParticipantFactory::get_instance()->create_participant(
+            0, PARTICIPANT_QOS_DEFAULT);
+        ASSERT_NE(probe, nullptr);
+        Subscriber* subscriber = probe->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
+        ASSERT_NE(subscriber, nullptr);
+        const DataReaderQos resolved =
+            internal::ResolveReaderQos(*subscriber, sub_config.document, "any/topic");
+        EXPECT_EQ(resolved.endpoint().history_memory_policy,
+                  eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE)
+            << "the document's <historyMemoryPolicy> did not reach the reader QoS";
+        EXPECT_FALSE(internal::CanLoanSamples(resolved));
+        probe->delete_subscriber(subscriber);
+        DomainParticipantFactory::get_instance()->delete_participant(probe);
+    }
 
-    FastDDSPubSubProvider pub_provider(BoundedOptions());
-    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+    FastDDSPubSubProvider pub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(sub_config);
 
     pub_provider.CreateTopic({"dynamic", "reader"}, MakeSchema());
 
@@ -420,8 +535,8 @@ TEST(FastDDSPubSubProviderTest, CanLoanSamplesFollowsTheMemoryPolicy) {
 // as long as the row needs, while the loan spans a whole slot, and it is the sample's own length
 // rather than the payload length that bounds the read.
 TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
-    FastDDSPubSubProvider pub_provider(BoundedOptions());
-    FastDDSPubSubProvider sub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
 
     pub_provider.CreateTopic({"datasharing", "x"}, MakeSchema());
 
@@ -442,13 +557,16 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
 // declares itself bounded, which is all data-sharing needs. Being plain (loans)
 // is a separate claim this mode does not make.
 TEST(FastDDSPubSubProviderTest, DataSharingTypeIsAcceptedForDataSharing) {
-    FastDDSProviderOptions pub_opts = BoundedOptions();
-    pub_opts.default_writer_qos.data_sharing().on("");
-    FastDDSProviderOptions sub_opts = BoundedOptions();
-    sub_opts.default_reader_qos.data_sharing().on("");
+    DocumentParts sharing;
+    sharing.writer_qos = std::string(kFletcherWriterQos) + R"(
+        <data_sharing><kind>ON</kind></data_sharing>)";
+    sharing.reader_qos = R"(
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+        <data_sharing><kind>ON</kind></data_sharing>)";
 
-    FastDDSPubSubProvider pub_provider(std::move(pub_opts));
-    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+    FastDDSPubSubProvider pub_provider(BoundedConfig(sharing));
+    FastDDSPubSubProvider sub_provider(BoundedConfig(sharing));
 
     pub_provider.CreateTopic({"datasharing", "on"}, MakeSchema());
 
@@ -470,7 +588,7 @@ TEST(FastDDSPubSubProviderTest, DataSharingTypeIsAcceptedForDataSharing) {
 // reports it to Fast DDS instead of throwing out of Publish. The sample is
 // dropped either way.
 TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
-    FastDDSPubSubProvider pub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(BoundedConfig());
     pub_provider.CreateTopic({"datasharing", "oversized"}, MakeSchema());
 
     auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
@@ -485,13 +603,16 @@ TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
 // bounded, instead of quietly falling back to the transport — so this only
 // passes while the type really declares itself bounded.
 TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
-    FastDDSProviderOptions pub_opts = BoundedOptions();
-    pub_opts.default_writer_qos.data_sharing().on("");
-    FastDDSProviderOptions sub_opts = BoundedOptions();
-    sub_opts.default_reader_qos.data_sharing().on("");
+    DocumentParts sharing;
+    sharing.writer_qos = std::string(kFletcherWriterQos) + R"(
+        <data_sharing><kind>ON</kind></data_sharing>)";
+    sharing.reader_qos = R"(
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+        <data_sharing><kind>ON</kind></data_sharing>)";
 
-    FastDDSPubSubProvider pub_provider(std::move(pub_opts));
-    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
+    FastDDSPubSubProvider pub_provider(BoundedConfig(sharing));
+    FastDDSPubSubProvider sub_provider(BoundedConfig(sharing));
 
     pub_provider.CreateTopic({"bounded", "datasharing"}, MakeSchema());
 
@@ -514,7 +635,7 @@ TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
 // the loan pool also proves the failed attempt returned its loan: once loans
 // leak, loan_sample starts failing and Publish stops throwing.
 TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
-    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
+    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
     pub_provider.CreateTopic({"loaned", "oversized"}, MakeSchema());
 
     auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
@@ -542,8 +663,8 @@ TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
 // the process. On the loaned path it must also not take the loan with it: the reader has only
 // max_samples + extra_samples loans, so a handful of leaks starves delivery for good.
 TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoans) {
-    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
-    FastDDSPubSubProvider sub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
 
     pub_provider.CreateTopic({"loaned", "throwing"}, MakeSchema());
 
@@ -568,8 +689,8 @@ TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoan
 
 // Same guarantee with a publisher that does not loan.
 TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
-    FastDDSPubSubProvider pub_provider(BoundedOptions());
-    FastDDSPubSubProvider sub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
 
     pub_provider.CreateTopic({"datasharing", "throwing"}, MakeSchema());
 
@@ -593,8 +714,8 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
 
 // Attachments ride the same envelope on the loaned path.
 TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
-    FastDDSPubSubProvider pub_provider(LoanPublishOptions());
-    FastDDSPubSubProvider sub_provider(BoundedOptions());
+    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
 
     pub_provider.CreateTopic({"loaned", "attachments"}, MakeSchema());
 
@@ -622,173 +743,25 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
 // Loans are never negotiated: each side's own type gates its own, so all pairings interoperate.
 
 // ---------------------------------------------------------------------------
-// Tests — QoS configuration via FastDDSProviderOptions
+// Tests — QoS configuration
 // ---------------------------------------------------------------------------
-
-// A KEEP_LAST(N) writer QoS keeps things working but lets us swap out the
-// default KEEP_ALL profile and still verify message delivery — proving the
-// configured QoS is the one actually applied to the DataWriter.
-TEST(FastDDSPubSubProviderTest, CustomDefaultWriterQos) {
-    FastDDSProviderOptions opts;
-    opts.default_writer_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    opts.default_writer_qos.history().depth = 10;
-    FastDDSPubSubProvider pub_provider(std::move(opts));
-
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
-
-    pub_provider.CreateTopic({"customdefault", "writer"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    (void)sub_provider.Subscribe(
-        {"customdefault", "writer"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-
-    pub_provider.Publish({"customdefault", "writer"}, MakeEncoder(7));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    EXPECT_EQ(received.load(), 7);
-}
-
-TEST(FastDDSPubSubProviderTest, CustomDefaultReaderQos) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-
-    FastDDSProviderOptions opts;
-    opts.default_reader_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    opts.default_reader_qos.history().depth = 10;
-    FastDDSPubSubProvider sub_provider(std::move(opts));
-
-    pub_provider.CreateTopic({"customdefault", "reader"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    (void)sub_provider.Subscribe(
-        {"customdefault", "reader"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-
-    pub_provider.Publish({"customdefault", "reader"}, MakeEncoder(11));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    EXPECT_EQ(received.load(), 11);
-}
-
-// Per-topic override should affect only the specified topic; an untouched
-// topic on the same provider must still use the instance default.
-TEST(FastDDSPubSubProviderTest, PerTopicWriterQosOverridesDefault) {
-    FastDDSProviderOptions opts;
-    DataWriterQos override_qos = opts.default_writer_qos;
-    override_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    override_qos.history().depth = 5;
-    opts.topic_writer_qos["pertopic/override"] = std::move(override_qos);
-
-    FastDDSPubSubProvider pub_provider(std::move(opts));
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
-
-    pub_provider.CreateTopic({"pertopic", "override"}, MakeSchema());
-    pub_provider.CreateTopic({"pertopic", "default"}, MakeSchema());
-
-    std::atomic<int32_t> received_override{-1};
-    std::atomic<int32_t> received_default{-1};
-    (void)sub_provider.Subscribe(
-        {"pertopic", "override"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received_override.store(DecodeRow(data));
-        });
-    sub_provider.Subscribe({"pertopic", "default"}, [&](const uint8_t* data, size_t len,
-                                                        const SharedSchema&, const Attachments&) {
-        if (len >= 5) received_default.store(DecodeRow(data));
-    });
-
-    pub_provider.Publish({"pertopic", "override"}, MakeEncoder(101));
-    pub_provider.Publish({"pertopic", "default"}, MakeEncoder(202));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while ((received_override.load() == -1 || received_default.load() == -1) &&
-           std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    EXPECT_EQ(received_override.load(), 101);
-    EXPECT_EQ(received_default.load(), 202);
-}
-
-TEST(FastDDSPubSubProviderTest, PerTopicReaderQosOverridesDefault) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-
-    FastDDSProviderOptions sub_opts;
-    DataReaderQos override_qos = sub_opts.default_reader_qos;
-    override_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    override_qos.history().depth = 5;
-    sub_opts.topic_reader_qos["pertopic/readeroverride"] = std::move(override_qos);
-
-    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
-
-    pub_provider.CreateTopic({"pertopic", "readeroverride"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    (void)sub_provider.Subscribe(
-        {"pertopic", "readeroverride"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-
-    pub_provider.Publish({"pertopic", "readeroverride"}, MakeEncoder(303));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    EXPECT_EQ(received.load(), 303);
-}
-
-// Mirrors Autonomy's QoS profile: TRANSIENT_LOCAL + RELIABLE + KEEP_LAST(10)
-// + explicit resource limits on both writer and reader. Sets it via Options
-// to prove the typed Options path covers a realistic production profile.
-TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
-    FastDDSProviderOptions pub_opts;
-    pub_opts.default_writer_qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-    pub_opts.default_writer_qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
-    pub_opts.default_writer_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    pub_opts.default_writer_qos.history().depth = 10;
-    pub_opts.default_writer_qos.resource_limits().max_samples = 100;
-    pub_opts.default_writer_qos.resource_limits().max_samples_per_instance = 100;
-
-    FastDDSProviderOptions sub_opts;
-    sub_opts.default_reader_qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
-    sub_opts.default_reader_qos.durability().kind = TRANSIENT_LOCAL_DURABILITY_QOS;
-    sub_opts.default_reader_qos.history().kind = KEEP_LAST_HISTORY_QOS;
-    sub_opts.default_reader_qos.history().depth = 10;
-    sub_opts.default_reader_qos.resource_limits().max_samples = 100;
-    sub_opts.default_reader_qos.resource_limits().max_samples_per_instance = 100;
-
-    FastDDSPubSubProvider pub_provider(std::move(pub_opts));
-    FastDDSPubSubProvider sub_provider(std::move(sub_opts));
-
-    pub_provider.CreateTopic({"autonomy", "profile"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    (void)sub_provider.Subscribe(
-        {"autonomy", "profile"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-
-    pub_provider.Publish({"autonomy", "profile"}, MakeEncoder(2026));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    EXPECT_EQ(received.load(), 2026);
-}
-
+//
+// PDA-DEC-6 retired five tests from here — `CustomDefaultWriterQos`,
+// `CustomDefaultReaderQos`, `PerTopicWriterQosOverridesDefault`,
+// `PerTopicReaderQosOverridesDefault` and `AutonomyStyleProfileViaOptions` — with the typed
+// `FastDDSProviderOptions` struct they configured. Each set a QoS value and then asserted only
+// that a row arrived, which is true of almost any QoS; none could tell a provider that applied
+// the setting from one that ignored it. Their replacements in `test_profile_document.cpp` read
+// back what the endpoint ANNOUNCED on the network, setting for setting, and are strictly
+// stronger:
+//
+//   CustomDefault{Writer,Reader}Qos        -> FastDdsConfig.ProfileDocumentConfiguresQos
+//                                             FastDdsConfig.ReaderProfileConfiguresTheReader
+//   PerTopic{Writer,Reader}QosOverridesDefault
+//                                          -> FastDdsConfig.PerTopicProfileOverridesTheDefault
+//   AutonomyStyleProfileViaOptions         -> FastDdsConfig.DefaultProfileTranscriptionIsExact
+//                                             (whole-struct, so it covers the history and
+//                                             resource_limits that discovery cannot carry)
 // ---------------------------------------------------------------------------
 // Subscriber-first: Subscribe before any publisher/topic exists must not block
 // or throw, and once a publisher appears the schema future resolves and the
@@ -796,8 +769,8 @@ TEST(FastDDSPubSubProviderTest, AutonomyStyleProfileViaOptions) {
 // arrives — the callback is never invoked with a null schema).
 // ---------------------------------------------------------------------------
 TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
 
     std::mutex mu;
     std::condition_variable cv;
@@ -858,8 +831,8 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
 TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     constexpr int32_t kCount = 1000;
 
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
 
     std::mutex mu;
     std::condition_variable cv;
@@ -1209,8 +1182,8 @@ TEST(OrderedDeliveryTest, SteadyStateSurvivesAThrowingCallback) {
 // under the first lock, so a resubscribe cycle can never lose the new one.
 // ---------------------------------------------------------------------------
 TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
     pub_provider.CreateTopic({"resub", "x"}, MakeSchema());
 
     std::atomic<int32_t> first{-1};
@@ -1240,8 +1213,8 @@ TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
 // Unsubscribing a topic that was never subscribed is a no-op, and must not disturb a live
 // subscription on a different topic.
 TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
     pub_provider.CreateTopic({"unsub", "live"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
@@ -1256,33 +1229,13 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
     EXPECT_EQ(AwaitRow(received), 7);
 }
 
-// The write is checked, so an oversized schema surfaces at declaration time.
-TEST(FastDDSPubSubProviderTest, ASchemaTooLargeForItsChannelIsReported) {
-    FastDDSProviderOptions opts;
-    opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
-    FastDDSPubSubProvider p(opts);
-    EXPECT_THROW(p.CreateTopic({"schema", "toobig"}, MakeSchema()), std::runtime_error);
-}
-
-// A throw invites a retry, so a failed announcement has to leave nothing behind for that retry to
-// short-circuit on. It used to leave its DataWriter: the second call then matched the "already
-// announced" branch and returned quietly, so the failure became permanent and every subscriber of
-// the topic waited forever on a schema future nothing would resolve.
-TEST(FastDDSPubSubProviderTest, AFailedSchemaAnnouncementCanBeRetried) {
-    FastDDSProviderOptions opts;
-    opts.max_schema_bytes = 8;  // smaller than any real Arrow IPC schema
-    FastDDSPubSubProvider p(opts);
-
-    auto announce = [&p] {
-        try {
-            p.CreateTopic({"schema", "retry"}, MakeSchema());
-        } catch (const std::runtime_error& e) {
-            return std::string(e.what());
-        }
-        return std::string("returned without announcing");
-    };
-
-    // Both calls must reach the write and fail *there* — not earlier, and not silently.
-    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
-    EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
-}
+// The schema channel's bound was `FastDDSProviderOptions::max_schema_bytes`, and PDA-DEC-6 moved
+// it into the document as the `fletcher.max_schema_bytes` vendor property. Both tests that pinned
+// it moved with it, to `test_profile_document.cpp`, where they configure the bound the only way
+// there now is:
+//
+//   ASchemaTooLargeForItsChannelIsReported -> FastDdsConfig.SchemaBoundComesFromTheDocument
+//                                            (which also asserts the negative: with the property
+//                                            absent the same schema is delivered, so a provider
+//                                            that ignored the property goes red)
+//   AFailedSchemaAnnouncementCanBeRetried  -> FastDdsConfig.AFailedSchemaAnnouncementCanBeRetried

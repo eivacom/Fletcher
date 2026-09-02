@@ -291,9 +291,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    FastDDSProviderOptions fast_opts;
-    fast_opts.domain_id = kDdsDomain;
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kDdsDomain, ""});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
 
     PublisherArrow xrce_pub(xrce);
@@ -358,9 +356,7 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    FastDDSProviderOptions fast_opts;
-    fast_opts.domain_id = kDdsDomain;
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kDdsDomain, ""});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
 
     PublisherArrow fastdds_pub(fastdds);
@@ -426,9 +422,7 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    FastDDSProviderOptions fast_opts;
-    fast_opts.domain_id = kDdsDomain;
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(std::move(fast_opts));
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{0, kDdsDomain, ""});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00003));
 
     PublisherArrow fastdds_pub(fastdds);

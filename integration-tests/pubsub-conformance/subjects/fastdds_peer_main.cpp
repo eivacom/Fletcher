@@ -14,12 +14,12 @@
 int main(int argc, char** argv) {
     return fletcher::conformance::RunPeerMain(
         argc, argv, [](int count, char** args) -> std::shared_ptr<fletcher::PubSubProvider> {
-            fletcher::FastDDSProviderOptions options;
+            fletcher::ProviderConfig config;
             for (int i = 1; i < count; ++i) {
                 if (std::string(args[i]) == "--domain-id" && i + 1 < count) {
-                    options.domain_id = static_cast<uint32_t>(std::stoul(args[++i]));
+                    config.domain_id = static_cast<uint32_t>(std::stoul(args[++i]));
                 }
             }
-            return std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(options));
+            return std::make_shared<fletcher::FastDDSPubSubProvider>(config);
         });
 }

@@ -71,7 +71,7 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
     }
 
     // Fletcher sets no DEADLINE, so this only fires on a writer an operator gave one to through
-    // FastDDSProviderOptions. Implemented so that a configured policy cannot fail silently.
+    // the provider document. Implemented so that a configured policy cannot fail silently.
     void on_offered_deadline_missed(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::OfferedDeadlineMissedStatus& status) override {

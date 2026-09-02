@@ -65,16 +65,16 @@ struct SubscriptionResult {
 /// local subscribers to the same topic) is handled by the Subscriber
 /// class, not by providers.
 ///
-/// Provider-specific configuration (e.g. QoS) **will be** supplied when the
-/// provider is created, through `ProviderConfig` — a typed core of exactly
+/// Provider-specific configuration (e.g. QoS) is supplied when the provider is
+/// created, through `ProviderConfig` — a typed core of exactly
 /// `{max_payload_bytes, domain_id}` plus an opaque document in the provider's
 /// own format, which Fletcher transports and never reads (§4.1, §4.2, see
-/// provider_registry.hpp). PDA-DEC-4 landed the registry and that config type;
-/// the providers themselves are migrated onto it by PDA-DEC-6 (Fast DDS) and
-/// PDA-DEC-7 (XRCE), so today they still take their own options structs.
-/// There is no per-call config parameter, and no
-/// protocol-typed Options struct at this seam: `FastDDSProviderOptions` and
-/// `XrceConfig` are retired by PDA-DEC-6 and PDA-DEC-7 respectively.
+/// provider_registry.hpp). There is no per-call config parameter and no
+/// protocol-typed Options struct at this seam. The in-process loopback
+/// (PDA-DEC-5) and Fast DDS (PDA-DEC-6) are configured this way — Fast DDS by
+/// its own native XML QoS profiles document, so no eProsima type is nameable
+/// from here. XRCE still takes its own options struct until PDA-DEC-7 retires
+/// `XrceConfig` the same way.
 class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;

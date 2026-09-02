@@ -13,7 +13,8 @@
 //
 // Both derive from SampleWriterBase, and both leave the same fields in the same layout, so a reader
 // cannot tell which one produced a sample. Unlike the read flows, this is a genuine preference
-// rather than a precondition — see FastDDSProviderOptions::loan_publish for what it costs.
+// rather than a precondition — see the `fletcher.loan_publish` document property for what it
+// costs.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SAMPLE_WRITER_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SAMPLE_WRITER_HPP_
 
