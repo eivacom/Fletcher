@@ -169,3 +169,223 @@ that were missing. Not a reason to cut anything — a reason to spend S1 and S2.
 4. No upper bound on selector length: a multi-megabyte selector is copied and then re-emitted into an error message at up to 4x expansion.
 5. "`Create` is `const` and safe to call concurrently" is true of the registry but invokes caller-supplied factories concurrently too; the header does not say that obligation passes to the factory author.
 6. A non-ASCII name (`cafe` with an accented e) is a second documented-rule misclassification beyond the `myDriver` case the header names — refused as `kNotSupported` "cannot load drivers" rather than "no such provider"; loud and located, so cosmetic only.
+
+---
+
+# Re-check — fix cycle 1 (`7f2dc5b..9bf99c4`), 2026-09-02
+
+Focused re-check of my three should-fix findings plus the ~268 new lines. Done in an
+isolated worktree (`git worktree add /c/tmp/pdadec4-recheck 9bf99c4`, removed after), and
+— because a mutated `conan create pubsub` would poison the *shared Conan cache* for any
+agent running in parallel, which is the same hazard one level down from the shared
+checkout — the suite was built standalone from worktree sources against a read-only
+`gtest/1.17.0`. `core` is header-only, so that build needs no Fletcher package at all and
+no mutation of mine was ever published. Baseline in that build: **14/14 green**.
+
+**Re-check counts: 0 blocking · 1 should-fix · 3 nits. S1, S2, S3 all closed.**
+
+## First: my S3 snippet was wrong. I accept the correction without reservation.
+
+The implementer is right and I was wrong. I checked it rather than concede it, and the
+verdict is not close — the form I put in this review is a **heap-use-after-free on every
+call**, confirmed by AddressSanitizer under MSVC:
+
+```
+SUMMARY: AddressSanitizer: heap-use-after-free in Prov::use() const
+    #2 reviewer_form(std::shared_ptr<Seat>) main.cpp:13
+```
+
+The reason is a plain misreading of the aliasing constructor on my part. A `shared_ptr`
+owns **exactly one** control block. `shared_ptr<T>(shared_ptr<Y>&& r, T* ptr)` shares
+ownership with `r` **only** and merely stores `ptr`; it does not, and cannot, also adopt
+the control block that `ptr` came from. So in my snippet the local `provider` was the sole
+owner of the provider, it died at the end of `Create`, and the handle returned to the
+caller pointed into freed memory while diligently keeping the resolver alive. My
+parenthetical — *"the aliasing constructor keeps the provider's own control block alive
+too, so the provider's deleter still runs first"* — is simply false, and it was the
+load-bearing sentence of the suggestion. Had it been taken as written it would have been
+far worse than the prose it replaced: prose that is ignored costs nothing, whereas that
+snippet turns **every** `Create` into a dangling handle. Good catch, and the right call to
+verify it rather than implement it.
+
+**The landed `Anchor` form is correct.** Verified, same ASan build:
+
+```
+== anchor_form (landed) ==
+ after return:
+  Prov::use alive=YES
+ releasing:
+  ~Prov
+  ~Seat (module unloaded)
+```
+
+- **Destruction order is genuinely guaranteed**, not incidental: `~Anchor` destroys
+  non-static data members in reverse declaration order ([class.dtor]), `provider` is
+  declared second, so it is released first and `seat` after. The provider's destructor
+  therefore runs with its module still loaded. Confirmed by the trace above.
+- **No dangling:** the returned handle owns the `Anchor`, and the `Anchor` owns a strong
+  reference to the provider, so the pointed-to object is kept alive by the very control
+  block the handle holds. `raw` is read into a local *before* `provider` is moved, so
+  there is no evaluation-order trap.
+- **No leak, no cycle:** nothing reachable from the provider or the seat points back at
+  the `Anchor`. The registry holds `shared_ptr<Factory>`; the `Anchor` holds another; both
+  are ordinary strong edges in a DAG.
+- **One allocation per `Create`,** as claimed: `make_shared<Anchor>` is the single
+  allocation, and the C++20 rvalue aliasing constructor moves rather than bumping a
+  refcount. (`make_shared<Anchor>(Anchor{...})` materialises a temporary and
+  move-constructs; that is a copy of two `shared_ptr`s, not an allocation. Immaterial.)
+
+## S1 — CLOSED (re-derived, not taken on report)
+
+Mutating to `(*resolver)(selector.text_, ProviderConfig{})` now reddens
+`PathSelectorResolvesThroughTheSameCall`, exactly as reported:
+
+```
+journal->last_config.max_payload_bytes  Which is: 0   vs 65000u
+journal->last_config.domain_id          Which is: 0   vs 151u
+the resolver was handed domain 0, not the caller's — a loaded driver would join the wrong domain with no error
+```
+
+The document assertion fires too. Worth noting the detail that makes this non-vacuous:
+the test resets `journal->last_config = ProviderConfig{}` between the name `Create` and
+the path `Create`. Without that reset the name branch would have left `65000` in the
+journal and all three new assertions would have passed no matter what the resolver
+received. That reset is the whole guard; it was not obvious and it is right.
+
+## S2 — CLOSED, and it exercises digits *and* capitals, as asked
+
+`Fast2DDS-v1_x` spans capitals (`F`, `DDS`), digits (`2`, `1`), `-` and `_`. Both
+mutations re-derived independently:
+
+- drop `(c >= '0' && c <= '9')` → red: `character at offset 4 is outside [A-Za-z0-9_-]`
+  (the `2`)
+- drop `(c >= 'A' && c <= 'Z')` → red: `character at offset 0 is outside [A-Za-z0-9_-]`
+  (the `F`)
+
+Two different offsets from two different mutations is proof the single name covers both
+ranges rather than one masking the other.
+
+## S3 — CLOSED, taken mechanically and in a better form than I proposed
+
+The rule is now enforced by the object instead of asked of the author, and the fix went
+further than my finding did in one respect I had missed: `Register("zenoh",
+factory_that_dlopens)` reaches a loaded module by **name**, so the factory seat needed the
+same treatment as the resolver seat. Both got it. Both routes are covered by
+`AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade`, and the test is real in both halves
+— removing `KeepSeatAlive` from the name branch reddens it, and removing it from the path
+branch reddens it. `AResolverThatFailsIsReportedAsATypedSeamFailure` is real too: deleting
+the `TranslateSeamFailure` around the resolver call reddens it and nothing else.
+
+---
+
+## New finding
+
+### R1 — should-fix (high confidence, build-verified). The `Anchor` member order is called load-bearing and nothing pins it.
+
+Swapping the two `Anchor` members (and the corresponding aggregate initialiser) leaves the
+suite at **14/14 green**. Verified by building.
+
+```cpp
+struct Anchor {
+    std::shared_ptr<PubSubProvider> provider;   // swapped
+    std::shared_ptr<Seat> seat;
+};
+```
+
+The code comment says the order "is the load-bearing part … `provider` (declared last) is
+released FIRST and the seat only afterwards. The provider's destructor therefore still
+runs with its module loaded." Under the swap, the seat is destroyed first and the
+provider's destructor runs **after** its module is gone — the module's code and vtable are
+unmapped while `~Provider` executes in it. That is precisely the "use-after-unload, and
+not reliably loud" failure this entire fix exists to prevent, and it survives every one of
+the 14 entries.
+
+This is the same defect class as S1 and S2 in cycle 1: the mechanism is correct, but the
+one property that makes it correct is unasserted, so a later refactor that reorders two
+struct members reintroduces the original hazard silently. It survives specifically because
+`ModuleStandIn` is only ever observed from the *test body*, after both are gone, where the
+order is invisible.
+
+Fix, in the existing test: make the ordering observable from inside the provider's
+destructor rather than after it.
+
+```cpp
+struct ModuleStandIn {
+    explicit ModuleStandIn(bool* unloaded) : unloaded_(unloaded) {}
+    ~ModuleStandIn() { *unloaded_ = true; }
+    bool* unloaded_;
+};
+
+// A probe that reads its module's state AT ITS OWN DESTRUCTION.
+class ModuleUserProvider : public ProbeProvider {
+   public:
+    ModuleUserProvider(std::string tag, std::shared_ptr<Journal> journal,
+                       const bool* unloaded, bool* module_was_live_at_my_death)
+        : ProbeProvider(std::move(tag), std::move(journal)),
+          unloaded_(unloaded), out_(module_was_live_at_my_death) {}
+    ~ModuleUserProvider() override { *out_ = !*unloaded_; }
+   private:
+    const bool* unloaded_;
+    bool* out_;
+};
+```
+
+then, after `provider.reset()`, `EXPECT_TRUE(module_was_live_at_my_death) << "the
+provider's destructor ran after its module was unloaded — the Anchor's member order is
+reversed"`. That reddens under the swap and stays green as landed, for both the path and
+the name route.
+
+## Nits (one line each)
+
+1. `make_shared<Anchor>` is the first allocation on `Create`'s **success** path outside any
+   `TranslateSeamFailure`, so OOM now escapes `Create` as a raw `std::bad_alloc` while the
+   header still promises in bold that "nothing else escapes" — no leak and loud, but it is
+   the one contract PDA-ABI's C boundary will be written against; wrapping the
+   `KeepSeatAlive` call is one line.
+2. A pathological factory that retains a `shared_ptr` to its own product defeats the
+   ordering (the anchor's release is not the last one), but that already violates the
+   fresh-instance contract `EachCreateReturnsAnIndependentInstance` pins, so it is
+   unreachable by a conforming factory.
+3. No `enable_shared_from_this` exists anywhere in `core` or `pubsub` today, so the
+   header's `shared_from_this` caveat is correctly forward-looking rather than a live hole.
+
+## Recommendation on the two nits the PM asked about
+
+- **Nit 1 (`Quoted` does not escape `\` or `"`) — worth fixing, but folded into the next
+  touch, not launched for on its own.** It is sharper than I first wrote it: on this
+  platform the collision is concrete, not theoretical. `C:\x64\driver.dll` is an ordinary
+  Windows driver path, and `\x64` is *exactly* this function's escape spelling for byte
+  0x64. So the one message PDA-ABI's users read when a driver fails to load can render a
+  real path ambiguously with a real escape. The fix is two lines in `Quoted` (emit `\\`
+  for a backslash and `\"` for a quote) plus one assertion. Since R1 already warrants a
+  cycle, this rides along free — I would not spend a launch on it alone.
+- **Nit 3 (locale-imbued `ostringstream` offset) — genuinely fine to log and leave.** It
+  needs two things to bite at once: someone calling `std::locale::global()` with a
+  grouping locale, *and* an offset past 999, i.e. a selector where the first non-name
+  character sits beyond position 999. Driver paths are short, so the second condition is
+  effectively unreachable in the diagnostic that matters, and the consequence is a
+  cosmetically grouped number rather than a wrong or missing fact. Log it; do not spend on
+  it.
+
+## Requested confirmations
+
+- All 12 prior entries green and **unchanged in meaning**: the only edits to existing tests
+  *added* assertions (the config triple in `PathSelectorResolvesThroughTheSameCall`, the
+  `Fast2DDS-v1_x` name in `RegistrationAndSelectionShareOneVocabulary`) plus the
+  `journal->last_config` reset. Nothing was weakened or deleted; the single `−1` line is a
+  `const ProviderConfig config;` becoming mutable.
+- `Registry.` is **14/14**.
+- The item's forcing test is `Registry.SelectsByNameWithoutCallerKnowingTheProvider`, at
+  `integration-tests/pubsub-conformance/src/registry.cpp:170`. The new lifetime entry is
+  not it.
+- **No new link dependency** in `fletcher-pubsub`: the only include added to the TU is
+  `<memory>`, and neither CMakeLists is touched in this diff.
+- **Public surface still 5** — `Factory`, `PathResolver`, `Register`, `SetPathResolver`,
+  `Create` — plus the defaulted ctor and two deleted copy operations, all unchanged. The
+  frozen-signature `static_assert` is untouched.
+- Incidental improvement worth recording: `Create` now copies the `shared_ptr<Factory>`
+  out of the map *before* invoking it, so it no longer dereferences a map iterator across
+  caller-supplied code. `std::map` iterators were already stable and `Register` is
+  documented non-concurrent, so this fixed nothing — but it is strictly tighter. Neither
+  seat has a self-assignment path: `Register` refuses a duplicate before touching the map,
+  and `SetPathResolver` assigns only when the slot is empty.
