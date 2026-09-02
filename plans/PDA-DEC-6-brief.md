@@ -55,6 +55,15 @@ really configure QoS, and the defect hunt needs it on).
 Declared net lines: +780 / −310 · new public surface: 0 net (+2 / −2) · cycles: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-02, PM):* **+2870 / −628** over 30 files vs declared +780/−310 — 3.7×
+on adds. Production (`src/` + public headers) is **+663/−182**; the mass is tests
+(+1713) and docs (+408), which the design review ordered. Surface **net 0 (+2/−2)** as
+declared. Two fix cycles, both from findings the brief did not predict: the published
+starting-point profile's drift guard held its own copy of the block it claimed to
+protect, and three refusals turned out to fire *after* construction, contradicting the
+header's own "refused in the constructor" promise — now disclosed in spec §4.1 so
+PDA-DEC-7 inherits it. Not predicted and added: `--provider-config` test coverage (5
+cases), refusal of an empty document file and of a misplaced `fletcher.*` property, and
+43 spurious Fast DDS error lines removed from happy paths. Suite 69 → **85 ctest / 84
+gtest**; `gateway-end-to-end` 24 → 29. Cycles: design 2/2 · fix 2 · implementer
+launches 3/5 · owner touches 0 (both brief decisions were answered before step 3).

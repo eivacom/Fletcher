@@ -485,3 +485,67 @@ retired constructor but not the added one); a public header naming the now-priva
 spec §4.1's NUL sentence lacking a subject; the harness README stale four ways. **One reviewer
 record item did not survive checking** — `main.cpp` was said to cite the `static_assert`; it
 never did, and the comment was improved on the merits instead.
+
+## PDA-DEC-6 — Fast DDS configured by document; retire `FastDDSProviderOptions` (2026-09-02) 🟢
+
+**Forcing test:** `FastDdsConfig.ProfileDocumentConfiguresQos` — green, and it asserts what
+the endpoint *announces on the network*, not merely that the document loaded.
+**Commits:** `6a66a15` (implementation) · `7f6a310` (fix cycle 1) · `68ac6b5` (fix cycle 2).
+
+**What landed.** An operator configures Fast DDS QoS with a native XML profile document and
+compiles against no eProsima header. `FastDDSProviderOptions` is deleted; 18 `ProviderConfig`
+constructions across 8 files were migrated, and `gateway/src/main.cpp` lost the last concrete
+provider type. `--provider-config FILE` closes PDA-DEC-5's DEBT-5: charter requirement (b) is
+now reachable from `gateway.exe`, which it was not before this item.
+
+**The design's own guard was unfalsifiable, and the implementer found it.** Mutation M12 — a
+non-empty document silently falling through to Fast DDS's defaults — left every test green,
+because `DataWriterQos()`'s durability is TRANSIENT_LOCAL and Fast DDS's writer defaults are
+bit-identical to Fletcher's on both policies discovery can carry. Closed by
+`AnAnchorOnlyDocumentResolvesToFletchersBuiltIn` (whole-struct, in-process). Declared
+deviation from the design's test table; compliance judged it genuinely additive.
+
+**Two review cycles, both finding a *claim* rather than a bug.** (1) The drift guard for the
+published starting-point profile held its own copy of the README block it claimed to protect,
+so the README's "cannot drift without a test going red" was false. It now reads the block off
+disk; cycle 2 reproduced the mutation in both directions, plus the reader half and the
+*packaged* route, and confirmed a dropped export fails loudly rather than degrading. (2) The
+header promised every document error is refused in the constructor; three refusals actually
+fire later (end of ctor, or out of `Publish`/`Subscribe`). Now disclosed in source, header and
+spec §4.1 — the last of those matters because **PDA-DEC-7 derives XRCE's document handling
+from §4.1** and would have inherited the promise.
+
+Also turned silence into refusals: an empty `--provider-config` file (was indistinguishable
+from "unconfigured") and a correctly-spelled `fletcher.*` property in the wrong profile
+(measured refusable, so refused rather than documented). 43 spurious `[XMLPARSER Error]` lines
+removed from happy paths — the widening proof was fixed too: gating on the *document*
+containing whitespace fires on every XML file; the precondition is on the yielded *name*.
+
+**Verification.** Full suite green at `7f6a310` with every package cache-cleared first, so no
+"Already installed!" false green: core 28 · arrow-bridge 61 · pubsub 19 · pubsub-arrow 16 ·
+fastdds **85 ctest / 84 gtest** · xrcedds 11 · protoc 99+3 · pubsub-conformance **82**
+(XRCE=ON, `conformance_xrce` ran against a live Agent) · pubsub-arrow-fastdds 4 ·
+fastdds-xrce-interop 1 · protoc-arrow-bridge 91 · protoc-coverage 20 · gateway-end-to-end
+**29** · gateway-fastdds-ts 4/4 ×3, no row loss, binaries confirmed to postdate HEAD.
+Fast DDS–touching subset re-confirmed at final HEAD `68ac6b5`.
+
+**A false red cost a review cycle.** ~127 leaked shm segments in
+`C:\ProgramData\eprosima\fastdds_interprocess` fault `create_participant` with `0xC0000005`
+for *any* QoS. Cycle-1 compliance reported a crashing test and a 78/79 suite; code review
+diagnosed the environment and cleared it; I re-verified 6/6 green. Recorded in the round
+config — clear that directory before believing any provider access violation.
+
+**Records corrected in place.** Spec §10's construction count, twice — "12 sites, all
+migrated" contradicted its own table and my first correction still didn't reconcile; the true
+figure is 18 constructions over 8 files, re-derivable by grep. Also §10's "Docs:" line (claimed
+two untouched files), `architecture-overview.md` §7.4's include path (wrong since \#26), a test
+comment asserting a mutation that measurably reddens nothing, and the config's conformance
+baseline, two items stale (62 → 82).
+
+**Numbers.** Declared +780/−310; actual **+2870/−628** over 30 files (3.7× on adds).
+Production `src/` + public headers **+663/−182** — near the declared budget alone; the overrun
+is tests +1713 and docs +408, both review-ordered. Surface **net 0 (+2/−2)**. Note: production
+totals were misreported three times, always by excluding `src/internal/profile_document.hpp`
+(+30/−9 claimed vs +149/−15 actual once) — a pattern, not a slip.
+**Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · implementer launches 3/5 ·
+owner touches 0.
