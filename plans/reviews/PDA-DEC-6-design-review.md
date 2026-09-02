@@ -280,3 +280,199 @@ Three weaknesses, all DEBT:
 
 DEBT-1 (must land in this PR), DEBT-2 … DEBT-11 as recorded in
 [design-debt.md](design-debt.md) under PDA-DEC-6.
+
+---
+
+# Re-review — 2026-09-02, revision 2 (`2456e76`), design cycle 2 of 2
+
+Verdict: **APPROVE-WITH-DEBT(5).** **B1, B2 and B3 are all closed.** All eleven
+cycle-1 DEBT items are taken. No BLOCKERs stand, so no owner escalation is needed:
+nothing below is a principle-level disagreement — every item is an implementation
+form or a missing guard row, and each carries an exact sentence.
+
+Budget re-checked: 300/300 lines, brief 60/60, surface still +2/−2, +780/−310
+declared (+60, consistent with the six additions). Rulings, locked decisions and
+scope re-checked against revision 2: unchanged and honoured.
+
+## B1 — closed
+
+P6 is stated sharply enough to be falsified, and the stop-condition is the right
+one. Two things make it real rather than decorative: it names the *structural*
+consequence of being wrong ("the not-found rung — reading `BAD_PARAMETER` as
+'absent' — needs a different shape"), not merely "stop"; and the falsifying
+observation is a test row that fails **against the correct implementation** if the
+premise is false, which is the only shape a premise-test can usefully have. The
+"do not weaken the row" instruction is the right guard on the row itself — the
+tempting repair when it goes red is deletion.
+
+One wording snag, C2-3 below: "**If the P6 row cannot be made red, P6 is false**"
+has two readings (red *under mutation M8*, versus red *against the unmutated
+build*). Both readings lead to "stop", so it is not dangerous — but a
+stop-condition is the last place to leave a reader a choice.
+
+## B2 — closed, and the residue is genuinely harmless
+
+The extended call replaces rather than adds, rung-2 case 7 and the
+`<domainId>3</domainId>`-against-`domain_id = 7` row are both present, and §2 states
+the precedence.
+
+On the residue — an explicit `<domainId>0</domainId>` against a non-zero typed core
+draws no complaint. It **is** the same class one level down, and it is nevertheless
+the right silence, for three reasons:
+
+1. **It cannot be forbidden.** `DomainParticipantExtendedQos::domainId_` defaults to
+   0 (`DomainParticipantExtendedQos.hpp:93`), so "wrote zero" and "wrote nothing" are
+   the same observation. This is the *same* substrate limit that grounds the no-merge
+   rule — the API never reports what a document mentioned — so refusing here would
+   need a fact that does not exist.
+2. **The available alternative is worse.** Dropping the `!= 0` guard (refuse whenever
+   `domainId() != config.domain_id`) would refuse every *silent* document on a
+   non-zero deployment domain, forcing each document to restate the domain and making
+   documents non-portable across domains — which defeats the reason ruling 2026-09-02
+   put the domain in the typed core at all.
+3. **The blast is bounded and not a wrong answer inside Fletcher.** Every Fletcher
+   endpoint in the deployment follows the typed core, so they still agree with each
+   other; only a non-Fletcher peer the operator expected on domain 0 goes unmatched,
+   and that shows as no data rather than wrong data.
+
+C2-4 asks for one improvement that is not a blocker: state it in the README as a
+*positive precedence rule* ("the deployment's domain always wins; an anchor's
+`<domainId>` must match or be absent, and an explicit `0` cannot be told from
+absent"), rather than as a residue an operator must infer.
+
+## B3 — closed, and the equality is total; I verified it rather than took it
+
+Checked in `fast-dds/3.4.0`, since swapping one blind spot for another was the risk:
+
+- `DataWriterQos::operator==` (`DataWriterQos.hpp:57-82`) compares **22 policies**;
+  the class has **22** data members (`:772-835`). Nothing is excluded.
+- `DataReaderQos::operator==` (`DataReaderQos.hpp:55-80`) compares **22**; the class
+  has **22** (`:760-823`). Nothing is excluded.
+- The two policies whose absence motivated the fix are in both: `history_` and
+  `resource_limits_`.
+- The third silent one is covered transitively: `endpoint_` is compared, and
+  `RTPSEndpointQos::operator==` includes `history_memory_policy`
+  (`QosPolicies.hpp:2879`) — the policy that gates `CanLoanSamples`
+  (`fast_dds_pubsub_provider.cpp:431`), i.e. whether the zero-copy read path is used
+  at all. A README block that silently loses zero-copy receive now reddens this test.
+
+So the transcription guard is total over the writer and reader QoS, and it is
+strictly cheaper than the discovery form it replaces. M7 is repaired as claimed: the
+new form reddens on a README edit unconditionally, where the old one compared two
+instances and stayed green if the document were ignored entirely. P2 is also now
+honest about what discovery *cannot* show (`history` / `resource_limits` are
+`fastcdr::optional` in `PublicationBuiltinTopicData:141-145`), which is the fact that
+makes the in-process form necessary rather than merely nicer.
+
+The one thing not covered by the transcription assert is the **participant** QoS —
+correctly, since Fletcher's built-in participant QoS is `PARTICIPANT_QOS_DEFAULT`
+plus a name (`fast_dds_pubsub_provider.cpp:199-200`) and H4 already discloses the
+name loss as diagnostic-only. No finding.
+
+## DEBT-3 — the two-instance measurement would detect what it claims
+
+`TwoInstancesResolveTheirOwnDocuments` is well-constructed: **same** profile names,
+**different** values, both instances **alive at once**. Under process-global
+registration both failure modes are caught, not just one — the second load either
+collides on a duplicate profile name (construction refused, test errors) or the first
+registration wins and instance B's writer announces A's durability (assert fails).
+A leak in the *participant* path is caught incidentally, since both instances use the
+same anchor name. This converts P1's un-cache-verifiable half into a measurement
+inside this item, which is what DEBT-3 asked for.
+
+## The class question — is there a fifth silence?
+
+**Yes, two, and the first is the more important.** The revision's four guards all
+watch for a *whole profile* being absent. Neither of these is watched:
+
+### C2-1 — the policies a supplied profile OMITS (the fifth silence)
+
+This is Brief decision 2 itself — "if your profile leaves a setting out, do you get
+Fast DDS's default or Fletcher's?" — and **no test in the item can tell the two
+answers apart.** Every row that supplies a profile asserts only the policy that
+profile sets (`durability`, `reliability`), so a build delivering answer (b) passes
+all of them. `DefaultProfileTranscriptionIsExact` does not help: it feeds a block
+that states *everything*, so it is equally green under (a) and (b).
+
+That would matter little if the correct behaviour were the one an implementer falls
+into. It may not be. The natural way to write the fallback ladder is to seed the
+output with the built-in and let a failed lookup leave it untouched:
+
+```cpp
+DataWriterQos qos = internal::MakeFletcherDefaultWriterQos();     // fallback
+if (pub->get_datawriter_qos_from_xml(doc, qos, name) != RETCODE_OK) { /* keep it */ }
+```
+
+If `get_*_from_xml` overwrites the caller's struct wholesale, this is correct. If it
+overlays onto what it was handed, **this silently implements (b)** — merge semantics,
+the answer the owner did not pick, contradicting rung-1 case 3 — and nothing goes
+red. The package is binary-only, so which one it is cannot be read off the headers,
+exactly as with P1 and P6.
+
+The cheap move is not to add a seventh premise but to make the question moot:
+**mandate the form.** One sentence in §2 — *every `get_*_from_xml` call is made into
+a freshly default-constructed QoS; the built-in default is applied only on the
+not-found branch, never as the call's input* — is correct under either substrate
+behaviour and needs no stop-and-ask. Add one in-process assert beside the
+transcription test to hold it: a *minimal* writer profile setting only
+`durability = VOLATILE` must resolve to `history()` = Fast DDS's `KEEP_LAST(1)`, **not**
+Fletcher's `KEEP_ALL`. That single assert is the only thing in the item that would
+distinguish the owner's answer (a) from (b), which is a poor place for the coverage
+to be zero.
+
+### C2-2 — the reader's silence (the sixth)
+
+A document that supplies a writer profile, or only the anchor, and says nothing about
+the reader must land on `MakeFletcherDefaultReaderQos()` — whose `data_sharing().off()`
+is the single line holding back the measured receive-side defect that "intermittently
+receives only a subset of the `TRANSIENT_LOCAL` backlog … with no error anywhere"
+(`qos_defaults.cpp:45-68`). All four omission-guards read **publication** data: the
+forcing table's anchor-only row (DEBT-1) checks the writer, and
+`ReaderProfileConfiguresTheReader` only exercises the case where a reader profile
+*is* supplied. If the reader's fallback slipped to `DATAREADER_QOS_DEFAULT`,
+data-sharing comes back on by default and the failure signature is intermittent
+silent row loss — which this design correctly says "is never acceptable — it is the
+defect signature, not flake". `gateway-fastdds-ts` does not cover it either: it will
+run with an **empty** document (`--provider-config` is optional), so it never
+exercises the non-empty-document reader path.
+
+Fix: one row — a writer-only document, and the reader's *discovered* `data_sharing`
+must be OFF and durability TRANSIENT_LOCAL. Verified available:
+`SubscriptionBuiltinTopicData` carries `durability`, `reliability` and `data_sharing`
+(lines 74 / 89 / 142), and the test already listens on `on_data_reader_discovery`.
+
+## Spot-checks (cycle-1 DEBT and the cuts)
+
+All eleven taken, and the four I checked in the tree hold up:
+
+- **DEBT-4/5** — Files-to-touch now carries `benchmarks/{conanfile.py,CMakeLists.txt}`
+  with the right reason, `tests/CMakeLists.txt`, and `pubsub-conformance/CMakeLists.txt`.
+- **DEBT-6** — `Registry.FastDdsResolvesAsABuiltIn` moved to `conformance_fastdds`,
+  citing the narrow-link-line guard. Correct: that is what `pubsub-conformance/CMakeLists.txt:205-213`
+  says of itself.
+- **DEBT-11** — §10 is now *corrected*, not marked done.
+- **The §4 pointer resolves.** "the other **seven** external sites (Files-to-touch
+  lists them)" — I re-counted against Files-to-touch and against a fresh grep, and
+  they are the same seven (`test_package/src/example.cpp`,
+  `benchmarks/exp_zero_copy.cpp`, `test_roundtrip.cpp`, `test_interop.cpp`,
+  `fastdds_peer.cpp`, both conformance subjects), plus the gateway named separately
+  and the provider's own test TU as internal churn. **Complete**; nothing was lost by
+  replacing the enumeration with a pointer.
+- **The other cuts cost nothing.** The PDA-DEC-7 boundary survives as §5's last two
+  sentences and rung-1 cases 4–5 both survive the merge. The dropped "PDA-DEC-8 proves
+  two-instance isolation" line is superseded by measuring it here. The dropped
+  split-the-stage argument reached its conclusion in cycle 1 and the conclusion holds:
+  splitting would land a configuration path whose only guard is that it compiles.
+
+## Brief decision 2 is a real owner question
+
+Checked against all 28 entries in `PDA-DEC-rulings.md`: nothing answers overlay-vs-whole.
+The 2026-08-31 configuration ruling settles the *format* and the 2026-09-02 ruling
+settles the *typed core*; neither says what happens to a policy a profile omits, and
+the answer is directly user-visible ("your profile is that endpoint's whole QoS"). It
+is worth the owner touch. Decision 3's removal is also right — the `<propertiesPolicy>`
+question was settled by §R2 above and re-asking it would spend a touch on a closed
+point. C2-1 strengthens rather than reopens decision 2: it asks that the item be able
+to *demonstrate* whichever answer the owner gives.
+
+## Re-review DEBT (5) — C2-1 … C2-5 in design-debt.md
