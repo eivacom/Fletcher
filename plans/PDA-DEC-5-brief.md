@@ -29,7 +29,12 @@ build that cannot load files. **Handled:** the loopback ignores the two generic
 settings (payload size, domain) as it documents today, and tolerates a Windows
 line ending so one text means the same everywhere.
 
-## Decisions for you   (2)
+## Decisions — both PM-decided, NOT asked (2026-09-02)
+*Neither reached the owner: (1) is already answered by spec §4.2 and the 2026-08-31
+configuration ruling, as the design review established; (2) has no viable alternative,
+since keeping today's message requires the gateway to retain the very name list this
+item removes. Both taken as recommended. Recorded here so the reasoning is visible.*
+
 1. **Should the loopback read its own one-line settings text, given that Fletcher
    itself parses nothing?** Options: (a) yes — ~25 lines inside the protocol, no
    library · (b) no — publish two protocol names, one per mode.
