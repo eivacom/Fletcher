@@ -20,6 +20,10 @@ class FletcherPubsubConan(ConanFile):
 
     exports_sources = (
         "CMakeLists.txt",
+        # README.md is exported for the TESTS, not for documentation:
+        # XrceConfig.PublishedDefaultsAreExact reads the published default document out of it,
+        # so the cache build must have the file the repository holds.
+        "README.md",
         "src/*",
         "include/*",
         "cmake/*",

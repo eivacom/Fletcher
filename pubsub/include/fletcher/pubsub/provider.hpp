@@ -70,11 +70,11 @@ struct SubscriptionResult {
 /// `{max_payload_bytes, domain_id}` plus an opaque document in the provider's
 /// own format, which Fletcher transports and never reads (§4.1, §4.2, see
 /// provider_registry.hpp). There is no per-call config parameter and no
-/// protocol-typed Options struct at this seam. The in-process loopback
-/// (PDA-DEC-5) and Fast DDS (PDA-DEC-6) are configured this way — Fast DDS by
-/// its own native XML QoS profiles document, so no eProsima type is nameable
-/// from here. XRCE still takes its own options struct until PDA-DEC-7 retires
-/// `XrceConfig` the same way.
+/// protocol-typed Options struct at this seam. All three providers are
+/// configured this way, as landed: the in-process loopback (PDA-DEC-5), Fast DDS
+/// by its own native XML QoS profiles document (PDA-DEC-6), and XRCE by a
+/// `key=value` document (PDA-DEC-7). No eProsima type and no XRCE type is
+/// nameable from here, or from any provider's installed header.
 class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;

@@ -27,24 +27,30 @@
 int main(int argc, char** argv) {
     return fletcher::conformance::RunPeerMain(
         argc, argv, [](int count, char** args) -> std::shared_ptr<fletcher::PubSubProvider> {
-            fletcher::XrceConfig config;
-            config.connect_timeout_ms = 5000;
+            // PDA-DEC-7: the Agent address and the session key are document lines now, and the
+            // address is ONE line - so this child builds `agent=HOST:PORT` complete rather than
+            // setting a port beside a host it never mentions.
+            uint16_t agent_port = 2018;
+            uint32_t session_key = 0xAABBCCDDu;
+            fletcher::ProviderConfig config;
             for (int i = 1; i < count; ++i) {
                 const std::string arg = args[i];
                 if (arg == "--domain-id" && i + 1 < count) {
-                    config.domain_id = static_cast<uint16_t>(std::stoul(args[++i]));
+                    config.domain_id = static_cast<uint32_t>(std::stoul(args[++i]));
                 } else if (arg == "--agent-port" && i + 1 < count) {
-                    config.agent_port = static_cast<uint16_t>(std::stoul(args[++i]));
+                    agent_port = static_cast<uint16_t>(std::stoul(args[++i]));
                 } else if (arg == "--session-key-base" && i + 1 < count) {
                     const uint32_t base = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
                     // 24 bits of pid, not 12: a 12-bit slice collided on any
                     // 4096-multiple pid gap, which is one wrap of the pid space.
                     // The bases are an octet apart, so this cannot reach the
                     // next role's range.
-                    config.session_key =
-                        base + (static_cast<uint32_t>(FLETCHER_GETPID()) & 0x00FFFFFFu);
+                    session_key = base + (static_cast<uint32_t>(FLETCHER_GETPID()) & 0x00FFFFFFu);
                 }
             }
+            config.document = "agent=127.0.0.1:" + std::to_string(agent_port) +
+                              "\nsession_key=" + std::to_string(session_key) +
+                              "\nconnect_timeout_ms=5000";
             return std::make_shared<fletcher::XrceDDSPubSubProvider>(config);
         });
 }

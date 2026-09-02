@@ -41,38 +41,27 @@ TEST(XrceProviderTest, ReentrantUnsubscribeNoUseAfterFree) {
 }
 
 // ---------------------------------------------------------------------------
-// JoinSegments — mirrors the internal helper; tested via public API behavior
+// RETIRED here, replaced in test_xrce_document.cpp (PDA-DEC-7):
+//
+//   XrceProviderTest.DefaultValues / .CustomValues set a field on the retired
+//   `XrceConfig` struct and read it straight back, which asserts that C++
+//   assignment works. Their subject no longer exists. What replaces them is
+//   strictly stronger: `XrceConfig.PublishedDefaultsAreExact` parses the
+//   default document out of README.md on disk and compares it WHOLE-STRUCT to
+//   the code's defaults, and `XrceConfig.EveryKeySetNonDefaultLandsWholeStruct`
+//   sets all four keys away from their defaults and compares whole-struct, so a
+//   reader that accepts a value and then discards it cannot stay green.
+//
+//   XrceProviderTest.ConstructorThrowsWithoutAgent asserted only that
+//   something deriving from `std::runtime_error` came out - true of every
+//   `PubSubError` whatever its status. It is replaced by
+//   `XrceConfig.AgentUnreachableIsATransportFailure`, which asserts
+//   `kTransportFailure` and goes through `RegisterXrceProvider` + `Create`.
+//
+//   XrceProviderTest.SerialTransportNotImplemented likewise becomes
+//   `XrceConfig.SerialIsRefusedAsUnsupported`, asserting `kNotSupported` -
+//   distinct from a typo's `kInvalidArgument`.
 // ---------------------------------------------------------------------------
-
-TEST(XrceProviderTest, DefaultValues) {
-    XrceConfig cfg;
-    EXPECT_EQ(cfg.transport, XrceTransport::kUdp);
-    EXPECT_EQ(cfg.agent_ip, "127.0.0.1");
-    EXPECT_EQ(cfg.agent_port, 2018);
-    EXPECT_EQ(cfg.max_payload, 512);
-    EXPECT_EQ(cfg.stream_history, 4);
-    EXPECT_EQ(cfg.run_loop_ms, 10);
-    EXPECT_EQ(cfg.session_key, 0xAABBCCDD);
-}
-
-TEST(XrceProviderTest, CustomValues) {
-    XrceConfig cfg;
-    cfg.transport = XrceTransport::kTcp;
-    cfg.agent_ip = "192.168.1.100";
-    cfg.agent_port = 3000;
-    cfg.max_payload = 1024;
-    cfg.stream_history = 8;
-    cfg.run_loop_ms = 50;
-    cfg.session_key = 0x12345678;
-
-    EXPECT_EQ(cfg.transport, XrceTransport::kTcp);
-    EXPECT_EQ(cfg.agent_ip, "192.168.1.100");
-    EXPECT_EQ(cfg.agent_port, 3000);
-    EXPECT_EQ(cfg.max_payload, 1024);
-    EXPECT_EQ(cfg.stream_history, 8);
-    EXPECT_EQ(cfg.run_loop_ms, 50);
-    EXPECT_EQ(cfg.session_key, 0x12345678);
-}
 
 // ---------------------------------------------------------------------------
 // XRCE object ID allocation
@@ -113,27 +102,6 @@ TEST(XrceProviderTest, DifferentTypesWithSameBase) {
     EXPECT_EQ(dw.type, UXR_DATAWRITER_ID);
     EXPECT_EQ(sub.type, UXR_SUBSCRIBER_ID);
     EXPECT_EQ(dr.type, UXR_DATAREADER_ID);
-}
-
-// ---------------------------------------------------------------------------
-// Constructor without Agent — should throw
-// ---------------------------------------------------------------------------
-
-TEST(XrceProviderTest, ConstructorThrowsWithoutAgent) {
-    XrceConfig cfg;
-    cfg.agent_ip = "127.0.0.1";
-    cfg.agent_port = 19999;  // No agent expected on this port.
-    cfg.connect_timeout_ms = 200;
-
-    EXPECT_THROW(XrceDDSPubSubProvider(cfg), std::runtime_error);
-}
-
-TEST(XrceProviderTest, SerialTransportNotImplemented) {
-    XrceConfig cfg;
-    cfg.transport = XrceTransport::kSerial;
-    cfg.connect_timeout_ms = 200;
-
-    EXPECT_THROW(XrceDDSPubSubProvider(cfg), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------

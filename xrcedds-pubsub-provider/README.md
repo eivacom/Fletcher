@@ -18,7 +18,7 @@ The binary payload is a serialized `Envelope`:
 
 This format is shared with the FastDDS provider, so payloads are wire-compatible between provider implementations.
 
-Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `XrceConfig::payload_bound` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
+Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `ProviderConfig::max_payload_bytes` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB, and **0 means unset**, which resolves to exactly that (65536) - so a caller who leaves it alone gets the same type name this provider has always registered. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
 
 ### Topic name
 
@@ -41,33 +41,128 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 using namespace fletcher;
 
-// Connect to an XRCE-DDS Agent on localhost:2018 (defaults).
-// Throws std::runtime_error if the Agent is not reachable.
-XrceDDSPubSubProvider provider;
+// Selected by NAME through the registry - the same call that resolves `inprocess` and
+// `fastdds`, and the same call a runtime-loaded driver will arrive through later.
+ProviderRegistry registry;
+RegisterXrceProvider(registry);
 
-// Or with explicit configuration:
-XrceConfig cfg;
-cfg.transport    = XrceTransport::kUdp;
-cfg.agent_ip     = "192.168.1.10";
-cfg.agent_port   = 2018;
-cfg.max_payload  = 4096;
-auto provider2 = XrceDDSPubSubProvider(cfg);
+ProviderConfig config;
+config.domain_id = 145;                       // must match any DDS peer's domain
+config.document  = "agent=192.168.1.10:2018\n"
+                   "session_key=305419896\n"
+                   "connect_timeout_ms=5000";
+auto provider = registry.Create(ProviderSelector::Parse("xrce"), config);
+
+// Or constructed directly, with the same configuration and no registry.
+XrceDDSPubSubProvider direct(config);
 ```
 
-### `XrceConfig` fields
+There is **no typed XRCE options struct**. `XrceConfig` and `XrceTransport` were *retired* in
+PDA-DEC-7 - not deprecated, no coexistence window - so there is one configuration path and one
+path to test. Fletcher itself understands only `{max_payload_bytes, domain_id}`; everything
+protocol-specific is a line in the document, which only this provider reads (spec §4.1/§4.2,
+locked decision 8: Fletcher gains no parser and no configuration dependency).
 
-| Field | Default | Description |
+### Configuration
+
+`ProviderConfig`'s typed core:
+
+| Field | Default | Meaning |
 |---|---|---|
-| `transport` | `kUdp` | Transport: `kUdp`, `kTcp`, or `kSerial` (serial not yet implemented) |
-| `agent_ip` | `"127.0.0.1"` | XRCE-DDS Agent IP address |
-| `agent_port` | `2018` | XRCE-DDS Agent port |
-| `serial_device` | `""` | Serial device path (only when `transport == kSerial`) |
-| `serial_baudrate` | `115200` | Serial baud rate |
-| `max_payload` | `512` | Maximum payload size in bytes |
-| `stream_history` | `4` | Reliable stream history depth (must be a power of 2) |
-| `run_loop_ms` | `10` | Milliseconds per `uxr_run_session_time` call in the run-loop thread |
-| `session_key` | `0xAABBCCDD` | XRCE session key — must be unique per client on the same Agent |
-| `connect_timeout_ms` | `3000` | Timeout for the initial session creation handshake; lower this in tests |
+| `domain_id` | `0` | The DDS domain the Agent creates this client's participant on. `uint32_t` at the seam, `uint16_t` on the XRCE wire, so **above 65535 is refused, never narrowed** - a truncated domain id is a wrong answer with no error. |
+| `max_payload_bytes` | `0` = unset -> `65536` | The row payload bound this client's DDS topics advertise; part of the registered type name (see above). Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
+| `document` | empty = all defaults | This provider's `key=value` document. |
+
+#### The document: `key=value`, one setting per line
+
+| Key | Values | Default |
+|---|---|---|
+| `transport` | `udp`, `tcp` (`serial` is nameable and refused as *unsupported*) | `udp` |
+| `agent` | `HOST:PORT` - exactly one colon, port 1-65535 | `127.0.0.1:2018` |
+| `session_key` | decimal `uint32`; must be unique per client on one Agent | `2864434397` |
+| `connect_timeout_ms` | decimal 0-60000 | `3000` |
+
+The address is **one** key, not two. Two would let a document name only the host and silently
+keep port 2018 - a half-specified address, which is the kind of silence this shape exists to
+remove. A key nobody mentions keeps its published default below.
+
+`connect_timeout_ms` is coarse: the client retries the session handshake in ~1000 ms steps, so
+**every value below 1000 ms means one attempt** and `0` means one attempt that does not wait for
+an answer at all. The knob is advertised in milliseconds because that is the unit the client's
+API takes; do not read more precision into it than the second it actually has.
+
+Tolerance is strict, and identical to the in-process loopback's document (spec §4.1 is the one
+oracle for both readers): `\n`-separated entries, a trailing `\r` stripped so a CRLF document
+means the same thing everywhere, blank lines and a trailing newline skipped - and **nothing else
+trimmed**, no case folding, no comments. `agent =x`, ` agent=x`, `AGENT=x` and `# a comment` are
+all refused rather than guessed at: "the right setting in the wrong place" is a mistake worth
+being told about.
+
+#### The published default document
+
+This is what an empty document means, spelled out - the copy-paste starting point for a real
+one. It cannot drift from the code: `XrceConfig.PublishedDefaultsAreExact` reads **this block,
+out of this file, at run time** and compares what it parses to the provider's defaults
+whole-struct, so editing either side alone turns that test red.
+
+```
+transport=udp
+agent=127.0.0.1:2018
+session_key=2864434397
+connect_timeout_ms=3000
+```
+
+#### Refused, and all of it before any I/O
+
+Every document refusal is a construction-time refusal, and structurally so: the document is
+read to completion before a buffer is sized, before a socket exists and before a session is
+created. No key here is topic-scoped, so unlike the Fast DDS provider this one defers nothing -
+a constructed provider is one whose whole document has been read.
+
+Each refusal is a `PubSubError` carrying a stable status (spec §5.1) and quoting the offending
+entry:
+
+- **`kInvalidArgument`** - an embedded NUL; an entry with no `=`; an unknown key; a duplicate
+  key; an unknown value; a key with stray whitespace (` agent=x`, `agent =x`); an `agent` without exactly one
+  colon, with an empty host, or with a port outside 1-65535; a `connect_timeout_ms` above
+  60000; a `session_key` above 4294967295; a `domain_id` above 65535; an unusable
+  `max_payload_bytes`. Numbers are parsed wide and then range-checked per key, so no value is
+  ever silently narrowed. Whitespace inside a *value* is not trimmed either, and not
+  second-guessed: `agent=127.0.0.1:2018 ` is refused because the port no longer parses, while
+  `agent= 127.0.0.1:2018` keeps the space **in the host** and fails at the transport instead -
+  the host is the client resolver's business, not Fletcher's (see H1 below).
+- **`kNotSupported`** - `transport=serial`. Nameable, and refused *distinctly* from a typo:
+  "this build cannot do serial" is a different problem from a mistyped key.
+- **`kTransportFailure`** - a transport that will not initialise, or an Agent that does not
+  answer within `connect_timeout_ms`.
+
+#### Settings that no longer exist
+
+| Was | Now |
+|---|---|
+| `agent_ip` + `agent_port` | one `agent=HOST:PORT` line |
+| `transport` (enum) | `transport=udp` / `tcp` |
+| `session_key`, `connect_timeout_ms` | the keys of the same name |
+| `payload_bound`, `domain_id` | `ProviderConfig`'s typed core |
+| `max_payload` | **gone.** A documented 512-byte cap that capped nothing: no code in this repository ever read it. Nothing observable changes; what disappears is this README's old claim that it bounded anything. |
+| `serial_device`, `serial_baudrate` | **gone.** Reachable only through a transport that refuses. |
+| `stream_history`, `run_loop_ms` | **gone, and this one is a real narrowing.** They are now fixed at 4 and 10 ms - the values every caller in the tree already used. Nothing in the repository set either and no test could observe either, so a document key for one would have been a range-check with nothing behind it. If either is ever wanted it comes back **with** a test proving it took effect, which is the thing neither ever had. |
+
+#### Handled, not forbidden
+
+- **An unresolvable or unreachable host is a transport failure, not a document refusal.** The
+  host is handed to the XRCE client unchanged, and Fletcher does not know what that client's
+  resolver accepts - requiring IPv4 literals would refuse hostnames that work today. Still a
+  construction-time failure, typed `kTransportFailure`.
+- **IPv4 only.** The one-colon rule means `[::1]:2018` and `::1` are refused rather than
+  half-accepted. Nothing is lost that ever worked - the client is initialised `UXR_IPv4` - but
+  it is a deliberate foreclosure: IPv6 is a separate change that also has to move off
+  `UXR_IPv4`.
+- **An empty document means every published default**, including an Agent on
+  `127.0.0.1:2018`. "The operator meant to configure this and forgot" is not a question this
+  provider can answer; the gateway is where an empty configuration file is refused.
+- **A `session_key` colliding with another client on one Agent.** Uniqueness is a property of
+  that Agent's client population, which is not observable from here. Pre-existing.
 
 ### PubSubProvider interface
 
@@ -86,7 +181,7 @@ provider.Unsubscribe({"my", "topic"});
 - Only one subscription per topic per provider instance. Call `Unsubscribe` before re-subscribing.
 - The subscription callback is invoked from the background run-loop thread. Shared state accessed from the callback must be protected externally.
 - `XrceDDSPubSubProvider` is non-copyable and non-movable.
-- Serial transport (`kSerial`) throws `std::runtime_error` — not yet implemented.
+- `transport=serial` is refused with `PubSubError(kNotSupported)` - not implemented, and said distinctly from a typo.
 
 ## Runtime requirement
 
@@ -96,9 +191,18 @@ A running [MicroXRCEAgent](https://micro-xrce-dds.docs.eprosima.com/en/latest/ag
 MicroXRCEAgent udp4 -p 2018
 ```
 
-The unit tests do **not** require an Agent — the test that exercises missing-Agent behaviour expects the constructor to throw and passes without one.
+The unit tests do **not** require an Agent - not one of them. The document is guarded by a pure
+function, and the one guard that watches the *transport* brings its own socket.
 
-> **Test duration note:** `ConstructorThrowsWithoutAgent` and `SerialTransportNotImplemented` each take ~1 second to complete. This is the floor imposed by the XRCE-DDS client's internal per-attempt UDP timeout — there is no public API to shorten it further without patching the client library. Both tests set `connect_timeout_ms = 200` which maps to 0 retries (a single attempt), so the combined overhead is ~2 seconds per test run.
+> **Test duration note:** `XrceConfig.DocumentConfiguresTransport` is the only case here that
+> costs real wall clock - budget 2-5 s. It opens a listening socket on an **ephemeral** port,
+> hands the provider `transport=tcp` plus that port, and asserts the connection arrives: the port
+> is chosen at run time, so no build can hard-code its way past it. Its first row sets
+> `connect_timeout_ms=0` (one attempt, no wait) and asserts the constructor fails *inside*
+> 1000 ms, which is what would catch a constructor that ignored the operator's budget and used
+> its own. Its second row is a harness control on the defaults and pays the full default
+> 3000 ms budget, which the client spends as two ~1000 ms attempts. Every other case is
+> sub-millisecond.
 
 ## Building the package locally
 

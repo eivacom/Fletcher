@@ -110,10 +110,12 @@ struct ProviderConfig {
     /// The transport's domain/endpoint identity, in whatever the transport calls
     /// a domain.
     ///
-    /// Forward note for PDA-DEC-7: this is `uint32_t` while `XrceConfig`'s field
-    /// is `uint16_t`. A migration must **refuse** an out-of-range value, never
-    /// narrow it — a truncated domain id puts the client on the wrong domain with
-    /// no error, which is a wrong answer rather than a failure.
+    /// `uint32_t` here, and narrower on some wires: the XRCE protocol carries a
+    /// `uint16_t` domain id. **As landed** (PDA-DEC-7) that provider **refuses**
+    /// anything above 65535 rather than narrowing it — a truncated domain id puts
+    /// the client on the wrong domain with no error, which is a wrong answer
+    /// rather than a failure. Any future provider on a narrower wire owes the
+    /// same refusal.
     uint32_t domain_id = 0;
 
     /// Everything else, in **the provider's own format** — Fast DDS's native XML

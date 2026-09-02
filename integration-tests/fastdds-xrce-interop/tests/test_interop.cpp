@@ -104,15 +104,19 @@ void ExpectRowEquals(const ArrowRow& row, int32_t expected_id, double expected_t
     EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(), expected_label);
 }
 
-XrceConfig XrceConfigFor(uint32_t session_key) {
-    XrceConfig cfg{};
-    cfg.transport = XrceTransport::kUdp;
-    cfg.agent_ip = kAgentIp;
-    cfg.agent_port = kAgentPort;
-    cfg.session_key = session_key;
+// PDA-DEC-7: the typed XRCE options struct is retired. What these three tests witness is the
+// seam's TYPED CORE and the registered type name, not the document - they run their Agent on
+// the DEFAULT port with the DEFAULT (UDP) transport, and their one distinguishing setting is
+// `domain_id`. The document carries only the session key, which has to be unique per client on
+// one Agent. The document's own end-to-end witness is the 24 `conformance_xrce` cases, which
+// run on a non-default port and a non-default domain.
+ProviderConfig XrceConfigFor(uint32_t session_key) {
+    ProviderConfig cfg;
     // Match the FastDDS-side participants on the same DDS domain so the
     // Agent-bridged XRCE participant lands on the same bus.
-    cfg.domain_id = static_cast<uint16_t>(kDdsDomain);
+    cfg.domain_id = kDdsDomain;
+    cfg.document = std::string("agent=") + kAgentIp + ":" + std::to_string(kAgentPort) +
+                   "\nsession_key=" + std::to_string(session_key);
     return cfg;
 }
 
@@ -236,8 +240,8 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         auto deadline = std::chrono::steady_clock::now() + 15s;
         while (std::chrono::steady_clock::now() < deadline) {
             try {
-                XrceConfig cfg = XrceConfigFor(0xF0F0FFFF);
-                cfg.connect_timeout_ms = 2000;
+                ProviderConfig cfg = XrceConfigFor(0xF0F0FFFF);
+                cfg.document += "\nconnect_timeout_ms=2000";
                 XrceDDSPubSubProvider probe(cfg);
                 return;
             } catch (const std::exception& e) {

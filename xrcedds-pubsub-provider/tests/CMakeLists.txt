@@ -4,7 +4,8 @@
 find_package(GTest REQUIRED)
 
 add_executable(xrce_provider_tests
-    test_xrce_provider.cpp)
+    test_xrce_provider.cpp
+    test_xrce_document.cpp)
 
 # The re-entrant-Unsubscribe test (issue #62 residual, HARD-4) includes the
 # non-installed internal test hook header directly, and must see the same
@@ -13,6 +14,14 @@ add_executable(xrce_provider_tests
 target_include_directories(xrce_provider_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_compile_definitions(xrce_provider_tests PRIVATE FLETCHER_BUILD_TESTS)
+
+# PDA-DEC-7: XrceConfig.PublishedDefaultsAreExact reads the published default document out of
+# README.md itself rather than holding a copy, so editing either the README block or a default in
+# the code alone turns the test red. The README is exported by conanfile.py so the cache build
+# reads the same file the repository holds. It is read at RUN time - a file(READ)/configure_file
+# bake-in here would re-create the held-copy defect the disk read exists to kill.
+target_compile_definitions(xrce_provider_tests PRIVATE
+    FLETCHER_XRCE_README_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../README.md")
 
 target_link_libraries(xrce_provider_tests PRIVATE
     GTest::gtest_main

@@ -363,17 +363,20 @@ Normative:
 4. **A built-in provider is registered, not hardcoded.** The gateway's
    `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5, PDA-DEC-6):
    the loopback is selectable under the name `inprocess`
-   (`RegisterInProcessProvider`) and Fast DDS under the name `fastdds`
-   (`RegisterFastDDSProvider`, which lives in the provider's own component, so
-   the gateway names no concrete provider type). The gateway registers both
-   unconditionally, before the selector is looked at — registration states
+   (`RegisterInProcessProvider`), Fast DDS under the name `fastdds`
+   (`RegisterFastDDSProvider`) and XRCE-DDS under the name `xrce`
+   (`RegisterXrceProvider`, PDA-DEC-7) — each in the provider's own component, so
+   no caller names a concrete provider type. The gateway registers the two it
+   links unconditionally, before the selector is looked at — registration states
    *availability* (a link-time fact), `Create` performs *selection* (a runtime
    string), and branching registration on the selector would put a selector
-   branch back above the seam. `Registry.FastDdsResolvesAsABuiltIn` (in
-   `conformance_fastdds`, deliberately not in `conformance_registry`, whose
-   narrow link line is itself the "no transport SDK is reachable" guard) proves
-   the name resolves and delivers a row through a base-typed handle. XRCE is
-   owed by PDA-DEC-7.
+   branch back above the seam. The gateway does **not** register `xrce`, because
+   it does not link the XRCE client: what a build has is a link-time fact, and
+   registration is where it is stated. `Registry.FastDdsResolvesAsABuiltIn` and
+   `Registry.XrceResolvesAsABuiltIn` (in `conformance_fastdds` and
+   `conformance_xrce`, deliberately not in `conformance_registry`, whose narrow
+   link line is itself the "no transport SDK is reachable" guard) each prove the
+   name resolves and delivers a row through a base-typed handle.
 
 ### §4.1 — Configuration: typed core plus opaque document
 
@@ -417,6 +420,33 @@ been read, and the provider's public header states this rather than promising th
 stronger thing. The convenience of reading a document out of a file lives in the
 **gateway** (`--provider-config FILE`), never in Fletcher.
 
+**As landed** (PDA-DEC-7), XRCE's document is a sequence of `\n`-separated
+`key=value` entries with **four** keys: `transport` (`udp` | `tcp`), `agent`
+(`HOST:PORT`), `session_key` (decimal `uint32`) and `connect_timeout_ms`
+(decimal 0–60000). The address is **one** key, because two would let a document
+name only the host and silently keep the default port — a half-specified address
+is the same class of silence the no-merge rule above exists to remove. Numbers
+are parsed wide and range-checked per key, so **no value is ever narrowed
+silently**; `domain_id` is typed core and `uint16_t` on the XRCE wire, so above
+65535 it is refused rather than truncated. `transport=serial` is nameable and
+refused with **`kNotSupported`**, distinctly from an unknown value's
+`kInvalidArgument` (owner ruling 2026-09-02, "accept it, fail distinctly").
+**This provider owes nothing under the disclosure clause above, and structurally
+so:** its document is read to completion before a buffer is sized, a socket
+exists or a session is created, and no key of its is topic-scoped, so there is no
+later moment at which one first becomes checkable — a constructed XRCE provider
+*is* one whose whole document has been read. The reader is the provider's own
+(`src/internal/xrce_document.{hpp,cpp}`), unshared and dependency-free, exactly
+as §4.2 requires; the two in-tree `key=value` readers share this section as their
+single tolerance oracle and nothing else. `XrceConfig` and its transport enum are
+**retired**, not deprecated, with no coexistence window (owner ruling
+2026-08-31), and five of its twelve fields are **deleted outright**: a payload
+cap nothing read, two serial settings reachable only through a transport that
+refuses, and the stream depth and pump quantum — which no caller set and no test
+could observe, and which are now fixed constants at their previous values. That
+last pair is a disclosed narrowing, recoverable only *with* a witness that it
+takes effect.
+
 **As landed** (PDA-DEC-5), the loopback is the other document reader in-tree:
 its document is a sequence of `\n`-separated `key=value` entries, and the only
 key is `schema_carriage` (`as_declared`, the default, or `carried`, §7 clause
@@ -445,7 +475,9 @@ The check is mechanical rather than editorial: `fastdds-pubsub-provider` links
 fast-dds **PRIVATE** and its recipe drops `transitive_headers`, so its
 `test_package` compiles with no Fast DDS include directories at all and any
 eProsima type reappearing in the installed header is a compile error there.
-`XrceConfig` is the same shape of change, owed by PDA-DEC-7.
+`XrceConfig` was the same shape of change and **is discharged** (PDA-DEC-7): the
+installed XRCE header declares exactly `RegisterXrceProvider` and one
+constructor over `ProviderConfig`, and names no XRCE vocabulary at all.
 
 ### §4.2 — Fletcher parses nothing (explicit non-goal)
 
@@ -727,6 +759,9 @@ rather than 2. The gateway's single construction now feeds
 | [integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp) | 1 | migrated, PDA-DEC-6 |
 | [fastdds-pubsub-provider/test_package/src/example.cpp](../fastdds-pubsub-provider/test_package/src/example.cpp) | 1 | migrated, PDA-DEC-6 — and it is the machine check that no eProsima type survives in the public header |
 | [fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp](../fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp) | 1 | migrated, PDA-DEC-6 — the in-tree proof the document expresses what the struct did |
+| [integration-tests/pubsub-conformance/subjects/xrce_main.cpp](../integration-tests/pubsub-conformance/subjects/xrce_main.cpp) | 3 | migrated, PDA-DEC-7 — the factory, the reachability probe and `Registry.XrceResolvesAsABuiltIn` |
+| [integration-tests/pubsub-conformance/subjects/xrce_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/xrce_peer_main.cpp) | 1 | migrated, PDA-DEC-7 — and it now builds `agent=HOST:PORT` whole, rather than setting a port beside a host it never mentioned |
+| [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 2 | migrated, PDA-DEC-7 (the XRCE half; the 3 Fast DDS constructions above were PDA-DEC-6's) — these witness the typed core and the type name, not the document: they run their Agent on the default port with the default transport |
 
 **Provider-internal churn** (part of the work, not external migration):
 `fastdds-pubsub-provider/` — done in PDA-DEC-6. Five QoS tests that set a value
@@ -734,11 +769,19 @@ and then only checked that a message arrived were retired and replaced by tests
 that read back what the endpoint *announced*; the two `max_schema_bytes` tests
 were re-anchored onto the `fletcher.max_schema_bytes` document property; and
 `internal/qos_defaults.hpp` left the installed tree for `src/internal/`.
-`xrcedds-pubsub-provider/` 10 across 4 files — **still owed, PDA-DEC-7**.
+`xrcedds-pubsub-provider/` — done in PDA-DEC-7. Four tests that set a struct
+field and read it straight back, or asserted only that *something* derived from
+`std::runtime_error` came out, were retired and replaced by tests that compare
+the parsed document to the code **whole-struct**, read the published defaults out
+of `README.md` on disk, and assert the *status* rather than the exception's base
+class. The new `XrceConfig.DocumentConfiguresTransport` observes the document's
+address arriving at a test-owned socket on an ephemeral port, with no Agent.
 
 **Docs:** the Fast DDS README's configuration section was rewritten and
 [gateway/README.md](../gateway/README.md) now documents `--provider-config`, both
-in PDA-DEC-6; the XRCE README is **still owed, PDA-DEC-7**.
+in PDA-DEC-6; the XRCE README's configuration section was rewritten in
+PDA-DEC-7, and the default document it publishes is read off disk by a test so it
+cannot drift from the code.
 [docs/architecture-overview.md](architecture-overview.md) and the root
 [README.md](../README.md) were inspected in PDA-DEC-6 and carry no retired
 vocabulary — their "implementing one interface" claims stand, and the only code

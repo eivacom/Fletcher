@@ -238,6 +238,10 @@ if(FLETCHER_CONFORMANCE_XRCE)
         conformance_peer_loop
         fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
+    # Also home to `Registry.XrceResolvesAsABuiltIn` (spec 4 clause 4, PDA-DEC-7), for the
+    # reason its Fast DDS twin lives in subjects/fastdds_main.cpp: conformance_registry's link
+    # line names no transport SDK and that narrowness IS a guard, so registering a real
+    # provider there would destroy it. This binary already links the provider and owns an Agent.
     add_executable(conformance_xrce subjects/xrce_main.cpp)
     target_link_libraries(conformance_xrce PRIVATE
         conformance_support

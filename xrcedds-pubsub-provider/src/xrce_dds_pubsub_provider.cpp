@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <fletcher/core/envelope.hpp>
@@ -38,6 +39,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "internal/xrce_document.hpp"
 
 #ifdef FLETCHER_BUILD_TESTS
 #include "internal/xrce_test_hook.hpp"
@@ -106,7 +109,15 @@ struct XrceDDSPubSubProvider::Impl {
         std::vector<Envelope> pending;
     };
 
-    XrceConfig config;
+    // What the four document keys decided (internal/xrce_document.hpp). The typed core is not
+    // kept as a `ProviderConfig` copy: only `domain_id` outlives the constructor, and it is
+    // held below already narrowed to what the XRCE call takes.
+    internal::XrceSettings settings;
+
+    // The DDS domain, validated <= 65535 by the constructor and narrowed exactly once, there.
+    // `uxr_buffer_create_participant_bin` takes a `uint16_t`, so keeping the seam's `uint32_t`
+    // here would only move the same narrowing to two call sites.
+    uint16_t domain_id = 0;
 
     // Must be byte-identical to what a FastDDS peer registers, or the endpoints never match.
     std::string type_name;
@@ -334,72 +345,147 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
 // Construction / destruction
 // -----------------------------------------------------------------------
 
-XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
+void RegisterXrceProvider(ProviderRegistry& registry) {
+    registry.Register("xrce", [](const ProviderConfig& config) {
+        return std::make_shared<XrceDDSPubSubProvider>(config);
+    });
+}
+
+namespace {
+
+// The bound `max_payload_bytes == 0` (unset, spec 4.1) resolves to. Bit-for-bit the retired
+// options struct's `payload_bound` default (`kPayloadBytes<64 * 1024>`), and deliberately so:
+// the bound is part of the registered DDS type name, so a different number silently stops
+// endpoints discovering each other (locked decision 13). No in-tree caller ever set the old
+// field, so this reproduces every existing type name byte for byte.
+constexpr uint32_t kDefaultPayloadBytes = 64 * 1024;
+
+// The largest `domain_id` the XRCE wire can carry: `uxr_buffer_create_participant_bin` takes a
+// `uint16_t`. The seam's field is `uint32_t`, so anything above this is REFUSED rather than
+// narrowed (provider_registry.hpp's forward note demands exactly that).
+constexpr uint32_t kMaxDomainId = 65535;
+
+// The XRCE reliable-stream history depth, and the pump quantum of the run-loop thread. These
+// were `XrceConfig::stream_history` / `run_loop_ms`; both are now FIXED at the values every
+// caller in the tree already used (only the two retired echo-tests ever assigned them, and
+// nothing anywhere observed either). Disclosed narrowing: an operator cannot set them at all
+// any more, because they cannot be said. If either is ever wanted it returns as a document key
+// WITH a witness that it took effect - the thing neither had (design section 2).
+constexpr uint16_t kStreamHistory = 4;
+constexpr std::chrono::milliseconds kRunLoopQuantum{10};
+
+// One session-creation attempt costs the client ~1000 ms internally
+// (`UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL`), and `uxr_create_session_retries` takes a
+// COUNT, so the operator's millisecond budget converts to a count and everything below 1000 ms
+// means a single attempt. The README says so, because the key advertises a millisecond knob
+// whose bottom second is indistinguishable.
+constexpr int64_t kMsPerAttempt = 1000;
+
+}  // namespace
+
+XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
     : impl_(std::make_unique<Impl>()) {
-    impl_->config = config;
+    // -- Validate EVERYTHING first, then touch the world --------------------------------------
+    // The document is read to completion here, before a buffer is sized, before a socket
+    // exists and before a session is created. That order is the whole of this provider's
+    // answer to spec 4.1's disclosure clause: no key is topic-scoped, so there is no later
+    // moment at which one first becomes checkable, and a constructed provider is one whose
+    // whole document has been read. Refusals are typed `PubSubError` - reached through a
+    // registry factory, a `std::invalid_argument` would arrive at the caller as `kInternal`,
+    // which tells an operator nothing (spec 5.1).
+    impl_->settings = internal::ParseXrceDocument(config);
+
+    if (config.domain_id > kMaxDomainId) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "XRCE: domain_id " + std::to_string(config.domain_id) +
+                              " does not fit the XRCE wire, which carries a 16-bit domain id; "
+                              "the maximum is " +
+                              std::to_string(kMaxDomainId));
+    }
+    impl_->domain_id = static_cast<uint16_t>(config.domain_id);
 
     // The bound is part of the registered type name, so an unusable one matches nothing.
-    if (!IsPayloadBound(config.payload_bound)) {
-        throw std::invalid_argument(
-            "XRCE: payload_bound " + std::to_string(config.payload_bound) +
-            " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 between " +
-            std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+    const uint32_t bound =
+        config.max_payload_bytes == 0 ? kDefaultPayloadBytes : config.max_payload_bytes;
+    if (!IsPayloadBound(bound)) {
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            "XRCE: max_payload_bytes " + std::to_string(bound) +
+                " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 "
+                "between " +
+                std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
     }
-    impl_->type_name = FletcherTypeName(config.payload_bound);
+    impl_->type_name = FletcherTypeName(bound);
 
-    // Size reliable stream buffers.
-    // history must be power of 2; buffer size = MTU * history.
-    uint16_t history = config.stream_history;
-    size_t mtu = UXR_CONFIG_UDP_TRANSPORT_MTU;
-    impl_->output_buffer.resize(mtu * history);
-    impl_->input_buffer.resize(mtu * history);
+    // Size reliable stream buffers. history must be power of 2; buffer size = MTU * history.
+    const size_t mtu = UXR_CONFIG_UDP_TRANSPORT_MTU;
+    impl_->output_buffer.resize(mtu * kStreamHistory);
+    impl_->input_buffer.resize(mtu * kStreamHistory);
 
-    // Initialize transport.
-    std::string port_str = std::to_string(config.agent_port);
+    // Initialize transport. Both arms hand the host string to the client UNCHANGED, so whatever
+    // its resolver accepts keeps working (H1): an unresolvable or unreachable host is a
+    // `kTransportFailure`, not a document refusal, because Fletcher does not know what that
+    // resolver accepts and refusing hostnames would break setups that work today.
+    const std::string port_str = std::to_string(impl_->settings.agent_port);
 
-    switch (config.transport) {
-        case XrceTransport::kUdp:
-            if (!uxr_init_udp_transport(&impl_->udp_transport, UXR_IPv4, config.agent_ip.c_str(),
-                                        port_str.c_str()))
-                throw std::runtime_error("XRCE: failed to init UDP transport");
+    switch (impl_->settings.transport) {
+        case internal::XrceTransportKind::kUdp:
+            if (!uxr_init_udp_transport(&impl_->udp_transport, UXR_IPv4,
+                                        impl_->settings.agent_host.c_str(), port_str.c_str())) {
+                throw PubSubError(PubSubStatus::kTransportFailure,
+                                  "XRCE: failed to init UDP transport towards " +
+                                      impl_->settings.agent_host + ":" + port_str);
+            }
             impl_->comm = &impl_->udp_transport.comm;
             break;
 
-        case XrceTransport::kTcp:
-            if (!uxr_init_tcp_transport(&impl_->tcp_transport, UXR_IPv4, config.agent_ip.c_str(),
-                                        port_str.c_str()))
-                throw std::runtime_error("XRCE: failed to init TCP transport");
+        case internal::XrceTransportKind::kTcp:
+            // TCP connects HERE, inside init (verified against Micro XRCE-DDS Client v3.0.1:
+            // `uxr_init_tcp_platform` performs a blocking `connect()` on both the Windows and
+            // the POSIX platform and returns false when every address fails). That is what lets
+            // `XrceConfig.DocumentConfiguresTransport` observe the document's address with a
+            // plain listening socket and no Agent at all.
+            if (!uxr_init_tcp_transport(&impl_->tcp_transport, UXR_IPv4,
+                                        impl_->settings.agent_host.c_str(), port_str.c_str())) {
+                throw PubSubError(PubSubStatus::kTransportFailure,
+                                  "XRCE: failed to init TCP transport towards " +
+                                      impl_->settings.agent_host + ":" + port_str);
+            }
             impl_->comm = &impl_->tcp_transport.comm;
             break;
-
-        case XrceTransport::kSerial:
-            throw std::runtime_error("XRCE: serial transport not implemented");
     }
 
     // Initialize session.
-    uxr_init_session(&impl_->session, impl_->comm, config.session_key);
+    uxr_init_session(&impl_->session, impl_->comm, impl_->settings.session_key);
     uxr_set_topic_callback(&impl_->session, Impl::OnTopic, impl_.get());
 
-    // uxr_create_session_retries takes a retry COUNT; each attempt waits
-    // ~1000 ms internally. Convert the ms budget to a count (minimum 0 = 1 attempt).
-    constexpr int kMsPerAttempt = 1000;
-    size_t retries =
-        static_cast<size_t>((std::max)(0, (config.connect_timeout_ms - 1) / kMsPerAttempt));
-    if (!uxr_create_session_retries(&impl_->session, retries))
-        throw std::runtime_error("XRCE: failed to create session (is the Agent running?)");
+    // The operator's budget, not a constant. It used to be a hard-coded 3000 here, which is the
+    // one mutation the document guards could not see: every row stayed green and the client just
+    // failed at the wrong deadline (review C2-2). `connect_timeout_ms=0` means 0 retries, i.e.
+    // one attempt that does not wait for an answer at all - which is what the forcing test's
+    // wall-clock bound measures.
+    const int64_t budget_ms = impl_->settings.connect_timeout.count();
+    const size_t retries =
+        static_cast<size_t>((std::max)(static_cast<int64_t>(0), (budget_ms - 1) / kMsPerAttempt));
+    if (!uxr_create_session_retries(&impl_->session, retries)) {
+        throw PubSubError(PubSubStatus::kTransportFailure,
+                          "XRCE: failed to create a session with the Agent at " +
+                              impl_->settings.agent_host + ":" + port_str + " within " +
+                              std::to_string(budget_ms) + " ms (is the Agent running?)");
+    }
 
     // Create reliable streams.
     impl_->reliable_out = uxr_create_output_reliable_stream(
-        &impl_->session, impl_->output_buffer.data(), impl_->output_buffer.size(), history);
+        &impl_->session, impl_->output_buffer.data(), impl_->output_buffer.size(), kStreamHistory);
 
     impl_->reliable_in = uxr_create_input_reliable_stream(
-        &impl_->session, impl_->input_buffer.data(), impl_->input_buffer.size(), history);
+        &impl_->session, impl_->input_buffer.data(), impl_->input_buffer.size(), kStreamHistory);
 
     // Start background run-loop. Holds impl_->mu only during the
     // session pump itself and sleeps a fixed quantum between iterations
     // so concurrent API methods are guaranteed a window to acquire the
     // lock for their own create/wait sequences. std::this_thread::yield
-    // was insufficient — on a fully loaded scheduler the run-loop would
+    // was insufficient - on a fully loaded scheduler the run-loop would
     // immediately reacquire after release and starve API methods of the
     // mutex for tens of seconds. A 5 ms sleep gives subscribers ~33%
     // duty-cycle pump coverage (5 ms gap + 10 ms pump) while keeping the
@@ -409,7 +495,7 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const XrceConfig& config)
         while (impl_->running.load(std::memory_order_relaxed)) {
             {
                 std::lock_guard lock(impl_->mu);
-                uxr_run_session_time(&impl_->session, static_cast<int>(impl_->config.run_loop_ms));
+                uxr_run_session_time(&impl_->session, static_cast<int>(kRunLoopQuantum.count()));
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -426,15 +512,14 @@ XrceDDSPubSubProvider::~XrceDDSPubSubProvider() {
     // Delete session (cleans up all entities on the Agent).
     uxr_delete_session(&impl_->session);
 
-    // Close transport.
-    switch (impl_->config.transport) {
-        case XrceTransport::kUdp:
+    // Close transport. Two arms, not three: serial is refused by the document reader, so a
+    // constructed provider cannot be on it.
+    switch (impl_->settings.transport) {
+        case internal::XrceTransportKind::kUdp:
             uxr_close_udp_transport(&impl_->udp_transport);
             break;
-        case XrceTransport::kTcp:
+        case internal::XrceTransportKind::kTcp:
             uxr_close_tcp_transport(&impl_->tcp_transport);
-            break;
-        case XrceTransport::kSerial:
             break;
     }
 }
@@ -521,7 +606,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
             // Create participant on the configured DDS domain.
             uint16_t req_part = uxr_buffer_create_participant_bin(
-                &impl_->session, impl_->reliable_out, ts.participant_id, impl_->config.domain_id,
+                &impl_->session, impl_->reliable_out, ts.participant_id, impl_->domain_id,
                 name.c_str(), UXR_REPLACE);
             WaitForStatus(&impl_->session, req_part, "participant");
 
@@ -701,7 +786,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
 
             uint16_t req_part = uxr_buffer_create_participant_bin(
-                &impl_->session, impl_->reliable_out, ts.participant_id, impl_->config.domain_id,
+                &impl_->session, impl_->reliable_out, ts.participant_id, impl_->domain_id,
                 name.c_str(), UXR_REPLACE);
             WaitForStatus(&impl_->session, req_part, "subscriber participant");
 

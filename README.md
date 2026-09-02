@@ -152,7 +152,7 @@ sub.Subscribe([](fletcher_gen::myapp::SensorReading msg, fletcher::Attachments a
 });
 ```
 
-Swap `FastDDSPubSubProvider` for `XrceDDSPubSubProvider` to publish from an MCU/embedded node — the generated publisher/subscriber code is identical.
+Swap `FastDDSPubSubProvider` for `XrceDDSPubSubProvider` to publish from an MCU/embedded node — the generated publisher/subscriber code is identical. Either one is also selectable **by name at runtime** (`"fastdds"`, `"xrce"`, `"inprocess"`) through `ProviderRegistry`, configured by a `ProviderConfig` whose typed core is `{max_payload_bytes, domain_id}` plus a document in that protocol's own format — Fast DDS's native XML QoS profile, or `key=value` for XRCE.
 
 ### 5. Consume in the browser
 

@@ -21,6 +21,16 @@ Both directions of the bridge on a single shared DDS domain (different topic nam
 | `XrcePublishReachesFastDDSSubscriber` | XRCE → Agent → FastDDS | Topic naming matches across providers; envelope bytes survive XRCE→DDS translation; schema reaches the FastDDS subscriber via `/__schema`. |
 | `FastDDSPublishReachesXrceSubscriber` | FastDDS → Agent → XRCE | Symmetric to above. Exercises `XrceDDSPubSubProvider::Subscribe` — a structurally different code path from FastDDS's subscribe (global `on_topic` callback demultiplexed by reader object id). |
 
+Both providers are configured through `ProviderConfig` (PDA-DEC-6, PDA-DEC-7): no
+typed Fast DDS options struct and no typed XRCE options struct exists any more.
+What these three tests witness is the seam's **typed core** and the registered
+type name, not either provider's document — they run their Agent on the default
+UDP port with the default transport, and their one distinguishing setting is
+`domain_id` (145). The XRCE document carries only the session key, which has to
+be unique per client on one Agent. The document's own end-to-end witness is the
+24 `conformance_xrce` cases, which deliberately run on a non-default port (2019)
+and a non-default domain (153).
+
 ## Self-contained: the Agent is built and managed by the test
 
 `MicroXRCEAgent` is built from source by this directory's `CMakeLists.txt` as an `ExternalProject` (with `UAGENT_SUPERBUILD=ON` so the Agent fetches its own fast-dds / fast-cdr / asio / tinyxml2 / micro-cdr in isolation from the Conan deps the test itself uses). The resulting binary path is injected as `MICRO_XRCE_AGENT_PATH` into the test binary.

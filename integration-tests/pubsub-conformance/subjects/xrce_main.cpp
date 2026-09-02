@@ -18,10 +18,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "fletcher/conformance/suite.hpp"
 
@@ -57,6 +60,9 @@ constexpr const char* kAgentIp = "127.0.0.1";
 constexpr uint32_t kLocalSessionBase = 0x51000000u;
 constexpr uint32_t kPeerSubscriberSessionBase = 0x52000000u;
 constexpr uint32_t kPeerPublisherSessionBase = 0x53000000u;
+/// The registry case's own base (`Registry.XrceResolvesAsABuiltIn`), so it cannot reuse
+/// a key any conformance clause is holding on the same Agent.
+constexpr uint32_t kRegistrySessionBase = 0x54000000u;
 /// The mask the peer applies to its pid; also the ceiling on a parent-side
 /// counter, though only ~13 of those are handed out per run.
 constexpr uint32_t kSessionKeyMask = 0x00FFFFFFu;
@@ -68,13 +74,16 @@ uint32_t NextSessionKey(uint32_t base) {
     return base + (counter.fetch_add(1) & kSessionKeyMask);
 }
 
-XrceConfig XrceConfigFor(uint32_t session_key) {
-    XrceConfig config;
-    config.agent_ip = kAgentIp;
-    config.agent_port = kAgentPort;
+// PDA-DEC-7: the typed XRCE options struct is retired. The Agent address, the session key and
+// the connect budget are now lines in this provider's own `key=value` document; the DDS domain
+// stays in the seam's typed core. These 24 cases are the document's end-to-end witness: with an
+// Agent on 2019 and discovery on domain 153, a build that stopped reading the document would
+// dial the default 127.0.0.1:2018 on domain 0 and every one of them would redden.
+ProviderConfig XrceConfigFor(uint32_t session_key) {
+    ProviderConfig config;
     config.domain_id = kDdsDomain;
-    config.session_key = session_key;
-    config.connect_timeout_ms = 5000;
+    config.document = std::string("agent=") + kAgentIp + ":" + std::to_string(kAgentPort) +
+                      "\nsession_key=" + std::to_string(session_key) + "\nconnect_timeout_ms=5000";
     return config;
 }
 
@@ -222,8 +231,11 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (std::chrono::steady_clock::now() < deadline) {
             try {
-                XrceConfig probe_config = XrceConfigFor(kProbeSessionKey);
-                probe_config.connect_timeout_ms = 2000;
+                ProviderConfig probe_config = XrceConfigFor(kProbeSessionKey);
+                probe_config.document = std::string("agent=") + kAgentIp + ":" +
+                                        std::to_string(kAgentPort) +
+                                        "\nsession_key=" + std::to_string(kProbeSessionKey) +
+                                        "\nconnect_timeout_ms=2000";
                 XrceDDSPubSubProvider probe(probe_config);
                 // Something answered on the port. It has to be OUR Agent: a
                 // leftover Agent from an interrupted run holds the same port and
@@ -296,6 +308,65 @@ INSTANTIATE_TEST_SUITE_P(
         // process itself — unique per child, which is what the Agent needs.
         {"--domain-id", std::to_string(kDdsDomain), "--agent-port", std::to_string(kAgentPort),
          "--session-key-base", std::to_string(kPeerPublisherSessionBase)})));
+
+// -- XRCE resolves as a built-in NAME (spec section 4 clause 4) --------
+//
+// This test lives HERE and not in `conformance_registry`, for the reason the Fast DDS twin
+// gives (`subjects/fastdds_main.cpp`): that binary's link line is deliberately narrow - it
+// names `fletcher-pubsub` and NO transport SDK, so no DDS or XRCE vocabulary resolves from
+// there - and linking the XRCE client into it to register one provider would destroy exactly
+// the guard the narrowness IS. This binary already links the provider, already owns an Agent
+// and already holds a RESOURCE_LOCK, so the test is free here and destructive there.
+//
+// What it asserts is the only claim `RegisterXrceProvider` makes: the name "xrce" resolves
+// through `ProviderRegistry::Create` - the SAME call a driver path will go through in PDA-ABI -
+// and what comes back delivers a row through a base-typed handle. Nothing below names
+// `XrceDDSPubSubProvider`; register it under any other name (M9) and this reddens as an unknown
+// selector.
+TEST(Registry, XrceResolvesAsABuiltIn) {
+    ProviderRegistry registry;
+    RegisterXrceProvider(registry);
+
+    const ProviderConfig config = XrceConfigFor(NextSessionKey(kRegistrySessionBase));
+
+    std::shared_ptr<PubSubProvider> provider =
+        registry.Create(ProviderSelector::Parse("xrce"), config);
+    ASSERT_NE(provider, nullptr) << "\"xrce\" did not resolve to a provider";
+
+    const std::vector<std::string> topic{"registry", "xrce-probe"};
+    provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+
+    std::vector<uint8_t> received;
+    std::atomic<bool> delivered{false};
+    SubscriptionResult result = provider->Subscribe(
+        topic, [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            received.assign(data, data + len);
+            delivered.store(true);
+        });
+
+    // XRCE carries the schema on its companion __schema topic, so this is a real wait.
+    SharedSchema schema;
+    ASSERT_EQ(result.schema.Wait(std::chrono::seconds(20), &schema), PubSubStatus::kOk)
+        << result.schema.Message();
+    ASSERT_NE(schema, nullptr);
+
+    provider->Publish(topic, [](WriteBuffer& buffer) {
+        buffer.AppendByte(0x17);
+        buffer.AppendByte('R');
+        buffer.AppendByte('O');
+        buffer.AppendByte('W');
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!delivered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(delivered.load()) << "the row never reached the subscriber";
+    // Written out as a literal rather than by running the encoder again: a guard that compares
+    // a buffer with itself asserts nothing.
+    EXPECT_EQ(received, (std::vector<uint8_t>{0x17, 'R', 'O', 'W'}))
+        << "the delivered bytes are not what was published";
+}
 
 }  // namespace conformance
 }  // namespace fletcher
