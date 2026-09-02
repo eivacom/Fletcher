@@ -120,6 +120,12 @@ hostname and is refused by the same rule. Value-side whitespace (`agent=x:2018 `
 parse rather than being trimmed, so "nothing is tolerated silently" is total. The one thing the
 one-colon rule forecloses is IPv6 — see D-7.4.
 
+> **Corrected, fix cycle 1 (review 4a claim 6 / 4b S2).** "Total" was true of the PORT half
+> only: `agent= 127.0.0.1:2018` was *accepted* with the space kept in the host and died at the
+> resolver a layer down, not in the parse. As landed after fix cycle 1 the claim is true again,
+> by a stronger rule than non-trimming: **any byte below `0x21` inside an entry is refused**, so
+> whitespace anywhere in an entry is unrepresentable rather than tolerated.
+
 **Wire identity, verified.** `kPayloadBytes<64*1024>` is `65536` (`payload_bound.hpp:56-58`), the
 current `XrceConfig::payload_bound` default is exactly that (`xrce_dds_pubsub_provider.hpp:37`),
 and **no in-tree caller sets `payload_bound`** — `xrce_main.cpp:71-79`, `test_interop.cpp:107-117`
@@ -308,6 +314,14 @@ analysed above ✓. M13 is a form mandate rather than a mutation, which is the r
 a build-system defect. Row 1's `connect_timeout_ms=0` does buy a single attempt: `retries =
 max(0, (0-1)/1000) = 0` (`:385-387`) ✓, so the 4–5 s budget is right (the control row pays the
 default 3000 → 2 retries).
+
+> **Corrected, fix cycle 1 (review 4b B1 / 4a F3).** `retries = 0` does NOT buy an attempt:
+> `wait_session_status` with `0` sends one datagram and returns without listening
+> (`session.c:742-746`), so the session can never be created. That was harmless for row 1,
+> which asserts a failure inside 1000 ms, but the same `floor((ms-1)/1000)` mapping made every
+> budget from 1 to 1000 ms dead and under-spent all the others by one attempt. The mapping is
+> now a ceiling, in `internal::SessionAttempts`, and the control row pays 3 attempts rather
+> than 2 — so budget the case at 3–6 s.
 
 One overclaim inside the new row: "a field added later and left unassigned is caught without
 editing the row" is false — a fifth field the parser forgets compares default-against-default in

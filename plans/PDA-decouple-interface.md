@@ -211,10 +211,12 @@ vocabulary. The `__schema` companion channel stays non-configurable
 ### PDA-DEC-7 — XRCE configured by document
 **Story.** The same, for the edge provider, without carrying a parser it cannot
 afford.
-**Content.** `key=value` document. Four of `XrceConfig`'s POD fields become document keys;
-five are deleted outright — `max_payload` and the two `serial_*` settings as no-ops, and
-`stream_history`/`run_loop_ms` as fixed constants, a disclosed behaviour loss (PDA-DEC-7
-review cycle 2).
+**Content.** `key=value` document. `XrceConfig`'s twelve fields resolve as: **five become four
+document keys** (`agent_ip`+`agent_port` collapse into one `agent=host:port`, so a
+half-specified address is unrepresentable), **five are deleted** — `max_payload` and the two
+`serial_*` as verified no-ops, `stream_history`/`run_loop_ms` as fixed constants and a
+disclosed behaviour loss — and **two move to `ProviderConfig`'s typed core**
+(`payload_bound`→`max_payload_bytes`, `domain_id`).
 **Forcing test.** `XrceConfig.DocumentConfiguresTransport`.
 **Acceptance.** Spec §4.2. No JSON/YAML parser may be linked into the edge
 provider. A link-size check is *not* required here — the footprint proxy belongs

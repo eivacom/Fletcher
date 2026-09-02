@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// NO XRCE vocabulary may appear in this header, and none does: it declares exactly two things,
-// a registration function and one constructor over `ProviderConfig`. `XrceConfig` and
+// NO eProsima or `uxr*` type may appear in this header, and none does: the XRCE client is
+// entirely private to this component, and the two entry points a caller needs are a
+// registration function and one constructor over `ProviderConfig` (the class itself, its
+// `PubSubProvider` overrides and its own name are of course declared here - "no XRCE
+// vocabulary" means no vendor type, not no declarations). `XrceConfig` and
 // `XrceTransport` are **retired, not deprecated** — no coexistence window, no shim, nothing
 // scheduled for later deletion (owner ruling 2026-08-31, applied to Fast DDS first and named
 // for XRCE by spec §4.1's closing sentence). Everything the struct used to carry is either the
@@ -65,6 +68,12 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 /// | `session_key` | decimal `uint32`, unique per client on one Agent | `2864434397` |
 /// | `connect_timeout_ms` | decimal 0–60000 | `3000` |
 ///
+/// `connect_timeout_ms` is a budget, not a deadline: the client takes a COUNT of handshake
+/// attempts costing up to ~1000 ms each, and the budget rounds **up** to whole attempts —
+/// `1`–`1000` ms is one attempt, `3000` is three, `60000` is sixty — so no accepted value buys
+/// zero. `0` is the exception and the only value that cannot connect: it sends one datagram and
+/// does not wait for an answer, which is what makes it useful as a non-blocking probe.
+///
 /// The address is **one** key: two would let a document name only the host and silently keep
 /// port 2018, and a half-specified address is exactly the silence this shape exists to remove.
 /// An unmentioned key keeps this provider's published default. The provider's README publishes
@@ -72,8 +81,12 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 ///
 /// Tolerance is strict (spec §4.1, as landed by PDA-DEC-5, the single oracle for both in-tree
 /// `key=value` readers): `\n`-separated entries, a trailing `\r` stripped, blank entries
-/// skipped, **nothing else trimmed**, no case folding, no comments. ` agent =x` is refused
-/// rather than trimmed — right setting, wrong place, said out loud.
+/// skipped, **nothing else trimmed**, no case folding, no comments — and, stronger than
+/// "nothing is trimmed", **any byte below `0x21` inside an entry is refused**. ` agent =x` and
+/// `agent= 127.0.0.1:2018` are both refused rather than trimmed or passed on: right setting,
+/// wrong place, said out loud, and a host with whitespace in it is unrepresentable rather than
+/// left for a resolver to reject. Entry separators are untouched by that rule, so CRLF
+/// documents and blank lines behave as above.
 ///
 /// ── Refused, and all of it before any I/O ───────────────────────────────────────────────────
 /// **Every** document refusal is a construction-time refusal, and structurally so: the document
@@ -84,11 +97,11 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 ///
 /// `kInvalidArgument`: an embedded NUL; an entry with no `=`; an unknown key (`stream_history`
 /// and `run_loop_ms` are now unknown names like any other); a duplicate key; an unknown value; a
-/// key with stray whitespace; an `agent` without exactly one colon, with an empty host or with a
-/// port outside 1–65535; a `connect_timeout_ms` above 60000; a `domain_id` above 65535; an
-/// unusable `max_payload_bytes`. `kNotSupported`: `transport=serial`. `kTransportFailure`: a
-/// transport that will not initialise, and an Agent that does not answer within
-/// `connect_timeout_ms` — including an unresolvable hostname, which the client's resolver
+/// space or control byte inside an entry; an `agent` without exactly one colon, with an empty
+/// host or with a port outside 1–65535; a `connect_timeout_ms` above 60000; a `domain_id` above
+/// 65535; an unusable `max_payload_bytes`. `kNotSupported`: `transport=serial`.
+/// `kTransportFailure`: a transport that will not initialise, and an Agent that does not answer
+/// within `connect_timeout_ms` — including an unresolvable hostname, which the client's resolver
 /// decides, not Fletcher.
 ///
 /// ── Not settable at all any more (disclosed narrowing) ──────────────────────────────────────

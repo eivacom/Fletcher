@@ -15,14 +15,22 @@
 // Drift is bounded by both readers' tolerance tests asserting the same spec §4.1 rows
 // (`XrceConfig.ToleranceRulesMatchTheLoopback` here).
 //
-// ── Tolerance, verbatim from the loopback (spec §4.1, as landed by PDA-DEC-5) ────────────────
-// `\n`-separated entries; a trailing `\r` on an entry is stripped (a document authored on this
-// project's primary platform is CRLF, and the same text must mean the same thing in every
-// build); a blank entry — a blank line, or the trailing newline — is skipped; **nothing else is
-// trimmed**, no case folding, no comments. An embedded NUL is refused up front: the refusal
-// message is built by concatenation and read back through `what()`/`c_str()`, which stops dead
-// at the first NUL, so quoting around a byte the diagnostic channel cannot carry would be
-// dishonest.
+// ── Tolerance: the loopback's rules, one of them made stricter ─────────────────────────────────
+// `\n`-separated entries; a trailing `\r` on an entry is stripped (a document authored
+// on this project's primary platform is CRLF, and the same text must mean the same thing in
+// every build); a blank entry — a blank line, or the trailing newline — is skipped;
+// **nothing else is trimmed**, no case folding, no comments. An embedded NUL is refused up
+// front: the refusal message is built by concatenation and read back through
+// `what()`/`c_str()`, which stops dead at the first NUL, so quoting around a byte the
+// diagnostic channel cannot carry would be dishonest.
+//
+// One rule is STRONGER than "nothing is trimmed", because that rule turned out to be weaker
+// than it sounds: any byte below 0x21 INSIDE an entry — a space, a tab, a mid-entry CR — is
+// refused outright (fix cycle 1, review 4b S2). Trimming nothing left `agent= 127.0.0.1:2018`
+// representable, with the space kept in the host, to be rejected a layer down by the resolver
+// this provider deliberately knows nothing about (H1); refusing it here makes the state
+// unrepresentable instead of documented. It is a rule about bytes INSIDE an entry, never about
+// the separators between them, so CRLF documents and blank lines are unaffected.
 //
 // ── Everything else is refused, before any I/O ───────────────────────────────────────────────
 // An unknown key (including `stream_history` and `run_loop_ms`, which this item deleted — they
@@ -42,6 +50,7 @@
 #define FLETCHER_XRCE_SRC_INTERNAL_XRCE_DOCUMENT_HPP_
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <string>
@@ -88,12 +97,38 @@ struct XrceSettings {
     ///
     /// `std::chrono::milliseconds` and not an integer **on purpose**: it is the only duration
     /// left, and a field swap with a neighbouring number is now a compile error rather than a
-    /// test row (design §2, rung-1 case 7). Granularity is coarse: the client retries in
-    /// ~1000 ms steps, so everything below 1000 ms means "one attempt" (README says so).
+    /// test row (design §2, rung-1 case 7). Granularity is coarse and the conversion to what
+    /// the client actually takes — a COUNT of ~1000 ms attempts — is `SessionAttempts` below,
+    /// which is where the arithmetic lives so a test can pin it without a socket.
     std::chrono::milliseconds connect_timeout{3000};
 
     bool operator==(const XrceSettings&) const = default;
 };
+
+/// How many session-creation attempts a millisecond budget buys.
+///
+/// `uxr_create_session_retries` does not take a duration; it takes a **total attempt count**,
+/// and each attempt costs up to `UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL` (1000 ms, fixed in
+/// the client's generated `config.h`) because that is how long it listens before resending.
+/// Two facts about that argument decide this function:
+///
+///  - `0` means *send one datagram and do not listen at all* — `wait_session_status` returns
+///    early with `last_requested_status` still `UXR_STATUS_NONE`, so `uxr_create_session_retries`
+///    reports failure unconditionally (`session.c:742-746`, client 3.0.1). It is a legal and
+///    useful value — "do not wait" — but it can never connect, so nothing above 0 may map to it.
+///  - the count is not a count of RETRIES on top of a first try, so `n` means `n` attempts.
+///
+/// The mapping is therefore a **ceiling**: `0 → 0`, `1..1000 → 1`, `1001..2000 → 2`,
+/// `3000 → 3`, `60000 → 60`. Rounding down instead (as this provider did until PDA-DEC-7 fix
+/// cycle 1) made every accepted budget from 1 to 1000 ms buy ZERO attempts — a documented,
+/// in-range value that could never connect to a healthy Agent, while the diagnostic blamed the
+/// Agent — and under-spent every larger budget by one attempt. It survived because only `=0`
+/// was tested; the interior of the range is now a table
+/// (`XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts`).
+///
+/// Pure, and deliberately HERE rather than in the constructor: this was the only arithmetic in
+/// this item that lived outside the reader, and it was the only arithmetic that was wrong.
+size_t SessionAttempts(std::chrono::milliseconds budget);
 
 /// Read `config.document`. Throws `PubSubError` — `kInvalidArgument` for everything except
 /// `transport=serial`, which is `kNotSupported`. An EMPTY document is not an error: it means

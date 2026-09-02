@@ -294,7 +294,7 @@ if(FLETCHER_CONFORMANCE_XRCE)
     # precedent): one Agent binds one UDP port, and per-clause entries would pay
     # ~24 Agent start/stop cycles for the same coverage.
     add_test(NAME conformance_xrce COMMAND conformance_xrce)
-    # 24 clauses, ~26 peer spawns and one Agent handshake per session, in one
+    # 25 clauses (PDA-DEC-7 added one), ~26 peer spawns and one Agent handshake per session, in one
     # process.
     set_tests_properties(conformance_xrce PROPERTIES
         RESOURCE_LOCK conformance_xrce

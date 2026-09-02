@@ -1,6 +1,6 @@
 # xrcedds-pubsub-provider
 
-Implements `fletcher::PubSubProvider` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v3.0.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP, TCP, or serial.
+Implements `fletcher::PubSubProvider` using [eProsima Micro XRCE-DDS Client](https://micro-xrce-dds.docs.eprosima.com/) (v3.0.x). Transports `EncodedRow` byte buffers between a constrained client and an XRCE-DDS Agent over UDP or TCP. `transport=serial` is nameable in the document and refused as *unsupported* - this build cannot do serial.
 
 ## How it works
 
@@ -86,17 +86,32 @@ The address is **one** key, not two. Two would let a document name only the host
 keep port 2018 - a half-specified address, which is the kind of silence this shape exists to
 remove. A key nobody mentions keeps its published default below.
 
-`connect_timeout_ms` is coarse: the client retries the session handshake in ~1000 ms steps, so
-**every value below 1000 ms means one attempt** and `0` means one attempt that does not wait for
-an answer at all. The knob is advertised in milliseconds because that is the unit the client's
-API takes; do not read more precision into it than the second it actually has.
+`connect_timeout_ms` is coarse, and the rounding is stated rather than implied: the client does
+not take a duration at all, it takes a **count of handshake attempts**, each of which costs up
+to ~1000 ms. The budget is converted by rounding **up** to whole attempts - `1`-`1000` ms is one
+attempt, `1001`-`2000` two, the default `3000` three, `60000` sixty - so no accepted value ever
+buys zero attempts. `0` is the one budget that does: it sends one datagram and does not wait for
+an answer, which means it can report a *reachable* Agent as a failure. That is what `0` is for
+(a probe that must not block), and it is the only value in the range that cannot connect.
 
-Tolerance is strict, and identical to the in-process loopback's document (spec §4.1 is the one
-oracle for both readers): `\n`-separated entries, a trailing `\r` stripped so a CRLF document
-means the same thing everywhere, blank lines and a trailing newline skipped - and **nothing else
-trimmed**, no case folding, no comments. `agent =x`, ` agent=x`, `AGENT=x` and `# a comment` are
-all refused rather than guessed at: "the right setting in the wrong place" is a mistake worth
-being told about.
+> Until PDA-DEC-7 fix cycle 1 this rounded **down**, so every budget from 1 to 1000 ms bought
+> zero attempts and could never connect - to any Agent, however healthy - while the error
+> message asked whether the Agent was running. Larger budgets were each one attempt short. Only
+> `0` was ever tested, which is why the interior of the range is now a table
+> (`XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts`).
+
+Tolerance is strict, and shares the in-process loopback’s rules (spec §4.1 is the one oracle
+for both readers): `\n`-separated entries, a trailing `\r` stripped so a CRLF document means the
+same thing everywhere, blank lines and a trailing newline skipped - and **nothing else trimmed**,
+no case folding, no comments.
+
+One rule is stronger than "nothing is trimmed", because that rule is weaker than it sounds:
+**any byte below `0x21` inside an entry is refused** - a space, a tab, a mid-entry CR. So
+` agent=x`, `agent =x`, `agent= 127.0.0.1:2018` and `agent=127.0.0.1:2018 ` are all refused by
+that one rule, rather than by whichever later check happened to catch them (and `AGENT=x` and
+`# a comment` are refused by the no-folding and no-comments rules above). A host with whitespace in it is not representable, so it cannot be handed to a resolver to
+reject a layer down. The refusal is about bytes *inside* an entry and never about the separators
+between entries: CRLF documents and blank lines are unaffected.
 
 #### The published default document
 
@@ -123,14 +138,12 @@ Each refusal is a `PubSubError` carrying a stable status (spec §5.1) and quotin
 entry:
 
 - **`kInvalidArgument`** - an embedded NUL; an entry with no `=`; an unknown key; a duplicate
-  key; an unknown value; a key with stray whitespace (` agent=x`, `agent =x`); an `agent` without exactly one
-  colon, with an empty host, or with a port outside 1-65535; a `connect_timeout_ms` above
+  key; an unknown value; a space or control byte anywhere inside an entry (` agent=x`,
+  `agent =x`, `agent= x:2018`); an `agent` without exactly one colon, with an empty host, or
+  with a port outside 1-65535; a `connect_timeout_ms` above
   60000; a `session_key` above 4294967295; a `domain_id` above 65535; an unusable
   `max_payload_bytes`. Numbers are parsed wide and then range-checked per key, so no value is
-  ever silently narrowed. Whitespace inside a *value* is not trimmed either, and not
-  second-guessed: `agent=127.0.0.1:2018 ` is refused because the port no longer parses, while
-  `agent= 127.0.0.1:2018` keeps the space **in the host** and fails at the transport instead -
-  the host is the client resolver's business, not Fletcher's (see H1 below).
+  ever silently narrowed.
 - **`kNotSupported`** - `transport=serial`. Nameable, and refused *distinctly* from a typo:
   "this build cannot do serial" is a different problem from a mistyped key.
 - **`kTransportFailure`** - a transport that will not initialise, or an Agent that does not
@@ -194,15 +207,21 @@ MicroXRCEAgent udp4 -p 2018
 The unit tests do **not** require an Agent - not one of them. The document is guarded by a pure
 function, and the one guard that watches the *transport* brings its own socket.
 
-> **Test duration note:** `XrceConfig.DocumentConfiguresTransport` is the only case here that
-> costs real wall clock - budget 2-5 s. It opens a listening socket on an **ephemeral** port,
-> hands the provider `transport=tcp` plus that port, and asserts the connection arrives: the port
-> is chosen at run time, so no build can hard-code its way past it. Its first row sets
-> `connect_timeout_ms=0` (one attempt, no wait) and asserts the constructor fails *inside*
-> 1000 ms, which is what would catch a constructor that ignored the operator's budget and used
-> its own. Its second row is a harness control on the defaults and pays the full default
-> 3000 ms budget, which the client spends as two ~1000 ms attempts. Every other case is
+> **Test duration note:** two cases here cost real wall clock; every other one is
 > sub-millisecond.
+>
+> `XrceConfig.DocumentConfiguresTransport` - budget 3-6 s. It opens a listening socket on an
+> **ephemeral** port, hands the provider `transport=tcp` plus that port, and asserts the
+> connection arrives: the port is chosen at run time, so no build can hard-code its way past it.
+> Its first row sets `connect_timeout_ms=0` (one datagram, no wait) and asserts the constructor
+> fails *inside* 1000 ms, which is what would catch a constructor that ignored the operator’s
+> budget and used its own. Its second row is a harness control on the defaults, so it pays the
+> full default 3000 ms budget - three ~1000 ms attempts.
+>
+> `XrceConfig.AgentUnreachableIsATransportFailure` - ~1 s. It sets `connect_timeout_ms=1`, which
+> is one whole attempt, so the handshake against the unused port 19999 is genuinely awaited and
+> genuinely unanswered. At `0` it would not be awaited at all and the row could not witness
+> unreachability.
 
 ## Building the package locally
 

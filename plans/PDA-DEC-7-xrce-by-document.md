@@ -272,6 +272,33 @@ Elsewhere:
 notes to this item) · `docs/pubsub-interface-spec.md` · root `README.md`.
 **New:** `src/internal/xrce_document.{hpp,cpp}` · `tests/test_xrce_document.cpp`.
 
+**Untouched, and neither needed it** (review 4a RECORD): `tests/discard_probe.cpp` holds an
+`XrceDDSPubSubProvider&` and names no retired type, and
+`integration-tests/pubsub-conformance/src/registry.cpp`'s entry was cross-reference prose only.
+
+**Fix cycle 1 (2026-09-02), on top of the above** — four findings from the step-4 reviews, no
+design change:
+
+- **B1/F3, blocking.** The ms→attempt-count conversion was `floor((ms-1)/1000)`, and the
+  client's argument is a total ATTEMPT COUNT whose `0` sends once without listening
+  (`session.c:742-746`) — so every accepted budget from 1 to 1000 ms could never connect and
+  every larger one was an attempt short. Now a ceiling, and (S3) inside the pure reader as
+  `internal::SessionAttempts`, so the constructor holds no arithmetic at all and the INTERIOR of
+  the range is a table row, not just its ends. New test
+  `XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts` (8th case in the suite).
+- **S1.** `Impl` gains a destructor, so the transport is closed on every constructor-throw path
+  instead of only in `~XrceDDSPubSubProvider`, which does not run when the constructor throws.
+- **S2.** Any byte below `0x21` **inside an entry** is now refused, which makes
+  `agent= 127.0.0.1:2018` unrepresentable rather than accepted-and-explained. This supersedes
+  the cycle-1 note that value-side whitespace "dies in the port parse" (true of the port half
+  only). Separators are untouched: `\n` splits, a trailing `\r` is stripped, blank entries are
+  skipped, CRLF still means the same thing.
+- **F4.** `AgentUnreachableIsATransportFailure` now uses `connect_timeout_ms=1` (one whole
+  attempt) so its `ASSERT_EQ(provider, nullptr)` is live and the row really does witness
+  unreachability; costs it ~1 s.
+- **F2.** Spec §4.1's XRCE paragraph now states this reader's tolerance rules rather than only
+  naming itself their oracle.
+
 ## Files-to-delete
 
 - `struct XrceConfig`, `enum class XrceTransport`, `XrceDDSPubSubProvider(const XrceConfig&)`
@@ -297,5 +324,6 @@ cross-platform listener ~250, refusal table ~350, whole-struct row ~25, toleranc
 guard ~90, defaults ~90, registry-routed refusal ~10), caller migrations ~150, README ~180,
 spec ~50, CMake + `conanfile.py` ~30; dropping two keys saves ~40, B1's row adds ~25.
 Provider suite **10 gtest cases − 4 retired + 7 new = 13** plus the MSVC nodiscard probe =
-**14 ctest entries**; `conformance_xrce` stays **one** entry, 24 → 25 gtest cases. New public
+**14 ctest entries** (fix cycle 1 adds `ConnectTimeoutBudgetBuysWholeAttempts`: **14 gtest
+cases / 15 ctest entries** as landed); `conformance_xrce` stays **one** entry, 24 → 25 gtest cases. New public
 surface **net −1** (+2 / −3), counted and confirmed. Cycles 2/2.

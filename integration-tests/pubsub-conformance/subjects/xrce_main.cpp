@@ -79,11 +79,12 @@ uint32_t NextSessionKey(uint32_t base) {
 // stays in the seam's typed core. These 24 cases are the document's end-to-end witness: with an
 // Agent on 2019 and discovery on domain 153, a build that stopped reading the document would
 // dial the default 127.0.0.1:2018 on domain 0 and every one of them would redden.
-ProviderConfig XrceConfigFor(uint32_t session_key) {
+ProviderConfig XrceConfigFor(uint32_t session_key, int connect_timeout_ms = 5000) {
     ProviderConfig config;
     config.domain_id = kDdsDomain;
     config.document = std::string("agent=") + kAgentIp + ":" + std::to_string(kAgentPort) +
-                      "\nsession_key=" + std::to_string(session_key) + "\nconnect_timeout_ms=5000";
+                      "\nsession_key=" + std::to_string(session_key) +
+                      "\nconnect_timeout_ms=" + std::to_string(connect_timeout_ms);
     return config;
 }
 
@@ -231,11 +232,12 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (std::chrono::steady_clock::now() < deadline) {
             try {
-                ProviderConfig probe_config = XrceConfigFor(kProbeSessionKey);
-                probe_config.document = std::string("agent=") + kAgentIp + ":" +
-                                        std::to_string(kAgentPort) +
-                                        "\nsession_key=" + std::to_string(kProbeSessionKey) +
-                                        "\nconnect_timeout_ms=2000";
+                // The suite's own document with a shorter budget on the end. Rebuilding the
+                // address and session key here instead would be a second copy of the thing
+                // `XrceConfigFor` exists to own (review 4b nit 5); a duplicate key is a
+                // refusal, so the shorter budget has to REPLACE the factory's, which is why
+                // the factory takes it as an argument.
+                const ProviderConfig probe_config = XrceConfigFor(kProbeSessionKey, 2000);
                 XrceDDSPubSubProvider probe(probe_config);
                 // Something answered on the port. It has to be OUR Agent: a
                 // leftover Agent from an interrupted run holds the same port and

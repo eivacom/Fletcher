@@ -366,7 +366,10 @@ Normative:
    (`RegisterInProcessProvider`), Fast DDS under the name `fastdds`
    (`RegisterFastDDSProvider`) and XRCE-DDS under the name `xrce`
    (`RegisterXrceProvider`, PDA-DEC-7) — each in the provider's own component, so
-   no caller names a concrete provider type. The gateway registers the two it
+   **the gateway** names no concrete provider type. Conformance subjects, interop
+   tests, `test_package` and the READMEs' examples still construct providers
+   directly and legitimately: they are testing or demonstrating a specific
+   provider, which is exactly the case selection-by-name does not cover. The gateway registers the two it
    links unconditionally, before the selector is looked at — registration states
    *availability* (a link-time fact), `Create` performs *selection* (a runtime
    string), and branching registration on the selector would put a selector
@@ -438,7 +441,20 @@ later moment at which one first becomes checkable — a constructed XRCE provide
 *is* one whose whole document has been read. The reader is the provider's own
 (`src/internal/xrce_document.{hpp,cpp}`), unshared and dependency-free, exactly
 as §4.2 requires; the two in-tree `key=value` readers share this section as their
-single tolerance oracle and nothing else. `XrceConfig` and its transport enum are
+single tolerance oracle and nothing else. **Those rules, stated here rather
+than only pointed at:** entries are separated by `\n`, a trailing `\r` on an entry
+is stripped so a CRLF document means the same thing in every build, a blank
+entry — a blank line or the trailing newline — is skipped, and nothing else is
+trimmed; there is no case folding and no comment syntax; an embedded NUL is
+refused up front, for the same provider-level reason the loopback gives below.
+XRCE is **stricter on one point**, because "nothing is trimmed" turned out to be
+weaker than it sounds: any byte below `0x21` *inside* an entry — a space, a tab,
+a mid-entry CR — is refused, so `agent= 127.0.0.1:2018` is unrepresentable
+rather than accepted with a space in the host and rejected a layer down by a
+resolver Fletcher declines to know anything about (PDA-DEC-7 fix cycle 1). That
+rule governs bytes inside an entry and never the separators between entries. A
+third `key=value` reader is judged against this paragraph, not against either
+implementation. `XrceConfig` and its transport enum are
 **retired**, not deprecated, with no coexistence window (owner ruling
 2026-08-31), and five of its twelve fields are **deleted outright**: a payload
 cap nothing read, two serial settings reachable only through a transport that
@@ -476,8 +492,12 @@ fast-dds **PRIVATE** and its recipe drops `transitive_headers`, so its
 `test_package` compiles with no Fast DDS include directories at all and any
 eProsima type reappearing in the installed header is a compile error there.
 `XrceConfig` was the same shape of change and **is discharged** (PDA-DEC-7): the
-installed XRCE header declares exactly `RegisterXrceProvider` and one
-constructor over `ProviderConfig`, and names no XRCE vocabulary at all.
+installed XRCE header offers exactly two entry points — `RegisterXrceProvider`
+and one constructor over `ProviderConfig` — and names no eProsima or `uxr*`
+type at all. (It does of course declare the provider class, its own name and
+its `PubSubProvider` overrides; the claim is about vendor vocabulary, not about
+declarations. The XRCE client is linked PRIVATE and its headers are private to
+the component.)
 
 ### §4.2 — Fletcher parses nothing (explicit non-goal)
 

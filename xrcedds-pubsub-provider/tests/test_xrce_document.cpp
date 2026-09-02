@@ -3,7 +3,7 @@
 //
 // The XRCE provider's configuration document (PDA-DEC-7): `key=value`, one setting per line.
 //
-// NO AGENT IN ANY ROW. Five of these seven cases touch nothing but a pure function; the forcing
+// NO AGENT IN ANY ROW. Six of these eight cases touch nothing but a pure function; the forcing
 // case owns a plain TCP listening socket and the two constructor-refusal cases fail before or
 // during transport init. That is deliberate: the FORMAT is guarded here, in the provider's own
 // CI, and the TRANSPORT is guarded by the 24 Agent-gated `conformance_xrce` cases, which are
@@ -353,6 +353,66 @@ TEST(XrceConfig, EveryKeySetNonDefaultLandsWholeStruct) {
 }
 
 // =============================================================================================
+// The connect budget, converted where it can be pinned: ms -> whole ~1000 ms attempts
+// =============================================================================================
+//
+// This row exists because the ENDS of a range are not the range. Before fix cycle 1 the
+// conversion was `floor((ms - 1) / 1000)` and lived in the constructor, where nothing without a
+// socket could see it; the only value ever tested was `0`, where floor and ceil agree. Everything
+// from 1 to 1000 ms therefore bought ZERO attempts - and 0 attempts is not "one quick attempt",
+// it is `wait_session_status` sending one datagram and returning without ever listening
+// (session.c:742-746), after which `uxr_create_session_retries` reports failure unconditionally.
+// So a third of the published 0-60000 range could never connect to a healthy Agent, and the
+// diagnostic said "is the Agent running?" while it was (review 4b B1 / 4a F3).
+//
+// Every interior row below is red under that mapping: 1, 250, 500, 999 and 1000 all mapped to 0,
+// and 1001, 1500, 3000 and 60000 were each one attempt short - the published default spent
+// ~2000 ms of its 3000 ms budget. `0` is the one value both mappings agree on, and it stays
+// legal: "send once, do not wait" is a useful thing to ask for, which is why the fix is a ceiling
+// rather than a refusal of 1..1000.
+TEST(XrceConfig, ConnectTimeoutBudgetBuysWholeAttempts) {
+    using fletcher::internal::SessionAttempts;
+    using std::chrono::milliseconds;
+
+    // 0 is the only budget that may map to 0 attempts, because 0 attempts cannot connect.
+    EXPECT_EQ(SessionAttempts(milliseconds(0)), 0u)
+        << "connect_timeout_ms=0 means send once and do not wait - the one value that is allowed "
+           "to be unable to connect";
+
+    // The interior. Under the old floor mapping every one of these was one attempt too few, and
+    // the first four were zero.
+    EXPECT_EQ(SessionAttempts(milliseconds(1)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(250)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(500)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(999)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1000)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1001)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1500)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(2000)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(3000)), 3u) << "the PUBLISHED DEFAULT: a 3000 ms "
+                                                          "budget must spend three attempts, not "
+                                                          "the two the old mapping bought";
+    EXPECT_EQ(SessionAttempts(milliseconds(59999)), 60u);
+    EXPECT_EQ(SessionAttempts(milliseconds(60000)), 60u) << "the top of the published range";
+
+    // Not a hidden second rule: nothing in 1..60000 may buy zero attempts. Stated as a property
+    // over the whole range rather than only at the rows above, because the defect this replaces
+    // was exactly "a value inside the range that the rows happened to miss".
+    for (int64_t ms = 1; ms <= 60000; ++ms) {
+        ASSERT_GE(SessionAttempts(milliseconds(ms)), 1u)
+            << "connect_timeout_ms=" << ms
+            << " is accepted by the reader but buys no attempt, so it can never connect";
+        ASSERT_EQ(SessionAttempts(milliseconds(ms)), static_cast<size_t>((ms + 999) / 1000))
+            << "connect_timeout_ms=" << ms << " does not round up to whole attempts";
+    }
+
+    // And the reader's own range check is what keeps this function's input in that band, so the
+    // two belong together: above 60000 never reaches it.
+    ExpectRefused("connect_timeout_ms=60001", PubSubStatus::kInvalidArgument,
+                  "connect_timeout_ms=60001");
+}
+
+// =============================================================================================
 // Every refusal, typed and quoting the offending entry (rung-2 cases 9-13)
 // =============================================================================================
 //
@@ -450,18 +510,29 @@ TEST(XrceConfig, ToleranceRulesMatchTheLoopback) {
     EXPECT_TRUE(ParseXrceDocument(ConfigWith("")) == XrceSettings{});
     EXPECT_TRUE(ParseXrceDocument(ConfigWith("\n\r\n\n")) == XrceSettings{});
 
-    // Refused, not trimmed: "the right setting in the wrong place" is exactly what PDA-DEC-6
-    // paid a fix cycle for, so it is said out loud rather than guessed at.
+    // ONE whitespace rule, and it refuses (fix cycle 1, review 4b S2): any byte below 0x21
+    // INSIDE an entry. Every row below used to be decided by a DIFFERENT check - the key lookup,
+    // the decimal parse - and one of them was not decided at all: `agent= 127.0.0.1:2018` was
+    // accepted with the space kept in the host and failed a layer down in the client's resolver,
+    // which is the one component this provider deliberately knows nothing about (H1). The state
+    // is now unrepresentable rather than documented, so these rows are one rule rather than four
+    // coincidences.
     ExpectRefused(" agent=127.0.0.1:2018", PubSubStatus::kInvalidArgument, " agent=127.0.0.1:2018");
     ExpectRefused("agent =127.0.0.1:2018", PubSubStatus::kInvalidArgument, "agent =127.0.0.1:2018");
-    // Value-side whitespace is not trimmed EITHER, and that is the assertion: a leading space
-    // lands in the host verbatim, so `agent= 127.0.0.1:2018` is not silently the same address as
-    // `agent=127.0.0.1:2018`. The host is handed to the client unchanged (H1 - Fletcher does not
-    // know what that resolver accepts), so a host with a space in it fails at the transport
-    // rather than being quietly repaired into a working one.
-    EXPECT_EQ(ParseXrceDocument(ConfigWith("agent= 127.0.0.1:2018")).agent_host, " 127.0.0.1");
+    ExpectRefused("agent= 127.0.0.1:2018", PubSubStatus::kInvalidArgument, "agent= 127.0.0.1:2018");
+    ExpectRefused("agent=127.0.0.1 :2018", PubSubStatus::kInvalidArgument, "agent=127.0.0.1 :2018");
     ExpectRefused("agent=127.0.0.1:2018 ", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:2018 ");
     ExpectRefused("transport=tcp\t", PubSubStatus::kInvalidArgument, "transport=tcp\t");
+    ExpectRefused("session_key= 7", PubSubStatus::kInvalidArgument, "session_key= 7");
+    // A CR that is NOT the trailing one: the strip is a line-terminator tolerance, not a licence
+    // to put a control byte in the middle of an address.
+    ExpectRefused("agent=127.0.0.1\r:2018", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1\r:2018");
+    // ...and the SEPARATORS keep working, which is what this rule is careful not to touch: the
+    // CRLF document accepted above already proves the trailing strip, and a blank-only document
+    // is still the defaults.
+    EXPECT_TRUE(ParseXrceDocument(ConfigWith("transport=tcp\r\n")).transport ==
+                XrceTransportKind::kTcp);
 
     // No case folding.
     ExpectRefused("AGENT=127.0.0.1:2018", PubSubStatus::kInvalidArgument, "AGENT=127.0.0.1:2018");
@@ -564,20 +635,30 @@ TEST(XrceConfig, SerialIsRefusedAsUnsupported) {
 // any other name (M14) and this row reddens in the provider's own CI as an unknown selector,
 // instead of only in the Agent-gated conformance suite.
 //
-// Port 19999 and `connect_timeout_ms=0` are named explicitly. The default address would be
-// 127.0.0.1:2018 - the interop suite's own Agent port - and an Agent there would make
-// construction SUCCEED and redden this row for the wrong reason (review C2-5).
+// Port 19999 is named explicitly. The default address would be 127.0.0.1:2018 - the interop
+// suite's own Agent port - and an Agent there would make construction SUCCEED and redden this
+// row for the wrong reason (review C2-5).
+//
+// `connect_timeout_ms=1`, not `=0`, since fix cycle 1: at a 0 ms budget the client sends one
+// datagram and never listens, so construction failed whether or not anything answered on 19999
+// and the `ASSERT_EQ(provider, nullptr)` below was DEAD - the row claimed to witness
+// unreachability and could not (review 4a F4). One millisecond is one whole ~1000 ms attempt
+// (`SessionAttempts`), so the handshake is now genuinely awaited and genuinely unanswered: that
+// costs this row ~1 s and buys the assertion back. It stays Agent-INSENSITIVE - nothing in this
+// tree runs an Agent on 19999, and if something did, the message says so instead of failing on
+// the status.
 TEST(XrceConfig, AgentUnreachableIsATransportFailure) {
     ProviderRegistry registry;
     RegisterXrceProvider(registry);
 
-    const ProviderConfig config = ConfigWith("agent=127.0.0.1:19999\nconnect_timeout_ms=0");
+    const ProviderConfig config = ConfigWith("agent=127.0.0.1:19999\nconnect_timeout_ms=1");
 
     const Refusal refusal = Catch([&] {
         std::shared_ptr<PubSubProvider> provider =
             registry.Create(ProviderSelector::Parse("xrce"), config);
-        // Only reachable if something answers XRCE on 19999, which would be a broken machine
-        // rather than a broken build - say so instead of failing on the status.
+        // Reachable only if something answers XRCE on 19999 within the one attempt this
+        // budget buys, which would be a broken machine rather than a broken build - say so
+        // instead of failing on the status.
         ASSERT_EQ(provider, nullptr) << "something is answering XRCE on 127.0.0.1:19999";
     });
     ASSERT_TRUE(refusal.threw) << "constructing against an unreachable Agent did not fail";

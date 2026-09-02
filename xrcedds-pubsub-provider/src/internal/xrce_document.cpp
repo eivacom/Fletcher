@@ -24,6 +24,8 @@ std::string QuoteEntry(const std::string& entry) { return "\"" + entry + "\""; }
 // Strict decimal, parsed WIDE. `false` for an empty string, for any byte that is not `0`-`9`
 // (so no sign, no `0x`, no whitespace, no separators - one total rule beats two, and every
 // caller in the tree builds its keys with `std::to_string`) and for anything past 2^64-1.
+// Leading zeros are digits like any other, so `02018` is 2018: refusing them would be a second
+// rule buying nothing, since the value is unambiguous either way.
 //
 // The caller range-checks per key against the wide value, so **no value is ever narrowed
 // silently** (rung-1 case 3): a domain-sized truncation is a wrong answer with no error, which
@@ -41,11 +43,27 @@ bool ParseDecimal(const std::string& text, uint64_t& out) {
     return true;
 }
 
+// What one session-creation attempt costs the client internally:
+// `UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL`, fixed at 1000 in the client's generated
+// `config.h`. Not read from the client's headers on purpose - this TU is the pure reader and
+// includes nothing of the XRCE client's, which is what lets the whole format be tested with no
+// socket, no session and no Agent.
+constexpr int64_t kMsPerAttempt = 1000;
+
 [[noreturn]] void Refuse(const std::string& reason, const std::string& entry) {
     throw PubSubError(PubSubStatus::kInvalidArgument, "XRCE: " + reason + ": " + QuoteEntry(entry));
 }
 
 }  // namespace
+
+size_t SessionAttempts(std::chrono::milliseconds budget) {
+    // CEILING, not floor - see the header for why floor is a defect and not a rounding choice.
+    // `budget` is range-checked to 0..60000 by the reader before it can get here, so there is no
+    // negative or overflowing input to guard: the largest value this can see is 60000.
+    const int64_t ms = budget.count();
+    if (ms <= 0) return 0;  // "send once, do not wait" - legal, and cannot connect
+    return static_cast<size_t>((ms + kMsPerAttempt - 1) / kMsPerAttempt);
+}
 
 XrceSettings ParseXrceDocument(const ProviderConfig& config) {
     const std::string& document = config.document;
@@ -74,6 +92,36 @@ XrceSettings ParseXrceDocument(const ProviderConfig& config) {
         start = (nl == std::string::npos) ? document.size() + 1 : nl + 1;
 
         if (entry.empty()) continue;
+
+        // ONE rule, applied to the whole entry before the `=` is even looked for: no byte below
+        // 0x21 may appear INSIDE an entry. That is the space, the tab, and every other control
+        // byte - including a CR that is not the trailing one stripped just above (NUL never
+        // reaches here; it is refused up front).
+        //
+        // Forbidding beats documenting. Without this the format's real rule was not "nothing is
+        // trimmed" but "nothing is trimmed, and whether whitespace is refused depends on which
+        // side of the `=` and which key you put it on": ` agent=x` and `agent =x` died in the key
+        // lookup and `agent=x:2018 ` died in the decimal parse, but `agent= 127.0.0.1:2018` was
+        // ACCEPTED with the space kept in the host and failed a layer down in `getaddrinfo` - i.e.
+        // it was safe only because the resolver this provider deliberately knows nothing about
+        // (H1) happens to reject it. Refusing here makes a host with whitespace in it
+        // unrepresentable instead of tolerated-and-explained, and costs the README a paragraph
+        // rather than adding one (review 4b S2; this round has ruled repeatedly against
+        // documenting a silence it could forbid).
+        //
+        // Nothing legal is lost: the entry SEPARATORS are handled above (a newline splits, a
+        // trailing CR is stripped, a blank entry is skipped, so CRLF documents and blank lines
+        // keep working), and no key, IPv4 literal, hostname or decimal number contains a byte
+        // below 0x21.
+        for (const char c : entry) {
+            if (static_cast<unsigned char>(c) < 0x21u) {
+                Refuse(
+                    "document entry contains a space or control byte; keys, values and the "
+                    "address inside one are taken verbatim, so whitespace is refused rather "
+                    "than trimmed",
+                    entry);
+            }
+        }
 
         const size_t eq = entry.find('=');
         if (eq == std::string::npos) {

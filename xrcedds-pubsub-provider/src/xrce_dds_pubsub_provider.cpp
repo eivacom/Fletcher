@@ -128,6 +128,25 @@ struct XrceDDSPubSubProvider::Impl {
     uxrTCPTransport tcp_transport{};
     uxrCommunication* comm = nullptr;
 
+    // RAII, and the reason `Impl` has a destructor at all. `uxr_init_*_transport` opens an OS
+    // socket (and, on Windows, takes a `WSAStartup` reference); a constructor that threw AFTER
+    // that point used to leak both, because `~XrceDDSPubSubProvider` does not run when the
+    // constructor throws - only `impl_` is destroyed. Three guards in this item's own test file
+    // and both Agent readiness probes (which construct-and-fail in a loop for up to 20 s) walk
+    // exactly that path, so the leak was per-iteration, per-run (review 4b S1).
+    //
+    // Structural rather than remembered: whoever opens the transport sets `open_transport`, and
+    // the ONLY code that closes it is this struct's destructor, which runs on a half-constructed
+    // `Impl` during unwind just as it does on a fully-constructed one. There is no `catch` to
+    // keep in step with the arms above, and the open/close pairing cannot drift apart because
+    // both ends read the same field. `session_created` does the same job for the session:
+    // `uxr_delete_session` talks to the Agent, so it may only be called for a session that was
+    // actually created.
+    std::optional<internal::XrceTransportKind> open_transport;
+    bool session_created = false;
+
+    ~Impl();
+
     // Reliable output/input streams.
     uxrStreamId reliable_out{};
     uxrStreamId reliable_in{};
@@ -374,13 +393,6 @@ constexpr uint32_t kMaxDomainId = 65535;
 constexpr uint16_t kStreamHistory = 4;
 constexpr std::chrono::milliseconds kRunLoopQuantum{10};
 
-// One session-creation attempt costs the client ~1000 ms internally
-// (`UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL`), and `uxr_create_session_retries` takes a
-// COUNT, so the operator's millisecond budget converts to a count and everything below 1000 ms
-// means a single attempt. The README says so, because the key advertises a millisecond knob
-// whose bottom second is indistinguishable.
-constexpr int64_t kMsPerAttempt = 1000;
-
 }  // namespace
 
 XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
@@ -418,6 +430,14 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
     impl_->type_name = FletcherTypeName(bound);
 
     // Size reliable stream buffers. history must be power of 2; buffer size = MTU * history.
+    // Sized before the transport exists (validate-everything-first ordering), so the two MTUs
+    // must agree rather than being read off `comm->mtu` - asserted at compile time rather than
+    // assumed, because they are separate knobs in the client's generated `config.h` and this
+    // buffer is what the reliable stream writes into (review 4b nit 1).
+    static_assert(UXR_CONFIG_UDP_TRANSPORT_MTU == UXR_CONFIG_TCP_TRANSPORT_MTU,
+                  "the reliable-stream buffers below are sized from the UDP MTU but are used for "
+                  "transport=tcp as well; if the client's two MTUs ever differ, size them from "
+                  "the larger one (or from comm->mtu after transport init)");
     const size_t mtu = UXR_CONFIG_UDP_TRANSPORT_MTU;
     impl_->output_buffer.resize(mtu * kStreamHistory);
     impl_->input_buffer.resize(mtu * kStreamHistory);
@@ -437,6 +457,7 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
                                       impl_->settings.agent_host + ":" + port_str);
             }
             impl_->comm = &impl_->udp_transport.comm;
+            impl_->open_transport = internal::XrceTransportKind::kUdp;
             break;
 
         case internal::XrceTransportKind::kTcp:
@@ -452,7 +473,19 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
                                       impl_->settings.agent_host + ":" + port_str);
             }
             impl_->comm = &impl_->tcp_transport.comm;
+            impl_->open_transport = internal::XrceTransportKind::kTcp;
             break;
+    }
+
+    // Unreachable while `XrceTransportKind` has exactly the two arms above, which is why the
+    // switch has no `default` (a `default` would silence the exhaustiveness warning that catches
+    // a third enumerator at compile time). This is the belt for the case where someone adds one
+    // and misses an arm anyway: `uxr_init_session` with a null `comm` is a crash inside the
+    // client, not a diagnostic (review 4b nit 2).
+    if (impl_->comm == nullptr) {
+        throw PubSubError(PubSubStatus::kInternal,
+                          "XRCE: no transport was opened for the selected transport kind; this "
+                          "is a Fletcher bug, not a configuration error");
     }
 
     // Initialize session.
@@ -461,18 +494,34 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
 
     // The operator's budget, not a constant. It used to be a hard-coded 3000 here, which is the
     // one mutation the document guards could not see: every row stayed green and the client just
-    // failed at the wrong deadline (review C2-2). `connect_timeout_ms=0` means 0 retries, i.e.
-    // one attempt that does not wait for an answer at all - which is what the forcing test's
-    // wall-clock bound measures.
+    // failed at the wrong deadline (review C2-2).
+    //
+    // The ms -> attempt-count conversion is `internal::SessionAttempts`, in the pure reader, and
+    // this constructor deliberately contains NO arithmetic: the previous version computed
+    // `floor((budget - 1) / 1000)` right here, which handed the client 0 attempts for every
+    // budget from 1 to 1000 ms - and 0 attempts means "send one datagram, never listen", so a
+    // third of the published range could not connect to a healthy Agent while the diagnostic
+    // below blamed the Agent (review 4b B1 / 4a F3). It was invisible because it was the one
+    // piece of arithmetic no test in this item could reach without a socket; it now lives where
+    // a table pins it (`XrceConfig.ConnectTimeoutBudgetBuysWholeAttempts`).
     const int64_t budget_ms = impl_->settings.connect_timeout.count();
-    const size_t retries =
-        static_cast<size_t>((std::max)(static_cast<int64_t>(0), (budget_ms - 1) / kMsPerAttempt));
-    if (!uxr_create_session_retries(&impl_->session, retries)) {
-        throw PubSubError(PubSubStatus::kTransportFailure,
-                          "XRCE: failed to create a session with the Agent at " +
-                              impl_->settings.agent_host + ":" + port_str + " within " +
-                              std::to_string(budget_ms) + " ms (is the Agent running?)");
+    if (!uxr_create_session_retries(&impl_->session,
+                                    internal::SessionAttempts(impl_->settings.connect_timeout))) {
+        // The 0 case gets its OWN sentence rather than "is the Agent running?", because at a
+        // 0 ms budget the answer to that question is not what failed - nothing was awaited.
+        // Misattributing this is the half of B1 that was a diagnostic defect rather than an
+        // arithmetic one (review 4b B1).
+        throw PubSubError(
+            PubSubStatus::kTransportFailure,
+            "XRCE: failed to create a session with the Agent at " + impl_->settings.agent_host +
+                ":" + port_str + " within " + std::to_string(budget_ms) + " ms" +
+                (budget_ms == 0
+                     ? std::string(
+                           " (connect_timeout_ms=0 sends one datagram and does not wait for an "
+                           "answer, so it reports failure even against a healthy Agent)")
+                     : std::string(" (is the Agent running?)")));
     }
+    impl_->session_created = true;
 
     // Create reliable streams.
     impl_->reliable_out = uxr_create_output_reliable_stream(
@@ -502,27 +551,43 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
     });
 }
 
-XrceDDSPubSubProvider::~XrceDDSPubSubProvider() {
-    if (!impl_) return;
+XrceDDSPubSubProvider::Impl::~Impl() {
+    // Runs on a HALF-constructed Impl too - that is the whole point (review 4b S1). Every step
+    // below is conditional on the thing having been started, so the destructor is correct at any
+    // point the constructor may have thrown from, and the socket is released on every path.
 
-    // Stop run-loop.
-    impl_->running = false;
-    if (impl_->run_thread.joinable()) impl_->run_thread.join();
+    // Stop the run-loop first: it pumps the session, so it must not be running when the session
+    // is deleted or the transport closed. The thread only exists if the constructor got all the
+    // way to the end.
+    running = false;
+    if (run_thread.joinable()) run_thread.join();
 
-    // Delete session (cleans up all entities on the Agent).
-    uxr_delete_session(&impl_->session);
+    // Delete the session (cleans up all entities on the Agent). Only if one was created: this
+    // sends a message, and `uxr_create_session_retries` failing is the commonest reason this
+    // destructor runs at all.
+    if (session_created) {
+        uxr_delete_session(&session);
+    }
 
-    // Close transport. Two arms, not three: serial is refused by the document reader, so a
-    // constructed provider cannot be on it.
-    switch (impl_->settings.transport) {
-        case internal::XrceTransportKind::kUdp:
-            uxr_close_udp_transport(&impl_->udp_transport);
-            break;
-        case internal::XrceTransportKind::kTcp:
-            uxr_close_tcp_transport(&impl_->tcp_transport);
-            break;
+    // Close whichever transport was opened. Two arms, not three: serial is refused by the
+    // document reader, so no transport can ever be on it.
+    if (open_transport.has_value()) {
+        switch (*open_transport) {
+            case internal::XrceTransportKind::kUdp:
+                uxr_close_udp_transport(&udp_transport);
+                break;
+            case internal::XrceTransportKind::kTcp:
+                uxr_close_tcp_transport(&tcp_transport);
+                break;
+        }
+        open_transport.reset();
     }
 }
+
+// Everything teardown-worthy is owned by `Impl` and released by `Impl::~Impl` above, so this is
+// just the pimpl's out-of-line destructor. Deliberately NOT a duplicate of that sequence: two
+// teardown paths for one set of resources is how the constructor-throw leak survived.
+XrceDDSPubSubProvider::~XrceDDSPubSubProvider() = default;
 
 // -----------------------------------------------------------------------
 // Helper: wait for entity creation status

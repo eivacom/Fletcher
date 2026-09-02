@@ -232,10 +232,12 @@ class MicroXRCEAgentEnv : public ::testing::Environment {
     void WaitUntilReachable() {
         // Probe by constructing an XRCE session. The Agent takes a few
         // hundred ms to bind its UDP socket after fork; we poll with a
-        // generous deadline. connect_timeout_ms is set above 1000 so
-        // the underlying retry count is >= 1 (the implementation drops
-        // values below 1000 to a single attempt that is sometimes too
-        // short for a freshly-started Agent).
+        // generous deadline. connect_timeout_ms=2000 buys TWO ~1000 ms
+        // handshake attempts, which is deliberate: one is occasionally too
+        // short for an Agent that has just been forked. (Before PDA-DEC-7
+        // fix cycle 1 the provider rounded the budget DOWN, so this bought
+        // one attempt and anything <= 1000 bought none at all; the comment
+        // here used to describe that mapping.)
         std::string last_error;
         auto deadline = std::chrono::steady_clock::now() + 15s;
         while (std::chrono::steady_clock::now() < deadline) {
