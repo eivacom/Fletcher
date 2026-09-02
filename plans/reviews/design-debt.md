@@ -95,3 +95,24 @@ item as the expected exception.
 | DEBT-8 | `kNotSupported`'s message should say the selector was classified as a *path* and name the first offending character/offset — trailing whitespace or a CRLF from a config file is the realistic misclassification, and "this build cannot load drivers" reads as an infrastructure fault rather than a typo. | review §DEBT-8 |
 | DEBT-9 | Forward note for PDA-DEC-7: the seam's `domain_id` is `uint32_t`, `XrceConfig::domain_id` is `uint16_t`. Refuse out-of-range, never narrow — a truncated domain id is a wrong answer with no error. | review §DEBT-9 |
 | DEBT-10 | Records: (a) "providers are constructed at four sites in tree (§10)" is false — §10 counts four *config-consuming files* and predates PDA-DEC-1/2/3; PDA-DEC-6/7 should re-measure. (b) `provider.hpp:68-70` still documents configuration as "a provider-specific Options struct"; update here or book against PDA-DEC-6/7. | review §DEBT-10 |
+
+## PDA-DEC-5 — InProcess as a built-in (APPROVE-WITH-DEBT(5), cycle 1 of 2)
+
+Review: [PDA-DEC-5-design-review.md](PDA-DEC-5-design-review.md). No BLOCKERs.
+Two rulings the implementer may rely on **without stop-and-asking**: premise
+**P1 does not fire** — `TranslateSeamFailure` rethrows a `PubSubError`
+untouched (`core/status.hpp:136`) and `Registry.AFactoryThatFailsIsReportedAsA
+TypedSeamFailure` already asserts it, so the bad-document refusal arrives as
+`kInvalidArgument` (the reader must throw `PubSubError`, not a `std::` type);
+and premise **P3's stop-and-ask does not fire** — the loopback reading its own
+document inside `fletcher-pubsub` honours decision 8, the provider does **not**
+move to its own component, and the reader must stay unshared and dependency-free
+in `in_process_provider.cpp` (review §B).
+
+| Id | Owed | Where |
+|----|------|-------|
+| DEBT-1 | **The substantive one.** B.1's named mutation "register `inprocess` in `carried` mode → the schema/publish cases go red" is false: every publish in `end-to-end.test.ts` is preceded by `createTopic(topic, SCHEMA)` (lines 225/237, 335/353, 408), and the one undeclared-subscribe case (170-189) asserts the *absence* of a schema, which a pending `kCarried` arrival also satisfies. The battery cannot see the mode. Correct the claim — the load-bearing mutation is "drop the registration"; the mode proof is `Registry.InProcessCarriageComesFromTheDocument`. If the gateway's mode is to be pinned, one ~10-line case (publish to a never-declared topic produces no error frame) is the only difference the battery could see. | review §C, §F-1 |
+| DEBT-2 | Pin the `--provider bogus` staleness assertion to wording the pre-change binary cannot emit (`available:` / `no built-in provider named`) — "names the registered providers" is satisfied by the old `unknown provider: … (expected inprocess\|fastdds)`. Give the new block's `READY` case its own port; `TEST_PORT` and `TEST_PORT+3` are held by the two `describe.each` contexts. | review §C, §F-2 |
+| DEBT-3 | Rung-2 case 6 lists four refusals but names three test inputs; add a duplicate key (`schema_carriage=as_declared\nschema_carriage=carried`) to `InProcessRefusesAnUnrecognisedDocumentEntry`, or that rule is asserted by nothing. | review §F-3 |
+| DEBT-4 | Undisclosed narrowing: a Fast DDS construction failure escapes `main` uncaught today (no try around `main.cpp:109-116`) and aborts; after this item it exits 2 with a message. An improvement, but "observably unchanged" should say it. Put `Parse`, both `Register` calls and `Create` inside the one `try`. | review §F-4 |
+| DEBT-5 | Record that the gateway has no route for a provider document (it passes `""`), so charter requirement (b) is unreachable from `gateway.exe` after this item. Correct here; PDA-DEC-6 cannot move Fast DDS QoS into the document without that surface, and no item currently owns it. | review §F-5 |

@@ -56,9 +56,8 @@ assigns XRCE, so the tree has one shape rather than two:
   defaults**, which are today's gateway behaviour.
 - The only key is `schema_carriage`, whose values are `as_declared` (default,
   today's loopback) and `carried` (§7 schema-before-data).
-- A trailing `\r` on an entry is stripped. Nothing else is trimmed, no case
-  folding, no comments.
-- An empty entry (`\n\n`, or a trailing newline) is skipped.
+- A trailing `\r` on an entry is stripped; nothing else is trimmed, no case
+  folding, no comments. An empty entry (`\n\n`, a trailing newline) is skipped.
 - **Anything else is refused** — unknown key, unknown value, an entry with no
   `=`, a duplicate key — with `PubSubError(kInvalidArgument)` quoting the
   offending entry. Refused in the constructor, so a misconfigured loopback never
