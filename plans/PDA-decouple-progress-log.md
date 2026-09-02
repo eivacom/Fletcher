@@ -607,13 +607,38 @@ ordered a stop-and-ask on reads that *do* happen, so it would have halted step 3
 predicted finding. Plus a stale "24 clauses", a census summing nine of eight, and a mutation count
 of 11 that measured 12.
 
-**Routed out, unowned: `ROUND-1`.** `SpawnedAgentAlive()` accepts an Agent it did not start, so a
-stray MicroXRCEAgent serves a whole run at 25/25 PASSED — proved against a deliberately foreign
-Agent. **Every XRCE green since PDA-DEC-1 is conditional on "no stray Agent was listening".**
-PDA-DEC-1 is closed so nothing owns it; in the config and debt register, recommended for in-round
-fix before PDA-DEC-9 signs the handoff — both ABI rounds inherit this harness as their oracle.
+**Routed out: `ROUND-1`, now PDA-DEC-1H by owner ruling.** The re-reviewer observed a full run at
+`conformance_xrce` 25/25 PASSED served by a foreign Agent. **PM correction:** I first recorded this
+as the harness "accepting an Agent it did not start" — wrong; `SpawnedAgentAlive()` does check the
+process this binary spawned. The gap is that liveness is not port ownership, and the mechanism is
+unconfirmed — PDA-DEC-1H's first job. **Every XRCE green since PDA-DEC-1 is conditional on "no
+stray Agent was listening"**, including ones reported today.
 
 **Numbers.** Declared +1900/−400; actual **+1979/−247** over 20 files excluding `plans/` — **adds
 within 5%**, the first item this round to cost what it said. Production **+715/−121**. Surface
 **net −1 (+2/−3)**. **Close gate:** PASS. **Cycle meter:** design 2/2 · fix 2 · implementer
 launches 3/5 · owner touches 0.
+
+## Process observation — three unfalsifiable guards in one round (2026-09-02, PM)
+
+Recorded for the round-close retrospective at the owner's direction; **no process rule changes
+mid-round.** Measured instances, each costing a cycle:
+
+1. **PDA-DEC-6** — the design's discovery-based guard for the whole-QoS ruling could not fail:
+   Fast DDS's own writer defaults are bit-identical to Fletcher's on both policies discovery can
+   carry, so a build ignoring the document entirely passed every row. Found by the *implementer*,
+   by mutation, after the design was approved.
+2. **PDA-DEC-7** — four of six document keys had no guard that an accepted value lands anywhere;
+   two had no witness in the tree at all. Found by *design review cycle 1*, before code.
+3. **PDA-DEC-7** — the socket-leak fix landed with its probe deleted after measuring. Found by
+   the *cycle-2 re-reviewer*, in a stale binary and `CTestCostData.txt`.
+
+The pattern is not "guards are missing" — it is that **a guard's falsifiability was asserted
+rather than executed**. All three were caught, by three different steps, which is the system
+working; but each cost a cycle that naming the reddening mutation *and running it* would have
+saved. Note also that (3) arrived inside a fix for (2)'s sibling finding: **a debt fix received
+less red-first discipline than a feature**, which is the sharper version of the lesson.
+
+Adjacent, same round: line-count reporting was wrong four times, always by excluding a new
+`src/internal/` header; and two consecutive progress-log entries (63 and 67 lines) exceeded the
+60-line budget. Both are candidates for the same retrospective, with numbers attached.
