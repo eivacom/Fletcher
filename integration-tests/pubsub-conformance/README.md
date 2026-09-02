@@ -359,8 +359,8 @@ than growing a second one, so this harness still has exactly one scoring path.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
 §4.1, §4.2. A **fourth** suite in this harness, in its own binary
-(`conformance_registry`), 17 entries, no provider SDK — and, for all but the
-three PDA-DEC-5 entries below, **no provider at all**: every OTHER provider in
+(`conformance_registry`), 19 entries, no provider SDK — and, for all but the
+five PDA-DEC-5 entries below, **no provider at all**: every OTHER provider in
 it is a probe defined in the test file, so those constructs nothing that opens
 a socket, binds a port or joins a domain.
 
@@ -388,7 +388,9 @@ delivery claim.
 | `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` | the lifetime rule is **mechanical, not prose**: `Create` returns an aliasing handle owning `Anchor{seat, provider}`, so a factory's or resolver's module outlives every provider it made, whatever the author did. Pinned on **both** seats, and the probe records module-still-loaded *in its own destructor* — so the load-bearing member order is itself asserted |
 | `InProcessResolvesAsABuiltIn` (forcing, PDA-DEC-5) | §4 clause 4: `RegisterInProcessProvider` makes `"inprocess"` selectable; a row published through the **base-typed** `shared_ptr<PubSubProvider>` handle arrives byte-identical, and a publish to a **second, never-declared** topic succeeds — pinning the default `as_declared` mode without an accessor for it |
 | `InProcessCarriageComesFromTheDocument` | the live control for the row above: the identical registry call, `document = "schema_carriage=carried"`, and the opposite behaviour — publish-before-declare is refused `kTopicNotDeclared`, and a declared topic's delivery carries a non-null schema. Neither test alone proves the mode comes from the document |
-| `InProcessRefusesAnUnrecognisedDocumentEntry` | rung-2 case 6: an unrecognised value, an unrecognised key, an entry with no `=`, and a duplicate key are all refused `kInvalidArgument` quoting the offending entry — never "threw something", and never a silently-defaulted typo |
+| `InProcessRefusesAnUnrecognisedDocumentEntry` | rung-2 case 6: seven refusals — an unrecognised value, an unrecognised key, an entry with no `=`, a duplicate key, an empty value, and leading/trailing whitespace on key and value — all `kInvalidArgument` quoting the offending entry, never "threw something" and never a silently-defaulted typo |
+| `InProcessDocumentToleratesCrlfAndBlankLines` | the two tolerances the reader *adds* are the ones that had no guard: a trailing `` is stripped (so a CRLF document means the same on every platform — the 2026-09-02 ruling) and a blank entry is skipped. Covers CRLF, a leading blank line, an interior blank line, a trailing newline, and all composed |
+| `InProcessRefusesADocumentContainingANul` | a document carrying an embedded NUL is refused at the door with its offset, mirroring `ProviderSelector::Parse`. This is a **provider-format** rule, not a seam one — the seam's document stays length-authoritative and carries a NUL unchanged (§4.2). It is the suite's only guard against a NUL-truncating boundary |
 
 **The link line is a machine check.** `conformance_registry` names
 `fletcher-pubsub` and no transport SDK, so no DDS or XRCE vocabulary resolves
@@ -433,7 +435,15 @@ Ignoring an unrecognised document entry instead of refusing it reddens
 duplicate-key case (the document's first line rather than the repeated key)
 would have passed with a message that only accidentally happened to contain the
 right substring, which is why that test's helper takes the expected quote
-explicitly rather than deriving it from the document.
+explicitly rather than deriving it from the document. *(PDA-DEC-5)* Deleting the
+document reader's `` strip, or its blank-entry skip, each redden
+`InProcessDocumentToleratesCrlfAndBlankLines` alone — both were **fully green**
+across all 17 entries before those cases existed. Deleting the NUL refusal reddens
+`InProcessRefusesADocumentContainingANul` and reproduces the truncation it exists to
+prevent: `what()` stops mid-string at the NUL. Memoising one built-in instance per
+registry — which passed **19/19 Registry and 80/80 conformance** when found — now
+reddens `InProcessCarriageComesFromTheDocument` at the distinct-instance assertion,
+which is the property PDA-DEC-8 depends on.
 
 Five of the mutations **in the list above** left the suite fully green when those
 entries were first written, and were closed only after review; the four failure-seat and vocabulary
