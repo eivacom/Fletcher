@@ -344,3 +344,22 @@ ruling ("scope to the interface, say so plainly") and the 2026-09-01 blind-spot 
 the third time this round the owner has chosen a narrow claim stated honestly over a wide
 one implied. **Review debt C2-1 rides with it:** §8 must stop publishing "exchange no
 rows" for the different-bounds pair, which premise P1b makes an unearned claim.
+
+## 2026-09-03 — The handoff states the platform evidence exactly *(selection)*
+> "State the evidence exactly — all runs local on Windows plus one Linux compile — tell both later rounds to treat Linux as unverified, and make a Linux-only difference in seam behaviour a question for you rather than a local fix. Matches the three times you chose a narrow claim stated honestly."
+
+**Context:** PDA-DEC-9, the round's last owner decision. No automated build has ever run on
+`feature/protocol-driver-abi`: the CI lanes are `workflow_call` from a PR-triggered
+workflow, so opening the pull request is the only trigger and that is the owner's step.
+Eight items of Linux-side correctness therefore exist only as local Windows runs plus one
+WSL compile of the single platform-forked file (PDA-DEC-1H's `/proc` ownership path).
+Rejected: holding the handoff unsigned until the lanes pass — strongest evidence, but it
+makes two downstream rounds wait on one manual step; and saying nothing about platforms,
+which would let a reader assume the usual lanes backed the work.
+**Applies to:** spec §12's evidence statement. The handoff names what was actually run,
+tells PDA-ABI and BIND to treat Linux as **unverified**, and routes any Linux-only
+difference in seam behaviour to the owner as a question rather than a local fix — because a
+local fix by one round would silently change the seam both rounds share. **Fourth
+consecutive time** the owner chose a narrow claim stated honestly over a wide one implied
+(2026-09-01 copy-accounting scope, 2026-09-01 conformance blind spot, 2026-09-03 isolation
+scope, and this). A design may now infer that preference rather than ask again.
