@@ -7,8 +7,8 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <cstring>
+#include <fletcher/core/status.hpp>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -50,16 +50,33 @@ class OwnedSchema {
     bool valid() const noexcept { return schema_.release != nullptr; }
     explicit operator bool() const noexcept { return valid(); }
 
-    /// Create a deep copy of src. Throws if the copy cannot be made — silently returning an empty
+    /// Create a deep copy of src.
+    ///
+    /// Throws `PubSubError(kInternal)` if the copy cannot be made — silently returning an empty
     /// schema would let a topic be declared with no schema at all, which the delivery contract
     /// (schema-before-data) relies on never happening.
+    ///
+    /// **Why the seam's typed error and not `std::runtime_error`.** This function is public
+    /// because spec §3.3 makes it the only memory-safe way to consume a borrowed `SharedSchema`:
+    /// a binding that hands a shared schema straight to a consuming importer destroys it under
+    /// every other holder. So a language binding is *told* to call it directly, and §5.1 promises
+    /// that what leaves the seam is one error type carrying one stable number. An untyped
+    /// exception here is that promise failing at exactly the sanctioned call.
+    ///
+    /// `kInternal` is the number because a failed `ArrowSchemaDeepCopy` is an allocation or
+    /// nanoarrow-internal failure with no better home, and because it is the number this failure
+    /// already reached seam callers as: every in-tree call site is inside a
+    /// `TranslateSeamFailure`, whose `std::exception` arm maps to `kInternal`. Nothing observable
+    /// through a seam entry point changes; what changes is that a DIRECT caller now gets the
+    /// number too. `PubSubError` derives from `std::runtime_error`, so any existing
+    /// `catch (const std::runtime_error&)` still catches it.
     [[nodiscard]] static OwnedSchema DeepCopy(const ArrowSchema* src) {
         OwnedSchema copy;
         ArrowErrorCode code = ArrowSchemaDeepCopy(src, copy.get());
         if (code != NANOARROW_OK) {
-            throw std::runtime_error(
-                "OwnedSchema::DeepCopy: ArrowSchemaDeepCopy failed with code " +
-                std::to_string(code));
+            throw PubSubError(PubSubStatus::kInternal,
+                              "OwnedSchema::DeepCopy: ArrowSchemaDeepCopy failed with code " +
+                                  std::to_string(code));
         }
         return copy;
     }

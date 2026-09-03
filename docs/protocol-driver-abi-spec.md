@@ -208,29 +208,99 @@ bounded DDS payload implements both hooks as an overflow failure.
 
 Exceptions must not cross, in either direction: a driver catches everything at its
 entry points, and the host catches everything before returning into a driver. The
-mapping from the seam's exception taxonomy (seam §5.1) to these codes is
-normative and must be exhaustive — an unmapped exception type is a defect, not a
-`FLETCHER_ERR_INTERNAL`.
+mapping from the seam's failure vocabulary (seam §5.1) to these codes is normative
+and must be **exhaustive** — an unmapped cause is a defect, not a
+`FLETCHER_STATUS_INTERNAL`.
+
+**`fletcher_status` is `PubSubStatus`, number for number.** The mapping is the
+IDENTITY, in both directions. It is not a second taxonomy with a translation table
+beside it:
 
 ```c
+/* The numbers are seam PubSubStatus's numbers. They are published once, in
+   core/README.md - that table is the only enumeration of them (seam §5.1) - and
+   restated here only because C needs the spelling. */
 typedef enum {
-    FLETCHER_OK = 0,
-    FLETCHER_ERR_INVALID_ARGUMENT,
-    FLETCHER_ERR_UNSUPPORTED,
-    FLETCHER_ERR_CONFIG,           /* driver rejected the config document */
-    FLETCHER_ERR_SCHEMA_CONFLICT,  /* re-declaration with a different schema */
-    FLETCHER_ERR_NO_SUCH_TOPIC,
-    FLETCHER_ERR_TRANSPORT,
-    FLETCHER_ERR_OVERFLOW,         /* row exceeded the payload bound */
-    FLETCHER_ERR_INTERNAL,
+    FLETCHER_STATUS_OK                 = 0,  /* kOk */
+    FLETCHER_STATUS_INVALID_ARGUMENT   = 1,  /* kInvalidArgument */
+    FLETCHER_STATUS_SCHEMA_CONFLICT    = 2,  /* kSchemaConflict */
+    FLETCHER_STATUS_TOPIC_NOT_DECLARED = 3,  /* kTopicNotDeclared */
+    FLETCHER_STATUS_PAYLOAD_TOO_LARGE  = 4,  /* kPayloadTooLarge */
+    FLETCHER_STATUS_TRANSPORT_FAILURE  = 5,  /* kTransportFailure */
+    FLETCHER_STATUS_NOT_SUPPORTED      = 6,  /* kNotSupported */
+    FLETCHER_STATUS_INTERNAL           = 7,  /* kInternal */
+    /* Wait OUTCOMES, never failures (seam §2). Present for the same reason kOk
+       is: both boundaries need them in the same enum. Only the calls that can
+       wait may return them, and they never become a thrown error. */
+    FLETCHER_STATUS_PENDING            = 8,  /* kPending */
+    FLETCHER_STATUS_SUBSCRIPTION_ENDED = 9,  /* kSubscriptionEnded */
 } fletcher_status;
 ```
+
+**Why identity, and not this round's own numbering.** A round-opening sketch of
+this enum predated both `PubSubStatus` and the only-one-enumeration rule, and
+carried its own numbering — `FLETCHER_ERR_UNSUPPORTED = 2`, `FLETCHER_ERR_CONFIG = 3`,
+and every value after 1 shifted by an interleave rather than by a constant offset —
+with five different names for the same concepts. Nothing was ever bought with that
+divergence: this round has no shipped code, so there is no deployed number to
+protect, while the seam's numbers are already what the seam's callers,
+`core/README.md` and both binding rounds carry. Under identity the exhaustive
+mapping this section demands **exists by construction and owes no table**, which is
+the point: separate numbering would owe a maintained table forever, and any drift
+in that table would mislabel every error a driver had ever reported.
+
+Consequences, stated so they are not re-decided:
+
+1. **Append-only, and the SEAM allocates.** This enum inherits seam §5.1's
+   append-only rule *and its allocation procedure*: a new cause is a stop-and-ask
+   against the seam spec, the owner allocates the number, and it arrives here only
+   after it exists in `PubSubStatus` and in `core/README.md`. **This round may not
+   invent a code.** Inventing one is exactly how the two enums diverged the first
+   time.
+2. **The two codes with no seam counterpart are gone; here is what replaces them.**
+   `FLETCHER_ERR_UNSUPPORTED` was never really an orphan — it is `kNotSupported` (6)
+   under another name. `FLETCHER_ERR_CONFIG` was a real one, and it is not needed,
+   because "config error" is not one cause but two that both already have numbers:
+   - a driver that **rejects a config document** it cannot parse, or whose value is
+     out of range, returns `FLETCHER_STATUS_INVALID_ARGUMENT` (1) — precisely what
+     all three in-tree providers already throw for that fact
+     (`pubsub/src/in_process_provider.cpp`'s `ParseSchemaCarriage`,
+     `xrcedds-pubsub-provider/src/internal/xrce_document.cpp`'s `ParseXrceDocument`,
+     and `fastdds-pubsub-provider/src/fast_dds_pubsub_provider.cpp`'s document
+     reader);
+   - a document that is well-formed but **asks for a capability the driver does not
+     implement** returns `FLETCHER_STATUS_NOT_SUPPORTED` (6) — the split the tree
+     already draws, e.g. XRCE refusing a serial transport as unsupported while
+     refusing a malformed entry as invalid.
+3. **A number this enum does not define is `INTERNAL`.** If a driver returns a value
+   outside the list, the adapter reports `kInternal` carrying a message that names
+   the raw value. It must not pass the integer through as a `PubSubStatus`: the
+   seam's number space is the seam's to allocate, and a driver cannot widen it from
+   outside.
+4. **`OK` and the two outcomes are never thrown.** The adapter must not build a
+   `PubSubError` from `OK`, `PENDING` or `SUBSCRIPTION_ENDED`. `PubSubError` refuses
+   all three at construction (coercing to `kInternal`), so a slip is a mislabelled
+   error rather than a failure reported as success — but the adapter is where it
+   must not happen at all. `PENDING` and `SUBSCRIPTION_ENDED` are returned by the
+   waiting calls and surface as seam *outcomes*, not exceptions.
 
 A non-`OK` status may carry a human-readable message, retrievable from the
 **instance** that produced it — never a global or thread-local `errno`-style slot,
 which would not survive multiple instances per process (§5). The adapter turns
 status back into the seam's exceptions, so `PubSubProvider`'s throwing contract is
 preserved for callers.
+
+**What guards this once the round has code.** Nothing machine-checks it today: this
+round has no header yet. No check is added that reads this document beside
+`core/README.md` either — `core_tests`' `Taxonomy.PublishedNumbersMatchTheEnum`
+already pins that table against the enum row for row, and a second file-reading
+comparator would just be a second place to drift. When the ABI header lands the
+guard belongs **in code, in the adapter's translation unit**: one
+`static_assert(static_cast<int32_t>(PubSubStatus::kX) == FLETCHER_STATUS_X)` per
+enumerator — one per value, never a single assert on the last, for the reason
+`core/include/fletcher/core/status.hpp` gives — plus a `switch` over `PubSubStatus`
+with no `default`, so appending a seam cause without extending the ABI header fails
+the build. Until then this section is prose, and it says so.
 
 ### §4.2 — Negotiation and compatibility
 
