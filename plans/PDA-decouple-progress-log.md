@@ -926,3 +926,36 @@ excluding `plans/` (`git diff 7740a9d..60331b0`, derived after the last edit). O
 the 188-line guard, an 89-line log entry, the spec's §12, and rewrites counted on both sides.
 Public surface **0**, `core`'s package ID unchanged, `package()` untouched. Compliance judged
 the overrun not a breach — every file was ordered and no deletion under-delivered.
+
+## Round close addendum — what PR #126 found (2026-09-03, PM)
+
+The owner directed the PR be opened before the archive, to get a CI signal first. That ordering
+paid for itself: **the first automated run this branch has ever had found seven defects, all
+introduced by this round, none of them reachable locally.**
+
+| Defect | Why local running could not see it |
+|---|---|
+| clang-format violations in two files | the PM's local check was broken **two ways** — it grepped for `warning` where clang-format emits `error:`, and read `PIPESTATUS[0]`, the exit status of `echo` |
+| `protoc` version mismatch | inherited half-landed from the Fast DDS merge; never built here |
+| Fast DDS include dirs stripped from both XRCE harnesses | broke **four** lanes; a stale Agent cache hid it on Windows for a day |
+| `core/README.md` example could not compile | Copilot's finding; nothing in the tree verifies README examples |
+| gateway `in.bad()` could never fire | `<< rdbuf()` never touches the stream's state; needs Linux directory semantics to expose |
+| `XrceConfig.DocumentConfiguresTransport` hangs forever | `close(fd)` does not wake a blocked `accept()` on Linux |
+| that suite had no ctest `TIMEOUT` | `enable_testing()` rather than `include(CTest)`, so ctest's 1500 s default never applied — 2 h of runner time instead of failing fast |
+
+**Two PM premises were refuted by measurement**, and both had been stated as established:
+the harness Agent failure was called Linux-only when Windows failed identically in the same run
+(green before only by cache luck), and the hanging forcing test was attributed to the provider
+blocking against a silent peer when the client is provably bounded (0 ms at 0 attempts, 3003 ms
+at 3). In both cases the diagnosing agent declined the premise and produced the evidence. That is
+the apparatus working as designed, and it is the strongest argument in this log for keeping
+premises falsifiable rather than authoritative.
+
+**Three defects were Linux-only differences in behaviour** — exactly the class §12.4 clause 3
+routes to the owner rather than to a local fix. Each was fixed centrally.
+
+Final state: PR #126 at `08d1b81`, **46 checks green, 0 failing**; `mergeStateStatus: BLOCKED`
+pending the owner's review approval, which is not a test result. The lane that hung for 2 h 04
+now completes in **68 s**. §12.4 amended the same day, because its own ruling obliges it to state
+the evidence exactly and the evidence changed; clause 3 was preserved verbatim.
+

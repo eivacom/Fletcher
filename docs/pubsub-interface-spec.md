@@ -993,25 +993,41 @@ The oracle suites are named in §9's table. Inherited with them:
 
 Owner ruling 2026-09-03, *"The handoff states the platform evidence exactly"*:
 
-**Every green cited anywhere in this round was produced by a local run on one Windows machine,
+**Every green cited in the body of this round was produced by a local run on one Windows machine,
 plus one WSL compile of the single platform-forked file (PDA-DEC-1H's `/proc` ownership path).**
-**No automated build has ever run on `feature/protocol-driver-abi`**: the component and
-integration lanes are `workflow_call` entries invoked from a `pull_request`-triggered workflow
-(`.github/workflows/ci.pr.yml`, its `uses:` entries), so opening the pull request is the only
-trigger, and that is the owner's step. Condition 3's promoted diagnostic was witnessed firing
-under MSVC and **only** under MSVC; the `core` lane compiles `core_tests` on a Linux runner too
-(`ci.core.yml:55,107`), which is what would expose a diagnostic that fires under one compiler
-and not the other — and that lane has not run.
+No automated build had ever run on `feature/protocol-driver-abi` while the round was executing:
+the component and integration lanes are `workflow_call` entries invoked from a
+`pull_request`-triggered workflow (`.github/workflows/ci.pr.yml`, its `uses:` entries), so
+opening the pull request is the only trigger, and that is the owner's step.
+
+**Amended 2026-09-03, after the round closed, because this section's own ruling obliges it to
+state the evidence *exactly* and the evidence changed.** PR #126 ran the lanes for the first
+time and is green on all 46 checks. That run found **seven defects this round had introduced and
+local running could not reach**, which is the number that matters here more than the green does:
+a dependency-trait regression that stripped Fast DDS's include directories from both XRCE
+harnesses and broke four lanes while a stale cache hid it on Windows; a gateway `in.bad()` check
+that could never fire, because `<< rdbuf()` never touches the stream's state, so an unreadable
+path and an empty file were indistinguishable on Linux; and — in this round's own headline
+evidence — `XrceConfig.DocumentConfiguresTransport` hanging forever, because
+`close(fd)` does not wake a thread already blocked in `accept()` on Linux, in a suite with no
+ctest timeout to bound it. Two hours of runner time, after every assertion in the test body had
+passed.
 
 So, as instructions rather than as a record:
 
-1. **Both later rounds treat Linux as unverified for seam behaviour.** Nothing in this document
-   is backed by a Linux run.
-2. **The first pull request of either round runs the lanes.** Whichever opens first, its result
-   is the first Linux evidence this seam has.
+1. **Both later rounds treat Linux as verified once, not continuously.** The evidence is PR #126
+   at `08d1b81`, green on both platforms. It is a single point measurement on a branch that has
+   not merged; nothing in this document is backed by a *standing* Linux signal, and re-running it
+   is a lane away.
+2. **Prefer the first lane run to any amount of local green.** On the evidence above, the first
+   automated run on a branch is worth more than every local run preceding it — six of the seven
+   defects were invisible to a Windows box, and the seventh was invisible because the check
+   meant to catch it was itself broken.
 3. **A Linux-only difference in seam behaviour is a question for the owner — a stop-and-ask
    against this spec, not a local fix.** A local fix by one round would silently change the
-   seam both rounds share, which is exactly the divergence §1 exists to prevent.
+   seam both rounds share, which is exactly the divergence §1 exists to prevent. This clause is
+   **unchanged by the amendment** and is the one that mattered: three of the seven defects were
+   precisely Linux-only differences, and each was fixed centrally rather than worked around.
 
 This is the fourth consecutive time the owner chose a narrow claim stated honestly over a wide
 one implied (2026-09-01 copy-accounting scope, 2026-09-01 conformance blind spot, 2026-09-03
