@@ -101,7 +101,7 @@ Kind: 🟩 test-guard · 🟪 spec · 🟦 seam impl · 🟧 provider migration 
 | PDA-DEC-5 | `InProcessProvider` registered as a built-in (lifted into `pubsub/` by PDA-DEC-1) | 🟦 | `Registry.InProcessResolvesAsABuiltIn` + gateway `--provider inprocess` unchanged | 🟢 |
 | PDA-DEC-6 | Fast DDS configured by document; retire `FastDDSProviderOptions` | 🟧 | `FastDdsConfig.ProfileDocumentConfiguresQos` + 4 external sites migrated | 🟢 |
 | PDA-DEC-7 | XRCE configured by document (`key=value`) | 🟧 | `XrceConfig.DocumentConfiguresTransport` | 🟢 |
-| PDA-DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | ⚪ |
+| PDA-DEC-8 | Multi-instance proof — two instances, two domains, through the registry | 🔬 | `Registry.TwoInstancesTwoDomainsStayIsolated` | 🟢 |
 | PDA-DEC-1H | **Harness proves it owns the Agent it talks to** — PDA-DEC-1's defect, found by PDA-DEC-7, added to the round by owner ruling 2026-09-02. Must land BEFORE PDA-DEC-9 signs the handoff. | 🔬 | `AForeignAgentDoesNotSatisfyTheHarness` + `AFailedOwnershipQueryDoesNotSatisfyTheHarness`, one copy in each XRCE harness | 🟢 |
 | PDA-DEC-9 | Seam spec, exception taxonomy, TD entry, and the parallelism handoff | 📓 | docs review; handoff checklist complete (§DoD) | ⚪ |
 
@@ -230,6 +230,12 @@ domains, in one process, through the registry, and they do not interfere.
 **Acceptance.** Spec §4 clause 3. Proves no global state crept into PDA-DEC-4. This is
 the primitive a future bridge composes and the property PDA-ABI's module/instance
 handles depend on — cheap now, expensive to retrofit.
+**As landed.** Four cases in `conformance_fastdds` (the forcing test, a same-domain
+positive control, a concurrent-traffic variant and a per-instance-bound pair), **no
+product code change** — the tree already had the property, so the deliverable is the
+guard plus **six recorded mutations** that each redden a named assertion (suite
+README). The published claim is scoped to **one application on one machine** with
+three exclusions stated rather than implied (owner ruling 2026-09-03).
 
 ### PDA-DEC-9 — Seam spec, taxonomy, and the parallelism handoff
 **Story.** As the maintainer starting two rounds at once, I have one document both

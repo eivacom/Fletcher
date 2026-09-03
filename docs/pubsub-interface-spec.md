@@ -360,6 +360,28 @@ Normative:
    instances of the same provider with different configs must be ordinary. That
    the ABI round later needs module/instance handles is *its* business; the seam
    must simply not prevent it.
+
+   **As landed** (PDA-DEC-8), and scoped exactly as the owner ruled it on
+   2026-09-03: two instances of one provider, created through one registry in
+   **one application on one machine** with **different domains**, exchange no rows
+   and share no topic declaration, **within a window in which a same-domain
+   control measured a real crossing** (`Registry.TwoInstancesTwoDomainsStayIsolated`
+   and its `…OneDomainDoInterfere` control, plus
+   `…StayIsolatedUnderConcurrentTraffic`, in `conformance_fastdds`). *Separately*,
+   two instances with **different payload bounds** each honour their own — a row
+   over one instance's bound is dropped there and delivered on the other
+   (`Registry.TwoInstancesKeepTheirOwnPayloadBounds`). That second pair claims **no
+   crossing in either direction**: the bound is part of the registered DDS type
+   name, so those two instances could not have discovered each other whatever the
+   registry did. **Three exclusions, stated rather than implied:** nothing about
+   isolation between machines; nothing about vendor process-wide state both
+   instances would set identically; and nothing about the shared memory two
+   *separate* processes on one machine use — Fast DDS serves same-process endpoints
+   over intra-process delivery (locked decision 12), so what is shown isolated is
+   the matching and routing layer, not those segments. The guard is falsifiable and
+   was falsified: six mutations to product code, each turning a named assertion
+   above red, recorded verbatim in the suite README. No product code changed for
+   this clause — the tree already had the property.
 4. **A built-in provider is registered, not hardcoded.** The gateway's
    `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5, PDA-DEC-6):
    the loopback is selectable under the name `inprocess`

@@ -359,8 +359,10 @@ than growing a second one, so this harness still has exactly one scoring path.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
 §4.1, §4.2. A **fourth** suite in this harness, in its own binary
-(`conformance_registry`), 19 entries, no provider SDK — and, for all but the
-five PDA-DEC-5 entries below, **no provider at all**: every OTHER provider in
+(`conformance_registry`), 19 entries, no provider SDK — plus five more `Registry.`
+entries that live in the two PROVIDER binaries and are listed in their own
+sub-sections below. In `conformance_registry` itself, for all but the five
+PDA-DEC-5 entries, there is **no provider at all**: every OTHER provider in
 it is a probe defined in the test file, so those constructs nothing that opens
 a socket, binds a port or joins a domain.
 
@@ -449,6 +451,110 @@ Five of the mutations **in the list above** left the suite fully green when thos
 entries were first written, and were closed only after review; the four failure-seat and vocabulary
 cases were all on the branch PDA-ABI fills, which is where coverage was thinnest
 precisely because the code there already worked.
+
+### `Registry.*` cases that live in a PROVIDER binary — and why
+
+Not every `Registry.` case is in `conformance_registry`, so the 19 entries above
+are not the whole `Registry` suite. `Registry.FastDdsResolvesAsABuiltIn` and
+`Registry.TwoInstancesTwoDomainsStayIsolated` and its three companions are in
+**`conformance_fastdds`** (4 more entries, and 1 in `conformance_xrce` for
+`Registry.XrceResolvesAsABuiltIn`), for one reason: `conformance_registry`'s link
+line names no transport SDK and **that narrowness is itself the guard**, so
+linking a real provider into it to register a name would destroy exactly what it
+proves. The provider binaries already link the SDK, already hold a
+`RESOURCE_LOCK` and already have a generous timeout, so these cases are free
+there and destructive here.
+
+### Two instances of one provider, in one process — spec §4's third clause
+
+Oracle: `docs/pubsub-interface-spec.md` §4, third normative item — "**No global
+state.** The registry takes and returns explicit objects; multiple instances of
+the same provider with different configs must be ordinary." Four cases in
+`conformance_fastdds`, over the provider most likely to break it: Fast DDS routes
+every participant through a process-wide `DomainParticipantFactory` singleton.
+
+**The claim, as published** (owner ruling 2026-09-03):
+
+> Two instances of one provider, created through one registry in **one
+> application on one machine** with **different domains**, exchange no rows and
+> share no topic declaration, **within a window in which a same-domain control
+> measured a real crossing.** *Separately*, two instances with **different
+> payload bounds** each honour their own: a row over one instance's bound is
+> dropped there and delivered on the other. That second pair claims **no crossing
+> in either direction** — the bound is part of the registered DDS type name, so
+> those two instances could not have discovered each other whatever the registry
+> did, and the control's measured window licenses only the equal-bound pair.
+>
+> **Three exclusions, stated rather than implied:** nothing about isolation
+> between machines; nothing about vendor process-wide state both instances would
+> set identically; and nothing about the shared memory two *separate* processes on
+> one machine use — Fast DDS serves same-process endpoints over intra-process
+> delivery (locked decision 12), so what is shown isolated is the matching and
+> routing layer, not those segments.
+
+| Entry | What it pins |
+|---|---|
+| `TwoInstancesTwoDomainsStayIsolated` (forcing) | one registry, one process, **overlapping** topic names, one payload bound, differing domains, a different schema shape each: every journal equals **exactly** the markers its own instance published, and every subscriber is handed **its own** shape. B publishes first, so anything that was going to cross had a head start |
+| `TwoInstancesOneDomainDoInterfere` | the standing positive **control**, and the guard ON the forcing test: the same helper, the same topic names, the same bound and the same `kSettle`, both instances on **one** domain — and the row **does** cross. Red whenever the arrangement loses its teeth (names drift, a bound changes on one side, a subscription is not live before the publish, the window collapses), which is what separates "isolated" from "never had a chance" |
+| `TwoInstancesStayIsolatedUnderConcurrentTraffic` | the same claim under contention: two threads, one per instance, 32 rows each onto the **identical** shared topic name, journals compared whole and in order. Both threads are **joined before either provider is destroyed** — a call in flight through a dying provider is a use-after-free, not a style point |
+| `TwoInstancesKeepTheirOwnPayloadBounds` | "different configs"' second axis: bounds 4096 and 65536 on their own two domains, each publishing to its **own** topic. Small, then a row **between** the bounds, then small: the high-bound journal is all three markers, the low-bound one exactly the two small ones |
+
+**Three things carry the arrangement**, and a reviewer should check them before
+believing anything above. (1) **One `kBound`, equal in both instances of every
+case that asserts or denies a crossing.** The registered DDS type name is
+`fletcher_<bound>` and DDS matches by type name, so unequal bounds are an
+*independent* reason two endpoints never meet, on any domain — unequal bounds
+there and the isolation case would pass identically with process-wide state
+present. `domain_id` is the only wire-visible difference left. (2) **The
+control**, which measures that a real crossing fits inside the very `kSettle` the
+isolation case pays for its absence claim. (3) **Journals compared whole**, never
+"contains", never a tolerance — "mostly isolated" is not a result these cases can
+report. The journals are appended on Fast DDS listener threads and read on the
+main thread, so each carries **its own mutex** and every comparison is made
+against a snapshot taken under it: unguarded, a foreign marker arriving during
+the read could be *missed*, which would be a green the arrangement did not earn.
+
+**The between-bounds row is dropped silently, and does not throw.** On the
+serialising publish flow — the one an empty document selects — the overflow is
+caught inside `serialize()`, which zeroes the payload length, so the sample never
+enters history, `write()` returns non-OK and `SampleWriter` only logs it (pinned
+by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
+`kPayloadTooLarge` exists only on the **loaned** flow, which both instances would
+need a `fletcher.loan_publish=true` document to select. So the bound case asserts
+**delivery** in both directions and no throw anywhere, and it publishes a third
+row *after* the oversized one which must arrive — nothing dead can pose as a
+working instance.
+
+**These four cases are GREEN on the tree that first shipped them.** The property
+already held, so a passing run proves nothing by itself; the guard is the
+mutation table below. This is disclosed rather than dressed up — five guards in
+this round were unfalsifiable and each was plausible on the page.
+
+**Mutation evidence.** Each row is a minimal edit to **product** code, applied
+alone and reverted. Per row, and the row is void without it: the four cases were
+observed **green on the unmutated build immediately before** that row's mutation
+(that is the environment check — no separate probe), the mutated run's failure
+text is recorded **verbatim** below and names *these* cases, and
+`C:\ProgramData\eprosima\fastdds_interprocess` is cleared after any run that
+**crashes** rather than fails, because a stale segment makes the next
+`create_participant` fail with a false `0xC0000005` — a red that proves nothing.
+Recorded from `conformance_fastdds --gtest_filter='Registry.TwoInstances*'` on
+Windows / MSVC 19.4 / Release. No sanitizer.
+
+| # | Mutation (product code) | Class of global state | Observed red — verbatim |
+|---|---|---|---|
+| M1 | `create_participant(config.domain_id, …)` → `create_participant(0, …)` (`fast_dds_pubsub_provider.cpp:227`) | the typed core's domain never reaching the wire | `TwoInstancesTwoDomainsStayIsolated` and `…UnderConcurrentTraffic` fail on the whole-journal comparison: `Which is: { "B:0", "A:0" }` versus `Which is: { "A:0" }`, *"instance A's subscription on the shared topic name did not see exactly A's own row"*. The control stays green, which is what says the red is interference and not an environment fault |
+| M2 | `Impl::participant` becomes a function-local `static` shared by all instances | one process-wide participant | `[PARTICIPANT Error] Topic with name : pdadec8/shared already exists` then *"C++ exception with description \"FastDDS: failed to create topic: pdadec8/shared\" thrown in the test body"* — a typed `kTransportFailure` at the **second instance's declaration**. The other three cases then fail `SEH exception with code 0xc0000005`, the predicted teardown crash: the first `~Impl` deletes the shared participant and the rest hold a dangling pointer. Segment directory cleared afterwards. **Note:** cycle 2 predicted this refusal out of `register_type`; the tree refuses one step later, at `create_topic` — same class (typed refusal at declaration time), different call |
+| M3 | `Impl::topics` becomes a process-wide table | a process-wide topic/writer/endpoint table keyed by name | *"FastDDS: topic already declared with a conflicting schema: pdadec8/shared"* (`kSchemaConflict`) on the two cases whose instances declare different shapes, and *"FastDDS: already subscribed to: pdadec8/shared"* (`kInvalidArgument`) on the two that share one — all four cases red, exactly as predicted, and no crash (the first `~Impl` clears the shared table) |
+| M4 | `ProviderRegistry::Create` memoises one provider per name (`pubsub/src/provider_registry.cpp`) | registry-level global state | the same two refusals with one instance serving both selectors: *"FastDDS: topic already declared with a conflicting schema: pdadec8/shared"* on the forcing case, *"FastDDS: already subscribed to: pdadec8/shared"* on the other three |
+| M5 | `internal::JoinSegmentsInto` appends instead of assigning (`pubsub/.../internal/segments.hpp` — used by **every** provider, so most pub/sub suites redden at once, which is why the text below has to name *these* cases) | thread-local publish scratch shared across instances | filtered to these four cases, the forcing case fails at **A's own second publish**: *"FastDDS: unknown topic: pdadec8/sharedpdadec8/only-a"* (`kTopicNotDeclared`); the concurrent case reports it as data from the joined thread, *"instance A's publisher thread threw: FastDDS: unknown topic: pdadec8/sharedpdadec8/shared"*. Run **unfiltered** it fails one publish earlier, on leftover scratch from the preceding case — *"FastDDS: unknown topic: registry/fastdds-probepdadec8/shared"*, 23 of 29 cases red — because the scratch is `static thread_local` and outlives a case |
+| M6 | the payload bound is resolved once into a `static` (`fast_dds_pubsub_provider.cpp:204`) | a process-wide config cache | only `TwoInstancesKeepTheirOwnPayloadBounds` reddens, on its whole-journal comparison: `Which is: { "A:0", "A:1", "A:2" }` versus `Which is: { "A:0", "A:2" }`, *"the 4096-byte-bound instance's journal is not exactly the two rows inside its bound"* — the low-bound instance inherited the earlier case's 65536 and accepted a row over its own bound. It reddens in either construction order: whichever instance is built second loses or gains the middle marker |
+
+**What this table is worth**, said plainly: six classes of global state, each one
+visible. It is manual evidence, and it is worth exactly as much as the recorded
+text matching the mechanism the design predicted — which is why the two places
+the tree behaved differently (M2's refusal site, M5's failure point) are recorded
+as observed rather than as predicted.
 
 ## Building and running
 

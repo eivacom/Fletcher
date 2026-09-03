@@ -302,8 +302,8 @@ if(FLETCHER_CONFORMANCE_XRCE)
     # ~24 Agent start/stop cycles for the same coverage.
     add_test(NAME conformance_xrce COMMAND conformance_xrce)
     # 24 clauses plus one `Registry` case (PDA-DEC-7 added the registry case, not a clause)
-    # plus one `ConformanceXrce` case (PDA-DEC-1H's Agent-ownership guard, also not a clause) =
-    # 26 gtest cases, ~26 peer spawns and one Agent handshake per session, in one process.
+    # plus two `ConformanceXrce` cases (PDA-DEC-1H's Agent-ownership guards, also not clauses) =
+    # 27 gtest cases, ~27 peer spawns and one Agent handshake per session, in one process.
     # PDA-DEC-1H's case stands up two more Agents of its own on port 2119, inside its own
     # scope, so it needs this entry's RESOURCE_LOCK as much as any clause does.
     set_tests_properties(conformance_xrce PROPERTIES

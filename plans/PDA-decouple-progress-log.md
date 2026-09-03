@@ -712,3 +712,76 @@ the `+1263/−246` first reported was a per-commit churn sum that double-counts 
 the **fourth** line-count misreport this round. Public surface **0**. **Close gate:** PASS on
 re-run. **Cycle meter:** design 0 (compressed) · fix 2 · implementer launches 3/5 · owner
 touches 1 (the ruling that created the item).
+
+## PDA-DEC-8 — Multi-instance proof: two instances, two domains, one registry (2026-09-03) 🟢
+
+**Spec §4's third normative item, made executable.** Four cases in
+`conformance_fastdds` beside `Registry.FastDdsResolvesAsABuiltIn` — the forcing test
+(`Registry.TwoInstancesTwoDomainsStayIsolated`), its same-domain **positive control**,
+a concurrent-traffic variant, and a per-instance-payload-bound pair. **No product code
+changed**: the tree already had the property, which is exactly why the deliverable is
+not the green.
+
+**The green proves nothing by itself, and this is the item that says so out loud.**
+Five guards in this round were unfalsifiable and each was plausible on the page. So the
+gate here is six mutations to *product* code, each applied alone, reverted, and its
+failure text recorded verbatim in the suite README — with the four cases observed green
+on the unmutated build **immediately before** each row (a row whose green precondition
+was not observed is void), and `C:\ProgramData\eprosima\fastdds_interprocess` cleared
+after the one row that crashed, since a stale segment makes the next row's
+`create_participant` fail with a false `0xC0000005` that proves nothing.
+
+**All six rows reddened a named assertion.** Two behaved differently from the design's
+prediction, and both are recorded as **observed** rather than as predicted:
+
+1. **M2** (a process-wide participant) was predicted to be refused at `register_type`;
+   Fast DDS 3.4 accepts the second registration and refuses one step later, at
+   `create_topic` — *"Topic with name : pdadec8/shared already exists"* → a typed
+   `kTransportFailure`. Same class (typed refusal at declaration time), different call.
+   It is also the row that crashed: the first `~Impl` deletes the shared participant and
+   the remaining three cases die `0xc0000005`, precisely the teardown the design named.
+2. **M5** (an appending `JoinSegmentsInto`) fails at A's **second** publish when the four
+   cases are run filtered, and at its **first** when the whole binary runs, on scratch
+   left over from the preceding case — because the scratch is `static thread_local` and
+   outlives a case. Review debt C2-4 predicted exactly this; both runs are recorded.
+
+**What made the arrangement worth building.** The cycle-1 design gave the two instances
+different payload bounds — and the bound is part of the registered DDS type name, so
+they could never have discovered each other **on any domain**. That version would have
+passed identically with process-wide state present: a sixth unfalsifiable guard, caught
+in review. The landed arrangement holds **one `kBound`** everywhere a crossing is
+asserted or denied, so `domain_id` is the only wire-visible difference, and moves the
+bound claim to its own pair that claims no crossing either way. The standing
+**positive control** measures that a real crossing fits inside the very `kSettle` the
+isolation case pays for its absence claim (measured: ~260 ms inside a 1500 ms window).
+
+**The journals are mutexed, and that was a proof requirement, not hygiene** (debt C2-3).
+They are appended on Fast DDS listener threads and read on the main thread; unguarded, a
+foreign marker arriving during the read could be *missed* — a green the arrangement did
+not earn, which is this item's own defect class.
+
+**The claim was narrowed on the owner's ruling** (2026-09-03): **one application on one
+machine**, with **three exclusions stated rather than implied** — nothing about isolation
+between machines, nothing about vendor process-wide state both instances would set
+identically, nothing about the shared memory two *separate* processes on one machine use.
+Debt C2-1 rode with it: the design's §8 published "exchange no rows" for the
+different-bounds pair too, which its own premise P1b makes **unearned**. Split in the
+design, the README and the spec: the domain pair claims no crossing inside the measured
+window; the bound pair claims each instance honours its own bound.
+
+**Verification.** `pubsub-conformance` **82 → 86 ctest entries**, 86/86 passed;
+`conformance_fastdds` **25 → 29 gtest cases**, `conformance_xrce` unchanged at **1 entry
+/ 27 cases** and confirmed to have run (`-DFLETCHER_CONFORMANCE_XRCE=ON` stated
+explicitly, because `cmake --preset` does not reset a cached OFF and the run would still
+report all passed). Zero stray Agents before and after; shm directory empty before and
+after. Counts derived from `ctest -N` and `--gtest_list_tests`, not remembered.
+
+**Numbers.** Declared **+570 / −0** · landed **+705 / −25** all files, **+605 / −4**
+excluding `plans/`, of which **473 is the one test file**. Public surface **0**, product
+code **0**. Seven domains (154–160) newly owned by this file. The implementer's own draft
+of this line said +633/−19 — the **sixth** miscounted figure this round; the numbers above
+are from `git diff --cached --numstat`, not from any report. Design landed at **305 lines
+vs a 300 cap** (+5): debt C2-2 required a new premise while forbidding file growth, and
+the PM accepted the overrun rather than cut approved content for five lines.
+**Cycle meter:** design 2/2 · fix 0 · implementer launches 1/5 · owner touches 1 (the
+scope ruling).

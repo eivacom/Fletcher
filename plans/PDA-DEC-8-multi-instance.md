@@ -90,8 +90,8 @@ row goes *after* the oversized one and must arrive, so nothing dead can pose as 
 ### 3. What makes the negative assertion honest — the standing positive control
 
 `Registry.TwoInstancesOneDomainDoInterfere` runs the **same helper**, topic name and
-`kBound`, differing only in that both instances sit on domain 156, and asserts the
-row **does** cross. Whenever the arrangement loses its teeth — names drift, a bound
+`kBound`, differing in that both instances sit on domain 156 — and in using **one**
+shape rather than two (forbidden case 4) — and asserts the row **does** cross. Whenever the arrangement loses its teeth — names drift, a bound
 changes on one side, a subscription is not live before the publish, the window
 collapses — the control reddens while the forcing test stays green: that is what
 distinguishes "isolated" from "never had a chance". One `constexpr kSettle` serves
@@ -158,23 +158,26 @@ which is why §6, not this section, owns the segment-clearing step.
 Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
 "**As landed** (PDA-DEC-8)" paragraph under spec §4 clause 3 (clauses 1/2/4's style):
 
-> Two instances of one provider, created through one registry in one process with
-> different domains — and, separately, with different payload bounds — exchange no
-> rows, share no topic declaration and share no configuration, **within a window in
-> which a same-domain control measured a real crossing.** Three exclusions: nothing
-> about isolation between hosts; nothing about process-wide state inside the
-> transport SDK that both instances would set identically; and, because Fast DDS
-> serves same-process endpoints over intra-process delivery (locked decision 12),
-> what is shown isolated is the matching and routing layer, not the shared-memory
-> segments two instances in *separate* processes on one host do share.
+> Two instances of one provider, created through one registry in **one application
+> on one machine** with **different domains**, exchange no rows and share no topic
+> declaration, **within a window in which a same-domain control measured a real
+> crossing.** *Separately*, two instances with **different payload bounds** each
+> honour their own: a row over one bound is dropped there and delivered on the other.
+> That pair claims **no crossing either way** — the bound is in the registered type
+> name (P1b), so it could not cross regardless. **Three exclusions, stated rather
+> than implied** (ruling 2026-09-03): nothing about isolation between machines,
+> nothing about vendor process-wide state both instances would set identically, and
+> nothing about the shared memory two *separate* processes on one machine use — Fast
+> DDS serves same-process endpoints over intra-process delivery (locked decision 12),
+> so what is shown isolated is the matching and routing layer.
 
 ## Corner cases forbidden
 
 **Rung 1 — unrepresentable:**
 
 1. **A drifting wait budget, or a second reason the streams cannot meet** — one
-   `kSettle`, one `kBound`, one helper; the isolation case and its control differ
-   only in `domain_id`, so nothing but the domain can be keeping them apart.
+   `kSettle`, one `kBound`, one helper; the isolation case and its control differ in
+   `domain_id` and in nothing that *can* keep two endpoints apart (P1b).
 2. **An arrangement with no teeth** — the control shares the helper *and* the bound,
    so "the streams could never have crossed" reddens the control in the same
    binary; the forcing test cannot pass for absence of opportunity alone.
@@ -226,7 +229,11 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
   discover each other"; locked decision 13) — why one `kBound` serves every case
   that asserts or denies a crossing, and why §2a claims none. **STOP-AND-ASK if the
   bound ever leaves the type name:** §2a's pair becomes mutually discoverable and
-  must be re-argued; do not equalise its bounds to keep it green.
+  must be re-argued; do not equalise its bounds to keep it green. The **schema shape
+  is not** part of that key and cannot suppress a delivery (a reader runs no
+  row-against-schema validation; a schema only releases `OrderedDelivery`'s
+  pre-schema backlog), so shapes are an outcome, never a separator — which is what
+  makes the control's single shape free.
 - **P2 — two participants on *different* domains in one process are supported on
   both CI platforms.** Evidence: `test_profile_document.cpp:551-552` stands up two
   in one process (same domain). **STOP-AND-ASK if false:** do **not** fall back to
@@ -273,12 +280,10 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
   entry per discovered case). `conformance_xrce` unchanged at **1 / 27**, provider
   suites unchanged (fastdds 85/84, xrce 16/15). No CMake change: the 180 s
   per-entry timeout is an order of magnitude above these cases' cost.
-- **Declared net lines: +570 / −0**, superseding revision 0's `+460` and the review's
-  `~+540`: ~440 in `fastdds_main.cpp` (helper ~80, forcing ~95, control ~55,
-  concurrent ~75, bound case ~65, constants ~35, gate comment ~35), ~70 README
-  (claim, exclusions, evidence table, procedure), ~20 spec, ~25 plan and log, ~15
-  margin. **New public surface: 0** — a proof of absent global state that needed a
-  new type would be proving the opposite.
+- **Declared net lines: +570 / −0** (superseding revision 0's `+460` and the review's
+  `~+540`). **Landed: +705 / −25** — 473 `fastdds_main.cpp`, 108/−2 README, 22 spec,
+  2/−2 the CMakeLists count fix, 100/−21 these plans and the log. **New public surface: 0** — a
+  proof of absent global state that needed a new type would be proving the opposite.
 
 ## Files-to-touch
 
