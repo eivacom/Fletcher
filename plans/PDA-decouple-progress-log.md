@@ -813,3 +813,21 @@ confirmed to postdate HEAD. Two accepted skips (rustc, tsc) and one gated oracle
 **Cycle meter:** design 2/2 · fix 1 · implementer launches 2/5 · owner touches 1.
 **Close gate:** PASS on re-run.
 
+**PROCESS BREACH, recorded because it is the one this gate exists to prevent (PM,
+2026-09-03).** `b7b33f3` — the *implementation* commit — flipped this item's tracker cell
+to 🟢. That was the implementer's edit (`plans/PDA-decouple-interface.md +7/−1` in its own
+file list) and **I committed it without reading that hunk**. Consequence: the tracker
+asserted 🟢 from the implementation commit onward — through both step-4 reviews, a fix
+cycle that closed a dead guard and a domain collision, and a **first close-gate run that
+FAILED** on the missing brief delta. For that whole window the tracker was lying, and
+`d611419..a07b5da` was pushed with it lying.
+
+The end state is sound: the gate passed on re-run and the item is genuinely green. But the
+ordering was inverted, and the runbook is explicit that the flip is the PM's step *after*
+the gate passes, precisely because a stage once closed with its gate never run took ~10
+owner touches to unwind. **Two things follow, both mine:** an agent must not edit
+`plan_path`'s status column at all, and the PM must read the tracker hunk of any diff
+before committing it. Neither is a new rule — the second is just doing the job.
+For the retrospective, with the number attached: **1 item, 4 commits, ~2 hours** spent
+claiming a green the evidence did not yet support.
+
