@@ -753,7 +753,13 @@ in review. The landed arrangement holds **one `kBound`** everywhere a crossing i
 asserted or denied, so `domain_id` is the only wire-visible difference, and moves the
 bound claim to its own pair that claims no crossing either way. The standing
 **positive control** measures that a real crossing fits inside the very `kSettle` the
-isolation case pays for its absence claim (measured: ~260 ms inside a 1500 ms window).
+isolation case pays for its absence claim. **Corrected in fix cycle 1:** the "~260 ms"
+(and compliance's 279 ms) is the **case's wall time**, not the crossing — the crossing is
+**0 ms**, stable over five runs, because both participants are matched before either
+publish and Fast DDS serves same-process endpoints inline. Two reviewers and the PM all
+quoted a real number for the wrong quantity, which is a subtler failure than a
+miscount: the figure is now emitted by the test itself via `RecordProperty("crossing_ms")`
+so nobody has to infer it again.
 
 **The journals are mutexed, and that was a proof requirement, not hygiene** (debt C2-3).
 They are appended on Fast DDS listener threads and read on the main thread; unguarded, a

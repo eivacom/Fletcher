@@ -49,7 +49,7 @@ Contention is arranged, not hoped for:
 
 - **Overlapping topic names at an equal bound.** Both instances declare and
   subscribe `pdadec8/shared`, so the endpoints are genuinely matchable and only the
-  domain separates them (A `domain_id=154`, B `155`).
+  domain separates them (A `domain_id=161`, B `162`).
 - **Different shapes.** A declares `SchemaId::kA`, B `kB`, on that same name; each
   subscriber must receive **its own** shape.
 - **One thread, alternating.** shared-A, private-A, shared-B, private-B, so
@@ -69,7 +69,7 @@ cross had a head start.
 
 ### 2a. The per-instance bound, on a pair that claims no crossing
 
-`Registry.TwoInstancesKeepTheirOwnPayloadBounds`: domains **159/160**, bounds
+`Registry.TwoInstancesKeepTheirOwnPayloadBounds`: domains **166/167**, bounds
 **4096** and **65536**, each instance publishing on its **own private** topic to its
 own subscription, so unequal bounds confound nothing and clause 3's "different
 configs" keeps its second axis. Each publishes small, a row sized between the two
@@ -90,7 +90,7 @@ row goes *after* the oversized one and must arrive, so nothing dead can pose as 
 ### 3. What makes the negative assertion honest — the standing positive control
 
 `Registry.TwoInstancesOneDomainDoInterfere` runs the **same helper**, topic name and
-`kBound`, differing in that both instances sit on domain 156 — and in using **one**
+`kBound`, differing in that both instances sit on domain 163 — and in using **one**
 shape rather than two (forbidden case 4) — and asserts the row **does** cross. Whenever the arrangement loses its teeth — names drift, a bound
 changes on one side, a subscription is not live before the publish, the window
 collapses — the control reddens while the forcing test stays green: that is what
@@ -107,11 +107,13 @@ bounds), **overlapping** topic names, and a claim about *delivered rows*.
 
 `integration-tests/pubsub-arrow-fastdds` fails 1–2 of 4 under `jobs: 28` because
 four tests share domain 137 **and** topic names. This design shares topic names
-deliberately, so it owns its domains outright: **154, 155** (isolation), **156**
-(control, both instances), **157, 158** (concurrent), **159, 160** (§2a) — none used
-in the tree (census 0, 7, 43, 91–99, 137, 145, 151–153; no `domain_id` names 159 or
-160). `RESOURCE_LOCK conformance_fastdds` serialises this binary's cases, and a
-case-private pair keeps a lingering reader out of the next case.
+deliberately, so it owns its domains: **161, 162** (isolation), **163** (control,
+both instances), **164, 165** (concurrent), **166, 167** (§2a) — unused tree-wide on
+a census across **every** harness, TypeScript included (command beside the
+constants; revision 1's **154–160** came off a C++-only census and was wrong — 154
+is `end-to-end.test.ts:350`). `RESOURCE_LOCK conformance_fastdds` serialises this
+binary's cases, and a case-private pair keeps a lingering reader out of the next
+case.
 
 ### 6. Mutations — the gate, and the core of this design
 
@@ -126,7 +128,7 @@ only that a *named* assertion redden.
 | M2 | make `Impl::participant` a function-local `static` shared by all instances | one process-wide participant | isolation: `register_type` / `create_topic` refusal → `kTransportFailure`; and/or a teardown crash (see the procedure) |
 | M3 | make `Impl::topics` a file-scope `static` map | a process-wide topic/writer table keyed by name | isolation: B's `CreateTopic` meets A's `schema_writer` with different IPC bytes → `kSchemaConflict`, or B's `Subscribe` → "already subscribed to"; and/or a teardown crash |
 | M4 | `ProviderRegistry::Create` memoises one provider per name | registry-level global state | isolation: one instance, so `kSchemaConflict` on the second declaration and "already subscribed to" on the second subscribe |
-| M5 | `internal::JoinSegmentsInto` appends instead of assigning (`pubsub/include/fletcher/pubsub/internal/segments.hpp` — used by **every** provider, so most pub/sub suites redden at once) | thread-local scratch shared across instances | isolation, at **A's own second publish** (`pdadec8/shared` + `pdadec8/only-a` → `kTopicNotDeclared`), not at B's lookup. Already caught by `test_profile_document.cpp:556-557`; the row costs nothing and stays |
+| M5 | `internal::JoinSegmentsInto` appends instead of assigning (`pubsub/include/fletcher/pubsub/internal/segments.hpp` — used by **every** provider, so most pub/sub suites redden at once) | thread-local scratch shared across instances | isolation, at **A's first publish** — the case's second, since B publishes first (`pdadec8/shared` + `pdadec8/only-a` → `kTopicNotDeclared`), not at B's lookup. Unfiltered it fails a publish earlier still, at B's shared publish, on scratch left by the preceding case. Already caught by `test_profile_document.cpp:556-557`; the row costs nothing and stays |
 | M6 | resolve the payload bound once into a file-scope `static` | a process-wide config cache | §2a: the high-bound instance inherits 4096, so its middle-row marker never arrives and its whole-journal comparison fails |
 
 **Procedure, per row — the gate is only as good as this.** The four cases are
@@ -163,8 +165,8 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
 > declaration, **within a window in which a same-domain control measured a real
 > crossing.** *Separately*, two instances with **different payload bounds** each
 > honour their own: a row over one bound is dropped there and delivered on the other.
-> That pair claims **no crossing either way** — the bound is in the registered type
-> name (P1b), so it could not cross regardless. **Three exclusions, stated rather
+> That pair **makes no crossing claim** either way — the bound is in the registered
+> type name (P1b), so it could not cross regardless. **Three exclusions, stated rather
 > than implied** (ruling 2026-09-03): nothing about isolation between machines,
 > nothing about vendor process-wide state both instances would set identically, and
 > nothing about the shared memory two *separate* processes on one machine use — Fast
@@ -260,15 +262,15 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
 | Test | Turned green by | Red for the right reason |
 |---|---|---|
 | **`Registry.TwoInstancesTwoDomainsStayIsolated`** (forcing) | §2's arrangement: one registry, one `kBound`, overlapping topic name, differing domains, whole-journal comparison, per-instance shape | **Not the pre-change tree** — it does not exist there, and the property already holds. Red under **M1–M5 individually** (M6 reddens §2a), reverted, each under §6's procedure with the failure recorded. That table is this item's real gate. |
-| `Registry.TwoInstancesOneDomainDoInterfere` | the same helper and the same bound, both instances on domain 156, one shape | Red whenever the arrangement loses its teeth: names drift, a bound is changed on one side, subscription not live before publish, `kSettle` collapses. This is the guard **on** the forcing test. |
+| `Registry.TwoInstancesOneDomainDoInterfere` | the same helper and the same bound, both instances on domain 163, one shape | Red whenever the arrangement loses its teeth: names drift, a bound is changed on one side, subscription not live before publish, `kSettle` collapses. This is the guard **on** the forcing test. |
 | `Registry.TwoInstancesStayIsolatedUnderConcurrentTraffic` | two threads, 32 rows each, identical shared topic name and bound, journals compared whole | M3 and M5; plus any unguarded shared map, by mis-delivery or crash. |
 | `Registry.TwoInstancesKeepTheirOwnPayloadBounds` | §2a: unequal bounds, private topics, whole-journal comparison on both sides | M6 — the high-bound instance inherits the low bound and its middle row never arrives. Also red if the bound is ignored altogether. |
 
 ## Risks / Unknowns
 
-- **The forcing test is green before the change**, disclosed rather than dressed up:
-  §6's gate is the falsification, and a proof item over a property the tree already
-  has has no other honest red.
+- **The forcing test is green before the change**, disclosed rather than dressed
+  up: §6's gate is the falsification; a proof over a property the tree has has no
+  other honest red.
 - **The isolation claim is bounded, not absolute** — three exclusions in §8,
   published not implied. Concurrency detection power is mis-delivery and crash only.
 - **The §6 gate is manual evidence**, worth only as much as the recorded text
@@ -278,8 +280,9 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
 - **Suite counts:** `pubsub-conformance` **82 → 86 ctest entries**;
   `conformance_fastdds` **+4 gtest cases** (the review verified the 82 base and one
   entry per discovered case). `conformance_xrce` unchanged at **1 / 27**, provider
-  suites unchanged (fastdds 85/84, xrce 16/15). No CMake change: the 180 s
-  per-entry timeout is an order of magnitude above these cases' cost.
+  suites unchanged (fastdds **85/84** = 84 gtest cases + the `add_test` nodiscard
+  probe, re-derived in fix cycle 1 — both reviews' "reported 85/85" was itself the
+  wrong number; xrce 16/15). The `CMakeLists.txt` edit is a comment; 180 s stands.
 - **Declared net lines: +570 / −0** (superseding revision 0's `+460` and the review's
   `~+540`). **Landed: +705 / −25** — 473 `fastdds_main.cpp`, 108/−2 README, 22 spec,
   2/−2 the CMakeLists count fix, 100/−21 these plans and the log. **New public surface: 0** — a
@@ -288,10 +291,11 @@ Written into `integration-tests/pubsub-conformance/README.md` and mirrored as an
 ## Files-to-touch
 
 - `integration-tests/pubsub-conformance/subjects/fastdds_main.cpp` — the four cases,
-  the helper, seven domain constants, `kSettle`, `kBound`.
+  the helper, seven domain constants (161–167), `kSettle`, `kBound`.
 - `integration-tests/pubsub-conformance/README.md` — the scope statement (§8), the
   silent-drop disclosure (§2a), and the evidence table with §6's procedure, under
   `## The Registry suite`.
+- `integration-tests/pubsub-conformance/CMakeLists.txt` — comment only (C2-6).
 - `docs/pubsub-interface-spec.md` — an "**As landed** (PDA-DEC-8)" paragraph on §4
   clause 3. `plans/PDA-decouple-progress-log.md`,
   `plans/PDA-decouple-interface.md` — the item's entry and tracker row.

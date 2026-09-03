@@ -370,17 +370,19 @@ Normative:
    `…StayIsolatedUnderConcurrentTraffic`, in `conformance_fastdds`). *Separately*,
    two instances with **different payload bounds** each honour their own — a row
    over one instance's bound is dropped there and delivered on the other
-   (`Registry.TwoInstancesKeepTheirOwnPayloadBounds`). That second pair claims **no
-   crossing in either direction**: the bound is part of the registered DDS type
-   name, so those two instances could not have discovered each other whatever the
-   registry did. **Three exclusions, stated rather than implied:** nothing about
+   (`Registry.TwoInstancesKeepTheirOwnPayloadBounds`). That second pair **makes no
+   crossing claim** in either direction — the bound is part of the registered DDS
+   type name, so it could not cross regardless, whatever the registry did.
+   **Three exclusions, stated rather than implied:** nothing about
    isolation between machines; nothing about vendor process-wide state both
    instances would set identically; and nothing about the shared memory two
    *separate* processes on one machine use — Fast DDS serves same-process endpoints
    over intra-process delivery (locked decision 12), so what is shown isolated is
    the matching and routing layer, not those segments. The guard is falsifiable and
-   was falsified: six mutations to product code, each turning a named assertion
-   above red, recorded verbatim in the suite README. No product code changed for
+   was falsified: six mutations to product code, each turning a named **case** above
+   red — by a named assertion, or by the typed refusal recorded beside it, three of
+   which escape the test helper's constructor before an assertion is reached — all
+   recorded verbatim in the suite README. No product code changed for
    this clause — the tree already had the property.
 4. **A built-in provider is registered, not hardcoded.** The gateway's
    `--provider` becomes a registry lookup. **As landed** (PDA-DEC-5, PDA-DEC-6):

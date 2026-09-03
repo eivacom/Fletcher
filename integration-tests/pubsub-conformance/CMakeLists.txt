@@ -291,8 +291,10 @@ gtest_discover_tests(conformance_seam_vocabulary DISCOVERY_MODE PRE_TEST
 gtest_discover_tests(conformance_registry DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
-# and conformance_fastdds carries two subjects (domains 151 and 152). It also
-# spawns a peer child, so two of its clauses must never run at once.
+# and conformance_fastdds joins nine domains — two subjects (151 and 152),
+# Registry.FastDdsResolvesAsABuiltIn (153) and the Registry.TwoInstances* cases
+# (161-167, two instances each). It also spawns a peer child, so two of its
+# clauses must never run at once.
 gtest_discover_tests(conformance_fastdds DISCOVERY_MODE PRE_TEST
     PROPERTIES RESOURCE_LOCK conformance_fastdds TIMEOUT 180)
 

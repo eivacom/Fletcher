@@ -7,7 +7,12 @@
 // subject cannot see the transport at all (spec §7.2).
 //
 // Fixed, distinct domains so the harness cannot collide with
-// integration-tests/fastdds-xrce-interop (domain 145) or with itself.
+// integration-tests/fastdds-xrce-interop (domain 145) or with itself. Domains
+// 151 and 152 are shared with the TypeScript gateway harnesses
+// (integration-tests/gateway-end-to-end/test/end-to-end.test.ts:54 and
+// protoc-gen.test.ts:55, both overridable by DDS_DOMAIN_ID) — pre-existing, and
+// left as it is; 153 and the Registry.TwoInstances* block at 161-167 are this
+// binary's alone.
 
 #include <gtest/gtest.h>
 
@@ -130,8 +135,10 @@ TEST(Registry, FastDdsResolvesAsABuiltIn) {
 // disclosed rather than dressed up.** The property already holds, so a passing
 // run proves nothing on its own; what makes them a guard is the six-row mutation
 // table in README.md, each row a minimal edit to product code that turns a NAMED
-// assertion here red, observed and recorded. A proof over a property the tree
-// already has has no other honest red.
+// CASE here red — by a named assertion, or by the typed refusal that row's README
+// entry records, three of which kill the case in `Instance`'s constructor before
+// any assertion is reached — observed and recorded. A proof over a property the
+// tree already has has no other honest red.
 //
 // Three things carry the arrangement, and none of them may drift:
 //
@@ -143,8 +150,8 @@ TEST(Registry, FastDdsResolvesAsABuiltIn) {
 //     case would pass identically with process-wide state present, because the
 //     streams could never have met in the first place. The per-instance-bound
 //     claim therefore lives in its own pair, on its own two domains
-//     (`TwoInstancesKeepTheirOwnPayloadBounds`), which claims no crossing in
-//     either direction. `domain_id` is the only wire-visible difference left:
+//     (`TwoInstancesKeepTheirOwnPayloadBounds`), which MAKES NO CROSSING CLAIM
+//     in either direction. `domain_id` is the only wire-visible difference left:
 //     the schema companion type name is the bound-independent constant
 //     `SchemaBytes`, topic names are identical by construction, no partitions
 //     are set anywhere, and both instances take an EMPTY document, so
@@ -173,15 +180,32 @@ namespace {
 // Seven domains this file owns outright. It shares topic names deliberately, so
 // unlike integration-tests/pubsub-arrow-fastdds — four tests on domain 137 with
 // the same topic names, which cross-talk under a parallel preset — the domains
-// are what keeps the cases apart, and no other test in the tree names any of
-// these.
-constexpr uint32_t kIsolationDomainA = 154;
-constexpr uint32_t kIsolationDomainB = 155;
-constexpr uint32_t kControlDomain = 156;  // BOTH instances, on purpose
-constexpr uint32_t kConcurrentDomainA = 157;
-constexpr uint32_t kConcurrentDomainB = 158;
-constexpr uint32_t kLowBoundDomain = 159;
-constexpr uint32_t kHighBoundDomain = 160;
+// are what keeps the cases apart.
+//
+// The range is 161-167, and it was checked across EVERY harness in the tree
+// rather than the C++ ones only. The census command, run from the repo root:
+//
+//   grep -rniE 'domain' --include='*.ts' --include='*.js' --include='*.json'
+//        --include='*.cpp' --include='*.hpp' --include='*.py' --include='*.txt'
+//        --include='*.cmake' --include='*.sh' --include='*.ps1' --include='*.xml'
+//        --include='*.md' . | grep -v /build | grep -v node_modules
+//
+// filtered to the numbers each hit names, which yields 0, 3, 4, 5, 7, 16, 32,
+// 43, 91-99, 137, 142, 145, 151-154 — and nothing at all in 161-167.
+//
+// This block's first draft took 154-160 on a census of the C++ suites alone, and
+// 154 is in fact taken: integration-tests/gateway-end-to-end/test/
+// end-to-end.test.ts:350 sets `domainId: '154'`, in a TypeScript harness a
+// C++-only grep cannot see. That harness runs under `npm test` rather than as a
+// ctest entry, so it never serialises against this binary through
+// RESOURCE_LOCK — which is why the range was moved rather than argued about.
+constexpr uint32_t kIsolationDomainA = 161;
+constexpr uint32_t kIsolationDomainB = 162;
+constexpr uint32_t kControlDomain = 163;  // BOTH instances, on purpose
+constexpr uint32_t kConcurrentDomainA = 164;
+constexpr uint32_t kConcurrentDomainB = 165;
+constexpr uint32_t kLowBoundDomain = 166;
+constexpr uint32_t kHighBoundDomain = 167;
 
 // ONE bound, for every case that asserts or denies a crossing. Making these two
 // instances differ here means deleting this constant — see (1) above.
@@ -324,9 +348,16 @@ class Instance {
     PubSubStatus AwaitSubscriptionsLive() const {
         SharedSchema schema;
         const PubSubStatus shared = shared_result_.schema.Wait(kClauseBudget, &schema);
-        if (shared != PubSubStatus::kOk || schema == nullptr) return shared;
+        if (shared != PubSubStatus::kOk) return shared;
+        // A resolution that reports kOk and hands back no schema is what spec §7
+        // forbids, so it is mapped onto a status of its own rather than onto the
+        // one the wait returned. Written as `shared != kOk || schema == nullptr`
+        // this guard returned `shared` — i.e. kOk — on exactly the state it
+        // exists to catch, and read as protection while being inert.
+        if (schema == nullptr) return PubSubStatus::kInternal;
         const PubSubStatus priv = private_result_.schema.Wait(kClauseBudget, &schema);
-        if (priv != PubSubStatus::kOk || schema == nullptr) return priv;
+        if (priv != PubSubStatus::kOk) return priv;
+        if (schema == nullptr) return PubSubStatus::kInternal;
         return PubSubStatus::kOk;
     }
 
@@ -415,21 +446,32 @@ TEST(Registry, TwoInstancesTwoDomainsStayIsolated) {
     // control observed a real crossing.
     std::this_thread::sleep_for(kSettle);
 
-    EXPECT_EQ(Markers(a.SharedJournal().Snapshot()), (std::vector<std::string>{a.Mark(0)}))
+    // ONE observation per journal, and every claim about that journal derived
+    // from it. Two snapshots of one journal are two different moments, so a case
+    // taking several could report "the markers are exactly A's own rows" and
+    // "the shapes are wrong" about two different histories, and the reader of
+    // that red would have no way to tell.
+    const std::vector<Journal::Entry> a_shared = a.SharedJournal().Snapshot();
+    const std::vector<Journal::Entry> b_shared = b.SharedJournal().Snapshot();
+    const std::vector<Journal::Entry> a_private = a.PrivateJournal().Snapshot();
+    const std::vector<Journal::Entry> b_private = b.PrivateJournal().Snapshot();
+
+    EXPECT_EQ(Markers(a_shared), (std::vector<std::string>{a.Mark(0)}))
         << "instance A's subscription on the shared topic name did not see exactly A's own row";
-    EXPECT_EQ(Markers(b.SharedJournal().Snapshot()), (std::vector<std::string>{b.Mark(0)}))
+    EXPECT_EQ(Markers(b_shared), (std::vector<std::string>{b.Mark(0)}))
         << "instance B's subscription on the shared topic name did not see exactly B's own row";
-    EXPECT_EQ(Markers(a.PrivateJournal().Snapshot()), (std::vector<std::string>{a.Mark(1)}))
+    EXPECT_EQ(Markers(a_private), (std::vector<std::string>{a.Mark(1)}))
         << "instance A's private topic did not see exactly A's own row";
-    EXPECT_EQ(Markers(b.PrivateJournal().Snapshot()), (std::vector<std::string>{b.Mark(1)}))
+    EXPECT_EQ(Markers(b_private), (std::vector<std::string>{b.Mark(1)}))
         << "instance B's private topic did not see exactly B's own row";
 
     // Each subscriber received ITS OWN shape, on the topic name both declared
-    // with a different one. Asserted as an outcome, never relied on as a
-    // separator (see the header comment).
-    EXPECT_EQ(Shapes(a.SharedJournal().Snapshot()), (std::vector<int64_t>{1}))
+    // with a different one — from the same observation as the markers above.
+    // Asserted as an outcome, never relied on as a separator (see the header
+    // comment).
+    EXPECT_EQ(Shapes(a_shared), (std::vector<int64_t>{1}))
         << "instance A was handed a schema that is not its own shape A";
-    EXPECT_EQ(Shapes(b.SharedJournal().Snapshot()), (std::vector<int64_t>{2}))
+    EXPECT_EQ(Shapes(b_shared), (std::vector<int64_t>{2}))
         << "instance B was handed a schema that is not its own shape B";
 }
 
@@ -450,14 +492,47 @@ TEST(Registry, TwoInstancesOneDomainDoInterfere) {
     b.PublishShared(0);
     a.PublishShared(0);
 
-    // Two rows on the shared name: A's own and B's. Bounded by exactly the
-    // `kSettle` the isolation case pays for its absence claim, so this case is
-    // what licenses that window.
-    const bool crossed = WaitForCount(a.SharedJournal(), 2, kSettle);
+    // Two rows on the shared name: A's own and B's. Waited out to the full
+    // clause budget rather than to `kSettle`, and the elapsed time then measured
+    // against `kSettle` separately — because the two reds need opposite
+    // responses. "No crossing at all inside the budget" voids the isolation case
+    // and is an ASSERT; "a real crossing, but slower than the window the
+    // isolation case pays" is tuning and is an EXPECT. Waiting only to `kSettle`
+    // conflated them, and reported the first when the truth was the second.
+    const auto started = std::chrono::steady_clock::now();
+    const bool crossed = WaitForCount(a.SharedJournal(), 2, kClauseBudget);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    // One observation, both claims derived from it: `crossed` and a separately
+    // taken snapshot are two different moments, and a marginal crossing landing
+    // between them made the case print "measured NO crossing" while the markers
+    // it printed visibly contained the foreign row.
     const std::vector<std::string> markers = Markers(a.SharedJournal().Snapshot());
-    EXPECT_TRUE(crossed) << "the control measured NO crossing on one domain within kSettle, so "
-                            "TwoInstancesTwoDomainsStayIsolated proves nothing: the two streams "
-                            "could not have met whatever the registry did";
+    const bool crossed_by_evidence =
+        std::find(markers.begin(), markers.end(), b.Mark(0)) != markers.end();
+
+    // The margin lives in the suite's own output, not in a plan document:
+    // erosion of it toward `kSettle` is invisible unless every run reports the
+    // number. Measured here it is **0 ms** — the two participants have already
+    // matched by the time the publishes happen (both instances are constructed
+    // and both schema waits have returned first), and Fast DDS then serves
+    // same-process endpoints inline over intra-process delivery, so the foreign
+    // row is in A's journal before `WaitForCount` looks. A recorded 0 is
+    // therefore the healthy reading, not a missing measurement; the ~270 ms in
+    // this item's plan and log is the whole CASE's runtime, construction and
+    // teardown included, which is not the same quantity.
+    RecordProperty("crossing_ms", static_cast<int>(elapsed.count()));
+
+    ASSERT_TRUE(crossed || crossed_by_evidence)
+        << "the control measured NO crossing on one domain AT ALL, within the full "
+        << kClauseBudget.count()
+        << "-second clause budget, so TwoInstancesTwoDomainsStayIsolated proves nothing: the two "
+           "streams could not have met whatever the registry did";
+    EXPECT_LE(elapsed, kSettle)
+        << "a real crossing on one domain took at least " << elapsed.count() << " ms, outside the "
+        << kSettle.count()
+        << " ms window TwoInstancesTwoDomainsStayIsolated pays for its absence claim — widen "
+           "kSettle (which strengthens both cases), do not narrow this control";
     EXPECT_NE(std::find(markers.begin(), markers.end(), b.Mark(0)), markers.end())
         << "instance B's row did not reach instance A on the SAME domain and the same topic name";
     EXPECT_NE(std::find(markers.begin(), markers.end(), a.Mark(0)), markers.end())
@@ -522,19 +597,24 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
         expected_a.push_back(a.Mark(seq));
         expected_b.push_back(b.Mark(seq));
     }
+    // One observation per journal, both claims about it derived from that one
+    // (see the isolation case above).
+    const std::vector<Journal::Entry> a_shared = a.SharedJournal().Snapshot();
+    const std::vector<Journal::Entry> b_shared = b.SharedJournal().Snapshot();
+
     // Whole, and in order: one writer per reader, RELIABLE + KEEP_ALL, so a
     // reordering would itself be a contract violation rather than noise.
-    EXPECT_EQ(Markers(a.SharedJournal().Snapshot()), expected_a)
+    EXPECT_EQ(Markers(a_shared), expected_a)
         << "instance A's shared-topic journal is not exactly A's own rows, in order";
-    EXPECT_EQ(Markers(b.SharedJournal().Snapshot()), expected_b)
+    EXPECT_EQ(Markers(b_shared), expected_b)
         << "instance B's shared-topic journal is not exactly B's own rows, in order";
     EXPECT_EQ(Markers(a.PrivateJournal().Snapshot()), (std::vector<std::string>{}))
         << "instance A's private topic received a row nobody published to it";
     EXPECT_EQ(Markers(b.PrivateJournal().Snapshot()), (std::vector<std::string>{}))
         << "instance B's private topic received a row nobody published to it";
-    EXPECT_EQ(Shapes(a.SharedJournal().Snapshot()), (std::vector<int64_t>{1}))
+    EXPECT_EQ(Shapes(a_shared), (std::vector<int64_t>{1}))
         << "instance A was handed a schema that is not its own shape A";
-    EXPECT_EQ(Shapes(b.SharedJournal().Snapshot()), (std::vector<int64_t>{2}))
+    EXPECT_EQ(Shapes(b_shared), (std::vector<int64_t>{2}))
         << "instance B was handed a schema that is not its own shape B";
 }
 
@@ -542,8 +622,10 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 // bound. Its own pair of domains, and each instance publishes only on its own
 // PRIVATE topic to its own subscription — so the unequal bounds, which are an
 // independent reason two endpoints never discover each other, confound nothing.
-// This pair claims NO crossing in either direction; it claims that a row over
-// one instance's bound is dropped there and delivered on the other.
+// This pair MAKES NO CROSSING CLAIM in either direction — the bound is part of
+// the registered DDS type name, so it could not cross regardless. What it claims
+// is that a row over one instance's bound is dropped there and delivered on the
+// other.
 //
 // The middle row is dropped SILENTLY on the low-bound instance and does not
 // throw: the overflow is caught inside `serialize()`, which zeroes the payload
