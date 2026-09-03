@@ -64,4 +64,22 @@ target_link_libraries(core_tests PRIVATE
     fletcher-core)
 
 include(GoogleTest)
-gtest_discover_tests(core_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# `core/CMakeLists.txt` calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded test here runs until the CI job itself is cancelled. That is not hypothetical - PR
+# #126's first Linux run of the xrcedds provider suite, which has the same gap, spent 2 h 04 m
+# inside one hung test and was cancelled with no result at all. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`.
+#
+# 30 s, chosen from this suite's own measured wall clock: all 29 rows run in 0.02-0.03 s and the
+# whole suite in 0.93 s (msvc-194 x86_64 Release). Every row is pure in-process computation -
+# encode/decode of a row buffer and two file reads of the READMEs - so there is no wait here that
+# a slower runner could stretch, and no subprocess whose cost is a compiler. 30 s is ~1000x the
+# slowest row, which absorbs any amount of runner contention, cold page-in or AV interference
+# while still turning a future hang into a 30-second red instead of a cancelled job.
+gtest_discover_tests(core_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 30)

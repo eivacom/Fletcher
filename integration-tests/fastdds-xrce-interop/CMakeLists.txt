@@ -147,3 +147,32 @@ endif()
 # PDA-DEC-1H's `AForeignAgentDoesNotSatisfyTheHarness`, which stands up two
 # more Agents of its own on port 2118 inside its own scope.
 add_test(NAME integration_tests COMMAND integration_tests)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# This directory calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded entry here runs until the CI job itself is cancelled. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
+# 2 h 04 m inside one hung test before the job was cancelled with no result at all. That risk is
+# concentrated here more than anywhere else in the tree, because the single entry above is the
+# WHOLE binary: a hang in any one of its five gtest cases hangs the only row ctest can see.
+#
+# 300 s, chosen from this entry's own measured wall clock AND from the budgets the tests impose on
+# themselves. Measured: 7.04 s for the entry (msvc-194 x86_64 Release), of which ~3.7 s is inside
+# gtest - AForeignAgentDoesNotSatisfyTheHarness 1.03 s, AFailedOwnershipQuery... 1.02 s, and the
+# three interop directions 0.45-0.70 s - and the remaining ~3.3 s is the fixture forking
+# MicroXRCEAgent and waiting for it to answer an XRCE probe. That is a MIXTURE, not a pure wait:
+# the Agent spawn, the DDS discovery handshake and the row round-trips are work a slower runner
+# stretches, while the ownership probes' 1 s poll budgets are wall clock and do not stretch.
+# So the cap is set from the ceiling the suite already enforces on itself rather than from the
+# 7 s happy path: each interop case bounds itself at 15 s (AwaitArrowSchema) + 10 s (row
+# delivery), the reachability probe at 15 s, and the foreign-Agent case stands up two more Agents
+# with the same 15 s budget each - about 120 s in total if every single deadline were spent. A
+# PASSING run therefore cannot exceed ~120 s no matter how slow the runner, so 300 s (43x the
+# measured figure, 2.5x the self-imposed ceiling) cannot false-red, and it turns a hang below
+# those deadlines - a `connect()` that never returns, an Agent that never dies - into a
+# five-minute red instead of a cancelled job.
+set_tests_properties(integration_tests PROPERTIES
+    TIMEOUT 300)
