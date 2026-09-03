@@ -237,7 +237,10 @@ int main() {
     fletcher::Envelope env;
     env.row = { 0x01, 0x02, 0x03, 0x04 };
     auto serialized = fletcher::SerializeEnvelope(env);
-    auto restored   = fletcher::DeserializeEnvelope(serialized);
+    // The two-argument form owns the ownership rule for you: it takes ONE shared copy of the
+    // buffer, and only when the envelope carries attachments. There is no vector overload —
+    // an attachment's Blob must not alias a buffer nothing keeps alive.
+    auto restored   = fletcher::DeserializeEnvelope(serialized.data(), serialized.size());
 
     // Write positional wire format into a growable buffer; Finish() hands the bytes over
     fletcher::VectorWriteBuffer writeBuffer;
