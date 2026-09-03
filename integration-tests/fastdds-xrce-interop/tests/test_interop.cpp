@@ -40,6 +40,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -50,6 +51,7 @@
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -466,7 +468,18 @@ class OwnedAgent {
         failure_ = ProveOwnership();
     }
 
-    ~OwnedAgent() { Kill(); }
+    ~OwnedAgent() {
+        // A destructor may not ASSERT, and this one runs both from MicroXRCEAgentEnv::TearDown
+        // and from the two extra Agents `AForeignAgentDoesNotSatisfyTheHarness` scopes locally.
+        // ADD_FAILURE is non-fatal and throws nothing, so it is safe here and puts the reason in
+        // the gtest report; the stderr copy is what survives in the ctest log if gtest's own
+        // summary is cut short - which is precisely the case a stuck child produces.
+        const std::string note = Kill();
+        if (!note.empty()) {
+            std::cerr << note << std::endl;
+            ADD_FAILURE() << note;
+        }
+    }
 
     OwnedAgent(const OwnedAgent&) = delete;
     OwnedAgent& operator=(const OwnedAgent&) = delete;
@@ -751,22 +764,90 @@ class OwnedAgent {
                std::to_string(port_) + " within 15 s. Last probe error: " + last_error;
     }
 
-    void Kill() {
+    /// Terminate the Agent this object spawned AND reap it. Bounded on both platforms, and it
+    /// SAYS SO when it cannot: the empty string means reaped, anything else is a note naming the
+    /// pid and every stage that was tried.
+    ///
+    /// The POSIX branch used to be `kill(pid_, SIGTERM); waitpid(pid_, &status, 0);` - an
+    /// UNBOUNDED blocking wait, sitting right beside a Windows branch that bounded the same wait
+    /// at 5000 ms. An Agent that does not die on SIGTERM (one wedged in the kernel, one whose
+    /// handler never runs, one stopped) hung this destructor FOREVER, on Linux only, in fixture
+    /// teardown. That is the identical shape that cost PR #126 a cancelled 2 h 04 m job in the
+    /// xrcedds provider suite; the ctest TIMEOUT this directory now carries bounds the damage but
+    /// reports it as a bare timeout with no clue which call stalled, which is why the bound
+    /// belongs here as well.
+    ///
+    /// Two rules this round has already paid for:
+    ///   * Do not rely on a signal to unblock a blocked call. `close()` does not wake a blocked
+    ///     `accept()` on Linux (see the TcpListener note in
+    ///     xrcedds-pubsub-provider/tests/test_xrce_document.cpp), and SIGTERM is a REQUEST that a
+    ///     wedged child need never honour. So every wait here is a `waitpid(WNOHANG)` poll
+    ///     against a deadline - never a blocking `waitpid`, not even after SIGKILL, which is
+    ///     uninterceptable but still cannot reap a task parked in an uninterruptible sleep.
+    ///   * The child must be REAPED. A zombie is not a fix: it keeps the pid allocated, and this
+    ///     fixture's whole ownership guard is "does the OS record OUR pid as holding the port".
+    ///
+    /// Sleep rather than spin between polls, for the reason `ChildProcess::Shutdown` in
+    /// integration-tests/pubsub-conformance/src/child_process.cpp records: a tight
+    /// `waitpid(WNOHANG)` + yield loop burned a whole core for the full budget on a hanging
+    /// child, on the same loaded runner this suite has to be quick on.
+    [[nodiscard]] std::string Kill() {
 #ifdef _WIN32
-        if (process_handle_) {
-            TerminateProcess(process_handle_, 0);
-            WaitForSingleObject(process_handle_, 5000);
-            CloseHandle(process_handle_);
-            process_handle_ = nullptr;
-            process_id_ = 0;
+        if (process_handle_ == nullptr) {
+            return {};
         }
+        const DWORD doomed = process_id_;
+        std::string note;
+        TerminateProcess(process_handle_, 0);
+        if (WaitForSingleObject(process_handle_, 5000) != WAIT_OBJECT_0) {
+            note = "MicroXRCEAgent (pid " + std::to_string(doomed) +
+                   ") was still not gone 5 s after TerminateProcess. Its handle is closed here, "
+                   "so it is leaked to the OS; if it still holds UDP port " +
+                   std::to_string(port_) + " the next run's ProveOwnership will refuse to start.";
+        }
+        CloseHandle(process_handle_);
+        process_handle_ = nullptr;
+        process_id_ = 0;
+        return note;
 #else
-        if (pid_ > 0) {
-            kill(pid_, SIGTERM);
-            int status = 0;
-            waitpid(pid_, &status, 0);
-            pid_ = -1;
+        if (pid_ <= 0) {
+            return {};
         }
+        const pid_t doomed = pid_;
+        // Ask, then insist. SIGTERM lets the Agent close its socket; SIGKILL cannot be declined.
+        for (const int sig : {SIGTERM, SIGKILL}) {
+            // An ESRCH here means it has already died and is only waiting to be collected, which
+            // the poll below does. So the return value carries no decision and is discarded.
+            static_cast<void>(::kill(doomed, sig));
+            const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            for (;;) {
+                int status = 0;
+                const pid_t reaped = ::waitpid(doomed, &status, WNOHANG);
+                if (reaped == doomed || (reaped < 0 && errno != EINTR)) {
+                    // Collected, or unwaitable (ECHILD - Alive() already collected it). Either
+                    // way this pid is no longer ours, so drop it: signalling a pid we do not own
+                    // is how a recycled pid gets a stranger's process killed.
+                    pid_ = -1;
+                    return {};
+                }
+                if (std::chrono::steady_clock::now() >= give_up) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        // Both stages spent. Deliberately NOT falling back to a blocking `waitpid` - that is the
+        // defect this function exists to remove. Drop the pid so no later call can block on it,
+        // and hand the caller a sentence it can act on, because an unreaped Agent still holding
+        // the port is otherwise the NEXT run's mystery failure.
+        pid_ = -1;
+        return "MicroXRCEAgent (pid " + std::to_string(doomed) +
+               ") could not be reaped: SIGTERM, then a 5 s waitpid(WNOHANG) poll, then SIGKILL, "
+               "then another 5 s poll - it neither exited nor became waitable in 10 s. It is "
+               "left unreaped and may still hold UDP port " +
+               std::to_string(port_) +
+               "; if it does, the next run's ProveOwnership will refuse to start rather than "
+               "test across a stranger's Agent.";
 #endif
     }
 
