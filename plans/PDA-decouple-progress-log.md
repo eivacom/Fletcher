@@ -776,11 +776,14 @@ explicitly, because `cmake --preset` does not reset a cached OFF and the run wou
 report all passed). Zero stray Agents before and after; shm directory empty before and
 after. Counts derived from `ctest -N` and `--gtest_list_tests`, not remembered.
 
-**Numbers.** Declared **+570 / −0** · landed **+705 / −25** all files, **+605 / −4**
-excluding `plans/`, of which **473 is the one test file**. Public surface **0**, product
-code **0**. Seven domains (154–160) newly owned by this file. The implementer's own draft
-of this line said +633/−19 — the **sixth** miscounted figure this round; the numbers above
-are from `git diff --cached --numstat`, not from any report. Design landed at **305 lines
+**Numbers.** Declared **+570 / −0** · landed **+710 / −25** all files (`git diff
+e99eaeb..b7b33f3`), **+605 / −4** excluding `plans/`, of which **473 is the one test
+file**. Public surface **0**, product code **0**. The counting went wrong twice here and
+both are worth naming: the implementer's draft of this line said +633/−19 (the sixth
+miscounted figure this round), and the PM's correction to +705/−25 was **itself stale** —
+derived before editing this very paragraph, which added the five lines that make it 710.
+Compliance caught it. The lesson is not "count more carefully" but **derive after the
+last edit, against the commit, not the index**. Design landed at **305 lines
 vs a 300 cap** (+5): debt C2-2 required a new premise while forbidding file growth, and
 the PM accepted the overrun rather than cut approved content for five lines.
 **Cycle meter:** design 2/2 · fix 0 · implementer launches 1/5 · owner touches 1 (the
