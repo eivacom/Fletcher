@@ -29,7 +29,31 @@ target_link_libraries(xrce_provider_tests PRIVATE
     microxrcedds_client)
 
 include(GoogleTest)
-gtest_discover_tests(xrce_provider_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# `xrcedds-pubsub-provider/CMakeLists.txt` calls `enable_testing()` rather than
+# `include(CTest)`, so no `DartConfiguration.tcl` is generated and ctest's
+# usual 1500 s per-test cap DOES NOT APPLY: an unbounded test here runs until
+# the CI job itself is cancelled. It did, once - PR #126's first-ever Linux run
+# of this suite spent 2 h 04 m inside `XrceConfig.DocumentConfiguresTransport`
+# (a POSIX `close()` does not wake a blocked `accept()`; see the TcpListener
+# comment in test_xrce_document.cpp) and was cancelled with no result at all.
+#
+# 60 s, chosen from this suite's own measured wall clock rather than a round
+# number: the slowest legitimate case is `XrceConfig.DocumentConfiguresTransport`
+# at 3.08 s, followed by `XrceConfig.AgentUnreachableIsATransportFailure` at
+# 1.03 s and everything else at 0.03 s. Both slow rows are WAITS, not work -
+# their cost is the XRCE session handshake spending its `connect_timeout_ms`
+# budget (3 x 1000 ms and 1 x 1000 ms), which is wall clock and therefore does
+# not stretch on a slower or more contended runner. 60 s is ~19x the slowest
+# row, which is generous headroom for a suite whose real ceiling is fixed by a
+# timer, and it turns a future hang into a one-minute red instead of a
+# cancelled job. The matching per-test discovery cap is gtest_discover_tests'
+# own 5 s default and is left alone.
+gtest_discover_tests(xrce_provider_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
 
 # ---------------------------------------------------------------------------
 # HARD-6 forcing test for the CONCRETE XrceDDSPubSubProvider::Subscribe override.
@@ -72,6 +96,11 @@ if(MSVC)
                 --target xrce_discard_probe_tu
                 --config $<CONFIG>)
 
+    # TIMEOUT is 300 s rather than the 60 s the gtest rows get: this entry shells
+    # out to `cmake --build`, so its cost is a compiler invocation (1.92 s
+    # measured, once the provider library is already built) and not a fixed
+    # wait. Same reason as above - without it there is no cap at all.
     set_tests_properties(NodiscardTest.XrceConcreteSubscribeCompileFailsOnDiscard PROPERTIES
-        PASS_REGULAR_EXPRESSION "C4834")
+        PASS_REGULAR_EXPRESSION "C4834"
+        TIMEOUT 300)
 endif()

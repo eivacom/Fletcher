@@ -44,6 +44,7 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>  // the accept loop waits with a deadline; see TcpListener
 #include <sys/socket.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -180,6 +181,32 @@ int CountOpenHandles() {
 // test was written: `uxr_init_tcp_transport` -> `uxr_init_tcp_platform` performs a blocking
 // `connect()` during INIT (`tcp_transport_windows.c` / `tcp_transport_posix.c`) and returns
 // false when every candidate address fails. There is no lazy-connect machinery in this client.
+//
+// AND ON ONE PLATFORM FACT, which cost this suite a two-hour CI hang the first time it ever ran
+// on Linux (`ci.pr / xrcedds-pubsub-provider / build-linux`, PR #126: the log's last line was
+// `Start 7: XrceConfig.DocumentConfiguresTransport` and the runner was cancelled at 2 h 04 m).
+// The accept loop must be woken by a DEADLINE, never by closing the socket underneath it:
+//
+//   * Windows: `closesocket()` on a listening socket makes a blocked `accept()` in another
+//     thread return an error at once. That is why this hung nowhere until Linux ran it.
+//   * POSIX/Linux: `close()` does NOT wake a thread already blocked in `accept()` on that
+//     descriptor. The descriptor is unhooked from the table, the blocked syscall keeps its
+//     reference, and the thread sleeps forever - so the `join()` below never returns and the
+//     TEST BODY's assertions have all already passed. Measured under WSL2, gcc 13.3.0 (the
+//     version the Linux CI profile pins) with a 40-line reduction of exactly this class: the
+//     old destructor's `close(); join();` never printed past "joining".
+//
+// So the loop below waits with `poll`/`select` for a 25 ms slice and re-checks `stop_`, and the
+// destructor joins BEFORE it closes anything. Nothing needs interrupting, on either platform.
+// Do not "simplify" this back into a bare blocking `accept()`: that is the CI hang.
+//
+// NOTE what this did NOT turn out to be, because the wrong suspect is expensive here: the XRCE
+// client's own session wait is BOUNDED on Linux. Probed against a peer that accepts and never
+// speaks, `uxr_create_session_retries` returned in 0 ms at 0 attempts and 3003 ms at 3, i.e.
+// `attempts * UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL` (1000) exactly - `wait_session_status`
+// at session.c:734-762, whose per-attempt loop is bounded by `uxr_millis()`, over
+// `uxr_read_tcp_data_platform`'s `poll(fd, 1, timeout)` at tcp_transport_posix.c:110. The
+// provider bounds its own wait at the operator's `connect_timeout_ms`; the hang was here.
 // ---------------------------------------------------------------------------------------------
 class TcpListener {
    public:
@@ -201,7 +228,7 @@ class TcpListener {
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;  // the kernel picks; nothing in any build knows this number
         if (::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return;
-        if (::listen(fd_, 4) != 0) return;
+        if (::listen(fd_, kBacklog) != 0) return;
 
         sockaddr_in bound{};
 #ifdef _WIN32
@@ -215,27 +242,49 @@ class TcpListener {
         // The accept runs on its own thread and LATCHES. The provider's connect and the
         // accept race by nature, so the test asserts against the latch with a deadline rather
         // than calling accept at a moment of its choosing.
+        //
+        // `WaitReadable` first, `accept` only when a connection is already pending: that keeps
+        // this thread out of an uninterruptible `accept()` (see the class comment - a blocked
+        // `accept()` is what a POSIX `close()` cannot wake, and it is the CI hang).
         thread_ = std::thread([this] {
             while (!stop_.load(std::memory_order_relaxed)) {
-                const auto client = ::accept(fd_, nullptr, nullptr);
-                if (!Valid(client)) break;  // the listening socket was closed: we are done
-                accepted_.fetch_add(1, std::memory_order_relaxed);
-                // Held, not closed: closing immediately would let the client's connect()
-                // succeed and its first send() fail, which is a different story from "nothing
-                // behind this socket speaks XRCE".
-                if (hold_clients_) {
-                    clients_.push_back(client);
-                } else {
-                    CloseOne(client);
-                }
+                if (!WaitReadable(fd_, kAcceptSlice)) continue;  // nothing pending yet; re-check
+                // DRAIN what is pending before going back to the slice wait, so throughput is
+                // not capped at one connection per slice (40/s) - the leak row makes hundreds of
+                // connections back to back. Together with `kBacklog` this is what keeps that row
+                // a millisecond row on Linux; see kBacklog for the measurement.
+                do {
+                    const auto client = ::accept(fd_, nullptr, nullptr);
+                    // A readiness that yields no socket (a peer that reset between the readiness
+                    // and the accept: ECONNABORTED) is not a reason to stop listening -
+                    // `stop_` is.
+                    if (!Valid(client)) break;
+                    accepted_.fetch_add(1, std::memory_order_relaxed);
+                    // Held, not closed: closing immediately would let the client's connect()
+                    // succeed and its first send() fail, which is a different story from
+                    // "nothing behind this socket speaks XRCE".
+                    if (hold_clients_) {
+                        clients_.push_back(client);
+                    } else {
+                        CloseOne(client);
+                    }
+                } while (!stop_.load(std::memory_order_relaxed) &&
+                         WaitReadable(fd_, std::chrono::milliseconds(0)));
             }
         });
     }
 
+    // ORDER MATTERS, and it is the opposite of the obvious one: join FIRST, close after.
+    //
+    // `stop_` plus the loop's 25 ms deadline is the whole wake-up mechanism, so the thread is
+    // gone within one slice and there is nothing left touching `fd_` or `clients_` when they are
+    // closed. Closing first (the previous shape) relied on `close()` interrupting a blocked
+    // `accept()`, which is true on Windows and false on Linux; it also raced the poll against a
+    // descriptor being closed under it. Neither is a thing this suite needs.
     ~TcpListener() {
         stop_.store(true, std::memory_order_relaxed);
-        if (Valid(fd_)) CloseOne(fd_);  // unblocks accept()
         if (thread_.joinable()) thread_.join();
+        if (Valid(fd_)) CloseOne(fd_);
         for (const auto client : clients_) CloseOne(client);
 #ifdef _WIN32
         if (wsa_) WSACleanup();
@@ -260,16 +309,53 @@ class TcpListener {
     }
 
    private:
+    // How long the accept loop sleeps in one wait before re-reading `stop_`. It bounds teardown
+    // (25 ms, once) and nothing else: the loop returns the instant a connection is pending, so
+    // this is not added to any test's measured elapsed time - including the forcing row's
+    // sub-1000 ms bound, which times the CONSTRUCTOR and not this thread.
+    static constexpr std::chrono::milliseconds kAcceptSlice{25};
+
+    // The listen backlog, and it is not decorative on Linux. It was 4, which is fine for the
+    // forcing row's single connection and quietly awful for the leak row, which opens hundreds
+    // back to back: once the accept queue is full Linux DROPS the SYN, and the next connect
+    // waits for a ~1 s retransmit. Measured under WSL2, 400 connections in a tight loop: 6-17 s
+    // at a backlog of 4 (the same with a plain blocking accept, so it is the backlog and not the
+    // wait above), 5-6 ms at this backlog. Windows clamps this to its own maximum and never
+    // showed the cost, which is why it lasted.
+    static constexpr int kBacklog = 128;
+
+    // True when `s` has a connection pending, false when the slice expired or the wait failed.
+    // A false return is never fatal here: the caller loops and `stop_` is what ends it.
 #ifdef _WIN32
     using Socket = SOCKET;
     static bool Valid(Socket s) { return s != INVALID_SOCKET; }
     static void CloseOne(Socket s) { ::closesocket(s); }
+    // Winsock has no `poll` on the versions this project supports, so `select` it is; the first
+    // argument is ignored on Windows and a single-socket fd_set has no FD_SETSIZE question.
+    static bool WaitReadable(Socket s, std::chrono::milliseconds slice) {
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(s, &readable);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = static_cast<long>(slice.count() * 1000);
+        return ::select(0, &readable, nullptr, nullptr, &timeout) > 0;
+    }
     Socket fd_ = INVALID_SOCKET;
     bool wsa_ = false;
 #else
     using Socket = int;
     static bool Valid(Socket s) { return s >= 0; }
     static void CloseOne(Socket s) { ::close(s); }
+    // `poll` rather than `select`: the leak row cycles hundreds of descriptors through this
+    // process, and `FD_SET` past FD_SETSIZE is undefined behaviour where `poll` has no such
+    // limit. It is also what the XRCE client's own POSIX transport uses.
+    static bool WaitReadable(Socket s, std::chrono::milliseconds slice) {
+        pollfd pending{};
+        pending.fd = s;
+        pending.events = POLLIN;
+        return ::poll(&pending, 1, static_cast<int>(slice.count())) > 0;
+    }
     Socket fd_ = -1;
 #endif
     uint16_t port_ = 0;
