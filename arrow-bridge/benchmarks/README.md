@@ -63,11 +63,11 @@ with the row that produced it, or `fletcher::BatchDecoder` — `Append`'d the sa
 
 ## Running
 
-The lockfile in this directory (`conan.lock`) pins the exact recipe revisions of
-`fletcher-arrow-bridge` and `fletcher-pubsub-arrow` (and their dependency graph) that were in the Conan
-cache when this baseline was recorded — **keep it**; it is the baseline pin, not a build artifact.
-`conan lock create` must run before any code changes so the lockfile captures the revisions in place at
-that moment, independent of any later rebuild of those packages.
+`conan lock create` first: it pins the `fletcher-*` recipe revisions currently in the local Conan
+cache, so a later `conan create` of one of those components (a concurrent agent, a rebuild) cannot
+silently change what the benchmark measures mid-run. The lockfile is local and not tracked — the
+revisions it pinned for every recorded run are written out in the Results section, and a BEFORE binary
+is reproducible by building the components from the named commit.
 
 ```bat
 cd arrow-bridge/benchmarks
@@ -101,8 +101,8 @@ trusting it.
   cache (`conan list` briefly showed only a newer recipe revision). Re-running
   `conan install ... --build=missing` recovered it: the locked revision's exported source was still
   present in the cache, so Conan rebuilt the exact pinned binary rather than resolving to the newer one.
-  `conan.lock` in this directory still names the original pinned revisions, and the BASELINE numbers
-  below were recorded against that pinned build, not the concurrent rebuild's changes.
+  The lockfile of that run still named the original pinned revisions, and the BASELINE numbers below
+  were recorded against that pinned build, not the concurrent rebuild's changes.
 - **`MakeBatch` is not per-shape hand-rolled typed builders.** See the shapes section above — batch
   construction is unmeasured fixture setup here, folded through the same scalar-path builder the
   `BM_Decode_Batch_ScalarPath_*` arm measures, rather than seven independent typed-builder pipelines.
@@ -115,7 +115,7 @@ logical processors (Google Benchmark's own header confirms `Run on (32 X 2419 MH
 
 **BEFORE**: commit `564467b` (this branch's HEAD) with none of this session's working-tree changes
 applied — `fletcher-arrow-bridge` and `fletcher-pubsub-arrow` were built from HEAD before the working
-tree was touched, pinned by `conan.lock.before` (kept in this directory):
+tree was touched, pinned at the time by a lockfile (not kept; the revisions are the record):
 `fletcher-arrow-bridge/0.5.0-alpha#c02b0860c3c539e907a9699b9ab86241`,
 `fletcher-pubsub-arrow/0.5.0-alpha#cc1475b31ab7df3c7c5e16900f93d9c8`. This binary predates the new
 arms (`BM_Decode_Batch_S/N`, `BM_Encode_Codec_S_IntoFixed`) — those rows read "(new arm)" below.
@@ -123,7 +123,7 @@ arms (`BM_Decode_Batch_S/N`, `BM_Encode_Codec_S_IntoFixed`) — those rows read 
 **AFTER**: commit `564467b` **plus the uncommitted working-tree changes** in this session
 (`BatchDecoder`, `Codec::EncodeRow(row, WriteBuffer&)`, the new `RecordBatchBatcher` on
 `BatchDecoder`, the bulk primitive-list-run path, `fletcher-protoc` updates — see `git status`),
-pinned by `conan.lock` (regenerated this step):
+pinned by the regenerated lockfile:
 `fletcher-arrow-bridge/0.5.0-alpha#19bf79025942386b6c2c9fb80ab28f55`,
 `fletcher-pubsub-arrow/0.5.0-alpha#16b84c6a40dd21702bf8f4ad857e89af` — confirmed the newest revision
 of each via `conan list "fletcher-arrow-bridge/0.5.0-alpha#*"` / `"fletcher-pubsub-arrow/0.5.0-alpha#*"`
