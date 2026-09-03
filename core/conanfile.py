@@ -26,6 +26,12 @@ class FletcherCoreConan(ConanFile):
         "include/*",
         "cmake/*",
         "tests/*",
+        # Exported for the TESTS, not for documentation and not for consumers:
+        # Taxonomy.PublishedNumbersMatchTheEnum reads the published error-taxonomy table out of
+        # README.md at run time, so the cache build must see the same file the repository holds
+        # (PDA-DEC-9, spec 5.1). package() is unchanged - nothing about the README reaches a
+        # consumer's package folder.
+        "README.md",
     )
 
     def requirements(self):

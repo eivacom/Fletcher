@@ -12,7 +12,7 @@ Fletcher bridges two worlds: **Protocol Buffers** for message definition and **A
 
 **Code generation over hand-writing.** Schema definitions live in `.proto` files — the single source of truth. The `protoc-gen-fletcher` plugin generates typed C++ message classes, Arrow view classes, and TypeScript interfaces with schema descriptors. No boilerplate to write, no schema drift between languages.
 
-**Transport-agnostic pub/sub.** The `PubSub` interface decouples encoding from transport. Implementations exist for Fast DDS (desktop/server), XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding a new transport (MQTT, Zenoh, custom TCP) requires implementing one interface — no changes to generated code or the codec.
+**Transport-agnostic pub/sub.** The `PubSub` interface decouples encoding from transport. Implementations exist for Fast DDS (desktop/server), XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding a new transport (MQTT, Zenoh, custom TCP) means implementing that one interface **and registering it under a name**, after which callers reach it through `ProviderRegistry` by name — no changes to generated code or the codec. After PDA-ABI a loaded driver arrives the same way, by path through the same call, with no caller change. See the [pub/sub interface specification](pubsub-interface-spec.md) §4.
 
 **Zero-copy where it matters.** Publishers encode directly into the transport's buffer via the `RowEncoder` callback pattern, avoiding intermediate copies. Subscribers receive raw bytes and decode in place. The `PositionalWriter`/`PositionalReader` pair operates without allocation.
 
@@ -83,7 +83,7 @@ For schema delivery, the flow is:
 
 1. When a publisher creates a topic, it provides the nanoarrow `OwnedSchema`.
 2. The transport provider stores the schema alongside the data topic (e.g., via a companion DDS topic with TRANSIENT_LOCAL durability).
-3. When a subscriber joins, the provider returns the schema automatically in the `SubscriptionResult`.
+3. When a subscriber joins, `Subscribe` returns immediately with a **waitable schema arrival** in the `SubscriptionResult`; waiting on it yields the schema, or a typed outcome saying why it did not (spec §3.4).
 4. Both sides now share the same schema, enabling the compact positional wire format.
 
 For **batched, column-oriented reads** — once rows have been assembled into an Arrow `RecordBatch` for analytics, storage, or forwarding — the optional generated `<Class>Accessor` (C++ `.fletcher.accessor.pb.h`, Rust `.fletcher.rs`) takes a whole `RecordBatch` (or `StructArray`), validates it against the message's schema **once**, down-casts every column **once** up front, and then exposes typed, zero-copy getters that index straight into the cached concrete arrays — no per-cell scalar allocation and no hand-written `static_pointer_cast` boilerplate. This is the read-side counterpart to the row-at-a-time encode path above; the C++ and Rust accessors are proven to read the same batch identically. See [RecordBatch Accessor Specification](recordbatch-accessor-spec.md).
@@ -161,7 +161,7 @@ Field numbers are the stable identity in Protocol Buffers — they do not change
 The positional wire format requires both publisher and subscriber to share the same schema. Fletcher solves this via provider-level schema transport:
 
 1. **Publisher calls `CreateTopic(segments, OwnedSchema)`** — the provider stores the schema alongside the data topic.
-2. **Subscriber calls `Subscribe(segments, callback)`** — the provider returns a `SubscriptionResult` containing the publisher's schema as an `OwnedSchema`.
+2. **Subscriber calls `Subscribe(segments, callback)`** — the call never blocks. It returns a `SubscriptionResult` carrying a **`SchemaArrival`**: a waitable handle whose outcome is typed, so "not yet, within the timeout", "this transport carries no schemas at all" and "no schema will ever arrive" are distinguishable rather than guessed ([spec §3.4](pubsub-interface-spec.md)).
 3. Both sides use the same schema for the positional wire format.
 
 The FastDDS and XRCE-DDS providers implement this via companion DDS topics (`topic/__schema`) with TRANSIENT_LOCAL durability and KEEP_LAST(1) QoS. The gateway delivers the schema in the `subscribed` JSON response in both JSON descriptor and base64 Arrow IPC forms.
@@ -266,6 +266,26 @@ fletcher_gen::myapp::SensorFeed_StreamSubscriber sub(provider);
 sub.Subscribe([](fletcher_gen::myapp::SensorReading msg, fletcher::Attachments att) {
     std::cout << "Temperature: " << msg.temperature() << "\n";
 });
+```
+
+Or select the transport **at run time**. The selection path names no concrete provider type,
+and it is the same call a loaded driver will arrive through once PDA-ABI adds path selectors —
+the transport's library is still linked in and registered here; freeing a caller from that is
+PDA-ABI's job, not this one's:
+
+```cpp
+#include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/provider_registry.hpp>
+
+fletcher::ProviderRegistry registry;
+fletcher::RegisterFastDDSProvider(registry);  // once at startup, per transport linked in
+
+fletcher::ProviderConfig config;              // typed core: {max_payload_bytes, domain_id}
+config.document = xml_qos_profiles;           // opaque to Fletcher; only Fast DDS reads it
+
+// "fastdds" is a name; "/opt/mqtt_driver.so" would be a path, through this same call
+const std::string selection = "fastdds";  // from config, a flag, or an environment variable
+auto provider = registry.Create(fletcher::ProviderSelector::Parse(selection), config);
 ```
 
 ---

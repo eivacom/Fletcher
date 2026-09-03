@@ -5,8 +5,45 @@ A header-only library facilitating the Fletcher Publish-Subscriber logic.
 Headers are located under `include/core/`:
 - `envelope.hpp`
 - `positional_io.hpp`
+- `status.hpp`
 - `types.hpp`
 - `write_buffer.hpp`
+
+---
+
+## Error taxonomy (published)
+
+`fletcher/core/status.hpp` defines the pub/sub seam's failure vocabulary: **one error type
+carrying one stable numbered cause** (`PubSubError` over `PubSubStatus`; owner ruling
+2026-09-01, [pub/sub interface spec](../docs/pubsub-interface-spec.md) §5.1). The numbers are
+published here because two independent language bindings need them in prose, beside the code
+that defines them. **This table is the only enumeration of them** — the spec cites it and does
+not restate it.
+
+**Only `Name` and `Number` are machine-compared.** `core_tests`'
+`Taxonomy.PublishedNumbersMatchTheEnum` reads this table off disk and compares it row for row
+against the enum, so editing a name or a number on either side alone turns it red, and
+appending an enumerator without publishing its row fails the build. `Meaning` is a reader's
+summary; the normative wording is the doc comment on each enumerator in `status.hpp`.
+
+| Name | Number | Meaning |
+|---|---|---|
+| `kOk` | 0 | Success. Present because both C boundaries need a success value in the same enum; `PubSubError` refuses it, so a boundary cannot report a failed call as a success. |
+| `kInvalidArgument` | 1 | The caller passed something the seam refuses to interpret: an empty topic-segment list, a blob with bytes and no owner, a negative timeout. |
+| `kSchemaConflict` | 2 | A topic was re-declared with a provably different schema (spec §7 clause 3). |
+| `kTopicNotDeclared` | 3 | The topic has not been declared on this instance. |
+| `kPayloadTooLarge` | 4 | The encoded sample does not fit the transport's payload bound. A `std::overflow_error` escaping a seam entry point maps here, normatively (spec §5.1). |
+| `kTransportFailure` | 5 | The transport refused or failed: an endpoint that would not be created, a write that did not go out, a session that is gone. |
+| `kNotSupported` | 6 | This provider does not implement the requested behaviour. |
+| `kInternal` | 7 | The total catch-all. Anything with no better home arrives here carrying the original message — a taxonomy that lets an untyped exception through is not one. |
+| `kPending` | 8 | A wait **outcome**, never thrown: the answer is not available yet, within the timeout that was asked for. |
+| `kSubscriptionEnded` | 9 | A wait **outcome**, never thrown: the answer will never arrive, because the subscription that would have produced it is gone. |
+
+Values are **fixed integers, appended only** — never renumbered, reordered, reused or removed,
+because a boundary that has shipped one of these numbers to an application cannot take it back.
+Making an append is a stop-and-ask against the spec and the owner allocates the number (spec
+§12); the append carries its row in this table in the same change, which the guard above makes
+mechanical rather than a request.
 
 ---
 

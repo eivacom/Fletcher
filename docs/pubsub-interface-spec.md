@@ -1,9 +1,11 @@
 # The Pub/Sub Provider Interface — Specification (oracle)
 
-Status: **proposed** (round **PDA-decouple**, token `PDA-DEC`). This is the authoritative
-spec for the pub/sub provider interface — the seam between Fletcher and a
-protocol. On any contradiction with the plan or a per-item design, **this document
-wins**. Locked-decision digest:
+Status: **frozen** (round **PDA-decouple**, token `PDA-DEC`; frozen 2026-09-03 by
+PDA-DEC-9). This is the authoritative spec for the pub/sub provider interface — the seam
+between Fletcher and a protocol. On any contradiction with the plan or a per-item design,
+**this document wins**. **§12 states what "frozen" binds, who may act on each class, and how
+each handoff condition was actually verified** — read it before proposing any change here.
+Locked-decision digest:
 [plans/PDA-decouple-locked-decisions.md](../plans/PDA-decouple-locked-decisions.md).
 Plan + tracker: [plans/PDA-decouple-interface.md](../plans/PDA-decouple-interface.md).
 
@@ -557,6 +559,18 @@ without drifting, which is the drift this round exists to stop.
   the build rather than silently re-labelling every error an already-deployed
   binding has seen. `kOk = 0` exists because both C boundaries need a success
   value in the same enum (§5.2).
+- **The numbers are published once, and this spec cites that copy rather than restating it.**
+  The *name and number* of every value sit in the *Error taxonomy (published)* table in
+  [core/README.md](../core/README.md), beside the header that defines them, because two
+  independent bindings need them in prose; the *meaning* stays normatively owned by
+  `status.hpp`'s doc comments. `core_tests`' `Taxonomy.PublishedNumbersMatchTheEnum` reads that
+  table off disk and compares it row for row to the enum, and the same test's exhaustive
+  `switch` — with the unhandled-enumerator diagnostic promoted to an error on that one source
+  file — makes **appending a status a compile failure** until its row is published. A second
+  enumeration anywhere, including in this document, would be the drift the guard exists to
+  stop. The two numbers spelled out in this section (`kOk = 0` above, "taxonomy entry 4" below)
+  are **deliberate cited exceptions**: the rules stated there are *about* those numbers. The
+  table is the only enumeration.
 - `PubSubError` **refuses** `kOk`, `kPending` and `kSubscriptionEnded`: the first
   would let a boundary report a failed call as a success, and the other two are
   §2 wait outcomes rather than failures. "Refuses" means **coerces to
@@ -763,6 +777,13 @@ has measured.
 | Adds to §4 | a resolver for path selectors | nothing |
 | May change the seam | **no** (stop-and-ask) | **no** (stop-and-ask) |
 | Depends on the other | **no** | **no** |
+| Inherits as its oracle | `integration-tests/pubsub-conformance` — `ProviderConformance` (§7's clauses over every subject), `CopyAccounting` (§8's provenance guard), `SeamVocabulary` (what the crossing types make representable), and the `Registry` cases (§4's selection, including the path-selector pair) | the same four |
+
+Neither round re-derives §7's rules or re-invents a copy guard: both check themselves against
+that suite, and both are **expected to add cases to it** — the contract *text* is frozen, the
+test set is not (§12). §8.1's standing requirement travels with it, restated and not
+strengthened: *a live negative control ships with it — a guard nobody has made go red is a
+guard nobody has measured.*
 
 Note where **§4 selection** lands: choosing and configuring a provider at runtime
 is binding-visible — a C# application must be able to do it — so it is part of
@@ -779,34 +800,21 @@ the two are constantly conflated.
 
 ## §10 — Migration and blast radius
 
-Measured, excluding `docs/archive/**`:
+**A record of what the round moved, not a live measurement of the tree** — and that
+distinction is normative here, because §12 freezes this document. Past-tense records of work
+that landed are what this section is for; a present-tense count of the current tree is not
+representable in it, and the ones that were are deleted rather than dated (PDA-DEC-9).
+Excluding `docs/archive/**`:
 
-**External consumers of the protocol-typed config** that a uniform registry
-retires. **Corrected** when PDA-DEC-6 migrated them: the earlier figure of "4
-files, 19 occurrences" was wrong in both halves — `test_interop.cpp` carried 3
-constructions rather than 9, and four further files construct the provider that
-the count omitted entirely. PDA-DEC-7 will cite this table for XRCE, so it is
-corrected rather than merely marked done. **8 files, 18 `ProviderConfig`
-constructions**, counted per file below and re-derivable with
-`grep -E 'ProviderConfig[[:space:]]*\{|ProviderConfig[[:space:]]+[a-z_]+[{;]'`.
-The earlier "12 construction sites" was itself wrong twice over: it counted
-`test_roundtrip.cpp`'s "4 pairs" as 4 rather than 8, and `fastdds_main.cpp` as 1
-rather than 2. The gateway's single construction now feeds
-`RegisterFastDDSProvider` rather than a concrete provider type:
-
-| Site | Sites | Status |
-|---|---|---|
-| [integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp](../integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp) | 8 | migrated, PDA-DEC-6 |
-| [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 3 | migrated, PDA-DEC-6 |
-| [gateway/src/main.cpp](../gateway/src/main.cpp) | 1 | migrated, PDA-DEC-6 — and the concrete provider type is gone from it entirely, replaced by `RegisterFastDDSProvider` |
-| [integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp](../integration-tests/gateway-fastdds-ts/src/fastdds_peer.cpp) | 1 | migrated, PDA-DEC-6 |
-| [integration-tests/pubsub-conformance/subjects/fastdds_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_main.cpp) | 2 | migrated, PDA-DEC-6 |
-| [integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/fastdds_peer_main.cpp) | 1 | migrated, PDA-DEC-6 |
-| [fastdds-pubsub-provider/test_package/src/example.cpp](../fastdds-pubsub-provider/test_package/src/example.cpp) | 1 | migrated, PDA-DEC-6 — and it is the machine check that no eProsima type survives in the public header |
-| [fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp](../fastdds-pubsub-provider/benchmarks/exp_zero_copy.cpp) | 1 | migrated, PDA-DEC-6 — the in-tree proof the document expresses what the struct did |
-| [integration-tests/pubsub-conformance/subjects/xrce_main.cpp](../integration-tests/pubsub-conformance/subjects/xrce_main.cpp) | 3 | migrated, PDA-DEC-7 — the factory, the reachability probe and `Registry.XrceResolvesAsABuiltIn` |
-| [integration-tests/pubsub-conformance/subjects/xrce_peer_main.cpp](../integration-tests/pubsub-conformance/subjects/xrce_peer_main.cpp) | 1 | migrated, PDA-DEC-7 — and it now builds `agent=HOST:PORT` whole, rather than setting a port beside a host it never mentioned |
-| [integration-tests/fastdds-xrce-interop/tests/test_interop.cpp](../integration-tests/fastdds-xrce-interop/tests/test_interop.cpp) | 2 | migrated, PDA-DEC-7 (the XRCE half; the 3 Fast DDS constructions above were PDA-DEC-6's) — these witness the typed core and the type name, not the document: they run their Agent on the default port with the default transport |
+**External consumers of the protocol-typed config**, which a uniform registry retired in
+PDA-DEC-6 and PDA-DEC-7. **No count and no per-file ledger is published here**, and the ones
+that stood here are deleted rather than dated: the quantity stopped existing when the migration
+finished, because after it `ProviderConfig` is how *everything* is configured, so the recipe
+that once bounded the blast radius now matches every configuration site in the tree — including
+this spec's own prose and the registry header. What survives is the claim a machine keeps:
+**`FastDDSProviderOptions` and `XrceConfig` are declared nowhere and constructed nowhere, and
+the compile is the check.** They were retired, not deprecated (owner rulings 2026-08-31 and
+2026-09-02), so no coexistence window exists in which a stale ledger could be true.
 
 **Provider-internal churn** (part of the work, not external migration):
 `fastdds-pubsub-provider/` — done in PDA-DEC-6. Five QoS tests that set a value
@@ -828,26 +836,31 @@ in PDA-DEC-6; the XRCE README's configuration section was rewritten in
 PDA-DEC-7, and the default document it publishes is read off disk by a test so it
 cannot drift from the code.
 [docs/architecture-overview.md](architecture-overview.md) and the root
-[README.md](../README.md) were inspected in PDA-DEC-6 and carry no retired
-vocabulary — their "implementing one interface" claims stand, and the only code
-they show is `make_shared<FastDDSPubSubProvider>()`, which still compiles. The
-one edit made to either was §7.4's include path, wrong since #26 (it named the
+[README.md](../README.md) were inspected in PDA-DEC-6 **for retired vocabulary only**, and
+carried none: the single provider construction each shows,
+`make_shared<FastDDSPubSubProvider>()`, still compiles. That inspection did not check
+*accuracy*, and PDA-DEC-9 found two claims in them that had stopped being true — a subscriber
+receiving its schema as an `OwnedSchema` inside `SubscriptionResult` (the seam has carried a
+`SchemaArrival` since PDA-DEC-3), and a new transport arriving by "implementing one interface"
+alone (it is also registered under a name and reached through §4's registry). Both are restated
+in PDA-DEC-9. The one edit PDA-DEC-6 made was §7.4's include path, wrong since #26 (it named the
 header unqualified rather than as it is packaged); PDA-DEC-6 corrected it in
 passing because the item is what put a machine check on that include tree.
 
-**Consumers of the vocabulary change, which sit ABOVE the seam.** Giving schema
-arrival a C-expressible form (§3.4) is not confined to providers: `SubscriptionResult`
-and its `shared_future` are consumed by 10 sites outside `provider.hpp` —
-`pubsub/src/subscriber.cpp` (5), `pubsub-arrow/src/subscriber_arrow.cpp` and its
-header (4), `gateway/src/{main,ws_session}.cpp` (3), plus both `test_package`
-examples and the `pubsub` / `pubsub-arrow` test suites. Same for any change to
-`Blob` under §3.2. So PDA-DEC-3 lands in `core/` and `pubsub/` **and** ripples up
-through `pubsub-arrow` and the gateway; the round is not "providers only" in
-either direction.
+**Consumers of the vocabulary change, which sit ABOVE the seam.** Giving schema arrival a
+C-expressible form (§3.4) was not confined to providers. `SubscriptionResult` carries a
+`SchemaArrival` and nothing else; the `shared_future` it used to carry was **retired, not
+wrapped** (owner ruling 2026-09-01, *"One mechanism only"*), so PDA-DEC-3 rewrote every caller
+that waits for a schema — in `pubsub/`, `pubsub-arrow/`, the gateway, both `test_package`
+examples and those two components' suites. Same for any change to `Blob` under §3.2. So
+PDA-DEC-3 landed in `core/` and `pubsub/` **and** rippled up through `pubsub-arrow` and the
+gateway; the round is not "providers only" in either direction. **No per-site count is
+published** — with no coexistence window there is nothing for one to bound, and the compile is
+the check.
 
-`InProcessProvider` moves out of the gateway executable into a real component
-and becomes a registered built-in — the first proof that §4's registry works, and
-later the body of PDA-ABI's reference driver. The **lift** landed in PDA-DEC-1
+`InProcessProvider` **moved** out of the gateway executable into a real component and
+**became** a registered built-in — the first proof that §4's registry works, and later the body
+of PDA-ABI's reference driver. The **lift** landed in PDA-DEC-1
 (the conformance suite cannot link a type in an anonymous namespace inside a
 `main.cpp`); PDA-DEC-5 is the **registration**.
 
@@ -866,3 +879,123 @@ change to the interface's method set (§2).
 Deliberately deferred with a named home: **zero-copy receive** is enabled here
 (§3.2) but delivered in PDA-ABI, where the loaned-sample path and the data-sharing
 defect live.
+
+---
+
+## §12 — The handoff (what is frozen, who may act, and how each condition was verified)
+
+This section is why the document is `frozen` rather than `proposed`. It exists for two rounds
+that start the same day and cannot ask each other anything: **PDA-ABI** below the seam and
+**BIND-C# / BIND-Rust** above it.
+
+### §12.1 — What is frozen, and who may act
+
+Two classes. **There is no third**, and no "negotiable" text.
+
+**`frozen`** — §2; **§3 entire** (§3.1, §3.2, §3.3, §3.4 including its outcome table and its
+`timeout_ms` rules, §3.5 including the empty-segment refusal); §4 and §4.1's *rules*; §4.2;
+§5.1's mapping and refusal rules; §5.3's callback rule; §6; §7's clauses; §8's zero-copy
+property. **Anything not named `append-only` below is `frozen`** — including §0, §1, §5.2, §8.1
+and §9 — **except the two record sections named at the end of this subsection.** *Who may act:*
+**nobody
+alone.** §1 governs: *"A later round finding the seam insufficient is a **stop-and-ask**
+against *this* spec — not a local workaround, and not a change landed inside an ABI round."*
+
+**`append-only`** — the `PubSubStatus` values (§5.1); `ProviderConfig`'s typed core fields
+(§4.1); registered provider names (§4). The class constrains only the **shape** of a change:
+an append, with nothing renumbered, reordered, reused or removed. *Who may act:* **making an
+append is itself a stop-and-ask, and the owner allocates the number or the field** — so two
+parallel rounds cannot both take `PubSubStatus = 10`, and no allocation protocol or reserved
+range is needed. A `PubSubStatus` append carries its `core/README.md` row **in the same
+change**, which §12.2's condition 3 makes mechanical rather than a request. For the typed core,
+§4.1 governs verbatim: *"It is **exactly those two fields** and it is append-only; a later field
+never changes `Create`. Widening it because one protocol wants a setting typed is a
+stop-and-ask (owner ruling 2026-09-02: 'Fletcher keeps exactly payload size and domain')."*
+
+**Two sections are records, not contract, and are named so that correcting a stale record is
+not a stop-and-ask:** **§10** (what the round moved) and **§11** (scope). Fixing a fact in
+either is ordinary maintenance. They carry one rule of their own instead: **a count that claims
+something about the current tree is not representable in this document** — it carries the
+command that derives it, inline, or it is not written, and a table of counts a machine cannot
+re-derive is deleted rather than dated. Past-tense records of work that landed are fine.
+
+**Contract text is not the test set.** `frozen` binds the *wording* of §7's clauses. The
+conformance suite stays extendable and **both rounds are expected to add cases** — that is what
+the 2026-08-31 ruling means by the suite pressure-testing the ABI (§9).
+
+### §12.2 — The six handoff conditions, and how each was actually verified
+
+`mechanical` is used **only where a named machine reddens on a named mutation**. By that bar
+**two of the six are mechanical end to end** (3 and 4); condition 2 splits into a mechanical
+clause and a read one; 1, 2b and 6 name a reader and a date; and 5 has **no machine check** and
+says so. The labels were brought down to the evidence, rather than guards invented to meet
+them.
+
+| DoD condition | Artifact | The check | How verified |
+|---|---|---|---|
+| 1. Every crossing type has a normative, C-expressible ownership rule in the header (§3) | `write_buffer.hpp`, `types.hpp`, `owned_schema.hpp`, `schema_arrival.hpp`, `provider.hpp` | Correctness of the *wording* is read. What the types make **representable** is pinned by the `SeamVocabulary` suite — no view-only `Blob`, zero-size normalisation, empty-segment refusal | **by-reading** — PDA-DEC-3 implementer and its two design reviews, 2026-09-01; re-read at close, 2026-09-03 |
+| 2a. No second schema-wait mechanism exists (§3.4) | `schema_arrival.hpp`, and the absence of a `shared_future` member on any seam type | Two mutations, two different answers. **Regressing** to a `shared_future` return stops the tree compiling at every waiting call site: mechanical. **Adding one beside `SchemaArrival`** compiles and reddens nothing — only a reader re-running `grep -rn "shared_future" core pubsub pubsub-arrow gateway *-provider --include=*.hpp --include=*.cpp` notices, and no lane runs that grep. Derive the survivors from that command; no tally is published here | **mechanical (regression only)** and **by-reading (addition)** — 2026-09-03. Forward protection against the addition is §3's place in the `frozen` list, not a machine: the same footing as condition 5 |
+| 2b. `SchemaArrival` has a coherent C-expressible form (§3.4) | `schema_arrival.hpp` plus §3.4's outcome table and `fl_status wait(...)` sketch | Read. This is the clause both later rounds derive their own `wait` from, weeks apart, without talking — and an absence grep passes whether or not the form is coherent, so this is not labelled as if it settled it | **by-reading** — PDA-DEC-3 implementer and review, 2026-09-01; re-read at close, 2026-09-03 |
+| 3. The exception taxonomy is published and stable (§5.1) | `status.hpp` plus `core/README.md`'s *Error taxonomy (published)* table | Per-enumerator `static_assert`s pin the numbering (`status.hpp:67-83`). `Taxonomy.PublishedNumbersMatchTheEnum` reads the table **off disk** and compares it row for row; its exhaustive `switch`, with the unhandled-enumerator diagnostic promoted to an error on that one source file, makes **appending an enumerator a compile failure**; and its one-past-the-last assertion holds the suite red until the README carries the new row. The test holds no count and no copy of the numbers | **mechanical**, and *measured*: all three mutations were applied and reverted at close (append → `error C4062`; the `case` added without the row → red; a name edited on either side → red), recorded in the progress log. **Witnessed under MSVC only** — see §12.4 |
+| 4. The registry signature admits a path resolver without change (§4 clause 2) | `provider_registry.hpp` | `static_assert` on the **member-pointer type** of `Create` (`provider_registry.hpp:292-297`) — it sees a defaulted extra parameter or a dropped `const`, which a return-type check cannot; plus `Registry.PathSelectorResolvesThroughTheSameCall` (stand-in resolver) with `Registry.PathSelectorWithoutResolverIsRefusedAsUnsupported` as its live negative control | **mechanical** — the model row |
+| 5. Nothing above the seam branches on built-in versus loaded (§0.1(2)) | `provider_registry.hpp`, `gateway/src/main.cpp` | Today the distinction is unrepresentable above the seam: the public registry exposes no accessor that reports it, and the gateway names no concrete provider type in selection. **No machine notices a later round adding one** — the frozen-signature assert pins `Create`'s type alone. What protects it forward is §12.1: §4's registry surface is `frozen`, so such an accessor is a **stop-and-ask**. This is the condition PDA-ABI will pressure hardest, because it is the round that adds loading | **by-construction — no machine check** |
+| 6. The spec states what is frozen, and changing it is a stop-and-ask (§1) | §1 plus §12.1 | A wording condition: read. §12.1 makes it checkable *in kind* — every normative element sits in exactly one of two named classes, the default is `frozen`, and each class names who may act | **by-reading** — PM and the two design reviews of this item, 2026-09-03 |
+
+A handoff row claiming "a machine watches this" where none does would be worse for two blind
+teams than one naming the reader. That is why five of these labels came down in review, and why
+no new guard was invented at close.
+
+### §12.3 — What the two rounds inherit besides the contract
+
+The oracle suites are named in §9's table. Inherited with them:
+
+- **Guards that are real but have never been made to fail** — protection by reading, not by
+  measurement, each named so that neither round mistakes it for evidence: PDA-DEC-6's
+  discovery-based QoS guard; PDA-DEC-7's four unwitnessed document keys; PDA-DEC-7's
+  socket-leak probe; PDA-DEC-1H's unreached refusal arm; PDA-DEC-8's
+  unreachable-by-construction pair; PDA-DEC-8's `kOk`-on-null-schema wait.
+- **One false green, fixed:** a foreign XRCE Agent left listening on the port could serve a
+  whole conformance run and certify it (found by PDA-DEC-7, fixed in PDA-DEC-1H, which now
+  proves the harness owns the Agent that answers).
+- **One false red, and it costs an hour if you meet it cold:** leaked Fast DDS shared-memory
+  segments make `create_participant` fault with `0xC0000005`. Clear the
+  `eprosima/fastdds_interprocess` directory before a DDS run.
+- **Two blind spots that keep their owners by ruling, and are not reopened here:** the
+  receive-side data-sharing defect (**PDA-ABI-7**; owner rulings 2026-08-31 and 2026-09-01,
+  starting from PDA-DEC-1's evidence table), and §3.4's unbounded-wait clause, which is pinned
+  by no test because a conforming and a non-conforming implementation are indistinguishable on
+  the standard library this tree builds against on Windows (§3.4 states it; it was measured
+  both ways).
+- **The standing policy on blind spots:** *a guard may ship with a recorded blind spot* —
+  PDA-DEC-1's owner ruling of 2026-09-01 (*"Ship the guard, hunt elsewhere"*), whose own scope
+  was that one item, **carried forward as policy by PDA-DEC-9** so that neither later round
+  re-poses a settled question. It is a permission, not a requirement, and it does not relieve
+  §8.1's negative-control requirement.
+
+### §12.4 — The evidence behind this document, stated exactly
+
+Owner ruling 2026-09-03, *"The handoff states the platform evidence exactly"*:
+
+**Every green cited anywhere in this round was produced by a local run on one Windows machine,
+plus one WSL compile of the single platform-forked file (PDA-DEC-1H's `/proc` ownership path).**
+**No automated build has ever run on `feature/protocol-driver-abi`**: the component and
+integration lanes are `workflow_call` entries invoked from a `pull_request`-triggered workflow
+(`.github/workflows/ci.pr.yml`, its `uses:` entries), so opening the pull request is the only
+trigger, and that is the owner's step. Condition 3's promoted diagnostic was witnessed firing
+under MSVC and **only** under MSVC; the `core` lane compiles `core_tests` on a Linux runner too
+(`ci.core.yml:55,107`), which is what would expose a diagnostic that fires under one compiler
+and not the other — and that lane has not run.
+
+So, as instructions rather than as a record:
+
+1. **Both later rounds treat Linux as unverified for seam behaviour.** Nothing in this document
+   is backed by a Linux run.
+2. **The first pull request of either round runs the lanes.** Whichever opens first, its result
+   is the first Linux evidence this seam has.
+3. **A Linux-only difference in seam behaviour is a question for the owner — a stop-and-ask
+   against this spec, not a local fix.** A local fix by one round would silently change the
+   seam both rounds share, which is exactly the divergence §1 exists to prevent.
+
+This is the fourth consecutive time the owner chose a narrow claim stated honestly over a wide
+one implied (2026-09-01 copy-accounting scope, 2026-09-01 conformance blind spot, 2026-09-03
+isolation scope, and this).

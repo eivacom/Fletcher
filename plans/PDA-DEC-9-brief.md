@@ -49,7 +49,7 @@ you allocate it, so two rounds cannot both take the same number.
   a named reader on a named date and one by construction — the honest count after review.
 - Reconciliation covers the specification, the two top-level documents and the round's own
   completion claims; per-component document counts stay with the items that own them. No
-  public code surface is added, altered or retired, and packaging does not change.
+  public code surface is added, altered or retired, and the package's **contents** do not change.
 
 ## Numbers
 Declared net lines: +330 / −100 · new public surface: 0 · design cycles used: 2/2

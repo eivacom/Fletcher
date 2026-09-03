@@ -831,3 +831,92 @@ before committing it. Neither is a new rule — the second is just doing the job
 For the retrospective, with the number attached: **1 item, 4 commits, ~2 hours** spent
 claiming a green the evidence did not yet support.
 
+## PDA-DEC-9 — the seam becomes a signed contract: spec §12, the published taxonomy, TD-008 (2026-09-03) 🟢
+
+**The round's last item is documentation plus exactly one guard.** The spec goes
+`proposed` → **frozen** and gains **§12**: what is frozen and **who may act on each class**,
+how each of the six handoff conditions was *actually* verified, what the two later rounds
+inherit, and what the evidence does not cover. `core/README.md` gains the one published
+*Error taxonomy* table; `docs/technology-decisions.md` gains **TD-008**; the two top-level docs
+stop describing a schema handoff the seam abandoned in PDA-DEC-3 and a transport that arrives
+by "implementing one interface" alone. No product code, no public surface, no seam method
+touched.
+
+**The one guard, and why it is the only new machine in the item.**
+`Taxonomy.PublishedNumbersMatchTheEnum` (`core_tests`) reads the published table **off disk**
+at run time and compares it row for row to `PubSubStatus`. It holds **no count and no copy** of
+the numbers: the expected set is derived from the file (a contiguous prefix from 0, which
+§5.1's *appended only, never reordered or reused* is what licenses), because a row-count
+equality against a number the test itself carried would **be** the held-copy defect the guard
+exists to close. Totality is a **compile** matter, not a test matter: `StatusName` is one
+`switch` over every enumerator with no `default:` label, and the unhandled-enumerator
+diagnostic is promoted to an error on that one source file.
+
+**The guard was reddened three ways before it was believed** — the whole mechanism hangs on a
+compiler flag whose failure mode is a silent green (review debt C3-2), and P3b carried a
+stop-and-ask on exactly that. All three mutations were applied alone, observed, and reverted:
+
+1. **Append an enumerator, touch nothing else → the build fails.** The flag takes under MSVC
+   19.4:
+   `test_status_taxonomy.cpp(74,5): error C4062: enumerator 'fletcher::PubSubStatus::kThrowawayMutationDoNotShip' in switch of enum 'fletcher::PubSubStatus' is not handled [core_tests.vcxproj]`
+2. **Add the `case` but not the README row → red at part 3.**
+   `Expected equality of these values: StatusName(...(rows.size())) Which is: "kThrowawayMutationDoNotShip" / ""` —
+   *an enumerator exists one past the last published row.*
+3. **Edit a name on either side → red at part 2.** (`kNotSupported` → `kUnsupported` in the
+   README):
+   `StatusName(static_cast<PubSubStatus>(row.number)) Which is: "kNotSupported" / row.name Which is: "kUnsupported"`
+
+Two further reds were observed *on the way in*, and they are the non-vacuity proof the design
+asked for: with the README not yet exported the test failed on the **empty read**
+(`could not read the published taxonomy from …/README.md`), and with it exported but the table
+not yet written it failed on **zero rows parsed** — never a silently green loop. P3b is
+**not** triggered; P1 holds (core's package ID is `da39a3ee…` before and after the new
+`exports_sources` entry, and `conan create` is unaffected).
+
+**What §10 said that this PR would have frozen.** The section still asserted, in the present
+tense, that "`SubscriptionResult` and its `shared_future` are consumed by 10 sites outside
+`provider.hpp`" with a per-site breakdown that summed to **12**. Both halves were false: the
+`shared_future` was retired outright by the 2026-09-01 *One mechanism only* ruling. Deleted,
+with no replacement count. The **whole-section sweep** that review debt C3-1 asked for (the
+defect class recurred at a new address between cycles) found three more: the section's own
+"Measured" framing, read as a live measurement of the tree; "their 'implementing one
+interface' claims stand", an inspection of *vocabulary* reported as a check of *accuracy*; and
+`InProcessProvider` "moves … and becomes", present tense for work that landed in PDA-DEC-1 and
+PDA-DEC-5. §12.1 now names §10 and §11 as **records, not contract**, so correcting a stale
+record is maintenance rather than a stop-and-ask, and scopes the no-free-floating-count rule to
+counts that claim something about the *current tree* — past-tense records of what landed are
+fine.
+
+**One label came down, again.** §12 row 2a is no longer flatly `mechanical`: *regressing* to a
+`shared_future` return stops the tree compiling, but **adding one beside `SchemaArrival`
+compiles and reddens nothing**, so the row reads **mechanical (regression only) ·
+by-reading (addition)** and says that the forward protection is §3's place in the frozen list,
+not a machine. The honest tally in §12.2 is therefore: **two of six mechanical end to end
+(3, 4)**, one split (2a), three by-reading with a reader and a date (1, 2b, 6), one
+by-construction with no machine check (5).
+
+**The platform evidence is stated exactly** (owner ruling 2026-09-03): every green in this
+round is a local run on one Windows machine plus one WSL compile of the single platform-forked
+file, **no automated build has ever run on `feature/protocol-driver-abi`** (the lanes are
+`workflow_call` entries from a `pull_request`-triggered workflow, so opening the PR is the
+owner's step), and §12.4 *instructs* rather than only recording: both later rounds treat Linux
+as unverified, the first PR of either runs the lanes, and a Linux-only difference in seam
+behaviour is a **question for the owner, not a local fix** — a local fix by one round would
+silently change the seam both rounds share. Condition 3's diagnostic is witnessed under MSVC
+**only**; the `core` lane compiles `core_tests` on a Linux runner too, which is what would
+expose a flag that fires under one compiler and not the other, and that lane has not run.
+
+**Verification.** `core` **28 → 29 ctest entries** and **28 → 29 gtest cases**, both derived
+(`ctest -N` → *Total Tests: 29*; `--gtest_list_tests` → 29), 29/29 passed. Both required
+`conan create` passes genuinely compiled — `Package 'da39a3ee5e6b4b0d3255bfef95601890afd80709'
+created` on each, not "Already installed!". No other package was rebuilt, and the reason is
+stated rather than assumed: no product header changed (`status.hpp` is byte-identical to
+HEAD), `package()` is untouched, so nothing downstream sees a different `fletcher-core`.
+
+**Deliberate deviation from the design, flagged.** The design's Files-to-touch has this item
+flip its own tracker cell to 🟢. It does not: the 2026-09-03 process breach recorded in this
+log ruled that **an agent must not edit `plan_path`'s status column at all**, and the flip is
+the PM's step after the close gate passes. The DoD checklist's new verification column landed;
+the status cell was left alone.
+
+**Numbers.** Declared **+330 / −100**.

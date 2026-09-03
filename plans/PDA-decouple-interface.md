@@ -279,17 +279,20 @@ sites migrated; `InProcessProvider` out of `gateway/src/main.cpp` and resolved a
 a built-in; two instances on two domains isolated; **wire format byte-identical**;
 Fletcher carrying **no config parser**.
 
-**And the handoff, which is the point of the round:**
+**And the handoff, which is the point of the round.** Each condition carries **how it was
+verified**, not just whether it is ticked; the labels and the evidence behind them are
+[spec §12.2](../docs/pubsub-interface-spec.md), and `mechanical` is claimed only where a named
+machine reddens on a named mutation. **Two of the six are mechanical end to end.**
 
-1. Every type crossing the seam has a normative, C-expressible ownership rule in
-   the header (§3).
-2. Schema arrival has a C-expressible form; the `shared_future` is a convenience
-   over it, not the contract (§3.4).
-3. The exception taxonomy is published and stable (§5.1).
-4. The registry signature admits a path resolver **without change** (§4 clause 2).
-5. Nothing above the seam branches on built-in versus loaded (§0.1(2)).
-6. The spec states what is frozen, and that changing it is a stop-and-ask for
-   either later round (§1).
+| # | Condition | Verified | How |
+|---|---|---|---|
+| 1 | Every type crossing the seam has a normative, C-expressible ownership rule in the header (§3) | ✅ | **by-reading** (reader + date in §12.2); representability pinned by `SeamVocabulary` |
+| 2a | No second schema-wait mechanism exists (§3.4) | ✅ | **mechanical for a regression** (the tree stops compiling), **by-reading for an addition** (a `shared_future` added *beside* `SchemaArrival` reddens nothing — §3's freeze is the forward protection). The DoD's original "the `shared_future` is a convenience over it, not the contract" clause is **superseded** by owner ruling 2026-09-01 (*"One mechanism only"*): the three members are retired, so there is no convenience wrapper |
+| 2b | `SchemaArrival` has a coherent C-expressible form (§3.4) | ✅ | **by-reading** — the clause both later rounds derive their `wait` from; an absence grep cannot settle it |
+| 3 | The exception taxonomy is published and stable (§5.1) | ✅ | **mechanical** — `Taxonomy.PublishedNumbersMatchTheEnum` reads `core/README.md` off disk; appending a status is a **compile** failure; all three mutations were applied, observed red, and reverted (MSVC only — spec §12.4) |
+| 4 | The registry signature admits a path resolver without change (§4 cl. 2) | ✅ | **mechanical** — `static_assert` on the member-pointer type of `Create`, plus the path-selector pair with its live negative control |
+| 5 | Nothing above the seam branches on built-in versus loaded (§0.1(2)) | ✅ | **by-construction, no machine check** — unrepresentable today; held forward by §4 being `frozen`, so an accessor is a stop-and-ask |
+| 6 | The spec states what is frozen, and that changing it is a stop-and-ask for either later round (§1) | ✅ | **by-reading** — §1 plus §12.1's two classes, each naming who may act |
 
 When those six hold, PDA-ABI and BIND-C#/BIND-Rust are both unblocked, in
 parallel.
