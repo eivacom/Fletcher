@@ -794,3 +794,22 @@ vs a 300 cap** (+5): debt C2-2 required a new premise while forbidding file grow
 the PM accepted the overrun rather than cut approved content for five lines.
 **Cycle meter:** design 2/2 · fix 0 · implementer launches 1/5 · owner touches 1 (the
 scope ruling).
+
+**Close (PM, 2026-09-03).** Gate FAILED first run — the Stage Brief still carried its
+template placeholder instead of an "As landed" delta, which is exactly what the gate
+exists to catch, and it caught it against me. Fixed and re-run: **PASS**. Also corrected
+the brief's opening sentence, which still folded the two pairs into one over-claim that
+review debt C2-1 had struck.
+
+**Round-close full suite at `eb69297`: zero failures.** All seven components reported
+"Already installed!" on the first pass and were `conan remove`d and genuinely rebuilt, so
+the round's most-cited false-green trap was caught rather than reported around. Notable
+figures, entries and cases stated separately: `pubsub-conformance` **86 entries / 112
+cases** (`conformance_xrce` is ONE entry bundling 27; `conformance_fastdds` 29),
+`fastdds-pubsub-provider` **85 / 84**, `xrcedds` **16 / 15**, `gateway-end-to-end` **29**,
+`gateway-fastdds-ts` **4/4 three times with no row-loss signature**, all three TS binaries
+confirmed to postdate HEAD. Two accepted skips (rustc, tsc) and one gated oracle.
+
+**Cycle meter:** design 2/2 · fix 1 · implementer launches 2/5 · owner touches 1.
+**Close gate:** PASS on re-run.
+

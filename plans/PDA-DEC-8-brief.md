@@ -1,8 +1,12 @@
 # PDA-DEC-8 — Stage Brief (2026-09-03, revision 1)
 
 **In one sentence:** an integrator can run two instances of the same protocol in one
-application — on two domains, and with two different message-size limits — and it is
-now *proved* they exchange no messages and share no topic declarations or settings.
+application and it is now *proved* that two instances on **different domains** exchange
+no messages and share no topic declarations or settings, and — separately — that two
+instances with **different message-size limits** each honour their own. Those are two
+claims about two pairs, not one claim about one; folding them together is what review
+debt C2-1 struck, because differing size limits stop the instances discovering each
+other at all, so "exchange no messages" would be unearned there.
 **Forcing test:** `Registry.TwoInstancesTwoDomainsStayIsolated` — two instances chosen
 the way an operator chooses one, publishing on **the same topic name** with **identical
 size limits**, so only the domain could keep them apart; each gets only its own messages
@@ -55,6 +59,17 @@ process, through the registry"); the loopback keeps no cross-instance state at a
 Declared net lines: +570 / −0 · new public surface: 0 · design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-03, PM):* **+903 / −104** over `integration-tests/` + `docs/` across
+both commits (`b7b33f3` +710/−25, `eb69297` +193/−79), vs declared +570/−0 — over on adds,
+and the overrun is evidence rather than scope: **zero product code**, 592 lines of it one
+test file. Public surface **0** as declared. All six mutation rows observed red with
+verbatim text, independently re-run by compliance with Conan cache forensics. Not
+predicted by the brief: a **dead guard** (`AwaitSubscriptionsLive` returned `kOk` on a
+null schema — the round's seventh inert guard), a **real domain collision** (154 was
+already `gateway-end-to-end`'s; both design cycles checked only the C++ suites, so the
+range moved to 161–167 with the census command recorded), and the control's margin being
+a **mislabelled quantity** — the crossing is 0 ms, not the ~260/279 ms two reviewers and
+the PM attributed to it, which was the case's wall time. Round-close full suite green with
+every component force-rebuilt. Design landed 309 lines vs a 300 cap; the +9 is mandated
+provenance and I declined to trim it. Cycles: design 2/2 · fix 1 · implementer launches
+2/5 · owner touches 1 (the claim-scope ruling).
