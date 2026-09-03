@@ -54,6 +54,32 @@ class PubsubConformanceIntegrationConan(ConanFile):
         self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
         self.requires("fletcher-xrcedds-pubsub-provider/[*, include_prerelease]")
         self.requires("gtest/1.17.0")
+        # NOT for our code: for the MicroXRCEAgent the CMakeLists builds from
+        # source. PDA-DEC-6 dropped `transitive_headers=True` from the Fast DDS
+        # provider's own require -- correctly, since its public header names no
+        # eProsima type -- so Fast DDS and Fast CDR now reach this graph with
+        # headers=False, and Conan's CMakeDeps then emits their `fastdds` /
+        # `fastcdr` targets with EMPTY include directories. Everything Fletcher
+        # compiles is fine with that; the Agent is not. Its CMake resolves
+        # UAGENT_USE_SYSTEM_FASTDDS/FASTCDR through find_package(fastdds 3) /
+        # find_package(fastcdr 2) on our CMAKE_PREFIX_PATH, which SUCCEEDS
+        # against those targets and then compiles `#include <fastcdr/Cdr.h>`
+        # with no -I for it. Requiring Fast DDS here restores headers=True for
+        # both (fast-dds re-exports fast-cdr's headers), which is what the Agent
+        # superbuild needs and all it needs.
+        #
+        # What it costs, stated rather than glossed: the provider's target links
+        # `fastdds` (transitive_libs), so those include dirs now also reach the
+        # subject binaries that link the provider, and a subject COULD include a
+        # Fast DDS header and compile. So this harness is no longer even an
+        # incidental witness to PDA-DEC-6's claim. That claim's machine check is
+        # the provider's own test_package, which links the provider and nothing
+        # else and is unaffected by anything here -- and this is exactly the
+        # visibility the harness had before 2026-09-02, when it built the Agent
+        # green. Nothing that reads a Fast DDS header is added here.
+        #
+        # Same require, same reason, as fastdds-pubsub-provider/benchmarks.
+        self.requires("fast-dds/3.4.0")
 
     def layout(self):
         cmake_layout(self)

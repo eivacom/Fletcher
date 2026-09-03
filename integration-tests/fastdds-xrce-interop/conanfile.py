@@ -39,6 +39,15 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
         # arrow pins zlib/1.2.13, openssl pulls 1.3.1 — same conflict
         # arrow-bridge handles in its own conanfile.
         self.requires("zlib/1.3.1", override=True)
+        # NOT for our code: for the MicroXRCEAgent the CMakeLists builds from
+        # source, exactly as in integration-tests/pubsub-conformance. PDA-DEC-6
+        # dropped `transitive_headers=True` from the Fast DDS provider's require,
+        # so Fast DDS and Fast CDR now reach this graph with headers=False and
+        # Conan's CMakeDeps emits their `fastdds` / `fastcdr` targets with EMPTY
+        # include directories. UAGENT_USE_SYSTEM_FASTDDS/FASTCDR still find those
+        # targets and the Agent then fails to compile `#include <fastcdr/Cdr.h>`.
+        # Requiring Fast DDS here restores headers=True for both.
+        self.requires("fast-dds/3.4.0")
 
     def layout(self):
         cmake_layout(self)
