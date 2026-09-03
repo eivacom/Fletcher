@@ -327,3 +327,20 @@ discovery cannot observe `history` or `resource_limits`.
 omits*, so a build implementing either answer would have passed every row. The
 implementation must mandate the form (a fresh default-constructed QoS per call; the
 built-in only on the not-found branch) and assert it, or this ruling is unfalsifiable.
+
+## 2026-09-03 — The isolation claim is one machine, with its exclusions published *(selection)*
+> "One application on one machine, with three exclusions in the docs — nothing about isolation between machines, vendor process-wide state, or the shared memory two *separate* processes on one machine use. Separate processes cannot share the in-memory state this stage disproves, so a wider harness adds maintenance and no evidence; it matches the scope you chose twice."
+
+**Context:** PDA-DEC-8, how wide the published multi-instance isolation claim should be.
+Rejected: buying a cross-machine harness — real added coverage, but new infrastructure
+the round had not budgeted, and it would test DDS *transport* rather than the registry's
+freedom from global state, which is what spec §4's third item actually requires.
+**Applies to:** PDA-DEC-8's README wording and design §8. The claim is scoped to one
+process on one host, within the window the same-domain positive control measured a real
+crossing, with **three exclusions stated rather than implied**: cross-host isolation,
+vendor process-wide state both instances would set identically, and the shared memory two
+separate processes on one machine use. Consistent with the 2026-09-01 copy-accounting
+ruling ("scope to the interface, say so plainly") and the 2026-09-01 blind-spot ruling —
+the third time this round the owner has chosen a narrow claim stated honestly over a wide
+one implied. **Review debt C2-1 rides with it:** §8 must stop publishing "exchange no
+rows" for the different-bounds pair, which premise P1b makes an unearned claim.
