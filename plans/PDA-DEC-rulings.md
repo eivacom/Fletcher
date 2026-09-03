@@ -363,3 +363,39 @@ local fix by one round would silently change the seam both rounds share. **Fourt
 consecutive time** the owner chose a narrow claim stated honestly over a wide one implied
 (2026-09-01 copy-accounting scope, 2026-09-01 conformance blind spot, 2026-09-03 isolation
 scope, and this). A design may now infer that preference rather than ask again.
+
+## 2026-09-03 — The BIND-C# stop-and-ask is absorbed into PR #126, not deferred *(selection)*
+> "Absorb into PR #126 now — Amend the spec and land all eight before merge, so the seam ships correct rather than shipping frozen-and-known-wrong. Strongest final artifact."
+
+**Context:** a colleague raised a formal stop-and-ask against the frozen seam spec from the
+BIND-C# implementer's frame (PR #126, 2026-09-03): nine amendments, seven touching `frozen`
+text, one owner-allocated append, one correction to the sibling ABI spec. §1 and §12.1 route
+exactly this to the owner — nobody acts alone on frozen text. An independent verification pass
+**confirmed A1–A7 and A9**, found **A8 only partly** established, confirmed both header
+corrections, and found four further defects the author missed. All eight require **product
+code, not wording**, which is itself the evidence they are rulings rather than maintenance.
+Rejected: opening PDA-ABI with them (which §1's mechanism arguably exists for, but would ship a
+seam known to be wrong and slip the same-day handoff anyway), and pulling forward only A4 and
+A5 (the two that are defects in shipped behaviour rather than gaps in wording).
+**Applies to:** all eight amendments land before #126 merges. **Accepted cost, stated at the
+time of the ruling:** the round reopens after its gate passed and all ten items were green and
+CI-verified; the denominator grows from 10 to 18; every amendment carries a machine check its
+author demanded, so each is a design-plus-implementation cycle, not an edit. Realistically this
+doubles the round.
+
+## 2026-09-03 — A re-entrancy refusal gets its own number *(selection)*
+> "Allocate a new number — A distinct status lets a caller tell 'this provider can't do that at all' from 'you called back into me from my own callback', which are genuinely different operator problems."
+
+**Context:** A8 asked the owner to allocate a `PubSubStatus` value for a re-entrancy refusal.
+Verification established that the author never addressed `kNotSupported = 6` (*"This provider
+does not implement the requested behaviour"*), so the premise "no existing status fits" was
+**not** established — the owner ruled on the merits anyway, distinguishing the two operator
+problems. Rejected: reusing `kNotSupported`, and deferring the allocation until A3's clause is
+drafted.
+**Applies to:** the append is **`kReentrantCall = 10`** — the next free value; `PubSubStatus` is
+fixed and append-only (`core/include/fletcher/core/status.hpp`, values 0–9 today, pinned by
+`static_assert`). Per §12.1 only the owner may authorise an append, and this is that
+authorisation. The append moves as one change with `core/README.md`'s published table, the
+`static_assert` set, and `Taxonomy.PublishedNumbersMatchTheEnum` — whose exhaustive `switch`
+makes an un-published append **fail to compile**, so the guard enforces this ruling rather than
+documenting it.
