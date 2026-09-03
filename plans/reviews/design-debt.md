@@ -337,6 +337,48 @@ sentences already there and must not grow the file.
 | C2-5 | README placement. `## The Registry suite` opens "in its own binary (`conformance_registry`), 19 entries", and the two existing `Registry.*ResolvesAsABuiltIn` cases that live in the provider binaries are not documented there at all. Introduce the four new cases under a sub-heading that names `conformance_fastdds` (PDA-DEC-6 DEBT-6's concern in the other direction), or that section's own count becomes misleading. | re-review §DEBT-5 |
 | C2-6 | Informational, nothing owed by this item. `integration-tests/pubsub-conformance/CMakeLists.txt:304-306` says `conformance_xrce` is 26 gtest cases; it is 27 (24 clause cases + 2 `ConformanceXrce` + 1 `Registry`), and the design's number is the correct one. Fix wherever it is cheapest — PDA-DEC-9 restates these counts anyway. Not a reason to grow this item's `Files-to-touch`. | re-review §DEBT-6 |
 
+## PDA-DEC-9 — seam spec, taxonomy, handoff (NEEDS-REWORK, 6 BLOCKERs, cycle 1 of 2)
+
+Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md). The eight items below are
+DEBT and do **not** loop the design; the six BLOCKERs are in the review (B1 the totality
+`static_assert` cannot fail on an append, so the item's one new guard does not do what it
+claims; B2 "ships with the package" is false — `package()` copies only `*.hpp`/`*.cmake`;
+B3 §12 rows 2 and 5 are labelled `mechanical` over checks that are partial or by-reading;
+B4 §10's per-site ledger and three bare counts survive into the frozen spec, against the
+design's own F1; B5 `append-only` names no actor or allocator and drops §4.1's stop-and-ask;
+B6 Brief decision 2 as worded reverses the owner's 2026-09-01 *Ship the guard, hunt
+elsewhere* ruling — STOP-AND-ASK).
+
+Verified against the tree in cycle 1 — **rely on these, do not re-derive them**: §10's recipe
+really does yield **96 occurrences / 21 files** (`plans/`, `build/`, `node_modules/` excluded;
+`docs/` contributes 0); `architecture-overview.md:164` really does describe a
+`SubscriptionResult` carrying an `OwnedSchema` while the type is
+`struct SubscriptionResult { SchemaArrival schema; }` (`provider.hpp:39-41`); `README.md:155`
+is already correct; both docs' `std::make_shared<fletcher::FastDDSPubSubProvider>()` examples
+exist (`README.md:142`, `architecture-overview.md:258`) and still compile
+(`fast_dds_pubsub_provider.hpp:104`); C2-6 is discharged
+(`pubsub-conformance/CMakeLists.txt:306-308` reads 27); `status.hpp:67-83` is ten
+per-enumerator asserts over values `0..9`; `provider_registry.hpp:292-297` pins the
+member-pointer type of `Create`; `gateway/src/main.cpp:209-227` names no concrete provider in
+selection; no `FastDDSProviderOptions`/`XrceConfig` survives except comments and gtest suite
+names (38 occurrences, all inert); `ci.pr.yml` is `pull_request`-triggered with **9 component +
+11 integration** reusable-workflow lanes; `core_tests` exists and the `core` lane runs it in the
+Conan cache on both platforms (`ci.core.yml:55,107`); the P2 precedent is exactly as cited
+(`xrcedds-pubsub-provider/tests/CMakeLists.txt:18-24`). The tree has **no** global `/W4 /WX` or
+`-Wall -Werror`; warnings-as-errors are per-target only (`pubsub-arrow/tests/CMakeLists.txt:57-59`,
+`xrcedds-pubsub-provider/tests/CMakeLists.txt:66`) — B1's fix must set its own flag.
+
+| Id | Owed | Where |
+|----|------|-------|
+| C1-1 | **`README.md:315` is a wrong correction — do not make it as written.** The roadmap bullet promises two things: runtime plugin *loading* (not shipped, PDA-ABI) and "pick a transport **without compile-time coupling to its library**" (also **not** shipped — an application still links the provider library). What shipped is runtime *selection among linked-in providers*. Files-to-delete proposes to delete exactly the clause that is still a true unshipped promise. Keep the coupling clause; narrow the bullet to loading and note that selection by name already ships. Deleting the wrong half would understate PDA-ABI and is the "wrong correction is worse than the original error" pattern this item exists to end. | review §DEBT C1-1 |
+| C1-2 | The drift guard covers **name + number only**. The published table's "meaning" and "who raises it" columns are unguarded prose, and "meaning" duplicates `status.hpp`'s own doc comments — a second copy of the semantics one column over from the copy F2 forbids. Say in the README section which columns the test enforces, or drop "who raises it" (it rots the moment PDA-ABI ships a driver that raises `kNotSupported`). | review §DEBT C1-2 |
+| C1-3 | §12's frozen list **paraphrases** sections ("§3's ownership rules", "§5.1's mapping rules"). §3.5's empty-segment refusal and §5.3's callback-must-not-throw rule are normative and are neither ownership nor mapping rules — only the default clause catches them, after the reader has already wondered. List by section number with named exceptions instead. | review §DEBT C1-3 |
+| C1-4 | Say whether "§7's clauses are `frozen`" forbids PDA-ABI from **adding conformance cases**. The clause *text* must not change; the *suite* must stay extendable — the 2026-08-31 ruling wants it to pressure-test the ABI, and §9's new row hands it to both rounds as their oracle. One sentence distinguishing contract text from test set. | review §DEBT C1-4 |
+| C1-5 | D7 states the evidence and issues no instruction, which is the difference between a handoff and a record of embarrassment. Add the actionable sentence Brief option 1(a) actually promises: both rounds treat Linux as unverified; the first PR of either round runs the lanes; a Linux-only failure **of seam behaviour** is a stop-and-ask against the spec, not a local fix. | review §DEBT C1-5 |
+| C1-6 | The new test must fail **loudly** on a missing or unreadable `README.md` and on a zero-row parse. A "for each row, compare" loop is vacuously green over zero rows; the row-count equality closes that only if the expected count is asserted rather than derived from the parse. Follow the precedent's shape (`#error` on a missing define, empty string on a missing file, caller asserts). | review §DEBT C1-6 |
+| C1-7 | §5.1 still names numbers in prose after the change (`kOk = 0`, "taxonomy entry 4"). Under F2 either cite the table for both or state that these two are deliberate, cited exceptions. | review §DEBT C1-7 |
+| C1-8 | **Brief decision 3 is already answered** — locked decision 1 ("not a change landed inside an ABI round") and spec §1 ("Neither ABI round may change the seam") settle it verbatim, and option (b)'s observations annex is a *deviation from a locked decision*. Either strike the question or label (b) as requiring a lock change, so the owner is not offered a locked-decision breach as an ordinary alternative. | review §DEBT C1-8 |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |
