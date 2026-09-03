@@ -2,7 +2,7 @@
 
 A header-only library facilitating the Fletcher Publish-Subscriber logic.
 
-Headers are located under `include/core/`:
+Headers are located under `include/fletcher/core/`:
 - `envelope.hpp`
 - `positional_io.hpp`
 - `status.hpp`
@@ -65,7 +65,7 @@ Build locally and run unit tests:
 conan build . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 ```
 
-Create the Conan package (required to produce packaged headers under `include/core/`):
+Create the Conan package (required to produce packaged headers under `include/fletcher/core/`):
 ```bash
 conan create . -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
 ```
@@ -216,6 +216,7 @@ target_link_libraries(my-project PRIVATE fletcher::core)
 ```cpp
 #include "fletcher/core/envelope.hpp"
 #include "fletcher/core/positional_io.hpp"
+#include "fletcher/core/status.hpp"
 #include "fletcher/core/types.hpp"
 #include "fletcher/core/write_buffer.hpp"
 ```
@@ -225,6 +226,7 @@ target_link_libraries(my-project PRIVATE fletcher::core)
 ```cpp
 #include "fletcher/core/envelope.hpp"
 #include "fletcher/core/positional_io.hpp"
+#include "fletcher/core/status.hpp"
 #include "fletcher/core/types.hpp"
 #include "fletcher/core/write_buffer.hpp"
 
@@ -245,5 +247,10 @@ int main() {
 
     // Share the buffer as a Blob (zero-copy shared_ptr)
     fletcher::Blob blob = std::make_shared<const std::vector<uint8_t>>(std::move(raw));
+
+    // Failures cross the pub/sub seam as one type carrying one published number (see the
+    // taxonomy above)
+    const fletcher::PubSubError error(fletcher::PubSubStatus::kInvalidArgument, "empty topic");
+    return static_cast<int>(error.status());
 }
 ```

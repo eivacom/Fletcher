@@ -31,6 +31,31 @@ if(MSVC)
 else()
     set(FLETCHER_CORE_SWITCH_TOTALITY_FLAG -Werror=switch)
 endif()
+
+# That flag is the ONLY part of the guard that catches an APPENDED enumerator, and losing it
+# would otherwise be SILENT: `if(MSVC)` also matches clang-cl, whose /we<n> mapping need not
+# contain 4062, and a compiler that ignores the flag leaves the append case green forever. So
+# the flag proves itself HERE, at configure time: a default-less non-exhaustive switch must NOT
+# compile with it. Configuring fails loudly instead (design P3b's stop-and-ask, made mechanical;
+# PDA-DEC-9 code review F2). Do not delete this without the owner's ruling on the alternative.
+include(CheckCXXSourceCompiles)
+set(FLETCHER_CORE_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+set(CMAKE_REQUIRED_FLAGS "${FLETCHER_CORE_SWITCH_TOTALITY_FLAG}")
+check_cxx_source_compiles(
+    "enum class E { a, b };
+     int f(E e) { switch (e) { case E::a: return 0; } return 1; }
+     int main() { return f(E::a); }"
+    FLETCHER_CORE_SWITCH_TOTALITY_IS_TOLERATED)
+set(CMAKE_REQUIRED_FLAGS "${FLETCHER_CORE_SAVED_REQUIRED_FLAGS}")
+if(FLETCHER_CORE_SWITCH_TOTALITY_IS_TOLERATED)
+    message(FATAL_ERROR
+        "${FLETCHER_CORE_SWITCH_TOTALITY_FLAG} does not reject a non-exhaustive default-less "
+        "switch with this compiler, so appending a PubSubStatus enumerator would compile "
+        "silently and spec §12 condition 3's guard would be absent. This is a stop-and-ask "
+        "(design premise P3b): the owner chooses between a sentinel and relabelling the "
+        "condition. Do not work around it by dropping the check.")
+endif()
+
 set_source_files_properties(test_status_taxonomy.cpp PROPERTIES
     COMPILE_OPTIONS "${FLETCHER_CORE_SWITCH_TOTALITY_FLAG}")
 

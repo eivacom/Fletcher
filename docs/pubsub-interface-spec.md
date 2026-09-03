@@ -802,8 +802,9 @@ the two are constantly conflated.
 
 **A record of what the round moved, not a live measurement of the tree** — and that
 distinction is normative here, because §12 freezes this document. Past-tense records of work
-that landed are what this section is for; a present-tense count of the current tree is not
-representable in it, and the ones that were are deleted rather than dated (PDA-DEC-9).
+that landed are what this section is for; a present-tense count of the current tree carrying no
+derivation is not representable here — nor anywhere else in this document, by §12.1's rule — and
+the ones that were are deleted rather than dated (PDA-DEC-9).
 Excluding `docs/archive/**`:
 
 **External consumers of the protocol-typed config**, which a uniform registry retired in
@@ -837,8 +838,9 @@ PDA-DEC-7, and the default document it publishes is read off disk by a test so i
 cannot drift from the code.
 [docs/architecture-overview.md](architecture-overview.md) and the root
 [README.md](../README.md) were inspected in PDA-DEC-6 **for retired vocabulary only**, and
-carried none: the single provider construction each shows,
-`make_shared<FastDDSPubSubProvider>()`, still compiles. That inspection did not check
+carried none: the direct `make_shared<FastDDSPubSubProvider>()` construction each shows still
+compiles, and PDA-DEC-9 added a registry acquisition beside it in
+[architecture-overview.md](architecture-overview.md) §7.4. That inspection did not check
 *accuracy*, and PDA-DEC-9 found two claims in them that had stopped being true — a subscriber
 receiving its schema as an `OwnedSchema` inside `SubscriptionResult` (the seam has carried a
 `SchemaArrival` since PDA-DEC-3), and a new transport arriving by "implementing one interface"
@@ -890,7 +892,9 @@ that start the same day and cannot ask each other anything: **PDA-ABI** below th
 
 ### §12.1 — What is frozen, and who may act
 
-Two classes. **There is no third**, and no "negotiable" text.
+Two classes of **contract text**. **There is no third**, and no "negotiable" text. (§10 and
+§11 are records rather than contract, named at the end of this subsection; a record is not a
+third class of contract, and what it may license is bounded there.)
 
 **`frozen`** — §2; **§3 entire** (§3.1, §3.2, §3.3, §3.4 including its outcome table and its
 `timeout_ms` rules, §3.5 including the empty-segment refusal); §4 and §4.1's *rules*; §4.2;
@@ -913,11 +917,24 @@ never changes `Create`. Widening it because one protocol wants a setting typed i
 stop-and-ask (owner ruling 2026-09-02: 'Fletcher keeps exactly payload size and domain')."*
 
 **Two sections are records, not contract, and are named so that correcting a stale record is
-not a stop-and-ask:** **§10** (what the round moved) and **§11** (scope). Fixing a fact in
-either is ordinary maintenance. They carry one rule of their own instead: **a count that claims
-something about the current tree is not representable in this document** — it carries the
-command that derives it, inline, or it is not written, and a table of counts a machine cannot
-re-derive is deleted rather than dated. Past-tense records of work that landed are fine.
+not a stop-and-ask:** **§10** (what the round moved) and **§11** (scope). **The permission is
+bounded to *facts*:** a statement of what the tree or the round *is or did* may be corrected to
+match the tree, and that is ordinary maintenance. It is **not** a licence over the
+*prohibitions* those sections carry — §11's "everything ABI is out of scope" list (no
+`extern "C"`, no C header, no `dlopen`, no version negotiation, no driver vtable, no
+host-callback struct) and its "any change to the interface's method set (§2)" restate §2, §4
+and this round's scope, and they are **`frozen`**: relaxing one is a stop-and-ask, never
+maintenance. Correcting a stale fact beside them is not.
+
+**One rule binds every section of this document, §12 included: a count carries its derivation
+where it stands, or it is not written.** Three forms of derivation and no fourth: the **command**
+that re-derives it, inline; or the **members themselves, named here**, so the reader checks the
+number against this document (§12.2's "two of the six are mechanical" names which two); or a
+**past-tense record of work that landed** and can no longer be re-measured (§4.1's count of a
+retired type's deleted fields). A count that claims something about the **current tree** and
+carries none of the three is not written at all, a table of counts a machine cannot re-derive is
+deleted rather than dated, and no hand-composed per-site ledger is representable anywhere here —
+which is why §10 publishes no total and no ledger.
 
 **Contract text is not the test set.** `frozen` binds the *wording* of §7's clauses. The
 conformance suite stays extendable and **both rounds are expected to add cases** — that is what
@@ -936,14 +953,14 @@ them.
 | 1. Every crossing type has a normative, C-expressible ownership rule in the header (§3) | `write_buffer.hpp`, `types.hpp`, `owned_schema.hpp`, `schema_arrival.hpp`, `provider.hpp` | Correctness of the *wording* is read. What the types make **representable** is pinned by the `SeamVocabulary` suite — no view-only `Blob`, zero-size normalisation, empty-segment refusal | **by-reading** — PDA-DEC-3 implementer and its two design reviews, 2026-09-01; re-read at close, 2026-09-03 |
 | 2a. No second schema-wait mechanism exists (§3.4) | `schema_arrival.hpp`, and the absence of a `shared_future` member on any seam type | Two mutations, two different answers. **Regressing** to a `shared_future` return stops the tree compiling at every waiting call site: mechanical. **Adding one beside `SchemaArrival`** compiles and reddens nothing — only a reader re-running `grep -rn "shared_future" core pubsub pubsub-arrow gateway *-provider --include=*.hpp --include=*.cpp` notices, and no lane runs that grep. Derive the survivors from that command; no tally is published here | **mechanical (regression only)** and **by-reading (addition)** — 2026-09-03. Forward protection against the addition is §3's place in the `frozen` list, not a machine: the same footing as condition 5 |
 | 2b. `SchemaArrival` has a coherent C-expressible form (§3.4) | `schema_arrival.hpp` plus §3.4's outcome table and `fl_status wait(...)` sketch | Read. This is the clause both later rounds derive their own `wait` from, weeks apart, without talking — and an absence grep passes whether or not the form is coherent, so this is not labelled as if it settled it | **by-reading** — PDA-DEC-3 implementer and review, 2026-09-01; re-read at close, 2026-09-03 |
-| 3. The exception taxonomy is published and stable (§5.1) | `status.hpp` plus `core/README.md`'s *Error taxonomy (published)* table | Per-enumerator `static_assert`s pin the numbering (`status.hpp:67-83`). `Taxonomy.PublishedNumbersMatchTheEnum` reads the table **off disk** and compares it row for row; its exhaustive `switch`, with the unhandled-enumerator diagnostic promoted to an error on that one source file, makes **appending an enumerator a compile failure**; and its one-past-the-last assertion holds the suite red until the README carries the new row. The test holds no count and no copy of the numbers | **mechanical**, and *measured*: all three mutations were applied and reverted at close (append → `error C4062`; the `case` added without the row → red; a name edited on either side → red), recorded in the progress log. **Witnessed under MSVC only** — see §12.4 |
+| 3. The exception taxonomy is published and stable (§5.1) | `status.hpp` plus `core/README.md`'s *Error taxonomy (published)* table | Per-enumerator `static_assert`s pin the numbering (`status.hpp:67-83`). `Taxonomy.PublishedNumbersMatchTheEnum` reads the table **off disk** and compares it row for row; its exhaustive `switch`, with the unhandled-enumerator diagnostic promoted to an error on that one source file, makes **appending an enumerator a compile failure**; its one-past-the-last assertion holds the suite red until the README carries the new row; and a published row it cannot parse is a failure rather than a skipped line, so an added row does not escape the comparison. The test holds no count and no copy of the numbers | **mechanical**, and *measured*: each named mutation was applied and reverted at close (append → `error C4062`; the `case` added without the row → red; a name edited on either side → red; a row whose `Number` cell does not parse → red), recorded in the progress log. The promotion also proves itself at configure time — CMake `FATAL_ERROR`s if the flag stops rejecting a default-less non-exhaustive `switch`. **Witnessed under MSVC only** — see §12.4 |
 | 4. The registry signature admits a path resolver without change (§4 clause 2) | `provider_registry.hpp` | `static_assert` on the **member-pointer type** of `Create` (`provider_registry.hpp:292-297`) — it sees a defaulted extra parameter or a dropped `const`, which a return-type check cannot; plus `Registry.PathSelectorResolvesThroughTheSameCall` (stand-in resolver) with `Registry.PathSelectorWithoutResolverIsRefusedAsUnsupported` as its live negative control | **mechanical** — the model row |
 | 5. Nothing above the seam branches on built-in versus loaded (§0.1(2)) | `provider_registry.hpp`, `gateway/src/main.cpp` | Today the distinction is unrepresentable above the seam: the public registry exposes no accessor that reports it, and the gateway names no concrete provider type in selection. **No machine notices a later round adding one** — the frozen-signature assert pins `Create`'s type alone. What protects it forward is §12.1: §4's registry surface is `frozen`, so such an accessor is a **stop-and-ask**. This is the condition PDA-ABI will pressure hardest, because it is the round that adds loading | **by-construction — no machine check** |
 | 6. The spec states what is frozen, and changing it is a stop-and-ask (§1) | §1 plus §12.1 | A wording condition: read. §12.1 makes it checkable *in kind* — every normative element sits in exactly one of two named classes, the default is `frozen`, and each class names who may act | **by-reading** — PM and the two design reviews of this item, 2026-09-03 |
 
 A handoff row claiming "a machine watches this" where none does would be worse for two blind
-teams than one naming the reader. That is why five of these labels came down in review, and why
-no new guard was invented at close.
+teams than one naming the reader. That is why labels came down in review rather than guards
+going up, and why no new guard was invented at close.
 
 ### §12.3 — What the two rounds inherit besides the contract
 
@@ -951,7 +968,7 @@ The oracle suites are named in §9's table. Inherited with them:
 
 - **Guards that are real but have never been made to fail** — protection by reading, not by
   measurement, each named so that neither round mistakes it for evidence: PDA-DEC-6's
-  discovery-based QoS guard; PDA-DEC-7's four unwitnessed document keys; PDA-DEC-7's
+  discovery-based QoS guard; PDA-DEC-7's unwitnessed document keys; PDA-DEC-7's
   socket-leak probe; PDA-DEC-1H's unreached refusal arm; PDA-DEC-8's
   unreachable-by-construction pair; PDA-DEC-8's `kOk`-on-null-schema wait.
 - **One false green, fixed:** a foreign XRCE Agent left listening on the port could serve a
