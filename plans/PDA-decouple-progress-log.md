@@ -854,7 +854,9 @@ diagnostic is promoted to an error on that one source file.
 
 **The guard was reddened three ways before it was believed** — the whole mechanism hangs on a
 compiler flag whose failure mode is a silent green (review debt C3-2), and P3b carried a
-stop-and-ask on exactly that. All three mutations were applied alone, observed, and reverted:
+stop-and-ask on exactly that. **Four** mutations were applied alone, observed, and reverted
+(the fourth — a malformed added README row — was added by fix cycle 1, which also proved the
+configure-time check firing by neutering the flag to `/wd4062`):
 
 1. **Append an enumerator, touch nothing else → the build fails.** The flag takes under MSVC
    19.4:
@@ -919,4 +921,8 @@ log ruled that **an agent must not edit `plan_path`'s status column at all**, an
 the PM's step after the close gate passes. The DoD checklist's new verification column landed;
 the status cell was left alone.
 
-**Numbers.** Declared **+330 / −100**.
+**Numbers.** Declared **+330 / −100** · landed **+1131 / −70** all files, **+574 / −58**
+excluding `plans/` (`git diff 7740a9d..60331b0`, derived after the last edit). Over on adds:
+the 188-line guard, an 89-line log entry, the spec's §12, and rewrites counted on both sides.
+Public surface **0**, `core`'s package ID unchanged, `package()` untouched. Compliance judged
+the overrun not a breach — every file was ordered and no deletion under-delivered.

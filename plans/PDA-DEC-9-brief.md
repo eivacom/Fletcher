@@ -55,6 +55,18 @@ you allocate it, so two rounds cannot both take the same number.
 Declared net lines: +330 / −100 · new public surface: 0 · design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-03, PM):* **+1131 / −70** all files, **+574 / −58** excluding `plans/`
+(`git diff 7740a9d..60331b0`, derived after the last edit), vs declared +330/−100 — over on
+adds: the 188-line guard, the spec's §12, an 89-line log entry, and rewrites counted on both
+sides. Public surface **0** as declared; `core`'s package ID unchanged and `package()`
+untouched, so no downstream component sees a different core. **The honest headline is that
+two of six handoff conditions are mechanical end to end** — the first draft claimed four, and
+the review's central blocker was that gap; one more label came down during implementation
+rather than up. Not predicted by the brief, and the round's own signature failure arriving
+inside the document meant to end it: a **wrong free-floating count in frozen contract text**
+(§12.2's "five labels"), plus the discovery that the rule which should have caught it was
+scoped to §10/§11 rather than document-wide — widening it immediately caught one more wrong
+count that would otherwise have been frozen. The guard also shipped with two holes of exactly
+the class it exists to close (a parser that silently dropped unparseable README rows; a
+compile promotion whose loss was silent), both now reddening. Cycles: design 2/2 · fix 1 ·
+implementer launches 2/5 · owner touches 1 (the platform-claim ruling).
