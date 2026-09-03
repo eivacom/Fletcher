@@ -97,17 +97,17 @@ SchemaCarriage ParseSchemaCarriage(const std::string& document) {
 
         const size_t eq = entry.find('=');
         if (eq == std::string::npos) {
-            throw PubSubError(PubSubStatus::kInvalidArgument,
-                              "InProcessPubSubProvider: document entry with no '=': " +
-                                  QuoteEntry(entry));
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "InProcessPubSubProvider: document entry with no '=': " + QuoteEntry(entry));
         }
         const std::string key = entry.substr(0, eq);
         const std::string value = entry.substr(eq + 1);
 
         if (key != "schema_carriage") {
-            throw PubSubError(PubSubStatus::kInvalidArgument,
-                              "InProcessPubSubProvider: unknown document key: " +
-                                  QuoteEntry(entry));
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "InProcessPubSubProvider: unknown document key: " + QuoteEntry(entry));
         }
         if (seen) {
             throw PubSubError(PubSubStatus::kInvalidArgument,

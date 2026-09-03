@@ -127,8 +127,7 @@ void PublishRow(PubSubProvider& provider, uint8_t marker) {
 
 // Same encoding, an explicit topic — for the loopback tests below, where the
 // topic (not just the marker byte) decides which subscription sees the row.
-void PublishRowTo(PubSubProvider& provider, const std::vector<std::string>& topic,
-                  uint8_t marker) {
+void PublishRowTo(PubSubProvider& provider, const std::vector<std::string>& topic, uint8_t marker) {
     provider.Publish(topic, [marker](WriteBuffer& buffer) {
         buffer.AppendByte(marker);
         buffer.AppendByte('R');
@@ -352,7 +351,8 @@ TEST(Registry, PathSelectorWithoutResolverIsRefusedAsUnsupported) {
         << "the backslashes in a Windows driver path are not escaped: " << quoted;
     EXPECT_FALSE(Mentions(quoted, windows_path))
         << "the path is reproduced raw, so its backslash sequences are ambiguous "
-           "with the diagnostic's own escapes: " << quoted;
+           "with the diagnostic's own escapes: "
+        << quoted;
 }
 
 // ── The rest of the door ────────────────────────────────────────────
@@ -624,7 +624,7 @@ TEST(Registry, InProcessRefusesAnUnrecognisedDocumentEntry) {
     // DEBT-3: the fourth rung-2 refusal — a duplicate key — needs its own case,
     // or "duplicate key -> kInvalidArgument" is a rule asserted by nothing.
     refuse("schema_carriage=as_declared\nschema_carriage=carried", "schema_carriage=carried",
-          "a duplicate key");
+           "a duplicate key");
     // An empty value IS an unrecognised value (`"" != "as_declared"` and
     // `"" != "carried"`) — already the door's behaviour, but asserted by
     // nothing before this cycle. Mutation: treating an empty value as a
@@ -636,9 +636,9 @@ TEST(Registry, InProcessRefusesAnUnrecognisedDocumentEntry) {
     // future trim added to either side would make one of these SUCCEED where
     // it must be refused, reddening whichever row it trims.
     refuse(" schema_carriage=carried", " schema_carriage=carried",
-          "leading whitespace is not trimmed");
+           "leading whitespace is not trimmed");
     refuse("schema_carriage=carried ", "schema_carriage=carried ",
-          "trailing whitespace on the value is not trimmed");
+           "trailing whitespace on the value is not trimmed");
 }
 
 // ── The tolerance rules, proved by mutation rather than assumed ─────
@@ -661,11 +661,8 @@ TEST(Registry, InProcessDocumentToleratesCrlfAndBlankLines) {
         ProviderConfig config;
         config.document = document;
         std::shared_ptr<PubSubProvider> provider = MakeProvider(registry, "inprocess", config);
-        return RefusalOf(
-                   [&] {
-                       PublishRowTo(*provider, {"registry", "tolerance-probe"}, 0x1b);
-                   },
-                   "publish to an undeclared topic") == PubSubStatus::kTopicNotDeclared;
+        return RefusalOf([&] { PublishRowTo(*provider, {"registry", "tolerance-probe"}, 0x1b); },
+                         "publish to an undeclared topic") == PubSubStatus::kTopicNotDeclared;
     };
 
     // Mutation: deleting the `\r`-strip block makes "carried\r" compare
@@ -719,8 +716,7 @@ TEST(Registry, InProcessRefusesADocumentContainingANul) {
               PubSubStatus::kInvalidArgument);
     const std::string message =
         MessageOf([&] { return MakeProvider(registry, "inprocess", config); });
-    EXPECT_TRUE(Mentions(message, "NUL"))
-        << "the refusal does not say why: " << message;
+    EXPECT_TRUE(Mentions(message, "NUL")) << "the refusal does not say why: " << message;
     EXPECT_TRUE(Mentions(message, "offset 23"))
         << "the refusal does not locate the NUL (offset 23, right after 'carried'): " << message;
 }
