@@ -301,3 +301,308 @@ Recorded so cycle 2 does not re-litigate them:
   deletions.
 - **Files-to-delete is present and real**, and its last line ("no tests and no code are retired,
   and here is why") is the right shape for a docs item.
+
+---
+
+# Cycle 2 review (2026-09-03)
+
+Reviewer: independent architecture review, cold context, **cycle 2 of a hard cap of 2**.
+Scope as set: did revision 1 close the six BLOCKERs, and did closing them break anything?
+Revision diff read (`9c69d23..739a80e -- plans/`). Design 300/300, brief 60/60.
+Oracles re-read: `docs/pubsub-interface-spec.md` (§1, §4.1, §5.1, §5.2, §8.1, §9, §10, §11),
+`plans/PDA-DEC-rulings.md` (31 rulings: 14 on 2026-08-31, 11 on 2026-09-01, 5 on 2026-09-02,
+1 on 2026-09-03), `plans/PDA-decouple-locked-decisions.md`,
+`plans/PDA-decouple-interface.md` §PDA-DEC-9 + DoD, `plans/reviews/design-debt.md`.
+
+**Verdict: see the closing section.** Written as I went; the per-blocker audit is first.
+
+## B1 — the guard that can fail: CLOSED, resting on one premise that is only half-observable
+
+Mechanism as designed is sound and I could not break it on paper:
+
+- **`/we4062`** (MSVC) fires only when a `switch` over an enum has **no `default:` label** and an
+  enumerator is unhandled — which is exactly the shape D4 part 1 specifies, and the trailing
+  `return ""` is a statement, not a label, so it does not suppress C4062 and does keep C4715
+  quiet. `-Werror=switch` (GCC/Clang) implies `-Wswitch`, so it does not need `-Wall`. Both
+  promote-by-flag routes are real.
+- **`core/tests` has no other `switch`** — verified, 0 occurrences across the two existing
+  sources (`test_envelope.cpp`, `test_positional_io.cpp`; `core/tests/CMakeLists.txt:6-8`), so
+  the narrow-scope claim holds and a per-source-file promotion is the right blast radius.
+- **The three claimed mutations do each redden**, given the flag takes: name/number edit → part
+  2; enumerator appended → compile failure of `core_tests`; `case` added without the README row
+  → part 3, because `rows.size()` is derived from the file and not held.
+- **No count and no copy in the test** — confirmed. Part 3 uses `rows.size()`, and contiguity is
+  asserted rather than assumed. F3 is now honoured by the guard, not just declared.
+- `exports_sources` lacking `README.md` today is **exactly right**: `core/conanfile.py:24-29` is
+  `("CMakeLists.txt", "include/*", "cmake/*", "tests/*")`. `package()` (`:58-66`) copies `*.hpp`
+  and `*.cmake` only, untouched by the design.
+
+**The residual, and it is load-bearing.** The whole guard hangs on part 1. Trace the append
+mutation with the flag *not* firing: appending `kFoo = 10` and touching nothing else leaves part
+1 silent (fallthrough returns `""`), part 2 green (all ten rows still match), and **part 3 green
+as well** — `StatusName(static_cast<PubSubStatus>(10))` returns `""`, which is what part 3
+asserts. So a flag that does not take restores the original B1 defect *in full*, silently, with
+condition 3 labelled `mechanical` in a frozen document. P3b states this premise and names the
+fallbacks (and forbids the bad one), which is why it is not the unstated-premise blocker class.
+But P3b's stop condition — "**does not fire** the flag" — is not observable from a clean build;
+only "rejects the flag" is. It is observable only by running the append once. The design's own
+restated §8.1 ("a guard nobody has made go red is a guard nobody has measured") asks for that
+record, and it costs one throwaway enumerator and one revert.
+
+Filed as **DEBT (C3-1)**, not a BLOCKER: the premise is stated, the stop condition is named, the
+fix is a line in the PR record rather than a design change, and demanding it as a gate at the cap
+would be a manufactured cycle. But it is the item's single point of failure and the register
+should say so in those words.
+
+Two smaller inaccuracies, both DEBT-level:
+
+- The cited precedent `pubsub-arrow/tests/CMakeLists.txt:57-59` is **`target_compile_options` on
+  a dedicated `EXCLUDE_FROM_ALL` OBJECT target** (`discard_probe_tu`, `:45-60`), not
+  `set_source_files_properties`. The precedent is for *promoting a diagnostic to an error in a
+  narrow scope*, which is the load-bearing half, but it is not precedent for the per-source-file
+  mechanism the design names. (DEBT C3-2.)
+- Source-file `COMPILE_OPTIONS` are **directory-scoped** in CMake. Both the `add_executable`
+  entry and the `set_source_files_properties` call must sit in `core/tests/CMakeLists.txt` — the
+  design's Files-to-touch does put them there, so this is a note for the implementer, not a
+  finding.
+
+## B2 — packaging claim: CLOSED
+
+No packaging claim survives in the design: `exports_sources` is justified only as "the *test's*
+input", `package()` is stated unchanged, and D4 says in as many words that nothing claims the
+README reaches a consumer's package folder. The brief's NEW interface row now reads "in the
+repository beside the code defining the numbers", not "shipped in the core package". Nothing in
+the proposed spec text publishes a distribution route.
+
+One residue: the brief's risk line still says "**packaging does not change**" (`:52`) while the
+design edits `core/conanfile.py`. Under the design's own reading (nothing reaches the package
+folder) that sentence is defensible, but it is the one place a reader could still take a
+packaging claim away. Recommend narrowing to "the package's contents do not change". Filed as
+**DEBT (C3-3)**, and a NIT-adjacent one.
+
+## B5 — who may act: CLOSED, and §4.1 is verbatim
+
+Checked character by character against the oracle. Spec `§4.1:414-417` reads:
+
+> It is **exactly those two fields** and it is append-only; a later field never changes `Create`.
+> Widening it because one protocol wants a setting typed is a stop-and-ask (owner ruling
+> 2026-09-02: "Fletcher keeps exactly payload size and domain").
+
+D3 carries that sentence **verbatim** (only the nested quote marks change form). The owner's
+2026-09-02 ruling *Protocol-specific settings move into the protocol's own document* backs it
+exactly ("Fletcher keeps exactly payload size and domain"). The PM's instruction that it be
+restored is honoured.
+
+The hostile question — can PDA-ABI and BIND each append `PubSubStatus = 10` and ship? — is now
+closed by wording, and closed at the right rung: an append is itself a **stop-and-ask** and **the
+owner allocates**, so no round takes a number alone; §1 already forbids either round changing the
+seam; and D4's guard makes the `core/README.md` row arrive in the same change. Two rounds that
+both tried it would additionally collide in one file (the README table), though the design does
+not claim that and does not need to. Forbidding rather than protocol-building is the cheaper
+shape and the design took it.
+
+## B3 — the relabelling: CLOSED on five rows of six, one label still over-claims
+
+Audited row by row against D2's own bar ("`mechanical` **only where a named machine reddens on a
+named mutation**", and F2's "must name the edit that reddens it"):
+
+| Row | Label | Earned? |
+|---|---|---|
+| 1 | `by-reading` | **Yes.** Names the reader, and names `SeamVocabulary` as pinning *representability* without claiming it verifies the wording. The "(7 entries)" count is gone. |
+| 2a | `mechanical` | **Over-claims — see below.** |
+| 2b | `by-reading` | **Yes**, and the sentence explaining *why* ("an absence grep passes whether or not the form is coherent") is the strongest honesty in the document. |
+| 3 | `mechanical` | **Yes**, and it names both reddening edits (compile failure; suite red until the row lands) — conditional on P3b, see B1. |
+| 4 | `mechanical` | **Yes.** Re-verified: `provider_registry.hpp:292-297` asserts `std::is_same_v` on `decltype(&ProviderRegistry::Create)` as a whole member-pointer type, with the comment stating exactly why a return-type check is insufficient. This is the model row. |
+| 5 | `by-construction (no machine check)` | **Yes, and the honesty is complete.** Checked every other mention: D2's preamble, H4, Risks ("two of six is the honest count"), the brief ("held by the freeze, not a machine"), and the row itself ("**No machine notices** a later round adding one … the frozen-signature assert pins `Create`'s type alone"). Nothing anywhere implies condition 5 is checked. |
+
+**Row 2a.** Condition 2a is "no second schema-wait mechanism exists". The check is a compile plus a
+grep the reader runs. Two different mutations, opposite answers:
+
+- *regress to the old mechanism* (drop `SchemaArrival`, return a `shared_future`) → the tree stops
+  compiling at a dozen call sites. Mechanical, real.
+- *add a `shared_future` convenience **beside** `SchemaArrival`* → **compiles, and nothing reddens.**
+  Only a human re-running the grep notices, and nothing in CI runs that grep.
+
+The second mutation is the one the 2026-09-01 *One mechanism only* ruling exists to forbid, and it
+is the one a `mechanical` label tells a later round is guarded. Verified the grep's own claim while
+I was there: `shared_future` survives at exactly three sites tree-wide in `*.hpp`/`*.cpp`
+(`pubsub/include/fletcher/pubsub/schema_arrival.hpp:7`,
+`pubsub-arrow/include/fletcher/pubsub_arrow/subscriber_arrow.hpp:51`,
+`integration-tests/pubsub-conformance/src/seam_vocabulary.cpp:120` — the third outside the row's
+stated scope), **all three comments**. So the row's factual claim is true; it is the label's forward
+reach that over-claims, by the design's own definition of the word.
+
+Not a BLOCKER, for two reasons I want on the record: cycle 1's own acceptable fix **prescribed**
+this label for this clause ("`mechanical` for 'no second mechanism exists' (with the command)"), so
+blocking on it now is reviewer-versus-reviewer, not design-versus-oracle; and the fix is one
+clause. Filed as **DEBT (C3-5)** with the clause named: either give the row its reddening edit
+("re-add a `shared_future` member → the grep returns a non-comment hit") or say what row 5 says —
+forward protection is §3's presence in the frozen list, not a machine.
+
+## B4 — the ledgers: the named instances are gone; the **class recurred at a new instance**
+
+Closed as specified. Verified by reading what the design proposes to *write*, not what it says
+about itself:
+
+- §10's eleven-row table, its "8 files, 18 constructions" header and its `grep -E` recipe are all
+  in **Files-to-delete**, with "no replacement" stated. ✔
+- Row 2's absence ledger is replaced by the derivation command **with no tally**, and the row says
+  in words "Derive the survivors, do not trust a tally here". ✔ That is the right shape.
+- The bare counts cycle 1 listed are gone: no "(7 entries)", no "two historical comments", no "20
+  component + integration lanes" (D7 now says "no count written — the lanes are that file's `uses:`
+  entries"), and D6's inert guards are a **list of six named guards with no total**. ✔
+- The only numbers surviving into §12 are "two of six", which is derivable by counting the table
+  immediately beneath it. ✔
+
+**What survived, and it is the same defect at a new address.** `docs/pubsub-interface-spec.md`
+§10:838-846 — the paragraph headed *"Consumers of the vocabulary change, which sit ABOVE the
+seam"* — is untouched by D5, by Files-to-touch and by Files-to-delete, and reads, **in the present
+tense**:
+
+> `SubscriptionResult` and its `shared_future` are consumed by 10 sites outside `provider.hpp` —
+> `pubsub/src/subscriber.cpp` (5), `pubsub-arrow/src/subscriber_arrow.cpp` and its header (4),
+> `gateway/src/{main,ws_session}.cpp` (3), plus both `test_package` examples and the `pubsub` /
+> `pubsub-arrow` test suites.
+
+Three things wrong with freezing that sentence:
+
+1. **It is false about the seam.** `SubscriptionResult` is `{ SchemaArrival schema; }`; the
+   `shared_future` was retired by the 2026-09-01 *One mechanism only* ruling. §10 is the one place
+   left in the spec that still describes the seam as carrying it — the very misreading D2 row 2a
+   was rewritten to prevent.
+2. **Its rows do not sum to its own total** — 5 + 4 + 3 = 12 against a stated 10, plus unquantified
+   extras. That is the identical arithmetic defect the design diagnoses one section up ("its rows
+   do not sum to its own header"), and it is the next miscounted figure of a round that has had
+   eight.
+3. **After this item it is frozen.** D3's rule is "anything unlisted is `frozen`", and §10 is
+   unlisted — so correcting it later becomes a stop-and-ask against a frozen document. The freeze
+   is exactly what makes leaving it expensive.
+
+**This is DEBT, not a BLOCKER, and the distinction matters.** The design holds the *right*
+position — §10's ledgers are deleted, not dated — and simply did not enumerate this instance of
+it; there is no disagreement for a third cycle to settle, no owner question, and no design decision
+to revisit. The fix needs **zero new design lines**: extend the existing Files-to-delete bullet to
+name it, e.g. "…**and its eleven-row per-site count table, and §10's 'Consumers of the vocabulary
+change' ledger**". Filed as **C3-1**, the register's priority item, and it must land in **this** PR
+— it cannot be deferred, because the item freezes the document.
+
+**Class recurrence, stated as instructed.** B4's defect class (a hand-composed, present-tense
+count in §10 that does not reproduce) has now appeared in both cycles at different addresses. The
+lesson is not about wording: the right instruction is **"sweep §10 whole for present-tense claims
+and counts"**, not "delete the instances the review named". Anyone implementing C3-1 should read
+§10 end to end with that question, not grep for the sentence I quoted.
+
+## B6 — the struck decisions: CLOSED, and all three authorities check out
+
+I checked each citation against the source rather than the design's paraphrase:
+
+- *"a guard may ship with a recorded blind spot — your 2026-09-01 ruling 'Ship the guard, hunt
+  elsewhere'"* — **accurate.** The ruling exists under that exact title, its context records that
+  PDA-DEC-1's design made falsification a close gate, and its *Applies-to* says the gate "is
+  **relieved by this ruling** and by nothing else". A decision offering "required — a guard ships
+  with a recorded falsification or it is not evidence" would indeed have reversed it. Striking it
+  and restating §8.1 unchanged is the outcome the ruling supports. ✔
+- *"neither later round may edit the frozen contract — locked decision 1 and specification §1"* —
+  **accurate, verbatim in both.** Locked decision 1: "A later round finding the seam insufficient
+  is a **stop-and-ask against that spec**, not a local workaround and not a change landed inside an
+  ABI round." Spec §1:59-62 says the same. C1-8's warning is also honoured: option (b)'s
+  observations annex — which would have been a locked-decision breach offered as an ordinary
+  alternative — is gone rather than relabelled. ✔
+- *"who may add a new error cause — the same rule: you allocate it"* — **supported, and correctly
+  not presented as a quote.** The chain is sound: a round needing a new cause has found the seam
+  insufficient (§1), §5.1's published set is normative spec content, therefore stop-and-ask,
+  therefore the owner answers. §5.1 constrains the *shape* of a change ("appended only, never
+  reordered or reused") and is silent on who may make one, which is precisely the door D3 now
+  shuts. Note for the record that §12 **states** this rule for the first time rather than
+  restating it — within remit, since locked decision 1 makes this round the only one that may
+  define the seam. ✔
+
+One precision point, filed as DEBT rather than pressed: the 2026-09-01 blind-spot ruling's
+*Applies-to* is **item-scoped** (PDA-DEC-1's gate, "and by nothing else"). D6 carries it into §12
+as "the standing policy" for two future rounds. The generalisation runs in the safe direction — it
+*permits* rather than forbids, and it stops PDA-ABI-7 re-posing a settled question — but it should
+be attributed as *PDA-DEC-1's ruling, carried forward as policy by PDA-DEC-9*, not as a round-wide
+ruling the owner issued. That is the second time this round an item-scoped ruling could harden
+into round-wide precedent. (C3-10.)
+
+## Also confirmed undisturbed (cycle 1's verified findings)
+
+- **96 occurrences / 21 files** headline: unchanged in D5, and it carries its derivation inline. ✔
+- **`architecture-overview.md:164`**: re-read — still "the provider returns a `SubscriptionResult`
+  containing the publisher's schema as an `OwnedSchema`", and `:86` and `:15` are exactly as D5
+  describes. `README.md:38` and `:315` likewise, word for word, including `:315`'s two promises of
+  which only selection shipped — so D5 row 5's "keep the coupling clause" (C1-1) is right. ✔
+- **design-debt C2-6**, **P3**, **P5**: all still recorded as cycle 1 found them; P5 keeps its
+  `:104` citation and its stop condition. ✔
+- **All eight cycle-1 DEBT items are genuinely folded in**, each at a named place: C1-1 (D5 row 5),
+  C1-2 (D1.2 — "only name and number are machine-compared and the section says so", "who raises
+  it" column dropped), C1-3 (D3 — by section number, with §3.4/§3.5/§5.3 named explicitly),
+  C1-4 (D3's "contract text is not the test set"), C1-5 (D7's three instructing sentences),
+  C1-6 (D4 part 2's non-vacuity assertions), C1-7 (D4's cited-exceptions clause), C1-8 (decision 3
+  struck). ✔
+- **The durable sentence that replaces §10's table — spot-checked, and it needs one word changed.**
+  The *claim* is true: `FastDDSProviderOptions` and `XrceConfig` are declared nowhere and
+  constructed nowhere. But the design's phrasing — "every remaining occurrence is a comment or a
+  gtest suite name" — is **not** true of a re-derivation: `XrceConfigFor(...)`, a live local helper,
+  accounts for 7 of the 36 `*.hpp`/`*.cpp` matches (`pubsub-conformance/subjects/xrce_main.cpp:111,
+  122,647,651,852`, `fastdds-xrce-interop/tests/test_interop.cpp:169,733,906,971,1037`). Cycle 1's
+  "all 38 occurrences are comments or gtest suite names" was imprecise for the same reason; noting
+  it so the record does not harden. Word the frozen sentence as *declared nowhere, constructed
+  nowhere — the compile is the check*, and drop the survival clause. (C3-6.)
+
+## Brief decision 1 — genuine, and correctly phrased
+
+Behaviour-visible throughout: option (a) is "state the evidence exactly … tell both later rounds to
+treat Linux as unverified, and make a Linux-only difference in seam behaviour a question for you
+rather than a local fix"; (b) "hold the handoff unsigned until you open the pull request and the
+lanes pass"; (c) "say nothing about platforms". Recommendation (a) with the reason, default (a),
+and the only mechanism word (`workflow_call`) is confined to the skippable background line. ✔
+
+The design states the CI situation plainly enough that a downstream reader cannot borrow
+confidence from it: D7 writes it positively (local Windows runs plus one WSL compile; the lanes are
+`workflow_call` from a `pull_request`-triggered workflow; **no CI has run on
+`feature/protocol-driver-abi`**), F6 forbids "portable", "both platforms" and "CI-green" from
+appearing in §12 at all, and C1-5's instructing sentences make Linux-only seam failures a
+stop-and-ask. The three-rulings citation ("2026-09-01 ×2, 2026-09-03") is accurate — those are the
+copy-accounting scope, blind-spot and isolation rulings, and the last of them says in its own text
+that it is "the third time this round the owner has chosen a narrow claim stated honestly". ✔
+
+## Budgets
+
+- **Design 300/300, brief 60/60** — both exactly at cap. I checked for squeeze: nothing cycle 1
+  valued was dropped (F7/F8, H1–H4, P1–P5, Files-to-delete with its "no tests and no code are
+  retired, and here is why" justification, the forcing-test mapping's "red for the right reason
+  today" clauses, TD-008, Risks). The +41 lines over cycle 1 all went into the six fixes; neither
+  document grew by restating the spec — the only quoted spec text is §4.1's sentence, which had to
+  be verbatim, and §1's stop-and-ask.
+- **At cap has a consequence, so I sized my asks to it:** every DEBT item below is implementation
+  or wording, and the priority one (C3-1) is a **zero-line** extension of an existing bullet. I am
+  **not** asking for another guard.
+- **New public surface 0 — counted.** One new test TU (`StatusName` lives in the test file, not a
+  header), one `core/README.md` section over an existing enum, one `exports_sources` entry, three
+  CMake lines. The `kLastStatus` alternative is explicitly declined *because* it would be +1
+  against a declared 0. ✔
+- **+330 / −100: realistic, with the slack now on the deletions side.** My estimate of the adds is
+  ~240 (§12 ~70, the README table ~18, TD-008 ~16, the new test ~100, the spec's small edits ~6,
+  CMake/conan ~5, the plan/tracker/log ~25), so +330 still has headroom rather than the
+  third-of-cost under-declaration this round saw three times. −100 is generous against ~40 lines of
+  genuine deletion unless replaced-then-rewritten lines are being counted on both sides; say which
+  at close so the *as landed* delta is not read as a miss.
+
+## Verdict — APPROVE-WITH-DEBT(10)
+
+All six BLOCKERs are closed. B1's mechanism is real and now holds no count and no copy; B2's
+packaging claim is gone everywhere; B3's labels are honest on five of six rows; B4's named
+instances are deleted outright; B5 carries §4.1 verbatim, names the actor, and shuts the
+parallel-append door by forbidding rather than by protocol; B6's three strikes each rest on an
+authority I checked and found accurate.
+
+Nothing here warrants a third cycle, and I am not manufacturing one: the one finding with real
+teeth (C3-1, §10's surviving consumers ledger) is a deletion the design's own rule already
+mandates, needs no design lines, no owner input and no decision — it needs to be *named* to the
+implementer, which is what the register is for. The two items an implementer must not skip are
+**C3-1** (sweep §10 whole; it is frozen after this PR) and **C3-2** (redden the append mutation
+once — the entire B1 guard hangs on a compiler flag whose failure mode is silent green).
+
+Debt appended to `plans/reviews/design-debt.md` §PDA-DEC-9 (cycle 2), items C3-1..C3-10.
+

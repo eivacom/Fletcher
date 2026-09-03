@@ -379,6 +379,39 @@ Conan cache on both platforms (`ci.core.yml:55,107`); the P2 precedent is exactl
 | C1-7 | §5.1 still names numbers in prose after the change (`kOk = 0`, "taxonomy entry 4"). Under F2 either cite the table for both or state that these two are deliberate, cited exceptions. | review §DEBT C1-7 |
 | C1-8 | **Brief decision 3 is already answered** — locked decision 1 ("not a change landed inside an ABI round") and spec §1 ("Neither ABI round may change the seam") settle it verbatim, and option (b)'s observations annex is a *deviation from a locked decision*. Either strike the question or label (b) as requiring a lock change, so the owner is not offered a locked-decision breach as an ordinary alternative. | review §DEBT C1-8 |
 
+## PDA-DEC-9 — cycle 2 (APPROVE-WITH-DEBT(10), no BLOCKERs stand)
+
+Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md) §Cycle 2. All six cycle-1
+BLOCKERs are closed and all eight cycle-1 DEBT items are folded into the design. The ten items
+below do **not** loop the design; **C3-1 and C3-2 are the two an implementer must not skip.**
+
+Verified in cycle 2 — **rely on these, do not re-derive**: `core/conanfile.py:24-29`
+`exports_sources` is `("CMakeLists.txt", "include/*", "cmake/*", "tests/*")` and `package()`
+(`:58-66`) copies `*.hpp` + `*.cmake` only; `core/tests` contains **no** `switch` today (two
+sources, `core/tests/CMakeLists.txt:6-8`); `provider_registry.hpp:292-297` is an
+`is_same_v<decltype(&ProviderRegistry::Create), …>` whole-member-pointer assert; spec §4.1:414-417
+matches D3's quote **verbatim**; spec §1:59-62 and locked decision 1 match the brief's citation
+verbatim; the 2026-09-01 *Ship the guard, hunt elsewhere* ruling exists under that title and its
+*Applies-to* is item-scoped; `shared_future` survives at exactly three `*.hpp`/`*.cpp` sites, all
+comments (`schema_arrival.hpp:7`, `subscriber_arrow.hpp:51`, `seam_vocabulary.cpp:120`);
+`README.md:38`/`:315` and `architecture-overview.md:15`/`:86`/`:164` are word for word as D5
+describes; `FastDDSProviderOptions|XrceConfig` now matches **36 times across 9 `*.hpp`/`*.cpp`
+files**, of which **7 are the live helper `XrceConfigFor(...)`** and the rest comments or gtest
+suite names.
+
+| Id | Owed | Where |
+|----|------|-------|
+| **C3-1** | **Priority; must land in this PR.** `docs/pubsub-interface-spec.md` §10:838-846 — the *"Consumers of the vocabulary change"* paragraph — survives D5, Files-to-touch and Files-to-delete, and says **in the present tense** that "`SubscriptionResult` and its `shared_future` are consumed by 10 sites outside `provider.hpp` — `subscriber.cpp` (5), `subscriber_arrow.cpp` and its header (4), `gateway/src/{main,ws_session}.cpp` (3), plus …". It is false about the seam (the `shared_future` was retired by the 2026-09-01 *One mechanism only* ruling; `SubscriptionResult` is `{ SchemaArrival schema; }`), its rows sum to **12** against its stated **10**, and after this item §10 is `frozen` by D3's default, so correcting it later is a stop-and-ask. **Zero design lines needed:** extend the existing Files-to-delete bullet to name it. And do the general thing, not the named thing — **read §10 end to end for present-tense claims and counts**; this defect class has now appeared in both review cycles at different addresses. | review §Cycle 2 B4 |
+| **C3-2** | **The whole B1 guard hangs on one compiler flag whose failure mode is silent green.** If `/we4062` (or `-Werror=switch`) does not take, appending `kFoo = 10` and touching nothing else leaves part 1 silent (fallthrough returns `""`), part 2 green (all ten rows still match) **and part 3 green** (`StatusName(cast(rows.size()))` *is* `""`) — the original B1 defect restored, with condition 3 labelled `mechanical` in a frozen document. P3b's stop condition ("does not fire") is not observable from a clean build. **Redden it once:** append a throwaway enumerator, confirm `core_tests` fails to *compile*, revert, and record the compiler error text in the PR — the design's own restated §8.1 asks for exactly that, and it is two minutes. | review §Cycle 2 B1 |
+| C3-3 | The flag precedent is cited as `pubsub-arrow/tests/CMakeLists.txt:57-59`, which is `target_compile_options` on a dedicated `EXCLUDE_FROM_ALL` OBJECT target (`discard_probe_tu`, `:45-60`) — precedent for *narrow-scope promotion*, which is the load-bearing half, but **not** for `set_source_files_properties`. Fix the citation or drop the word "precedent" there. Implementer note: source-file `COMPILE_OPTIONS` are **directory-scoped**, so the `add_executable` entry and the property must both sit in `core/tests/CMakeLists.txt` (Files-to-touch already puts them there). | review §Cycle 2 B1 |
+| C3-4 | Brief `:52` still says "**packaging does not change**" while the design edits `core/conanfile.py`. Defensible under the design's own reading, but it is the last place a reader can take a packaging claim away (B2). Narrow to "the package's **contents** do not change". | review §Cycle 2 B2 |
+| C3-5 | §12 row 2a's `mechanical` label reaches further than its check. *Regressing* to a `shared_future` breaks the compile (mechanical, real); **adding one beside `SchemaArrival` compiles and reddens nothing** — only a human re-running the grep notices, and no lane runs it. That is the mutation the 2026-09-01 *One mechanism only* ruling forbids. One clause: either name the reddening edit ("re-add a `shared_future` member → the grep returns a non-comment hit") or say what row 5 says — forward protection is §3's place in the frozen list, not a machine. | review §Cycle 2 B3 |
+| C3-6 | The durable sentence replacing §10's table must not carry the survival clause "every remaining occurrence is a comment or a gtest suite name" — a substring re-derivation returns 7 live hits for the helper `XrceConfigFor(...)`. Word it as *the retired types are **declared nowhere and constructed nowhere**; the compile is the check*. (Cycle 1's "all 38 occurrences are comments or gtest suite names" was imprecise the same way; the corrected count is 36, of which 7 are live and unrelated.) | review §Cycle 2 "undisturbed" |
+| C3-7 | `core/README.md`'s new taxonomy section must **state no count** — no "the ten statuses". F1 binds *the spec*, so the newly published artifact sits outside the rule that protects it, and a stale "ten" in prose beside a machine-compared table is the drift this item exists to stop. The table is the enumeration. | review §Cycle 2 B4 |
+| C3-8 | Say in §12 **which sections the two classes cover**. As written ("anything unlisted is `frozen`") the classification also freezes §10 (record) and §11 (scope), so correcting a stale record needs an owner stop-and-ask. While there, scope F1 to *counts that claim something about the current tree* — otherwise §10's kept past-tense records ("Five QoS tests … were retired", "Four tests … were retired") breach the design's own forbidden rule. | review §Cycle 2 B4 |
+| C3-9 | Condition 3's `mechanical` label is witnessed on **MSVC only** at signing time: the GCC/Clang half of the promotion cannot run until the owner opens the PR (D7/P4). One clause in §12 or D7 — the `core` lane building `core_tests` on both platforms is what would expose a flag that fires on one and not the other. | review §Cycle 2 B1 / D7 |
+| C3-10 | Attribute the blind-spot policy precisely: the 2026-09-01 *Ship the guard, hunt elsewhere* ruling's *Applies-to* is **item-scoped** ("PDA-DEC-1 … relieved by this ruling and by nothing else"). D6 carries it into §12 as "the standing policy" for two future rounds. The generalisation is in the safe direction and worth keeping, but write it as *PDA-DEC-1's ruling, carried forward as policy by PDA-DEC-9* — second time this round an item-scoped ruling could harden into round-wide precedent. | review §Cycle 2 B6 |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |
