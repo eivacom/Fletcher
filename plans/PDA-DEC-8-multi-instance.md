@@ -115,10 +115,10 @@ case-private pair keeps a lingering reader out of the next case.
 
 ### 6. Mutations — the gate, and the core of this design
 
-Each row is a one-line edit to **product** code, applied alone and reverted, its
-failure recorded in the suite README (PDA-DEC-1's precedent). Predicted mechanisms
-are typed refusals where that is what the tree does; P5 asks only that a *named*
-assertion redden.
+Each row is a minimal edit (one to three lines) to **product** code, applied alone
+and reverted, its failure recorded in the suite README (PDA-DEC-1's precedent).
+Predicted mechanisms are typed refusals where that is what the tree does; P5 asks
+only that a *named* assertion redden.
 
 | # | Mutation | Class of global state it stands for | Must redden |
 |---|---|---|---|
