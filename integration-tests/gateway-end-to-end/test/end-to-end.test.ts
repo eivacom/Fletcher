@@ -297,8 +297,13 @@ describe('provider configuration', () => {
   });
 
   it('an unreadable --provider-config file exits 2', async () => {
-    // A DIRECTORY: the open fails on Windows and the read fails on Linux, so either message is
-    // correct - what matters is that it never falls through to "unconfigured".
+    // A DIRECTORY. Windows refuses it at the open; on Linux open(2) on a directory SUCCEEDS and
+    // only the read fails (EISDIR), so the gateway refuses a directory explicitly instead of
+    // letting a zero-byte read masquerade as an empty file. Either wording in the "unreadable"
+    // family is accepted here, because which of the two the gateway reaches is an implementation
+    // detail; the two things that must NOT happen are pinned below - it must not fall through to
+    // "unconfigured", and it must not borrow the EMPTY-file wording, which is a different
+    // condition with a different remedy and has its own case underneath this one.
     const { code, stderr } = await spawnGatewayExpectingExit([
       '--port',
       String(TEST_PORT + 10),
@@ -309,6 +314,7 @@ describe('provider configuration', () => {
     ]);
     expect(code).toBe(2);
     expect(stderr).toMatch(/cannot read --provider-config|error reading --provider-config/);
+    expect(stderr).not.toContain('is empty');
   });
 
   it('an EMPTY --provider-config file exits 2 rather than meaning "unconfigured"', async () => {
@@ -325,6 +331,10 @@ describe('provider configuration', () => {
     ]);
     expect(code).toBe(2);
     expect(stderr).toContain('is empty');
+    // ...and NOT the unreadable wording: this file opened and read perfectly, it simply held
+    // nothing, and an operator told "cannot read" would go looking for a permissions problem
+    // that is not there. The case above pins the mirror image of this.
+    expect(stderr).not.toMatch(/cannot read --provider-config|error reading --provider-config/);
   });
 
   it("a document the provider rejects exits 2, in the provider's own wording", async () => {

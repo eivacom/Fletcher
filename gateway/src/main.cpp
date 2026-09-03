@@ -31,8 +31,11 @@
 //                          2026-09-02: the configuration setting carries the
 //                          document itself, and the convenience of reading a
 //                          file lives HERE). An unreadable FILE exits 2, like a
-//                          bad selector; a document the provider rejects exits 2
-//                          with the provider's own message.
+//                          bad selector, and so does a FILE that is a directory
+//                          or that reads as empty - each with its own message,
+//                          because they are different mistakes; a document the
+//                          provider rejects exits 2 with the provider's own
+//                          message.
 //
 // The gateway is schema-agnostic. It knows nothing about topic schemas
 // or which topics exist before clients show up; clients establish
@@ -58,8 +61,10 @@
 //   should a reader of this comment: the registry's own refusal, not this
 //   text, is what says which providers a given build has.
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fletcher/core/status.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
@@ -69,9 +74,9 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include "gateway.hpp"
 
@@ -93,18 +98,47 @@ struct Args {
 // (§4.2, C form: "the bytes may contain NUL"), so no newline translation and no
 // text-mode truncation at a stray 0x1A.
 std::string ReadProviderDocument(const char* path) {
+    // A DIRECTORY is refused here, before the open, because the open does not refuse it
+    // everywhere: on Linux open(2) on a directory SUCCEEDS and only the first read(2)
+    // fails, with EISDIR. A directory would therefore reach the empty-document check
+    // below as zero bytes and be reported as an empty file -- the one diagnosis that has
+    // to stay reserved for a file that really was read and really did hold nothing.
+    // Windows refuses a directory at the open, so this check is also what makes the two
+    // platforms say the same thing about the same path. It is an EXTRA check and never
+    // the only one: an unreadable regular file is still caught by the open just below,
+    // and a read that dies part-way is still caught by the badbit check after it.
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec)) {
+        std::fprintf(stderr, "fletcher-gateway: cannot read --provider-config %s\n", path);
+        std::exit(2);
+    }
+
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         std::fprintf(stderr, "fletcher-gateway: cannot read --provider-config %s\n", path);
         std::exit(2);
     }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
+
+    // Read THROUGH the istream, block by block, so that a failed read lands on THIS
+    // stream's badbit: [istream.unformatted] requires an unformatted input function to
+    // set badbit when the streambuf reports failure by exception, which is exactly what
+    // libstdc++'s filebuf does on EISDIR. The obvious `buffer << in.rdbuf()` cannot be
+    // used for this -- it drains the streambuf without ever touching `in`'s state, so
+    // `in.bad()` stays false and a read error and an empty file both reduce to "no
+    // characters inserted": indistinguishable, which is the one question this function
+    // exists to answer.
+    std::string document;
+    char block[8192];
+    while (in.read(block, sizeof block) || in.gcount() > 0) {
+        document.append(block, static_cast<std::size_t>(in.gcount()));
+    }
+    // The READ says whether this worked; the length of what came back does not. badbit
+    // means the bytes never arrived, which is a different answer from "the file opened,
+    // read cleanly and held nothing" -- and the two get deliberately different messages.
     if (in.bad()) {
         std::fprintf(stderr, "fletcher-gateway: error reading --provider-config %s\n", path);
         std::exit(2);
     }
-    std::string document = buffer.str();
 
     // An EMPTY file is refused, and with its own message. Every provider reads an empty document
     // as "my own defaults", so a zero-length, truncated or wrong-but-empty file would otherwise
