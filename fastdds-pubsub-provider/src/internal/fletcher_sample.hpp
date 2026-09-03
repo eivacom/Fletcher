@@ -8,7 +8,6 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
-#include <fletcher/pubsub/payload_bound.hpp>
 
 namespace fletcher {
 namespace internal {

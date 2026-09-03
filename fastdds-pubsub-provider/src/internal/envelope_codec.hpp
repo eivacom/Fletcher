@@ -25,7 +25,7 @@ namespace internal {
 // Fail the build rather than the wire if that stops being true.
 static_assert(std::endian::native == std::endian::little,
               "Fletcher's envelope stores lengths in host order and assumes little-endian; a "
-              "big-endian target needs byte swaps in EncodeEnvelopeBody and ParseEnvelope");
+              "big-endian target needs byte swaps in EncodeEnvelopeBody and ParseEnvelopeBody");
 
 // Writes [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]; throws if the buffer is too small.
 inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncoder& encoder,

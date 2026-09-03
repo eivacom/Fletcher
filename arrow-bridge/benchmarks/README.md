@@ -27,7 +27,7 @@ generated code would emit for that schema. `MakeBatch`-style construction (used 
 end-to-end arms) is **not** independently hand-rolled per shape: batch construction never runs inside
 a timed loop, so the suite folds `N` rows built via `MakeRow` into a `RecordBatch` with
 `BuildBatchScalarPath` (the same `MakeBuilder`/`AppendScalar`/`Finish` pattern
-`SubscriberArrow::RecordBatchBatcher::BuildBatch` uses) rather than seven independent typed-builder
+`SubscriberArrow::RecordBatchBatcher` used before `BatchDecoder`) rather than seven independent typed-builder
 pipelines — that pattern is measured on purpose by `BM_Decode_Batch_ScalarPath_*`; here it is only
 fixture setup.
 
@@ -93,16 +93,6 @@ trusting it.
 
 ## Notes
 
-- **Mid-session re-pin.** `conan lock create` was run first, pinning `fletcher-arrow-bridge/0.5.0-alpha#c02b0860c3c539e907a9699b9ab86241`
-  and `fletcher-pubsub-arrow/0.5.0-alpha#cc1475b31ab7df3c7c5e16900f93d9c8` — the revisions in the cache
-  at that moment. Partway through this session, a concurrent rebuild of `fletcher-arrow-bridge` (editing
-  `arrow-bridge/src`, `arrow-bridge/include`, and `arrow-bridge/tests` live in this working tree — see
-  `git status`) transiently evicted the *package binary* for the locked revision from the local Conan
-  cache (`conan list` briefly showed only a newer recipe revision). Re-running
-  `conan install ... --build=missing` recovered it: the locked revision's exported source was still
-  present in the cache, so Conan rebuilt the exact pinned binary rather than resolving to the newer one.
-  The lockfile of that run still named the original pinned revisions, and the BASELINE numbers below
-  were recorded against that pinned build, not the concurrent rebuild's changes.
 - **`MakeBatch` is not per-shape hand-rolled typed builders.** See the shapes section above — batch
   construction is unmeasured fixture setup here, folded through the same scalar-path builder the
   `BM_Decode_Batch_ScalarPath_*` arm measures, rather than seven independent typed-builder pipelines.
@@ -113,21 +103,17 @@ Recorded **2026-09-02** on this machine: 13th Gen Intel(R) Core(TM) i9-13950HX, 
 logical processors (Google Benchmark's own header confirms `Run on (32 X 2419 MHz CPU)`), Windows
 11, MSVC 19.44 (toolset v143). Google Benchmark is `benchmark/1.9.4` here (as before).
 
-**BEFORE**: commit `564467b` (this branch's HEAD) with none of this session's working-tree changes
-applied — `fletcher-arrow-bridge` and `fletcher-pubsub-arrow` were built from HEAD before the working
-tree was touched, pinned at the time by a lockfile (not kept; the revisions are the record):
+**BEFORE**: commit `564467b`. `fletcher-arrow-bridge` and `fletcher-pubsub-arrow` built from that
+commit, pinned at the time by a lockfile (the revisions are the record):
 `fletcher-arrow-bridge/0.5.0-alpha#c02b0860c3c539e907a9699b9ab86241`,
 `fletcher-pubsub-arrow/0.5.0-alpha#cc1475b31ab7df3c7c5e16900f93d9c8`. This binary predates the new
 arms (`BM_Decode_Batch_S/N`, `BM_Encode_Codec_S_IntoFixed`) — those rows read "(new arm)" below.
 
-**AFTER**: commit `564467b` **plus the uncommitted working-tree changes** in this session
-(`BatchDecoder`, `Codec::EncodeRow(row, WriteBuffer&)`, the new `RecordBatchBatcher` on
-`BatchDecoder`, the bulk primitive-list-run path, `fletcher-protoc` updates — see `git status`),
-pinned by the regenerated lockfile:
+**AFTER**: commit `0050365` (`BatchDecoder`, `Codec::EncodeRow(row, WriteBuffer&)`, the
+`RecordBatchBatcher` on `BatchDecoder`, the bulk primitive-list-run path, the `fletcher-protoc`
+updates), pinned by the regenerated lockfile:
 `fletcher-arrow-bridge/0.5.0-alpha#19bf79025942386b6c2c9fb80ab28f55`,
-`fletcher-pubsub-arrow/0.5.0-alpha#16b84c6a40dd21702bf8f4ad857e89af` — confirmed the newest revision
-of each via `conan list "fletcher-arrow-bridge/0.5.0-alpha#*"` / `"fletcher-pubsub-arrow/0.5.0-alpha#*"`
-before building.
+`fletcher-pubsub-arrow/0.5.0-alpha#16b84c6a40dd21702bf8f4ad857e89af`.
 
 Both binaries were run twice back to back on an otherwise-idle machine (no other build or agent
 running), with:
@@ -136,10 +122,7 @@ running), with:
 <binary> --benchmark_min_time=0.3s --benchmark_repetitions=5 --benchmark_report_aggregates_only=true --benchmark_out=<name>.json --benchmark_out_format=json
 ```
 
-(5 repetitions and JSON output, not the 7-repetition text-table runs `run1.txt`/`run2.txt` used for
-the noisy Step-0 baseline — those two files are superseded by `before_run1.json`/`before_run2.json`
-below, recorded fresh on the quiet machine, and have been moved out of the repo alongside them, per
-the measurement-discipline note above.) Wall time: `before_run1` 22m07s, `before_run2` 22m17s,
+Wall time: `before_run1` 22m07s, `before_run2` 22m17s,
 `after_run1` 17m36s, `after_run2` 17m34s — all four comfortably under the 35-minute filter threshold,
 so no filtered sweeps were needed. The AFTER binary runs faster overall despite carrying 28 more
 registered benchmarks than BEFORE (135 lines from `--benchmark_list_tests`, 128 of them counted
@@ -148,9 +131,7 @@ cheaper than the `BM_Decode_Batch_ScalarPath_*` control sitting next to it for e
 below), so the added arms cost less time than the BEFORE binary spends inside
 `BM_Decode_Batch_ScalarPath_Points/8000` and `BM_Decode_Batch_ScalarPath_Cloud/8000` alone.
 
-All four raw JSON logs live outside the repo, under this session's scratchpad directory
-(`C:\Users\mch\AppData\Local\Temp\claude\C--src-git-eivacom-Fletcher\1b52de73-7150-4ab3-87c6-372bb810c070\scratchpad`):
-`bench_before\before_run{1,2}.json` (BEFORE) and `after_run{1,2}.json` (AFTER). The table below pastes run 1's median ± run 1's
+The raw JSON logs are not kept in the repo. The table below pastes run 1's median ± run 1's
 stddev for both binaries; the last column flags a run-1 → run-2 delta only when `|delta| > 3%`,
 in *either* binary. Ratio is after/before — below 1.0 is faster; new arms (no BEFORE binary
 support) show no ratio.
@@ -360,7 +341,7 @@ is what every producer in the tree does today. `Codec::EncodeRow` is for Arrow-n
 `ArrowRow` in hand, and at 108 ns for a 10-field row it is not where a publish spends its time.
 
 **`Run_Memcpy` vs `Run_PerElement` (target >= 3x): PASS.** 4.022 us vs 620.2 ns, **6.49x** —
-comfortably over target, confirming the bulk-copy path `AppendPrimitiveRun` exists to reach is worth
+comfortably over target, confirming the bulk-copy path `AppendRun` exists to reach is worth
 taking when it applies.
 
 **`Decode_Batch/8000` vs `ArrowIpc_Read/8000`, and `Encode_Codec_IntoFixed` (x8000) vs

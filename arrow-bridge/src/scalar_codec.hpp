@@ -11,8 +11,6 @@
 #include <arrow/scalar.h>
 #include <arrow/type.h>
 
-#include <cstddef>
-#include <cstdint>
 #include <fletcher/core/write_buffer.hpp>
 #include <memory>
 

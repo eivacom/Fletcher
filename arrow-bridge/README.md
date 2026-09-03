@@ -131,12 +131,12 @@ how to run it.
 
 ---
 
-### Measured decisions (2026-09-02)
+## Measured decisions (2026-09-02)
 
 Numbers from `benchmarks/bench_arrow_codec`, the same machine (i9-13950HX, MSVC 19.44, Release),
 run twice back to back with nothing else compiling, comparing commit `564467b` against the tree with
 `BatchDecoder`, the `PositionalWriter` encoder and the fixed-width run path. Medians; per row at
-N = 8000 for the batched arms. The full 128-arm table, run logs and lockfiles are described in
+N = 8000 for the batched arms. The full 128-arm table and run logs are described in
 [`benchmarks/README.md`](benchmarks/README.md).
 
 | Row shape | Batched decode: `DecodeRow` + `AppendScalar` → `BatchDecoder` | Allocations per row | Encode: `EncodeRow` → into the provider buffer |

@@ -24,7 +24,6 @@
 #include <fastdds/dds/topic/Topic.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider.hpp>
-#include <utility>
 
 #include "envelope_codec.hpp"
 #include "fletcher_sample.hpp"

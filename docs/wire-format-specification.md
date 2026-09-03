@@ -207,7 +207,7 @@ are never sent. `Codec::DecodeRow` returns a plain value scalar for a dictionary
 field; the batched (RecordBatch) subscriber re-folds the accumulated values into
 a `DictionaryArray` of the field's declared dictionary type. The dictionary
 **value type must be a primitive/scalar type** — nested value types
-(struct/list/map/union) are rejected with a clear error.
+(struct/list/map/union) and `float16` are rejected with a clear error.
 
 The wire bytes are the same regardless of which side decodes them — always the
 value type, never indices. The re-fold above happens specifically in

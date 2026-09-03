@@ -588,6 +588,4 @@ std::shared_ptr<arrow::RecordBatch> BatchDecoder::Finish() {
     return batch;
 }
 
-const arrow::Schema& BatchDecoder::schema() const noexcept { return *impl_->schema; }
-
 }  // namespace fletcher

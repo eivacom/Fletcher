@@ -46,8 +46,6 @@ class BatchDecoder {
     // The pending rows as a RecordBatch (zero rows is valid) and resets for reuse.
     [[nodiscard]] std::shared_ptr<arrow::RecordBatch> Finish();
 
-    const arrow::Schema& schema() const noexcept;
-
    private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

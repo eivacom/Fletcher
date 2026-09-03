@@ -187,8 +187,8 @@ Each top-level directory is an independent component with its own version, CI wo
 | Directory | Artifact | Type |
 |---|---|---|
 | [`core/`](core/README.md) | `fletcher-core` (Conan) | header-only library — positional I/O, envelope, types |
-| [`pubsub/`](pubsub/README.md) | `fletcher-pubsub` (Conan) | static library — `PubSub` interface, `Driver`, schema transport |
-| [`arrow-bridge/`](arrow-bridge/README.md) | `fletcher-arrow-bridge` (Conan) | static library — server-side `Codec`, `ArrowRowView` |
+| [`pubsub/`](pubsub/README.md) | `fletcher-pubsub` (Conan) | static library — `PubSubProvider` interface, `Publisher`/`Subscriber`, schema transport |
+| [`arrow-bridge/`](arrow-bridge/README.md) | `fletcher-arrow-bridge` (Conan) | static library — server-side `Codec`, `BatchDecoder`, `ArrowRowView` |
 | [`pubsub-arrow/`](pubsub-arrow/README.md) | `fletcher-pubsub-arrow` (Conan) | static library — Arrow C++ convenience over the nanoarrow provider |
 | [`fastdds-pubsub-provider/`](fastdds-pubsub-provider/README.md) | `fletcher-fastdds-pubsub-provider` (Conan) | static library — Fast DDS transport |
 | [`xrcedds-pubsub-provider/`](xrcedds-pubsub-provider/README.md) | `fletcher-xrcedds-pubsub-provider` (Conan) | static library — Micro XRCE-DDS transport |
@@ -301,7 +301,7 @@ conan cache restore fletcher-core-linux-conan-package.tgz
 
 ```python
 # In your conanfile.py:
-self.requires("fletcher-core/0.3.1-alpha")
+self.requires("fletcher-core/0.5.0-alpha")
 ```
 
 `conan cache restore` registers the package under the exact profile it was built with. To target a different profile, build from source with `conan create <component>` against a Fletcher checkout.
@@ -310,7 +310,7 @@ The `gateway-client-ts` package is published to npm as [`@eiva/fletcher-gateway-
 
 ## Roadmap
 
-Fletcher is at an early (`0.3.x-alpha`) stage. Planned work, roughly in priority order:
+Fletcher is at an early (`0.5.x-alpha`) stage. Planned work, roughly in priority order:
 
 - **Dynamically loadable transport plugins.** Make transport providers (Fast DDS, XRCE-DDS, …) loadable at runtime as plugins, so an application can pick a transport without compile-time coupling to its library.
 - **A protocol bridge service.** A standalone service that loads two transport plugins and bridges traffic between them — e.g. relay XRCE-DDS telemetry from an embedded segment onto a Fast DDS backbone, or DDS onto WebSocket — without bespoke glue code.
