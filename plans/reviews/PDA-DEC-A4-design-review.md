@@ -257,3 +257,183 @@ gate under DEBT-2 shrinks this.)
 
 The brief is 61 lines against the 60-line cap — one line over, and the overflow is
 the trailing *as-landed* stub the PM fills at close.
+
+---
+---
+
+# Cycle 2 of 2 — revision `9b354cb` (cycle 1 was `d2acfb9`)
+
+Rulings ledger re-read in full: **36 entries** (`grep -c '^## 2026'` → 36),
+including the two of 2026-09-04 that discharge my cycle-1 stop-and-ask.
+
+**Verdict: NEEDS-REWORK — 1 BLOCKER, which *is* the stop-and-ask, plus 4 DEBT.**
+There is no third design cycle and none is needed: the single BLOCKER is settled
+by the owner's answer to one question plus a one-line reconciliation that lands in
+implementation.
+
+## Cycle-1 BLOCKERs: both closed, and closed properly
+
+**BLOCKER 1 (lock order) — closed.** The order is now stated as total
+(`impl_->mu` < gate < provider) with both edges *forbidden* rather than handled:
+edge A by a delivery-depth counter, edge B by a scoping mandate. The gate is now
+`std::mutex` + `atomic<bool>`, and the store-then-barrier order makes the two
+interleavings total — I checked the four cases (self, non-delivery thread racing
+an in-flight invocation, later entry in the same loop, and unsubscriber acquiring a
+free gate ahead of the loop) and they are correct as described. `CallerTier.Cross
+CancellingDeliveriesDoNotDeadlock` is a real control: it hangs on any build that
+lets a delivery thread block on a gate. The mechanism also folded A4-DEBT-2 in —
+§1.2's argument for the non-recursive gate is the right one and is the argument I
+made, arrived at independently rather than copied.
+
+**BLOCKER 2 (provider re-entrancy premise) — closed.** P5 states it, names A3 and
+`kReentrantCall = 10` as the owner of the answer, forbids the implementer from
+touching it *including by using `kReentrantCall`*, scopes forbidden row 4 and the
+clause-6 sentence to this tier's gate, and disclosed it in the README. The brief's
+Forbidden line was corrected and the residue moved into Risks. Nothing left here.
+
+**A4-DEBT-1 — closed by deletion, and that is the stronger answer.** Dropping
+`StaleSnapshotProbeIsDetected` and resting falsification on the three primaries
+(red today) plus the two deadlock controls is not compliance-by-deletion: a case
+that could only fail an assertion written to fail on it was carrying no evidence,
+and what replaces it is a claim a reader can check. The remaining set does redden
+on revert or half-landing — the three primaries on the behaviour, `SelfUnsubscribe…`
+on dropping the depth counter (the non-recursive gate then self-deadlocks under
+`TIMEOUT`), `CrossCancelling…` on edge A, `ReentrantSubscribe…` on the `mu`↔gate
+edge. **A4-DEBT-4 closed** (both assertion sites now listed, with the changed
+expectations spelled out).
+
+## BLOCKER (cycle 2) — the sentence going into frozen §7 is narrower than the mechanism, in the unsafe direction
+
+§1.3 publishes, and §3 puts into frozen §7 clause 6:
+
+> An `Unsubscribe` **issued from inside a delivery callback on that subscriber**
+> does not wait…
+
+§1.1 implements it with a **file-local** `thread_local` depth counter, which is one
+counter for every `Subscriber` in the process. So a handler running on subscriber
+**X** that cancels a subscription on subscriber **Y** also skips **Y**'s barrier —
+`Y.Unsubscribe` returns while a Y delivery may be inside its callback on another
+thread. The published sentence tells that caller the wait happened (the callback
+was not "on that subscriber"), so it frees or unpins the handler state: a
+use-after-free, of exactly the class this item exists to remove, licensed by the
+seam's own frozen text. §1.1's supporting claim — *"it is invisible across
+`Subscriber` instances"* — is true of the storage and false of the effect.
+
+This is not a separate question from P6; it is the same question asked at the
+scope the mechanism actually has. Whichever way the owner rules, the text and the
+mechanism must be made to agree before either lands.
+
+**Acceptable fix (one line, and the owner's answer picks which):** either scope the
+depth counter to the `Subscriber::Impl` it belongs to — the published sentence then
+becomes true, the within-instance ABBA stays forbidden, and the residual
+*cross-instance* mutual cancel is named as handled residue (and the brief's
+"forbidden" line for two handlers cancelling each other narrowed to match) — or
+publish the carve-out at its real width, *"issued from inside any delivery callback
+on this thread"*, and say so in the stop-and-ask, because that widens the owner's
+carve-out by two steps rather than one.
+
+## STOP-AND-ASK — P6, ruled in three parts as asked
+
+**1. Is the widening necessary to close edge A?** For the *within-subscriber* cycle,
+**yes** — I checked the narrow form and it does not close it. Skipping the barrier
+only when the target gate is the one this thread already holds leaves thread A
+(holding gate E1, cancelling E2) and thread B (holding gate E2, cancelling E1)
+blocking on each other. So the widening from "its own subscription" to "any
+subscription on this subscriber" is load-bearing, not a convenience, and the design
+is right that narrowing it back locally reinstates the deadlock. **The second
+step** — from "on this subscriber" to "any subscriber in the process" — is *not*
+necessary for that cycle; it is a consequence of where the counter was put. It does
+buy closure of the rarer cross-instance mutual cancel. That is the choice in the
+BLOCKER above, and it is the owner's to make because it is his carve-out being
+widened.
+
+**2. Is it a deviation you must carry?** **Yes, and it is worse than one step.** The
+2026-09-04 ruling does not merely permit the self case, it asserts uniqueness —
+*"that is **the one shape** where a caller may not free callback state on return"* —
+and the owner was shown that carve-out precisely so he could weigh it before
+agreeing (*"Carve-out you should see before agreeing"*). A second shape contradicts
+the ruling's own words, so it is a ruling deviation, not an inference. It is the
+fifth consecutive narrow-claim-stated-honestly ruling; the 2026-09-03 licence to
+*infer* that preference licenses narrowing without asking, never widening. And the
+true width is two steps, not the one the design's Risks bullet and the brief
+describe. Carry it as a **decision**, not a Risks line — with the per-thread scope
+on the table, since the design as written implements a width neither the brief nor
+the frozen sentence states.
+
+**3. What does an application lose — one sentence, product vocabulary?**
+
+> A handler that cancels **any** subscription — not only its own, and as currently
+> built not even only on its own subscriber object — gets a cancel that returns
+> straight away instead of waiting, so in every one of those cases the application
+> must keep that handler's state alive rather than freeing it when the cancel
+> returns.
+
+For the framed question, the two options and their costs are: **(a) keep it to one
+subscriber object** — the published sentence becomes true as written, cost is that
+two handlers on *different* subscriber objects cancelling each other can still hang
+one another (disclosed, not forbidden); **(b) any handler, anywhere in the process**
+— nothing can hang, cost is that the "you may free your handler state" promise is
+off in a second, wider set of cases and the contract must say so.
+
+## Also pressure-tested, and clean
+
+- **Does closing edge A reopen the forcing test's guarantee?** No, on the half that
+  matters. A handler can never be *entered* after its cancellation returned: the
+  `retired` store precedes the return and every entry is re-checked under its own
+  gate before invocation, so no new invocation can begin. What the skip gives up is
+  only "not currently running on another thread" — which is the carve-out, and must
+  be published rather than implied. The two halves of clause 6 come apart cleanly
+  here and the design's wording keeps them apart.
+- **Thread pools.** Fine. The counter is incremented on whichever thread runs the
+  invocation, and the same thread takes and releases that gate under a `lock_guard`,
+  so no hand-off between the two is representable.
+- **Per-thread is not per-logical-flow** — see A4-DEBT-7.
+- **Budget.** Design 299/300, brief 60/60, public surface 0. I compared against
+  rev 1 for compression: what left the document is the discharged P3, the deleted
+  probe case, and the contention bullet folded into handled residue. Nothing
+  load-bearing was squeezed to fit; the reduction from +410 to +360 is the dropped
+  test case, which is a scope cut and not a compression.
+- **Tree claims re-checked:** the two of 2026-09-04 rulings are quoted accurately;
+  `subscriber.cpp:205-206`, `in_process_provider.cpp:248,270-275`,
+  `fast_dds_pubsub_provider.cpp:570-574` and `provider.hpp:109-113,130-132` are all
+  as cited. One claim is false — see A4-DEBT-6.
+
+## DEBT (4, cycle 2)
+
+**A4-DEBT-6 — must land: edge B's named live check cannot fire.** The design offers
+`ctest -R 'ProviderConformance\.'` against Fast DDS as edge B's live check. That
+suite constructs no `Subscriber` at all — which is the design's *own* premise, and I
+re-verified it: the only `Subscriber` anywhere in the harness is
+`integration-tests/pubsub-conformance/src/copy_accounting.cpp:247,266`, i.e. the
+`CopyAccounting` suite, whose subjects are in-process by construction and so have no
+provider that waits on its own in-flight delivery either. Edge B therefore has **no
+live check in the harness**, and the sentence that makes its uncontrolled status
+acceptable is the one sentence that is not true. Owed: delete the claim and say edge
+B rests on the scoping mandate with no live check — the same honesty §12.2 applied
+when it brought labels down to the evidence — or name a harness that really drives
+`Subscriber` over Fast DDS (`integration-tests/pubsub-arrow-fastdds/tests/
+test_roundtrip.cpp:119,171,250,336`, via `SubscriberArrow`) and say plainly that it
+is opportunistic, since nothing there guarantees a delivery is in flight at the
+`Unsubscribe`.
+
+**A4-DEBT-7 — the depth counter is per-thread, not per-logical-flow.** A handler
+that hands the cancellation to a helper thread and then waits for it deadlocks: the
+helper has depth 0, so it takes the barrier on the gate the handler is still
+holding. One line of handled residue in §"Corner cases" and one in the README; it is
+adjacent to, but not covered by, the existing "a callback that never returns" entry.
+
+**A4-DEBT-8 — a probe is owed before the fan-out loop is written.** Answering the
+question directly: **yes**, and it is cheap. The design does not merely accept an
+unmeasured cost, it *defers a live design choice to a number it declines to take* —
+§1.2 rejects the atomic in-flight counter while calling it "cheaper per sample", and
+Risks says the alternative is there "if the number ever matters". A ~20-line
+throwaway on this machine answering (i) uncontended `std::mutex` lock+unlock per
+entry per sample against the 1.4 ns call at `provider.hpp:109-113`, and (ii) the
+same for an `atomic` fetch_add, settles the choice before the loop is written rather
+than after. The design's reason for declining ("a probe would be measuring the
+standard library") is exactly why it is cheap, not why it is uninformative.
+
+**A4-DEBT-9 — §1.1's *"invisible across `Subscriber` instances"* is false as
+written.** True of the storage, false of the effect. Correct it whichever way the
+owner rules on P6 — under fix (a) it becomes true; under fix (b) it must be replaced
+by a statement of the cross-instance effect.
