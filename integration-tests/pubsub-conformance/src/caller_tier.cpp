@@ -113,6 +113,10 @@ class ProbeProvider : public PubSubProvider {
 
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                                SubscribeCallback callback) override {
+        // Deliberately OUTSIDE the probe's own lock: a real provider's Subscribe
+        // does its work without holding anything of ours, and serialising it here
+        // would make the concurrent-first-Subscribe case vacuous.
+        if (subscribe_delay.count() > 0) std::this_thread::sleep_for(subscribe_delay);
         std::lock_guard<std::mutex> lock(mu_);
         callbacks_[Join(segments)] = std::move(callback);
         ++subscribe_calls;
@@ -147,6 +151,9 @@ class ProbeProvider : public PubSubProvider {
     }
 
     bool wait_for_inflight_on_unsubscribe = false;
+    // How long provider->Subscribe takes. Fast DDS's create_datareader is far
+    // above the 50 us at which the unserialised window was measured 400/400.
+    std::chrono::milliseconds subscribe_delay{0};
     std::atomic<int> subscribe_calls{0};
     std::atomic<int> unsubscribe_calls{0};
 
@@ -618,14 +625,21 @@ TEST(CallerTier, ADuplicateCancelWaitsForTheDrainInProgress) {
     std::thread delivery([&] { probe->Deliver(kT1, Row(1)); });
     ASSERT_TRUE(entered.WaitFor(kGenerous));
 
+    std::atomic<bool> winner_returned{false};
     std::thread winner([&] {
         winner_at_unsubscribe.Set();
         subscriber.Unsubscribe(id);
+        winner_returned.store(true, std::memory_order_release);
     });
     ASSERT_TRUE(winner_at_unsubscribe.WaitFor(kGenerous));
     // Let the winner get past its critical section and into the drain, which is
     // where the id stops being live and starts being "retiring".
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // ...and prove it is still there, so a short sleep cannot green this case
+    // without ever reaching the branch it names.
+    ASSERT_FALSE(winner_returned.load(std::memory_order_acquire))
+        << "the winner had already finished draining: this case never exercised the duplicate "
+           "branch";
 
     std::thread releaser([&] {
         ASSERT_TRUE(duplicate_at_unsubscribe.WaitFor(kGenerous));
@@ -717,12 +731,17 @@ TEST(CallerTier, ASubscribeDuringADrainKeepsItsProviderSubscription) {
 
     // Cancels the topic's LAST subscription and then blocks in the drain for as
     // long as the parked handler takes.
+    std::atomic<bool> canceller_returned{false};
     std::thread canceller([&] {
         canceller_at_unsubscribe.Set();
         subscriber.Unsubscribe(parked_id);
+        canceller_returned.store(true, std::memory_order_release);
     });
     ASSERT_TRUE(canceller_at_unsubscribe.WaitFor(kGenerous));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_FALSE(canceller_returned.load(std::memory_order_acquire))
+        << "the cancellation had already completed: the newcomer below would not land in the "
+           "drain window at all";
 
     // The newcomer, landing squarely inside the drain window.
     std::atomic<int> newcomer_calls{0};
@@ -743,6 +762,103 @@ TEST(CallerTier, ASubscribeDuringADrainKeepsItsProviderSubscription) {
            "subscription was torn down by the drain it landed in, and nothing repairs it";
     EXPECT_EQ(probe->unsubscribe_calls.load(), 0)
         << "the topic was released at the provider while it still had a live subscriber";
+}
+
+// ── The carve-out must not un-publish the drain for everyone else ───
+//
+// A handler cancels its OWN subscription: the carve-out skips the barrier,
+// because a cancellation cannot wait for the frame it is already in. That skip is
+// the one authorised exception, and it belongs to *that* caller. It must not also
+// hide the drain from a cancel arriving on another thread, which is covered by no
+// exception at all — that thread reads the published sentence, frees its handler
+// state, and the handler is still running.
+//
+// The sibling keeps the topic non-empty so the provider is never re-entered (P5).
+TEST(CallerTier, ACancelRacingASelfCancelWaitsForThatHandler) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    Flag entered;
+    Flag release;
+    Flag other_at_cancel;
+    std::atomic<bool> exited{false};
+
+    (void)subscriber.Subscribe(
+        kT1, Sub{[](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
+    const uint64_t self_id =
+        subscriber
+            .Subscribe(kT1, Sub{[&](uint64_t id, const uint8_t*, size_t, const SharedSchema&,
+                                    const Attachments&) {
+                           subscriber.Unsubscribe(id);  // the carve-out: skips the barrier
+                           entered.Set();
+                           ASSERT_TRUE(release.WaitFor(kGenerous));
+                           exited.store(true, std::memory_order_release);
+                       }})
+            .subscription_id;
+
+    std::thread delivery([&] { probe->Deliver(kT1, Row(1)); });
+    ASSERT_TRUE(entered.WaitFor(kGenerous));
+
+    std::thread releaser([&] {
+        ASSERT_TRUE(other_at_cancel.WaitFor(kGenerous));
+        std::this_thread::sleep_for(kHoldWindow);
+        release.Set();
+    });
+
+    other_at_cancel.Set();
+    subscriber.Unsubscribe(self_id);  // another thread, the same id
+    const bool other_saw_it_exit = exited.load(std::memory_order_acquire);
+
+    releaser.join();
+    delivery.join();
+
+    EXPECT_TRUE(other_saw_it_exit)
+        << "a cancel from outside the handler returned while that handler was still running: the "
+           "self-cancel un-published the drain, so the promise has a second exception";
+}
+
+// ── RB1: two first-Subscribes on one topic register once ────────────
+//
+// `EnsureProviderSubscription` releases `mu` across `provider->Subscribe`, so
+// without serialisation both callers read `provider_subscribed == false` and both
+// register — measured 400/400 duplicate provider subscriptions at 50 us of
+// provider work, which is the outcome under contention rather than a race. Fast
+// DDS then refuses the loser with `kInvalidArgument` on a valid Subscribe; the
+// loopback replaces the slot and reports `kSubscriptionEnded` to a live
+// subscriber's arrival. Reachable in the gateway, where one `Subscriber` is
+// shared by every WS session.
+TEST(CallerTier, ConcurrentFirstSubscribesCreateOneProviderSubscription) {
+    auto probe = std::make_shared<ProbeProvider>();
+    probe->subscribe_delay = std::chrono::milliseconds(50);
+    Subscriber subscriber(probe);
+
+    Flag go;
+    std::atomic<int> first_calls{0};
+    std::atomic<int> second_calls{0};
+
+    std::thread one([&] {
+        ASSERT_TRUE(go.WaitFor(kGenerous));
+        (void)subscriber.Subscribe(kT1,
+                                   Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { ++first_calls; }});
+    });
+    std::thread two([&] {
+        ASSERT_TRUE(go.WaitFor(kGenerous));
+        (void)subscriber.Subscribe(kT1,
+                                   Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { ++second_calls; }});
+    });
+    go.Set();
+    one.join();
+    two.join();
+
+    EXPECT_EQ(probe->subscribe_calls.load(), 1)
+        << "both callers registered a provider-level subscription for one topic";
+
+    // Vacuity guard: serialising must not have cost either of them its delivery.
+    probe->Deliver(kT1, Row(3));
+    EXPECT_EQ(first_calls.load(), 1);
+    EXPECT_EQ(second_calls.load(), 1);
 }
 
 }  // namespace

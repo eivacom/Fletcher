@@ -58,6 +58,15 @@ class Subscriber {
         std::function<void(uint64_t subscription_id, const uint8_t* data, size_t len,
                            const SharedSchema& schema, const Attachments& attachments)>;
 
+    /// A callback **must not throw** (spec §5.3, §7 clause 6 — the clauses bind
+    /// at every tier this seam publishes). What this tier does if one does
+    /// anyway, stated rather than left to be discovered: the exception is
+    /// **contained at the point of invocation**, every remaining subscriber on
+    /// that topic still receives that sample, and the throw is **not reported
+    /// anywhere** — no status, no return value, no log. Containing it is not
+    /// tolerance: a provider invokes this from a transport thread where an
+    /// escaping exception terminates the process rather than unwinding.
+    ///
     /// Subscribe to a topic. Returns a per-subscription ID for targeted
     /// unsubscribe and the schema that the publisher registered.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,

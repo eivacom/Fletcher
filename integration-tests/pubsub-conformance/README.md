@@ -608,6 +608,8 @@ green after — each observed, not asserted:
 | `DestructorDrainsAnInFlightDelivery` | the same, through teardown instead of through cancellation |
 | `ADuplicateCancelWaitsForTheDrainInProgress` | `duplicate_saw_it_exit` was **false** — the loser of a two-thread cancel took the no-op branch and returned while the handler was still running: a second, unpublished exception to the frozen promise, reachable only under a race (owner ruling 2026-09-04 removed it) |
 | `ASubscribeDuringADrainKeepsItsProviderSubscription` | `newcomer_calls` **0** and `unsubscribe_calls` **1** — a subscription created while another thread was draining had its provider-level subscription torn down under it and received nothing, ever, with no error anywhere |
+| `ACancelRacingASelfCancelWaitsForThatHandler` | `other_saw_it_exit` was **false** — a handler's self-cancel took the id out of the retiring map while that handler was still on the stack, so a cancel from any OTHER thread found neither map, took the no-op branch and returned mid-callback. That caller is covered by no exception at all |
+| `ConcurrentFirstSubscribesCreateOneProviderSubscription` | `subscribe_calls` was **2** — two first-`Subscribe`s on one topic each registered a provider-level subscription |
 
 The remaining cases are **live negative controls**, and each was made to go red
 by mutating the thing it controls rather than asserted to be one:
@@ -618,7 +620,9 @@ by mutating the thing it controls rather than asserted to be one:
 | `CrossCancellingDeliveriesDoNotDeadlock` | same mutation | **Timeout** — the ABBA cycle between two deliveries on one `Subscriber` |
 | `UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider` | scope the barrier as a function-scoped `lock_guard`, so a gate is held across `provider->Unsubscribe` | **Timeout** — and *only* this case reddens on that mutation |
 | `CancellingOnAnotherSubscriberWaitsForItsDelivery` | widen the depth predicate from `InsideDeliveryOn(identity.get())` back to process-wide (`!g_delivery_stack.empty()`) | **Failed** — and *only* this case reddens on that mutation. It is the sole control on the scope the owner ruled on (2026-09-04, "one subscriber object"); every other case constructs one `Subscriber`, so the process-wide scope the owner rejected is invisible to all of them |
-| `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` | — | that the two no-op branches were not collapsed: an **unknown or fully cancelled** id still returns at once, while an id **another thread is cancelling right now** waits (the row above it) |
+| `ACancelRacingASelfCancelWaitsForThatHandler` | drop the deferred release, so the carve-out's skip erases the id from the retiring map at once | **Failed** — and *only* this case reddens on that mutation |
+| `ConcurrentFirstSubscribesCreateOneProviderSubscription` | delete the `provider_cv.wait` that serialises the first-`Subscribe` | **Failed** — and *only* this case reddens on that mutation |
+| `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` | — | only that an unknown or fully cancelled id neither throws nor waits. It does **not** redden if the two no-op branches are collapsed: an id with no drain in progress has a free barrier either way. The distinction between "gone" and "being cancelled right now" is pinned by `ADuplicateCancelWaitsForTheDrainInProgress` alone |
 | `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the gate→`mu` edge, in the permitted direction |
 | `ALiveSubscriptionStillReceives` | — | that the gate did not simply silence delivery |
 | `AReleasedIdIsNeverReused` | — | ids are never recycled, without which "unknown id is a no-op" silently becomes "cancels a stranger" |
@@ -634,7 +638,7 @@ that has already cancelled itself, so the cancellation of the last remaining
 entry empties the topic and enters the provider with that entry's gate still
 ahead of the fan-out loop.
 
-**Three of these fourteen cases redden by hanging**, so `conformance_caller_tier`
+**Three of these sixteen cases redden by hanging**, so `conformance_caller_tier`
 carries a declared ctest `TIMEOUT` of 60 s against a suite that costs well under
 a second. An uncapped hang is not a red; it is a hung job.
 
@@ -676,22 +680,49 @@ a second. An uncapped hang is not a red; it is a hung job.
    instance silently addresses a stranger's subscription. Predates this suite and
    is unchanged by it; globally unique ids would need the process-global state
    the isolation ruling keeps out of the seam.
-7. **The provider-level subscribe/unsubscribe transition is not fully
-   serialised.** `ASubscribeDuringADrainKeepsItsProviderSubscription` closes the
-   window the drain opened — the whole duration of a handler — by deciding the
-   transition *after* the drain, in one critical section, so a newcomer's entry
-   is simply visible and the teardown does not happen. What remains is the
-   few-instruction window this file has always had: between that decision and
-   `provider->Unsubscribe`, and between two concurrent first-`Subscribe`s. A
-   serialising lock would close it, and it is deliberately **not** taken: the
-   fan-out holds a gate across the user callback, and that callback may re-enter
-   `Subscribe` — so any lock `Subscribe` must acquire becomes gate→lock, while a
-   teardown holding it across a provider call that synchronously delivers becomes
-   lock→gate. That is a new deadlock class in exchange for a pre-existing race,
-   and a hang here would not be the owner's sanctioned trade. None of the three
-   shipped providers delivers synchronously from `Subscribe` today; a driver that
-   did would make the cycle reachable, which is why the reason is recorded rather
-   than the lock added.
+7. **The provider-level TEARDOWN transition is not serialised, and deliberately
+   never will be.** The drain used to make this window as long as a handler runs;
+   `ASubscribeDuringADrainKeepsItsProviderSubscription` closed that by deciding
+   the transition *after* the drain, in one critical section, so a newcomer's
+   entry is simply visible and the teardown does not happen. What remains is the
+   few-instruction window this file has always had, between that decision and
+   `provider->Unsubscribe`: a `lock_guard` destructor, a `vector::empty()` and a
+   virtual call, bounded only by preemption. **Measured 0 silent losses in
+   876,000 deliveries** under an adversarial churn thread.
+
+   A lock would close it and must **not** be added. The cycle is reachable
+   against today's providers, not against a hypothetical one: `provider.hpp`
+   *requires* `Unsubscribe` to let no in-flight delivery outlive it, and Fast DDS
+   implements that (`delete_datareader` waits). A teardown holding lock `T` across
+   that call therefore waits for a delivery that holds its gate, whose handler may
+   re-enter `Subscribe`, which wants `T` — `T → provider → gate → mu → T`. This
+   suite already exercises both legs
+   (`UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider` and
+   `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock`). Any scheme that makes
+   `Subscribe` *wait* for an in-progress `provider->Unsubscribe` closes the same
+   cycle, because the waiting `Subscribe` may be the delivery the teardown is
+   waiting for. Trading a race that cannot corrupt memory for a manufactured hang
+   is not the owner's 2026-09-04 preference; that preference is about *not*
+   widening a "you may free" promise.
+8. **The first-`Subscribe` transition IS serialised, and the one shape it could
+   hang on is named.** This half of the old limit 7 was published as a
+   few-instruction window and was nothing of the sort: `EnsureProviderSubscription`
+   releases `mu` across `provider->Subscribe`, so it lasted the entire provider
+   call — **400/400 duplicate provider subscriptions at 50 µs of provider work**,
+   the outcome under contention rather than a race, with Fast DDS refusing the
+   loser `kInvalidArgument` on a valid `Subscribe` and the loopback reporting
+   `kSubscriptionEnded` to a live subscriber's arrival. It is now closed by a
+   per-topic in-progress flag and a condition variable on `mu`
+   (`ConcurrentFirstSubscribesCreateOneProviderSubscription`): **0/400 at 0 µs,
+   50 µs and 500 µs** after the fix, against 1/400, 324/400 and 400/400 before it.
+
+   Serialising *this* side is safe where serialising the teardown side is not:
+   `provider->Subscribe` never waits for an in-flight delivery, so it closes no
+   cycle. The one shape that could still hang is a provider that **delivers
+   synchronously from inside `Subscribe`** into a handler that subscribes to the
+   same topic. None of the three shipped providers does; a driver that did would
+   hang loudly under this target's ctest `TIMEOUT`, which is the trade the owner's
+   preference does sanction.
 
 ## Building and running
 

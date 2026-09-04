@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <fletcher/core/status.hpp>
 #include <memory>
 #include <mutex>
@@ -34,10 +35,92 @@ namespace {
 // keeps it alive by shared_ptr, so it outlives the Subscriber it identifies.
 thread_local std::vector<const void*> g_delivery_stack;
 
+// One per subscription. `retired` is stored BEFORE the barrier is taken and read
+// under `mu` at invocation, which is what makes the two interleavings total: a
+// delivery that read `retired == false` under the gate is waited for, and one
+// that had not yet taken the gate reads `true` and skips. "Retired but being
+// invoked" is not a representable state — that is the memory-safety property,
+// not a test.
+//
+// NOT recursive, deliberately: a recursive gate would let a provider that
+// re-entered delivery for one subscription on one thread proceed silently, which
+// would make provider.hpp's "one callback at a time" unfalsifiable and would
+// pre-empt the typed re-entrancy refusal that belongs to a separate item. With a
+// plain mutex that violation deadlocks loudly under the conformance suite's
+// ctest TIMEOUT. The self-cancellation case a recursive gate used to cover is
+// covered by the delivery-depth scope instead.
+struct Gate {
+    std::mutex mu;
+    std::atomic<bool> retired{false};
+};
+
+// The third state, between "live" and "gone": ids whose gate has been retired
+// but whose drain has not yet been observed to complete. It is what lets a
+// duplicate cancel wait for the same drain instead of returning as a no-op
+// (owner ruling 2026-09-04).
+//
+// Held by `shared_ptr` rather than inline in `Impl` for one reason: a delivery
+// frame that deferred a release into it must be able to finish that release even
+// if the `Subscriber` is destroyed the instant its handler returns.
+//
+// Its lock is always innermost — taken under the Subscriber's `mu` for publish
+// and lookup, alone for the deferred release, and never held across anything
+// that can block. Publishing under `mu`, in the same critical section that
+// removes the id from the live map, is what keeps the three states disjoint with
+// no window between the first two.
+class Retirements {
+   public:
+    void Publish(uint64_t id, std::shared_ptr<Gate> gate) {
+        std::lock_guard<std::mutex> lock(mu_);
+        map_.emplace(id, std::move(gate));
+    }
+    [[nodiscard]] std::shared_ptr<Gate> Find(uint64_t id) const {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto it = map_.find(id);
+        return it == map_.end() ? nullptr : it->second;
+    }
+    void Release(uint64_t id) {
+        std::lock_guard<std::mutex> lock(mu_);
+        map_.erase(id);
+    }
+
+   private:
+    mutable std::mutex mu_;
+    std::unordered_map<uint64_t, std::shared_ptr<Gate>> map_;
+};
+
+// Releases owed by this thread's delivery frames — see DeliveryScope.
+struct DeferredRelease {
+    std::shared_ptr<Retirements> retirements;
+    uint64_t id;
+};
+thread_local std::vector<DeferredRelease> g_deferred_releases;
+
 class DeliveryScope {
    public:
     explicit DeliveryScope(const void* token) { g_delivery_stack.push_back(token); }
-    ~DeliveryScope() { g_delivery_stack.pop_back(); }
+
+    // When a cancellation issued from inside a delivery skips its barrier, the
+    // id must STAY published until this thread's outermost delivery frame
+    // returns — otherwise the winner un-publishes the drain the moment it skips,
+    // and a cancel of the same id from any OTHER thread finds neither map, takes
+    // the no-op branch, and returns while that callback is still running. That
+    // caller is not covered by the published carve-out, so leaving it there gave
+    // the frozen promise a second exception.
+    //
+    // Swept at depth 0, not per frame: while any frame of this thread is still
+    // on the stack, a gate it holds is still held. Costs nothing when the list is
+    // empty, which is every delivery that did not cancel anything.
+    ~DeliveryScope() {
+        g_delivery_stack.pop_back();
+        if (!g_delivery_stack.empty() || g_deferred_releases.empty()) return;
+        std::vector<DeferredRelease> due;
+        due.swap(g_deferred_releases);
+        for (const DeferredRelease& release : due) {
+            release.retirements->Release(release.id);
+        }
+    }
+
     DeliveryScope(const DeliveryScope&) = delete;
     DeliveryScope& operator=(const DeliveryScope&) = delete;
 };
@@ -50,25 +133,6 @@ bool InsideDeliveryOn(const void* token) {
 }  // namespace
 
 struct Subscriber::Impl {
-    // One per subscription. `retired` is stored BEFORE the barrier is taken and
-    // read under `mu` at invocation, which is what makes the two interleavings
-    // total: a delivery that read `retired == false` under the gate is waited
-    // for, and one that had not yet taken the gate reads `true` and skips.
-    // "Retired but being invoked" is not a representable state — that is the
-    // memory-safety property, not a test.
-    //
-    // NOT recursive, deliberately: a recursive gate would let a provider that
-    // re-entered delivery for one subscription on one thread proceed silently,
-    // which would make provider.hpp's "one callback at a time" unfalsifiable and
-    // would pre-empt the typed re-entrancy refusal that belongs to a separate
-    // item. With a plain mutex that violation deadlocks loudly under the
-    // conformance suite's ctest TIMEOUT. The self-cancellation case a recursive
-    // gate used to cover is covered by DeliveryScope above instead.
-    struct Gate {
-        std::mutex mu;
-        std::atomic<bool> retired{false};
-    };
-
     // Identity for the delivery-depth stack. Never dereferenced; held by
     // shared_ptr so the provider callback can keep the token alive past `this`.
     struct Identity {};
@@ -100,6 +164,9 @@ struct Subscriber::Impl {
         // same topic all share it (SchemaArrival is copyable).
         SchemaArrival schema_arrival;
         bool provider_subscribed = false;
+        // Set while THIS topic's first Subscribe is inside provider->Subscribe,
+        // which runs with `mu` released. See EnsureProviderSubscription.
+        bool provider_subscribe_in_progress = false;
     };
 
     std::shared_ptr<PubSubProvider> provider;
@@ -129,15 +196,37 @@ struct Subscriber::Impl {
     // delivery, and that delivery may at that moment be about to take the gate
     // we hold (`CallerTier.UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider`).
     //
+    // Gates of DIFFERENT `Subscriber` objects are unordered with respect to each
+    // other: a handler holding X's gate may block on Y's. That edge is the
+    // mechanism of the published cross-`Subscriber` hang (harness README), which
+    // is handled residue by owner ruling rather than a defect — a loud hang is
+    // preferred over a silent use-after-free.
+    //
     // Retire a subscription and wait out any invocation already inside its gate.
     // A thread already inside a delivery on THIS Subscriber skips the barrier —
     // otherwise two cross-cancelling deliveries deadlock on each other's gates.
     // That skip is the one published exception to "you may free on return"
     // (subscriber.hpp; owner ruling 2026-09-04).
-    void RetireAndDrain(const std::shared_ptr<Gate>& gate) const {
+    //
+    // Returns true if the release of `id` from `retirements` was DEFERRED to the
+    // end of this thread's delivery frame — which is how the skip stops
+    // un-publishing the drain for every other thread. Only the owner of the
+    // retirement may defer or release it; a duplicate cancel that lands in the
+    // carve-out simply returns.
+    [[nodiscard]] bool RetireAndDrain(uint64_t id, const std::shared_ptr<Gate>& gate,
+                                      bool owns_retirement) const {
         gate->retired.store(true, std::memory_order_release);
-        if (InsideDeliveryOn(identity.get())) return;
+        if (InsideDeliveryOn(identity.get())) {
+            if (!owns_retirement) return false;
+            g_deferred_releases.push_back(DeferredRelease{retirements, id});
+            return true;
+        }
+        // If this ever threw — only std::mutex::lock failing, which the standard
+        // reserves for resource exhaustion — the owner's entry would stay in
+        // `retirements`; benign, since later cancels then lock a free gate and
+        // return at once.
         std::lock_guard<std::mutex> barrier(gate->mu);
+        return false;
     }
 
     mutable std::mutex mu;
@@ -152,7 +241,10 @@ struct Subscriber::Impl {
     // 2026-09-04). Without it a concurrent duplicate cancel returned while the
     // handler was still running — a second, unpublished exception to the frozen
     // promise, and the one the owner refused to publish.
-    std::unordered_map<uint64_t, std::shared_ptr<Gate>> retiring;
+    std::shared_ptr<Retirements> retirements = std::make_shared<Retirements>();
+    // One per Subscriber rather than per topic: a first-Subscribe is rare, so a
+    // shared condition variable costs a predicate re-check nobody notices.
+    std::condition_variable provider_cv;
     std::atomic<uint64_t> next_id{1};
 
     // Copy-on-write mutation of one topic's subscriber list. Called with mu held — the lock is what
@@ -169,6 +261,28 @@ struct Subscriber::Impl {
     // provider to avoid deadlock if the provider calls back synchronously.
     SchemaArrival EnsureProviderSubscription(const std::string& key, TopicState& ts,
                                              std::unique_lock<std::mutex>& lock) {
+        // Wait out a first-Subscribe already inside provider->Subscribe for this
+        // topic. `mu` is released across that call, so without this both callers
+        // read provider_subscribed == false and BOTH register: measured 400/400
+        // duplicate provider subscriptions at 50 us of provider work — the
+        // outcome under contention, not a race. Fast DDS then refuses the loser
+        // with kInvalidArgument on a perfectly valid Subscribe; the loopback
+        // silently replaces the slot and reports kSubscriptionEnded to a live
+        // subscriber's SchemaArrival.
+        //
+        // Serialising THIS side is safe where serialising the teardown side is
+        // not: provider->Subscribe never waits for an in-flight delivery, so it
+        // closes no cycle, whereas provider->Unsubscribe is REQUIRED to wait
+        // (provider.hpp) and a lock held across it would close
+        // lock -> provider -> gate -> mu -> lock. The one shape this can still
+        // hang on is a provider that delivers synchronously from inside
+        // Subscribe into a handler that subscribes to the same topic — a loud
+        // hang under the suite's TIMEOUT, and published in the harness README.
+        //
+        // `ts` stays valid across the wait and across the unlock below: nothing
+        // ever erases from `topics`, and unordered_map nodes are stable.
+        provider_cv.wait(lock, [&ts] { return !ts.provider_subscribe_in_progress; });
+
         if (ts.provider_subscribed) {
             return ts.schema_arrival;
         }
@@ -177,7 +291,21 @@ struct Subscriber::Impl {
         FanoutPtr fanout = ts.fanout;
         std::shared_ptr<Identity> token = identity;
 
+        ts.provider_subscribe_in_progress = true;
         lock.unlock();
+
+        // Whatever happens, the flag must be cleared and waiters woken, or every
+        // later Subscribe on this topic waits forever.
+        struct InProgressGuard {
+            TopicState& ts;
+            std::unique_lock<std::mutex>& lock;
+            std::condition_variable& cv;
+            ~InProgressGuard() {
+                if (!lock.owns_lock()) lock.lock();
+                ts.provider_subscribe_in_progress = false;
+                cv.notify_all();
+            }
+        } in_progress{ts, lock, provider_cv};
 
         SubscriptionResult result = provider->Subscribe(
             segments, [fanout, token](const uint8_t* data, size_t len, const SharedSchema& schema,
@@ -245,12 +373,15 @@ Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider) : impl_(std::ma
 
 Subscriber::~Subscriber() {
     std::vector<std::vector<std::string>> to_unsub;
-    std::vector<std::shared_ptr<Impl::Gate>> gates;
+    // Ids as well as gates: a drain that lands in the carve-out defers its
+    // release by id, exactly as Unsubscribe's does.
+    std::vector<std::pair<uint64_t, std::shared_ptr<Gate>>> gates;
     {
         std::lock_guard lock(impl_->mu);
         for (auto& [key, ts] : impl_->topics) {
             for (const Impl::Entry& entry : *ts.fanout->entries.load()) {
-                gates.push_back(entry.gate);
+                gates.emplace_back(entry.id, entry.gate);
+                impl_->retirements->Publish(entry.id, entry.gate);
             }
             // Publish an empty list so a delivery that starts from here on finds
             // nothing; the gates below cover one that already holds a snapshot.
@@ -259,9 +390,14 @@ Subscriber::~Subscriber() {
         impl_->subscription_topic.clear();
     }
     // Retire and drain BEFORE entering the provider, and with no lock held — see
-    // the lock-order note on Impl::RetireAndDrain.
-    for (const std::shared_ptr<Impl::Gate>& gate : gates) {
-        impl_->RetireAndDrain(gate);
+    // the lock-order note on Impl::RetireAndDrain. A subscription mid-retirement
+    // on ANOTHER thread is not in this list — §6 clause 5 makes destruction
+    // require quiescence, so a cancel racing the destructor is already outside
+    // the contract.
+    for (const auto& [id, gate] : gates) {
+        if (!impl_->RetireAndDrain(id, gate, /*owns_retirement=*/true)) {
+            impl_->retirements->Release(id);
+        }
     }
     // The provider transition is decided after the drain, in one critical
     // section, for the reason Unsubscribe does the same: `provider_subscribed`
@@ -296,7 +432,7 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
     uint64_t id = impl_->next_id.fetch_add(1);
     impl_->subscription_topic[id] = key;
     Impl::RewriteEntries(it->second, [&](std::vector<Impl::Entry>& v) {
-        v.push_back({id, std::move(cb), std::make_shared<Impl::Gate>()});
+        v.push_back({id, std::move(cb), std::make_shared<Gate>()});
     });
 
     SchemaArrival schema;
@@ -309,7 +445,7 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
         // held here; retake it if not, and re-find the topic rather than reusing `it`.
         if (!lock.owns_lock()) lock.lock();
         impl_->subscription_topic.erase(id);
-        std::shared_ptr<Impl::Gate> gate;
+        std::shared_ptr<Gate> gate;
         auto topic_it = impl_->topics.find(key);
         if (topic_it != impl_->topics.end()) {
             Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
@@ -326,9 +462,14 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
         }
         // Retire the rolled-back entry too, outside `mu` and before rethrowing: a
         // provider that delivered once and then failed must not reach a callback
-        // whose Subscribe never returned.
+        // whose Subscribe never returned. Published in `retirements` like any
+        // other retirement, so a concurrent cancel of this id waits for the same
+        // drain rather than finding neither map.
+        if (gate) impl_->retirements->Publish(id, gate);
         lock.unlock();
-        if (gate) impl_->RetireAndDrain(gate);
+        if (gate && !impl_->RetireAndDrain(id, gate, /*owns_retirement=*/true)) {
+            impl_->retirements->Release(id);
+        }
         throw;
     }
     return {id, std::move(schema)};
@@ -336,15 +477,15 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
 
 void Subscriber::Unsubscribe(uint64_t subscription_id) {
     std::string key;
-    std::shared_ptr<Impl::Gate> gate;
+    std::shared_ptr<Gate> gate;
     bool ours = false;
     {
         std::lock_guard lock(impl_->mu);
 
         auto it = impl_->subscription_topic.find(subscription_id);
         if (it == impl_->subscription_topic.end()) {
-            auto retiring_it = impl_->retiring.find(subscription_id);
-            if (retiring_it == impl_->retiring.end()) {
+            gate = impl_->retirements->Find(subscription_id);
+            if (!gate) {
                 // Unknown, or already fully cancelled: accepted, and does nothing
                 // (owner ruling 2026-09-04). A foreign-runtime finaliser cancels
                 // unconditionally during teardown and cannot let an error escape,
@@ -359,7 +500,6 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
             // on return exactly like the winner. Returning early here was a
             // second, unpublished exception to the frozen promise — reachable
             // only under a race, which is the hardest kind to discover.
-            gate = retiring_it->second;
         } else {
             ours = true;
             key = it->second;
@@ -384,13 +524,16 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
                 });
             }
             // Published for the duration of the drain, so a duplicate cancel
-            // arriving meanwhile can find this gate and wait on it too.
-            if (gate) impl_->retiring.emplace(subscription_id, gate);
+            // arriving meanwhile can find this gate and wait on it too. Under
+            // `mu`, in the same critical section that removed it from the live
+            // map, so "live", "retiring" and "gone" have no window between them.
+            if (gate) impl_->retirements->Publish(subscription_id, gate);
         }
     }
 
     // Outside every lock — see the lock-order note on Impl::RetireAndDrain.
-    if (gate) impl_->RetireAndDrain(gate);
+    bool deferred = false;
+    if (gate) deferred = impl_->RetireAndDrain(subscription_id, gate, ours);
 
     // A duplicate cancel has now waited for the winner's drain; the winner owns
     // everything below.
@@ -406,7 +549,11 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
     std::vector<std::string> segments_to_unsub;
     {
         std::lock_guard lock(impl_->mu);
-        impl_->retiring.erase(subscription_id);
+        // Unless the drain landed in the carve-out and skipped its barrier: the
+        // id then stays published until this thread's delivery frame returns, so
+        // a cancel from any other thread still finds the gate and waits the
+        // handler out instead of taking the no-op branch.
+        if (!deferred) impl_->retirements->Release(subscription_id);
 
         auto topic_it = impl_->topics.find(key);
         if (topic_it != impl_->topics.end() && topic_it->second.fanout->entries.load()->empty() &&
