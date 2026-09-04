@@ -261,12 +261,44 @@ is no shared C header (§1).
 
 ### §3.5 — Topic segments
 
-`std::vector<std::string>`, so the provider may join with any separator. Fine as a
-C++ signature; the C form is a **pointer-and-count of pointer-and-length pairs,
-borrowed for the duration of the call** — a callee that keeps a segment copies its
-bytes. **An empty segment list is illegal** and is refused with
-`kInvalidArgument` by every method that takes one: there is no default topic and
-no recovery. The check lives once, in `internal::RequireSegments`, which all three
+`std::vector<std::string>`. Fine as a C++ signature; the C form is a
+**pointer-and-count of pointer-and-length pairs, borrowed for the duration of the
+call** — a callee that keeps a segment copies its bytes.
+
+**The join is the seam's, not the provider's discretion.** The seam computes the
+topic's name once, joining the segments with `/`, and **that name is the topic's
+identity**. A driver may map that name into its own transport's namespace — a
+transport on which `/` is not a legal topic character is still conformant — but
+**only injectively**, and every companion name it derives from a topic's name must
+lie in the reserved `__` namespace below. Both obligations are needed: injectivity
+alone would still let a driver derive `name + ".meta"` and land on an accepted
+topic, which is the collision this section exists to close.
+
+**Refused with `kInvalidArgument` by every method that takes a segment list** — one
+check, no default topic, no recovery, no partial mode:
+
+1. an **empty segment list**: it names no topic;
+2. a segment containing a **NUL**: the name would not reach the wire whole (XRCE
+   hands it to a `const char*` API that has no length form, so the transport would
+   see a truncated name);
+3. a segment containing **`/`**: the joined name would not split back to the list it
+   came from, so `{"a/b"}` and `{"a","b"}` would be one topic on every provider;
+4. an **empty segment**: rule 1 one level down — `{""}` reproduces the very name
+   rule 1 forbids, and `{"a",""}` names `"a/"`;
+5. a segment beginning **`__`**: the reserved namespace derived companion names live
+   in — both DDS providers derive `name + "/__schema"`, so `{"a","__schema"}` would
+   land on the schema channel of `{"a"}`. The **prefix** is reserved, not any one
+   literal name, so a future companion name needs no further amendment here.
+
+The invariant those five establish, for every accepted segment list `L`: `Join(L)`
+contains no NUL, `Split(Join(L)) == L`, and `Join(L)` is not a derived companion
+name. So two distinct accepted lists are two distinct topics in **every** provider,
+no accepted name collides with a derived one, and the name a provider hands its
+transport is the whole name.
+
+No trimming, no case folding, no Unicode normalisation, no escaping: identity is
+bytes, and there is no normalisation step anywhere on this path for two providers to
+disagree about. The checks live once, in `internal::RequireSegments`, which all three
 providers already route every topic through.
 
 ---

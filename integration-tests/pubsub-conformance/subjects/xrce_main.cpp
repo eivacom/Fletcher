@@ -91,6 +91,12 @@ constexpr uint32_t kPeerPublisherSessionBase = 0x53000000u;
 /// The registry case's own base (`Registry.XrceResolvesAsABuiltIn`), so it cannot reuse
 /// a key any conformance clause is holding on the same Agent.
 constexpr uint32_t kRegistrySessionBase = 0x54000000u;
+/// `TopicNames.AmbiguousSegmentsAreRefused`'s own base, NOT the registry case's. Every clause
+/// in this binary builds a client against the same long-lived Agent, and session keys must be
+/// unique per client on one Agent — sharing a base would put this case's create_session in a
+/// race with the registry case's teardown, over UDP. The DDS domain stays 153 because that is
+/// the domain the Agent this binary owns is serving; the key is what separates the two.
+constexpr uint32_t kTopicNamesSessionBase = 0x55000000u;
 /// The mask the peer applies to its pid; also the ceiling on a parent-side
 /// counter, though only ~13 of those are handed out per run.
 constexpr uint32_t kSessionKeyMask = 0x00FFFFFFu;
@@ -969,6 +975,80 @@ TEST(Registry, XrceResolvesAsABuiltIn) {
     // a buffer with itself asserts nothing.
     EXPECT_EQ(received, (std::vector<uint8_t>{0x17, 'R', 'O', 'W'}))
         << "the delivered bytes are not what was published";
+}
+
+// ── §3.5 — a topic's segment list IS its identity, on real XRCE ──────
+//
+// The CROSS-PROVIDER half of PDA-DEC-A5, and the provider the defect was
+// REPORTED against: `xrce_dds_pubsub_provider.cpp:673-681` hands the joined
+// name to `uxr_buffer_create_participant_bin` and `uxr_buffer_create_topic_bin`
+// as a `const char*`. Those take no length, so a NUL anywhere in the name
+// truncated it on the wire and two different Fletcher topics arrived as one.
+// The sinks cannot be fixed — the C API has no length form — so the fix is at
+// the door, and this is what says XRCE reaches it.
+//
+// A plain `TEST` and not a `TEST_P(ProviderConformance, ...)`: the
+// parameterised suite also runs `XrceCrossProcess`, whose peer pipe refuses
+// three of these shapes itself and would score the harness's door rather than
+// the provider's.
+//
+// Its own session key base, not the registry case's — see kTopicNamesSessionBase.
+TEST(TopicNames, AmbiguousSegmentsAreRefused) {
+    const ProviderConfig config = XrceConfigFor(NextSessionKey(kTopicNamesSessionBase));
+    XrceDDSPubSubProvider provider(config);
+
+    auto refused = [](auto&& call) {
+        try {
+            call();
+        } catch (const PubSubError& e) {
+            return e.status() == PubSubStatus::kInvalidArgument;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+
+    // Built byte by byte: `std::string("a\0b")` stops at the zero and would
+    // quietly test an ordinary one-character segment instead.
+    std::string nul_bearing = "a";
+    nul_bearing.push_back('\0');
+    nul_bearing += "b";
+
+    const std::vector<std::pair<std::vector<std::string>, std::string>> kRefused = {
+        {{nul_bearing}, "a NUL, which this provider truncated at both c_str() sinks"},
+        {{"a/b"}, "the separator, which aliases with {a, b}"},
+        {{"a", "b/c"}, "the separator in a later segment"},
+        {{""}, "an empty segment"},
+        {{"a", ""}, "a trailing empty segment"},
+        {{"a", "__schema"}, "the reserved `__` namespace this provider derives its companion in"},
+        {{"__anything"}, "the reserved `__` namespace"},
+    };
+
+    for (const auto& entry : kRefused) {
+        const std::vector<std::string>& topic = entry.first;
+        const std::string& why = entry.second;
+
+        EXPECT_TRUE(refused([&] {
+            provider.CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+        })) << "XRCE CreateTopic accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            provider.Publish(topic, [](WriteBuffer& buffer) { buffer.AppendByte(0x01); });
+        })) << "XRCE Publish accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            static_cast<void>(provider.Subscribe(
+                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+        })) << "XRCE Subscribe accepted "
+            << why;
+        EXPECT_TRUE(refused([&] { provider.Unsubscribe(topic); }))
+            << "XRCE Unsubscribe accepted " << why;
+    }
+
+    // The bound: an ordinary name with a dot, a hyphen and a single leading
+    // underscore still declares.
+    EXPECT_NO_THROW(
+        provider.CreateTopic({"_vessel.bow", "depth-raw"}, MakeConformanceSchema(SchemaId::kA)));
 }
 
 }  // namespace conformance

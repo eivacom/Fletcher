@@ -262,6 +262,10 @@ the tree in cycle 1 — do not re-derive them:
   are not conflated.
 - **The domain census is accurate.** The tree uses 0, 7, 43, 91–99, 137, 145,
   151–153; 154–158 are unused. Do not re-survey.
+  **PM correction 2026-09-04 (A5 implementation, verified in the tree): 154 is NOT unused** —
+  `integration-tests/gateway-end-to-end/test/end-to-end.test.ts:360` takes it. The census was
+  wrong, and "do not re-survey" is what made it load-bearing. Unused: **155–158**. A5 took 155
+  (Fast DDS) and domain 153 with session base `0x55000000` (XRCE).
 - **P2 holds:** `test_profile_document.cpp:551-552` really does stand up two
   providers in one process.
 - **Forbidden case 5 holds:** `ProviderRegistry` has no static member, no free
@@ -471,7 +475,7 @@ beyond 2026-09-03 except for the `__` rule itself.
 | Id | Owed | Where |
 |----|------|-------|
 | A5-DEBT-4 | **The §3.5 amendment states injectivity but not the disjointness the `__` reservation actually implements.** A driver deriving `name + "/__schema"` is an injective map, so the A5-DEBT-2 clause alone does not stop a future driver deriving `name + ".meta"` and colliding with an accepted list all over again — and PDA-ABI may not change the seam to fix it (locked decision 1, §1). The reservation is only load-bearing if the amendment states the reciprocal obligation: **a driver's derived companion names must live in the reserved `__` namespace**, which is what makes every future companion name safe by construction rather than by inspection. One clause, written while the amendment is being written; it is the difference between "we refuse these four shapes" and a rule a third-party driver author can obey. | review §"`__` prefix width", §"§3.5 wording" |
-| A5-DEBT-5 | The two new `TopicNames.AmbiguousSegmentsAreRefused` cases should name their **own** domain / session key rather than reusing the registry case's (`kRegistryDomain = 153`, `fastdds_main.cpp:42`; `kRegistrySessionBase`, `xrce_main.cpp`). The tree keeps a domain census and PDA-DEC-8 recorded **154–158 unused** (`design-debt.md`, PDA-DEC-8 cycle 2) — take one rather than re-survey. Cheap, and it keeps a refusal case (which creates a participant even though it never declares a topic) out of another case's discovery traffic. | review §"BLOCKER 1 closed" |
+| A5-DEBT-5 | The two new `TopicNames.AmbiguousSegmentsAreRefused` cases should name their **own** domain / session key rather than reusing the registry case's (`kRegistryDomain = 153`, `fastdds_main.cpp:42`; `kRegistrySessionBase`, `xrce_main.cpp`). The tree keeps a domain census and PDA-DEC-8 recorded **154–158 unused** (`design-debt.md`, PDA-DEC-8 cycle 2) — take one rather than re-survey. **PM correction: that census was wrong, 154 is taken; A5 took 155 and 153.** Cheap, and it keeps a refusal case (which creates a participant even though it never declares a topic) out of another case's discovery traffic. | review §"BLOCKER 1 closed" |
 
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 

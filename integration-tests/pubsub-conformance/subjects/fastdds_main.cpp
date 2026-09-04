@@ -40,6 +40,15 @@ namespace {
 constexpr uint32_t kLocalDomain = 151;
 constexpr uint32_t kPeerDomain = 152;
 constexpr uint32_t kRegistryDomain = 153;
+/// `TopicNames.AmbiguousSegmentsAreRefused`'s own domain, NOT shared with the registry
+/// case above. That case's participant is discovering and matching for its whole run, and
+/// this one stands a participant up too (a refusal is checked at the seam door, but the
+/// provider is constructed first). This round has already lost a review cycle to two cases
+/// sharing a domain, so the census range is used rather than re-argued: PDA-DEC-8 recorded
+/// 154-158 unused, and 154 is in fact taken by
+/// integration-tests/gateway-end-to-end/test/end-to-end.test.ts:360 — a TypeScript harness
+/// the C++-only grep behind that record could not see. 155 is the first genuinely free one.
+constexpr uint32_t kTopicNamesDomain = 155;
 
 std::shared_ptr<PubSubProvider> MakeFastDds(uint32_t domain_id) {
     return std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = domain_id});
@@ -121,6 +130,82 @@ TEST(Registry, FastDdsResolvesAsABuiltIn) {
     // guard that compares a buffer with itself asserts nothing.
     EXPECT_EQ(received, (std::vector<uint8_t>{0x17, 'R', 'O', 'W'}))
         << "the delivered bytes are not what was published";
+}
+
+// ── §3.5 — a topic's segment list IS its identity, on real Fast DDS ──
+//
+// The CROSS-PROVIDER half of PDA-DEC-A5. The refusal lives at one door
+// (`internal::RequireSegments`), so what this asserts is that Fast DDS still
+// routes every entry point through it — the 2026-08-31 divergence ruling
+// requires all three providers to agree, and "the loopback agrees with itself"
+// is not that evidence.
+//
+// A plain `TEST` and not a `TEST_P(ProviderConformance, ...)`, deliberately:
+// the parameterised suite also runs on `FastDdsCrossProcess`, whose
+// `PeerSubject::RejectUnsendableTopic` refuses these shapes ITSELF and returns
+// `Reply::HarnessFailure` — so the clause would score the harness's door for
+// three shapes and pass vacuously on the fourth. Constructing the provider
+// directly, as `Registry.FastDdsResolvesAsABuiltIn` above does, removes the
+// question rather than working around it.
+//
+// Nothing here waits for discovery or for a row: a refused name never reaches
+// the transport, which is the whole point of refusing at the door.
+TEST(TopicNames, AmbiguousSegmentsAreRefused) {
+    std::shared_ptr<PubSubProvider> provider = MakeFastDds(kTopicNamesDomain);
+
+    auto refused = [](auto&& call) {
+        try {
+            call();
+        } catch (const PubSubError& e) {
+            return e.status() == PubSubStatus::kInvalidArgument;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+
+    // Built byte by byte: `std::string("a\0b")` would stop at the zero and
+    // quietly become an ordinary one-character segment.
+    std::string nul_bearing = "a";
+    nul_bearing.push_back('\0');
+    nul_bearing += "b";
+
+    const std::vector<std::pair<std::vector<std::string>, std::string>> kRefused = {
+        {{nul_bearing}, "a NUL, which Fast DDS carries whole but XRCE truncates"},
+        {{"a/b"}, "the separator, which aliases with {a, b}"},
+        {{"a", "b/c"}, "the separator in a later segment"},
+        {{""}, "an empty segment"},
+        {{"a", ""}, "a trailing empty segment"},
+        {{"a", "__schema"}, "the reserved `__` namespace this provider derives its companion in"},
+        {{"__anything"}, "the reserved `__` namespace"},
+    };
+
+    for (const auto& entry : kRefused) {
+        const std::vector<std::string>& topic = entry.first;
+        const std::string& why = entry.second;
+
+        EXPECT_TRUE(refused([&] {
+            provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+        })) << "Fast DDS CreateTopic accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            provider->Publish(topic, [](WriteBuffer& buffer) { buffer.AppendByte(0x01); });
+        })) << "Fast DDS Publish accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            static_cast<void>(provider->Subscribe(
+                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+        })) << "Fast DDS Subscribe accepted "
+            << why;
+        EXPECT_TRUE(refused([&] { provider->Unsubscribe(topic); }))
+            << "Fast DDS Unsubscribe accepted " << why;
+    }
+
+    // The bound: an ordinary name with a dot, a hyphen and a single leading
+    // underscore still declares. Without this a provider that refused every
+    // topic would be green above.
+    EXPECT_NO_THROW(
+        provider->CreateTopic({"_vessel.bow", "depth-raw"}, MakeConformanceSchema(SchemaId::kA)));
 }
 
 // ── Two instances, one registry, one process (spec §4, third clause) ──

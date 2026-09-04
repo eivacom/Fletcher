@@ -22,6 +22,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "fletcher/conformance/copy_accounting.hpp"
@@ -355,6 +356,97 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
     // And a one-segment topic is still perfectly ordinary — the refusal is of
     // EMPTY, not of short.
     EXPECT_NO_THROW(provider.CreateTopic({"solo"}, OwnedSchema{}));
+}
+
+// ── §3.5 rung 2 — the segment list IS the topic (PDA-DEC-A5) ─────────
+//
+// The seam identifies a topic by a segment LIST; every provider identifies it
+// by the single joined byte string `internal::JoinSegments` produces. Nothing
+// made that map injective or faithful, so four segment shapes broke it:
+//
+//   1. a segment containing a NUL — XRCE hands the joined name to
+//      `uxr_buffer_create_topic_bin` as a `const char*`, which has no length
+//      form, so the name reaching the wire was TRUNCATED at the first zero
+//      byte and two different topics arrived as one;
+//   2. a segment containing `/` — `{"a/b"}` and `{"a","b"}` joined to the same
+//      name in all three providers, so one silently received the other's rows;
+//   3. an empty segment — `{""}` reproduces the empty name that §3.5's
+//      empty-LIST rule already refuses, one level down, and `{"a",""}` names
+//      `"a/"`;
+//   4. a segment beginning `__` — both DDS providers derive a companion topic
+//      `name + "/__schema"`, so `{"a","__schema"}` landed on the schema channel
+//      of `{"a"}`. The PREFIX is reserved rather than the one literal name, so
+//      every future provider-derived companion is out of reach by construction
+//      (owner ruling 2026-09-04).
+//
+// This is the SIBLING of the empty-list case above and is deliberately beside
+// it: same provider, same four methods, same shape of assertion. Both rules
+// live in `internal::RequireSegments`, and asserting all four methods is what
+// says the door is still the one door every entry point routes through.
+//
+// The peer subjects are excluded by construction, not by omission:
+// `PeerSubject::RejectUnsendableTopic` makes all of these unsendable over the
+// harness pipe, so a parameterised clause would score the HARNESS's door. The
+// cross-provider half of this claim lives as `TopicNames.AmbiguousSegmentsAreRefused`
+// in the Fast DDS and XRCE subject binaries, which construct a real provider
+// directly. See README.md.
+TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
+    InProcessPubSubProvider provider;
+
+    auto refused = [](auto&& call) {
+        try {
+            call();
+        } catch (const PubSubError& e) {
+            return e.status() == PubSubStatus::kInvalidArgument;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+
+    // Spelled through `push_back` because `std::string("a\0b")` stops at the
+    // zero byte and would silently become a DIFFERENT rule's row.
+    std::string nul_bearing = "a";
+    nul_bearing.push_back('\0');
+    nul_bearing += "b";
+
+    const std::vector<std::pair<Topic, std::string>> kRefused = {
+        {Topic{nul_bearing}, "a segment carrying a NUL"},
+        {Topic{"a/b"}, "a segment carrying the separator"},
+        {Topic{"a", "b/c"}, "a later segment carrying the separator"},
+        {Topic{""}, "an empty segment"},
+        {Topic{"a", ""}, "a trailing empty segment"},
+        {Topic{"a", "__schema"}, "a segment in the reserved `__` namespace"},
+        {Topic{"__anything"}, "any segment in the reserved `__` namespace"},
+    };
+
+    for (const auto& entry : kRefused) {
+        const Topic& topic = entry.first;
+        const std::string& why = entry.second;
+
+        EXPECT_TRUE(refused([&] {
+            provider.CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+        })) << "CreateTopic accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            provider.Publish(topic, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
+        })) << "Publish accepted "
+            << why;
+        EXPECT_TRUE(refused([&] {
+            static_cast<void>(provider.Subscribe(
+                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+        })) << "Subscribe accepted "
+            << why;
+        EXPECT_TRUE(refused([&] { provider.Unsubscribe(topic); }))
+            << "Unsubscribe accepted " << why;
+    }
+
+    // The bound on the narrowing. A dot, a space, a hyphen and a SINGLE leading
+    // underscore are not wrong and must still work — the safe-charset option
+    // was rejected for exactly this reason. Without these rows a build that
+    // refused every topic would be green above.
+    EXPECT_NO_THROW(provider.CreateTopic({"vessel.bow", "depth-raw"}, OwnedSchema{}));
+    EXPECT_NO_THROW(provider.CreateTopic({"_private", "two words"}, OwnedSchema{}));
 }
 
 }  // namespace conformance

@@ -312,7 +312,7 @@ real A and B on every subject.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
 §3.3, §3.4, §5.1, §7 clause 1. A **third** suite in this harness, in its own
-binary (`conformance_seam_vocabulary`), seven entries, no provider SDK.
+binary (`conformance_seam_vocabulary`), eight entries, no provider SDK.
 
 It asserts what the crossing *types* make representable, which no
 provider-parameterised clause can reach:
@@ -326,6 +326,27 @@ provider-parameterised clause can reach:
 | `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
 | `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
+| `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}` |
+
+**Why the §3.5 refusals are asserted here and in the two provider binaries, and
+never as a `ProviderConformance` clause.** `PeerSubject::RejectUnsendableTopic`
+(`src/peer_subject.cpp`) refuses every one of these shapes *itself*: the peer
+protocol joins segments with a slash, splits requests on whitespace and carries
+its request line as a C-terminated token, so an empty, `/`-bearing, space-bearing
+or NUL-bearing segment is **unsendable over the pipe by construction** and comes
+back as `Reply::HarnessFailure`. A parameterised clause would therefore score the
+*harness's* door on the cross-process subjects rather than the provider's —
+`Reply::refused()` is false for a harness failure, so the clause would go red for
+a harness reason on three shapes and, before the NUL was added to that door, pass
+*vacuously* on the fourth by catching the harness's own `JoinSegments` throw. The
+NUL row was added in PDA-DEC-A5 so that door is total for every shape the pipe
+cannot carry. Cross-provider evidence lives instead in
+`TopicNames.AmbiguousSegmentsAreRefused`, a plain `TEST` in each of
+`subjects/fastdds_main.cpp` and `subjects/xrce_main.cpp` that constructs a real
+provider directly — no `Subject`, no `Reply`, no peer. **Filtering note:** the
+XRCE binary is a single ctest entry (`conformance_xrce`), so `ctest -R
+'TopicNames\.'` selects the Fast DDS case only; select `conformance_xrce` by name
+to reach the other.
 
 **How the ownership half is kept honest.** It was vacuous twice, and both shapes
 are worth knowing because they recur:

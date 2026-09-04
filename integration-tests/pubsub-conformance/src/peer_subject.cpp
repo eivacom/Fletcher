@@ -74,9 +74,20 @@ class PeerSubject : public ProviderSubject {
     /// whitespace, so a segment containing either would arrive as a different
     /// topic. FreshTopic never produces one; nothing forbade it, so this does —
     /// loudly, as a harness failure, rather than as a mysterious missing row.
+    ///
+    /// The NUL is here for a second reason (PDA-DEC-A5): a request line is written to a
+    /// pipe and read back as a whitespace-delimited token, so a segment carrying a zero
+    /// byte would arrive TRUNCATED — the harness reproducing the very defect it exists to
+    /// observe. Without this row the shape falls through to `internal::JoinSegments`
+    /// below, which after A5 throws out of a method declared to return a `Reply`. With it
+    /// the door is TOTAL: every shape the seam refuses is unsendable over this pipe by
+    /// construction, so no clause here can score the HARNESS's door instead of a
+    /// provider's. The count of 4 is explicit because the set now contains a zero byte,
+    /// and a plain string literal would stop the search one character early.
     static Reply RejectUnsendableTopic(const Topic& topic) {
         for (const std::string& segment : topic) {
-            if (segment.empty() || segment.find_first_of(" \t/") != std::string::npos) {
+            if (segment.empty() ||
+                segment.find_first_of(std::string(" \t/\0", 4)) != std::string::npos) {
                 return Reply::HarnessFailure("peer: topic segment is not sendable over the pipe: " +
                                              segment);
             }

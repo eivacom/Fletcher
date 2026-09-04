@@ -1020,3 +1020,77 @@ reviewer then upheld the rebuttal and recorded its own as weaker — a transitio
 `Subscriber` instances" (A4-DEBT-9); the brief listing cross-instance mutual cancel as Forbidden.
 A ledger count and a case count both went stale **within one cycle** of my correcting them, so the
 doc now carries the `grep` and a pointer to the suite rather than numbers — the durable fix.
+
+## PDA-DEC-A5 — topic name integrity: the segment list is the topic (2026-09-04) 🟢
+
+Second of the PR #126 amendments. The seam identifies a topic by a **segment list**, every
+provider by a single **joined byte string**, and nothing made that map injective or faithful:
+`{"a/b"}` and `{"a","b"}` were one topic on all three providers, `{"a","__schema"}` landed on
+the schema companion channel of `{"a"}`, an embedded NUL truncated the name at both XRCE
+`c_str()` sinks, and `{""}`/`{"a",""}` named something degenerate. Fixed at the **map**, not at
+either sink: four per-segment refusals in `internal::RequireSegments`, the one door all twelve
+provider entry points already route through.
+
+**Landed.** `RequireSegments` refuses a segment that is empty, carries a NUL, carries `/`, or
+begins `__` — all `kInvalidArgument`, **no new status** (only the owner allocates those; nothing
+here touches A3's `kReentrantCall`). Frozen §3.5's *"so the provider may join with any
+separator"* deleted; replaced by the seam-owned join, the five refusals, the invariant, and the
+two driver obligations — **injective** mapping (A5-DEBT-2) **and** derived companion names
+confined to the reserved `__` namespace (A5-DEBT-4), which is what stops a future driver
+deriving `name + ".meta"` and reopening the hole. §12.1 not edited; its *"§3.5 including the
+empty-segment refusal"* phrase still reads true. One implementation file, one header, four
+harness files, one spec section. **Nothing retired** — no legacy test pinned a now-refused name;
+the empty-**list** case is a different rule and is kept beside the new one.
+
+**Owner rulings that define it** (ledger 39 → 42, all 2026-09-04): `/` refused outright rather
+than rewritten on the wire; the empty part refused; and the **`__` prefix reserved** — the tenth
+amendment authorised for PR #126, refusing the class rather than the literal `__schema`, so a
+future companion name needs no further ruling.
+
+**Mutation table — seven of seven live, M5 with its package rebuild recorded.**
+
+| Mutation | Header source | Reddens | Discrimination |
+|---|---|---|---|
+| M1 drop the NUL check | in-tree | `SegmentsThatAliasOrTruncateAreRefused` (+ `RefusalReachesAllFourEntryPoints`) | the NUL rows only |
+| M2 drop the `/` check | in-tree | + `JoinIsInvertible` | two independent controls, as designed |
+| M3 drop the empty-segment check | in-tree | `SegmentsThatAliasOrTruncateAreRefused` (+ entry-point control) | the empty rows only |
+| M4 move the check into `CreateTopic` only | in-tree | `RefusalReachesAllFourEntryPoints` | measured: **`Publish`, `Subscribe`, `Unsubscribe`** accept; `CreateTopic` still refuses — the routing claim, isolated |
+| M5 refuse in the loopback only | **packaged — rebuilt** | `TopicNames.AmbiguousSegmentsAreRefused` on **both** provider binaries | `SeamVocabulary.Ambiguous…` stays **green**, which is exactly the loopback-only signature |
+| M6 escape `/` instead of refusing | in-tree | `AcceptedNamesJoinToTheSameBytesAsBefore` (+3) | the over-reach control fires only once the byte table carries a `%`-bearing accepted row, because a reversible escape must escape its own marker |
+| M7 drop the `__` prefix check | in-tree | `SegmentsThatAliasOrTruncateAreRefused` (+ entry-point control) | the reserved-namespace rows only |
+
+M5 was run **after** `conan create` of `fletcher-pubsub` and both provider packages, then a full
+harness reconfigure and rebuild — recorded because a working-tree edit is inert against the
+harness, which links the packaged target. The entry-point control necessarily co-reddens with any
+mutation that removes a rule it exercises; that is inherent to a control that drives real provider
+methods, and M4's per-method signature is what makes it discriminate.
+
+**Wire bytes did not move.** `AcceptedNamesJoinToTheSameBytesAsBefore` was **green before the
+change and stayed green**, including the two derived forms (`name + "/__schema"`, the XRCE
+participant name). Both are plain concatenations of the joined name and never re-enter the door,
+so no provider can refuse its own companion.
+
+**Evidence.** Red-first on the unmodified tree, all three families, with the failure text kept:
+`JoinSegments` accepted every refused shape; `SplitOnSlash("a/b")` returned `{"a","b"}` against
+the list `{"a/b"}`; and `"a/b" vs "a/b"` for two distinct accepted lists. On the packaged side,
+`SeamVocabulary` and both `TopicNames` cases reddened against the pre-A5 packages with all four
+methods named. Green after: core 29/29 · pubsub 23/23 · fastdds 85/85 · xrce 16/16 ·
+pubsub-arrow 16/16 · **gateway 20/20** · gateway-end-to-end (TS) 29/29 · conformance harness
+**105/105 with `-DFLETCHER_CONFORMANCE_XRCE=ON`**.
+
+**A trap worth recording.** The XRCE subject binary is a **single** ctest entry
+(`conformance_xrce`), so the item's own verify filter — `ctest -R '…|TopicNames\.'` — selects the
+Fast DDS case and **silently misses the XRCE one**. Half the cross-provider evidence would have
+gone unrun. Recorded in `CMakeLists.txt` beside the entry and in the harness README.
+
+**Debt.** A5-DEBT-4 (the disjointness clause) and A5-DEBT-5 (own domain / session key) both
+landed. A5-DEBT-5's register text pointed at 154-158 as unused; **154 is in fact taken** by
+`gateway-end-to-end/test/end-to-end.test.ts:360`, which the C++-only census behind that record
+could not see, so the new Fast DDS case took **155** and the XRCE case took its own session base
+`0x55000000` on the Agent's own domain 153.
+
+**Numbers.** Declared **+535 / −15** · landed **+737 / −19** excluding `plans/` — over the
+declared contingency ceiling by ~80 lines, all of it test apparatus: the in-tree cases came to
+325 against 240 declared and the two provider-binary cases to 85 and 80 against 45 each, this
+tree's comment-per-case convention being the driver the cycle-2 review predicted. Mechanism
+itself: four `if`s in one function. **New public surface 0**, as declared.

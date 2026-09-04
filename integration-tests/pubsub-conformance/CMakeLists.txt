@@ -317,9 +317,11 @@ gtest_discover_tests(conformance_registry DISCOVERY_MODE PRE_TEST
 gtest_discover_tests(conformance_caller_tier DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
-# and conformance_fastdds joins nine domains — two subjects (151 and 152),
-# Registry.FastDdsResolvesAsABuiltIn (153) and the Registry.TwoInstances* cases
-# (161-167, two instances each). It also spawns a peer child, so two of its
+# and conformance_fastdds joins ten domains — two subjects (151 and 152),
+# Registry.FastDdsResolvesAsABuiltIn (153), TopicNames.AmbiguousSegmentsAreRefused
+# (155, its own so a refusal case's participant stays out of the registry case's
+# discovery traffic) and the Registry.TwoInstances* cases (161-167, two instances
+# each). It also spawns a peer child, so two of its
 # clauses must never run at once.
 gtest_discover_tests(conformance_fastdds DISCOVERY_MODE PRE_TEST
     PROPERTIES RESOURCE_LOCK conformance_fastdds TIMEOUT 180)
@@ -330,8 +332,13 @@ if(FLETCHER_CONFORMANCE_XRCE)
     # ~24 Agent start/stop cycles for the same coverage.
     add_test(NAME conformance_xrce COMMAND conformance_xrce)
     # 24 clauses plus one `Registry` case (PDA-DEC-7 added the registry case, not a clause)
-    # plus two `ConformanceXrce` cases (PDA-DEC-1H's Agent-ownership guards, also not clauses) =
-    # 27 gtest cases, ~27 peer spawns and one Agent handshake per session, in one process.
+    # plus two `ConformanceXrce` cases (PDA-DEC-1H's Agent-ownership guards, also not clauses)
+    # plus one `TopicNames` case (PDA-DEC-A5's §3.5 refusals, also not a clause) =
+    # 28 gtest cases, ~27 peer spawns and one Agent handshake per session, in one process.
+    #
+    # NOTE for anyone filtering: because this binary is ONE ctest entry, a
+    # `ctest -R 'TopicNames\.'` selects the Fast DDS case and NOT this one. Select
+    # `conformance_xrce` by name, or run the binary with its own --gtest_filter.
     # PDA-DEC-1H's case stands up two more Agents of its own on port 2119, inside its own
     # scope, so it needs this entry's RESOURCE_LOCK as much as any clause does.
     set_tests_properties(conformance_xrce PROPERTIES
