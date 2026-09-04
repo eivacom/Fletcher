@@ -2,7 +2,7 @@
 
 *Design, revision 2 (2026-09-04). Round PDA-DEC, item A4. Oracle:
 `docs/pubsub-interface-spec.md` §7 clause 6, §9, §12.1. Rulings:
-`plans/PDA-DEC-rulings.md`, **37 entries** — including the three of 2026-09-04 that
+`plans/PDA-DEC-rulings.md` (count it: `grep -c '^## 2026'`) — including those of 2026-09-04 that
 authorise the idempotence amendment and the blocking wait, and publish the
 self-unsubscribe carve-out.*
 
@@ -230,7 +230,7 @@ what stop a broken instrument from greening the guard.
 | `CallerTier.ALiveSubscriptionStillReceives` | — | control that the gate did not simply silence delivery |
 | `CallerTier.AReleasedIdIsNeverReused` | — | pins P4 |
 
-*(PM correction at `aa72813`: **10 cases shipped, not the 8 tabled** — see progress log.)*
+*(PM correction: **more cases shipped than tabled** — the suite is the record, not this table. No count is restated here, deliberately; see the progress log.)*
 
 **Edge B has no unit control** — it needs a provider that waits on its own in-flight
 delivery, which the in-file probe is not and `conformance_caller_tier` deliberately cannot

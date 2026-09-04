@@ -169,3 +169,154 @@ row the design listed as **forbidden, rung 1** (*"Callback running after
 `~Subscriber` returns"*) with nothing to redden it — the same defect A4-DEBT-6 was
 raised about, one row down. Adding controls to uncontrolled rung-1 rows is this
 round's standard, not a breach of it.
+
+
+---
+---
+
+# Re-check after fix cycle 1 — revision `6d74d53` (cycle 1 was `aa72813`)
+
+*The `PASS-WITH-FINDINGS(3)` above stands as the cycle-1 record and is not
+rewritten. This section reviews `git diff 10ad452 6d74d53` (+386/−71) only.*
+
+Rulings ledger re-read in full: **38 entries** (`grep -c '^## 2026'` → 38),
+including the new 2026-09-04 entry that my cycle-1 finding 2 produced.
+
+**Verdict: FAIL — 1 blocking, 2 minor.** The blocking item is narrow and the fix
+is about ten lines; everything else in this cycle came back clean, and two of the
+three cycle-1 findings are closed by probe rather than by reading. But the item
+cannot close while a **frozen** sentence says something the tree does not do.
+
+**"The frozen promise now has exactly one exception": NO.** There is a second, and
+it is R1 below. Reported immediately, as asked.
+
+---
+
+## Closed, and verified by probe rather than by reading
+
+Three throwaway probes rebuilt against the **new** package
+(`fletcb13015e00d85d`, 2026-09-04 08:23), not against the test file.
+
+- **Cycle-1 finding 1 — closed.** `CancellingOnAnotherSubscriberWaitsForItsDelivery`
+  is a real control on the newest ruling's mechanism, and my independent probe
+  agrees 3/3: a handler on X cancelling on Y waits out Y's in-flight handler. The
+  "reddens on exactly one case" claim holds structurally as well as by assertion —
+  every other case constructs one `Subscriber`, and with one `Subscriber`
+  `InsideDeliveryOn(identity.get())` and `!g_delivery_stack.empty()` are the same
+  predicate, so no other case *can* distinguish the mutation. Claim confirmed.
+- **Cycle-1 finding 2 — closed for the shape it named.** My probe 2, which failed
+  3/3 in cycle 1, now passes 3/3: the duplicate concurrent cancel blocks on the
+  winner's drain. The `retiring` map is the right discriminator, published and
+  cleared under `mu` in the same critical sections that move `subscription_topic`,
+  so "live", "being cancelled now" and "gone" are three states rather than two
+  with no window between the first two. I also checked the awkward interleaving in
+  the other order — an outside thread winning and blocking on the gate while the
+  handler *then* self-cancels — and it is correct: the self-cancel finds
+  `retiring`, hits the carve-out skip, and returns instead of deadlocking.
+- **Cycle-1 finding 3 — closed.** `enable_testing()` restored, `TIMEOUT 60` kept.
+- **Converse check clean.** No `kInvalidArgument` path for an unknown subscription
+  id at either tier; nothing in the tree asserts or documents the pre-change
+  contract; the earlier spec amendment still matches the code after the mechanism
+  changed underneath it (§7 clause 6's "fully cancelled" wording was updated in
+  step with the three-state split, and the §9 row is untouched). `PubSubStatus` is
+  untouched and `kReentrantCall` still appears nowhere in `pubsub/`. Suite 14/14
+  green as built.
+
+## R1 (BLOCKING) — the carve-out un-publishes the drain, so the promise still has two exceptions
+
+The self-cancel carve-out does not only return early for the caller inside the
+handler. It also takes the id **out of the `retiring` map while that handler is
+still on the stack**: `RetireAndDrain` skips the barrier and returns, and the
+winner's second critical section then erases `retiring[id]` at once. From that
+instant the id is in neither map, so a cancel of the same id from **any other
+thread** takes the no-op branch and returns while the callback is still running.
+
+Probe evidence, 3/3 reproducible on `6d74d53`: *"after a self-cancel, another
+thread's cancel of the same id waited: **NO** (returned while that handler was
+still running)."* The probe keeps a sibling subscription so the provider is never
+re-entered (P5) — nothing in the shape is exotic.
+
+That second caller is **not** in the published exception: it did not issue from
+inside a delivery callback, so §7 clause 6 and `subscriber.hpp` both tell it that
+"none is in progress when it returns" and that it may free handler state. It may
+not. This is the same defect class as cycle-1 finding 2 — a race-only exception to
+a promise the frozen text says has one — and the reachability argument the owner
+accepted there applies unchanged: a handler that cancels itself once it has what
+it wanted is ordinary, and the unconditional teardown cancel is precisely what the
+idempotence ruling exists to serve. Worth stating in its general form: **whenever
+the carve-out is exercised — on any subscription of that subscriber, not only the
+handler's own — the drain stops being visible to everyone else.**
+
+Ruling 38 is explicit about what it is buying: *"the 'you may free on return'
+promise has **exactly one** exception, the self-cancel carve-out."* It has two.
+
+**Acceptable fix (~10 lines, and it needs no new authorisation — it narrows, which
+the 2026-09-03 licence permits without asking):** when `RetireAndDrain` skips the
+barrier, leave the id **published in `retiring`** until the invocation it is inside
+actually returns, and have the delivery frame clear the ids retired during it (a
+thread-local list swept by `DeliveryScope`'s destructor costs the hot path nothing
+when it is empty). A cancel from a non-delivery thread then finds the gate, blocks
+on it, and waits the handler out like any other. *Alternative, if the implementer
+prefers not to touch the mechanism again:* carry one line to the owner asking
+whether a cancel arriving in the carve-out's shadow is the same exception or a
+second one — but do not close the item on text that asserts the answer.
+
+## R2 (minor) — `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` does not redden on the collapse it is credited with
+
+The README credits it with showing *"that the two no-op branches were not
+collapsed."* It cannot. Collapse them the natural way — drop
+`impl_->retiring.erase(subscription_id)` so a finished id stays "retiring" — and
+the case still passes: the gate it would then find has a free barrier, so the call
+returns at once and the unrelated delivery it watches is undisturbed either way.
+The two branches are distinguishable only while a drain is actually in progress,
+which is its sibling's job. Its Mutation cell is honestly "—"; the Observed cell
+overclaims. *The implementation does discriminate* — that is probe-verified — so
+this is a claim defect, not a mechanism one.
+
+**Acceptable fix:** bring the Observed cell down to what the case shows — a fully
+cancelled or never-issued id neither throws nor waits — and leave
+`ADuplicateCancelWaitsForTheDrainInProgress` as the sole pin on the distinction.
+
+## R3 (minor) — a newly swallowed exception, in the one place §5.3 requires the behaviour be stated
+
+The fan-out now wraps `entry.callback(...)` in `catch (...) {}`. It came from the
+step-4b reviewer's S3 and it is an improvement on unwinding into a transport
+thread. My angle is only this: locked decision 10 and frozen §5.3 make a throwing
+callback **forbidden**, and §5.3's own words require the seam to *"say what a
+provider does if one does anyway"* — while §7 clause 6, as amended by this item,
+now binds the clauses *"at every tier this seam publishes."* So the caller tier has
+just acquired a silent tolerance for a forbidden state, stated in a source comment
+and nowhere a reader of the seam would look. Nothing to redesign; the behaviour is
+the right one.
+
+**Acceptable fix:** one sentence in `subscriber.hpp` — a callback that throws is
+contained, the remaining subscribers still receive that sample, and the exception
+is not reported anywhere. Do not touch frozen §5.3 to say it.
+
+## Judged as asked
+
+- **B1's residual window (README limit 7) — consistent with the rulings, and NOT a
+  third exception to the promise.** I checked what it actually claims: it is about
+  the *provider-level* subscribe/unsubscribe transition, whose failure mode is a
+  subscriber that silently receives nothing, not a callback running after a cancel
+  returned. It neither touches "you may free on return" nor creates a shape in
+  which a handler outlives its cancellation, so the owner's exactly-one-exception
+  count is unaffected by it. Declining the serialising lock is also right under the
+  rulings rather than merely cheaper: gate→lock via a callback re-entering
+  `Subscribe` against lock→gate via a teardown holding it across a synchronously
+  delivering provider is a genuine new cycle, and the 2026-09-04 preference for a
+  loud hang over a silent use-after-free does not license *manufacturing* a hang to
+  close a race that cannot corrupt memory.
+- **S2 declined — I agree.** The 2026-09-04 carve-out ruling says, in the owner's
+  own selected words, that a handler cancelling *any* subscription on its own
+  subscriber gets an immediate return. Narrowing the skip to the frames this thread
+  holds would make the published sentence false in the safe direction, but it would
+  still make it false, and a reviewer's licence to narrow does not extend to
+  contradicting the sentence the owner was shown. No disagreement.
+
+## RECORD (PM's, one line each, not blocking)
+
+- All four cycle-1 RECORD items are fixed in place; I re-checked each.
+- `plans/PDA-DEC-A4-lifetime-tier.md` now reads *"**37 entries**"* and carries a PM
+  note *"10 cases shipped, not the 8 tabled"*; the ledger is at **38** and the
+  suite ships **14**.
