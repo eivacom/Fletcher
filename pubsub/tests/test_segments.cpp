@@ -430,7 +430,9 @@ TEST(Segments, NamesThatWouldTruncateOnTheWireAreRefused) {
 
     // The counterfactual that makes 246 the right number rather than a number:
     // the FIRST refused length is refused precisely because its companion would
-    // have overrun. Bounded at 255 instead, this assertion is what fails.
+    // have overrun. NB this assertion is built from literals, so it holds under
+    // any bound and is NOT what M9 reddens -- the `247 is refused` row earlier in
+    // this case is. Kept because it states WHY 246, which no other row does.
     EXPECT_GT((std::string(247, 'x') + "/__schema").size(), kFastDdsAnnouncedCeiling)
         << "247 would be safe for the data name, so the bound must be about the companion";
 

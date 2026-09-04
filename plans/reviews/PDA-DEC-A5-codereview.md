@@ -344,3 +344,86 @@ names that were already accepted.
 
 * `pubsub/tests/test_segments.cpp` `RefusedCases()`: two rule labels are transposed
   (rule 2 / rule 3) after the renumbering that made room for rule 6.
+
+---
+---
+
+# FINAL CONFIRMATION after fix cycle 2 (appended — everything above unmodified)
+
+Diff: `git diff 445b4ea b946798`. Tree at `b946798`, clean. Targeted check only; the
+boundary sweep, the injectivity check and the XRCE round trip stand from the previous
+section and were not re-run.
+
+**0 blocking · 0 should-fix · 1 nit · 1 RECORD. Ready to close: YES.**
+
+## 1. Do my measurements survive the cache purge? — Yes, re-measured, identical
+
+`conan install` on the conformance recipe now resolves three **new** package folders
+(`fletc7fa0f4347408a` pubsub, `fletc934411242e12e` fastdds, `fletc27183ac0caf3b`
+xrce). I rebuilt my probe against those and re-ran the round-1 reproduction:
+
+```
+the-round-1-pair-256: joined=256  CreateTopic(A)=REFUSED(1)  CreateTopic(B)=REFUSED(1)
+just-over-247:        joined=247  CreateTopic(A)=REFUSED(1)  CreateTopic(B)=REFUSED(1)
+longest-accepted-246: joined=246  schemaWait=0  cross(B->subA)=0  control(A->subA)=5
+short-control-40:     joined=40   schemaWait=0  cross(B->subA)=0  control(A->subA)=5
+```
+
+Byte-for-byte the same as the numbers I reported last round. Nothing I reported was
+taken against a poisoned package, and there is a structural reason as well as a
+re-run: **M9 bounds at 255, so M9 accepts 247** — every one of my runs reported 247
+REFUSED, which no M9-compiled binary can produce. The probe is behavioural, against
+the compiled provider library and a real Fast DDS domain, so it also covers the
+harder half of the trap the coordinator describes: a library compiled against a
+mutated header that a header inspection would miss.
+
+## 2. The new `gateway-end-to-end` case — correct, non-flaky, on the right path
+
+It drives the shipped gateway exe over its real WebSocket surface and asserts what a
+CLIENT observes, which is the claim I made when I filed S2. It covers `"a//b"`,
+`"a/b/"` and `"/a/b"` — exactly the three aliases I named — through **both**
+`create_topic` and `subscribe`, the two text-frame paths into `SplitTopic`, with the
+positive row (`"emptypart/ok"`) first so a refuse-everything gateway cannot be green.
+
+**It cannot race.** I checked the mechanism rather than assuming: the TS client
+resolves a pending request on `resp.type === 'error'`
+(`gateway-client-ts/src/client.ts:271`) and each call site turns that into a thrown
+`Error` carrying the server message, so an error frame **rejects** instead of leaving
+`subscribe` waiting for a `subscribed` reply that will never come. The test awaits
+each call sequentially, so the pending queue never holds more than one entry and the
+"first pending, any type, if error" match cannot mis-correlate. No timers, no sleeps,
+no discovery wait, no row delivery, no shared topic across the two provider contexts.
+The message it matches (`/empty segment/`) is the seam's own
+`"topic: an empty segment names nothing"`.
+
+Green-by-construction at the diff base is the honest description and is fine: the
+guards were deleted in cycle 1, so the case is a regression lock, and its red is the
+mutation that restores them.
+
+## 3. N4's counterfactual — holds, and it is the right assertion
+
+The product form is correct: longest accepted (246) → companion derived as both DDS
+providers derive it (`+ "/__schema"`, 255) → the sink's own truncation modelled as
+`substr(0, min(size, 255))` → `announced == companion`, nothing lost, and
+`announced != longest`, still a different name from its data topic. That is the
+claim, not the arithmetic.
+
+The counterfactual holds: `247 + 9 = 256 > 255`, so 247 is refused *because of the
+companion*, not because of the data name — which is exactly what makes 246 the right
+number rather than a number that happens to work. `pubsub_tests`: **24/24**, the five
+`Segments.*` among them.
+
+## Nit
+
+* The new case covers the two text-frame paths into `SplitTopic` but not the binary
+  `publish` path (`ws_session.cpp:271`), which also splits. Low value — a publish to
+  an undeclared topic already errors — but it is the one door of the three left
+  unwatched.
+
+## RECORD (this round)
+
+* `test_segments.cpp`, the rule-6 counterfactual comment says "Bounded at 255 instead,
+  this assertion is what fails". The `EXPECT_GT` beneath it is built from literals, so
+  it does not move under M9; what actually reddens under M9 is the `247 is refused`
+  row earlier in the same case. The assertion is correct and worth keeping — only the
+  sentence about which one fails is off.
