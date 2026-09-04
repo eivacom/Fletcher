@@ -547,3 +547,28 @@ tenth amendment authorised for PR #126**, after the eight of 2026-09-03 and the 
 2026-09-04. Note it also refuses the **prefix**, not the literal name, per the 2026-09-04
 class-not-instance ruling — the whole provider-derived companion namespace is out of reach, so a
 future companion name needs no further ruling.
+
+## 2026-09-04 — A topic name is bounded at 246 bytes, leaving room for the companion *(selection)*
+> "Refuse names longer than 246 bytes — Leaves 9 bytes of headroom so the hidden companion channel each DDS protocol derives (the name plus \"/__schema\") also stays under the limit — otherwise the collision just moves to the companion. Cost: a fifth refusal in frozen text, and topic names longer than 246 bytes stop working. This would be the eleventh amendment authorised for PR #126. Consistent with your standing preference: a loud refusal at development time beats a silent wrong delivery in production."
+
+**Context:** PDA-DEC-A5 code review, the single blocking finding, **measured rather than
+reasoned**: two accepted segment lists whose joined names agree on their first 255 bytes are
+**one topic on Fast DDS** — a subscriber to A received all 5 rows published to B; 255 bytes
+distinct, 256 aliased, controls green in every run. Cause: Fast DDS announces
+`fastcdr::string_255 topic_name` and `fixed_string` truncates **silently**
+(`fixed_size_string.hpp:83,331`, both `noexcept`). Both `segments.hpp` and the freshly amended
+§3.5 asserted the opposite, so the item's central claim — that a topic name means exactly one
+thing — was **false above the ceiling** at the moment the amendment landed. The remedy is a
+fifth refusal in frozen §3.5 that the 2026-09-03 authorisation did not name, so it went to the
+owner exactly as the `__` prefix did. Rejected: bounding at **255** (matches the protocol's own
+limit and refuses the minimum, but a name near the ceiling still has a companion name that
+overruns, so the same silent collision reappears on the hidden channel — harder to find, not
+fixed), and **publishing the limit without enforcing it** (no code change, but the silent wrong
+delivery stays in the shipped tree and a language binding has no way to enforce it).
+**Applies to:** `internal::RequireSegments` refuses a segment list whose **joined** length
+exceeds **246 bytes**. This is the **eleventh** amendment authorised for PR #126 — eight on
+2026-09-03, the ninth (idempotence) and tenth (`__` prefix) on 2026-09-04, and this. Note the
+headroom is what makes the rule close the class rather than move it, the same reasoning that
+made the `__` refusal a prefix rather than a literal. Eighth consecutive time the owner chose the
+honest-and-narrow answer, and the third time in two items that a **loud refusal was preferred to
+a silent wrong answer**.
