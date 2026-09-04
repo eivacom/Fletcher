@@ -374,3 +374,26 @@ change falsifies. **Verdict: the latter — you carry it.**
   Behaviourally the pin is real (M8 and M9 both bite), so this is wording only.
 - The cycle-1 RECORD item about `.claude/runbook.PDA-DEC.config.md:75` (`XRCE=OFF` in the command
   vs *"ON is MANDATORY for it"* in its own note six lines below) is unchanged and still stands.
+
+## LIVE CACHE HAZARD — not a defect in `f526acb`, but act before close
+
+While writing this section I checked the Conan cache and found that the **current** cached
+`fletcher-pubsub` package carries a **mutated** `segments.hpp`:
+
+```
+conan list 'fletcher-pubsub/*:*#*'
+  fletcher-pubsub/0.5.0-alpha#376f2faef9183d7244d902b73e6e9abb   (2026-09-04 13:46:32 UTC)
+```
+
+is the only recipe revision, and its header reads
+`constexpr size_t kMaxJoinedTopicBytes = kFastDdsAnnouncedTopicBytes;  // M9: the REJECTED 255`
+(`/c/Users/CTM/.conan2/p/fletce7550719a534e/...`, built 15:46 local). The 15:32 build
+(`fletc81a0d11ccc907`) carries the correct derived 246 and has been superseded.
+
+Two reviewers were mutating the same working tree in the same window — a `conan create` captured a
+mutation in flight. The **working tree is correct** (246, derived; `pubsub_tests` 24/24 green, and
+I reverted every mutation I applied), so `f526acb` itself is unaffected. But **any packaged-target
+run started from this cache now links a 255-bounded seam**, which would make
+`TopicNames.*`/`SeamVocabulary.*` and any harness green mean less than it appears to. Re-run
+`conan create pubsub` (and the two provider packages) from the clean tree before trusting any
+packaged-target result taken after 15:46 today.
