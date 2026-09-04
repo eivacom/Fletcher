@@ -288,13 +288,25 @@ check, no default topic, no recovery, no partial mode:
 5. a segment beginning **`__`**: the reserved namespace derived companion names live
    in — both DDS providers derive `name + "/__schema"`, so `{"a","__schema"}` would
    land on the schema channel of `{"a"}`. The **prefix** is reserved, not any one
-   literal name, so a future companion name needs no further amendment here.
+   literal name, so a future companion name needs no further amendment here;
+6. a **joined name longer than 246 bytes**. Fast DDS announces a topic in discovery
+   as `fastcdr::string_255` and `fixed_string` truncates **silently** — `noexcept`,
+   no error, no log — so above that ceiling the name the seam computed is not the
+   name the transport matches on: measured, two lists agreeing on their first 255
+   bytes are one topic. The limit is 255 **less the 9 bytes of `"/__schema"`**, so
+   the derived companion survives intact as well; bounded at 255 the collision would
+   merely move to the hidden channel. XRCE inherits both, its Agent building the
+   Fast DDS entities from the name the client sent.
 
-The invariant those five establish, for every accepted segment list `L`: `Join(L)`
-contains no NUL, `Split(Join(L)) == L`, and `Join(L)` is not a derived companion
-name. So two distinct accepted lists are two distinct topics in **every** provider,
-no accepted name collides with a derived one, and the name a provider hands its
-transport is the whole name.
+The invariant those six establish, for every **accepted** segment list `L` — and
+accepted is bounded, rule 6 being what makes the rest of this sentence true rather
+than aspirational: `Join(L)` contains no NUL, `Split(Join(L)) == L`, `Join(L)` is not
+a derived companion name, and both `Join(L)` and the companion derived from it reach
+the wire untruncated. So two distinct accepted lists are two distinct topics in
+**every** provider, no accepted name collides with a derived one, and the name a
+provider hands its transport is the whole name. **Nothing is claimed for a list this
+section refuses**; a transport whose own ceiling is lower than 246 bytes refuses on
+its own terms through §5.1, which is a loud failure rather than a silent one.
 
 No trimming, no case folding, no Unicode normalisation, no escaping: identity is
 bytes, and there is no normalisation step anywhere on this path for two providers to

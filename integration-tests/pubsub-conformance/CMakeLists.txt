@@ -317,7 +317,7 @@ gtest_discover_tests(conformance_registry DISCOVERY_MODE PRE_TEST
 gtest_discover_tests(conformance_caller_tier DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
-# and conformance_fastdds joins ten domains — two subjects (151 and 152),
+# and conformance_fastdds joins eleven domains — two subjects (151 and 152),
 # Registry.FastDdsResolvesAsABuiltIn (153), TopicNames.AmbiguousSegmentsAreRefused
 # (155, its own so a refusal case's participant stays out of the registry case's
 # discovery traffic) and the Registry.TwoInstances* cases (161-167, two instances

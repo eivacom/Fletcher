@@ -146,18 +146,33 @@ void WsSession::HandleBinaryFrame(const uint8_t* data, size_t len) {
 // Action handlers
 // -----------------------------------------------------------------------
 
+// Splits on `/` and keeps EVERY piece, including empty ones.
+//
+// It used to drop empty pieces, which made `"a/b"`, `"a//b"`, `"/a/b"`, `"a/b/"`
+// and `"//a//b//"` all the segment list {"a","b"} — so a client subscribing to
+// one and a client publishing to another exchanged rows although they had named
+// different topics. That was the same silent alias PDA-DEC-A5 removed at the
+// seam, one tier above it, and this was the last place on the path still tidying
+// a name up instead of letting it be refused.
+//
+// Keeping the empty piece means the seam's §3.5 rule 4 sees it and refuses with
+// `kInvalidArgument`, which the handler's existing catch turns into an error
+// frame. Strictly less code, strictly fewer representable states, and a loud
+// refusal where there was a silent wrong delivery. `""` still yields an empty
+// list, which §3.5 rule 1 already refuses.
 std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
     std::vector<std::string> segments;
+    if (topic.empty()) return segments;
     std::string seg;
     for (char c : topic) {
         if (c == '/') {
-            if (!seg.empty()) segments.push_back(std::move(seg));
+            segments.push_back(std::move(seg));
             seg.clear();
         } else {
             seg += c;
         }
     }
-    if (!seg.empty()) segments.push_back(std::move(seg));
+    segments.push_back(std::move(seg));
     return segments;
 }
 

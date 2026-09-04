@@ -1094,3 +1094,61 @@ declared contingency ceiling by ~80 lines, all of it test apparatus: the in-tree
 325 against 240 declared and the two provider-binary cases to 85 and 80 against 45 each, this
 tree's comment-per-case convention being the driver the cycle-2 review predicted. Mechanism
 itself: four `if`s in one function. **New public surface 0**, as declared.
+
+### PDA-DEC-A5 fix cycle 1 (2026-09-04) — the ceiling the amendment did not know about
+
+Both reviews landed one blocking finding each, neither in the mechanism.
+
+**Code review's was measured, not reasoned, and it made the item's own claim false.** Two accepted
+lists whose joined names agree on their first 255 bytes are **one topic on Fast DDS** — a
+subscriber to A received all five rows published to B; 255 distinct, 256 aliased, control green in
+every run. Fast DDS announces a topic as `fastcdr::string_255` and `fixed_string` truncates
+**silently** (`noexcept`, no error, no log), so the name the seam computed was not the name the
+transport matched on. `JoinIsInvertible` could not see it: it is an oracle over the join, and the
+join is not where the map broke. **Ruling 43** (ledger 42 → 43, the **eleventh** amendment for PR
+#126) bounds the joined name at **246 bytes** — 255 less the 9 of `"/__schema"`, because at 255 the
+derived companion truncates back onto the data topic and the collision merely moves to the hidden
+channel. Landed as §3.5 **rule 6** in `RequireSegments`, with the headroom expressed as
+`kFastDdsAnnouncedTopicBytes - kDerivedCompanionSuffixBytes` and a `static_assert` in the test, so
+the two numbers cannot drift apart. §3.5 and `segments.hpp` now say **"injective for *accepted*
+lists, and accepted is bounded"**, and say explicitly that nothing is claimed for a refused list.
+
+`Segments.NamesThatWouldTruncateOnTheWireAreRefused` — **red at `5f04e2c`** on the measured pair
+(*"the measured aliasing pair's first list is still accepted"*), on 247 bytes, on the
+separator-counting shape and on all four provider methods. Boundary pinned both ways: **246
+accepted** (and its join is 246 bytes), **247 refused**; three 82-byte segments sum to 246 but
+**join to 248 and are refused**, so a rule that forgot the separators reddens. The headroom is
+asserted rather than trusted — the companion of the longest accepted name is `<= 255`. Two
+mutations, each reddening **only** this case: **M8** drop the length check; **M9** bound at 255
+with no headroom, which is the alternative the owner rejected.
+
+**Compliance's was the converse check:** the sentence deleted from frozen §3.5 survived **verbatim**
+in `pubsub/include/fletcher/pubsub/provider.hpp` — *"the provider can join them with any separator
+it prefers"* — on the abstract interface the 2026-09-01 ruling says the bindings read, and it still
+published only the empty-**list** refusal. The spec forbade what the header licensed: this item's
+own defect class, one layer up. The block now states the seam-owned `/` join, the injective-plus-`__`
+driver obligations, and **all six** refusals. `grep -rn 'any separator'` outside `plans/` is now
+empty.
+
+**Both should-fixes taken, both in the forbidding direction.** `PeerSubject::RejectUnsendableTopic`
+was a hand-copied subset of §3.5 that had **already drifted** (it missed the empty list, the `__`
+prefix and `\n`, `\r`, `\v`, `\f`); it now calls `internal::RequireSegments` in a `try` and tests only
+`isspace` on top, so the harness cannot disagree with the seam again and rule 6 arrived there for
+free. `gateway/src/ws_session.cpp`'s `SplitTopic` **dropped empty pieces**, making `"a/b"`,
+`"a//b"`, `"/a/b"` and `"a/b/"` one topic at a **shipped** caller — the same silent alias, one tier
+up, and the last place on the path still tidying a name instead of letting it be refused. The two
+`if (!seg.empty())` guards are deleted; the empty piece now reaches rule 4 and surfaces as an error
+frame through the handler's existing catch. Ruling 41 applied, not a new decision.
+
+**Also fixed:** the `rule N` labels in `test_segments.cpp` renumbered to §3.5's numbering (rule 1 is
+the empty **list**), so a failure message names the rule the spec names (N2); the byte table gained
+a backslash row and a space-padded row, so a backslash-escaping or trimming design moves a row (nit 1); the two
+near-tautological derived-form pins replaced by a length relation and a prefix relation (nit 2);
+`fastdds_main.cpp`'s stale `:350` citation → `:360`; `CMakeLists.txt`'s "ten domains" → **eleven**.
+**Left, with reasons:** compliance N1 (the two illustrative `kInvalidArgument` cause lists in
+`core/`) — not false, and `status.hpp` is A3's file this week; code-review nit 3 (`pubsub-arrow`
+scans the same bytes twice per sample) — recorded, harmless, and the second join is the arrow tier's;
+nit 4 (the `static thread_local` scratch keeps the previous name after a refusal) — correct because
+the call unwinds, and pinning it needs a live Fast DDS provider for no new claim. Rule 6 is asserted
+**in-tree only**, deliberately: the provider binaries already prove the door is reached from every
+provider for rules 2-5, and adding rule 6 there would cost M8/M9 their isolation for no new claim.

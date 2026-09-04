@@ -280,7 +280,7 @@ namespace {
 //
 // This block's first draft took 154-160 on a census of the C++ suites alone, and
 // 154 is in fact taken: integration-tests/gateway-end-to-end/test/
-// end-to-end.test.ts:350 sets `domainId: '154'`, in a TypeScript harness a
+// end-to-end.test.ts:360 sets `domainId: '154'`, in a TypeScript harness a
 // C++-only grep cannot see. That harness runs under `npm test` rather than as a
 // ctest entry, so it never serialises against this binary through
 // RESOURCE_LOCK — which is why the range was moved rather than argued about.

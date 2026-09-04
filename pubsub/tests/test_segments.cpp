@@ -102,28 +102,48 @@ OwnedSchema TestSchema() {
     return schema;
 }
 
+/// §3.5 rule 6's two numbers, spelled once. 255 is Fast DDS's own ceiling —
+/// discovery announces a topic as `fastcdr::string_255` and `fixed_string`
+/// truncates SILENTLY (`fixed_size_string.hpp:83,331`, both `noexcept`). 246 is
+/// that ceiling less the 9 bytes of `"/__schema"`, so the companion channel each
+/// DDS provider derives survives intact too — otherwise the collision merely
+/// moves to the hidden channel, which is harder to find rather than fixed
+/// (owner ruling 2026-09-04).
+constexpr size_t kMaxJoinedBytes = 246;
+constexpr size_t kFastDdsAnnouncedCeiling = 255;
+constexpr size_t kCompanionSuffixBytes = 9;  // strlen("/__schema")
+static_assert(kMaxJoinedBytes + kCompanionSuffixBytes == kFastDdsAnnouncedCeiling,
+              "the headroom IS the rule: 246 is 255 less the companion suffix");
+
+/// A one-segment list whose JOINED length is exactly `n`.
+Segments JoinedLength(size_t n) { return Segments{std::string(n, 'x')}; }
+
 struct RefusedCase {
     Segments segments;
     const char* why;
 };
 
 /// Every shape §3.5 refuses, one row per REASON rather than one per rule, so a
-/// rule that stops firing only in a later segment position still reddens.
+/// rule that stops firing only in a later segment position still reddens. The
+/// `rule N` labels are §3.5's numbering, in which **rule 1 is the empty LIST** —
+/// so a failure message names the rule the spec and the header name. §3.5's
+/// rule 6, the joined-length bound, is deliberately NOT here: it has its own
+/// case below, so the mutation that drops it reddens that case ALONE.
 std::vector<RefusedCase> RefusedCases() {
     return {
-        {{WithNul("a", "b")}, "rule 1: a NUL truncates the name at its first byte on XRCE"},
-        {{"ok", WithNul("x", "y")}, "rule 1, in a later segment"},
-        {{WithNul("", "")}, "rule 1: a segment that is nothing but a NUL"},
-        {{"a/b"}, "rule 2: joins onto the same name as {\"a\",\"b\"}"},
+        {{WithNul("a", "b")}, "rule 2: a NUL truncates the name at its first byte on XRCE"},
+        {{"ok", WithNul("x", "y")}, "rule 3, in a later segment"},
+        {{WithNul("", "")}, "rule 2: a segment that is nothing but a NUL"},
+        {{"a/b"}, "rule 3: joins onto the same name as {\"a\",\"b\"}"},
         {{"a", "b/c"}, "rule 2, in a later segment"},
-        {{"/"}, "rule 2: a segment that is nothing but the separator"},
-        {{""}, "rule 3: an empty segment names nothing"},
-        {{"a", ""}, "rule 3: a trailing empty segment yields the name \"a/\""},
-        {{"", "a"}, "rule 3: a leading empty segment yields the name \"/a\""},
-        {{"a", "__schema"}, "rule 4: lands on the schema companion channel of {\"a\"}"},
-        {{"__schema"}, "rule 4, as the only segment"},
-        {{"__anything_at_all"}, "rule 4: the whole `__` namespace is reserved, not one name"},
-        {{"__"}, "rule 4: the prefix itself"},
+        {{"/"}, "rule 3: a segment that is nothing but the separator"},
+        {{""}, "rule 4: an empty segment names nothing"},
+        {{"a", ""}, "rule 4: a trailing empty segment yields the name \"a/\""},
+        {{"", "a"}, "rule 4: a leading empty segment yields the name \"/a\""},
+        {{"a", "__schema"}, "rule 5: lands on the schema companion channel of {\"a\"}"},
+        {{"__schema"}, "rule 5, as the only segment"},
+        {{"__anything_at_all"}, "rule 5: the whole `__` namespace is reserved, not one name"},
+        {{"__"}, "rule 5: the prefix itself"},
     };
 }
 
@@ -147,6 +167,11 @@ const std::vector<Segments>& AcceptedListCorpus() {
         // scheme that is reversible must also escape its own marker, so this
         // row's bytes move under one and stand still under the other.
         {"50%", "done"},
+        // A backslash and a padded segment, for the same reason as the `%`: a
+        // design that escaped with `\\` rather than `%`, or one that TRIMMED,
+        // would move these rows and stand still on every other one.
+        {"c:\\x", "y"},
+        {" pad ", "z"},
     };
     return kLists;
 }
@@ -301,6 +326,8 @@ TEST(Segments, AcceptedNamesJoinToTheSameBytesAsBefore) {
         {{"a_b", "c-d"}, "a_b/c-d"},
         {{"UPPER", "lower", "123"}, "UPPER/lower/123"},
         {{"50%", "done"}, "50%/done"},
+        {{"c:\\x", "y"}, "c:\\x/y"},
+        {{" pad ", "z"}, " pad /z"},
     };
 
     for (const Row& row : kRows) {
@@ -317,9 +344,94 @@ TEST(Segments, AcceptedNamesJoinToTheSameBytesAsBefore) {
     // `xrce_dds_pubsub_provider.cpp:720,881`; XRCE's participant name IS the
     // topic name), so pinning them here closes the last inch between "the join
     // is unchanged" and "no accepted name's wire bytes moved".
+    //
+    // Asserted against harness-owned literals and against a LENGTH relation, not
+    // by restating the row above: a pin that says `joined == "telemetry/depth"`
+    // two lines after the table already said so asserts nothing new.
     const std::string joined = internal::JoinSegments({"telemetry", "depth"});
-    EXPECT_EQ(joined + "/__schema", std::string("telemetry/depth/__schema"))
+    const std::string companion = joined + "/__schema";
+    EXPECT_EQ(companion, std::string("telemetry/depth/__schema"))
         << "the DDS schema companion name is derived from the join and must not move";
-    EXPECT_EQ(joined, std::string("telemetry/depth"))
-        << "the XRCE participant name IS the topic name and must not move";
+    EXPECT_EQ(companion.size(), joined.size() + 9)
+        << "the companion suffix is 9 bytes, which is the headroom rule 6 reserves";
+    EXPECT_EQ(companion.compare(0, joined.size(), joined), 0)
+        << "the companion must still be the data name with a suffix, or rule 5 guards nothing";
+}
+
+// ── §3.5 rule 6 — a name the transport would truncate is refused ─────
+//
+// THE SECOND FORCING TEST, and the one measured rather than reasoned. Code
+// review found, on this box, that two accepted lists whose joined names agree
+// on their first 255 bytes are **one topic on Fast DDS**: a subscriber to A
+// received all five rows published to B. 255 bytes distinct, 256 aliased, with
+// a same-topic control green in every run.
+//
+// The cause is at the SINK, not at the join: Fast DDS announces a topic in
+// discovery as `fastcdr::string_255` and `fixed_string` truncates silently —
+// `noexcept`, no error, no log. So the name the seam computed was not the name
+// the transport matched on, and `JoinIsInvertible` could not see it, being an
+// oracle over the join. Nothing at the sink can fix it (the truncation is inside
+// the vendor's discovery type), so the bound goes at the door, which is also the
+// only place a language binding can reproduce it.
+//
+// 246 rather than 255 is the whole point: at 255 the DERIVED companion name
+// `name + "/__schema"` still overruns and truncates back onto the data topic's
+// own announced name, so the reserved-`__` guarantee stops holding and the same
+// silent collision reappears on the hidden channel. The headroom closes the
+// class instead of moving it — the same reasoning that made rule 5 a prefix
+// rather than a literal.
+TEST(Segments, NamesThatWouldTruncateOnTheWireAreRefused) {
+    // THE MEASURED SHAPE. Two distinct lists, identical for 255 bytes and
+    // differing only at byte 256 — one topic on Fast DDS before this rule.
+    const std::string prefix(kFastDdsAnnouncedCeiling, 'p');
+    const Segments measured_a{prefix + "A"};
+    const Segments measured_b{prefix + "B"};
+    EXPECT_NE(measured_a, measured_b);
+    EXPECT_TRUE(RefusedAsInvalid([&] { static_cast<void>(internal::JoinSegments(measured_a)); }))
+        << "the measured aliasing pair's first list is still accepted";
+    EXPECT_TRUE(RefusedAsInvalid([&] { static_cast<void>(internal::JoinSegments(measured_b)); }))
+        << "the measured aliasing pair's second list is still accepted";
+
+    // THE BOUNDARY, pinned on both sides so the rule cannot drift by one.
+    EXPECT_NO_THROW(static_cast<void>(internal::JoinSegments(JoinedLength(kMaxJoinedBytes))))
+        << "246 bytes is the longest ACCEPTED name and must stay accepted";
+    EXPECT_EQ(internal::JoinSegments(JoinedLength(kMaxJoinedBytes)).size(), kMaxJoinedBytes);
+    EXPECT_TRUE(RefusedAsInvalid([&] {
+        static_cast<void>(internal::JoinSegments(JoinedLength(247)));
+    })) << "247 bytes is the shortest REFUSED name";
+
+    // The bound is on the JOINED length, so the separators count. Three segments
+    // of 82 bytes sum to 246 but join to 248 — refused. A rule that summed the
+    // segments and forgot the separators would accept this.
+    const Segments three{std::string(82, 'y'), std::string(82, 'y'), std::string(82, 'y')};
+    EXPECT_TRUE(RefusedAsInvalid([&] { static_cast<void>(internal::JoinSegments(three)); }))
+        << "the separators are part of the joined length";
+    const Segments three_ok{std::string(82, 'y'), std::string(82, 'y'), std::string(80, 'y')};
+    EXPECT_NO_THROW(static_cast<void>(internal::JoinSegments(three_ok)));
+    EXPECT_EQ(internal::JoinSegments(three_ok).size(), kMaxJoinedBytes);
+
+    // THE HEADROOM, asserted rather than trusted: the companion name derived
+    // from the LONGEST accepted name still fits under the announced ceiling.
+    const std::string longest = internal::JoinSegments(JoinedLength(kMaxJoinedBytes));
+    EXPECT_LE((longest + "/__schema").size(), kFastDdsAnnouncedCeiling)
+        << "an accepted name exists whose companion channel would still truncate";
+
+    // Both joins, and all four entry points on a real provider — the bound lives
+    // in the same door as the other five rules, not beside it.
+    std::string into;
+    EXPECT_TRUE(RefusedAsInvalid([&] { internal::JoinSegmentsInto(into, JoinedLength(247)); }));
+
+    InProcessPubSubProvider provider;
+    const Segments too_long = JoinedLength(247);
+    EXPECT_TRUE(RefusedAsInvalid([&] { provider.CreateTopic(too_long, TestSchema()); }))
+        << "CreateTopic accepted a name the transport would truncate";
+    EXPECT_TRUE(RefusedAsInvalid([&] {
+        provider.Publish(too_long, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
+    })) << "Publish accepted a name the transport would truncate";
+    EXPECT_TRUE(RefusedAsInvalid([&] {
+        static_cast<void>(provider.Subscribe(
+            too_long, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    })) << "Subscribe accepted a name the transport would truncate";
+    EXPECT_TRUE(RefusedAsInvalid([&] { provider.Unsubscribe(too_long); }))
+        << "Unsubscribe accepted a name the transport would truncate";
 }

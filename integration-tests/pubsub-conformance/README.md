@@ -326,7 +326,7 @@ provider-parameterised clause can reach:
 | `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
 | `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
-| `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}` |
+| `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}`. §3.5's sixth refusal, the **246-byte joined-length bound**, is asserted in `pubsub_tests` (`Segments.NamesThatWouldTruncateOnTheWireAreRefused`) rather than here: it rides the same door, and keeping it in one place is what lets its two mutations redden that case alone |
 
 **Why the §3.5 refusals are asserted here and in the two provider binaries, and
 never as a `ProviderConformance` clause.** `PeerSubject::RejectUnsendableTopic`
@@ -334,7 +334,12 @@ never as a `ProviderConformance` clause.** `PeerSubject::RejectUnsendableTopic`
 protocol joins segments with a slash, splits requests on whitespace and carries
 its request line as a C-terminated token, so an empty, `/`-bearing, space-bearing
 or NUL-bearing segment is **unsendable over the pipe by construction** and comes
-back as `Reply::HarnessFailure`. A parameterised clause would therefore score the
+back as `Reply::HarnessFailure`. That door now **calls `internal::RequireSegments`**
+rather than mirroring its rules by hand — the hand-written version had already
+drifted (it missed the empty list, the `__` prefix and `\n`, `\r`, `\v`, `\f`), and delegating
+means the harness cannot disagree with the seam when the seam gains a rule, as it
+did with the 246-byte bound. Only the pipe's own extra — any `isspace` byte, since
+requests tokenise with `operator>>` — is still tested here. A parameterised clause would therefore score the
 *harness's* door on the cross-process subjects rather than the provider's —
 `Reply::refused()` is false for a harness failure, so the clause would go red for
 a harness reason on three shapes and, before the NUL was added to that door, pass

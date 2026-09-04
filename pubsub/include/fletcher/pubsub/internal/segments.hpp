@@ -33,6 +33,13 @@ namespace internal {
 ///     cannot be repaired at the sink;
 ///   * `Split(Join(L)) == L`, so two distinct accepted lists are two distinct topics in EVERY
 ///     provider — `{"a/b"}` and `{"a","b"}` used to be one;
+///   * `Join(L)` is short enough to reach the wire UNTRUNCATED, and so is the companion name a
+///     provider derives from it. Injectivity is a claim about **accepted** lists, and accepted
+///     is bounded: Fast DDS announces a topic in discovery as `fastcdr::string_255` and
+///     `fixed_string` truncates SILENTLY (`fixed_size_string.hpp:83,331`, both `noexcept`), so
+///     above that ceiling the name the seam computed is not the name the transport matches on.
+///     Measured, not reasoned: two lists agreeing on their first 255 bytes were ONE topic —
+///     a subscriber to A received every row published to B;
 ///   * `Join(L)` is not a name a provider DERIVES, because the `__` namespace those companions
 ///     live in (`name + "/__schema"` in both DDS providers) is reserved.
 ///
@@ -45,7 +52,13 @@ namespace internal {
 ///      name rule 1 forbids, and `{"a",""}` names `"a/"`;
 ///   5. a segment beginning `__` — the PREFIX, not the literal `__schema`, so every present and
 ///      future provider-derived companion name is out of reach without a further ruling
-///      (owner ruling 2026-09-04).
+///      (owner ruling 2026-09-04);
+///   6. a JOINED length above `kMaxJoinedTopicBytes` (246) — 255, Fast DDS's announced ceiling,
+///      LESS the 9 bytes of `"/__schema"`. The headroom is the rule: bounded at 255 the data
+///      name survives but its derived companion truncates back onto it, so the collision moves
+///      to the hidden channel instead of closing — harder to find, not fixed. Same reasoning as
+///      rule 5's prefix (owner ruling 2026-09-04). XRCE inherits both: its Agent builds the Fast
+///      DDS entities from the name the client sent, and `UXR_BINARY_SEQUENCE_MAX` is 512.
 ///
 /// Deliberately absent: trimming, case folding, Unicode normalisation, escaping. Identity is
 /// bytes. There is no normalisation step anywhere on this path, so there is no place for two
@@ -56,10 +69,30 @@ namespace internal {
 /// about to copy anyway — no allocation, no `find_first_of` with a constructed needle. It is
 /// unconditional at every entry point: validating only in `CreateTopic` would be a partial mode,
 /// and `Publish` to an undeclared topic is reachable.
+/// §3.5 rule 6's numbers, spelled once so the header, the spec and the tests cannot drift.
+/// `kFastDdsAnnouncedTopicBytes` is the vendor's, not ours; the 9 bytes are `"/__schema"`.
+constexpr size_t kFastDdsAnnouncedTopicBytes = 255;
+constexpr size_t kDerivedCompanionSuffixBytes = 9;
+constexpr size_t kMaxJoinedTopicBytes =
+    kFastDdsAnnouncedTopicBytes - kDerivedCompanionSuffixBytes;  // 246
+
 inline void RequireSegments(const std::vector<std::string>& segs) {
     if (segs.empty()) {
         throw PubSubError(PubSubStatus::kInvalidArgument,
                           "topic: an empty segment list names no topic");
+    }
+    // Rule 6 first: it is a pass over `segs.size()` lengths rather than over every byte, and it
+    // is the only rule whose violation is otherwise SILENT rather than merely wrong.
+    size_t joined = segs.size() - 1;  // the separators; segs is non-empty by the check above
+    for (const std::string& seg : segs) {
+        joined += seg.size();
+    }
+    if (joined > kMaxJoinedTopicBytes) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "topic: the joined name is " + std::to_string(joined) +
+                              " bytes, above the " + std::to_string(kMaxJoinedTopicBytes) +
+                              "-byte limit that keeps it and its companion channel from being "
+                              "silently truncated on the wire");
     }
     for (const std::string& seg : segs) {
         if (seg.empty()) {

@@ -47,12 +47,32 @@ struct SubscriptionResult {
 /// Subscriber, PublisherArrow, SubscriberArrow) add convenience APIs
 /// on top of this interface.
 ///
-/// Topic names are represented as a list of string segments so that
-/// the provider can join them with any separator it prefers. **An empty segment
-/// list is illegal** and is refused with PubSubStatus::kInvalidArgument by every
-/// method that takes one — there is no default topic and no recovery (§3.5).
-/// C form: a pointer-and-count of pointer-and-length pairs, borrowed for the
-/// duration of the call; a callee that keeps a segment copies its bytes. As
+/// Topic names are a list of string segments. **The join is the seam's, not a
+/// provider's discretion** (§3.5): the seam joins the segments with `/` once,
+/// and that name IS the topic's identity, so the same list names the same topic
+/// on every transport. A driver may map that name into its own transport's
+/// namespace, but only INJECTIVELY, and every companion name it derives must
+/// live in the reserved `__` namespace.
+///
+/// Six shapes are refused with PubSubStatus::kInvalidArgument by every method
+/// that takes a segment list — one check, no default topic, no recovery, no
+/// partial mode (§3.5, and `internal::RequireSegments`, which is the one door
+/// all of them route through):
+///
+///   1. an empty segment LIST — it names no topic;
+///   2. a segment containing a NUL — the name would not reach the wire whole;
+///   3. a segment containing `/` — the joined name would not split back to the
+///      list it came from, so `{"a/b"}` and `{"a","b"}` would be one topic;
+///   4. an EMPTY segment — rule 1 one level down;
+///   5. a segment beginning `__` — the namespace derived companion names live
+///      in, so `{"a","__schema"}` cannot land on the schema channel of `{"a"}`;
+///   6. a joined name longer than 246 bytes — Fast DDS announces a topic as a
+///      255-byte fixed string and truncates SILENTLY, and the 9 bytes of
+///      headroom are what keep the derived companion under that ceiling too.
+///
+/// No trimming, case folding, Unicode normalisation or escaping: identity is
+/// bytes. C form: a pointer-and-count of pointer-and-length pairs, borrowed for
+/// the duration of the call; a callee that keeps a segment copies its bytes. As
 /// everywhere in this vocabulary, the C form is conceptual — no layout
 /// compatibility is implied and each boundary constructs its own.
 ///

@@ -8,6 +8,7 @@
 // quietly turning a cross-process subject into an in-process one.
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -70,26 +71,43 @@ class PeerSubject : public ProviderSubject {
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
 
    private:
-    /// The peer protocol joins segments with a slash and splits requests on
-    /// whitespace, so a segment containing either would arrive as a different
-    /// topic. FreshTopic never produces one; nothing forbade it, so this does —
-    /// loudly, as a harness failure, rather than as a mysterious missing row.
+    /// Unsendable over the peer PIPE, or unsendable through the SEAM — both are
+    /// harness failures, and neither may reach the provider under test.
     ///
-    /// The NUL is here for a second reason (PDA-DEC-A5): a request line is written to a
-    /// pipe and read back as a whitespace-delimited token, so a segment carrying a zero
-    /// byte would arrive TRUNCATED — the harness reproducing the very defect it exists to
-    /// observe. Without this row the shape falls through to `internal::JoinSegments`
-    /// below, which after A5 throws out of a method declared to return a `Reply`. With it
-    /// the door is TOTAL: every shape the seam refuses is unsendable over this pipe by
-    /// construction, so no clause here can score the HARNESS's door instead of a
-    /// provider's. The count of 4 is explicit because the set now contains a zero byte,
-    /// and a plain string literal would stop the search one character early.
+    /// The seam half is delegated rather than mirrored. This used to be a
+    /// hand-copied subset of §3.5's rules, and it had already drifted: it missed
+    /// the empty LIST and the `__` prefix, both of which fell through to
+    /// `internal::JoinSegments` below and threw a `PubSubError` out of a method
+    /// declared to return a `Reply` — a hang or a mystery HarnessFailure rather
+    /// than a useful red. Calling the seam's own door means the harness cannot
+    /// disagree with the seam again, and rule 6's length bound (added after this
+    /// door was first written) arrived here for free.
+    ///
+    /// The pipe half is genuinely the harness's own and stays: the protocol
+    /// joins segments with a slash and tokenises requests with `operator>>`,
+    /// whose separator set is `isspace` — not the literal `" \t"` this once
+    /// tested — so a segment carrying `\n`, `\r`, `\v` or `\f`
+    /// splits the request line in two. `/` and the empty segment are already
+    /// the seam's.
+    ///
+    /// `FreshTopic` produces none of these, so nothing reaches it today; it is
+    /// the door for the next clause that tries.
     static Reply RejectUnsendableTopic(const Topic& topic) {
+        try {
+            internal::RequireSegments(topic);
+        } catch (const PubSubError& e) {
+            return Reply::HarnessFailure(std::string("peer: the seam refuses this topic, so the "
+                                                     "pipe never carries it: ") +
+                                         e.what());
+        }
         for (const std::string& segment : topic) {
-            if (segment.empty() ||
-                segment.find_first_of(std::string(" \t/\0", 4)) != std::string::npos) {
-                return Reply::HarnessFailure("peer: topic segment is not sendable over the pipe: " +
-                                             segment);
+            for (unsigned char c : segment) {
+                if (std::isspace(c)) {
+                    return Reply::HarnessFailure(
+                        "peer: topic segment is not sendable over the pipe (whitespace splits the "
+                        "request line): " +
+                        segment);
+                }
             }
         }
         return Reply::Ok();
