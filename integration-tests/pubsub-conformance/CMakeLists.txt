@@ -8,10 +8,7 @@ find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
-# include(CTest) rather than bare enable_testing(): it brings in the CTest module
-# proper, so every entry below carries a declared TIMEOUT and a deadlock control
-# that fires reports as a failed test rather than as a hung job.
-include(CTest)
+enable_testing()
 
 # Type-check broadly, link narrowly. The clause set is compiled ONCE and each
 # subject binary links it plus exactly ONE provider, so editing a clause

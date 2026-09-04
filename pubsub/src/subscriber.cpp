@@ -106,19 +106,34 @@ struct Subscriber::Impl {
 
     std::shared_ptr<Identity> identity = std::make_shared<Identity>();
 
-    // Retire a subscription and wait out any invocation already inside its gate.
+    // ── The lock order, as the code actually enforces it ────────────
     //
-    // The barrier's ONLY job is that wait, and its scope is load-bearing twice
-    // over — the lock order is total, `mu` < gate < provider, and both new edges
-    // are forbidden rather than handled:
-    //  - gate → gate: a thread already inside a delivery on THIS Subscriber
-    //    skips the barrier entirely, so two cross-cancelling deliveries have no
-    //    cycle to form. That is also the one shape where the caller may not free
-    //    callback state on return (published in subscriber.hpp).
-    //  - gate → provider: callers must let this function RETURN before entering
-    //    the provider. A provider's own Unsubscribe may wait for its in-flight
-    //    delivery, and that delivery may at that moment be about to take this
-    //    gate. Never hold a gate across a provider call.
+    //     gate  <  mu  <  (nothing)          and no lock is EVER held across a
+    //                                        provider call.
+    //
+    // The outermost lock is the **gate**, not `mu`: the fan-out holds
+    // `entry.gate->mu` across the user callback, and that callback may re-enter
+    // `Subscribe`/`Unsubscribe`, which take `mu`. So gate → mu is a real,
+    // exercised edge (`CallerTier.ReentrantSubscribeFromInsideDeliveryDoesNot
+    // Deadlock` is its control). The rule that keeps the graph acyclic is
+    // therefore the reverse of the obvious one:
+    //
+    //   **Never acquire a gate while holding `mu`.** `RetireAndDrain` must be
+    //   called with no lock held at all.
+    //
+    // The delivery path also holds a gate across whatever the callback does —
+    // including `Publisher::Publish`, so a gate can be held across a provider
+    // call *by the user*, and nothing here can prevent that. The rule below
+    // constrains this file's own calls only: no gate is held when WE enter the
+    // provider, because a provider's Unsubscribe may wait for its in-flight
+    // delivery, and that delivery may at that moment be about to take the gate
+    // we hold (`CallerTier.UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider`).
+    //
+    // Retire a subscription and wait out any invocation already inside its gate.
+    // A thread already inside a delivery on THIS Subscriber skips the barrier —
+    // otherwise two cross-cancelling deliveries deadlock on each other's gates.
+    // That skip is the one published exception to "you may free on return"
+    // (subscriber.hpp; owner ruling 2026-09-04).
     void RetireAndDrain(const std::shared_ptr<Gate>& gate) const {
         gate->retired.store(true, std::memory_order_release);
         if (InsideDeliveryOn(identity.get())) return;
@@ -130,6 +145,14 @@ struct Subscriber::Impl {
     // Only maps an id to its topic, so Unsubscribe can find the list to rebuild. The callback
     // itself lives in that topic's EntryList.
     std::unordered_map<uint64_t, std::string> subscription_topic;
+    // Ids whose entry has been pulled out of the fan-out but whose drain has NOT
+    // finished. It is what tells "this id is being cancelled right now on another
+    // thread" apart from "this id is unknown or already fully cancelled": the
+    // first waits for the same drain, the second is a silent no-op (owner ruling
+    // 2026-09-04). Without it a concurrent duplicate cancel returned while the
+    // handler was still running — a second, unpublished exception to the frozen
+    // promise, and the one the owner refused to publish.
+    std::unordered_map<uint64_t, std::shared_ptr<Gate>> retiring;
     std::atomic<uint64_t> next_id{1};
 
     // Copy-on-write mutation of one topic's subscriber list. Called with mu held — the lock is what
@@ -182,7 +205,18 @@ struct Subscriber::Impl {
                     // Checked HERE, at invocation, not at snapshot time: an entry
                     // cancelled after this snapshot was loaded must not be called.
                     if (entry.gate->retired.load(std::memory_order_acquire)) continue;
-                    entry.callback(entry.id, data, len, schema, att);
+                    try {
+                        entry.callback(entry.id, data, len, schema, att);
+                    } catch (...) {
+                        // Spec §5.3: a callback must not throw, because a
+                        // provider invokes it from a transport thread where an
+                        // escaping exception is a process termination rather than
+                        // an unwind. One misbehaving subscriber must not abort
+                        // the fan-out for everyone after it in the list either.
+                        // Contained here rather than translated: this frame has
+                        // no channel to report on, and inventing one would be a
+                        // new contract.
+                    }
                 }
             });
 
@@ -221,17 +255,25 @@ Subscriber::~Subscriber() {
             // Publish an empty list so a delivery that starts from here on finds
             // nothing; the gates below cover one that already holds a snapshot.
             Impl::RewriteEntries(ts, [](std::vector<Impl::Entry>& v) { v.clear(); });
+        }
+        impl_->subscription_topic.clear();
+    }
+    // Retire and drain BEFORE entering the provider, and with no lock held — see
+    // the lock-order note on Impl::RetireAndDrain.
+    for (const std::shared_ptr<Impl::Gate>& gate : gates) {
+        impl_->RetireAndDrain(gate);
+    }
+    // The provider transition is decided after the drain, in one critical
+    // section, for the reason Unsubscribe does the same: `provider_subscribed`
+    // is never left false across an unbounded wait.
+    {
+        std::lock_guard lock(impl_->mu);
+        for (auto& [key, ts] : impl_->topics) {
             if (ts.provider_subscribed) {
                 to_unsub.push_back(ts.segments);
                 ts.provider_subscribed = false;
             }
         }
-        impl_->subscription_topic.clear();
-    }
-    // Retire and drain BEFORE entering the provider, and outside `mu` — the same
-    // total order Unsubscribe keeps, for the same two reasons.
-    for (const std::shared_ptr<Impl::Gate>& gate : gates) {
-        impl_->RetireAndDrain(gate);
     }
     for (const auto& segs : to_unsub) {
         try {
@@ -293,54 +335,86 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
 }
 
 void Subscriber::Unsubscribe(uint64_t subscription_id) {
-    std::vector<std::string> segments_to_unsub;
+    std::string key;
     std::shared_ptr<Impl::Gate> gate;
+    bool ours = false;
     {
         std::lock_guard lock(impl_->mu);
 
         auto it = impl_->subscription_topic.find(subscription_id);
         if (it == impl_->subscription_topic.end()) {
-            // Not live: accepted, and does nothing (spec §7 clause 6, owner
-            // ruling 2026-09-04). A foreign-runtime finaliser cancels
-            // unconditionally during teardown and cannot let an error escape,
-            // and the provider tier below has said the same of an unknown topic
-            // since it was written. The cost is deliberate and published: a
-            // mistyped id is ignored rather than reported.
-            return;
-        }
-
-        const std::string key = it->second;
-        impl_->subscription_topic.erase(it);
-
-        auto topic_it = impl_->topics.find(key);
-        if (topic_it != impl_->topics.end()) {
-            Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
-                // Capture the gate BEFORE remove_if, which leaves the tail
-                // moved-from and would hand back a null gate.
-                for (const Impl::Entry& e : v) {
-                    if (e.id == subscription_id) {
-                        gate = e.gate;
-                        break;
-                    }
-                }
-                v.erase(std::remove_if(v.begin(), v.end(),
-                                       [subscription_id](const Impl::Entry& e) {
-                                           return e.id == subscription_id;
-                                       }),
-                        v.end());
-            });
-
-            if (topic_it->second.fanout->entries.load()->empty() &&
-                topic_it->second.provider_subscribed) {
-                segments_to_unsub = topic_it->second.segments;
-                topic_it->second.provider_subscribed = false;
+            auto retiring_it = impl_->retiring.find(subscription_id);
+            if (retiring_it == impl_->retiring.end()) {
+                // Unknown, or already fully cancelled: accepted, and does nothing
+                // (owner ruling 2026-09-04). A foreign-runtime finaliser cancels
+                // unconditionally during teardown and cannot let an error escape,
+                // and the provider tier below has said the same of an unknown
+                // topic since it was written. The cost is deliberate and
+                // published: a mistyped id is ignored rather than reported.
+                return;
             }
+            // Being cancelled RIGHT NOW by another thread. Not the same thing,
+            // and not a no-op (owner ruling 2026-09-04): wait for the same drain
+            // the winner is performing, so this caller may free its handler state
+            // on return exactly like the winner. Returning early here was a
+            // second, unpublished exception to the frozen promise — reachable
+            // only under a race, which is the hardest kind to discover.
+            gate = retiring_it->second;
+        } else {
+            ours = true;
+            key = it->second;
+            impl_->subscription_topic.erase(it);
+
+            auto topic_it = impl_->topics.find(key);
+            if (topic_it != impl_->topics.end()) {
+                Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
+                    // Capture the gate BEFORE remove_if, which leaves the tail
+                    // moved-from and would hand back a null gate.
+                    for (const Impl::Entry& e : v) {
+                        if (e.id == subscription_id) {
+                            gate = e.gate;
+                            break;
+                        }
+                    }
+                    v.erase(std::remove_if(v.begin(), v.end(),
+                                           [subscription_id](const Impl::Entry& e) {
+                                               return e.id == subscription_id;
+                                           }),
+                            v.end());
+                });
+            }
+            // Published for the duration of the drain, so a duplicate cancel
+            // arriving meanwhile can find this gate and wait on it too.
+            if (gate) impl_->retiring.emplace(subscription_id, gate);
         }
     }
 
-    // Outside `mu`, and in a scope that ENDS here — the barrier must not still be
-    // held when the provider is entered below. See Impl::RetireAndDrain.
+    // Outside every lock — see the lock-order note on Impl::RetireAndDrain.
     if (gate) impl_->RetireAndDrain(gate);
+
+    // A duplicate cancel has now waited for the winner's drain; the winner owns
+    // everything below.
+    if (!ours) return;
+
+    // The provider-level transition is decided AFTER the drain, in one critical
+    // section, and never published across it. Clearing `provider_subscribed`
+    // before draining left the topic looking unsubscribed for the whole duration
+    // of an in-flight handler: a Subscribe landing in that window registered a
+    // fresh provider subscription which this call then tore down, leaving the
+    // newcomer silently receiving nothing forever. Re-checking here means the
+    // newcomer's entry is simply visible, and the teardown does not happen.
+    std::vector<std::string> segments_to_unsub;
+    {
+        std::lock_guard lock(impl_->mu);
+        impl_->retiring.erase(subscription_id);
+
+        auto topic_it = impl_->topics.find(key);
+        if (topic_it != impl_->topics.end() && topic_it->second.fanout->entries.load()->empty() &&
+            topic_it->second.provider_subscribed) {
+            segments_to_unsub = topic_it->second.segments;
+            topic_it->second.provider_subscribed = false;
+        }
+    }
 
     if (!segments_to_unsub.empty()) {
         impl_->provider->Unsubscribe(segments_to_unsub);

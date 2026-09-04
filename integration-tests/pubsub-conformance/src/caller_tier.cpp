@@ -532,6 +532,219 @@ TEST(CallerTier, DestructorDrainsAnInFlightDelivery) {
            "reached through teardown instead of through cancellation";
 }
 
+// ── Control on the per-Subscriber scope of the depth predicate ──────
+//
+// The mechanism the owner ruled on (2026-09-04, "one subscriber object"), and
+// the one nothing else in this suite can see: every other case constructs ONE
+// `Subscriber`, so widening the predicate back to process-wide leaves them all
+// green while reinstating the use-after-free the ruling was given to remove.
+//
+// X's handler cancels a subscription on Y while Y's delivery is parked. Because
+// the skip is keyed on the subscriber, X is NOT inside a delivery on Y, so it
+// takes Y's barrier and waits — which is what makes the published sentence true
+// for Y's caller.
+TEST(CallerTier, CancellingOnAnotherSubscriberWaitsForItsDelivery) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber x(probe);
+    Subscriber y(probe);
+
+    Flag y_entered;
+    Flag release_y;
+    Flag x_at_cancel;
+    std::atomic<bool> y_exited{false};
+    std::atomic<bool> y_exited_at_return{false};
+
+    const uint64_t y_id = y.Subscribe(kT2, Sub{[&](uint64_t, const uint8_t*, size_t,
+                                                   const SharedSchema&, const Attachments&) {
+                                          y_entered.Set();
+                                          ASSERT_TRUE(release_y.WaitFor(kGenerous));
+                                          y_exited.store(true, std::memory_order_release);
+                                      }})
+                              .subscription_id;
+
+    (void)x.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            ASSERT_TRUE(y_entered.WaitFor(kGenerous));
+            x_at_cancel.Set();
+            y.Unsubscribe(y_id);
+            y_exited_at_return.store(y_exited.load(std::memory_order_acquire),
+                                     std::memory_order_release);
+        }});
+
+    std::thread y_delivery([&] { probe->Deliver(kT2, Row(1)); });
+    ASSERT_TRUE(y_entered.WaitFor(kGenerous));
+
+    std::thread releaser([&] {
+        ASSERT_TRUE(x_at_cancel.WaitFor(kGenerous));
+        std::this_thread::sleep_for(kHoldWindow);
+        release_y.Set();
+    });
+
+    probe->Deliver(kT1, Row(2));  // runs X's handler on this thread
+
+    releaser.join();
+    y_delivery.join();
+
+    EXPECT_TRUE(y_exited_at_return.load(std::memory_order_acquire))
+        << "a handler on one Subscriber cancelled on ANOTHER and did not wait: that caller reads "
+           "the published sentence, frees its handler state, and the handler is still running";
+}
+
+// ── A duplicate cancel waits for the same drain (ruling 2026-09-04) ─
+//
+// Two threads cancelling one id: the loser used to take the no-op branch and
+// return while the handler was still running — a second, unpublished exception
+// to the frozen promise, reachable only under a race. It now waits for the
+// winner's drain.
+TEST(CallerTier, ADuplicateCancelWaitsForTheDrainInProgress) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    Flag entered;
+    Flag release;
+    Flag winner_at_unsubscribe;
+    Flag duplicate_at_unsubscribe;
+    std::atomic<bool> exited{false};
+
+    const uint64_t id = subscriber
+                            .Subscribe(kT1, Sub{[&](uint64_t, const uint8_t*, size_t,
+                                                    const SharedSchema&, const Attachments&) {
+                                           entered.Set();
+                                           ASSERT_TRUE(release.WaitFor(kGenerous));
+                                           exited.store(true, std::memory_order_release);
+                                       }})
+                            .subscription_id;
+
+    std::thread delivery([&] { probe->Deliver(kT1, Row(1)); });
+    ASSERT_TRUE(entered.WaitFor(kGenerous));
+
+    std::thread winner([&] {
+        winner_at_unsubscribe.Set();
+        subscriber.Unsubscribe(id);
+    });
+    ASSERT_TRUE(winner_at_unsubscribe.WaitFor(kGenerous));
+    // Let the winner get past its critical section and into the drain, which is
+    // where the id stops being live and starts being "retiring".
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::thread releaser([&] {
+        ASSERT_TRUE(duplicate_at_unsubscribe.WaitFor(kGenerous));
+        std::this_thread::sleep_for(kHoldWindow);
+        release.Set();
+    });
+
+    duplicate_at_unsubscribe.Set();
+    subscriber.Unsubscribe(id);  // the duplicate
+    const bool duplicate_saw_it_exit = exited.load(std::memory_order_acquire);
+
+    winner.join();
+    releaser.join();
+    delivery.join();
+
+    EXPECT_TRUE(duplicate_saw_it_exit)
+        << "the duplicate cancel returned while the handler was still running, so its caller may "
+           "not free handler state after all — a second exception to a promise that has one";
+}
+
+// ── ...and the OTHER half of the same ruling: a fully cancelled id is
+//    a silent no-op that does NOT wait for anything ────────────────
+//
+// Written as its own case because these two branches are what a reader cannot
+// tell apart from the code alone: "being cancelled right now" waits, "unknown or
+// already fully cancelled" does not.
+TEST(CallerTier, ACancelOfAFullyRetiredIdReturnsWithoutWaiting) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    const uint64_t retired =
+        subscriber
+            .Subscribe(kT1, Sub{[](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                   const Attachments&) {}})
+            .subscription_id;
+    subscriber.Unsubscribe(retired);  // completes: `retired` is now fully cancelled
+
+    Flag other_entered;
+    Flag release_other;
+    std::atomic<bool> other_exited{false};
+    (void)subscriber.Subscribe(
+        kT2, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            other_entered.Set();
+            ASSERT_TRUE(release_other.WaitFor(kGenerous));
+            other_exited.store(true, std::memory_order_release);
+        }});
+
+    std::thread delivery([&] { probe->Deliver(kT2, Row(1)); });
+    ASSERT_TRUE(other_entered.WaitFor(kGenerous));
+
+    EXPECT_NO_THROW(subscriber.Unsubscribe(retired)) << "cancelling a fully cancelled id";
+    EXPECT_FALSE(other_exited.load(std::memory_order_acquire))
+        << "a no-op cancel waited for an unrelated delivery: the two branches have been collapsed "
+           "into one";
+    EXPECT_NO_THROW(subscriber.Unsubscribe(retired + 100000)) << "cancelling an id never issued";
+    EXPECT_FALSE(other_exited.load(std::memory_order_acquire));
+
+    release_other.Set();
+    delivery.join();
+}
+
+// ── B1: a Subscribe landing in the drain window survives it ─────────
+//
+// The drain makes the provider-level transition window as long as a handler
+// runs. Publishing `provider_subscribed = false` before draining meant a
+// newcomer subscribing in that window registered a fresh provider subscription
+// which the drainer then tore down — and nothing repaired it, so the newcomer
+// held a valid id and received nothing, ever, with no error anywhere. Reachable
+// in the gateway, where one `Subscriber` is shared by every WS session.
+TEST(CallerTier, ASubscribeDuringADrainKeepsItsProviderSubscription) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    Flag parked;
+    Flag release_parked;
+    Flag canceller_at_unsubscribe;
+
+    const uint64_t parked_id =
+        subscriber
+            .Subscribe(kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                    const Attachments&) {
+                           parked.Set();
+                           ASSERT_TRUE(release_parked.WaitFor(kGenerous));
+                       }})
+            .subscription_id;
+
+    std::thread delivery([&] { probe->Deliver(kT1, Row(1)); });
+    ASSERT_TRUE(parked.WaitFor(kGenerous));
+
+    // Cancels the topic's LAST subscription and then blocks in the drain for as
+    // long as the parked handler takes.
+    std::thread canceller([&] {
+        canceller_at_unsubscribe.Set();
+        subscriber.Unsubscribe(parked_id);
+    });
+    ASSERT_TRUE(canceller_at_unsubscribe.WaitFor(kGenerous));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // The newcomer, landing squarely inside the drain window.
+    std::atomic<int> newcomer_calls{0};
+    const uint64_t newcomer =
+        subscriber
+            .Subscribe(kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                    const Attachments&) { ++newcomer_calls; }})
+            .subscription_id;
+    ASSERT_NE(newcomer, 0u);
+
+    release_parked.Set();
+    canceller.join();
+    delivery.join();
+
+    probe->Deliver(kT1, Row(5));
+    EXPECT_EQ(newcomer_calls.load(), 1)
+        << "a subscription created during a drain receives nothing: its provider-level "
+           "subscription was torn down by the drain it landed in, and nothing repairs it";
+    EXPECT_EQ(probe->unsubscribe_calls.load(), 0)
+        << "the topic was released at the provider while it still had a live subscriber";
+}
+
 }  // namespace
 }  // namespace conformance
 }  // namespace fletcher

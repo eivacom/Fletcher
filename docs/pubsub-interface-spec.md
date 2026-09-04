@@ -701,10 +701,16 @@ The contract:
    implied, because a caller who does not know it has a use-after-free.
 
    **Unsubscribing something that is not live is a no-op, not an error, at every
-   tier** (owner ruling 2026-09-04): an unknown id, an already-cancelled id, an
+   tier** (owner ruling 2026-09-04): an unknown id, a fully cancelled id, an
    unsubscribed topic. A foreign-runtime finaliser cancels unconditionally and
    cannot let an exception escape, so teardown must be safe to call blind. The
    deliberate cost is that a mistyped identifier is ignored rather than reported.
+   An id that **another thread is cancelling right now** is not that case: it
+   waits for the same drain rather than returning early (owner ruling
+   2026-09-04), which is what keeps the exception count at exactly one — the
+   race is created by the unconditional-cleanup shape idempotence exists to
+   serve, and an exception that only bites under a race is the hardest kind for
+   an application author to discover.
 
    **Scoped to each tier's own machinery.** This clause is a promise about the
    tier the call was made on. It says nothing about what a *provider* does with

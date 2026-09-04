@@ -87,11 +87,17 @@ class Subscriber {
     /// one another — see integration-tests/pubsub-conformance/README.md.
     ///
     /// **Cancelling something that is not live is a no-op, not an error.** An
-    /// unknown id, an already-cancelled id and an id this Subscriber never
-    /// issued are all accepted and do nothing, so teardown may call this
+    /// unknown id, a fully cancelled id and an id this Subscriber never issued
+    /// are all accepted and do nothing, so teardown may call this
     /// unconditionally — a foreign-runtime finaliser cannot let an exception
     /// escape. The cost is deliberate: a mistyped id is ignored rather than
     /// reported.
+    ///
+    /// A cancellation of an id that **another thread is cancelling right now** is
+    /// not that case, and is not a no-op: it waits for the same drain, so it too
+    /// returns only once that callback has finished. Two threads cancelling one
+    /// subscription therefore both block, and both may free handler state on
+    /// return — the promise above keeps exactly one exception, the one above it.
     ///
     /// **A subscription id is meaningful only to the Subscriber that issued
     /// it.** Ids are per-instance counters, so handing one to a *different*

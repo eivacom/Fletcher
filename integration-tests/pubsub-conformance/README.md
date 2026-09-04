@@ -597,26 +597,29 @@ that these are seam properties and not one provider's. Every case is driven by
 latches, never sleeps: the timing window the defect lived in is *made*, not
 waited for.
 
-**What falsifies it.** Three cases were red before the fix and green after, on
-the behaviour itself:
+**What falsifies it.** These cases were red before the behaviour they name and
+green after — each observed, not asserted:
 
-| Case | What it caught before the fix |
+| Case | What it caught |
 |---|---|
 | `NoCallbackAfterUnsubscribeReturns` | `second_calls` was **1** — a handler ran after its own cancellation returned |
 | `UnsubscribeWaitsForAnInFlightDelivery` | the handler had **not** exited when `Unsubscribe` returned |
 | `UnsubscribeOfAnUnknownIdIsANoOp` | *"it throws fletcher::PubSubError with description \"Subscriber: unknown subscription ID\""* |
+| `DestructorDrainsAnInFlightDelivery` | the same, through teardown instead of through cancellation |
+| `ADuplicateCancelWaitsForTheDrainInProgress` | `duplicate_saw_it_exit` was **false** — the loser of a two-thread cancel took the no-op branch and returned while the handler was still running: a second, unpublished exception to the frozen promise, reachable only under a race (owner ruling 2026-09-04 removed it) |
+| `ASubscribeDuringADrainKeepsItsProviderSubscription` | `newcomer_calls` **0** and `unsubscribe_calls` **1** — a subscription created while another thread was draining had its provider-level subscription torn down under it and received nothing, ever, with no error anywhere |
 
-`DestructorDrainsAnInFlightDelivery` was red the same way, through teardown
-instead of through cancellation. The remaining cases are **live negative
-controls**, and each was made to go red by mutating the thing it controls rather
-than asserted to be one:
+The remaining cases are **live negative controls**, and each was made to go red
+by mutating the thing it controls rather than asserted to be one:
 
 | Control | Mutation | Observed |
 |---|---|---|
 | `SelfUnsubscribeInsideItsOwnCallbackReturns` | delete the per-`Subscriber` delivery-depth skip | **Failed** — self-deadlock on its own non-recursive gate |
 | `CrossCancellingDeliveriesDoNotDeadlock` | same mutation | **Timeout** — the ABBA cycle between two deliveries on one `Subscriber` |
 | `UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider` | scope the barrier as a function-scoped `lock_guard`, so a gate is held across `provider->Unsubscribe` | **Timeout** — and *only* this case reddens on that mutation |
-| `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the `mu`↔gate edge, in the permitted direction |
+| `CancellingOnAnotherSubscriberWaitsForItsDelivery` | widen the depth predicate from `InsideDeliveryOn(identity.get())` back to process-wide (`!g_delivery_stack.empty()`) | **Failed** — and *only* this case reddens on that mutation. It is the sole control on the scope the owner ruled on (2026-09-04, "one subscriber object"); every other case constructs one `Subscriber`, so the process-wide scope the owner rejected is invisible to all of them |
+| `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` | — | that the two no-op branches were not collapsed: an **unknown or fully cancelled** id still returns at once, while an id **another thread is cancelling right now** waits (the row above it) |
+| `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the gate→`mu` edge, in the permitted direction |
 | `ALiveSubscriptionStillReceives` | — | that the gate did not simply silence delivery |
 | `AReleasedIdIsNeverReused` | — | ids are never recycled, without which "unknown id is a no-op" silently becomes "cancels a stranger" |
 
@@ -631,7 +634,7 @@ that has already cancelled itself, so the cancellation of the last remaining
 entry empties the topic and enters the provider with that entry's gate still
 ahead of the fan-out loop.
 
-**Three of these ten cases redden by hanging**, so `conformance_caller_tier`
+**Three of these fourteen cases redden by hanging**, so `conformance_caller_tier`
 carries a declared ctest `TIMEOUT` of 60 s against a suite that costs well under
 a second. An uncapped hang is not a red; it is a hung job.
 
@@ -673,6 +676,22 @@ a second. An uncapped hang is not a red; it is a hung job.
    instance silently addresses a stranger's subscription. Predates this suite and
    is unchanged by it; globally unique ids would need the process-global state
    the isolation ruling keeps out of the seam.
+7. **The provider-level subscribe/unsubscribe transition is not fully
+   serialised.** `ASubscribeDuringADrainKeepsItsProviderSubscription` closes the
+   window the drain opened — the whole duration of a handler — by deciding the
+   transition *after* the drain, in one critical section, so a newcomer's entry
+   is simply visible and the teardown does not happen. What remains is the
+   few-instruction window this file has always had: between that decision and
+   `provider->Unsubscribe`, and between two concurrent first-`Subscribe`s. A
+   serialising lock would close it, and it is deliberately **not** taken: the
+   fan-out holds a gate across the user callback, and that callback may re-enter
+   `Subscribe` — so any lock `Subscribe` must acquire becomes gate→lock, while a
+   teardown holding it across a provider call that synchronously delivers becomes
+   lock→gate. That is a new deadlock class in exchange for a pre-existing race,
+   and a hang here would not be the owner's sanctioned trade. None of the three
+   shipped providers delivers synchronously from `Subscribe` today; a driver that
+   did would make the cycle reachable, which is why the reason is recorded rather
+   than the lock added.
 
 ## Building and running
 
