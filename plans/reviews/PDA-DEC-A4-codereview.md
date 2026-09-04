@@ -347,3 +347,165 @@ the numbers above re-confirm it.
   400/400 at 50 microseconds of provider work (see RB1).
 - The lock-order note in `subscriber.cpp` does not mention gate -> gate across two `Subscriber`
   objects, which is the mechanism of the published cross-`Subscriber` hang.
+
+
+---
+---
+
+# RE-CHECK 2 — fix cycle 2 (`d9a6e8f` -> `a86de50`)
+
+Appended; the cycle-0 review and re-check 1 above are unchanged.
+Cumulative for the item: `963bde5` -> `a86de50`.
+
+**Re-check 2 counts: 0 blocking, 1 should-fix, 4 nits.**
+**Item readiness: ready to close.** The one should-fix is not a regression — it reproduces
+identically at `d9a6e8f` and is strictly narrowed by this cycle — and it is a follow-up, not a
+gate.
+
+## RB1 — re-measured independently
+
+My own 400-trial harness (`C:\tmp\limit7b_pda.cpp`), unchanged, rebuilt against `a86de50`:
+
+| provider `Subscribe` work | before (`d9a6e8f`) | after (`a86de50`) |
+|---|---|---|
+| 0 us | 1/400 | **0/400** |
+| 50 us | 400/400 | **0/400** |
+| 500 us | 400/400 | **0/400** |
+
+Matches the implementer's numbers. I also built and ran the `CallerTier` suite standalone
+(`fletcher-pubsub` + gtest only, no transport): **16/16 green, and 20 consecutive runs with 0
+failures** — no flakiness observable at this gate.
+
+Regression battery re-run against `a86de50`:
+
+- Core guarantee + duplicate cancels: **218,607,781 callback invocations, 14,101 duplicate cancels,
+  0 owner-returned-while-running, 0 duplicate-returned-while-running, 0 post-return invocations.**
+- Cycle-0 B1 reproduction: `subs=1 unsubs=0 late_calls=1` — still closed.
+
+## The new subscribe-side serialisation — attacked, no defects found
+
+- **RAII coverage.** `InProgressGuard` is declared *after* `lock.unlock()` and destroyed at every
+  exit of `EnsureProviderSubscription`: the normal return (guard runs after the return value is
+  built, with `mu` re-held, so `owns_lock()` is true and it just clears + notifies), the
+  `topics.end()` early return (unreachable — nothing erases from `topics` — but covered anyway), and
+  a throwing `provider->Subscribe` (guard re-takes `mu`, clears, notifies; `Subscribe`'s catch then
+  finds the lock already owned and proceeds). No path leaves the flag set.
+- **Lost wakeup / notify-before-wait.** Impossible: the wait is predicate-form, the flag is written
+  only under `mu`, and `notify_all` is issued with `mu` held. A notify that precedes the wait is
+  absorbed by the predicate check.
+- **Waiter blocking forever.** Only if the setting thread never runs the guard — i.e. `terminate` or
+  process death. `provider_cv` is per-`Subscriber` while the predicate is per-topic, so unrelated
+  topics cause a re-check, not a miss.
+- **The `TopicState&` captured across the wait and the unlock** is sound: `std::unordered_map`
+  rehashing invalidates iterators but not references to elements, and nothing erases from `topics`.
+- **Ordering.** The wait releases `mu`, so `gate < mu` is preserved — a delivery thread holding a
+  gate can still take `mu` while another thread is mid-`provider->Subscribe`. The genuinely new edge
+  is that a caller may hold a *gate* while blocked on another thread's `provider->Subscribe`; the
+  only cycle that closes is a provider delivering synchronously from inside `Subscribe` into a
+  handler that subscribes to the same topic, which is exactly what limit 8 names, and it is a loud
+  hang under the target's `TIMEOUT`. Correct.
+
+## SHOULD-FIX (re-check 2)
+
+### RC2-S1 — depth-0 sweeping releases a deferred retirement whose handler is still running on **another** thread (confidence: high, reproduced; **not a regression** — identical at `d9a6e8f`)
+
+The deferral is released when *this thread's* outermost delivery frame returns. That is exactly
+right for the self-cancel it was built for, where the handler and the frame end together — verified
+below. It is approximate for the **sibling** shape, where the cancelled subscription's handler is
+running on a different thread:
+
+- T2 delivers topic B on `S`; handler `H_B` is long-running (legal: `provider.hpp` serialises
+  per subscription, and says the thread may differ between subscriptions; Fast DDS runs a listener
+  per reader).
+- T1 delivers topic A on `S`; handler `H_A` cancels `id_B`. Carve-out applies, barrier skipped,
+  release deferred. `H_A` returns; T1's frame exits; the sweep releases `id_B`.
+- T3 — an uninvolved thread, inside no delivery, covered by **no** published exception — cancels
+  `id_B`. It now finds neither map, takes the silent no-op branch, and returns **while `H_B` is
+  still running**, so it may free handler state under a live callback.
+
+Reproduced (`C:\tmp\defer_pda.cpp`): *"third-party Unsubscribe waited 0 ms; handler had exited: NO"*
+— identical at `d9a6e8f` and at `a86de50`.
+
+The companion case (`C:\tmp\defer2_pda.cpp`) is the proof that the new mechanism does real work: the
+same third-party cancel arriving **while the deferral is still outstanding** waits correctly at
+`a86de50` and returns mid-callback at `d9a6e8f`. So this cycle strictly narrows the hole; it does
+not open it.
+
+Why I do **not** think it should block the close: the marginal exposure is confined to a
+subscription that is *already* in the carved-out state — the in-delivery cancel that created the
+deferral is itself authorised to return without waiting, so the application that wrote `H_A` has
+already taken that trade for `id_B`. And the reachability is a three-way race requiring cross-topic
+concurrent delivery, which is the same family the owner already ruled published residue.
+
+**Fix (one line of intent):** carry the gate in `DeferredRelease` and make the sweep *drain* rather
+than merely release — `{ std::lock_guard g(gate->mu); } retirements->Release(id);`. At depth 0 the
+sweeping thread holds no gate, so this cannot originate a gate->gate cycle; the cost is that a
+delivery thread may block at the end of a fan-out that cancelled a sibling.
+
+## The `Retirements` deferral mechanism — everything else I tried, and it held
+
+- **Deferral outstanding when the `Subscriber` dies:** safe by construction. `DeferredRelease` holds
+  a `shared_ptr<Retirements>`, and `Retirements::Release` touches only its own mutex and map — no
+  `Impl`, no gate map, no provider. The gate itself is kept alive by the same map entry.
+- **Handler throwing mid-frame:** the fan-out's `catch (...)` contains it, and `~DeliveryScope` is
+  RAII, so the sweep runs on the unwind path too. Nothing is left unswept.
+- **Gate kept alive forever by a stale deferral:** cannot happen — the sweep is in the destructor of
+  a scope the thread is *already inside*, so it is guaranteed to run before that delivery returns.
+  It does not depend on any future delivery.
+- **Depth-0 sweeping dropping something a nested frame still needs:** the opposite. The sweep is
+  suppressed while any frame of this thread is live, including frames belonging to a *different*
+  `Subscriber`, so entries are over-held, never under-held. Over-holding is harmless: a cancel that
+  finds an over-held entry waits on a free gate and returns at once.
+- **Double release / double publish:** exactly-once on every path. `Unsubscribe` releases only when
+  `ours && !deferred`; the deferred one is released by the sweep; a duplicate cancel is
+  `owns_retirement == false` and returns `false` without touching the map; ids are never reused, so
+  a re-publish cannot collide.
+- **Lock order:** `Retirements::mu_` is genuinely innermost — taken under `mu` for publish/find/
+  release, taken alone by the sweep (which runs after the fan-out loop, so no gate is held), and
+  never held across anything that can block. `gate < mu < retirements` has no cycle.
+- **`RetireAndDrain` is now `[[nodiscard]]` and every call site consumes it** — I checked all four
+  (`Unsubscribe`, `~Subscriber`, `Subscribe`'s rollback, and the duplicate path).
+
+## Cycle-1 items: verification
+
+- **RS1 and both record items — done and correct.** Limit 7 now describes only the teardown side,
+  names the real cycle `T -> provider -> gate -> mu -> T`, and states correctly that it is reachable
+  against today's providers because `provider.hpp` *requires* `Unsubscribe` to outlive no delivery
+  and Fast DDS implements that. Limit 8 describes the side just closed, with the synchronous-
+  delivery caveat moved to where it belongs, and its numbers match mine exactly.
+- **Lock-order note — now true of every path.** I re-walked all of them: `Unsubscribe` (find/publish
+  under `mu`, drain outside), `~Subscriber` (publish under `mu`, drain outside, transition in a
+  later critical section), `Subscribe`'s rollback (publish under `mu`, `unlock`, then drain), the
+  delivery path (gate then `mu`), and the sweep (no lock held). No path acquires a gate while
+  holding `mu`. The gate->gate-across-`Subscriber`s residue is now recorded, which was the gap I
+  named.
+- **The two sleep-sequencing nits — genuinely fixed.** Both cases now `ASSERT_FALSE` that the racing
+  thread has not returned, and the latch structure makes that assertion load-bearing rather than
+  decorative: the racing thread cannot return until a flag the main thread sets *after* the
+  assertion. A too-short sleep now fails setup loudly. (If the two threads' roles swap, the case
+  still exercises the branch it names, on the other thread.)
+
+## Nits (re-check 2, one line each)
+
+- The teardown window of limit 7 is real and *observable*, not merely theoretical: a second run of
+  my harness hit it **1 time in 1,832,000** live-subscription deliveries (the first run was
+  0/876,000) — the README's "measured 0 silent losses in 876,000" should not be read as
+  "unobservable".
+- `InProgressGuard::~InProgressGuard` calls `lock.lock()`, which can throw; a destructor is
+  implicitly `noexcept`, so the only failure mode is `std::terminate` (reachable only on mutex
+  resource exhaustion, i.e. never in practice).
+- `~Subscriber` can now run while another thread sleeps in `provider_cv.wait` — the destructor does
+  not block, because the waiter has released `mu`, so it destroys the condition variable underneath
+  it; already outside the contract by §6 clause 5's quiescence requirement, but it is a new specific
+  way for that violation to crash.
+- `g_deferred_releases.push_back` can throw `bad_alloc` inside `RetireAndDrain`, which would leave
+  the id published forever; benign (later cancels lock a free gate and return) but nothing states
+  it, unlike the sibling claim about `std::mutex::lock` which is stated.
+
+## RECORD (re-check 2, paperwork, non-blocking)
+
+- README limit 7's "0 silent losses in 876,000" is a floor, not a ceiling: 1 in 1,832,000 observed
+  on a second run.
+- The lock-order note does not mention that a caller may now hold a gate while *blocked on another
+  thread's* `provider->Subscribe`; the consequence is named in `EnsureProviderSubscription` and in
+  limit 8, but not in the note that claims to be the total order.

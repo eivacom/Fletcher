@@ -320,3 +320,174 @@ is not reported anywhere. Do not touch frozen §5.3 to say it.
 - `plans/PDA-DEC-A4-lifetime-tier.md` now reads *"**37 entries**"* and carries a PM
   note *"10 cases shipped, not the 8 tabled"*; the ledger is at **38** and the
   suite ships **14**.
+
+
+---
+---
+
+# Re-check 2 after fix cycle 2 — revision `a86de50` (cycle 1 `aa72813`, cycle 2 `6d74d53`)
+
+*The two sections above stand as the cycle-1 and re-check-1 records and are not
+rewritten. This section reviews `git diff d9a6e8f a86de50` (+361/−58) only.*
+
+Ledger: **38 entries** (`grep -c '^## 2026'` → 38), unchanged. Both fixes narrow,
+so none was needed — agreed.
+
+**Verdict: FAIL — 1 blocking, 0 minor.** R1, R2 and R3 are all genuinely closed;
+I re-probed R1's exact shape and it is fixed. The blocking item is a **fourth**
+path in the same family, found by probe, in-contract, 5/5 reproducible.
+
+**"The frozen promise now has exactly one exception": NO.** The probe that decides
+it is **probe 6** — *a handler cancels a **sibling** subscription whose callback is
+running on another thread; that cancel defers its release to the end of the
+cancelling handler's frame, which ends first; a fresh thread that has never been
+inside a delivery then cancels that sibling and returns while its callback is
+still running.* 5/5 on `a86de50`.
+
+**Is the item ready to close? No** — one ~3-line fix short of it, and no owner
+question is needed because the fix narrows.
+
+---
+
+## R1 — closed for the shape it named, and I re-probed it rather than read it
+
+Probe 3, which failed 3/3 at `6d74d53`, now passes 3/3: *"after a self-cancel,
+another thread's cancel of the same id waited: **YES**."* Probes 1 and 2 still pass
+3/3. The mechanism is right where it is right: `Retirements` is shared-owned so a
+deferred release outlives the `Subscriber`; the sweep at **depth 0** rather than
+per frame is the correct choice and I checked the nested case that motivates it
+(probe 5c: an inner frame's deferral is not released while an outer frame is still
+on the stack, and the retired entry is not re-invoked); publish and lookup happen
+under `mu` in the same critical section that moves the live map, so "live",
+"retiring" and "gone" stay disjoint; `Retirements`' own lock is always innermost
+and never held across anything that blocks.
+
+## BLOCKING — the deferral is scoped to the cancelling FRAME, but the promise needs it scoped to the GATE
+
+The carve-out is deliberately wide: a handler may cancel **any** subscription on
+its own subscriber, not only its own. The deferred release is narrow: it fires when
+**this thread's** outermost delivery frame returns.
+
+For the *self* shape those two coincide — the fan-out holds the gate across the
+handler, so the frame necessarily outlives the callback, which is why R1's fix
+works. For the *sibling* shape they come apart: entry E2's callback is running on
+another thread (§6 clause 2 expressly permits it, and Fast DDS's listener-per-reader
+makes it ordinary), handler E1 cancels E2 from inside its own frame, E1's frame
+ends, the sweep erases E2 from `retirements` — and E2's callback is still running.
+From that instant E2 is in neither map, so a cancel from any other thread takes the
+no-op branch and returns mid-callback.
+
+Probe 6, 5/5 on `a86de50`: *"third-party cancel after a sibling self-cancel waited:
+**NO** (returned while E2's handler was still running)."* The third party is a
+freshly spawned thread that has never been inside a delivery, so there is no reading
+on which it is covered by the carve-out; §7 clause 6 and `subscriber.hpp` both tell
+it that nothing is in progress and that it may free. Nothing in the shape is out of
+contract: no destruction race, no re-entrant provider call (the probe keeps a spare
+entry so the topic never empties), and cancelling a sibling from inside a handler is
+behaviour this design promotes.
+
+I state the reachability honestly: this is **narrower** than the two shapes already
+fixed — it needs the carve-out exercised on a sibling, that sibling delivering
+concurrently, and a later cancel of it. But it is the same class, the frozen text
+still asserts the count is one, and ruling 38's own reasoning covers it verbatim —
+*"an exception that only bites under a race is the silent use-after-free you already
+ruled against."*
+
+**Acceptable fix (~3 lines, narrowing, no new authorisation):** carry the `Gate`
+alongside the id in `DeferredRelease`, and at sweep time — which is **depth 0**, so
+this thread holds no gate and no cycle is representable — take and release the
+barrier before erasing: `{ std::lock_guard<std::mutex> b(gate->mu); }
+retirements->Release(id);`. Self shapes pay nothing (the gate is already free by
+then); sibling shapes wait exactly as long as that handler takes, which is the cost
+clause 6 already charges. *Alternative, if the hot path is preferred over the
+delivery thread's return:* have the fan-out loop release the retirement for an entry
+whose `retired` flag is set once its callback has returned — the precise moment the
+promise becomes true — but that moves ownership of the release, which the current
+"only the owner may defer or release" invariant would have to be restated for.
+**One control is owed with it**, mirroring probe 6, with the mutation *"sweep
+without taking the barrier"*.
+
+## R2 — closed, and the whole control table audited
+
+The Observed cell is brought down and now says outright that the case does **not**
+redden if the two branches are collapsed, naming
+`ADuplicateCancelWaitsForTheDrainInProgress` as the sole pin. I re-read every row of
+both tables: the four rows carrying "—" (`ACancelOfAFullyRetiredId…`,
+`ReentrantSubscribe…`, `ALiveSubscriptionStillReceives`, `AReleasedIdIsNeverReused`)
+now describe only what they watch, and the six rows carrying a mutation each name
+one that is mechanically plausible for that case and no other. **No case is credited
+with catching something it cannot.**
+
+## R3 — closed, and §5.3 is genuinely untouched
+
+The new paragraph states all three parts §5.3 asks for — contained at the point of
+invocation, the remaining subscribers still receive that sample, and no report
+anywhere — and says why containment is not tolerance. Adequate to the requirement
+that it be *stated*.
+
+§5.3 unmodified, verified structurally rather than by eye: the cumulative spec diff
+`963bde5 → a86de50` contains exactly **two hunks**, at §7 clause 6 and §9's oracle
+row. Nothing else frozen was touched across three cycles.
+
+## Limits 7 and 8, judged as asked
+
+- **Neither is an exception to the "you may free on return" promise.** Limit 7's
+  failure mode is a topic released at the provider while a live subscriber remains —
+  silent non-delivery, not a callback outliving its cancellation. Limit 8's residual
+  is a **hang** (a driver delivering synchronously from inside `Subscribe` into a
+  handler that subscribes to the same topic), which is the trade the owner's
+  2026-09-04 preference does sanction. Neither creates a shape in which a handler
+  runs past a cancel that returned.
+- **Splitting 7 into 7 and 8 makes the published set more accurate, not less.** The
+  old limit 7 described the subscribe side as "a few-instruction window" when it in
+  fact lasted the whole provider call — 400/400 duplicate registrations at 50 µs is
+  the outcome under contention, not a race. Publishing that correction is the
+  honest move, and closing it is squarely inside the 2026-08-31 divergence ruling
+  (Fast DDS refusing the loser `kInvalidArgument` on a valid `Subscribe` while the
+  loopback reports `kSubscriptionEnded` to a live subscriber is exactly a
+  cross-provider divergence, and that ruling forbids pinning one instead of fixing
+  it). **Limit 8 conflicts with no ruling.**
+- Limit 7's refusal to serialise the teardown side is now argued against *today's*
+  providers rather than a hypothetical one, which is stronger than the version I
+  passed last cycle, and both legs of the cycle it names are exercised by cases in
+  this suite.
+
+## Also pressure-tested this cycle, and clean
+
+- **`Subscribe`'s new `provider_cv.wait` against frozen §7 clause 5 ("`Subscribe`
+  never blocks").** Checked and **not** a violation: clause 5's sentence is bound to
+  the late-joiner schema ("*Late joiners get the schema asynchronously; `Subscribe`
+  never blocks*"), which is what `SchemaArrival` exists for, and `Subscribe` already
+  blocks on `mu` and on `provider->Subscribe` itself. The new wait is bounded by a
+  provider call this same path would make anyway, and the `InProgressGuard` clears
+  the flag and notifies on the throwing path, so a failing `provider->Subscribe`
+  cannot wedge the topic.
+- **A handler that throws mid-frame** (probe 5a): contained, the fan-out continues,
+  the sibling still receives both samples, an outstanding deferral is still swept,
+  and a later cancel does not hang.
+- **Nested delivery frames on one thread** (probe 5c): the inner frame's deferral
+  survives until depth 0 and the retired entry is not re-invoked.
+- **A `Subscriber` destroyed with a deferral outstanding** (probe 5b): no crash —
+  `Retirements` is kept alive by the deferral's `shared_ptr`, which is exactly why
+  it is shared-owned. The destructor *does* return while such a handler runs, but
+  that is **out of contract** and therefore not a finding: frozen §6 clause 5 says
+  *"Destruction requires quiescence: no call in flight, no callback able to
+  re-enter."*
+- **Converse check clean, final pass.** No `kInvalidArgument` for an unknown
+  subscription id anywhere; no test, header or doc asserting the pre-change
+  contract; the spec text amended in cycle 1 still matches the code after two
+  mechanism changes underneath it — with the single exception of the sentence the
+  blocking finding is about (*"which is what keeps the exception count at exactly
+  one"*), which becomes true again the moment that fix lands. Suite 16/16 green as
+  built.
+
+## RECORD (PM's, one line each, not blocking)
+
+- `plans/PDA-DEC-A4-lifetime-tier.md` still reads *"**37 entries**"* and carries the
+  PM note *"10 cases shipped, not the 8 tabled"*; the ledger is at **38** and the
+  suite now ships **16**.
+- `subscriber.hpp`'s destructor paragraph promises *"Same wait, same one carve-out
+  as Unsubscribe."* After the deferral change that is over-generous — a
+  self-cancelled subscription is no longer in the live map the destructor drains —
+  but §6 clause 5 puts the whole scenario outside the contract, so this is wording,
+  not behaviour.
