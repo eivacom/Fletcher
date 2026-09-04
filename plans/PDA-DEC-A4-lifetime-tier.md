@@ -2,7 +2,7 @@
 
 *Design, revision 2 (2026-09-04). Round PDA-DEC, item A4. Oracle:
 `docs/pubsub-interface-spec.md` §7 clause 6, §9, §12.1. Rulings:
-`plans/PDA-DEC-rulings.md`, **36 entries** — including the two of 2026-09-04 that
+`plans/PDA-DEC-rulings.md`, **37 entries** — including the three of 2026-09-04 that
 authorise the idempotence amendment and the blocking wait, and publish the
 self-unsubscribe carve-out.*
 
@@ -69,13 +69,13 @@ Rev 1 stated this over two resources and silently added two more edges. Both are
 **forbidden**, not handled:
 
 - **No gate is held while another gate is acquired (edge gate→gate).** A
-  file-local `thread_local` delivery-depth counter is incremented around the delivery
+  **per-`Subscriber::Impl`** `thread_local` delivery-depth counter is incremented around the delivery
   loop's invocation. **A thread inside a delivery never blocks on any gate:** its
   `Unsubscribe` performs the `retired` store and **skips the barrier**. The
   cross-cancelling ABBA — two concurrent deliveries on two topics of the same
   `Subscriber`, ordinary on Fast DDS's listener-per-reader — therefore has no cycle to
-  form. The counter is per-thread scratch, not shared mutable state: it is invisible
-  across `Subscriber` instances and does not touch the 2026-09-03 isolation claim.
+  form. The counter is per-thread scratch, not shared mutable state, and does not touch the
+  2026-09-03 isolation claim. *(PM correction at `aa72813`, A4-DEBT-9 — see progress log.)*
 - **No gate is held while the provider is entered (edge gate→provider).** The barrier is
   a scoped block that **ends before** `provider->Unsubscribe(segments_to_unsub)`
   (`subscriber.cpp:205-206`) and before the destructor's per-topic call. Never a
@@ -230,6 +230,8 @@ what stop a broken instrument from greening the guard.
 | `CallerTier.ALiveSubscriptionStillReceives` | — | control that the gate did not simply silence delivery |
 | `CallerTier.AReleasedIdIsNeverReused` | — | pins P4 |
 
+*(PM correction at `aa72813`: **10 cases shipped, not the 8 tabled** — see progress log.)*
+
 **Edge B has no unit control** — it needs a provider that waits on its own in-flight
 delivery, which the in-file probe is not and `conformance_caller_tier` deliberately cannot
 link. It is forbidden by scope, and its live check is `ctest -R 'ProviderConformance\.'`
@@ -274,7 +276,7 @@ today and on the two deadlock controls**, and that sentence goes in the README.
 |---|---|
 | `docs/pubsub-interface-spec.md` | §7 clause 6 amended (both tiers, quiescence, the §1.3 carve-out, idempotence, tier-scoping); §9 oracle row gains `CallerTier` |
 | `pubsub/include/fletcher/pubsub/subscriber.hpp` | delete the "does NOT guarantee … intentional and by design" paragraph; state clause 6, idempotence, the blocking wait, the §1.3 carve-out, and the id-scoping hazard |
-| `pubsub/src/subscriber.cpp` | `Gate` on `Entry`; gate check in the fan-out loop; `thread_local` delivery depth; `Unsubscribe` retires after releasing `mu`, in a scope that **ends before** `provider->Unsubscribe`; unknown id → no-op; destructor retires and drains before entering the provider |
+| `pubsub/src/subscriber.cpp` | `Gate` on `Entry`; gate check in the fan-out loop; per-`Impl` `thread_local` delivery depth; `Unsubscribe` retires after releasing `mu`, in a scope that **ends before** `provider->Unsubscribe`; unknown id → no-op; destructor retires and drains before entering the provider |
 | `pubsub/tests/test_publisher_subscriber.cpp` | two cases rewritten (below) |
 | `integration-tests/pubsub-conformance/src/caller_tier.cpp` | **new** — the `CallerTier` suite and its probe provider |
 | `integration-tests/pubsub-conformance/CMakeLists.txt` | `conformance_caller_tier` target + `gtest_discover_tests` with `TIMEOUT 60` (a hang here is a deadlock control firing) |

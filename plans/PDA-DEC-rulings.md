@@ -458,3 +458,23 @@ stated reasoning is itself normative for this round: **a loud hang is preferred 
 use-after-free.** Sixth consecutive time the owner chose a narrow claim stated honestly over a
 wide one implied. Note the 2026-09-03 licence to infer that preference permits **narrowing**
 without asking, never **widening** — which is why this had to be carried.
+
+## 2026-09-04 — A duplicate cancel waits too; the promise keeps exactly one exception *(selection)*
+> "Make it wait too — A duplicate cancel waits for the same drain the first one is performing, so your promise holds with only the single carve-out you already approved. Cost: two threads cancelling the same subscription now both block until the handler finishes. Why I recommend it: this case arises precisely from the unconditional-cleanup shape your idempotence ruling exists to serve, so the C#/Rust teardown path is the most likely place to hit it — and an exception that only bites under a race is the silent use-after-free you already ruled against. The code is being restructured for the other fix anyway, so this is close to free now and expensive later."
+
+**Context:** PDA-DEC-A4 compliance review, finding 2, established by probe (3/3 reproducible,
+not by reading): a **concurrent duplicate `Unsubscribe(id)`** returned while that callback was
+still running — a second, unpublished exception to the frozen "none is in progress when it
+returns / you may free". It was created by the finaliser shape the 2026-09-04 idempotence ruling
+itself asked for, and it contradicted the same day's carve-out ruling, which asserted uniqueness
+("that is **the one shape**"). Rejected: publishing it as a second numbered limit in the header
+and the harness README — smaller diff and no mechanism change, but it would leave the frozen
+sentence with two exceptions, the second reachable only under a race, which is the hardest kind
+for an application author to discover or test against.
+**Applies to:** a duplicate `Unsubscribe` of an id already being retired by another thread
+**blocks on the same drain** rather than returning as a no-op. The idempotence ruling still
+holds for an id that is genuinely unknown or already fully cancelled — that stays a silent
+no-op. After this, the "you may free on return" promise has **exactly one** exception, the
+self-cancel carve-out of 2026-09-04, as that ruling claimed. Consistent with the owner's
+standing preference, stated the same day, that **a loud hang is preferred over a silent
+use-after-free** — and this trades a silent race for a bounded wait, which is the same trade.

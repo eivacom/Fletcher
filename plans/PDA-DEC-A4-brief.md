@@ -22,8 +22,8 @@ never entered after its cancellation returned, even while another delivery is mi
 ## Corner cases forbidden vs handled
 **Forbidden** (cannot occur, by construction, *at this layer*): a handler entered after
 its cancellation returned, or later in the same delivery round after being cancelled
-during it; two handlers cancelling each other's subscriptions hanging one another;
-teardown raising an error; a handler running after the subscriber is destroyed.
+during it; two handlers on the SAME subscriber cancelling each other hanging one
+another; teardown raising an error; a handler running after the subscriber is destroyed.
 **Handled**, with why not forbidden: (1) cancelling waits while a handler runs — that
 *is* the guarantee you ruled for; (2) a handler that never returns blocks it forever —
 nothing can bound foreign code; (3) a cancellation issued **from inside a handler** does
@@ -37,11 +37,10 @@ are built as you ruled. The third (how wide to claim the new evidence) is settle
 narrow-claim preference your 2026-09-03 ruling licensed us to apply without asking.
 
 ## Risks accepted / debt carried
-- **One widening you may want to overturn:** you approved "cancelling from inside a
-  handler cannot wait for the frame it is in". We extend that to *any* cancellation issued
-  from inside a handler, because waiting there is exactly what makes two handlers hang
-  each other. Same shape, same reason; published in the same sentence. Say the word and we
-  narrow it, at the cost of reinstating that hang.
+- **Published residue, per your 2026-09-04 ruling:** two handlers on *different*
+  subscriber objects that cancel each other can still hang. You chose this over the wider
+  alternative, on the reasoning that a loud hang beats a silent use-after-free. It is
+  written into the test-suite README as a numbered limit, not implied.
 - Delivery gets marginally slower: cancelling safely needs a lock the delivery path
   previously avoided. Accepted without measuring it — no mechanism that waits is free.
 - The other delivery guarantees stay proven only at the transport layer — published as a
