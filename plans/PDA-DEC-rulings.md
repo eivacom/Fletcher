@@ -501,3 +501,49 @@ it at the scope the guarantee is actually about, not to publish the leak — pro
 cause has been NAMED rather than another instance patched. The stop condition the owner set
 stands for any future item: a further case after the root-cause fix means the premise is broken
 and the item stops. Seventh consecutive time the owner chose the honest-and-narrow answer.
+
+## 2026-09-04 — A topic part containing a separator is refused *(selection)*
+> "Reject it outright — A loud refusal beats a silent wrong delivery. No remote client loses a working topic: Fletcher's own gateway can never produce such a part."
+
+**Context:** PDA-DEC-A5 brief decision 1. Today the single part `"a/b"` and the two parts
+`"a","b"` are the **same** topic in all three providers, so one can silently receive the other's
+data — while §3.5's frozen sentence licenses a provider under which they are two. Rejected:
+keeping both working by rewriting the name on the wire (preserves every name in use, but changes
+wire bytes for names that work today, which decision 13 makes a **separate stop-and-ask**), and
+declaring the collision intentional and documenting it (no code change, but it leaves the silent
+wrong delivery the colleague's stop-and-ask was raised about).
+**Applies to:** `internal::RequireSegments` refuses any segment containing `/`. Consistent with
+the owner's standing preference that a **loud failure beats a silent wrong answer**, now stated
+three times across A4 and A5.
+
+## 2026-09-04 — An empty topic part is refused *(selection)*
+> "Reject — Matches the existing rule that an empty topic names nothing — one rule at one level, which is what a language binding can reproduce. Neither Fletcher's gateway nor any code in the tree uses one."
+
+**Context:** PDA-DEC-A5 brief decision 2. `{"a",""}` and `{""}` are accepted today and name
+something degenerate; unlike decision 1 they are not a collision. Rejected: keeping them, which
+leaves each language binding to decide independently what an empty part means — the drift this
+round exists to stop. Consistent with PDA-DEC-3's in-round empty-**list** refusal, of which this
+is the per-segment analogue.
+**Applies to:** `internal::RequireSegments` refuses an empty segment.
+
+## 2026-09-04 — The `__` prefix is reserved, and this is its authorisation *(selection)*
+> "Reject any part starting with `__` — Closes the whole reserved namespace rather than the one name that collides today, so future companion channels cost nothing. Verified: no part starting with `__` exists anywhere in the tree. Because the text is frozen, the narrower literal fix would make every future companion name need its own ruling from you. Over-forbidding fails loudly in development; under-forbidding is the silent collision."
+
+**Context:** PDA-DEC-A5, review debt A5-DEBT-1, found in **cycle-1 design review** — not by the
+colleague's stop-and-ask. Both DDS providers derive a companion topic `name + "/__schema"`
+(`fast_dds_pubsub_provider.cpp:331,494`; `xrce_dds_pubsub_provider.cpp:720,881`), so after A5's
+other refusals the accepted list `{"a","__schema"}` still joins onto the schema channel of
+`{"a"}`. The cycle-2 reviewer raised this as a **stop-and-ask** because `__schema` appears
+**nowhere** in `PDA-DEC-9-bind-stopask-verification.md` — the document the 2026-09-03 absorption
+ruling was given on — so it is a new normative refusal in frozen §3.5 that that authorisation did
+not name, and §12.1's *who may act* is "nobody alone". The PM removed the brief's
+default-on-silence accordingly, exactly as the 2026-09-04 idempotence ruling required
+(*"Deliberately no default-on-silence — frozen text needs your explicit word"*). Rejected:
+leaving the collision open (smallest change to frozen text, but a WebSocket client **can** send
+such a part today, unlike decisions 1 and 2), and a safe-charset whitelist (strongest guarantee,
+but it rejects dots and spaces that work today and are not wrong — it can break working setups).
+**Applies to:** `internal::RequireSegments` refuses any segment beginning `__`. **This is the
+tenth amendment authorised for PR #126**, after the eight of 2026-09-03 and the ninth of
+2026-09-04. Note it also refuses the **prefix**, not the literal name, per the 2026-09-04
+class-not-instance ruling — the whole provider-derived companion namespace is out of reach, so a
+future companion name needs no further ruling.
