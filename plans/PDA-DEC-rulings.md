@@ -572,3 +572,35 @@ headroom is what makes the rule close the class rather than move it, the same re
 made the `__` refusal a prefix rather than a literal. Eighth consecutive time the owner chose the
 honest-and-narrow answer, and the third time in two items that a **loud refusal was preferred to
 a silent wrong answer**.
+
+## 2026-09-04 — The seam permits an uncopied row end to end *(selection)*
+> "Whole path — the seam permits an uncopied row end-to-end — Worded as PERMITS, not guarantees: a client that uses the new call can send without any copy; a client that ignores it still copies and the seam cannot stop it. Why: you ruled zero-copy a requirement rather than a trade, and the narrow promise is true but useless to the C#/Rust clients it exists to serve. This widens frozen §8, which your 2026-09-04 ruling says may not be inferred — hence no default. Review confirmed the amendment makes §8 achievable rather than weakening it."
+
+**Context:** PDA-DEC-A1, brief decision 1, presented **with no default on purpose** because it edits
+frozen §8 — the zero-copy property itself — and §12.1's *who may act* is "nobody alone". The
+2026-09-03 absorption ruling authorises *amending* §8 for this amendment but **not the direction**,
+and this option is a **widening**, which the 2026-09-04 narrow-claim ruling forbids inferring. Root
+cause, verified verbatim by the design review: §8's promise and §8.1's measurement **both begin at
+the window** — "the window base after the encoder's last append" (`spec:831`) — the harness README
+excludes "the encode itself", §3.1 clause 5 gives the window a **readable** end only, and no public
+member advances the write cursor without a source. The window's **write end was never part of the
+contract**, which is why a binding handed a `WriteBuffer` cannot fill it without copying *and* why
+`CopyAccounting` cannot see that copy. Rejected: keeping the narrow promise and publishing the gap
+as a named limit — true, but it ships the seam telling language-binding authors in writing that the
+cost it advertises is unavailable to them, which is the objection the colleague's stop-and-ask
+raised; the review also noted it concedes a copy on the **row path**, which locked decision 7 makes
+a stop-and-ask in its own right.
+**Applies to:** §8's promise scope, amended to the whole send path. The wording is **permits, not
+guarantees** — a client that ignores `AppendInPlace` still copies and the seam cannot stop it.
+**Twelfth amendment authorised for PR #126.**
+
+## 2026-09-04 — The guard claims what the interface permits, measured with a stand-in *(selection)*
+> "That the interface PERMITS an uncopied send, said plainly — Measured with a stand-in client, and the README states exactly that limit rather than implying more. Why: no real C#/Rust binding exists to measure yet, so any wider claim would be unearned."
+
+**Context:** PDA-DEC-A1, brief decision 2. Rejected: claiming that real C#/Rust clients send without
+copying — a stronger headline, but nothing in the tree can measure it because the bindings do not
+exist, so the claim would rest on a stand-in standing for something unbuilt.
+**Applies to:** `integration-tests/pubsub-conformance/README.md`'s claim limit for the new
+`encode_copies` measurement. Directly consistent with the 2026-09-01 copy-accounting ruling ("scope
+to the interface, say so plainly"). **Ninth consecutive time the owner chose the narrow claim stated
+honestly over a wide one implied** — and the second time in this item alone.
