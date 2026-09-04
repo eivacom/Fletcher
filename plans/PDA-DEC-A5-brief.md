@@ -42,9 +42,9 @@ Also impossible by construction: two protocols disagreeing on what a name means,
 3. **Both DDS protocols keep a hidden companion channel named `__schema` beside each topic, and a topic
    part named `__schema` lands on it. Reserve the `__` prefix?** Options: (a) reject any part starting
    with `__` · (b) leave this one collision open · (c) go further, allowing only letters, digits, `_`
-   and `-`. **Recommendation:** (a) — closes the whole reserved namespace rather than one name, where
-   (c) would reject dots and spaces that work today and are not wrong. **No default — this one needs
-   your explicit word:** it adds a refusal the 2026-09-03 authorisation did not name.
+   and `-`. **Recommendation:** (a) — closes the whole reserved namespace, where (c) rejects dots and
+   spaces that work today. **No default — needs your explicit word:** it adds a refusal the
+   2026-09-03 authorisation did not name.
    *Background (skippable): unlike 1 and 2, a WebSocket client can send such a part today.*
 
 ## Risks accepted / debt carried
