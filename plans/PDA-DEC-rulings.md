@@ -399,3 +399,37 @@ authorisation. The append moves as one change with `core/README.md`'s published 
 `static_assert` set, and `Taxonomy.PublishedNumbersMatchTheEnum` — whose exhaustive `switch`
 makes an un-published append **fail to compile**, so the guard enforces this ruling rather than
 documenting it.
+
+## 2026-09-04 — The idempotence amendment is authorised as a ninth, inside A4 *(selection)*
+> "Authorise it, land it inside A4 — Cancelling something already cancelled becomes accepted and does nothing, instead of raising an error. Why it matters: a C#/Rust cleanup path calls cancel unconditionally during teardown, and a finaliser cannot let an error escape — you already ruled the bindings are full pub/sub clients, not read-only accessors. Cost: a mistyped identifier is silently ignored rather than reported. Deliberately no default-on-silence — frozen text needs your explicit word."
+
+**Context:** PDA-DEC-A4 design review cycle 1 raised an **authorisation** tripwire. The
+2026-09-03 absorption ruling authorised **eight** amendments; the Unsubscribe-idempotence
+change is verification **finding #5**, not one of the eight, and reached A4 only through a
+tracker line the PM wrote at round reopen (`plans/PDA-decouple-interface.md:109`). It writes
+a new normative sentence into `frozen` §7, whose §12.1 *who may act* is "nobody alone" — so
+it is a decision, not a repair, and the reviewer ruled a default-on-silence insufficient.
+Rejected: giving it its own tracked item A9 (cleaner audit trail, costs an extra
+design-plus-implementation cycle and moves the denominator to 19), and declining it (which
+would ship the two-tier disagreement inside PR #126 and force the C# binding to wrap every
+teardown cancel in a catch).
+**Applies to:** `Unsubscribe` of an unknown or already-cancelled id is a **no-op at both
+tiers**, not `kInvalidArgument`; the amendment lands **inside PDA-DEC-A4**, so the round's
+denominator stays **18**. This is the ninth amendment authorised for PR #126 and the
+authorisation the 2026-09-03 ruling did not cover. Consistent with the 2026-08-31 ruling that
+BIND are **full pub/sub clients** — a finaliser cannot let an exception escape.
+
+## 2026-09-04 — Cancelling waits for a delivery already in progress *(selection)*
+> "Wait — Once cancel returns, that handler is not running and will not run again, so the application may immediately free whatever the handler was using. This is the memory-safety guarantee the item exists to deliver. Cost: shutdown can pause as long as the slowest handler takes. Carve-out you should see before agreeing: if a handler cancels its own subscription from inside itself, cancel cannot wait for the frame it is already in — so in that one shape the application must not free handler state on return, and that limit gets published rather than implied."
+
+**Context:** PDA-DEC-A4, brief decision 2, carrying review debt A4-DEBT-3 so the carve-out was
+visible before the owner answered rather than after. Rejected: returning immediately, under
+which a message already in flight may still reach the handler afterwards and every application
+must keep handler state alive indefinitely with no signal for how long — the crash class the
+item was opened to remove.
+**Applies to:** `Unsubscribe` blocks until any in-flight delivery for that subscription has
+returned; on return the caller may free or unpin its callback state. **The self-unsubscribe
+carve-out is authorised and must be PUBLISHED, not implied** — a handler cancelling its own
+subscription does not wait for the frame it is in, and that is the one shape where a caller may
+not free callback state on return. Fifth consecutive time the owner chose a narrow claim stated
+honestly over a wide one implied.

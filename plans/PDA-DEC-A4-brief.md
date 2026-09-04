@@ -1,4 +1,4 @@
-# PDA-DEC-A4 — Stage Brief (2026-09-03)
+# PDA-DEC-A4 — Stage Brief (2026-09-04, revision 2)
 
 **In one sentence:** cancelling a subscription now really cancels it — once the call
 returns, that handler is not running and will not run again — and cancelling something
@@ -9,9 +9,9 @@ never entered after its cancellation returned, even while another delivery is mi
 ## Interfaces
 | Surface | Change | Why |
 |---|---|---|
-| Cancelling a subscription (client-facing) | CHANGED | now waits for any delivery in progress; guarantees no later delivery |
-| Cancelling an unknown/already-cancelled subscription | CHANGED | was an error, becomes accepted and does nothing |
-| Contract text (the cancellation clause + who inherits which test suites) | CHANGED | says the guarantee applies to the layer other languages wrap, not only the transport layer |
+| Cancelling a subscription (client-facing) | CHANGED | waits for a delivery in progress; guarantees no later delivery — your 2026-09-04 ruling |
+| Cancelling an unknown/already-cancelled subscription | CHANGED | was an error, now accepted and does nothing — your 2026-09-04 ruling |
+| Contract text (cancellation clause + who inherits which test suites) | CHANGED | says the guarantee applies to the layer other languages wrap, not only the transport layer |
 
 ## Deleted
 - The published statement that "one final message after cancelling is intentional and by
@@ -20,42 +20,40 @@ never entered after its cancellation returned, even while another delivery is mi
   test asserting the opposite.
 
 ## Corner cases forbidden vs handled
-**Forbidden** (cannot occur, by construction): a handler entered after its cancellation
-returned, or later in the *same* delivery round after being cancelled during it; a
-cancellation deadlocking against the handler that issued it; teardown raising an error; a
-handler running after the subscriber is destroyed.
-**Handled**, with why not forbidden: (1) cancellation waits while a handler runs — the
-contract *is* that wait; (2) a handler that never returns blocks it forever — nothing can
-bound foreign code, and the transport layer already carries that exposure; (3) an
-identifier means something only to the subscriber that issued it — global uniqueness needs
-process-wide state your isolation ruling keeps out. All three published in the README.
+**Forbidden** (cannot occur, by construction, *at this layer*): a handler entered after
+its cancellation returned, or later in the same delivery round after being cancelled
+during it; two handlers cancelling each other's subscriptions hanging one another;
+teardown raising an error; a handler running after the subscriber is destroyed.
+**Handled**, with why not forbidden: (1) cancelling waits while a handler runs — that
+*is* the guarantee you ruled for; (2) a handler that never returns blocks it forever —
+nothing can bound foreign code; (3) a cancellation issued **from inside a handler** does
+not wait, so in that shape the application must not free handler state on return — the
+carve-out you approved, published rather than implied; (4) an identifier means something
+only to the subscriber that issued it. All four published in the test-suite README.
 
-## Decisions for you   (3)
-1. **Should cancelling a subscription that is already gone be an error, or accepted silently?**
-   Options: (a) accepted, does nothing · (b) keeps raising an error
-   **Recommendation:** (a) — a C#/Rust cleanup path calls it unconditionally and a finaliser
-   cannot let an error escape. Cost: a typo'd identifier is ignored. **Default:** (a)
-   *Background (skippable): the tiers disagree — `provider.hpp` says no-op, `subscriber.cpp` throws `kInvalidArgument`.*
-2. **Should cancelling wait for a delivery already in progress?**
-   Options: (a) wait, so the caller may free its handler state the moment it returns ·
-   (b) return immediately, requiring every client to keep handler state alive indefinitely
-   **Recommendation:** (a) — (b) is what causes the crash class this item exists to remove.
-   Cost: shutdown can pause as long as the last handler takes. **Default:** (a)
-3. **How much of the contract do we prove at the layer the language bindings wrap?**
-   Options: (a) this guarantee and cancellation only, remaining gap published ·
-   (b) the whole delivery contract re-run at that layer now
-   **Recommendation:** (a) — (b) is a stage of its own and would likely uncover more
-   divergences to fix mid-round; matches four prior narrow-claim rulings. **Default:** (a)
+## Decisions for you
+**None.** The two questions the last brief asked, you answered on 2026-09-04, and both
+are built as you ruled. The third (how wide to claim the new evidence) is settled by the
+narrow-claim preference your 2026-09-03 ruling licensed us to apply without asking.
 
 ## Risks accepted / debt carried
-- The other delivery clauses stay proven only at the transport layer — published as a limit, not implied.
-- The contract's blind-spot list is *not* edited: outside this item's authorisation; raised to you if review disagrees.
-- A transport found to deliver after its own cancellation returns is a stop-and-ask, not a local fix.
+- **One widening you may want to overturn:** you approved "cancelling from inside a
+  handler cannot wait for the frame it is in". We extend that to *any* cancellation issued
+  from inside a handler, because waiting there is exactly what makes two handlers hang
+  each other. Same shape, same reason; published in the same sentence. Say the word and we
+  narrow it, at the cost of reinstating that hang.
+- Delivery gets marginally slower: cancelling safely needs a lock the delivery path
+  previously avoided. Accepted without measuring it — no mechanism that waits is free.
+- The other delivery guarantees stay proven only at the transport layer — published as a
+  limit, not implied.
+- What a *transport* does when a handler cancels during its own delivery is untouched and
+  stays with the separate re-entrancy item; two of three hang there today, as before.
+- A transport found to deliver after its own cancellation returns is a stop-and-ask, not a
+  local fix.
 
 ## Numbers
-Declared net lines: +≈410 / −≈45 · new public surface: 0 · design cycles used: 1/2
+Declared net lines: +≈360 / −≈45 · new public surface: 0 · design cycles used: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+<delta vs the above — actual net lines, fix cycles used>.

@@ -412,6 +412,20 @@ suite names.
 | C3-9 | Condition 3's `mechanical` label is witnessed on **MSVC only** at signing time: the GCC/Clang half of the promotion cannot run until the owner opens the PR (D7/P4). One clause in §12 or D7 — the `core` lane building `core_tests` on both platforms is what would expose a flag that fires on one and not the other. | review §Cycle 2 B1 / D7 |
 | C3-10 | Attribute the blind-spot policy precisely: the 2026-09-01 *Ship the guard, hunt elsewhere* ruling's *Applies-to* is **item-scoped** ("PDA-DEC-1 … relieved by this ruling and by nothing else"). D6 carries it into §12 as "the standing policy" for two future rounds. The generalisation is in the safe direction and worth keeping, but write it as *PDA-DEC-1's ruling, carried forward as policy by PDA-DEC-9* — second time this round an item-scoped ruling could harden into round-wide precedent. | review §Cycle 2 B6 |
 
+## PDA-DEC-A4 — §7 clause 6 at the caller tier (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2)
+
+Review: [PDA-DEC-A4-design-review.md](PDA-DEC-A4-design-review.md). The five items
+below are DEBT and do **not** loop the design; the two BLOCKERs and the ruled
+STOP-AND-ASK (idempotence needs its own owner authorisation) are in the review.
+
+| Id | Owed | Where |
+|----|------|-------|
+| A4-DEBT-1 | `CallerTier.StaleSnapshotProbeIsDetected` is a control on nothing unless the instrument is shared. The design says a hand-built copy-then-release-then-call fan-out *"must be flagged by the same detector"*, but there is no detector object — the three primaries assert directly with latches. Factor the observation apparatus (latch protocol + the "entered after the unsubscribe returned" predicate) into one helper used by both the primary case and the probe, or drop the case and say in the README that the guard's falsification is the three primaries being red today. Fourth unfalsifiable-guard shape this round. | review §DEBT-1 |
+| A4-DEBT-2 | The recursive gate makes premise **P2** unfalsifiable: a provider re-entering delivery for one subscription on one thread re-acquires the gate and proceeds **silently**, so P2's stop-and-ask can never fire. A non-recursive gate makes that violation deadlock loudly — detection rather than masking — and leaves the *typed* refusal to A3's `kReentrantCall` where the owner put it. Rides with BLOCKER 1's fix. | review §DEBT-2 |
+| A4-DEBT-3 | **Carry with the stop-and-ask.** The brief does not name the carve-out in the memory-safety guarantee: an unsubscribe from inside its own callback *"does not wait for the frame it is in"*, so that is the one shape where a caller may **not** free or unpin its callback state on return. The brief's Forbidden list currently reads as if it were covered. One line in brief decision 2, added before the owner answers. | review §DEBT-3 |
+| A4-DEBT-4 | `Files-to-delete` names `test_publisher_subscriber.cpp:434-436`, but `EXPECT_EQ(second_calls, 1)` recurs at `:438-440`, where the second publish's expectations also change (`first_calls == 2`, `second_calls == 0`). The wholesale rewrite covers it; the ledger is incomplete as written. | review §DEBT-4 |
+| A4-DEBT-5 | The hot path's lock-free property is reversed without naming what it reverses: `subscriber.cpp:31-34` records the fan-out being deliberately made lock-free, and the budget it works to is `provider.hpp:109-113`'s measured **1.4 ns per call**. One uncontended `recursive_mutex` acquire per entry per sample is a real fraction of that (and `recursive_mutex` is dearer than `std::mutex` on MSVC), and `CopyAccounting` counts copies, not locks. Name the reversal in Risks and either measure it or state that it is accepted unmeasured. | review §DEBT-5 |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |
