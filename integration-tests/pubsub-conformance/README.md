@@ -622,6 +622,7 @@ by mutating the thing it controls rather than asserted to be one:
 | `CancellingOnAnotherSubscriberWaitsForItsDelivery` | widen the depth predicate from `InsideDeliveryOn(identity.get())` back to process-wide (`!g_delivery_stack.empty()`) | **Failed** — and *only* this case reddens on that mutation. It is the sole control on the scope the owner ruled on (2026-09-04, "one subscriber object"); every other case constructs one `Subscriber`, so the process-wide scope the owner rejected is invisible to all of them |
 | `ACancelRacingASelfCancelWaitsForThatHandler` | drop the deferred release, so the carve-out's skip erases the id from the retiring map at once | **Failed** — and *only* this case reddens on that mutation |
 | `ConcurrentFirstSubscribesCreateOneProviderSubscription` | delete the `provider_cv.wait` that serialises the first-`Subscribe` | **Failed** — and *only* this case reddens on that mutation |
+| `CancellingASiblingRunningOnAnotherThreadKeepsItPublished` | make the deferred sweep release the id without first taking the gate barrier | **Failed** — and *only* this case reddens on that mutation. It is the sole control on the deferral being scoped to the **gate** rather than to the cancelling frame: every other case has the two coincide |
 | `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` | — | only that an unknown or fully cancelled id neither throws nor waits. It does **not** redden if the two no-op branches are collapsed: an id with no drain in progress has a free barrier either way. The distinction between "gone" and "being cancelled right now" is pinned by `ADuplicateCancelWaitsForTheDrainInProgress` alone |
 | `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the gate→`mu` edge, in the permitted direction |
 | `ALiveSubscriptionStillReceives` | — | that the gate did not simply silence delivery |
@@ -638,7 +639,7 @@ that has already cancelled itself, so the cancellation of the last remaining
 entry empties the topic and enters the provider with that entry's gate still
 ahead of the fan-out loop.
 
-**Three of these sixteen cases redden by hanging**, so `conformance_caller_tier`
+**Three of these seventeen cases redden by hanging**, so `conformance_caller_tier`
 carries a declared ctest `TIMEOUT` of 60 s against a suite that costs well under
 a second. An uncapped hang is not a red; it is a hung job.
 
@@ -647,7 +648,12 @@ a second. An uncapped hang is not a red; it is a hung job.
 1. **A callback that never returns blocks `Unsubscribe` forever.** Not
    forbiddable: the seam cannot bound foreign callback duration, and a timeout
    would weaken the clause into "no further callback, probably". The identical
-   exposure exists at the provider tier.
+   exposure exists at the provider tier. Reached one step further along, the same
+   exposure means a **delivery** can block at its end: a handler that cancels a
+   subscription whose callback is running elsewhere hands that wait to its own
+   frame, which drains the gate before releasing the id. That drain is what makes
+   the promise true for an uninvolved third thread, so it is the guarantee rather
+   than a cost of it — but it is a wait, and it is bounded by the same nothing.
 2. **A cancellation issued from inside a delivery callback on that subscriber
    does not wait**, so in that one shape the application must **not** free or
    unpin handler state when it returns. It still gets the other half — no

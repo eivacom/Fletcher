@@ -32,9 +32,18 @@ class Subscriber {
     explicit Subscriber(std::shared_ptr<PubSubProvider> provider);
 
     /// Retires and drains every remaining subscription before releasing the
-    /// provider-level ones, so §7 clause 6 holds through teardown as well: no
-    /// callback of this Subscriber is running when the destructor returns, and
-    /// none begins afterwards. Same wait, same one carve-out as Unsubscribe.
+    /// provider-level ones.
+    ///
+    /// This is **not** a substitute for quiescing first. Spec §6 clause 5 already
+    /// requires the caller to have done that — no call in flight, no callback
+    /// able to re-enter — so destroying a Subscriber concurrently with a
+    /// delivery, or with a cancellation on another thread, is outside the
+    /// contract however this destructor behaves. What the drain buys *inside*
+    /// the contract is that teardown does not itself become the hole: the
+    /// provider is not entered while any of this Subscriber's callbacks is still
+    /// running, and no callback begins afterwards. It carries the same carve-out
+    /// as Unsubscribe — a destructor reached from inside one of this
+    /// Subscriber's own callbacks cannot wait for the frame it is in.
     ~Subscriber();
 
     Subscriber(const Subscriber&) = delete;

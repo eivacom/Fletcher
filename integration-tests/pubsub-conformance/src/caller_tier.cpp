@@ -861,6 +861,77 @@ TEST(CallerTier, ConcurrentFirstSubscribesCreateOneProviderSubscription) {
     EXPECT_EQ(second_calls.load(), 1);
 }
 
+// ── The deferral is scoped to the GATE, not to the cancelling frame ─
+//
+// A handler cancels a SIBLING subscription whose callback is running on another
+// thread — §6 clause 2 permits exactly that, and Fast DDS's listener-per-reader
+// makes it ordinary. The carve-out defers the sibling's retirement, but the
+// cancelling frame ends FIRST, while the sibling's callback is still running.
+// Releasing at that moment un-publishes the drain, and a third, uninvolved
+// thread — one that has never been inside a delivery, so no exception covers it
+// — then cancels the sibling and returns mid-callback.
+//
+// The sweep therefore drains the gate rather than merely releasing the id. The
+// spare entry keeps kT2 non-empty so the provider is never re-entered (P5).
+TEST(CallerTier, CancellingASiblingRunningOnAnotherThreadKeepsItPublished) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    Flag sibling_entered;
+    Flag release_sibling;
+    Flag handler_cancelled;
+    Flag third_at_cancel;
+    std::atomic<bool> sibling_exited{false};
+
+    (void)subscriber.Subscribe(
+        kT2, Sub{[](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
+    const uint64_t sibling =
+        subscriber
+            .Subscribe(kT2, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                    const Attachments&) {
+                           sibling_entered.Set();
+                           ASSERT_TRUE(release_sibling.WaitFor(kGenerous));
+                           sibling_exited.store(true, std::memory_order_release);
+                       }})
+            .subscription_id;
+
+    // The canceller: a handler on a DIFFERENT topic, so its own frame is short
+    // and ends long before the sibling's callback does.
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            subscriber.Unsubscribe(sibling);
+            handler_cancelled.Set();
+        }});
+
+    std::thread sibling_delivery([&] { probe->Deliver(kT2, Row(1)); });
+    ASSERT_TRUE(sibling_entered.WaitFor(kGenerous));
+
+    std::thread canceller_delivery([&] { probe->Deliver(kT1, Row(2)); });
+    ASSERT_TRUE(handler_cancelled.WaitFor(kGenerous));
+    // Give the cancelling frame time to end and sweep. A build that releases
+    // without draining has finished by now; a build that drains cannot finish
+    // until the sibling's callback returns, which nothing has allowed yet.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::thread releaser([&] {
+        ASSERT_TRUE(third_at_cancel.WaitFor(kGenerous));
+        std::this_thread::sleep_for(kHoldWindow);
+        release_sibling.Set();
+    });
+
+    third_at_cancel.Set();
+    subscriber.Unsubscribe(sibling);  // a third thread, never inside a delivery
+    const bool third_saw_it_exit = sibling_exited.load(std::memory_order_acquire);
+
+    releaser.join();
+    canceller_delivery.join();
+    sibling_delivery.join();
+
+    EXPECT_TRUE(third_saw_it_exit)
+        << "an uninvolved thread's cancel returned while that callback was still running: the "
+           "deferral was scoped to the cancelling frame, which ended first, instead of to the gate";
+}
+
 }  // namespace
 }  // namespace conformance
 }  // namespace fletcher

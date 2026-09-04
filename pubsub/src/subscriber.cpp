@@ -89,9 +89,13 @@ class Retirements {
     std::unordered_map<uint64_t, std::shared_ptr<Gate>> map_;
 };
 
-// Releases owed by this thread's delivery frames — see DeliveryScope.
+// Retirements owed by this thread's delivery frames — see DeliveryScope. The
+// GATE is carried, not just the id, because the guarantee is about the gate's
+// lifetime and nothing narrower: the id must stay published until that gate is
+// free, wherever the callback holding it happens to be running.
 struct DeferredRelease {
     std::shared_ptr<Retirements> retirements;
+    std::shared_ptr<Gate> gate;
     uint64_t id;
 };
 thread_local std::vector<DeferredRelease> g_deferred_releases;
@@ -101,23 +105,40 @@ class DeliveryScope {
     explicit DeliveryScope(const void* token) { g_delivery_stack.push_back(token); }
 
     // When a cancellation issued from inside a delivery skips its barrier, the
-    // id must STAY published until this thread's outermost delivery frame
-    // returns — otherwise the winner un-publishes the drain the moment it skips,
-    // and a cancel of the same id from any OTHER thread finds neither map, takes
-    // the no-op branch, and returns while that callback is still running. That
-    // caller is not covered by the published carve-out, so leaving it there gave
-    // the frozen promise a second exception.
+    // id must STAY published until that subscription's gate is free — otherwise
+    // the winner un-publishes the drain the moment it skips, and a cancel of the
+    // same id from any OTHER thread finds neither map, takes the no-op branch,
+    // and returns while that callback is still running. That caller is not
+    // covered by the published carve-out.
     //
-    // Swept at depth 0, not per frame: while any frame of this thread is still
-    // on the stack, a gate it holds is still held. Costs nothing when the list is
-    // empty, which is every delivery that did not cancel anything.
+    // The sweep therefore **drains**, it does not merely release. Ending the
+    // cancelling FRAME is not the event the promise is about: a handler may
+    // cancel a SIBLING subscription whose callback is running on another thread
+    // (§6 clause 2 permits it, and Fast DDS's listener-per-reader makes it
+    // ordinary), and that frame ends first. Taking the barrier here waits for the
+    // gate itself, which is the object whose lifetime matches the guarantee.
+    //
+    // Blocking here is safe precisely because it happens at depth 0: this thread
+    // holds no gate and no `mu`, and a thread inside a delivery never blocks on a
+    // gate, so no cycle is representable. The cost is that a delivery whose
+    // handler cancelled a busy sibling returns only once that sibling's callback
+    // does — the same unbounded-callback exposure already published, reached one
+    // step further along.
+    //
+    // Swept at depth 0, not per frame: while any frame of this thread is still on
+    // the stack, a gate it holds is still held, and draining it here would
+    // self-deadlock. Costs nothing when the list is empty, which is every
+    // delivery that did not cancel anything.
     ~DeliveryScope() {
         g_delivery_stack.pop_back();
         if (!g_delivery_stack.empty() || g_deferred_releases.empty()) return;
         std::vector<DeferredRelease> due;
         due.swap(g_deferred_releases);
-        for (const DeferredRelease& release : due) {
-            release.retirements->Release(release.id);
+        for (const DeferredRelease& owed : due) {
+            {
+                std::lock_guard<std::mutex> barrier(owed.gate->mu);
+            }
+            owed.retirements->Release(owed.id);
         }
     }
 
@@ -218,7 +239,7 @@ struct Subscriber::Impl {
         gate->retired.store(true, std::memory_order_release);
         if (InsideDeliveryOn(identity.get())) {
             if (!owns_retirement) return false;
-            g_deferred_releases.push_back(DeferredRelease{retirements, id});
+            g_deferred_releases.push_back(DeferredRelease{retirements, gate, id});
             return true;
         }
         // If this ever threw — only std::mutex::lock failing, which the standard
