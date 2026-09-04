@@ -678,7 +678,39 @@ The contract:
    re-declaration **must** be rejected.
 4. **One callback per topic per instance.** Local fan-out is `Subscriber`'s job.
 5. **Late joiners** get the schema asynchronously; `Subscribe` never blocks.
-6. **After `Unsubscribe` returns**, no further callback for that topic.
+6. **After `Unsubscribe` returns**, no further callback for that topic — **at
+   every tier this seam publishes**, not only at `PubSubProvider`. §9 hands
+   BIND `Publisher`/`Subscriber`, so a guarantee that binds only the provider
+   tier is a guarantee a language binding does not have.
+
+   **What "no further callback" means**, made exact by PDA-DEC-A4 (owner ruling
+   2026-09-04): *no invocation of that subscription's callback begins after
+   `Unsubscribe` returns, and none is in progress when it does.* `Unsubscribe`
+   therefore **blocks** while a delivery for that subscription is in flight, and
+   on return the caller may free or unpin whatever the callback was using. That
+   is the memory-safety property; the accepted cost is that teardown pauses for
+   as long as the slowest handler takes, and a handler that never returns blocks
+   it forever — the seam cannot bound foreign callback duration.
+
+   **The one shape where a caller may NOT free callback state on return:** an
+   `Unsubscribe` **issued from inside a delivery callback on that subscriber**
+   does not wait. A cancellation cannot wait for the frame it is already in, and
+   waiting for a *sibling* frame on the same subscriber is exactly what lets two
+   handlers hang one another. Such a call still gives the first half — no
+   invocation begins afterwards — but not the second. Published here rather than
+   implied, because a caller who does not know it has a use-after-free.
+
+   **Unsubscribing something that is not live is a no-op, not an error, at every
+   tier** (owner ruling 2026-09-04): an unknown id, an already-cancelled id, an
+   unsubscribed topic. A foreign-runtime finaliser cancels unconditionally and
+   cannot let an exception escape, so teardown must be safe to call blind. The
+   deliberate cost is that a mistyped identifier is ignored rather than reported.
+
+   **Scoped to each tier's own machinery.** This clause is a promise about the
+   tier the call was made on. It says nothing about what a *provider* does with
+   an `Unsubscribe` re-entered from inside its own delivery — that question is
+   open and is owned elsewhere, and PDA-DEC-A4 neither answers it nor claims it
+   away.
 
 ### §7.1 — The conformance suite is the deliverable
 
@@ -777,7 +809,7 @@ has measured.
 | Adds to §4 | a resolver for path selectors | nothing |
 | May change the seam | **no** (stop-and-ask) | **no** (stop-and-ask) |
 | Depends on the other | **no** | **no** |
-| Inherits as its oracle | `integration-tests/pubsub-conformance` — `ProviderConformance` (§7's clauses over every subject), `CopyAccounting` (§8's provenance guard), `SeamVocabulary` (what the crossing types make representable), and the `Registry` cases (§4's selection, including the path-selector pair) | the same four |
+| Inherits as its oracle | `integration-tests/pubsub-conformance` — `ProviderConformance` (§7's clauses over every subject), `CopyAccounting` (§8's provenance guard), `SeamVocabulary` (what the crossing types make representable), and the `Registry` cases (§4's selection, including the path-selector pair) | the same four, **plus `CallerTier`** (§7 clause 6 and cancellation idempotence at the `Subscriber` tier BIND actually wraps) |
 
 Neither round re-derives §7's rules or re-invents a copy guard: both check themselves against
 that suite, and both are **expected to add cases to it** — the contract *text* is frozen, the

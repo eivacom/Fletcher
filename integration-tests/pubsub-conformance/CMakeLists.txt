@@ -8,7 +8,10 @@ find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
-enable_testing()
+# include(CTest) rather than bare enable_testing(): it brings in the CTest module
+# proper, so every entry below carries a declared TIMEOUT and a deadlock control
+# that fires reports as a failed test rather than as a hung job.
+include(CTest)
 
 # Type-check broadly, link narrowly. The clause set is compiled ONCE and each
 # subject binary links it plus exactly ONE provider, so editing a clause
@@ -212,6 +215,22 @@ target_link_libraries(conformance_registry PRIVATE
     fletcher-pubsub::fletcher-pubsub
     GTest::gtest_main)
 
+# ── The caller-tier suite ───────────────────────────────────────────
+# A FIFTH suite in this harness, for the reason the copy oracle is a second one:
+# `ProviderConformance` encodes §7's clauses and constructs no `Subscriber` at
+# all, so §9's row for BIND — which inherits `Publisher`/`Subscriber`, not
+# `PubSubProvider` — had no oracle. This is it.
+#
+# Its link line is the machine check that these are seam properties: it names
+# `fletcher-pubsub` and NO transport SDK, and it does not link conformance_support
+# either — the subject is a probe provider defined in the test file, so there is
+# no fixture, no subject registry and no child process.
+add_executable(conformance_caller_tier src/caller_tier.cpp)
+target_compile_features(conformance_caller_tier PRIVATE cxx_std_20)
+target_link_libraries(conformance_caller_tier PRIVATE
+    fletcher-pubsub::fletcher-pubsub
+    GTest::gtest_main)
+
 add_executable(conformance_fastdds_peer subjects/fastdds_peer_main.cpp)
 target_link_libraries(conformance_fastdds_peer PRIVATE
     conformance_support
@@ -289,6 +308,16 @@ gtest_discover_tests(conformance_seam_vocabulary DISCOVERY_MODE PRE_TEST
 # in it is a probe defined in the test file — so it has no domain, no port and no
 # child either.
 gtest_discover_tests(conformance_registry DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+# Same again — no transport, no domain, no port, no child. The TIMEOUT here is
+# LOAD-BEARING rather than hygiene: three of this suite's cases are deadlock
+# controls (`SelfUnsubscribeInsideItsOwnCallbackReturns`,
+# `CrossCancellingDeliveriesDoNotDeadlock`,
+# `UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider`) and the way they redden
+# is by hanging. A hang that is not capped is not a red, it is a hung CI job.
+# The whole suite costs well under a second; 60 s is two orders of magnitude of
+# headroom.
+gtest_discover_tests(conformance_caller_tier DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 # One lock per BINARY, not per domain: ctest properties are applied target-wide
 # and conformance_fastdds joins nine domains — two subjects (151 and 152),

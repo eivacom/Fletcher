@@ -433,3 +433,28 @@ carve-out is authorised and must be PUBLISHED, not implied** — a handler cance
 subscription does not wait for the frame it is in, and that is the one shape where a caller may
 not free callback state on return. Fifth consecutive time the owner chose a narrow claim stated
 honestly over a wide one implied.
+
+## 2026-09-04 — The carve-out is one subscriber object, and the residual hang is published *(selection)*
+> "One subscriber object — publish the hang — A handler that cancels any subscription on its own subscriber gets an immediate return instead of a wait. The published sentence becomes true as written. Cost, stated plainly: two handlers on DIFFERENT subscriber objects that cancel each other can still hang one another. Why I recommend it: a hang is loud, detectable and corrupts nothing, whereas a too-wide 'you may free' promise is a silent use-after-free — the exact defect class this item was opened to remove. Also matches the five prior times you chose a narrow claim stated honestly."
+
+**Context:** PDA-DEC-A4 design review cycle 2 returned exactly one BLOCKER, and it was the P6
+stop-and-ask. The 2026-09-04 carve-out ruling asserted uniqueness — "that is **the one shape**" —
+but the design's mechanism was **two steps wider** than the sentence the owner was shown, and
+wider in the unsafe direction: §1.3 published "issued from inside a delivery callback *on that
+subscriber*" while §1.1 implemented it with a **file-local** `thread_local` shared by every
+`Subscriber` in the process, so a handler on X cancelling on Y also skipped **Y**'s barrier —
+Y's caller reads the frozen text, believes the wait happened, and frees handler state still in
+use. The reviewer verified step one (within-subscriber) is genuinely necessary — narrowing it
+back really does reinstate the deadlock — and step two (process-wide) is **not**, being an
+artefact of where the counter was placed. Rejected: process-wide (nothing hangs, but the "you
+may free" promise is off in a second, wider set of cases, including unrelated subscribers —
+the case an application author is least likely to anticipate), and giving the cross-instance
+hang its own tracked item (denominator 18 → 19).
+**Applies to:** the delivery-depth counter is scoped to **`Subscriber::Impl`**, so the published
+§7 sentence becomes true as written. The residual **cross-instance mutual cancel is handled
+residue and must be PUBLISHED** in `integration-tests/pubsub-conformance/README.md` — two
+handlers on different `Subscriber` objects cancelling each other can still hang. The owner's
+stated reasoning is itself normative for this round: **a loud hang is preferred over a silent
+use-after-free.** Sixth consecutive time the owner chose a narrow claim stated honestly over a
+wide one implied. Note the 2026-09-03 licence to infer that preference permits **narrowing**
+without asking, never **widening** — which is why this had to be carried.

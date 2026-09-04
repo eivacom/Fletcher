@@ -576,6 +576,104 @@ text matching the mechanism the design predicted — which is why the two places
 the tree behaved differently (M2's refusal site, M5's failure point) are recorded
 as observed rather than as predicted.
 
+## The `CallerTier` suite — the tier a language binding actually wraps
+
+A FIFTH suite, in `src/caller_tier.cpp`, binary `conformance_caller_tier`. It
+exists because of a gap that was invisible for as long as the harness had only
+provider-parameterised clauses: **`ProviderConformance` constructs no
+`Subscriber` at all.** Every §7 clause it proves is proved one tier below the one
+spec §9 hands BIND-C#/BIND-Rust, and the tier above went unmeasured — which is
+how `Subscriber` came to invoke a callback *after* `Unsubscribe` returned, and to
+throw when asked to cancel something already gone, with an in-tree test asserting
+the first as intended behaviour.
+
+What it claims, and only this: **§7 clause 6 and cancellation idempotence, at the
+`Subscriber` tier.** §7's other clauses stay measured at the provider tier alone.
+That limit is deliberate and stated rather than implied.
+
+Its subject is a probe provider defined in the test file, and its link line names
+`fletcher-pubsub` and **no transport SDK** — that narrowness is itself the guard
+that these are seam properties and not one provider's. Every case is driven by
+latches, never sleeps: the timing window the defect lived in is *made*, not
+waited for.
+
+**What falsifies it.** Three cases were red before the fix and green after, on
+the behaviour itself:
+
+| Case | What it caught before the fix |
+|---|---|
+| `NoCallbackAfterUnsubscribeReturns` | `second_calls` was **1** — a handler ran after its own cancellation returned |
+| `UnsubscribeWaitsForAnInFlightDelivery` | the handler had **not** exited when `Unsubscribe` returned |
+| `UnsubscribeOfAnUnknownIdIsANoOp` | *"it throws fletcher::PubSubError with description \"Subscriber: unknown subscription ID\""* |
+
+`DestructorDrainsAnInFlightDelivery` was red the same way, through teardown
+instead of through cancellation. The remaining cases are **live negative
+controls**, and each was made to go red by mutating the thing it controls rather
+than asserted to be one:
+
+| Control | Mutation | Observed |
+|---|---|---|
+| `SelfUnsubscribeInsideItsOwnCallbackReturns` | delete the per-`Subscriber` delivery-depth skip | **Failed** — self-deadlock on its own non-recursive gate |
+| `CrossCancellingDeliveriesDoNotDeadlock` | same mutation | **Timeout** — the ABBA cycle between two deliveries on one `Subscriber` |
+| `UnsubscribeDoesNotHoldAGateWhileEnteringTheProvider` | scope the barrier as a function-scoped `lock_guard`, so a gate is held across `provider->Unsubscribe` | **Timeout** — and *only* this case reddens on that mutation |
+| `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the `mu`↔gate edge, in the permitted direction |
+| `ALiveSubscriptionStillReceives` | — | that the gate did not simply silence delivery |
+| `AReleasedIdIsNeverReused` | — | ids are never recycled, without which "unknown id is a no-op" silently becomes "cancels a stranger" |
+
+The last of those mutations matters beyond its own row. The design named
+`ctest -R 'ProviderConformance\.'` against Fast DDS as the live check for the
+"no gate is held while the provider is entered" edge, and that check **cannot
+fire** — that suite constructs no `Subscriber`. The case above is a real one and
+needs no transport: it puts the probe into the shape `provider.hpp` already
+requires of every provider (an `Unsubscribe` that refuses to return while a
+delivery is in flight, as Fast DDS does) and parks a delivery inside an entry
+that has already cancelled itself, so the cancellation of the last remaining
+entry empties the topic and enters the provider with that entry's gate still
+ahead of the fan-out loop.
+
+**Three of these ten cases redden by hanging**, so `conformance_caller_tier`
+carries a declared ctest `TIMEOUT` of 60 s against a suite that costs well under
+a second. An uncapped hang is not a red; it is a hung job.
+
+### What `CallerTier` does NOT prove — read before trusting it
+
+1. **A callback that never returns blocks `Unsubscribe` forever.** Not
+   forbiddable: the seam cannot bound foreign callback duration, and a timeout
+   would weaken the clause into "no further callback, probably". The identical
+   exposure exists at the provider tier.
+2. **A cancellation issued from inside a delivery callback on that subscriber
+   does not wait**, so in that one shape the application must **not** free or
+   unpin handler state when it returns. It still gets the other half — no
+   invocation begins afterwards. Published, not implied (owner ruling
+   2026-09-04).
+3. **Two handlers on DIFFERENT `Subscriber` objects that cancel each other can
+   still hang one another.** The delivery-depth scope is per `Subscriber`, so a
+   handler on X cancelling on Y takes Y's barrier — which is what makes limit 2's
+   sentence true as written for Y's caller. The residue is a **hang**, and it is
+   published here as handled residue on the owner's stated reasoning: *a loud
+   hang is preferred over a silent use-after-free* (2026-09-04). Widening the
+   scope process-wide would remove the hang and put the "you may free" promise
+   off in a second, wider set of cases instead.
+4. **The scope is per THREAD, not per logical flow.** A handler that hands its
+   cancellation to a helper thread and then waits for that helper deadlocks: the
+   helper is not inside a delivery, so it takes the barrier on the gate the
+   handler still holds. Adjacent to limit 1, not covered by it.
+5. **What a PROVIDER does with an `Unsubscribe` re-entered from inside its own
+   delivery is untouched and unclaimed.** `Subscriber::Unsubscribe` calls
+   `provider->Unsubscribe` when a topic's last entry goes; issued from inside
+   that subscription's own callback, that is a re-entrant provider call, which
+   today deadlocks deliberately on the loopback
+   (`in_process_provider.cpp:248,270-275`), self-waits undocumented on Fast DDS
+   (`fast_dds_pubsub_provider.cpp:570-574`) and is safe on XRCE. That question is
+   open and owned by the re-entrancy item, not by this suite — which is why every
+   case here that cancels from inside a handler keeps a sibling subscription
+   alive so the provider is never re-entered.
+6. **A subscription id means something only to the `Subscriber` that issued
+   it.** Ids are per-instance counters from 1, so handing one to a different
+   instance silently addresses a stranger's subscription. Predates this suite and
+   is unchanged by it; globally unique ids would need the process-global state
+   the isolation ruling keeps out of the seam.
+
 ## Building and running
 
 ```sh

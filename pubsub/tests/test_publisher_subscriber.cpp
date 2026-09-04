@@ -336,11 +336,30 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
     EXPECT_EQ(mock->unsubscribe_count, 0);
 }
 
-TEST(SubscriberTest, UnsubscribeUnknownIdThrows) {
+// Replaces UnsubscribeUnknownIdThrows: cancelling something that is not live is
+// a no-op, not an error, at this tier as well as at the provider's (spec §7
+// clause 6, owner ruling 2026-09-04). Teardown in a foreign runtime calls this
+// unconditionally and cannot let an exception escape.
+TEST(SubscriberTest, UnsubscribeUnknownIdIsANoOp) {
     auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
     Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
 
-    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] { subscriber.Unsubscribe(999); }));
+    int calls = 0;
+    const uint64_t live =
+        subscriber
+            .Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                   const Attachments&) { ++calls; })
+            .subscription_id;
+
+    EXPECT_NO_THROW(subscriber.Unsubscribe(999));
+    subscriber.Unsubscribe(live);
+    EXPECT_NO_THROW(subscriber.Unsubscribe(live));  // already cancelled
+
+    // The no-op is a no-op: it neither disturbed nor resurrected anything.
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+    EXPECT_EQ(calls, 0);
 }
 
 TEST(SubscriberTest, NullProviderThrows) {
@@ -399,11 +418,13 @@ TEST(SubscriberTest, FanOutRunsCallbacksInSubscriptionOrder) {
     EXPECT_TRUE(std::is_sorted(order.begin(), order.end()));
 }
 
-// Delivery snapshots the subscriber list and then invokes outside the lock, so a callback may
+// Delivery still snapshots the subscriber list and invokes outside `mu`, so a callback may
 // unsubscribe itself — or another subscriber — without deadlocking or invalidating the iteration in
-// progress. The sample being delivered still reaches everyone who was subscribed when it started;
-// the removal takes effect from the next one.
-TEST(SubscriberTest, UnsubscribeFromInsideCallbackIsSafe) {
+// progress. What changed is WHEN the removal takes effect: each entry is re-checked under its own
+// gate at the moment it would be invoked, so a subscription cancelled during a delivery does not
+// receive the sample that delivery is carrying. The old expectation ("the removal takes effect from
+// the next one") was the defect frozen §7 clause 6 forbids, and it is gone with no replacement.
+TEST(SubscriberTest, UnsubscribeFromInsideCallbackTakesEffectImmediately) {
     auto mock = std::make_shared<MockProvider>();
     Publisher publisher(mock);
     Subscriber subscriber(mock);
@@ -431,13 +452,14 @@ TEST(SubscriberTest, UnsubscribeFromInsideCallbackIsSafe) {
                     .subscription_id;
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
-    // Both were subscribed when this sample started, so both saw it.
+    // The second was cancelled while this sample was being fanned out, and the fan-out had not
+    // reached it yet — so it never sees it. Once Unsubscribe returned, no callback ran.
     EXPECT_EQ(first_calls, 1);
-    EXPECT_EQ(second_calls, 1);
+    EXPECT_EQ(second_calls, 0);
 
     publisher.Publish(kTopic, MakeTestEncoder(2));
     EXPECT_EQ(first_calls, 2);
-    EXPECT_EQ(second_calls, 1);
+    EXPECT_EQ(second_calls, 0);
 
     subscriber.Unsubscribe(first_id);
 }
