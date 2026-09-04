@@ -10,8 +10,7 @@ would collide with a different topic is rejected at once, on all three protocols
 ## Interfaces
 | Surface | Change | Why |
 |---|---|---|
-| Topic naming rules | CHANGED | Four name shapes are rejected instead of accepted; every name still accepted behaves exactly as today |
-| Interface spec §3.5 | CHANGED | Protocols no longer choose their own way to build a name from its parts; rejection reuses the existing "invalid argument" code, so no new error number |
+| Topic naming rules + spec §3.5 | CHANGED | Five name shapes are rejected instead of accepted, and protocols no longer choose their own way to build a name from its parts; every name still accepted behaves exactly as today, and rejection reuses the existing "invalid argument" code, so no new error number |
 
 ## Deleted
 Nothing is retired. One sentence of the frozen interface specification is deleted and replaced; no
@@ -47,14 +46,15 @@ Also impossible by construction: two protocols disagreeing on what a name means,
    *Background (skippable): unlike 1 and 2, a WebSocket client can send such a part today.*
 
 ## Risks accepted / debt carried
-- Names using the four rejected shapes stop working, loudly, with no migration path — deliberate, and the reason decisions 1-3 are yours.
-- Evidence will again be local Windows runs only; a Linux-only difference here is a question for you,
-  not a local fix (your 2026-09-03 ruling). No temporary compatibility path is created.
-- One protocol's behaviour on the `__schema` collision could not be established from the code, so decision 3 removes the question rather than answering it.
+- Names using the rejected shapes stop working, loudly, with no migration path — deliberate, and the reason decisions 1-3 are yours.
+- Evidence is local Windows runs only; a Linux-only difference here is a question for you, not a local fix (2026-09-03). No compatibility path is created.
+- One protocol's `__schema` behaviour was not establishable from the code, so decision 3 removes the question rather than answering it.
 
-## Numbers
-Declared net lines: +535 / -15 · new public surface: 0 · design cycles used: 2/2
-
----
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+## Numbers — *as landed, 2026-09-04, PM at close*
+Declared +535/−15 · **landed +1055/−35** (2.0×) · surface **0** · **2 design cycles (cap) · 2 fix
+cycles · 4 launches · 2 owner touches · 4 rulings.** **Five refusals shipped, not four:**
+review found two accepted names agreeing on 255 bytes were one topic on Fast DDS (5 of 5 rows to the
+wrong subscriber), so you ruled a **246-byte** bound. Also unpredicted, **disclosed rather than
+implied: the gateway's accepted set narrowed** — it silently repaired `"a//b"` into `"a/b"`; that
+repair is gone, so such a name now returns an error frame. Rulings 40/41 were priced on the gateway
+never producing such a part — true *because* of that repair.

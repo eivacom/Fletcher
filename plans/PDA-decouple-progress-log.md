@@ -1208,3 +1208,64 @@ including its test package. The transposed `rule 2`/`rule 3` labels are **not re
 checked at `445b4ea` itself, the NUL-in-a-later-segment row reads `rule 2` and the `b/c` row reads
 `rule 3`, which is correct against §3.5 — nothing changed, and the RECORD item can be closed as
 already-true.
+
+## PDA-DEC-A5 — a topic name means one thing (2026-09-04) 🟢
+
+Second of the eight amendments, and the only confirmed **silent wrong answer already in the
+shipped tree**. The seam identified a topic by a segment **list**, every provider by a joined
+**byte string**, and nothing made that map injective or faithful — so an embedded NUL truncated a
+name on the wire (and the participant name at a second `c_str()` sink), and `{"a/b"}` aliased
+`{"a","b"}` on all three providers while frozen §3.5 licensed a provider under which they differ.
+The design's central call — **one class, not three** — survived both review cycles.
+
+**Landed.** Five per-segment refusals in `internal::RequireSegments`, the one door all twelve
+provider entry points route through: NUL, `/`, empty, the reserved `__` prefix, and a joined
+length over **246 bytes**. All `kInvalidArgument`; **no new status** (`kReentrantCall` stays A3's).
+§3.5's *"so the provider may join with any separator"* deleted and replaced by the seam-owned
+join, six numbered refusals, and both driver obligations — injective mapping **and** companions
+confined to `__`, so a future driver deriving `name + ".meta"` cannot reopen a hole PDA-ABI would
+be unable to fix locally. `pubsub-arrow`, the gateway and the peer harness all ripple.
+
+**Two refusals came from review, not from the original stop-and-ask.** The `__` prefix
+(design cycle 1) and the 246 bound (code review) each needed their own owner authorisation,
+because neither appears in the verification document the 2026-09-03 ruling was given on — the
+**tenth and eleventh** amendments for PR #126. Both close a class rather than an instance: the
+prefix reserves the whole companion namespace, and 246 = 255 − 9 leaves the derived
+`/__schema` room so the collision cannot reappear on the hidden channel.
+
+**Evidence.** The 246 bound was **measured, not reasoned**: two accepted names agreeing on 255
+bytes were one topic on Fast DDS, 5 of 5 rows to the wrong subscriber. Post-fix that pair is
+unconstructible. Injectivity re-run keyed on *what Fast DDS announces* and on the announced
+companion: **64,262 accepted → 64,262 distinct**, four ways. Separators proved counted (a rule
+summing segments alone would have accepted k=124..247). **XRCE is not tighter** — a live Agent
+round trip carried the longest accepted name *and* its 255-byte companion intact, which is what
+makes 246 right for all three rather than for one. M8 and M9 (M9 = the 255 the owner **rejected**)
+each redden the new case **alone**, so the ruling is pinned by a test. `provider.hpp`'s surviving
+copy of the deleted licence found by the converse check; `grep 'any separator'` outside `plans/`
+now empty. Six of seven mutations live in-tree, M5 rebuilt and recorded rather than assumed.
+
+**The cache incident, because it is a process finding.** A reviewer mutated `segments.hpp` to
+prove a control could fail — correct practice — while a parallel `conan create` captured the
+mutation into the newest `fletcher-pubsub` recipe revision. Conan resolves newest, so **the
+rejected 255 briefly became the shipped artifact**, and the Fast DDS provider's only revision was
+compiled against it, so header-checking alone would have missed it. Purged, rebuilt, verified
+behaviourally. Proved retroactively sound too: an M9 binary *accepts* 247, and every reported run
+showed 247 refused. **Mutation testing writes to shared build state — serialise it, and purge
+dependents, not just the mutated package.**
+
+**False greens caught, four distinct kinds:** a poisoned package; a cached `XRCE=OFF` flag (mine —
+I wrote "ON is mandatory" two lines under a flag set to OFF); a `-R` filter that could not reach
+`conformance_xrce` at all, since it is one ctest entry wrapping the binary (also mine, walking into
+a trap the config already documented); and `pubsub-arrow/build` silently resolving an **orphaned
+pre-A5 seam**, caught at the close gate before it could green anything.
+
+**Disclosed, not implied.** The **gateway's accepted set narrowed**: `SplitTopic` silently repaired
+`"a//b"` into `"a/b"`, and that repair is gone. Rulings 40/41 were priced on "the gateway can never
+produce such a part" — true *because* of the repair. Compliance ruled it a licensed narrowing, not
+a violation; it is in the Stage Brief for the owner before #126 merges.
+
+**Numbers.** Declared **+535 / −15** · landed **+1055 / −35** excluding `plans/` (`git diff
+722cc6b..b946798`), **2.0×** — against A4's 4.6×. Public surface **0** as declared. **2 design
+cycles (at cap) · 2 fix cycles · 4 implementer launches · 2 owner touches · 4 rulings (ledger
+39 → 43).** PM gate run on refreshed trees: inner loop **27/27 twice**, whole harness **105/105**
+at `XRCE=ON`. A5-DEBT-6 left open: the gateway case watches the text-frame paths, not binary publish.

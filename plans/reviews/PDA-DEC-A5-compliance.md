@@ -397,3 +397,162 @@ run started from this cache now links a 255-bounded seam**, which would make
 `TopicNames.*`/`SeamVocabulary.*` and any harness green mean less than it appears to. Re-run
 `conan create pubsub` (and the two provider packages) from the clean tree before trusting any
 packaged-target result taken after 15:46 today.
+
+---
+---
+
+# FINAL CHECK after fix cycle 2 — `git diff 445b4ea b946798` (2026-09-04)
+
+*The cycle-1 record and the fix-cycle-1 re-check above are left intact. This section is appended.*
+
+**Verdict: PASS — 0 blocking.** Ledger `grep -c '^## 2026' plans/PDA-DEC-rulings.md` = **43**
+(re-grepped). Cycle `+99 / −12`; cumulative `722cc6b → b946798` = **`+1055 / −35`** excluding
+`plans/` (re-derived, matches). Working tree clean before and after; every mutation I applied was
+reverted, every affected build tree rebuilt, and the suites re-verified green.
+
+## B2 is CLOSED — I reproduced the whole red/green cycle myself
+
+**The mutation-only red is sufficient here, and it is the only honest form available.** Red-first
+needs the defect present in the diff base; the two `if (!seg.empty())` guards were deleted in fix
+cycle 1 at `f526acb`, so no state of `445b4ea` can fail this case. The implementer said exactly
+that rather than claiming a red it did not get — which is the standard this round has enforced
+since PDA-DEC-1 (*"report the inert mutation, never claim a red you did not get"*). What makes the
+mutation *evidence* rather than assertion is that it is the **exact inverse** of the change, and I
+ran it:
+
+| step | result |
+|---|---|
+| `b946798`, harness gateway rebuilt against the current packages | **2 of 31 pass** (the new case, both provider contexts) |
+| both `if (!seg.empty())` guards restored verbatim in `ws_session.cpp`, gateway rebuilt | **2 of 31 FAIL** — `gateway over 'inprocess'` and `gateway over 'fastdds'`, *"promise resolved undefined instead of rejecting"*, at `end-to-end.test.ts:649`. Nothing else moved: 29 passed |
+| guards restored to `b946798`, rebuilt | **31 of 31 pass** |
+
+Note the failure *mode*: `promise resolved undefined` means the gateway **accepted** `emptypart//bad`
+— the aliasing behaviour itself — not a timeout, not a harness error. And the assertion pins the
+seam's own message (`/empty segment/`, which is `RequireSegments`' rule-4 text arriving through
+`SendError(e.what())` and `client.ts:84`'s `throw new Error(resp.message)`), so a rejection for any
+*other* reason would not satisfy it. That is a discriminating red on the exact claim.
+
+**The placement is right, and better than what I asked for.** I asked for a `gateway_tests` case;
+that was the weaker suggestion. `SplitTopic` is `private static` (`ws_session.hpp:110`, under the
+`private:` at `:80`) and `gateway_tests` links **`gateway_codec` alone**, which is
+`schema_codec.cpp` + `publish_frame.cpp` — `ws_session.cpp` is compiled into the `gateway`
+*executable* target (`gateway/CMakeLists.txt:48-64`). Taking my suggestion would have meant putting
+Boost.Beast and a provider on the test link line and widening a private member: changing production
+structure to admit a test. The claim is about what a **client** sees, and `gateway-end-to-end` is
+the only harness that drives the shipped WebSocket surface. It is also **CI-wired for the right
+trigger**: `ci.pr.yml`'s `integration-gateway-e2e` path filter includes `gateway/**`, so an edit to
+`ws_session.cpp` runs this workflow. The positive row is placed **first**, so a red on the negative
+rows cannot be read as "this gateway rejects everything".
+
+## The cache purge — COMPLETE for everything Conan can resolve
+
+I did not take the report on trust; I enumerated the cache.
+
+- **No poisoned artifact exists anywhere.** Zero hits for the M9 form
+  (`kMaxJoinedTopicBytes = kFastDdsAnnouncedTopicBytes;`) across the whole of `~/.conan2/p`, and
+  zero for the M8 form (a rule-6-era header with the length check missing). The poisoned recipe
+  revision I found last round, `fletcher-pubsub#376f2fae…`, **is gone**; the only recipe revision
+  now is `#b3ba0519…`.
+- **Every resolvable `fletcher-pubsub` package revision is clean.** I resolved all four through
+  `conan cache path` and read the header each one ships: 4/4 **CLEAN246** (`kMaxJoinedTopicBytes =
+  kFastDdsAnnouncedTopicBytes - kDerivedCompanionSuffixBytes`, with `if (joined >
+  kMaxJoinedTopicBytes)` present).
+- **The compiled provider binaries are clean too, established by provenance rather than by
+  grepping a header they do not contain.** For every resolvable provider package revision I read
+  its own build folder's generated `fletcher-pubsub` config to find the exact pubsub package folder
+  it compiled against, then classified that header: Fast DDS **4/4 CLEAN246** (built 16:20 and
+  16:40, `libs=2`/`libs=1`), XRCE **6/6 CLEAN246** (built 16:04–16:42, `libs=3`). Widened to every
+  build folder in the cache: **26 CLEAN246, 0 POISONED**; the rest consumed pre-fix-cycle headers
+  and are all dated before 12:03 today.
+- **No lockfiles** anywhere in the tree or the cache.
+
+So the packages a consumer resolves today carry the 246 refusal, and nothing compiled against 255
+survives. The coordinator's point that header-checking alone was insufficient is correct, and the
+provenance chain above is what closes it.
+
+### Three build-tree residues — not poisoned, but they decide whether a number means anything
+
+None is a defect in `b946798`. All three matter for close-gate evidence, so they are listed here
+rather than buried.
+
+1. **`pubsub-arrow/build` silently resolves a fully pre-A5 seam.** Its generators point at
+   `…/p/b/fletc62b281d1d34ee/p`, an **orphaned** package folder (not among the four Conan resolves)
+   whose `RequireSegments` is the 2026-09-03 version — `segs.empty()` and *nothing else*, none of
+   the six refusals. The folder still exists, so `cmake --build pubsub-arrow/build` does **not**
+   error; it compiles and goes green against a seam with no A5 rules at all. This is the silent
+   kind. Re-run `conan install` there before any `pubsub-arrow` number is taken.
+2. **`fastdds-pubsub-provider/build` and `xrcedds-pubsub-provider/build` reference purged package
+   folders** (2 missing each). These fail *loudly* at configure — the safe mode — but they cannot
+   produce a number until `conan install` is re-run. `gateway/build` was in the same state; I
+   re-ran `conan install` + configure + build there myself to run the mutation above, so it is
+   current again.
+3. **The nested `build/build/generators` is back at the conformance harness** (re-created 16:50),
+   so `integration-tests/pubsub-conformance/CMakeUserPresets.json` again includes **two** preset
+   files each declaring a preset named `conan-default`, with different `binaryDir`s
+   (`…/build` and `…/build/build`). That is the exact condition reported as discarded. Both
+   currently resolve the same CLEAN246 pubsub package, so nothing is wrong today — but
+   `cmake --preset conan-default` is ambiguous, and a run could configure one tree while a reader
+   inspects the other.
+
+## The three nits
+
+- **N3 — fixed correctly.** The three constants moved **above** the doc block
+  (`segments.hpp:21-27`), so the ~60-line `///` block documents `RequireSegments` again. Verified in
+  the packaged header a consumer resolves, not just in the working tree.
+- **N4 — the product assertion genuinely holds; one comment overstates its role.** The product
+  half is now real and is what I asked for: it takes the longest **accepted** name
+  (`JoinSegments(JoinedLength(246))`), derives the companion **as both DDS providers derive it**
+  (`name + "/__schema"`), applies the sink's own silent truncation
+  (`substr(0, min(size, 255))`), and asserts `announced == companion` — nothing lost — plus
+  `announced != longest`, still distinct from the data topic. Both hold (246 + 9 = 255, so the
+  truncation is a no-op, and 255 ≠ 246). The counterfactual `EXPECT_GT((std::string(247,'x') +
+  "/__schema").size(), 255)` also holds: 256 > 255, so 247 is refused *because of the companion*,
+  not because the data name would overrun. That is the right claim and it is what makes 246 the
+  right number.
+  **The inaccuracy:** its comment says *"Bounded at 255 instead, this assertion is what fails."*
+  It does not. I re-ran **M9** on `b946798` and listed every failing assertion: lines 402, 408,
+  442, 446, 450, 454, 455 — the 247-refusal, the separator-counting shape, `JoinSegmentsInto`, and
+  the four provider entry points. The counterfactual and both product assertions use the *test's*
+  own `kMaxJoinedBytes`/`kFastDdsAnnouncedCeiling` literals, so they are insensitive to the header
+  constant and stay green under any bound mutation. The mutation is still caught — twice over, by
+  a different assertion in the same case, and M9 still reddens **that case alone** (4 of 5
+  `Segments.*` green). So the evidence is sound and only the sentence is wrong. **Non-blocking, and
+  explicitly not worth a third cycle**: one clause, at the PM's convenience, or leave it.
+- **N5 — fixed, and more than asked.** `fastdds-pubsub-provider/README.md`'s `### Topic name`
+  section now carries the 246 cap, names the three `string_255` sites and
+  `fixed_size_string.hpp:83,331` as `noexcept`, records the measured aliasing, states *why* 255 was
+  rejected, and points at `Segments.NamesThatWouldTruncateOnTheWireAreRefused`. It also adds "the
+  join is the **seam's**, not this provider's choice", which is the B1 correction reaching the
+  provider docs.
+
+## Final conformance sweep — all clean
+
+- **Six refusals, one status.** `segments.hpp` contains 6 `PubSubStatus::` references and all 6 are
+  `kInvalidArgument`. `core/include/fletcher/core/status.hpp` is **absent from the cumulative diff
+  `722cc6b..b946798`**, its 10 one-value-at-a-time `static_assert`s are intact, and `kReentrantCall`
+  appears **nowhere** in the tree — A3's allocation is untouched. The six map exactly onto the
+  authorised eleven amendments (tenth = rule 5, eleventh = rule 6).
+- **§12.1 byte-identical**, re-measured at `b946798`: `md5 e66e71c53dcc201467cca8cbe2cd8c17`,
+  the same value as at `722cc6b`. The spec diff for the **whole item** is still exactly **one
+  hunk**, inside §3.5; this cycle touches `docs/pubsub-interface-spec.md` **not at all** (0 lines).
+- **§3.5's invariant is still scoped**: one occurrence of *"for every **accepted** segment list"*
+  and one of *"Nothing is claimed for a list this section refuses"*.
+- **Converse.** `grep -rn 'any separator'` outside `plans/` is still empty. All twelve provider
+  entry points still route through `internal::JoinSegments` (4 + 4 + 4); no new bypass; the only
+  refused-shape literal outside test and harness code is a doc-comment example in `segments.hpp:58`.
+  `SplitTopic` still keeps every piece (0 `if (!seg.empty())`, 2 unconditional `push_back`s).
+- Local runs at `b946798`: `pubsub_tests` **24/24**, `gateway-end-to-end` **31/31** (both provider
+  contexts), plus the full mutation cycle above.
+
+## Your two corrections — both right, and one addition
+
+- **The runbook's XRCE flag:** you are right and I was wrong. `.claude/runbook.PDA-DEC.config.md:75`
+  is prose about the conanfile requiring the xrce package unconditionally; both `cmake` sites carry
+  `ON`. Withdraw that RECORD item.
+- **The brief and the `static_assert`:** right — the brief predates ruling 43 and still describes
+  four refusals, so it never claimed the `static_assert`. My RECORD line was about the wording of
+  the re-check brief you sent me, not the Stage Brief; either way your As-landed delta covers it.
+  Withdraw.
+- **The gateway disclosure** is yours and I have not re-filed it. For the brief's Deleted/Risks
+  lines, the concrete cost is: `"a//b"`, `"/a/b"`, `"a/b/"` and `"//a//b//"` are WebSocket topic
+  strings that worked before this item and now return an error frame.
