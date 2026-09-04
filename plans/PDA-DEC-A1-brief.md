@@ -31,9 +31,12 @@ existing "hand over bytes you already have" call has always carried, so it is no
 ## Decisions for you   (2 — the first has no default on purpose)
 1. **Do we now promise zero-copy across the *whole* send path — from where a client's code
    produces the row to where a subscriber reads it — or keep promising only the half inside
-   Fletcher and publish the gap as a named limit?** (a) whole path · (b) narrow + limit.
+   Fletcher and publish the gap as a named limit?** (a) the seam **permits** an uncopied row
+   end-to-end, for a client that uses the new call · (b) narrow + limit.
    **Recommendation:** (a) — you ruled zero-copy a requirement, not a trade, and the narrow
-   promise is true but useless to the C#/Rust clients it exists to serve.
+   promise is true but useless to the C#/Rust clients it exists to serve. (a) is worded as
+   *permits*, not *guarantees*: a client that ignores the new call still copies, and the seam
+   cannot stop it.
    **Default:** none — this edits frozen text, so unanswered the stage does not close.
 
 2. **How much may a green guard claim?** (a) that the interface *permits* an uncopied send,
