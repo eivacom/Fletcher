@@ -226,3 +226,167 @@ new public surface 0 ≤ 3; net lines declared.
 Fixed silently in `plans/PDA-DEC-A5-brief.md` (trimmed 72 → 60 lines against the
 HARD cap; every load-bearing fact retained — reflow only, no scope cut needed).
 Nothing edited in the design doc.
+
+---
+---
+
+# Cycle 2 — revision `64fc095` (cycle 1 was `22ad8b3`). Last cycle of the hard cap.
+
+Ledger re-grepped, not trusted: `grep -c '^## 2026' plans/PDA-DEC-rulings.md` = **39**,
+unchanged.
+
+**Verdict: NEEDS-REWORK — 1 BLOCKER, and it is a one-line brief edit, not a design
+revision.** Both cycle-1 BLOCKERs are genuinely closed and all three cycle-1 DEBT
+items are folded in. The standing BLOCKER is an **authorisation** question the
+revision created by adopting A5-DEBT-1: it is not a defect in the mechanism, the
+evidence or the wording, and it needs no third revision.
+
+## BLOCKER (STOP-AND-ASK) — decision 3 may not carry a default-on-silence
+
+The `__` reservation is a **new normative refusal in frozen §3.5 that the
+2026-09-03 authorisation did not name.** I read
+`plans/reviews/PDA-DEC-9-bind-stopask-verification.md` in full again: its A5
+section establishes the NUL topic-name truncation, the participant-name sink, the
+embedded `/` and the empty segment. The string `__schema` does not appear anywhere
+in that document. The owner ruled on *that* document. Decisions 1 and 2 are
+therefore inside the authorisation and keep their defaults; decision 3 is not.
+
+The round has already ruled on this exact shape. The 2026-09-04 idempotence
+ruling: *"Deliberately no default-on-silence — frozen text needs your explicit
+word."* Its context is structurally identical — a change found in **review** rather
+than in the verification, writing a new normative sentence into `frozen` text whose
+§12.1 *who may act* is "nobody alone", so *"it is a decision, not a repair, and the
+reviewer ruled a default-on-silence insufficient"*. Nothing distinguishes A5's
+decision 3 from that except the section number.
+
+The design is not at fault: it put the question to the owner with options, which is
+right. Only the word *default* is wrong.
+
+**Acceptable fix (cheapest, one line, no design cycle):** brief decision 3's
+`**Default if you don't answer:** (a)` becomes *"**No default — this one needs your
+explicit word:** it adds a refusal the 2026-09-03 authorisation did not name."*
+Forbidding the silent path is cheaper than defending it later: if the owner is
+silent and `__` lands, a frozen refusal ships that nobody affirmatively approved,
+and un-shipping it is another stop-and-ask. I did not make this edit myself —
+picking a side on an authorisation question is exactly what I must not do
+silently.
+
+## Cycle-1 BLOCKER 1 — closed, and the withdrawal does not reduce coverage
+
+Verified rather than accepted:
+
+- `TEST(Registry, FastDdsResolvesAsABuiltIn)` (`subjects/fastdds_main.cpp:77`) and
+  `TEST(Registry, XrceResolvesAsABuiltIn)` (`subjects/xrce_main.cpp:929`) are real
+  and are exactly the claimed shape: a plain `TEST`, `registry.Create(...)` →
+  `std::shared_ptr<PubSubProvider>`, then `provider->CreateTopic(topic, ...)` with a
+  raw `std::vector<std::string>` (`fastdds_main.cpp:90-91`, `xrce_main.cpp:939-940`).
+  No `ProviderSubject`, no `Reply`, no `refused()`, no peer, no `TEST_P`
+  parameterisation — so none of cycle 1's failure modes can recur there.
+  `PubSubStatus` is already in scope in both files (`xrce_main.cpp:952`).
+  `MicroXRCEAgentEnv` is a real global environment (`xrce_main.cpp:786,803`).
+- **Coverage is not reduced to in-process.** The new `TopicNames` case runs against
+  a real `FastDDSPubSubProvider` and a real `XrceDDSPubSubProvider`; the loopback is
+  covered by `SeamVocabulary...` and by the new in-tree four-entry-point control. All
+  three providers still assert the refusal, which is what the 2026-08-31 divergence
+  ruling requires.
+- The `RejectUnsendableTopic` NUL addition is correctly scoped: it makes the two
+  `Reply`-returning methods total. `PeerSubject::Subscribe`/`Unsubscribe`
+  (`peer_subject.cpp:66-70`) are unguarded and may throw, but `subject.hpp:135-136`
+  sanctions that, and a throw there comes from the provider under test, so it is
+  evidence rather than a vacuous pass. The design's claim is stated at exactly that
+  width.
+
+## Cycle-1 BLOCKER 2 — closed; the live count is **six** of seven, not five
+
+Re-derived from the mutation table rather than from the summary. M1, M2, M3, M4, M6
+and M7 all name `pubsub_tests` controls and are marked "in-tree, free" — **six**
+live mutations. M5 is the only inert one and is labelled with its exact cost. The
+PM's brief-back said "five of seven"; the design's table says six, and the table is
+right.
+
+M4 is the one worth re-checking, and it holds: the mutation edits `segments.hpp`
+and `pubsub/src/in_process_provider.cpp`, both inside the **in-tree**
+`fletcher-pubsub` (`pubsub/CMakeLists.txt:11-25`), which `pubsub_tests` links
+(`pubsub/tests/CMakeLists.txt:10-12`); `in_process_provider.hpp` is on that include
+path. The row's discrimination is stated precisely — it reddens
+`RefusalReachesAllFourEntryPoints` *"on the other three methods"*, which is what
+separates the routing claim from the refusal claim. Header provenance now appears
+as a column on every test row, which is the durable form.
+
+## The `__` prefix width — ruled: right width, right reason
+
+Asked directly: **is there an accepted name today, in-tree or plausible, that
+starts `__`?** Searched `*.cpp *.hpp *.json *.js *.html` for a segment literal
+matching `"__[A-Za-z0-9_]*"` — **none**. (The `__rba.fletcher.rs` hits are generated
+Rust filenames, not topics.) This also **discharges P5's `__` half**: the
+implementer need not repeat that search.
+
+The narrower alternative — refuse the literal `__schema` — is worse for a reason
+specific to this document: §3.5 is `frozen` with *who may act: nobody alone*, so
+every future companion name would cost its own owner ruling to add. Reserving the
+prefix buys the whole provider-derived namespace once. Over-forbidding here is also
+the cheap direction of error: a refused name fails loudly at development time and
+nobody deploys a topic they cannot create, whereas under-forbidding is the silent
+collision this item exists to remove — the trade the owner has now made seven
+consecutive times.
+
+One correction: `in_process_provider.cpp` has **no** `__schema` companion (searched:
+zero occurrences). The companion channel is a **Fast DDS and XRCE** construct, not
+"every protocol". Fixed in the brief; see NITs.
+
+## §3.5 wording — confirmed: narrows, does not widen
+
+Against the deleted sentence (*"the provider may join with any separator"*), every
+clause of the replacement is strictly narrower: the seam-computed name becomes the
+identity, four refusals are added, and the A5-DEBT-2 clause permits a driver only an
+**injective** mapping where the old text permitted an arbitrary join. §12.1 is not
+edited and its *"§3.5 including the empty-segment refusal"* phrase still reads true.
+Nothing here needs an authorisation beyond the 2026-09-03 ruling — with the single
+exception of the `__` rule itself, above. One residual gap is filed as A5-DEBT-4.
+
+## Wire bytes — still does not fire, including the new refusal
+
+The `__` rule is a fourth **refusal**; it adds no transform, no escape and no
+normalisation, and the join is still untouched. It removes names from the accepted
+set and moves no accepted name's bytes. The byte-table control now covers the two
+derived forms (`name + "/__schema"`, the XRCE participant name), which closes the
+last inch cycle 1 flagged. Locked decisions 11 and 13 are not tripped.
+
+## Budget — +535 is defensible
+
+Composition re-added: 30+35+180+60+90+45+45+5+45 = **535**, and the itemisation is
+per-file rather than per-phase. The likeliest under-count is the two provider-binary
+cases at +45 each — this tree writes 10-20 lines of rationale comment per
+conformance test (`fastdds_main.cpp:61-76` is 16 comment lines for one case) — but
+the declared +120 contingency covers it twice over. Not a finding. This is not A4's
+shape: A4's 4.6× came from three fix cycles on a mechanism whose scope kept moving,
+and A5's mechanism has been four `if`s in one function across both cycles.
+
+## Caps — nothing load-bearing was squeezed out, after two restorations
+
+Design 300/300, brief 60/60. Comparing `22ad8b3..64fc095`, the design lost nothing
+load-bearing. The brief had lost two things to fit, both restored by reflow (no
+scope cut needed, so no finding):
+
+1. Decision 1's *"which is a separate stop-and-ask"* on option (b), and the
+   reassurance that **no remote client loses a working topic** — the answer to "who
+   breaks?", which is the whole cost question for that decision.
+2. *"if you don't answer"* on decisions 1 and 2. `**Default:** (a)` reads as the
+   design's preference; `**Default if you don't answer:** (a)` is the round's
+   convention and states what silence commits the owner to. Restored on 1 and 2;
+   deliberately **not** touched on 3, which is the BLOCKER.
+
+## Cycle-2 NITs, fixed silently in the brief
+
+- Decision 3's *"Every protocol keeps a hidden companion channel"* → *"Both DDS
+  protocols…"*; the loopback has none. Same fix in the Forbidden paragraph.
+- The two restorations above.
+- Line count held at exactly 60 by reflowing the Forbidden paragraph and the first
+  risk bullet — no substance removed.
+
+## Not a recurring defect class
+
+Cycle 1's two BLOCKERs were both "a control that cannot prove what it claims".
+Cycle 2's is an authorisation boundary. Different class, and the cycle-1 class is
+closed by verified means rather than by assertion — so this is convergence, not the
+premise being wrong.

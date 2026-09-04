@@ -454,6 +454,25 @@ design's favour and the PM carries nothing to the owner.
 | A5-DEBT-2 | **The §3.5 replacement wording must not foreclose an injective driver-side name mapping.** Deleting "so the provider may join with any separator" is authorised and correct for the three in-tree providers, but PDA-ABI may not change the seam (locked decision 1; spec §1), and a future driver on a transport where `/` is not a legal topic character would be non-conforming under "every provider uses it" as written. One clause in the amendment — the seam-computed name is the identity, and a driver may map it into its own transport namespace only **injectively** — costs nothing now, is a narrowing rather than a widening, and cannot reopen the aliasing hole. | review §Claim 3 |
 | A5-DEBT-3 | **The rung-1 argument is right for a weaker reason than the design gives.** §2 carries a carve-out the design does not cite — "this round *may* change the **types** in those signatures, and only where a type has **no C-expressible form**" (`docs/pubsub-interface-spec.md:104-106`) — which does not reach a sealed `TopicName`, because §3.5 already gives topic segments a C form. State that, and state the stronger point: across a boundary of pointer-and-length pairs a bad name is always constructible, so a sealed type relocates the check into a constructor rather than making anything unrepresentable. One line, so nobody later cites §2:104-106 as proof rung 1 was available. | review §Claim 4 |
 
+### PDA-DEC-A5 cycle 2 (`64fc095`) — NEEDS-REWORK, 1 BLOCKER (an authorisation boundary, fixed by one line in the brief)
+
+Cycle-1 BLOCKERs 1 and 2 are **closed and verified** (the new `TEST(TopicNames, …)`
+home is real and cross-provider; six of seven mutations are live in-tree, not five).
+A5-DEBT-1/2/3 are all folded into revision 2 and **closed**. Eight things the
+implementer may rely on **without re-deriving them**, on top of cycle 1's list:
+**no `__`-prefixed topic segment exists anywhere in the tree** (searched `*.cpp
+*.hpp *.json *.js *.html` for `"__[A-Za-z0-9_]*"` — the `__rba.fletcher.rs` hits are
+generated Rust filenames; this **discharges P5's `__` half**); the loopback has **no**
+`__schema` companion, so that channel is a Fast DDS + XRCE construct only; M4 is
+genuinely live in-tree (`pubsub/CMakeLists.txt:11-25` + `pubsub/tests/CMakeLists.txt:10-12`);
+and the §3.5 replacement narrows on every clause, so it needs no authorisation
+beyond 2026-09-03 except for the `__` rule itself.
+
+| Id | Owed | Where |
+|----|------|-------|
+| A5-DEBT-4 | **The §3.5 amendment states injectivity but not the disjointness the `__` reservation actually implements.** A driver deriving `name + "/__schema"` is an injective map, so the A5-DEBT-2 clause alone does not stop a future driver deriving `name + ".meta"` and colliding with an accepted list all over again — and PDA-ABI may not change the seam to fix it (locked decision 1, §1). The reservation is only load-bearing if the amendment states the reciprocal obligation: **a driver's derived companion names must live in the reserved `__` namespace**, which is what makes every future companion name safe by construction rather than by inspection. One clause, written while the amendment is being written; it is the difference between "we refuse these four shapes" and a rule a third-party driver author can obey. | review §"`__` prefix width", §"§3.5 wording" |
+| A5-DEBT-5 | The two new `TopicNames.AmbiguousSegmentsAreRefused` cases should name their **own** domain / session key rather than reusing the registry case's (`kRegistryDomain = 153`, `fastdds_main.cpp:42`; `kRegistrySessionBase`, `xrce_main.cpp`). The tree keeps a domain census and PDA-DEC-8 recorded **154–158 unused** (`design-debt.md`, PDA-DEC-8 cycle 2) — take one rather than re-survey. Cheap, and it keeps a refusal case (which creates a participant even though it never declares a topic) out of another case's discovery traffic. | review §"BLOCKER 1 closed" |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |

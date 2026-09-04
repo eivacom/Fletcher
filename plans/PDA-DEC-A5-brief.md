@@ -18,11 +18,10 @@ Nothing is retired. One sentence of the frozen interface specification is delete
 file, setting or test goes away, because this tightens a check that already exists in exactly one place.
 
 ## Corner cases forbidden vs handled
-**Forbidden** (refused at the door, no recovery, no partial mode): a name part containing a zero byte
-(today chopped off on one protocol); a part containing the separator (today makes "a/b" and "a"+"b" the
-same topic on all three); an empty part; a part starting with `__`, where the protocols keep their own
-hidden channels. Also impossible by construction: two protocols disagreeing on what a name means, and
-any hidden tidying-up such as case-folding.
+**Forbidden** (refused at the door, no recovery, no partial mode): a name part containing a zero byte (today
+chopped off on one protocol); a part containing the separator (today makes "a/b" and "a"+"b" the same topic on
+all three); an empty part; a part starting with `__`, where the two DDS protocols keep their own hidden channels.
+Also impossible by construction: two protocols disagreeing on what a name means, and any hidden tidying-up such as case-folding.
 
 **Handled**, with why it could not be forbidden: a name a particular transport rejects for its own reasons
 — limits differ per transport, refusing the union at Fletcher's level would reject names that work, and it already fails loudly.
@@ -31,23 +30,25 @@ any hidden tidying-up such as case-folding.
 1. **A topic part that itself contains a "/" — reject it, or keep it working?** Today `"a/b"` as one
    part and `"a"`+`"b"` as two parts are the *same* topic, so one can silently receive the other's data.
    Options: (a) reject outright · (b) keep both working by rewriting the name on the wire · (c) declare
-   the collision intentional and document it. **Recommendation:** (a) — a loud refusal beats a silent
-   wrong delivery, and (b) changes wire bytes for names that work today. **Default:** (a).
+   the collision intentional and document it. **Recommendation:** (a) — a loud refusal beats a silent wrong
+   delivery; (b) changes wire bytes for names that work today, which is a separate stop-and-ask; and no remote
+   client loses a working topic, because Fletcher's own gateway can never produce such a part.
+   **Default if you don't answer:** (a).
 2. **An empty topic part — reject it too?** `{"a", ""}` and `{""}` are accepted today and name something
    degenerate; unlike case 1 they are not a collision. Options: (a) reject, matching the existing rule
    that an empty topic names nothing · (b) keep accepting them. **Recommendation:** (a) — one rule at
    one level is what a language binding can reproduce, and neither Fletcher's own gateway nor any code
-   in the tree uses one. **Default:** (a).
-3. **Every protocol keeps a hidden companion channel named `__schema` beside each topic, and a topic
+   in the tree uses one. **Default if you don't answer:** (a).
+3. **Both DDS protocols keep a hidden companion channel named `__schema` beside each topic, and a topic
    part named `__schema` lands on it. Reserve the `__` prefix?** Options: (a) reject any part starting
    with `__` · (b) leave this one collision open · (c) go further, allowing only letters, digits, `_`
    and `-`. **Recommendation:** (a) — closes the whole reserved namespace rather than one name, where
-   (c) would reject dots and spaces that work today and are not wrong. **Default:** (a).
+   (c) would reject dots and spaces that work today and are not wrong. **No default — this one needs
+   your explicit word:** it adds a refusal the 2026-09-03 authorisation did not name.
    *Background (skippable): unlike 1 and 2, a WebSocket client can send such a part today.*
 
 ## Risks accepted / debt carried
-- Names using the four rejected shapes stop working, loudly, with no migration path — deliberate, and
-  the reason decisions 1-3 are yours.
+- Names using the four rejected shapes stop working, loudly, with no migration path — deliberate, and the reason decisions 1-3 are yours.
 - Evidence will again be local Windows runs only; a Linux-only difference here is a question for you,
   not a local fix (your 2026-09-03 ruling). No temporary compatibility path is created.
 - One protocol's behaviour on the `__schema` collision could not be established from the code, so decision 3 removes the question rather than answering it.
