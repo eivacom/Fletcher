@@ -134,7 +134,20 @@ The reader side, on `DataReaderListenerBase`, mirrors all of it: `requested_inco
 
 ### Topic name
 
-The `std::vector<std::string>` topic segments from `PubSubProvider` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`.
+The `std::vector<std::string>` topic segments from `PubSubProvider` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`. The join is the **seam's**, not this provider's choice (spec §3.5): the joined name *is* the topic's identity.
+
+**The joined name is capped at 246 bytes, and this provider is the reason.** Fast DDS announces a
+topic in discovery as `fastcdr::string_255` (`PublicationBuiltinTopicData::topic_name`,
+`SubscriptionBuiltinTopicData::topic_name`, `TopicDescription::topic_name`), and `fixed_string`
+truncates **silently** — `fixed_size_string.hpp:83,331`, both `noexcept`, no error and no log. So
+above that ceiling the name Fletcher computed is not the name this provider matches on: measured
+on this box, two topics whose names agreed on their first 255 bytes were **one topic**, and a
+subscriber to one received every row published to the other. The seam therefore refuses a joined
+name longer than **246 bytes** at `internal::RequireSegments` (`kInvalidArgument`) — 255 less the
+9 bytes of `"/__schema"`, so the schema companion this provider derives below stays under the
+ceiling too. Bounded at 255 the data name would survive while its companion truncated back onto
+it, which moves the collision to the hidden channel rather than closing it. Owner ruling
+2026-09-04; pinned by `Segments.NamesThatWouldTruncateOnTheWireAreRefused` in `pubsub_tests`.
 
 ### QoS configuration
 

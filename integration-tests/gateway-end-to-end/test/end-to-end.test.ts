@@ -611,6 +611,62 @@ describe.each(PROVIDERS)('gateway over $name provider', (cfg) => {
   });
 
   // ---------------------------------------------------------------------
+  // A topic name with an EMPTY part is refused, and an ordinary one still
+  // works (PDA-DEC-A5 fix cycle 1, §3.5 rule 4; owner ruling 2026-09-04).
+  //
+  // `WsSession::SplitTopic` used to DROP empty pieces, so `"a/b"`, `"a//b"`,
+  // `"/a/b"` and `"a/b/"` were all the segment list {"a","b"}: a client
+  // subscribing to one and a client publishing to another exchanged rows
+  // although they had named different topics. That is the silent alias the
+  // seam now refuses, and the gateway was the last place on the path still
+  // tidying a name up instead of letting the refusal happen.
+  //
+  // This case lives HERE and not in `gateway_tests` on purpose. `SplitTopic`
+  // is a private static of `WsSession`, and `gateway_tests` links
+  // `gateway_codec` alone — reaching it would mean putting Boost.Beast and a
+  // provider on that link line AND widening a private member for a test. More
+  // importantly, the claim is about what a CLIENT observes: an error frame
+  // where there used to be a silent wrong delivery. Only this harness drives
+  // the shipped WebSocket surface of the real gateway exe, so only here can
+  // restoring the two `if (!seg.empty())` guards turn something red.
+  //
+  // Both halves are required. Without the negative row the guards can come
+  // back; without the positive row a gateway that refused EVERY topic would
+  // be green.
+  // ---------------------------------------------------------------------
+  describe('topic names with an empty part are refused, not quietly repaired', () => {
+    it('"a//b" is an error frame while "a/b" still creates the topic', async () => {
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+
+      // The positive half FIRST, so a failure of the negative half cannot be
+      // read as "this gateway rejects everything".
+      await client.createTopic('emptypart/ok', MINIMAL_SCHEMA);
+
+      // A doubled separator names a middle part that is nothing. §3.5 rule 4
+      // refuses it with kInvalidArgument, which the session's existing catch
+      // turns into an error frame — so this rejects rather than resolving.
+      await expect(client.createTopic('emptypart//bad', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+      // A trailing and a leading separator are the same rule.
+      await expect(client.createTopic('emptypart/bad/', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+      await expect(client.createTopic('/emptypart/bad', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+
+      // And subscribe, not just createTopic: both route through SplitTopic.
+      await expect(
+        client.subscribe<Record<string, unknown>>('emptypart//bad', MINIMAL_SCHEMA, () => {}),
+      ).rejects.toThrow(/empty segment/);
+
+      client.close();
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // Binary frame layouts are exactly what the protocol documents:
   //   server -> client:  [SUB_ID :8 LE][ENVELOPE :rest]
   //   client -> server:  [TOPIC_LEN :2 LE][TOPIC :N][ENVELOPE :rest]

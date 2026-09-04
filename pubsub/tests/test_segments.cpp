@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 #include <nanoarrow/nanoarrow.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/status.hpp>
@@ -410,11 +411,28 @@ TEST(Segments, NamesThatWouldTruncateOnTheWireAreRefused) {
     EXPECT_NO_THROW(static_cast<void>(internal::JoinSegments(three_ok)));
     EXPECT_EQ(internal::JoinSegments(three_ok).size(), kMaxJoinedBytes);
 
-    // THE HEADROOM, asserted rather than trusted: the companion name derived
-    // from the LONGEST accepted name still fits under the announced ceiling.
+    // THE HEADROOM, asserted as the PRODUCT rather than as arithmetic. The
+    // `static_assert` above proves 246 + 9 == 255; it does NOT prove that the
+    // companion of the longest name the door accepts survives the sink. So:
+    // take that name, derive the companion exactly as both DDS providers do
+    // (`name + "/__schema"`), then apply the sink's own silent truncation —
+    // `fixed_string` keeps the first 255 bytes and drops the rest, `noexcept` —
+    // and assert nothing was lost.
     const std::string longest = internal::JoinSegments(JoinedLength(kMaxJoinedBytes));
-    EXPECT_LE((longest + "/__schema").size(), kFastDdsAnnouncedCeiling)
-        << "an accepted name exists whose companion channel would still truncate";
+    const std::string companion = longest + "/__schema";
+    const std::string announced =
+        companion.substr(0, std::min(companion.size(), kFastDdsAnnouncedCeiling));
+    EXPECT_EQ(announced, companion)
+        << "the companion of the LONGEST accepted name is truncated on the wire, so an accepted "
+           "name can still collide with a derived one";
+    EXPECT_NE(announced, longest) << "and after truncation it is still a different name from the "
+                                     "data topic it belongs to";
+
+    // The counterfactual that makes 246 the right number rather than a number:
+    // the FIRST refused length is refused precisely because its companion would
+    // have overrun. Bounded at 255 instead, this assertion is what fails.
+    EXPECT_GT((std::string(247, 'x') + "/__schema").size(), kFastDdsAnnouncedCeiling)
+        << "247 would be safe for the data name, so the bound must be about the companion";
 
     // Both joins, and all four entry points on a real provider — the bound lives
     // in the same door as the other five rules, not beside it.

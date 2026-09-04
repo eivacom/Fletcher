@@ -1152,3 +1152,59 @@ nit 4 (the `static thread_local` scratch keeps the previous name after a refusal
 the call unwinds, and pinning it needs a live Fast DDS provider for no new claim. Rule 6 is asserted
 **in-tree only**, deliberately: the provider binaries already prove the door is reached from every
 provider for rules 2-5, and adding rule 6 there would cost M8/M9 their isolation for no new claim.
+
+### PDA-DEC-A5 fix cycle 2 (2026-09-04) — a control that could not fail, and a cache the review itself poisoned
+
+**The cache first, because everything else depended on it.** The newest cached
+`fletcher-pubsub` recipe revision, `376f2faef9183d7244d902b73e6e9abb` (13:46:32 UTC), carried the
+reviewer's **M9 mutation** — a parallel `conan create` captured a mutated `segments.hpp` in flight.
+Verified independently before removing, not taken on trust: that revision's exported header read
+`constexpr size_t kMaxJoinedTopicBytes = kFastDdsAnnouncedTopicBytes;  // M9: the REJECTED 255`,
+while the revision below it (13:34:27) carried the correct `- kDerivedCompanionSuffixBytes`. Conan
+resolves the **newest** revision, so every packaged-target result taken after 13:46 was worthless.
+Removed that revision, and both provider packages with it — `fletcher-fastdds-pubsub-provider`'s
+only revision was stamped 13:48:03, i.e. **built against the poisoned header**. Rebuilt all three
+from the clean tree, then confirmed the replacement **behaviourally** rather than by reading: a
+standalone probe compiled against the packaged include a consumer actually resolves reports
+`kMaxJoinedTopicBytes = 246`, `246 -> ACCEPTED`, `247/255/256 -> refused`. The harness build tree
+was debris from the same runs (a nested `build/build/generators` at 15:52 gave two `conan-default`
+presets and CMake refused to configure), so it was deleted and rebuilt from scratch — which also
+discards any object file linked against the poisoned package.
+
+**B2 — the gateway change was pinned by nothing.** `gateway_tests` was 20/20 both before and after
+deleting the two `if (!seg.empty())` guards at a **shipped** caller: no C++ case, no TS case, no
+conformance clause. Fixed with one case in `gateway-end-to-end`:
+**`topic names with an empty part are refused, not quietly repaired`** →
+*`"a//b" is an error frame while "a/b" still creates the topic`*, running in **both** provider
+contexts. It asserts the positive row first (`emptypart/ok` still declares, so a gateway that
+refused everything cannot pass), then `emptypart//bad`, `emptypart/bad/` and `/emptypart/bad` all
+rejecting with `/empty segment/`, and the same for `subscribe` since both verbs route through
+`SplitTopic`.
+
+*Why there and not in `gateway_tests`:* `SplitTopic` is a private static of `WsSession`, and
+`gateway_tests` links `gateway_codec` alone — reaching it means putting Boost.Beast and a provider
+on that link line **and** widening a private member for a test. More to the point, the claim is
+about what a **client** observes: an error frame where there used to be a silent wrong delivery.
+Only this harness drives the shipped WebSocket surface of the real gateway exe.
+
+*Honest about the red:* the case is **green at `445b4ea`** by construction — the guards were
+deleted in fix cycle 1, so there is no state of the diff base at which it can fail. Its red is the
+**mutation**, and that is the evidence: restoring the two guards, with the exe rebuilt at 16:31,
+reddens **2 of 31** e2e cases — this case in both provider contexts and **nothing else** — with
+*"promise resolved \"undefined\" instead of rejecting"*, which is exactly the silent repair.
+
+**N3** the constants were moved above `RequireSegments`' doc block, with a blank line, so the block
+documents the function again. **N4** the headroom row now asserts the **product**: it takes the
+longest accepted name, derives the companion as both DDS providers do, applies the sink's own
+truncation at 255 and asserts nothing was lost and the result is still a different name from the
+data topic — plus the counterfactual that 247's companion **would** have overrun, which is what
+makes 246 the right number rather than a number. **N5** the Fast DDS README's `### Topic name`
+section now carries the 246 ceiling, the `fixed_string` mechanism with file and line, the measured
+aliasing, and why 255 was rejected.
+
+**Code review's two remaining nits.** The `test_package` `cxx_std_20` failure is pre-existing and
+untouched by this diff — no `-tf=""` was needed on this box, every `conan create` here completed
+including its test package. The transposed `rule 2`/`rule 3` labels are **not reproducible**:
+checked at `445b4ea` itself, the NUL-in-a-later-segment row reads `rule 2` and the `b/c` row reads
+`rule 3`, which is correct against §3.5 — nothing changed, and the RECORD item can be closed as
+already-true.

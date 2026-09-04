@@ -18,6 +18,13 @@
 namespace fletcher {
 namespace internal {
 
+/// §3.5 rule 6's numbers, spelled once so the header, the spec and the tests cannot drift.
+/// `kFastDdsAnnouncedTopicBytes` is the vendor's, not ours; the 9 bytes are `"/__schema"`.
+constexpr size_t kFastDdsAnnouncedTopicBytes = 255;
+constexpr size_t kDerivedCompanionSuffixBytes = 9;
+constexpr size_t kMaxJoinedTopicBytes =
+    kFastDdsAnnouncedTopicBytes - kDerivedCompanionSuffixBytes;  // 246
+
 /// §3.5, rung 2 — the gate that makes the segment list the topic's identity.
 ///
 /// The seam identifies a topic by a SEGMENT LIST; every provider identifies it by the single
@@ -69,13 +76,6 @@ namespace internal {
 /// about to copy anyway — no allocation, no `find_first_of` with a constructed needle. It is
 /// unconditional at every entry point: validating only in `CreateTopic` would be a partial mode,
 /// and `Publish` to an undeclared topic is reachable.
-/// §3.5 rule 6's numbers, spelled once so the header, the spec and the tests cannot drift.
-/// `kFastDdsAnnouncedTopicBytes` is the vendor's, not ours; the 9 bytes are `"/__schema"`.
-constexpr size_t kFastDdsAnnouncedTopicBytes = 255;
-constexpr size_t kDerivedCompanionSuffixBytes = 9;
-constexpr size_t kMaxJoinedTopicBytes =
-    kFastDdsAnnouncedTopicBytes - kDerivedCompanionSuffixBytes;  // 246
-
 inline void RequireSegments(const std::vector<std::string>& segs) {
     if (segs.empty()) {
         throw PubSubError(PubSubStatus::kInvalidArgument,
