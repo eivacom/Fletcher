@@ -478,3 +478,26 @@ no-op. After this, the "you may free on return" promise has **exactly one** exce
 self-cancel carve-out of 2026-09-04, as that ruling claimed. Consistent with the owner's
 standing preference, stated the same day, that **a loud hang is preferred over a silent
 use-after-free** — and this trades a silent race for a bounded wait, which is the same trade.
+
+## 2026-09-04 — Harden at the right scope rather than publish a weaker promise *(selection)*
+> "One more cycle — fix at the right scope — ~3 lines plus one control. Why I changed my mind about stopping: the three previous fixes each scoped the guarantee to an approximation of the right thing, and this is the first one aimed at the object whose lifetime the promise is actually about. That is a different kind of change from another patch. Cost: one more implement-plus-review pass on an item already at 4.3x its declared size. Risk if I'm wrong: a fifth case, at which point the premise really is broken and I stop regardless."
+
+**Context:** PDA-DEC-A4 had reached the runbook's non-convergence trigger — the same defect
+CLASS ("some caller returns while a callback is still running") recurring across four review
+cycles even as the instances differed, which the runbook routes to a premise escalation rather
+than another cycle. The PM had also publicly committed to stopping rather than opening a third
+fix cycle. What changed the reading: both reviewers, independently and from different angles,
+named the same ROOT CAUSE — the deferral was scoped to the cancelling frame when the promise
+needs it scoped to the gate — and proposed the identical three-line remedy. The scope sequence
+had run process-wide → per-`Impl` → per-frame → per-gate, the last being the first scope whose
+lifetime actually matches the guarantee. Rejected: closing A4 with the promise published more
+weakly and its exceptions enumerated (cheapest, but it hands the binding authors the
+growing-footnote contract A4 was opened to remove, and it is what the colleague's stop-and-ask
+objected to in the first place), and closing A4 on what it had with the residual hardening
+becoming a nineteenth item.
+**Applies to:** PDA-DEC-A4 fix cycle 3, which landed and closed the class. **Forward-relevant
+to the remaining amendments:** when a guarantee keeps leaking, the owner's preference is to fix
+it at the scope the guarantee is actually about, not to publish the leak — provided the root
+cause has been NAMED rather than another instance patched. The stop condition the owner set
+stands for any future item: a further case after the root-cause fix means the premise is broken
+and the item stops. Seventh consecutive time the owner chose the honest-and-narrow answer.

@@ -491,3 +491,141 @@ row. Nothing else frozen was touched across three cycles.
   self-cancelled subscription is no longer in the live map the destructor drains —
   but §6 clause 5 puts the whole scenario outside the contract, so this is wording,
   not behaviour.
+
+
+---
+---
+
+# Final check — revision `a96a2a7` (`aa72813` → `6d74d53` → `a86de50` → this)
+
+*The three sections above stand as their own records. This reviews
+`git diff 0e263c3 a96a2a7` (+125/−18) only.*
+
+Ledger: **38 entries**, unchanged — correctly, since the fix narrows.
+
+**Verdict: PASS.** No blocking findings, no minor findings.
+
+**"The frozen promise now has exactly one exception": YES.** Decided by **probe 9**,
+a randomised sweep over the sibling window with a **real non-vacuity control**: the
+pre-fix package for `a86de50` is still on disk, so I built the identical probe
+against it. Pre-fix: **266 cancels returned while the callback ran, of 282 that
+landed inside the victim window** (600 iterations). Post-fix: **0 of 249** (600
+iterations) and **0 of 685** (2,500 iterations). Probe 6 — the shape that was the
+blocking finding — flipped from **NO 5/5** to **YES 6/6**.
+
+**Ready to close: yes.**
+
+---
+
+## How I decided it, including the instrument I had to throw away
+
+The fix is the one both reviewers specified, taken verbatim: `DeferredRelease`
+carries the `Gate`, and the depth-0 sweep drains before releasing. I checked the
+safety argument rather than accepting it — at depth 0 the sweeping thread holds no
+gate and no `mu`; a thread inside a delivery never blocks on a gate; every gate the
+fan-out took is released at the end of its own loop iteration, *before*
+`~DeliveryScope` runs, so a sweep can never wait on a gate its own frame still
+holds. Probe 7B drives the ABBA shape with both sweeps draining and completes.
+
+**One thing I want on the record about method.** My first breadth instrument
+(probe 8, a uniform subscribe/deliver/cancel fuzz — 52k invocations, 12.7k sibling
+cancels from inside a delivery) reported **0 violations against the PRE-FIX
+library**. It was vacuous: its cancellers popped each victim, so the third-party
+cancel almost never arrived *after* an inside sibling-cancel had already retired
+that id. I discarded it as evidence rather than reporting its zero. That is the
+same failure the implementer caught in its own stub — a global delivery lock making
+the sibling shape unreachable — and it is why probe 9 is built around the window
+instead of hoping to hit it, and why it ships with a control.
+
+Evidence, all re-run on `a96a2a7`:
+
+| Probe | What it drives | Pre-fix `a86de50` | Subject `a96a2a7` |
+|---|---|---|---|
+| 6 | the blocking shape: sibling cancelled from inside a frame that ends first, then a fresh thread cancels | **NO** 5/5 | **YES** 6/6 |
+| 9 | the same window, randomised hold and arrival | **266 / 282** landings violated | **0 / 249**, and **0 / 685** at 2,500 iterations |
+| 7A | a three-deep chain: E1 cancels busy E2, E2 cancels busy E3, a fourth thread cancels E3 | — | clean |
+| 7B | cross-cancelling deliveries, both sweeps draining | — | completes, no deadlock |
+| 1, 2, 3 | cross-`Subscriber` wait; duplicate concurrent cancel; cancel after a self-cancel | — | **YES** each |
+| 5a, 5c | a handler that throws mid-frame; nested delivery frames | — | contained, fan-out continues, deferral still swept; retired entry not re-invoked |
+
+**And the structural check, which is what makes it a claim rather than a sample.** I
+enumerated every path on which `Unsubscribe` can return, and every one either takes
+the barrier or is the carve-out: id live → publish, then drain (barrier, or defer
+**and stay published until the gate is free**); id in `retirements` → drain (barrier,
+or carve-out); id in neither → returns at once, and an id is in neither map only
+after a barrier was taken — in `Unsubscribe`, in the sweep, in `~Subscriber`, and on
+`Subscribe`'s rollback path alike. The early return therefore has exactly one
+antecedent: `InsideDeliveryOn(identity.get())`. That is the published carve-out and
+nothing else. Probe 9 measures what the enumeration argues.
+
+## The new residue — a delivery that blocks at its end
+
+**My call: consistent with the rulings, and it does NOT need an owner decision.**
+Carry it as information in the close note if you like, but not as a question.
+
+Three reasons, in order of weight. First, it is not a new trade but the existing one
+reached one step along: frozen clause 6 already charges an unbounded wait on the
+slowest handler, and README limit 1 already publishes that a callback which never
+returns blocks a cancel forever — the wait has moved onto the delivery thread, its
+bound has not changed. Second, the alternative to this wait is precisely the silent
+use-after-free the owner has now ruled against three times; his standing reasoning —
+*a loud hang is preferred over a silent use-after-free* — covers a stalled delivery
+thread exactly, and a stall here is loud, detectable and corrupts nothing. Third, the
+2026-09-03 licence permits **narrowing** without asking, and this narrows the
+exception set from two to one; the residue is the price of the narrowing, not a
+widening of anything the owner was shown.
+
+I also checked it cannot manufacture a *new* deadlock class. The sweeper holds
+nothing, so it blocks no one but the provider thread it is on; the gate it waits for
+is held by a fan-out whose handler can never block on a gate; and the only way the
+wait becomes unbounded is a handler that never returns, which is limit 1. Placing it
+inside limit 1 rather than as a new limit is the honest placement.
+
+*Non-blocking suggestion, not a finding:* the sentence lives in the harness README,
+which is where two prior rulings put such limits and is therefore right — but a
+delivery thread blocking is a property of the **delivery path**, and a C++ or binding
+author reads `subscriber.hpp`. One line beside the `SubscribeCallback` paragraph
+would put it where that reader looks. The close does not depend on it.
+
+## `~Subscriber`'s paragraph — confirmed accurate
+
+It no longer claims the destructor is a synchronisation point. It names §6 clause 5
+as the precondition, scopes its guarantee explicitly to *inside* the contract, and
+keeps the carve-out. I checked the one way it could still be over-generous — a
+subscription self-cancelled from inside a handler is no longer in the live map the
+destructor drains, so its callback can outlive the destructor — and the new wording
+covers it, because that scenario requires a callback in flight at destruction, which
+§6 clause 5 puts outside the contract however the destructor behaves. Accurate as
+written; my record item from last round is discharged.
+
+## Final conformance sweep — all clean
+
+- **The three 2026-09-04 rulings hold in effect, not merely in text.** Idempotence:
+  a no-op at the caller tier (`SubscriberTest.UnsubscribeUnknownIdIsANoOp`,
+  `CallerTier.UnsubscribeOfAnUnknownIdIsANoOp`) and at the provider tier
+  (`provider.hpp` unchanged). The wait: probes 1–3, 6, 9. The carve-out scoped to
+  one subscriber object, with the cross-instance hang published: probe 1 plus
+  README limit 3.
+- **Ruling 38's discriminator intact.** `retirements->Find` splits "being cancelled
+  right now" (waits) from "unknown or fully cancelled" (silent no-op) at
+  `subscriber.cpp:508-510`; probe 2 confirms the first, the shipped case the second.
+- **Spec: still exactly the two authorised hunks** across all four cycles — §7
+  clause 6 and §9's oracle row. Nothing else frozen moved; §5.3, §6 and §12 are
+  untouched. `PubSubStatus` untouched; `kReentrantCall` appears nowhere in `pubsub/`.
+- **Converse, final.** No `kInvalidArgument` for an unknown subscription id
+  anywhere. Nothing asserts or documents the pre-change contract: the only two
+  textual hits are a comment naming the retired test as retired, and the README's
+  *"what it caught"* quotation of the old error — both records of removal, not
+  survivals.
+- **The published limit set describes the code and adds no exception to the
+  promise.** Limit 1 now carries the delivery-blocking residue; limit 7's failure
+  mode is silent non-delivery; limit 8's residual is a loud hang. None of the three
+  is a case in which a callback outlives a cancel that returned.
+- Suite **17/17** green as built; the new control mirrors probe 6 and its third
+  thread is genuinely never inside a delivery.
+
+## RECORD (PM's, one line each, not blocking)
+
+- `plans/PDA-DEC-A4-lifetime-tier.md` still reads *"**37 entries**"* and carries the
+  PM note *"10 cases shipped, not the 8 tabled"*; the ledger is **38** and the suite
+  now ships **17**.

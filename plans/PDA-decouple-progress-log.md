@@ -959,3 +959,64 @@ pending the owner's review approval, which is not a test result. The lane that h
 now completes in **68 s**. §12.4 amended the same day, because its own ruling obliges it to state
 the evidence exactly and the evidence changed; clause 3 was preserved verbatim.
 
+
+## PDA-DEC-A4 — cancelling a subscription really cancels it (2026-09-04) 🟢
+
+First of the eight BIND-C# amendments. §7 clause 6 promised no callback runs after
+`Unsubscribe` returns, but stated it for `PubSubProvider` while §9 hands the bindings
+`Publisher`/`Subscriber` — nothing bound or measured the caller tier, and
+`test_publisher_subscriber.cpp:406` **asserted the late callback as intended**. The design read
+that and the Unsubscribe-idempotence disagreement as one class, which both reviewers endorsed.
+
+**Landed.** Per-subscription `Gate` (`std::mutex` + `atomic<bool> retired`) checked at invocation;
+`Unsubscribe`/`~Subscriber` retire-then-barrier outside `mu` and before entering the provider.
+Unknown or already-cancelled ids are a silent no-op at both tiers; an id *mid-retirement* waits.
+New `conformance_caller_tier` binary, 17 cases. Both legacy tests **retired, not edited to pass**;
+the header paragraph calling late delivery deliberate deleted. Spec diff is exactly two hunks.
+
+**The scope sequence is the story.** Four reviewer-found holes, each a caller returning while a
+callback ran. The mechanism was scoped, successively, **process-wide → per-`Impl` → per-frame →
+per-gate** — only the last matches the lifetime the promise is about; the first three covered
+whatever had been thought to test. Both reviewers named that root cause independently and
+proposed the identical remedy, which is what justified a third fix cycle against the runbook's
+non-convergence trigger (owner ruling, ledger 39).
+
+**Evidence, with non-vacuity controls throughout — the round's best.**
+- Exactly-one-exception, compliance probe 9: pre-fix **266 violations / 282 landings**; post-fix
+  **0 / 249** and **0 / 685**. Its *first* instrument reported 0 against the pre-fix library and
+  was **discarded as vacuous** rather than reported — the discipline this round kept failing.
+- Implementer probe: **0** outside the carve-out over 24.6M invocations; control at `0e263c3`
+  **899,114 violations of 902,002**.
+- Code review: **394,146,047** invocations → 0/0/0; sibling repro **0 ms → 406 ms**, the wait
+  itself being the fix.
+- Every control mutation-verified: each mutation reddens **only** its own case.
+- PM's own gate run (not the implementer's): `CallerTier` **17/17 ×3**, regression **54/54**,
+  harness **102/102**; binary 09:58:21 postdates sources 09:52.
+
+**Cost measured, not assumed.** The gate reverses a deliberately lock-free fan-out at
+**+11.10 ns/visit** against a documented **1.4 ns** budget (probe, A4-DEBT-8). `std::mutex` kept
+over the ~33%-cheaper atomic counter: the alternative needs its own wait mechanism on a path
+that is not hot. `recursive_mutex` rejected on **correctness** — it would let a re-entrant
+delivery proceed silently, pre-empting A3's owner-allocated `kReentrantCall`; the review's
+assumption that it is materially dearer on MSVC was **refuted** (12.30 vs 12.37 ns).
+
+**Published residue** (README limits): teardown window, unserialisable, 0/876,000, cycle reachable
+today via Fast DDS's mandatory wait; cross-`Subscriber` mutual cancel can hang (owner: a loud hang
+beats a silent use-after-free); a delivery may block at its end awaiting a sibling it cancelled —
+ruled no owner decision needed, being the existing unbounded-callback exposure moved one step.
+
+**Deliberate deviations.** The implementer **declined the code reviewer's B1 remedy**; that
+reviewer then upheld the rebuttal and recorded its own as weaker — a transition mutex held across
+`provider->Unsubscribe`, which `provider.hpp` *mandates* waits for in-flight delivery, closes
+`T → provider → gate → mu → T`, reachable today. S2 declined: ruling 2026-09-04 answers it.
+
+**Numbers.** Declared **+≈360 / −45** · landed **+1657 / −46** excluding `plans/` (`git diff
+963bde5..a96a2a7`), **4.6×** — compliance ruled it **ordered work, not scope growth**; only a
+4-line CMake swap was undeclared, and it was reverted. Public surface **0** as declared.
+**2 design cycles (at cap) · 3 fix cycles · 4 implementer launches · 5 owner touches · 5 rulings
+(ledger 34 → 39).**
+
+**PM record corrections**, in place, no fix cycle: design §1.1's "file-local"/"invisible across
+`Subscriber` instances" (A4-DEBT-9); the brief listing cross-instance mutual cancel as Forbidden.
+A ledger count and a case count both went stale **within one cycle** of my correcting them, so the
+doc now carries the `grep` and a pointer to the suite rather than numbers — the durable fix.

@@ -509,3 +509,130 @@ delivery thread may block at the end of a fan-out that cancelled a sibling.
 - The lock-order note does not mention that a caller may now hold a gate while *blocked on another
   thread's* `provider->Subscribe`; the consequence is named in `EnsureProviderSubscription` and in
   limit 8, but not in the note that claims to be the total order.
+
+
+---
+---
+
+# RE-CHECK 3 — final check, cycle 3 (`0e263c3` -> `a96a2a7`)
+
+Appended; the cycle-0 review and re-checks 1 and 2 above are unchanged.
+Cumulative for the item: `963bde5` -> `a96a2a7`.
+
+**Re-check 3 counts: 0 blocking, 0 should-fix, 3 nits. Ready to close: yes.**
+
+## 1. Does drain-before-release close RC2-S1?
+
+**Yes — reproduced closed, with a sharp discriminator.** I rewrote my sibling reproduction
+(`C:\tmp\defer3_pda.cpp`) so the parked handler is released by a timed releaser rather than a
+timeout, and so it measures the invariant directly: *does the cancelling delivery end before the
+cancelled sibling's callback does?*
+
+| build | delivery A ended after | sibling handler done by then | third-party cancel returned with the handler exited |
+|---|---|---|---|
+| `0e263c3` | **0 ms** | **NO** | **NO** — returned mid-callback |
+| `a96a2a7` | **406 ms** | **yes** | **yes** |
+
+The 0 ms -> 406 ms is the whole fix: the cancelling delivery now waits out the sibling it cancelled,
+so the post-sweep window in which an uninvolved third thread got a silent no-op no longer exists.
+
+## 2. The new delivery-path wait — attacked, and it is inside the order I verified
+
+**Verdict: sound. The wait is inside the published order, and I could not construct a cycle from
+this file's locks — analytically or empirically.**
+
+*Inside the order.* The rule I verified and that the file publishes is **"never acquire a gate while
+holding `mu`"**. The sweep acquires a gate while holding **nothing at all**: `~DeliveryScope` is
+declared before the fan-out `for` loop, so every per-entry `lock_guard` is already gone when it runs;
+it takes no `mu`; and it takes `Retirements::mu_` only *after* the barrier, never across it. So the
+new edge satisfies the rule trivially rather than sitting outside it. The `!g_delivery_stack.empty()`
+guard is what makes that true: a *nested* scope never sweeps, so the case where a gate really is held
+(an outer frame mid-loop) cannot reach the barrier and self-deadlock.
+
+*No cycle is representable.* A thread that holds nothing cannot be the target of any wait through
+this file's locks, so it cannot close a cycle. Concretely, the three candidate back-edges all fail:
+a thread inside a delivery that cancels on this `Subscriber` **skips** the barrier (carve-out) rather
+than blocking; `mu` is never held by the sweeping thread, so no `mu` holder waits on it; and
+`Retirements::mu_` is innermost and never held across anything.
+
+*Empirically.* `C:\tmp\edge_pda.cpp` — one `Subscriber`, four topics with a delivery thread each
+(so §6 clause 2 concurrency is live), handlers that randomly cancel a **sibling on another topic**,
+self-cancel, or re-enter `Subscribe`, plus four churn threads, under a 15 s no-progress watchdog:
+**45 s, 54,340 handler invocations, 12,724 cross-topic sibling cancellations, no hang, 0
+running-at-return, 0 post-return.**
+
+*The one hazard that is not new.* The sweeping thread is the provider's in-flight delivery, and
+`provider.hpp` requires `Unsubscribe` to wait for that delivery — so a provider that held an
+internal lock *across* that wait, against a handler that re-enters the provider, would cycle. That
+cycle exists already, without the sweep: a slow handler plus `provider->Unsubscribe` on the same
+topic plus any `Publish`/`Subscribe` from inside the handler closes it identically. It is a
+constraint on providers, which Fast DDS explicitly honours (`Unsubscribe` releases `impl_->mu`
+before `delete_datareader`, with the reason in a comment). The new wait lengthens the exposure; it
+does not create the class.
+
+## 3. Lifetime on the changed shape
+
+- **Can a sweep block forever on a gate whose owner died?** No. `DeferredRelease` now carries a
+  `shared_ptr<Gate>`, and the gate is additionally pinned by the `Retirements` map and by the
+  entries snapshot the delivering thread holds, so the `std::mutex` being locked is guaranteed to
+  outlive the lock. The only unbounded wait is a callback that never returns — limit 1, published,
+  and now explicitly extended to cover this.
+- **Can the drain-then-release sequence race a *new* delivery taking the same gate?** It can, and it
+  is harmless — which is the interesting part. `retired` was stored **before** the deferral was
+  recorded, and the fan-out checks it *under* the gate, so a delivery that takes the gate between
+  the sweep's unlock and its `Release` holds it without invoking anything. Releasing the id at that
+  moment is therefore correct: no callback is running and none will run. Visibility is guaranteed by
+  the mutex — the sweep's lock/unlock synchronises-with the later delivery's acquire of the same
+  gate. Gates are per-entry and ids are never reused, so no other subscription can be behind that
+  gate.
+
+## 4. Is the lock-order note still true, and is the residue described?
+
+**Still true, and now complete for this edge.** I re-walked every acquisition: `Unsubscribe`
+(find/publish under `mu`, drain outside), `~Subscriber` (publish under `mu`, drain outside,
+transition in a later critical section), `Subscribe`'s rollback (publish under `mu`, `unlock`,
+drain), the delivery path (gate then `mu`), the `provider_cv` wait (releases `mu`), and now the
+sweep (no lock held). Nothing acquires a gate while holding `mu`. The published residue set covers
+the consequence: README limit 1 now states that a delivery can block at its end, and — correctly —
+frames it as the guarantee rather than a cost of it, since the drain is exactly what makes the
+promise true for the uninvolved third thread.
+
+## `~Subscriber`'s paragraph
+
+**Accurate, and it does not understate.** §6 clause 5 reads "Destruction requires quiescence: no call
+in flight, no callback able to re-enter. Destruction is *not* a synchronization boundary." The old
+text promised more than that ("no callback of this Subscriber is running when the destructor
+returns") — a promise the destructor cannot keep against a concurrent cancellation, because §6
+clause 5 says such a caller is already outside the contract. The new text says exactly what §6
+clause 5 says, keeps the carve-out, and still claims the thing the drain actually buys (the provider
+is not entered under a live callback). Nothing real is hidden by the weakening.
+
+## Re-verified, unchanged by this cycle
+
+- Core guarantee with duplicate cancels: **394,146,047 callback invocations, 15,059 duplicate
+  cancels, 0 owner-returned-while-running, 0 duplicate-returned-while-running, 0 post-return.**
+- `CallerTier` built standalone (`fletcher-pubsub` + gtest, no transport): **17/17, and 20
+  consecutive runs with 0 failures** — matching the implementer.
+
+## Nits (re-check 3, one line each)
+
+- The user-visible consequence — *your handler cancelling a sibling can stall your delivery thread
+  for that sibling's duration* — is published in the harness README (limit 1) but not in
+  `subscriber.hpp`, which is the file an application author reads; one sentence next to the
+  `Unsubscribe` carve-out would close the gap.
+- `DestructorDrainsAnInFlightDelivery` now exercises behaviour the header explicitly places
+  **outside** the contract (destruction concurrent with a delivery); it is a good defensive test, but
+  its relationship to §6 clause 5 is worth a line in the case comment so nobody later reads it as the
+  contract.
+- The `~Subscriber` paragraph's "the provider is not entered while any of this Subscriber's callbacks
+  is still running" is vacuous *inside* the contract it has just invoked (a quiesced Subscriber has
+  no running callbacks) and meaningful only outside it — true either way, but it reads as circular.
+
+## Verdict
+
+**Ready to close: yes.** Every finding I raised across three cycles is either fixed and verified
+here (B1, S1, S3, RB1, RS1, RC2-S1) or explicitly declined by an owner ruling I accept (S2). The
+last remedy was taken verbatim and I re-measured it closed with an independent reproduction; the new
+blocking edge it introduces is inside the lock order I verified, survived a 45 s adversarial
+deadlock hunt with 12,724 cross-topic sibling cancellations, and its lifetime and release-race
+questions both resolve cleanly. I have nothing blocking and nothing to simplify.

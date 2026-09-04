@@ -52,7 +52,8 @@ narrow-claim preference your 2026-09-03 ruling licensed us to apply without aski
 
 ## Numbers
 Declared net lines: +≈360 / −≈45 · new public surface: 0 · design cycles used: 2/2
-
----
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, fix cycles used>.
+*As landed (2026-09-04, PM at close):* declared +≈360/−45 · **landed +1657/−46** (4.6×), ruled
+ordered work not scope growth. Surface **0** as declared. **2 design cycles (cap) · 3 fix cycles
+· 4 launches · 5 owner touches · 5 rulings.** Cancelling waits at the *gate's* scope, not the
+frame's — four reviewer-found holes, the last two closed by one named root cause. Unpredicted: a
+17-case conformance binary, and a delivery may block at its end awaiting a sibling it cancelled.
