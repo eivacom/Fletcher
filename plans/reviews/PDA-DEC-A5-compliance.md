@@ -199,3 +199,178 @@ The design's "non-stop-and-ask" premise therefore holds on evidence, not on asse
 - `integration-tests/pubsub-conformance/subjects/fastdds_main.cpp:283` (pre-existing) cites
   `end-to-end.test.ts:350` for the domain-154 fact; the new comment at `:47` cites `:360`, which is
   the correct line. Two citations of one fact now disagree inside one file.
+
+---
+---
+
+# RE-CHECK after fix cycle 1 — `git diff 335b016 f526acb` (2026-09-04)
+
+*The cycle-1 review above is the cycle-1 record and is left intact. This section is appended.*
+
+**Verdict: PASS-WITH-FINDINGS(1).** Ledger `grep -c '^## 2026' plans/PDA-DEC-rulings.md` = **43**.
+Cycle diff `+268 / −53`; cumulative `722cc6b → f526acb` = **`+967 / −34`** excluding `plans/`
+(re-derived, matches). Working tree clean before and after; every mutation I applied was reverted
+and the tree re-verified green.
+
+**Cycle-1 B1 is CLOSED, and closed everywhere.** `grep -rn 'any separator'` outside `plans/`
+returns nothing. `provider.hpp:50-74` now states the seam-owned `/` join, that the joined name IS
+the identity, both driver obligations, and all six refusals. I checked for a *third* place that
+still disagrees: no other public header, no per-entry-point doc comment in `provider.hpp`
+(`CreateTopic`/`Publish`/`Subscribe`/`Unsubscribe` restate the delivery contract, never the naming
+rule), `publisher.hpp:48` and both provider READMEs say "joined with `/`", which the amendment
+makes true rather than false, and `docs/protocol-driver-abi-spec.md:51` inherits §3.5 **by
+reference**. Cycle-1 N2 (the `rule N` off-by-one) is also fixed, correctly, to §3.5's numbering.
+
+**§12.1 is byte-identical across the whole item.** I extracted `§12.1 … §12.2` from `722cc6b` and
+from `f526acb` and diffed: identical, `md5 e66e71c53dcc201467cca8cbe2cd8c17`. The spec diff for the
+entire item is **one hunk**, `@@ -261,+56 @@`, wholly inside §3.5; no section header moved.
+
+## BLOCKING
+
+### B2 — the gateway behaviour change is pinned by nothing
+
+`WsSession::SplitTopic` (`gateway/src/ws_session.cpp:163-176`) stopped dropping empty pieces, so
+`"a//b"`, `"/a/b"`, `"a/b/"` and `"//a//b//"` — WebSocket topic strings that **work today** and all
+name `{"a","b"}` — now reach §3.5 rule 4 and come back as error frames. The mechanism is right
+(all three `SplitTopic` call sites at `:189`, `:194`, `:271` sit inside a
+`catch (const std::exception&) { SendError(...) }`, so it is a frame, not a crash), but **no test
+asserts any of it**. There is no gateway unit case, no `gateway-end-to-end` TypeScript case, and
+no conformance clause: I built and ran `gateway_tests` — **20/20, the same 20 as before the
+change** — and `git diff 335b016 f526acb` touches no gateway test. A refactor that restores the two
+`if (!seg.empty())` guards goes unnoticed, and the log's claim that this was "the last place on the
+path still tidying a name" has no control behind it. This is a behaviour change at a **shipped,
+remotely-visible** caller with a red-on-regression story of zero.
+
+**Fix:** one `gateway_tests` case — `SplitTopic("a//b")` yields `{"a","","b"}` and the handler
+answers with an error frame, while `"a/b"` still creates the topic. Two assertions.
+
+## Explicit calls
+
+### The §3.5 narrowing — **honest and complete**
+
+The invariant is now scoped at the head (*"for every **accepted** segment list `L` — and accepted
+is bounded, rule 6 being what makes the rest of this sentence true rather than aspirational"*) and
+closed at the foot (*"**Nothing is claimed for a list this section refuses**"*). I read every
+surviving sentence of §3.5, of `segments.hpp`'s block and of the rewritten `provider.hpp` block
+looking for one that still says "always injective": there is none. `Split(Join(L)) == L` is scoped
+to accepted lists in both the spec and the header; the driver clauses are *obligations*, not
+claims; and `provider.hpp`'s *"the same list names the same topic on every transport"* is true for
+the accepted set. The amendment stays inside the authorised eleven — the only content beyond
+ruling 43 is the *scoping* of a claim that was previously unscoped, which is a narrowing.
+
+One sentence deserves naming and then survives: *"a transport whose own ceiling is lower than 246
+bytes refuses on its own terms through §5.1, which is a loud failure rather than a silent one"*
+asserts that other transports **refuse** rather than truncate — which is precisely what Fast DDS
+did not do at 255. It is true as written only because the same section already binds a driver to
+map **injectively**: a driver that silently truncates is non-conforming under that clause, so the
+residual case is "non-conforming driver", not "conforming driver, silent collision". It is also
+inherited in substance from the approved design's Handled-residue entry. No change asked.
+
+The six-refusal set is exactly the authorised one: the eight of 2026-09-03 are elsewhere, the
+ninth (idempotence) is A4's, the tenth is rule 5, the eleventh is rule 6. **No new
+`PubSubStatus`:** `core/include/fletcher/core/status.hpp` is not in the cycle diff, the enum is
+0–9 with all ten one-value-at-a-time `static_assert`s intact, and `kReentrantCall` appears nowhere
+in the tree. All six refusals throw `kInvalidArgument`.
+
+Rule 6's numbers conform to the ruling and are structural, not literal:
+`kMaxJoinedTopicBytes = kFastDdsAnnouncedTopicBytes(255) - kDerivedCompanionSuffixBytes(9)`, the
+bound is on the **joined** length (`joined = segs.size() - 1 + sum of seg.size()`, separators
+included), and I verified the header's `UXR_BINARY_SEQUENCE_MAX is 512` citation against
+`microxrcedds_client-src/include/uxr/client/core/type/xrce_types.h:37`. The 9-byte headroom is
+also *complete*: I enumerated every name either DDS provider derives from the joined name —
+`name + "/__schema"` (`fast_dds…:331,494`; `xrce…:720,885`) and XRCE's participant name `= name` —
+and there is no third derivation and no longer suffix.
+
+### M9 — **CONFIRMED by execution, and it is the strongest evidence in the item**
+
+I mutated `kMaxJoinedTopicBytes` to `kFastDdsAnnouncedTopicBytes` — literally the 255 the owner
+**rejected** — rebuilt and ran `Segments.*`:
+
+```
+[  FAILED  ] Segments.NamesThatWouldTruncateOnTheWireAreRefused
+[  PASSED  ] 4 tests   (SegmentsThatAliasOrTruncate…, JoinIsInvertible,
+                        RefusalReachesAllFourEntryPoints, AcceptedNamesJoinToTheSame…)
+```
+
+Seven assertions fired, and they are the right seven: `247 bytes is the shortest REFUSED name`,
+`the separators are part of the joined length` (the 3x82 = 246-summing, 248-joining shape), the
+`JoinSegmentsInto` row, and all four provider entry points. The owner's specific 246-vs-255 choice
+is therefore pinned by a test that goes red the moment anyone takes the rejected option. I also ran
+**M8** (delete the length check outright): same isolation — that case alone, the other four green.
+Keeping rule 6 out of `RefusedCases()` is what buys that isolation, and it is deliberate and
+documented.
+
+### The gateway change — **NOT inside ruling 41; the owner has not been told, and the PM carries it**
+
+Ruling 41's *Applies-to* is exactly one line: *"`internal::RequireSegments` refuses an empty
+segment."* Nothing above the seam. More decisively, the **premise the owner was given** for both
+2026-09-04 topic rulings is now false:
+
+- ruling 41: *"Neither Fletcher's gateway nor any code in the tree uses one."*
+- ruling 40: *"No remote client loses a working topic: Fletcher's own gateway can never produce
+  such a part."*
+
+Both were true **because `SplitTopic` dropped empty pieces** — and the approved design says so in
+as many words, citing `gateway/src/ws_session.cpp:149-162` as *evidence* under "Wire bytes"
+(*"Remote clients lose nothing to rules 2 and 3 — `WsSession::SplitTopic` splits on `/` and drops
+empty pieces"*). The design lists `ws_session.cpp` nowhere in `Files-to-touch`. Removing the
+dropping makes the gateway able to produce an empty part, so remote clients **do** now lose working
+topics, which is the one cost the owner was told could not arise.
+
+It is **not a ruling violation**: it is a narrowing, and the 2026-09-04 carve-out ruling states the
+2026-09-03 licence *"permits **narrowing** without asking, never **widening**"*. So I do not ask for
+a revert, and the direction is the one the owner has now chosen eight consecutive times. But it is a
+**disclosure owed before PR #126 merges**, because the owner priced two rulings on a sentence this
+change falsifies. **Verdict: the latter — you carry it.**
+
+## Other verifications this cycle (no findings)
+
+- **The peer door is total, and no `Reply`-returning method can throw.** Only `DeclareTopic` and
+  `PublishRow` return `Reply` and reach `internal::JoinSegments`; both call
+  `RejectUnsendableTopic` first, which now wraps `RequireSegments` in a `try` and converts to
+  `Reply::HarnessFailure`. `Subscribe`/`Unsubscribe` return `SubscriptionResult`/`void` and
+  delegate straight to the provider, so they are outside the claim. Delegation also strictly
+  widens the harness door: NUL is still covered (rule 2, since `isspace('\0')` is false), and the
+  pipe half moved from the literal `" \t"` to `isspace`, picking up `\n \r \v \f`.
+- **Nothing bypasses `RequireSegments`, and nothing still documents the pre-change contract.**
+  Re-swept for join-licence wording, for "only the empty list is refused" wording, and for any
+  claim that topic names are unbounded — all empty outside `plans/` and `docs/archive/`.
+- **No test was retired and none needed to be.** The only removed assertion is
+  `EXPECT_EQ(joined, "telemetry/depth")`, replaced by `EXPECT_EQ(companion,
+  "telemetry/depth/__schema")` plus a length and a prefix relation — which entails the removed
+  pin and is strictly stronger, so the XRCE participant-name control survives.
+- **Both record items landed:** `fastdds_main.cpp:283` `:350` → `:360`; `CMakeLists.txt` "ten
+  domains" → "eleven".
+- Local runs: `pubsub_tests` **24/24**, `gateway_tests` **20/20**,
+  `conformance_seam_vocabulary` 8/8 and `conformance_fastdds --gtest_filter=TopicNames.*` green
+  (the latter two from the cycle-1 pass; the fix cycle does not touch their sources beyond the
+  README). The Conan cache shows a further `fletcher-pubsub` rebuild carrying the fix-cycle header,
+  so the packaged side is current.
+
+## Non-blocking
+
+- **N3 — `RequireSegments` lost its doc comment.** The three constants were inserted **between**
+  the ~60-line `///` block and the function with no blank line (`segments.hpp:71-77`), so the block
+  — the header's statement of §3.5 — now documents `kFastDdsAnnouncedTopicBytes`, and
+  `RequireSegments` is undocumented. Introduced by this cycle's own fix. One blank line, or move
+  the three constants above the block.
+- **N4 — the rule-6 headroom assertion cannot see the header drift.**
+  `EXPECT_LE((longest + "/__schema").size(), kFastDdsAnnouncedCeiling)` uses the *test's* 246/255
+  literals, so it stays green even if `kMaxJoinedTopicBytes` moves. Harmless — the `247 is the
+  shortest REFUSED name` assertion is what actually catches drift, and M8/M9 prove it does — but
+  the headroom row asserts arithmetic rather than the product.
+- **N5 — `fastdds-pubsub-provider/README.md` has a `### Topic name` section that does not mention
+  the 246-byte ceiling**, which exists *because of* this provider's `fastcdr::string_255`
+  announcement. Not false and not in `Files-to-touch`; it is simply the first place a Fast DDS user
+  would look for the limit.
+- Cycle-1 **N1** (the two illustrative `kInvalidArgument` cause lists in `core/`) stands, left
+  deliberately and recorded in the log. Cycle-1 **N2** is fixed.
+
+## RECORD (PM's, never blocking)
+
+- The re-check brief states the headroom is pinned by `static_assert(246 + 9 == 255)` in the header
+  form; the `static_assert` is in **`pubsub/tests/test_segments.cpp:115`**, not in `segments.hpp`,
+  which carries the derivation but no assert. The progress log states this correctly.
+  Behaviourally the pin is real (M8 and M9 both bite), so this is wording only.
+- The cycle-1 RECORD item about `.claude/runbook.PDA-DEC.config.md:75` (`XRCE=OFF` in the command
+  vs *"ON is MANDATORY for it"* in its own note six lines below) is unchanged and still stands.

@@ -132,10 +132,10 @@ struct RefusedCase {
 std::vector<RefusedCase> RefusedCases() {
     return {
         {{WithNul("a", "b")}, "rule 2: a NUL truncates the name at its first byte on XRCE"},
-        {{"ok", WithNul("x", "y")}, "rule 3, in a later segment"},
+        {{"ok", WithNul("x", "y")}, "rule 2, in a later segment"},
         {{WithNul("", "")}, "rule 2: a segment that is nothing but a NUL"},
         {{"a/b"}, "rule 3: joins onto the same name as {\"a\",\"b\"}"},
-        {{"a", "b/c"}, "rule 2, in a later segment"},
+        {{"a", "b/c"}, "rule 3, in a later segment"},
         {{"/"}, "rule 3: a segment that is nothing but the separator"},
         {{""}, "rule 4: an empty segment names nothing"},
         {{"a", ""}, "rule 4: a trailing empty segment yields the name \"a/\""},

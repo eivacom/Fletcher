@@ -184,3 +184,163 @@ Strictly less code and strictly fewer representable states.
 * `integration-tests/pubsub-conformance/CMakeLists.txt:320` says `conformance_fastdds`
   joins "ten domains"; the tree uses eleven (151, 152, 153, 155, 161-167). The
   off-by-one predates this change, which said "nine" for ten.
+
+---
+---
+
+# RE-CHECK after fix cycle 1 (independent, appended — original above is unmodified)
+
+Diff re-reviewed: `git diff 335b016 f526acb`; cumulative `722cc6b..f526acb` also read.
+Tree at `f526acb`, clean.
+
+Everything below was re-measured on this box, not read off the implementer's report.
+To make that honest I rebuilt the Conan packages from the working tree first
+(`conan create pubsub`, `conan create fastdds-pubsub-provider`) and confirmed the new
+refusal string is actually inside the compiled provider libraries before running
+anything — the cached packages were still carrying the pre-fix header.
+
+**Counts this round: 0 blocking · 0 should-fix · 2 nits · 1 RECORD.**
+**Ready to close: YES.**
+
+## 1. The round-1 reproduction, re-run against `f526acb`
+
+Same probe, same shape, same domain-isolated single provider: two lists agreeing on
+their first 255 bytes, subscribe A, publish 5 rows to B, count at sub(A), then a
+same-topic control.
+
+| case | joined | result |
+|---|---|---|
+| **the round-1 aliasing pair** | 256 | `CreateTopic(A)` and `CreateTopic(B)` both **REFUSED, `kInvalidArgument`** — the pair is now unreachable |
+| just over the bound | 247 | both **REFUSED, `kInvalidArgument`** |
+| longest accepted | 246 | accepted; schema `kOk`; **cross(B to subA) = 0**, control 5/5 |
+| short control | 40 | accepted; schema `kOk`; cross 0, control 5/5 |
+
+**The finding is closed.** The 5-of-5 wrong delivery that opened it cannot be
+constructed any more, because neither name can be declared. The 246-byte row is the
+positive control that the bound did not simply refuse everything: at 246 the derived
+companion is exactly 255 bytes and the schema still arrived.
+
+`pubsub_tests --gtest_filter=Segments.*`: **5/5 green**, including the new
+`NamesThatWouldTruncateOnTheWireAreRefused`.
+
+## 2. Attacking the bound — I tried hard and could not break it
+
+Independent probe compiled straight against the working-tree header, not through the
+new test file, so it cannot inherit the test's assumptions.
+
+* **Boundary sweep.** k = 1..6 segments, joined totals 240..252, lengths spread
+  across the segments: accepted **exactly** when joined is 246 or less, refused at 247
+  and above, and every accepted `JoinSegments(L).size()` equalled the predicted joined
+  length to the byte. No off-by-one on either side.
+* **Separator accounting.** 1..300 single-byte segments: accepted exactly when
+  `2k - 1 <= 246` (k up to 123). A rule that summed segment bytes and forgot the
+  separators would have accepted k = 124..247; it does not. The check is on
+  `segs.size() - 1 + sum(sizes)`, i.e. genuinely the **joined** length, and it sits
+  first in `RequireSegments`, so all twelve entry points inherit it through the two
+  joins — nothing measures segments instead.
+* **Multibyte straddling.** A 2-byte UTF-8 sequence placed so its second byte lands
+  on 245..250: byte-exact, no partial-character acceptance, no off-by-one. Irrelevant
+  by construction anyway — the bound is 9 bytes below the ceiling that truncates.
+* **Empty list** still hits rule 1 first, so `segs.size() - 1` cannot underflow.
+  Overflow of the running sum needs about 2^64 bytes of input; not constructible.
+* **Single 246-byte segment vs many short ones** both land on 246, both accepted,
+  both join to exactly 246 bytes.
+
+## 3. Is 246 the right number across all three providers? — Yes, and XRCE is not tighter
+
+* **Fast DDS** — 255 is the vendor's, measured last round: `fixed_string<255>`
+  truncates silently (`fixed_size_string.hpp:83,331`, both `noexcept`). 246 + 9 = 255,
+  and `"/__schema"` is 9 bytes — confirmed the only companion any provider derives
+  (`fast_dds_pubsub_provider.cpp:331,494`, `xrce_dds_pubsub_provider.cpp:720,881`; all
+  four sites, one suffix, and no other derived name is a function of the topic).
+* **XRCE — measured, because reading the client sources alone would not settle it.**
+  Own `MicroXRCEAgent` on port 2219, domain 158, a 246-byte topic declared,
+  subscribed and published five times:
+
+  ```
+  longest-accepted-246: joined=246 companion=255 schemaWait=0 rows=5  ROUND TRIP OK
+  short-control-40:     joined=40  companion=49  schemaWait=0 rows=5  ROUND TRIP OK
+  ```
+
+  The longest name the seam now accepts, **and its 255-byte `/__schema` companion**,
+  cross the XRCE wire intact. XRCE's own ceilings are looser, not tighter:
+  `UXR_BINARY_SEQUENCE_MAX` is 512 (`xrce_types.h:37`) and both
+  `uxr_serialize_OBJK_Topic_Binary` and `uxr_serialize_OBJK_DomainParticipant_Binary`
+  write unbounded CDR strings into it — 246 plus type name plus framing is about 275.
+  `DDS_XRCE_REFERENCE_MAX_LEN` (128) applies to the `_ref` creation APIs, which this
+  provider does not use. So **246 is right for XRCE too**, and for the same reason it
+  is right for Fast DDS: the XRCE Agent builds the real Fast DDS entities from the
+  name the client sent.
+* **In-process** has no wire, so any bound is safe there.
+
+## 4. Is anything still aliasing? — No
+
+Re-ran the round-1 exhaustive injectivity check with the ceiling in force, alphabet
+`{a, _, /, NUL, \, 0xC3, 0xA9, %}` plus 120-, 125-, 246- and 247-byte words so lists
+straddle the bound, all 1- and 2-segment combinations, and this time also keying on
+**what Fast DDS actually announces** (each name truncated to 255) and on the
+**announced companion** (`name + "/__schema"` truncated to 255):
+
+```
+accepted=64262  distinct-bytes=64262  distinct-cstr=64262  distinct-companion=64262  CLEAN
+```
+
+Every accepted list has a distinct full name, a distinct `c_str()` name and a
+distinct announced companion name. No accepted list exceeds the ceiling. Nothing else
+on the path can truncate: the XRCE participant name **is** the topic name (246 or
+less), the type name derives from the payload bound and not from the topic
+(`payload_bound.hpp:63`), `kSchemaTypeName` is a constant, neither DDS provider uses
+partitions, and the XRCE session key is a number from the config document.
+
+## 5. Both should-fix items — checked for correctness, not presence
+
+**S1, the peer door: total, confirmed.** `RejectUnsendableTopic` now calls
+`internal::RequireSegments` in a `try` and converts a `PubSubError` into
+`Reply::HarnessFailure`, then tests `std::isspace` on `unsigned char` (correct
+signature usage) for the pipe's own rule. Both `Reply`-returning methods
+(`DeclareTopic`, `PublishRow`) call it first, so the `internal::JoinSegments` that
+follows **cannot throw** — every shape that would throw has already been converted.
+The empty list and the `__` prefix, the two gaps I filed, are now covered by
+delegation rather than by a second copy of the rules, and rule 6's length bound
+arrived there for free. `Subscribe`/`Unsubscribe` still forward straight to the
+provider, but they do not return `Reply` and that is unchanged behaviour. Checked that
+no clause can trip the new door by accident: every `FreshTopic`/`Fresh` label in the
+suite is a static identifier with no whitespace, longest 19 characters, so a fresh
+topic joins to about 37 bytes.
+
+**S2, the gateway: correct, and nothing throws past a handler.** `SplitTopic` keeps
+every piece; `""` short-circuits to an empty list, which rule 1 refuses. Both entry
+points into the seam sit inside a handler that catches `std::exception`
+(`HandleTextFrame`, `HandleBinaryFrame`), and `PubSubError` derives from
+`std::runtime_error` (`status.hpp:97`) — so `"a//b"`, `"/a/b"`, `"a/b/"` and a
+247-byte name all surface as error frames instead of silently naming another client's
+topic. No other gateway path repairs a name: `SplitTopic` is the only
+string-to-segments conversion (`ws_session.cpp:189,194,271`) and `ListTopics` returns
+names that were already accepted.
+
+## 6. Suites re-run here
+
+* `pubsub_tests --gtest_filter=Segments.*` — 5/5.
+* Whole conformance harness rebuilt against the freshly created packages and run with
+  **`FLETCHER_CONFORMANCE_XRCE=ON`**: `ctest -C Release` gave **104/105**, the single
+  failure being `Registry.TwoInstancesStayIsolatedUnderConcurrentTraffic` (SEGFAULT).
+  That is the documented false red — after clearing
+  `C:\ProgramData\eprosima\fastdds_interprocess` it passed on re-run, so **105/105
+  effective**, independently reproduced. `conformance_xrce` passed as one entry in
+  16.5 s.
+* `gateway` — 20/20.
+
+## Nits (this round)
+
+* `RefusedCases()`'s renumbered labels are transposed in two rows: the
+  NUL-in-a-later-segment row says "rule 3" (NUL is rule 2) and the `b/c` row says
+  "rule 2" (`/` is rule 3). Failure-message text only.
+* `conan create fastdds-pubsub-provider` fails in `test_package` on this box because
+  the test_package build does not carry `cxx_std_20` (`payload_bound.hpp` inline
+  variables). Pre-existing and unrelated to this diff — `payload_bound.hpp` is
+  untouched — but a local `conan create` needs `-tf=""` to get a package out.
+
+## RECORD (this round)
+
+* `pubsub/tests/test_segments.cpp` `RefusedCases()`: two rule labels are transposed
+  (rule 2 / rule 3) after the renumbering that made room for rule 6.
