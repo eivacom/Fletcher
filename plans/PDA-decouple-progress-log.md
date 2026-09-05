@@ -1327,3 +1327,65 @@ for an "As landed" delta — a template tension, not scope creep.
 
 **Baselines re-based here** (measured, not remembered): pubsub 19→**24**, xrce 11→**16**,
 core 28→**40**, pubsub-conformance 82→**110** (XRCE=ON), gateway-end-to-end 29→**31**.
+
+## PDA-DEC-AG1 — the misbehaving callback: throwing, re-entering, and the number it carries (2026-09-05) 🟢
+
+Absorbs A2 (§5.3, throws), A3 (§6, re-enters) and A8 (the refusal number re-entry carries).
+
+**Landed.** Twelve doors, one per provider entry point across all three providers, each
+placed *before* the lock it protects. A throwing handler is contained at the point of
+invocation, every remaining subscriber on that topic still receives the sample, and the
+absorption is **counted** rather than silent — the counter is what stops containment from
+being tolerance. A re-entrant call is refused with `kReentrantCall` on **every** protocol
+per ruling 52, superseding ruling 48's "refuse only what is unsafe". XRCE genuinely loses a
+working capability by this — AG1-DEBT-19, handed to PDA-ABI, which will have the
+loaned-sample receive path the decision should be made against.
+
+Above the seam the two caller-tier methods answer differently, because only one has an
+answer that does not need the provider: `Unsubscribe` **skips** the transport-level
+teardown, `Subscribe` **refuses** whenever this Subscriber has not already established a
+provider-level subscription for that topic.
+
+**The defect the reviews caught that the tests did not.** The caller-tier door sat one
+statement *after* `provider_cv.wait`. With another thread parked inside `provider->Subscribe`
+holding the provider's mutex, a re-entrant `Subscribe` waited on a flag only that thread
+could clear — neither door was reached, and the same call was refused or deadlocked
+depending on another thread's timing. Red-for-the-right-reason was a genuine **hang**:
+`EXIT=124` under `timeout 45`, green at 0 ms after, capped by a declared ctest `TIMEOUT 60`.
+
+**Three fix cycles, and compliance found no code defect in any of them.** Every blocking
+finding across all three was *published contract text* disagreeing with working code: cycle 1,
+three public headers still publishing ruling 48 after ruling 52 replaced it; cycle 2, the
+`Subscribe` refusal published nowhere at all; cycle 3, the prose that discharged cycle 2
+over-claiming in three ways at once ("when and only when", "before any state is touched",
+"whatever another thread happens to be doing" — each false against the tree). The mechanisms
+were right from cycle 1. **This is the item's real lesson and it is a prediction for AG2**,
+whose entire deliverable is published form.
+
+**PM ruling, recorded.** Amending frozen §6 text is normally a stop-and-ask. Licensed here:
+the corrected sentence sits *inside* the ruling-52 amendment this change lands — it had never
+shipped — and the correction **narrows**. Compliance reached the same reading independently
+and declined to call it an oracle-wins tripwire.
+
+**Deferred, not dropped.** AG1-DEBT-20: the identity is typed at one end only —
+`RefuseIfInsideDeliveryOn` takes `const void*` (`core` must not depend on `pubsub`), so
+thirteen ask sites hand-write the base cast. AG1-DEBT-21: a refused `Subscribe` still burns
+an id and walks the rollback path A4 needed four cycles to settle, for an entry nobody saw.
+Both non-blocking in two independent reviews; fixing 21 meant a fourth review of the item's
+most delicate code in cycle 3 of a three-cycle budget. The contract was narrowed to state
+what the code does instead, so nothing false ships.
+
+**Verification.** Full suite at `61e6dc7`, `conan remove -c 'fletcher-*'` first. core 40 ·
+arrow-bridge 61 · pubsub 24 · pubsub-arrow 16 · fastdds 85 · xrcedds 16 · protoc 99+3 ·
+**pubsub-conformance 134/134, XRCE read back as `BOOL=ON`** (`conformance_xrce` #134, live
+Agent) · pubsub-arrow-fastdds 4/4 · fastdds-xrce-interop 5/5 gtest · protoc-arrow-bridge
+90+1skip · protoc-coverage 18+2skip · gateway-end-to-end 31/31 · **gateway-fastdds-ts 4/4 ×3,
+full backlog, no row loss** (binaries checked to postdate HEAD). **Nothing below baseline.**
+
+**Numbers.** +2028/−243 vs declared +1050/−150 — **93% over**, owed a note: ruling 52 widened
+the refusal from `Unsubscribe` alone to all four methods on all three providers *after* the
+numbers were declared, so twelve doors cost what three were budgeted for. Public surface 3
+(declared 2). **Design cycles 2/2 · fix cycles 3 · implementer launches ≥4** — one launch was
+interrupted and is absent from the PM's dispatch record, so that figure is a floor.
+**Baselines re-based** (measured): pubsub-conformance 110→**134**, fastdds-xrce-interop 3→**5**
+gtest. Others unchanged from A1's 2026-09-05 rebaseline.
