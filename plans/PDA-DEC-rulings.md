@@ -672,3 +672,34 @@ subscription and Y's `Impl` with **no signal** — and the residue the design pr
 provider instance is in flight on this thread. **Consistent with the round's standing preference for
 a loud refusal over a silent leak** — the alternative offered was to permit it and publish the
 residue as unbounded, which would have converted a loud hang into a silent failure.
+
+## 2026-09-05 — A transport subscription outliving its handler-side cancel is left open, and said so *(selection)*
+> "Leave it open, and publish that — The transport subscription stays open and quiet until the subscriber object goes away or the topic is used again — and the seam states this plainly rather than implying prompt cleanup. No callbacks run either way, so nothing is unsafe; the cost is a resource held longer than a reader might expect."
+
+**Context:** PDA-DEC-AG1, brief decision 2, presented at cycle-2 APPROVE-WITH-DEBT(10). The
+architecture review judged this one of "the right questions, fairly put". A handler cancelling its
+own last subscription cannot close the transport-level subscription from inside itself; the
+question was what the seam promises about the residue.
+**Applies to:** §6's cancellation wording for the handler-initiated case. **The obligation is to
+PUBLISH the residue, not merely to permit it** — "states this plainly rather than implying prompt
+cleanup" is the operative half. A design that leaves the resource open without saying so does not
+satisfy this ruling.
+**Rejected:** closing it later on a thread the seam creates — tidier, but it invents a background
+thread the seam does not have, trading a harmless held resource for new lifetime and
+shutdown-ordering questions. **Consistent with the round's standing preference** for a stated
+limitation over an invented mechanism.
+
+## 2026-09-05 — A subscriber's handler failure is not the publisher's business *(selection)*
+> "Nothing — the publish succeeds — The failure is contained and reported where it happened. It is not the publisher's failure, and the publisher cannot act on it. Fixes today's bug directly, where a subscriber's overflow surfaces at an unrelated publisher as 'payload too large'."
+
+**Context:** PDA-DEC-AG1, brief decision 3. This is the decision that disposes of A2's headline
+defect: `status.hpp` maps `std::overflow_error` to `kPayloadTooLarge` with no discrimination of
+whose frame threw, so a subscriber's handler failure reaches an unrelated publisher's `Publish`,
+and on XRCE a publisher's `CreateTopic`. The ruling settles the direction: **contain and report at
+the failure site**, do not propagate to the publisher.
+**Applies to:** §5.3's obligation, and AG1's `DeliveryChannel` absorption. Note the design achieves
+this by making the wrong-party status **unrepresentable** rather than discriminated — no callback
+frame reaches the translator at all — which is the stronger form of this ruling, not merely a
+compliant one.
+**Rejected:** telling the publisher — a new contract for a party that cannot act on it, coupling
+publishers to subscriber behaviour they should not see.
