@@ -604,3 +604,36 @@ exist, so the claim would rest on a stand-in standing for something unbuilt.
 `encode_copies` measurement. Directly consistent with the 2026-09-01 copy-accounting ruling ("scope
 to the interface, say so plainly"). **Ninth consecutive time the owner chose the narrow claim stated
 honestly over a wide one implied** — and the second time in this item alone.
+
+## 2026-09-05 — Every protocol driver is C++, so both sides of the protocol ABI are C++ *(scope)*
+> "We decide that all protocol drivers will be C++, and so both sides of the protocol ABI will be pure C++. You only need to make aspects of the ABI fully language agnostic in cases where for instance data drills all the way up to the language ABI further up."
+
+**Context:** Given 2026-09-05 during a re-plan of the remaining amendment items, in direct response
+to the PM quoting `docs/protocol-driver-abi-spec.md:21-22` ("implementable by anyone in any
+language, in a separate binary") and §0.2 ("A driver written in Rust or C# implements role 1 and is
+entirely legitimate"). The owner was shown that text and ruled against it. It is therefore a
+**deliberate supersession, not an oversight**.
+**Supersedes:** `docs/protocol-driver-abi-spec.md` §0.2's multi-language driver licence and the
+:21-22 claim. Both require amendment; until amended, the spec contradicts this ruling and **this
+ruling wins** (`spec_precedence` standing decision applies to the seam spec; this ruling extends the
+same precedence over the driver ABI spec).
+**Applies to:** the language-agnosticism test for every remaining amendment item. The test is no
+longer "could a non-C++ implementer construct this?" but **"does this data drill all the way up to
+the language ABI?"** A concept that stops at the protocol ABI may be expressed in C++. A concept
+that continues up to the language boundary must still be language-agnostic.
+**Does NOT relax:** binary-stability constraints that hold between separately-built C++ binaries
+(exceptions may not cross, layout may not be assumed) where those are separately established — the
+driver ABI spec's own "Neither may throw or longjmp" (`:190-192`) stands on its own footing, as does
+seam §5.3's framing around the transport's C frames.
+
+## 2026-09-05 — Ceremony is expensive; group the remaining work into as few items as makes sense *(process)*
+> "Ceremony in the round plan is expensive. Group the works into as few rounds as makes sense"
+
+**Context:** Given 2026-09-05 after the PM measured the amendment round at ~5,000 lines of code
+against ~12,400 lines of docs/plans (a 2.5:1 docs-to-code ratio, against 0.7:1 in the main round),
+and showed that per-item process cost is fixed regardless of item size — eight small items were
+each paying a ceremony calibrated for items roughly three times their size.
+**Applies to:** the granularity of the remaining amendment items. Grouping is the PM's call under
+the `naming` standing decision ("stage granularity"), and this ruling directs it toward **fewer,
+larger items**. The cost being traded away is review independence per item: grouped items receive
+one compliance pass and one code review between them rather than one each.
