@@ -703,3 +703,37 @@ frame reaches the translator at all — which is the stronger form of this rulin
 compliant one.
 **Rejected:** telling the publisher — a new contract for a party that cannot act on it, coupling
 publishers to subscriber behaviour they should not see.
+
+## 2026-09-05 — Re-entry is refused on every protocol; the capability passes to PDA-ABI *(selection)*
+> "Refuse everywhere; hand the capability to PDA-ABI — One uniform rule now, loudly enforced. Nothing in-tree loses anything, and the copy it forces is already mandatory until the loaned-sample receive path exists. Record re-permitting as an explicit obligation on PDA-ABI, where zero-copy receive lands and the decision can be made with the real mechanism in hand. Cost: XRCE loses a capability that works there today, and re-permitting needs a fresh ruling from you."
+
+**SUPERSEDES the 2026-09-05 ruling "Re-entry is refused only where it is unsafe; the rest converges
+up"** (entry 48, immediately above 49). That ruling is **void as to direction**; its record stands.
+
+**Why it was superseded — the premise it rested on was false.** Ruling 48 was given on the
+architecture review's cycle-1 finding that `Publish`/`CreateTopic`/`Subscribe` from a handler "work
+today on Fast DDS and XRCE". That was a lock-graph claim about *Fletcher's* locks. Implementation
+tested it **by probe rather than by reading** — A: Declare+Publish only → hangs; B: Subscribe only →
+hangs; C: neither → completes — and a Fast DDS listener callback runs with the **RTPS reader mutex**
+held. The capability works on **XRCE only, one protocol of three**. Not a regression: the same
+entries time out at base `999b764`. Premise P2 fired as designed and the implementer stopped rather
+than narrowing the permitted set to dodge it.
+
+**The cost, measured before the ruling was given, not after:** a delivered row crosses as a bare
+pointer and length with **no owner handle**, valid only for the call; retain exists for attachments
+and schemas but **not for rows**. So deferring forces a whole-row copy — §8.1's `StagingProducerIsCaught`
+negative control, "the workaround a binding was forced into". That copy is **already mandatory**
+today, the receive side not yet being zero-copy (assigned to PDA-ABI). **No in-tree caller re-enters
+the seam from a handler**; the gateway already copies and posts to its own executor.
+
+**Applies to:** AG1's guard, now uniform across all providers and all four methods. The seam's §6
+clause 6 must state the **refusal**, not the permission — the "read a row and publish a derived one
+is contract, not luck" wording introduced in AG1 revision 2 is withdrawn before it ever landed.
+**The not-too-wide control must be re-aimed, not deleted:** the charter constraint depends on clause
+6 remaining a control neither mechanism can green.
+**Forward obligation on PDA-ABI, to be registered as debt:** re-permitting re-entry once the
+loaned-sample receive path exists. Refused→permitted is source-compatible for callers, but the
+contract text is frozen, so it needs a fresh owner ruling — this ruling does not pre-authorise it.
+**Rejected:** permitting where it works and refusing loudly on Fast DDS (ships two answers to one
+question); and spending a further design cycle on whether Fast DDS could reuse the loopback's
+delivery gate.
