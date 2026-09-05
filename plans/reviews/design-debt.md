@@ -501,6 +501,43 @@ verified.
 | A1-DEBT-4 | **An unsampled ledger must fail as itself.** If `produced_in_window` defaults false, a leg where the sampler never ran scores `encode_copies == 1` and the staged control passes for the wrong reason — the "control that cannot fail" shape this round has logged five times. Assert `produced_at != 0` (and `produced_len == row_bytes`) before any verdict is read, in the same place and for the same reason `COPY_MUST_DELIVER_CLEANLY` asserts an attachment did not arrive MISSING. | review §Claim 4, §DEBT-4 |
 | A1-DEBT-5 | **The §8 sentence must publish a permission, not an unconditional promise.** Under decision 1(a) the whole-path property is true only of a client that composes into the lent window; a staging client still pays one copy and the guard reports it. §8's replacement bullet must say so in the sentence itself, and §8.1's rewrite must move the interval's **start** to the producer's write site while keeping the window-base sample as an interior point — `row_copies` is preceded, not replaced. **PM-facing half:** one clause makes decision 1(a) unambiguous before it is presented — *"(a) whole path — the seam **permits** an uncopied row from the client's own write to the subscriber's read, for a client that uses the new call; the guard reports which kind of client it measured"*. Without it the owner rules on a promise wider than the mechanism, which is the A4 defect at the wording level. | review §Claim 5, §DEBT-5 |
 
+## PDA-DEC-AG1 — the misbehaving callback (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
+
+Review: [PDA-DEC-AG1-design-review.md](PDA-DEC-AG1-design-review.md). The eight below
+are DEBT and do **not** loop the design; the three BLOCKERs are in the review.
+
+Things the implementer may rely on **without re-deriving them**, all verified against the
+tree in cycle 1:
+- **The charter constraint holds structurally.** Clauses 2, 3 and 5 are order-independent
+  and each is red for a reason the other mechanism cannot supply. Do not split A2 from A3.
+- **P1 holds** — every `add_library` in the tree is `STATIC`/`OBJECT`/`INTERFACE`; no
+  `SHARED` anywhere (`pubsub/CMakeLists.txt:11`, `core/CMakeLists.txt:7`).
+- **P3 holds** — `subject.hpp:118-119` and `peer_subject.cpp:67-71`: `Subscribe`/`Unsubscribe`
+  are direct in-process calls on **both** local and peer subjects; only `PublishRow`/
+  `DeclareTopic` go over the pipe.
+- **P4 holds** — the door predicate is a `thread_local` read inside the existing critical
+  section at `subscriber.cpp:571-585`. No new lock, no new edge in `lock → provider → gate → mu`.
+- **The door check must sit inside that critical section, before the `provider_subscribed`
+  flip at `:583`** — not at `:587`. The design's "leaving `provider_subscribed` true" is
+  load-bearing; skipping after the flip re-registers the subscription on the next
+  `Subscribe` (`kInvalidArgument` on Fast DDS `:433-435`, a silently replaced slot on the
+  loopback). Do not "simplify" it.
+- **No second kind of user callback exists at the seam** — `SchemaArrival` carries no
+  continuation, so the six `SubscribeCallback` invocation sites
+  (`in_process_provider.cpp:279`; `ordered_delivery.hpp:98,157,208`;
+  `xrce_dds_pubsub_provider.cpp:307,358`) are the whole set.
+
+| Id | Owed | Where |
+|----|------|-------|
+| AG1-DEBT-1 | Two product call sites of the one-argument `TranslateSeamFailure` are outside the twelve and outside `Files-to-touch`: `pubsub/src/provider_registry.cpp:186` and `:211`. Deleting the one-argument form breaks both. Add the file, and say what token a registry call passes — there is no instance yet, and `nullptr` is safe only because the frame stack never holds one. `core/tests/test_write_buffer.cpp:453` (PDA-DEC-A1, in flight) is a fourteenth site. | review §DEBT-1 |
+| AG1-DEBT-2 | **`pubsub/src` has no logging facility** (zero hits for `std::cerr`, `printf`, `LOG`, `spdlog`), so `Deliver` "logs it" is unimplementable there, and deleting `data_reader_listener.hpp:46-56` removes the only ERROR line a throwing callback produces today. Cheapest fix: give `DeliveryChannel` an observable absorbed-count a clause can assert — which also discharges the charter constraint's literal branch (b) for free. | review §DEBT-2 |
+| AG1-DEBT-3 | The tree already has this mechanism: `subscriber.cpp:36` is `thread_local std::vector<const void*> g_delivery_stack` with an RAII `DeliveryScope` (`:103-140`) — the exact shape proposed for `internal/delivery_frame.hpp`. Lift the existing one into the new header rather than standing a second copy beside the code A4 needed four cycles to settle; tokens are addresses, so provider and `Subscriber` tokens coexist in one stack safely. | review §DEBT-3 |
+| AG1-DEBT-4 | Clause 4's shape must be stated. The loopback holds `mu_` across dispatch (`in_process_provider.cpp:258`→`:279`), so a second thread's seam call blocks for the whole delivery; a clause requiring that call to *complete* while the callback runs deadlocks there — a false red under TIMEOUT. Require only that it was *issued* and did not see `kReentrantCall`; the anti-widening force rests on the DDS subjects. | review §DEBT-4 |
+| AG1-DEBT-5 | No clause asserts what is still **permitted** from inside a delivery on the same instance. Clause 4 guards the thread axis only; the method axis (B1) has no control. Add one once B1's breadth is settled. | review §DEBT-5 |
+| AG1-DEBT-6 | `subscriber.cpp:298-301` publishes a *hang* ("a provider that delivers synchronously from inside `Subscribe` into a handler that subscribes to the same topic — a loud hang … published in the harness README"). The guard converts it into a `kReentrantCall`; the README sentence and the code comment both go stale, and the design does not name that edit. | review §DEBT-6 |
+| AG1-DEBT-7 | Name the split trigger as a number. The cut line ((i) everything but the DDS providers, (ii) the DDS providers) is right, but "if the two DDS conversions blow the budget" has no threshold. Bottom-up estimate is ≈910 added against a declared +520 (~1.75×). | review §"question 5" |
+| AG1-DEBT-8 | P2 should name the two entries that do **not** funnel through `TranslateSeamFailure` and why each is safe: `~PubSubProvider` (§6 clause 5's quiescence rule) and `FastDDSPubSubProvider::PayloadBytes()` (`fast_dds_pubsub_provider.hpp:133`, read-only). "No thirteenth" resting on the method count alone invites a future accessor to slip in. | review §DEBT-8 |
+
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
 | Item | Detail | Source |

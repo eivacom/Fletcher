@@ -637,3 +637,38 @@ each paying a ceremony calibrated for items roughly three times their size.
 the `naming` standing decision ("stage granularity"), and this ruling directs it toward **fewer,
 larger items**. The cost being traded away is review independence per item: grouped items receive
 one compliance pass and one code review between them rather than one each.
+
+## 2026-09-05 — Re-entry is refused only where it is unsafe; the rest converges up *(selection)*
+> "Refuse only what's unsafe — Keep publish / declare-topic / subscribe working from inside a handler, and fix the in-process path so they work there too. Refuse only the genuinely unsafe case. Converges the three protocols UP to one rule instead of down. Costs more work now and re-enters code that previously needed four fix cycles."
+
+**Context:** PDA-DEC-AG1, brief decision 1, **re-put by the PM with a corrected cost line**. The
+brief as authored stated the cost as "an XRCE application that cancels from inside its handler
+stops working". Architecture review verified against the tree that the guard, sitting on
+`TranslateSeamFailure`, refuses **all four** methods from inside a delivery, and that
+`Publish`/`CreateTopic`/`Subscribe` from a handler **work today on Fast DDS and XRCE** (the data
+listener holds no provider lock; `Publish` takes only `shared_lock`; XRCE's `mu` is recursive for
+exactly this). Only the in-process loopback breaks, because it holds `mu_` across dispatch. So the
+design as written would have removed **transform-and-republish** — read a row, publish a derived
+row from inside the handler — on all three protocols, including the two where it works now. The
+owner was shown the corrected cost and chose the narrower refusal.
+**Applies to:** AG1's re-entrancy guard. Uniformity is still required — the three-way divergence is
+what this item exists to end — but it is reached by **making the permitted set work everywhere**,
+not by refusing everywhere. The loopback's dispatch-under-lock is therefore in scope. The design
+owes one clause asserting what remains **permitted**; review noted the method axis currently has no
+not-too-wide control.
+**Rejected:** uniform refusal of all four (simpler, one choke point, but breaks working behaviour on
+two protocols); and refuse-now-restore-in-PDA-ABI (ships sooner, bets a later round re-opens it).
+
+## 2026-09-05 — Destroying another subscription from inside a delivery is forbidden, and said so *(selection)*
+> "Forbid it, and say so — State that a subscription may not be destroyed while a delivery is in flight on that protocol instance on the same thread. Makes the bad case a stated, named error instead of a silent one. The reviewer's judgement is that forbidding is cheaper than handling here."
+
+**Context:** PDA-DEC-AG1, a **fourth** decision the brief did not carry; architecture review BLOCKER
+B2 is its evidence. `~Subscriber` was named as a call site and given no remedy: a handler on
+subscriber X destroying a quiescent subscriber Y over the same provider fires the guard, which is
+then swallowed by the existing bare `catch (...)` at `subscriber.cpp:438`, leaking the transport
+subscription and Y's `Impl` with **no signal** — and the residue the design proposed to publish
+("until the Subscriber is destroyed") is already spent. Today that shape hangs **loudly**.
+**Applies to:** §6 clause 5's quiescence, widened to cover destruction while a delivery on that
+provider instance is in flight on this thread. **Consistent with the round's standing preference for
+a loud refusal over a silent leak** — the alternative offered was to permit it and publish the
+residue as unbounded, which would have converted a loud hang into a silent failure.
