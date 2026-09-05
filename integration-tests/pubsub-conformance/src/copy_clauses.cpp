@@ -2,7 +2,7 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 // The `CopyAccounting` suite: zero-copy stops being prose (§8) and becomes a
-// test that fails when it stops being true. Seven ctest entries, all
+// test that fails when it stops being true. Eleven ctest entries, all
 // in-process, all in milliseconds. What each one is, and why the mechanism is
 // provenance rather than counting, is in README.md.
 
@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -87,6 +88,22 @@ void PublishRefillCost(const std::string& tag, const CopyVerdict& verdict) {
         }                                                                                         \
     } while (false)
 
+/// The producer half of the same discipline: a leg whose sampler never ran must
+/// fail AS ITSELF rather than be read at all. Same place, same reason as
+/// COPY_MUST_DELIVER_CLEANLY's "arrived MISSING" (design review A1-DEBT-4). The
+/// verdict itself carries no number for such a leg — `encode_copies` is empty —
+/// so this reads as the named failure and not as a `bad_optional_access` from
+/// somewhere below.
+#define COPY_MUST_HAVE_PRODUCED(trip, expected_row_bytes)                                      \
+    do {                                                                                       \
+        ASSERT_NE((trip).ledger.produced_at, static_cast<::fletcher::conformance::Address>(0)) \
+            << "the producer sampler never ran, so there is no `encode_copies` to read — "   \
+               "this leg proves nothing either way";                                           \
+        ASSERT_EQ((trip).ledger.produced_len, static_cast<size_t>(expected_row_bytes))         \
+            << "the producer wrote a different number of bytes than the row it was asked "     \
+               "for, so the address it recorded is not the row's";                             \
+    } while (false)
+
 /// Value-parameterised over the registered subjects, so a subject that stopped
 /// being registered is a MISSING `ctest -N` entry rather than a skip nobody
 /// reads. There is no `GTEST_SKIP` in this file.
@@ -131,8 +148,94 @@ TEST_P(CopyAccounting, PublishAndReceivePerformNoPayloadCopies) {
     }
 }
 
+// ── The forcing test for PDA-DEC-A1 ─────────────────────────────────
+//
+// The CLIENT's half of §8, which the oracle could not see until this item: the
+// bytes a producer composes are the bytes the subscriber reads, at one address,
+// with nothing copied in between. `AppendInPlace` lends the window's write
+// cursor, so a producer that uses it scores `encode_copies == 0` — and the same
+// publish still scores `row_copies == 0`, because the two are consecutive halves
+// of one path rather than two views of the same half.
+//
+// What green claims, exactly: the INTERFACE permits an uncopied send, measured
+// with a stand-in producer. Not that a C#/Rust binding achieves it — none exists
+// to measure (owner ruling 2026-09-04). `StagingProducerIsCaught` below is the
+// live negative control that stops this greening on a stuck sampler.
+TEST_P(CopyAccounting, InPlaceEncodeWritesIntoTheDeliveredWindow) {
+    for (size_t row_bytes : {kSmallRowBytes, kLargeRowBytes}) {
+        const std::string tag = GetParam().label + "/" + std::to_string(row_bytes) + "B";
+        SCOPED_TRACE(tag);
+
+        std::unique_ptr<CopyRunner> runner = GetParam()();
+        ASSERT_NE(runner, nullptr);
+
+        RoundTrip trip = RunProducerRoundTrip(*runner, FreshTopic("CopyAccountingInPlace"),
+                                              row_bytes, ProducerMode::kInPlace);
+        COPY_MUST_DELIVER_CLEANLY(trip, row_bytes, static_cast<size_t>(0));
+        COPY_MUST_HAVE_PRODUCED(trip, row_bytes);
+
+        const CopyVerdict verdict = Judge(trip.ledger);
+
+        ASSERT_TRUE(verdict.encode_copies.has_value())
+            << "the verdict carries no producer number, so nothing here is a measurement";
+        EXPECT_EQ(*verdict.encode_copies, static_cast<size_t>(0))
+            << "the producer did not write into the delivered window: produced_at="
+            << Hex(trip.ledger.produced_at) << " vs the window cursor it was lent. A client "
+            << "handed a WriteBuffer must be able to compose the row IN it — otherwise §8's "
+            << "row property is unreachable from a language binding and the copy is invisible";
+
+        EXPECT_EQ(verdict.row_copies, static_cast<size_t>(0))
+            << "the delivered row is not the encode window: encode_base="
+            << Hex(trip.ledger.encode_base) << " (" << trip.ledger.encode_len
+            << " B) vs delivered=" << Hex(trip.ledger.delivered_data) << " ("
+            << trip.ledger.delivered_len << " B)";
+
+        // No PublishRefillCost here, deliberately. This leg's producer composes
+        // one row into a window that starts empty, so there are no bytes below
+        // the lend point for a refill to move and the number would be a
+        // STRUCTURAL zero rather than a measurement — publishing it would put a
+        // figure nobody measured beside figures somebody did. The refill
+        // sampling itself is unchanged in shape (it runs in `EncodeProduced`),
+        // and `RefillMovementIsCountedNotFailed` is the entry that measures it.
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(CopySubjects, CopyAccounting,
                          ::testing::ValuesIn(CopyAccountingSubjects()));
+
+// ── The producer-side live negative control ─────────────────────────
+//
+// The blindness itself, pinned as a test. A producer that composes its row in
+// its own vector and hands it over with one `Append` — exactly the workaround a
+// language binding was forced into before `AppendInPlace` existed — pays one
+// whole-row copy. The PROVIDER half is spotless for it: `row_copies == 0`,
+// because the staged bytes are copied into the window BEFORE the window base is
+// sampled. So `row_copies` alone was green over a lost property, which is why
+// this control and the forcing test are one item and not two.
+//
+// It is also the sampler's other direction: a sampler stuck TRUE reddens here,
+// a sampler stuck FALSE reddens the three forcing entries above.
+TEST(CopyAccounting, StagingProducerIsCaught) {
+    const CopySubject positive = SubjectNamed("SeamProbe");
+    std::unique_ptr<CopyRunner> runner = positive();
+    ASSERT_NE(runner, nullptr);
+
+    RoundTrip trip = RunProducerRoundTrip(*runner, FreshTopic("CopyAccountingStagedProducer"),
+                                          kSmallRowBytes, ProducerMode::kStaged);
+    COPY_MUST_DELIVER_CLEANLY(trip, kSmallRowBytes, static_cast<size_t>(0));
+    COPY_MUST_HAVE_PRODUCED(trip, kSmallRowBytes);
+
+    const CopyVerdict verdict = Judge(trip.ledger);
+    ASSERT_TRUE(verdict.encode_copies.has_value())
+        << "the verdict carries no producer number, so nothing here is a measurement";
+    EXPECT_EQ(*verdict.encode_copies, static_cast<size_t>(1))
+        << "the instrument did not see a whole-row staging copy it was handed on a plate — it "
+           "is inert, stubbed or always-zero, and every encode_copies==0 above is worthless";
+    EXPECT_EQ(verdict.row_copies, static_cast<size_t>(0))
+        << "the provider half must stay CLEAN here. If it does not, this control is measuring "
+           "the provider rather than the producer, and it no longer demonstrates that "
+           "row_copies was green over a copy it could not see";
+}
 
 // ── The live negative control ───────────────────────────────────────
 //
@@ -252,12 +355,45 @@ TEST(CopyAccounting, JudgeArithmeticIsSound) {
     clean.deliveries = 1;
     clean.delivered_data = base;
     clean.delivered_len = 64;
+    clean.produced_at = base;
+    clean.produced_len = 64;
+    clean.produced_in_window = true;
     EXPECT_EQ(Judge(clean).row_copies, static_cast<size_t>(0));
+    EXPECT_EQ(Judge(clean).encode_copies, std::optional<size_t>(0));
+
+    // The two halves are INDEPENDENT, and this is what says so: a producer that
+    // staged its row still delivers a spotless provider half, so a build that
+    // folded encode_copies into row_copies (or read one off the other) fails
+    // here without needing a provider.
+    CopyLedger staged = clean;
+    staged.produced_in_window = false;
+    staged.produced_at = base + 64;
+    EXPECT_EQ(Judge(staged).encode_copies, std::optional<size_t>(1));
+    EXPECT_EQ(Judge(staged).row_copies, static_cast<size_t>(0))
+        << "staging on the CLIENT side must not be charged to the provider half";
 
     // A second address is a copy.
     CopyLedger moved = clean;
     moved.delivered_data = base + 64;
     EXPECT_EQ(Judge(moved).row_copies, static_cast<size_t>(1));
+    // …and the mirror of the staged case: a PROVIDER that copied a row the client
+    // composed in place leaves the producer half clean.
+    EXPECT_EQ(Judge(moved).encode_copies, std::optional<size_t>(0))
+        << "a copy on the provider half must not be charged to the client half";
+
+    // An UNSAMPLED leg carries no producer verdict at all. Every pre-existing
+    // leg is one, and this is the row that stops `encode_copies` defaulting into
+    // "the client copied the row" for all of them (code review S4, compliance
+    // F3): the ledger declares the state unreadable, and the verdict now makes
+    // it unreadable rather than leaving a macro to remember.
+    CopyLedger unsampled = clean;
+    unsampled.produced_at = 0;
+    unsampled.produced_len = 0;
+    unsampled.produced_in_window = false;
+    EXPECT_FALSE(Judge(unsampled).encode_copies.has_value())
+        << "a leg whose producer was never sampled must carry NO producer number, not 1";
+    EXPECT_EQ(Judge(unsampled).row_copies, static_cast<size_t>(0))
+        << "an unsampled producer must not disturb the provider half";
 
     // The shape strict equality exists to catch: an in-place memmove down to
     // the window base, delivering `encode_base` with a SHORTER length.

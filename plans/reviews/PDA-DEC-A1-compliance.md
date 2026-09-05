@@ -267,3 +267,265 @@ brief for this review and each was verified against the tree rather than the dif
 - The design's *Files-to-touch* still says `VectorWriteBuffer::Reserve` has "3 call sites";
   it is 2 plus the definition. Already corrected by the design review (A1-DEBT-3); the code
   is right. No action beyond not re-copying the figure.
+
+---
+
+# RE-REVIEW after fix cycle 1 (adversarial conformance, independent context)
+
+Diff base `3051b94`; working tree, uncommitted. Nine modified files + one
+untracked (`core/tests/test_write_buffer.cpp`). Rulings ledger re-read in full:
+`grep -c '^## 2026' plans/PDA-DEC-rulings.md` = **47**; the last two are
+*"Every protocol driver is C++, so both sides of the protocol ABI are C++"* (46,
+scope) and *"Ceremony is expensive; group the remaining work into as few items as
+makes sense"* (47, process). Rulings 44 and 45 — the two that blocked cycle 1 —
+are entries 44/45 of 47, unsuperseded.
+
+**Verdict: PASS-WITH-FINDINGS. No blocking conformance item. Both cycle-1
+blockers (C1, C2) are closed in the tree, not merely described; the flagged
+design deviation is justified and minimal; the budget overage is earned; the
+skipped `used == 0` refusal is correctly skipped.**
+
+---
+
+## C1 / C2 — CLOSED, verified against the tree
+
+Grepped, not taken on trust. Every construct the design's `Files-to-delete`
+ordered retired is gone, and every replacement it ordered is present:
+
+| Ordered retired | Now |
+|---|---|
+| §8's rows bullet *"already there, via `Publish`'s inversion and `FixedWriteBuffer`"* | **gone** — `grep "already there, via" docs/pubsub-interface-spec.md` returns nothing. The only surviving "already there" is §8's **attachments** bullet (`:857`), which A1 does not touch |
+| §8.1's *"window base after the encoder's last append"* **as the interval's start** | **re-anchored, not deleted** (`spec:878`) — retained verbatim and explicitly recast as *"an **interior** point of that interval, not its start"*. That is exactly what A1-DEBT-5 demanded ("keeping the window-base sample described as an interior point"); deleting it would have been the wrong fix |
+| README's *"Not a copy: … the encode itself"* | **gone** — `grep "the encode itself"` finds it only inside the new retirement paragraph, which names the retirement and its reason |
+| `VectorWriteBuffer::Reserve` (the name) | **gone tree-wide** — `grep -rn "Reserve(" --include=*.hpp --include=*.cpp` returns nothing outside `arrow::ArrayBuilder::Reserve` |
+
+Ruling 44 landed **as the ruling worded it**, not as a paraphrase: §8's rows
+bullet now reads *"the seam PERMITS an uncopied row along the whole send path"*
+with the ruling's own *"Permits, not guarantees: a client that ignores that call
+… and the seam cannot stop it."* The provider half is retained as an
+unconditional statement, so the frozen property is **widened, not weakened** —
+which is what the ruling's own review note required.
+
+Ruling 45 landed in the artefact it names: harness README, under *"What green
+does NOT prove — read before trusting it"*, in the owner's own terms
+(**permits** / **stand-in** / no C#/Rust claim), with the ruling cited by date.
+It is additionally restated in spec §8.1's **Scope** paragraph — a *narrowing*
+disclosure, which the 2026-09-03 licence permits without asking.
+
+The four dangling `§3.1 clause 6` citations cycle 1 flagged now resolve:
+`spec:146-179` is a real clause 6. A1-DEBT-1's owed README line landed
+(*"A producer is trusted to report what it wrote"*), and the corrected counts are
+both **true**: `CopyAccounting` = 2 `TEST_P` × 3 subjects + 5 `TEST` = 11, and
+the entry table's rows sum to 11; `SeamVocabulary` = 9 `TEST(` in the file.
+Cycle-1 finding F3 is closed at the type rather than by convention —
+`CopyVerdict::encode_copies` is `std::optional<size_t>`, empty when
+`produced_at == 0`, with `JudgeArithmeticIsSound` gaining an unsampled row that
+asserts it. F4 is closed in `status.hpp`'s comment.
+
+---
+
+## Judgment 1 — the `bool lending_` deviation: justified, minimal, and the design is what is wrong
+
+The design's Design section asserts:
+
+> "any mutating re-entry — `Append`, `AppendByte`, `AppendZeros`, **a nested
+> `AppendInPlace`** — moves `data_` or `pos_` and is caught by one comparison at
+> return"
+
+**That claim is false, by construction. I verified it by tracing the real code
+rather than accepting the implementer's account.** On `VectorWriteBuffer` after
+`AppendZeros(4)`: `data_=D, capacity_=256, pos_=4` (`Refill` grows by
+`kChunk=256`). Outer `AppendInPlace(8)` needs no refill (`8 <= 252`), so
+`base0=D, pos0=4, cap0=256`. A nested `AppendInPlace(4)` also needs no refill,
+writes over `D+4` — **the same address the outer writer was lent** — and returns
+0, so its own commit is `pos_ = 4 + 0 = 4`. All three window fields are
+byte-identical to what the outer lend sampled. The outer return comparison
+passes, and the outer commits 8 bytes whose first four are the *inner* writer's:
+a silently wrong published row, from a mechanism the design declares total.
+
+This is the round's most-repeated failure shape — the owner has stated three
+times across A4/A5 that *a loud failure beats a silent wrong answer* — so
+tolerating it was not open, and the design's own remedy does not reach it.
+
+**Minimality.** A nested lend leaves **no** observable trace in
+`{data_, pos_, capacity_}`, so no state-free predicate can detect it; some state
+is forced. What landed is one `bool`, one 9-line private RAII guard, read at
+**exactly one site** (`grep lending_` = 3 hits: the guard's two, the door check),
+cleared on every exit path including the writer's own throw. It preserves the
+design's real constraint — *"no branch on the hot inline append path"* — which a
+depth counter or a generation stamp would not improve on. Rung 1 is intact: the
+flag is private, unobservable, and cannot be left set, so "a reservation that
+outlives a refill / is committed twice / is never taken" remains unspellable.
+
+**And it is not a new prohibition.** The design already ordered a nested fill
+refused (rung-2 row 3 names it, `kInvalidArgument`); only the *mechanism*
+changed. No owner authorisation is engaged, and the spec text for it lands inside
+clause 6 — new text A1 is authorised to write. The flag is scoped to the
+`WriteBuffer` object, i.e. the object whose lifetime the guarantee is about,
+which is the 2026-09-04 root-cause ruling's own preferred shape.
+
+**Consequence for the record:** `plans/PDA-DEC-A1-writebuffer-constructible.md`
+still publishes the false claim. That is a design-document correction, not an
+implementation defect.
+
+---
+
+## Judgment 2 — the budget: earned, and the band is met to within 1.3%
+
+Actual **+1114 / −37** (tracked `git diff --numstat 3051b94` = +656/−37, plus the
+458-line untracked test file) against a declared **+640 / −25** and a design band
+of **+600…+1100**. Per file, against the design's own itemisation:
+
+| File | Declared | Actual | Traceable to |
+|---|---|---|---|
+| `write_buffer.hpp` | +75/−4 | +176/−4 | code review S2 (nested fill), B1 (`SIZE_MAX` guard), A1-DEBT-1 (residue (b) disclosure), A1-DEBT-2/-3 |
+| `core/tests/test_write_buffer.cpp` | +185 | +458 | 9 cases vs 5 named: the extras are the S2 and B1 reproductions and the A1-DEBT-2/-3 pins; `ZeroMinBytesIsRefused` / `FixedBufferWithoutRoomRefusesAsPayloadTooLarge` are rung-2 rows the design's **table** listed and its line estimate omitted |
+| `copy_clauses.cpp` | +80 | +137/−1 | A1-DEBT-4 (`COPY_MUST_HAVE_PRODUCED`) plus the F3 `optional` rows |
+| `seam_vocabulary.cpp` | +25 | +67 | the declared case, plus ~17 lines pinning the two refusals against the **packaged** core |
+| `docs/pubsub-interface-spec.md` | +35/−9 | +69/−9 | clause 6 grew with the nested refusal, the three overflow causes and residue (b) |
+| `status.hpp` | *not declared* | +10/−4 | cycle-1 finding F4's own acceptable fix, verbatim |
+| `plans/PDA-decouple-progress-log.md` | +25 | **0** | not written (RECORD) |
+| harness header · `copy_accounting.cpp` · README · CMake | +55 · +95 · +50/−12 · +1 | +54/−1 · +98/−9 · +43/−8 · +2/−1 | on estimate |
+
+Every line of overage maps to a finding one of the two prior reviews raised, or
+to a rung-2 row the design's table already ordered. **No scope crept in beyond
+A1's charter**, and both bounds the design set are held:
+
+- **Attachments untouched.** `RunProducerRoundTrip` publishes `Attachments{}` by
+  construction; §8's attachments bullet, §3.2, `Blob` and the attachment
+  `static_assert`s are byte-identical.
+- **The row half of §8 only.** §8's receive bullet and §8.1's attachment sentence
+  are unchanged; no provider file is touched; no `PubSubProvider` method is added,
+  removed or reordered; P4 honoured — `PubSubStatus` unchanged, no
+  `kReentrantCall` grab.
+
++1114 is 14 lines over the band's top, ~+1139 once the missing progress-log entry
+is written. The design pre-authorised this: its stated remedy for exceeding the
+band is a split it *itself recommends against*. At 1.3% over, proposing one would
+be theatre. Not a finding; recorded below.
+
+---
+
+## Judgment 3 — the two skipped should-fix items
+
+**(a) Refusing `used == 0` — correctly skipped, on two independent grounds, and
+the stronger one is not the one the implementer gave.**
+
+1. *Design conformance (decisive).* The design **affirmatively permits**
+   `used == 0`. Step 5(c) is `pos_ = pos0 + used` with no lower bound; the rung-2
+   table lists exactly four refusals and `used == 0` is not among them; and
+   `OnlyTheReportedBytesAreCommitted`'s own comment calls a short report *"a
+   variable-length row"*. Adding the refusal would have been a **deviation** —
+   forbidding a state the design licenses — not a hardening.
+2. *§12.1 (the implementer's stated ground, and it holds).* §3 is `frozen`
+   entire; *who may act* is **"nobody alone."** A refusal the design never named
+   is a new normative prohibition, and this round has routed precisely that to the
+   owner **twice** — the `__` prefix (tenth amendment) and the 246-byte bound
+   (eleventh), both new refusals in frozen §3.5 that the 2026-09-03 absorption
+   ruling did not name. Neither the absorption ruling nor ruling 44 names a
+   `used == 0` refusal.
+
+   One caveat, so the reasoning is not over-applied: ground 2 alone does **not**
+   bar every addition to clause 6, since the implementer correctly added the
+   nested-fill and `SIZE_MAX` refusals without asking. The discriminator is that
+   those two *deliver refusals the design already ordered*, whereas `used == 0`
+   would *forbid a state the design permits*. Ground 1 is what separates them.
+
+Substantively it is also benign: `used == 0` commits nothing and publishes
+nothing, so the owner's standing "loud refusal beats silent wrong answer"
+preference does not engage.
+
+**(b) Splitting the two-subject loops — correctly deferred.** Cosmetic, step-4b's
+territory, and no count claim depends on it: the design's forcing-test map pins
+`ctest -R '…|WriteBufferInPlace\.'` as a scope, not an entry count, and each loop
+carries `SCOPED_TRACE` so a failure names its subject.
+
+---
+
+## Standing items re-checked
+
+- **Public surface: still 1 in `core`.** `AppendInPlace` is the only public member
+  added (whole public block enumerated); `lending_` and `Lend` are private; no
+  `Capacity()`, no non-const `Data()`, no `Reserve`/`Commit` pair. Counted
+  strictly with the harness apparatus (`ProducerMode`, `RunProducerRoundTrip`) it
+  is 3, matching the declaration and the round budget.
+- **`ReserveStorage` naming: clean**, with the rationale written where a reader
+  meets it. No shadowing remains anywhere in the tree.
+- **The widened interval matches rulings 44/45 *as landed in the spec*.**
+  `EncodeProduced` samples `produced_at` inside the borrow — the only place that
+  can answer it — and the forcing test requires `encode_copies == 0` **and**
+  `row_copies == 0` on the same publish, so the two halves compose into one
+  uninterrupted address chain. The instrument is pinned in both directions
+  (stuck-true reddens `StagingProducerIsCaught`; stuck-false reddens all three
+  forcing entries), and the design's M1–M5 mutations all still bite under the
+  `optional` change — M2 (`encode_copies = 0` unconditionally) now reddens
+  `StagingProducerIsCaught` **and** two `JudgeArithmeticIsSound` rows.
+- **Corner-case ladder intact.** All five rung-1 states remain unspellable; all
+  four rung-2 rows are typed refusals with nothing committed, each with its own
+  case, and `FixedBufferWithoutRoomRefusesAsPayloadTooLarge` asserts the *number*
+  through `TranslateSeamFailure`. **No refusal became a recovery path** — every
+  new check throws and none falls back; the two added checks (nested, `SIZE_MAX`)
+  are refusals, not recoveries, and both leave the window intact (pinned by
+  `HugeMinBytesRefusesLoudly`'s post-refusal append).
+- **Round scope (2026-09-01 split ruling).** No `extern "C"`, no C header, no
+  loader, no vtable, no ABI development. The C writer form is stated in prose,
+  exactly as §3.2 already does for `Blob` — which is also what ruling 46's test
+  ("does this data drill all the way up to the language ABI?") requires here,
+  since a row composed by a binding does drill all the way up.
+- **P1 re-verified.** `grep "public WriteBuffer"` = four subclasses;
+  `RelocatingWriteBuffer` is new and test-only, and its `Grow` delivers contiguous
+  room, so P1's stop-and-ask does not fire.
+- **No deletion beyond the ordered set; no test deleted.** `EncodeAccounted` and
+  legs 1–3 are behaviourally unchanged through the new `DriveRoundTrip` encoder
+  parameter; `Append(const uint8_t*, size_t)` stays undeprecated, as ordered.
+
+---
+
+## Non-blocking findings
+
+- **N1 — spec clause 6 publishes "Two refusals" over four `kInvalidArgument`
+  throw sites.** `spec:165` reads *"**Two refusals**, both `kInvalidArgument` …
+  `min_bytes == 0`, and a writer reporting more than `room`. A **nested** fill,
+  and any re-entry that moved the window under the lend, are the same refusal."*
+  The code has four such sites and arguably three distinct *kinds* (bad request,
+  re-entry, over-report). §12.1's count rule is satisfied — the members are named
+  where the count stands — but a binding author mapping causes back from
+  `kInvalidArgument` counts two and meets four. *Acceptable fix:* drop the number
+  and enumerate ("`kInvalidArgument`, committing nothing, in each of: …"), or say
+  "two refusal **classes**" and put the nested and moved-window cases plainly
+  under the second.
+- **N2 — `PatchU32`'s bound check was hardened without being declared.**
+  `write_buffer.hpp:95` changed from `offset + sizeof(value) > pos_` to
+  `pos_ < sizeof(value) || offset > pos_ - sizeof(value)`. It is a strict
+  hardening — no previously-accepted offset is now refused, and it closes a wrap
+  that admitted an out-of-range write — and A1 is what widens who reaches that
+  bound, since patching from inside a writer is now a published route. But it is a
+  behavioural change to an existing public member that the design's Files-to-touch
+  does not list. *Acceptable fix:* none to the code; name it in the as-landed
+  delta so the change is not silent.
+- **N3 — the design document still asserts a mechanism the tree disproves.** See
+  Judgment 1. *Acceptable fix:* the PM corrects the design's Design section to
+  record that the return comparison is necessary but not sufficient, and that the
+  nested case is refused at the door. **CLOSED 2026-09-05:** a marked CORRECTION
+  block is appended after the claim in
+  `plans/PDA-DEC-A1-writebuffer-constructible.md`; the original claim is retained.
+
+---
+
+## RECORD (PM corrects in place; never blocking, never a fix cycle)
+
+- `plans/PDA-decouple-progress-log.md` still has **no PDA-DEC-A1 entry** — it is
+  in `Files-to-touch` and carries +25 of the declared budget.
+- `plans/PDA-DEC-A1-brief.md`'s *"As landed"* footer is still the `<date>`
+  placeholder. As-landed: **+1114 / −37** vs declared **+640 / −25**; band
+  +600…+1100, so 14 over (≈+1139 once the progress log lands). Fix cycles: 1.
+  Undeclared file touched: `core/include/fletcher/core/status.hpp` (+10/−4),
+  which is cycle-1 finding F4's own acceptable fix.
+- `integration-tests/pubsub-conformance/README.md:192` — *"**Four** addresses per
+  publish"*. **CORRECTED 2026-09-05 (PM-directed):** there is no single number —
+  six address *roles* exist and each leg samples the ones it has (producer leg 3,
+  attachment leg 6, `BorrowedAttachmentCostsNoCopies` 7). The sentence now names
+  the roles instead of a count.
+- The design's *Files-to-touch* still says `VectorWriteBuffer::Reserve` has "3
+  call sites"; it is 2 plus the definition. Already noted at cycle 1; the code is
+  right.

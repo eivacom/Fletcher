@@ -289,6 +289,59 @@ void EncodeAccounted(WriteBuffer& buffer, const std::vector<uint8_t>& payload, C
     ledger.encode_len = buffer.Position();
 }
 
+/// The CLIENT half of the send path, instrumented — a stand-in for the language
+/// binding that does not exist yet, which is exactly what the guard may claim
+/// and no more (owner ruling 2026-09-04).
+///
+/// `kInPlace` composes the row into the span the buffer lends it. `kStaged`
+/// composes the identical row in its own vector and hands it over with one
+/// `Append`. Both end by sampling the window base, so the PROVIDER half
+/// (`row_copies`) is measured identically for the two and only the producer
+/// half can tell them apart — which is the whole point of the leg.
+void EncodeProduced(WriteBuffer& buffer, const std::vector<uint8_t>& payload, CopyLedger& ledger,
+                    ProducerMode mode) {
+    const Address base_before = At(buffer.Data());
+    const size_t pos_before = buffer.Position();
+
+    if (mode == ProducerMode::kInPlace) {
+        buffer.AppendInPlace(payload.size(), [&](uint8_t* dst, size_t room) -> size_t {
+            // Sampled HERE, inside the borrow, because nowhere else can answer
+            // it: after the call the cursor has already moved past the span.
+            // `Data()`/`Position()` are const reads and stay legal inside the
+            // writer — that permission is what makes this measurable at all.
+            ledger.produced_at = At(dst);
+            ledger.produced_in_window = At(dst) == At(buffer.Data()) + buffer.Position();
+            // `room >= min_bytes` is the member's own guarantee, so a short span
+            // is a broken buffer, not a short row. Fail on it rather than
+            // truncating: a silent `take = room` would deliver a partial row and
+            // score it as a clean uncopied send.
+            if (room < payload.size()) {
+                throw std::logic_error(
+                    "CopyAccounting: AppendInPlace lent less room than it was asked for");
+            }
+            std::memcpy(dst, payload.data(), payload.size());
+            ledger.produced_len = payload.size();
+            return payload.size();
+        });
+    } else {
+        // The workaround a binding was forced into: the row exists at a second
+        // address before the seam ever sees it.
+        const std::vector<uint8_t> staged = payload;
+        ledger.produced_at = At(staged.data());
+        ledger.produced_len = staged.size();
+        ledger.produced_in_window = At(staged.data()) == At(buffer.Data()) + buffer.Position();
+        buffer.Append(staged.data(), staged.size());
+    }
+
+    if (At(buffer.Data()) != base_before && pos_before > 0) {
+        ++ledger.refill_moves;
+        ledger.refill_bytes += pos_before;
+    }
+
+    ledger.encode_base = At(buffer.Data());
+    ledger.encode_len = buffer.Position();
+}
+
 /// Delivery-side capture, shared by every leg — one capture path, so no per-path
 /// branch exists for a missed copy to hide in. `ledger.attachments` must already
 /// carry the PUBLISHED side; this fills in the delivered side and compares
@@ -347,16 +400,17 @@ PubSubProvider::SubscribeCallback MakeCapture(CopyLedger& ledger,
 /// the subject (see RunBorrowedAttachmentRoundTrip), which is the only place that
 /// can do it safely — so the bad state is not guarded against, it cannot be
 /// written.
+///
+/// The ENCODER is a parameter so the producer legs share this one phase-1 path
+/// and this one capture rather than growing a second driver: a per-path branch
+/// is where a missed copy hides. `EncodeAccounted` is what every pre-existing
+/// leg passes, unchanged.
 void DriveRoundTrip(CopyRunner& runner, const Topic& topic, const std::vector<uint8_t>& payload,
-                    const Attachments& attachments, RoundTrip& trip, Blob& retained) {
+                    const Attachments& attachments, RoundTrip& trip, Blob& retained,
+                    const std::function<void(WriteBuffer&)>& encode) {
     runner.Subscribe(topic, MakeCapture(trip.ledger, payload, retained));
     try {
-        runner.Publish(
-            topic,
-            [&payload, &trip](WriteBuffer& buffer) {
-                EncodeAccounted(buffer, payload, trip.ledger);
-            },
-            attachments);
+        runner.Publish(topic, [&encode](WriteBuffer& buffer) { encode(buffer); }, attachments);
     } catch (const std::exception& e) {
         trip.error = DescribeException(e);
     } catch (...) {
@@ -391,6 +445,20 @@ void ReadRetainedBlob(CopyLedger& ledger, const Blob& retained) {
 
 CopyVerdict Judge(const CopyLedger& ledger) {
     CopyVerdict verdict;
+
+    // The CLIENT's half, which §8.1 used to begin after. A staged row is copied
+    // into the window before the window base is sampled, so `row_copies` below
+    // is a clean zero for it either way — this is the only field that can tell
+    // the two producers apart.
+    //
+    // Left EMPTY when the producer sampler never ran, which is the rule the
+    // ledger states: an unsampled leg must fail as itself rather than default
+    // into "the client copied the row". Every pre-existing leg is unsampled, so
+    // this is the difference between six legs carrying a manufactured verdict
+    // and six legs carrying none.
+    if (ledger.produced_at != 0) {
+        verdict.encode_copies = ledger.produced_in_window ? 0u : 1u;
+    }
 
     // Strict equality, not containment — see the header for the in-place
     // memmove that containment would score as zero.
@@ -447,9 +515,27 @@ RoundTrip RunRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
     RoundTrip trip;
     trip.ledger = std::move(ledger);
     Blob retained;
-    DriveRoundTrip(runner, topic, payload, attachments, trip, retained);
+    DriveRoundTrip(
+        runner, topic, payload, attachments, trip, retained,
+        [&payload, &trip](WriteBuffer& buffer) { EncodeAccounted(buffer, payload, trip.ledger); });
     // This path registers no retain_key, so phase 2 is a no-op; it is called
     // anyway so both paths read the ledger through exactly one function.
+    ReadRetainedBlob(trip.ledger, retained);
+    return trip;
+}
+
+RoundTrip RunProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
+                               ProducerMode mode) {
+    const std::vector<uint8_t> payload = CopyPayload(row_bytes);
+
+    RoundTrip trip;
+    Blob retained;
+    // No attachments: this leg measures the ROW half of §8. Same phase-1 driver,
+    // same capture, same Judge() — only the producer differs.
+    DriveRoundTrip(runner, topic, payload, Attachments{}, trip, retained,
+                   [&payload, &trip, mode](WriteBuffer& buffer) {
+                       EncodeProduced(buffer, payload, trip.ledger, mode);
+                   });
     ReadRetainedBlob(trip.ledger, retained);
     return trip;
 }
@@ -511,7 +597,10 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
     // runner even by mistake.
     {
         CopyRunner& live = *runner;
-        DriveRoundTrip(live, topic, payload, attachments, trip, retained);
+        DriveRoundTrip(live, topic, payload, attachments, trip, retained,
+                       [&payload, &trip](WriteBuffer& buffer) {
+                           EncodeAccounted(buffer, payload, trip.ledger);
+                       });
     }
 
     // The subject dies HERE, in the function that owns it — the only place that

@@ -143,6 +143,42 @@ C view must honour:
    only, invalidated by any refilling append and by `VectorWriteBuffer::Finish()`.
    The window is already declared `{data, capacity, pos}`, so this adds no
    obligation; without it §8.1 is not implementable from outside a provider.
+6. **The window has a WRITE end as well as a readable one** (PDA-DEC-A1).
+   `AppendInPlace(min_bytes, writer)` lends the window's write cursor to a
+   producer for **exactly one call** and commits what that producer reports it
+   wrote. Without it, a caller holding only a `WriteBuffer&` — which is all
+   `Publish`'s inversion hands a language binding — cannot put a byte into the
+   window without supplying that byte from somewhere else, so every
+   foreign-language row costs one whole-row copy §8 says need not exist. The C
+   form both ABI rounds must derive is
+   `size_t (*writer)(void* ctx, uint8_t* dst, size_t room)`; note the writer
+   receives **no buffer handle**, so foreign code cannot re-enter the buffer at
+   all.
+   - `dst` is `Data() + Position()` — the window's own cursor, not scratch
+     memory — and is **borrowed for the writer's frame only**. Storing it past
+     the return is the same use-after-free clause 5's pointer already carries.
+   - `room` is the **whole** remaining window and is always at least
+     `min_bytes`, so a variable-length producer never needs a second crossing to
+     ask how much is left.
+   - **Commit by return.** The position advances by exactly the count the writer
+     returned — never by `min_bytes` — in one assignment after all validation, so
+     there is no partial commit to observe or unwind. An exception from the
+     writer commits nothing and propagates unchanged.
+   - **Two refusals, both `kInvalidArgument`, both committing nothing:**
+     `min_bytes == 0`, and a writer reporting more than `room`. A **nested**
+     fill, and any re-entry that moved the window under the lend, are the same
+     refusal. Reads (`Data()`, `Position()`) and patches below the lend point are
+     permitted from inside the writer and move nothing.
+   - **Room that cannot be produced is clause 4's overflow**, reported as
+     `kPayloadTooLarge`, and the writer is not invoked: a fixed-capacity buffer
+     too small for `min_bytes`, a `min_bytes` no window could satisfy (clause 3's
+     subtract-never-add rule applies here first, because the refill computes
+     `pos + n` internally), and a subclass whose refill under-delivers.
+   - **A producer must report what it wrote.** `used` is trusted against `room`,
+     not against what was actually touched, so bytes in `[written, used)` are
+     committed and published having been written by nobody. This is a residue of
+     handing over real memory, disclosed rather than checked away, and it is
+     uniform across subclasses.
 
 ### §3.2 — `Blob` / `Attachments` — shared ownership across the seam
 
@@ -809,7 +845,15 @@ Zero-copy is required for rows **and** attachments, and it is a property *of thi
 seam* — both ABI rounds inherit it and neither can restore it if the seam loses
 it.
 
-- **Rows:** already there, via `Publish`'s inversion and `FixedWriteBuffer`.
+- **Rows: the seam PERMITS an uncopied row along the whole send path** — from
+  the client's own write to the subscriber's read. A client that composes its row
+  with `AppendInPlace` (§3.1 clause 6) writes it exactly once, into the window
+  the provider delivers from, and nothing copies it in between; the provider half
+  of that — `Publish`'s inversion and `FixedWriteBuffer` — has been there since
+  the seam was written. **Permits, not guarantees:** a client that ignores that
+  call composes its row elsewhere and `Append`s it, which costs one whole-row
+  copy, and the seam cannot stop it. The oracle reports which of the two it
+  measured rather than assuming (§8.1, `encode_copies`).
 - **Attachments:** already there publisher → provider → subscriber, via
   `shared_ptr`.
 - **Receive:** the *seam* no longer stands in the way — `Blob` is an owner plus a
@@ -828,11 +872,24 @@ it.
 ships a **copy-accounting oracle** — `integration-tests/pubsub-conformance`, the
 `CopyAccounting` suite — which both ABI rounds inherit rather than reinvent.
 
-The mechanism is **address provenance**, not counting: the window base after the
-encoder's last append (§3.1 clause 5) must equal, **strictly and span for span**,
-what the subscriber callback receives, and each delivered `Blob`'s `data()` the
-published one; content equality is checked first, so "garbled" and "at a second
-address" are different failures. It binds only where delivery is **synchronous on
+The mechanism is **address provenance**, not counting, and the measured interval
+starts **where the producer wrote** — the address the row's bytes first came to
+exist at, sampled inside the producer while it is running, which is the only
+place that can answer it. The window base after the encoder's last append (§3.1
+clause 5) is an **interior** point of that interval, not its start: the client
+half is *preceded by*, not replaced by, the provider half. So there are two
+consecutive numbers over one path. `encode_copies` is 0 iff the producer wrote
+into the delivered window itself (§3.1 clause 6); `row_copies` is 0 iff that
+window equals, **strictly and span for span**, what the subscriber callback
+receives, and each delivered `Blob`'s `data()` the published one; content
+equality is checked first, so "garbled" and "at a second address" are different
+failures. The client half has its own live negative control, a **staging
+producer** (`CopyAccounting.StagingProducerIsCaught`) that composes the identical
+row in its own vector and hands it over with one `Append` — the workaround a
+binding was forced into before clause 6 existed — and must score
+`encode_copies == 1` while `row_copies` stays 0. That combination is exactly the
+blindness the older window-base-onwards wording had: a whole-row copy the guard
+was green over. It binds only where delivery is **synchronous on
 the publishing thread** and the encode window stays **allocated until the callback
 returns** — a subject breaking either is not measurable this way. Refill movement
 is permitted (§3.1 clause 1) and **reported as a number**; every other byte
@@ -844,9 +901,12 @@ it (`CopyAccounting.BorrowedAttachmentCostsNoCopies`, renamed from
 types make representable rather than what a provider does.
 
 **Scope.** Green is evidence about *this seam* and nothing else — not about a
-transport's data-sharing, loaned samples or receive-side zero-copy. A live
-negative control ships with it: a guard nobody has made go red is a guard nobody
-has measured.
+transport's data-sharing, loaned samples or receive-side zero-copy. Nor, on the
+client half, about any language binding: `encode_copies == 0` says the interface
+**permits** an uncopied send and is measured with a **stand-in** producer in this
+harness, because no C#/Rust binding exists to measure. A live negative control
+ships with each half: a guard nobody has made go red is a guard nobody has
+measured.
 
 ---
 

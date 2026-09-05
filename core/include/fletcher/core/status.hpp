@@ -137,10 +137,16 @@ decltype(auto) TranslateSeamFailure(Fn&& fn) {
         throw;  // already typed — do not re-wrap and lose the cause
     } catch (const std::overflow_error& e) {
         // The one std::-type mapping worth making by hand. At this seam an
-        // overflow_error is always FixedWriteBuffer refusing a row that does not
-        // fit the transport's payload bound (write_buffer.hpp is its only
-        // thrower), and that cause has a number of its own — a caller can raise
-        // the bound or split the row, which is nothing like kInternal.
+        // overflow_error is a row that no window here can hold, and that cause
+        // has a number of its own — a caller can raise the bound or split the
+        // row, which is nothing like kInternal. write_buffer.hpp is still its
+        // only thrower, but PDA-DEC-A1 gave it three causes, not one:
+        // FixedWriteBuffer refusing a row past the transport's payload bound
+        // (§3.1 clause 4), AppendInPlace refusing a min_bytes no window could
+        // ever satisfy, and AppendInPlace refusing a subclass whose refill
+        // under-delivered. The last is a subclass defect rather than a bound the
+        // caller can raise; it is reported under this number anyway, because a
+        // caller cannot act on the difference and the message names it.
         throw PubSubError(PubSubStatus::kPayloadTooLarge, e.what());
     } catch (const std::exception& e) {
         throw PubSubError(PubSubStatus::kInternal, e.what());

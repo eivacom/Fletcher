@@ -65,6 +65,30 @@ or `pos_` and is caught by one comparison at return, with **no branch on the hot
 append path**. Const reads (`Data()`, `Position()`) inside the writer stay legal, which is
 what lets the oracle measure from inside the writer.
 
+> **CORRECTION (fix cycle 1, 2026-09-05) — the paragraph above is wrong about the
+> nested case, and is kept so the record shows what was believed.** "a nested
+> `AppendInPlace` … is caught by one comparison at return" is **false on a
+> growable buffer**. Traced on `VectorWriteBuffer` after `AppendZeros(4)`
+> (`data_=D, capacity_=256, pos_=4`): an outer `AppendInPlace(8)` needs no
+> refill, so it samples `base0=D, pos0=4, cap0=256`; a nested `AppendInPlace(4)`
+> also needs no refill, scribbles over `D+4` — the very span the outer writer was
+> lent — and returns 0, committing `pos_ = 4 + 0 = 4`. All three window fields are
+> byte-identical to what the outer lend sampled, the return comparison passes, and
+> the outer commits eight bytes whose first four are the *inner* writer's: a
+> silently wrong published row. Reproduced by the code reviewer; pinned by
+> `WriteBufferInPlace.NestedFillIsRefusedOnAGrowableWindowToo`.
+>
+> **What replaced it:** a nested fill is refused **at the door** with
+> `kInvalidArgument`, via a private `bool lending_` set for the writer's frame by
+> an RAII guard and read only inside `AppendInPlace`. Check (a) survives unchanged
+> and still catches every re-entry through the inline append path; the hot path
+> still pays nothing, so this paragraph's *last* claim holds. The
+> architecture-conformance re-review ruled the deviation **justified and minimal**
+> — a nested lend leaves no trace in `{data_, pos_, capacity_}`, so no state-free
+> predicate can see it — and not a new prohibition, since the design's own rung-2
+> table already ordered a nested fill refused. See
+> `plans/reviews/PDA-DEC-A1-compliance.md`, re-review Judgment 1.
+
 **Naming call, made here so the implementer does not make it:** the new member is
 `AppendInPlace`, in the existing `Append*` family, because it advances `pos_` exactly as the
 others do. There is therefore **no `WriteBuffer::Reserve`** and no shadowing of

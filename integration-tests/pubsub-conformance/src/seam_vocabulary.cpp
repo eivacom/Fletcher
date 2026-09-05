@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
@@ -200,6 +201,72 @@ TEST(SeamVocabulary, BlobRefusesBytesNothingOwns) {
     EXPECT_EQ(empty.data(), nullptr);
     EXPECT_EQ(empty.size(), 0u);
     EXPECT_TRUE(empty.empty());
+}
+
+// ── §3.1 clause 6 — the window has a WRITE end, through the base ────
+//
+// The representability claim, and the one no `CopyAccounting` entry can make: a
+// caller holding nothing but a `WriteBuffer&` — which is all a language binding
+// is ever handed, since `Publish` inverts and gives it the reference and nothing
+// else — can obtain writable space, be told how much, fill it, and commit what
+// it wrote. Before this member the only way to advance the position was to
+// supply the bytes from somewhere else, so the whole-row copy was structural.
+//
+// It runs through a plain `WriteBuffer&`, deliberately: a member reachable only
+// on a concrete subclass would be useless to the callers this exists to serve.
+TEST(SeamVocabulary, AWriteBufferReferenceCanBeFilledInPlace) {
+    VectorWriteBuffer owned;
+    WriteBuffer& buffer = owned;  // all a binding ever sees
+
+    // A variable-length row: a length placeholder, a body of a size the producer
+    // only discovers while writing, then a back-patch. This is the shape that
+    // proves the capability is COMPLETE with one member — no `Capacity()`, no
+    // non-const `Data()`, no Reserve/Commit pair.
+    const size_t length_at = buffer.WriteLengthPlaceholder();
+    const uint8_t* lent = nullptr;
+    size_t lent_room = 0;
+
+    buffer.AppendInPlace(64, [&](uint8_t* dst, size_t room) -> size_t {
+        lent = dst;
+        lent_room = room;
+        size_t written = 0;
+        while (written < 37) {
+            dst[written] = static_cast<uint8_t>(written);
+            ++written;
+        }
+        return written;
+    });
+    buffer.PatchU32(length_at, 37);
+
+    EXPECT_NE(lent, nullptr) << "the writer was never invoked";
+    EXPECT_GE(lent_room, static_cast<size_t>(64))
+        << "the producer must be TOLD how much space it has — it has no other way to ask";
+    ASSERT_EQ(buffer.Position(), sizeof(uint32_t) + 37);
+
+    const std::vector<uint8_t> row = owned.Finish();
+    ASSERT_EQ(row.size(), sizeof(uint32_t) + 37);
+    uint32_t declared = 0;
+    std::memcpy(&declared, row.data(), sizeof(declared));
+    EXPECT_EQ(declared, 37u);
+    for (size_t i = 0; i < 37; ++i) EXPECT_EQ(row[sizeof(uint32_t) + i], static_cast<uint8_t>(i));
+
+    // The two refusals a binding must be able to map back to a cause. Both are
+    // kInvalidArgument: they are "the caller broke this call's contract", which
+    // is what that number already means — A1 appends no status.
+    VectorWriteBuffer fresh;
+    WriteBuffer& target = fresh;
+    try {
+        target.AppendInPlace(0, [](uint8_t*, size_t) -> size_t { return 0; });
+        FAIL() << "a fill of no bytes names nothing and must be refused";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+    }
+    try {
+        target.AppendInPlace(8, [](uint8_t*, size_t room) -> size_t { return room + 1; });
+        FAIL() << "a writer reporting more than it was lent must be refused";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+    }
 }
 
 // ── §5.1 — one error type, one stable number ────────────────────────

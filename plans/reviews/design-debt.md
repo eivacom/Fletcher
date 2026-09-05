@@ -508,3 +508,17 @@ verified.
 | ROUND-1 | **The harness proves its Agent is alive, not that its Agent is the one answering.** `SpawnedAgentAlive()` (`subjects/xrce_main.cpp:210`, PDA-DEC-1 `a963211`) checks the process *this binary spawned*, and `WaitUntilReachable()` asserts it — the guard is real and its comment explicitly anticipates a leftover Agent. **A PM note first recorded here claiming it "accepts an Agent it did not start" was wrong; this is the corrected statement.** The gap is that liveness is not port ownership: if the spawned Agent fails to bind because a leftover holds the port, but does not exit, both conditions hold and the foreign Agent certifies the run. The PDA-DEC-7 cycle-2 re-reviewer observed exactly that outcome — a full run at `conformance_xrce` 25/25 PASSED served by a foreign Agent — but the **mechanism is unconfirmed**, and establishing it is the first job of the fix, not an assumption to build on. Consequence: every XRCE green since PDA-DEC-1 is conditional on "no stray Agent was listening". Owner ruling 2026-09-02: **fix in-round, before PDA-DEC-9 signs the handoff**, since both ABI rounds inherit this harness as their oracle. Now tracked as **PDA-DEC-1H**. | PDA-DEC-7 compliance cycle 2, corrected by PM 2026-09-02 |
 
 | A5-DEBT-6 | The gateway refusal case watches the two **text**-frame paths into `SplitTopic` but not the **binary `publish`** path (`gateway/src/ws_session.cpp:271`). Non-blocking: the seam refuses the name either way, so no wrong delivery is reachable — the gap is in what the *gateway* case observes, not in the product. Closing it means driving a binary publish frame with an empty part through `gateway-end-to-end`. Raised by code review's final check, 2026-09-04. | codereview §re-check 2 |
+
+## A1-DEBT-6 — the overflow guard lives at one door, not at the arithmetic (PDA-ABI)
+**Raised:** PDA-DEC-A1 step-4b re-review, 2026-09-05, as should-fix R1 (non-blocking).
+**Finding:** `AppendZeros(SIZE_MAX - 20)` still silently yields a 19-byte row. Unreachable
+from anything in-tree today — every in-tree caller passes a `WriteLengthPlaceholder()`
+result — so it was correctly not treated as a gate for A1.
+**Why it is written down anyway:** PDA-ABI will give `Append` and `AppendZeros` the same C
+form that A1 gave the window. Each will then need its own copy of A1's door check, and the
+first one that forgets reproduces B1 — the defect this item existed to close — at a new
+entry point.
+**Acceptable fix:** hoist the `min_bytes > SIZE_MAX - pos_` refusal into `Refill` /
+`ReserveStorage`, where the addition actually lives, so every present and future entry
+point inherits it instead of re-implementing it.
+**Addressed to:** PDA-ABI, at the item that gives the append path its C form.

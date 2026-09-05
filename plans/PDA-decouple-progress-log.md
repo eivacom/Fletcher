@@ -1269,3 +1269,61 @@ a violation; it is in the Stage Brief for the owner before #126 merges.
 cycles (at cap) · 2 fix cycles · 4 implementer launches · 2 owner touches · 4 rulings (ledger
 39 → 43).** PM gate run on refreshed trees: inner loop **27/27 twice**, whole harness **105/105**
 at `XRCE=ON`. A5-DEBT-6 left open: the gateway case watches the text-frame paths, not binary publish.
+
+## PDA-DEC-A1 — the window's write end joins the contract (2026-09-05) 🟢
+
+Third of the amendments, and the one the BIND-C# stop-and-ask was really about: §3.1 described a
+C form that **could not be constructed** from `WriteBuffer`'s public API by a binding that is
+*handed* one. `Data()` is `const`, no `Capacity()` existed, and every `Append*` copies from a
+source — so the only way in was a copy, and §8's zero-copy promise was unavailable to precisely
+the clients it existed to serve. Worse, `CopyAccounting` was **structurally blind** to that copy:
+§8.1 began measuring at the window base *after* the encoder's last append, which is downstream of
+where the copy happens.
+
+**Landed.** `AppendInPlace` gives the window a write end: one-call borrow, `room` is the whole
+remaining window, commit-by-return, and the measured interval now starts at the producer's write
+site. Spec §3.1 gains **clause 6**; §8's rows bullet is reworded as a **permission** — *permits,
+not guarantees*, per ruling 44 — and §8.1's interval start moves to the producer, the old window
+base demoted to an interior point. The harness README retires "Not a copy: the encode itself",
+which the shipped instrument made false, and carries ruling 45's claim limit: the guard claims
+what the interface **permits**, measured with a **stand-in**, stated as exactly that and no wider.
+
+**Two defects the reviews caught that the tests did not.** (1) `AppendInPlace` with
+`min_bytes > SIZE_MAX - pos_` wrapped inside the refill, left `pos_ > capacity_`, underflowed its
+own guard and handed the writer a ~16-exabyte `room` over a 19-byte vector — reproduced, then
+pinned by `HugeMinBytesRefusesLoudly`. (2) A nested fill was **not** always refused; the existing
+pinning test was green only because it used `FixedWriteBuffer`. Both were invisible to the forcing
+test, which is the recurring lesson of this amendment round.
+
+**Design deviation, ruled justified.** The design said "no flag, no state" and claimed the nested
+case was caught by one comparison at return. Conformance re-review disproved it independently: on
+a growable buffer after `AppendZeros(4)`, a nested fill needing no refill leaves `data_/pos_/
+capacity_` byte-identical, so no state-free predicate can see it. A private `bool lending_` behind
+a non-copyable RAII guard, read at one site, is the minimum that closes it; the hot inline path is
+untouched. The design doc carries a marked CORRECTION rather than a rewrite — the record shows
+what was believed and what replaced it.
+
+**Verification.** Full suite at `3051b94`, **cache-cleared first** (`conan remove -c` on all 8
+Fletcher refs) so nothing was served from cache — the round's documented false-green. core 40/40 ·
+arrow-bridge 61/61 · pubsub 24/24 · pubsub-arrow 16/16 · fastdds 85/85 · xrce 16/16 · protoc
+99+3 · **pubsub-conformance 110/110 with XRCE=ON** (a stale `OFF` in `CMakeCache.txt` was found and
+overridden explicitly; `conformance_xrce` ran as entry #110) · protoc-arrow-bridge 91 ·
+protoc-coverage 20 · gateway-end-to-end 31/31 · **gateway-fastdds-ts 4/4 ×3, no row loss**.
+No count below baseline. One failure: `PubSubArrowFastDdsTest.MultipleRowsDeliveredInOrder` on the
+parallel pass — the known domain-137 cross-talk, green at `-j1` and on a second parallel pass,
+and not reachable from anything A1 touched. A separate ripple check built the three components the
+implementer had not (`pubsub-arrow`, `protoc`, `gateway`, plus `arrow-bridge`): all clean.
+
+**Numbers.** +1114/−37 vs declared +640/−25 — 1.3% over the design's own band, ruled earned.
+Public surface 1. **Design cycles 1/2 · fix cycles 1 · implementer launches 2.**
+
+**Residuals.** A1-DEBT-6 raised for PDA-ABI: the overflow refusal sits at one door rather than at
+the arithmetic in `Refill`/`ReserveStorage`, so each new C-formed append entry point would need its
+own copy of it. Spec clause 6 says "Two refusals" where four `kInvalidArgument` sites implement
+them — defensible as written (nested fill is folded in explicitly) and deliberately **not**
+re-authored by the PM, since normative frozen text is not the PM's to edit over an arguable count.
+Brief closed at 62 lines against the 60 cap: the body was authored at exactly 60, leaving no room
+for an "As landed" delta — a template tension, not scope creep.
+
+**Baselines re-based here** (measured, not remembered): pubsub 19→**24**, xrce 11→**16**,
+core 28→**40**, pubsub-conformance 82→**110** (XRCE=ON), gateway-end-to-end 29→**31**.

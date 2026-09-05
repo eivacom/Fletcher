@@ -175,3 +175,98 @@ shadows one, and no Reserve/Commit pair was introduced. No two-mechanisms confus
   condition ("do not land §3.1 clause 6 with §8 left saying rows are already fine").
 * `integration-tests/pubsub-conformance/src/copy_clauses.cpp:5` still says "Seven ctest entries";
   the suite now runs 11 gtest cases.
+
+---
+
+# RE-REVIEW after the fix cycle (diff base `3051b94`, uncommitted + untracked `core/tests/test_write_buffer.cpp`)
+
+Verified by building and running, not by reading:
+`conan create core` → `core_tests` **40/40 pass** (12 `WriteBufferInPlace.*` entries),
+conformance rebuilt against the freshly packaged core → `conformance_copy_accounting` **11/11**,
+`conformance_seam_vocabulary` **9/9**. `clang-format 18.1.3` reports **zero** replacements on all
+seven touched files. Findings below marked *(reproduced)* were re-run with a standalone MSVC probe
+against the in-tree header.
+
+**Counts: 0 blocking · 1 should-fix · 6 nits.**
+
+## B1 and S2 are closed. S3, S4, S5 and the two named nits are closed.
+
+**B1 — closed, and the refusal is loud.** The door check `min_bytes > SIZE_MAX - pos_` runs before
+the refill virtual and throws `std::overflow_error` → `kPayloadTooLarge`, and the post-condition is
+now `capacity_ < pos_ || capacity_ - pos_ < min_bytes`. I re-audited every path that writes `pos_`
+or `capacity_` for a residual `pos_ > capacity_`:
+
+* `AppendInPlace` — the only manufacturer of the broken state, now refused at the door; and if a
+  future subclass produced it anyway, `capacity_ - pos_` underflows at the `min_bytes >` test,
+  the refill is skipped, and the `capacity_ < pos_` half fires. Loud either way.
+* `VectorWriteBuffer::AppendZeros` on a wrapping length — `Refill` sets `capacity_ = pos_ + grow`
+  and `AppendZerosSlow` then does `pos_ += len` with `grow == len`, so the two wrap in step and
+  `pos_ == capacity_` comes out. No broken invariant.
+* `AppendSlow`, `Finish`, `Sync` — no path leaves `pos_` above `capacity_`.
+
+Boundary probed *(reproduced)*: `min_bytes == SIZE_MAX - pos_` exactly (largest value the door lets
+through) and `SIZE_MAX - pos_ - 1`, on both `VectorWriteBuffer` and a relocating subclass — all four
+throw before the writer runs, `ran=0`, `Position()` unchanged.
+
+**S2 — closed, and the flag cannot be stranded.** `lending_` is set and cleared by a private RAII
+`Lend` whose destructor runs on *every* exit: normal return, the writer's own exception, and each of
+the two post-return `PubSubError` refusals (the `Lend` object outlives them, so it unwinds). Probed
+*(reproduced)*: after a writer that throws, and after a re-entry refusal, the next `AppendInPlace`
+on the same buffer succeeds — no permanent unusability. `Lend` is non-copyable, and it is
+constructed only after the refill, so no refill path can see the flag set.
+`NestedFillIsRefusedOnAGrowableWindowToo` genuinely pins the fix rather than passing for the old
+reason: on both growable subjects the inner call needs no refill at all (spare capacity), so without
+the door check the inner writer runs, overwrites the outer's first four bytes with `0x77`, and the
+test's per-byte loop reddens.
+
+**PatchU32's changed bound is genuinely equivalent for every offset the unrebuilt callers can
+produce.** For `pos_ >= 4` and any `offset <= SIZE_MAX - 4`, `offset + 4 > pos_` ⇔
+`offset > pos_ - 4`; the boundary `offset == pos_ - 4` is accepted by both forms and
+`offset == pos_ - 3` refused by both. For `pos_ < 4` the old form always threw (no non-wrapping
+offset can satisfy it) and the new form throws unconditionally on the first clause. The two forms
+differ **only** where `offset > SIZE_MAX - 4`, which the old form wrongly accepted. Every in-tree
+caller passes a `WriteLengthPlaceholder()` result, i.e. a position ≤ `pos_ - 4`
+(`envelope_codec.hpp:38`, `legacy_fletcher_topic_type.hpp:61,75`, `seam_vocabulary.cpp:239`, plus
+the two `core/tests/test_positional_io.cpp:228-229` cases, which still pass). Nothing in the
+unrebuilt components can observe the change.
+
+## SHOULD-FIX
+
+### R1 — `AppendZeros` still silently truncates on a wrapping length; A1 fixed the wrap one member at a time
+*Confidence: high (reproduced).* `write_buffer.hpp:69-76` + `VectorWriteBuffer::Refill`
+
+```
+VectorWriteBuffer v; v.Append(p, 40);
+v.AppendZeros(SIZE_MAX - 20);   // NO THROW, pos=19
+v.Finish();                     // len=19  <- a request for ~2^64 bytes yields 19
+```
+
+`Refill` wraps `pos_ + grow` to 19, `resize` *shrinks*, `pos_ += len` wraps back to 19, and the
+invariant is intact — so the new post-condition never sees it and the caller gets a silently short
+row instead of a refusal. This is **not in A1's diff** and is **not a gate on this item**: no
+in-tree caller can reach it (`positional_io` derives every length from a `uint32_t` count, bounded
+at 2^29), so it is not reachable-and-silent today.
+
+It is filed because A1 chose the *per-member* fix. The header now argues clause 3's
+subtract-never-add rule specifically for "the one member whose normative C form takes a length
+straight from foreign code" — but PDA-ABI will give `Append` and `AppendZeros` C forms taking a
+`size_t` from exactly the same place, and each will need its own copy of the same guard. **Acceptable
+fix:** hoist it — one `if (len > SIZE_MAX - pos_) throw std::overflow_error(...)` at the top of the
+two slow paths (or, better, inside `ReserveStorage`/`Refill`, which is where the addition actually
+lives), so the rule is enforced once at the place that adds rather than re-argued at each entry
+point. Cheaper than three guards, and it makes the residue unrepresentable rather than
+member-by-member refused.
+
+## Nits
+
+* `copy_accounting.hpp:158` says reading an empty `encode_copies` "throws `std::bad_optional_access`" — that is true of `.value()`, but both call sites use `operator*`, which is UB on empty. Say `.value()` in the doc, or use it in the harness.
+* `HugeMinBytesRefusesLoudly`'s `FixedWriteBuffer` leg would pass without the fix (clause 4's `Overflow()` throws the same `std::overflow_error`); only the two growable legs carry the evidence.
+* `min_bytes` just inside the door (e.g. `SIZE_MAX - pos_`) surfaces as `std::length_error` from `<vector>` → `kInternal`, not the `kPayloadTooLarge` that `status.hpp`'s new three-cause comment implies for an unsatisfiable row. Loud, just mistyped; same shape as a pre-existing `bad_alloc`.
+* A re-entrant `VectorWriteBuffer::Finish()` from inside the writer is still detected-not-prevented: it is refused loudly at return, but it has already freed the block `dst` points into. `lending_` is private, so a `Finish` guard would need a protected accessor.
+* A zero-length re-entry (`Append(p, 0)` / `AppendZeros(0)` from the writer) moves nothing and is undetected — harmless, but it is the one hole in the header's "every mutating re-entry moves the window" claim.
+* Carried from the first pass, still open: a writer returning `used == 0` is accepted silently while `min_bytes == 0` is refused because "a fill of no bytes names nothing".
+
+## RECORD (for the PM, not blocking)
+
+* Both prior RECORD items are now discharged: `docs/pubsub-interface-spec.md` §3.1 gained clause 6 and §8/§8.1 were rewritten; `copy_clauses.cpp:5` now says "Eleven ctest entries", which matches the 11 cases the binary runs.
+* `core/tests/test_write_buffer.cpp` is still **untracked** — it must be `git add`ed or the CI header/format scans and `core_tests` will not see it.

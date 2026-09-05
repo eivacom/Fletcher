@@ -167,19 +167,37 @@ surfaced immediately.
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §8,
 §8.1, §3.1, §3.2. A **second** suite in this harness, in its own binary
 (`conformance_copy_accounting`), linking no provider SDK and running in
-milliseconds. `ctest -R 'CopyAccounting\.'` runs the whole oracle: seven entries.
+milliseconds. `ctest -R 'CopyAccounting\.'` runs the whole oracle: eleven entries.
 A **third** suite, `SeamVocabulary`, is described at the bottom of this section.
 
 It decides, by **address provenance**, whether the payload bytes a subscriber
 sees are the very bytes the publisher wrote. **A copy** is payload bytes coming
-to exist at a second address, or moving to one, **by the provider** (and by the
-thin `Publisher`/`Subscriber` layer, where a subject routes through it), between
-the encoder's first write and the callback's return. Not a copy: the encode
-itself; anything a transport does once the bytes leave the seam; a window
-refill, below.
+to exist at a second address, or moving to one, between **where the producer
+wrote them** and the subscriber callback's return — by the client composing the
+row, by the provider, or by the thin `Publisher`/`Subscriber` layer where a
+subject routes through it. Not a copy: anything a transport does once the bytes
+leave the seam; a window refill, below.
 
-Four addresses per publish, sampled while their storage is live and compared as
-integers. No counters, no allocator hooks, no sanitizer: counting catches only
+**The encode itself used to be excluded here, and that exclusion is retired**
+(PDA-DEC-A1). It was the written form of a blind spot: §8 promised an uncopied
+row while both the promise and this measurement began at the *window*, so a
+client that composed its row somewhere else and handed it over paid one whole-row
+copy that the guard was structurally unable to see — and every language binding
+was forced into exactly that shape, because nothing at the seam let a caller
+holding a `WriteBuffer&` put a byte into the window. §3.1 clause 6
+(`AppendInPlace`) gives the window a write end, and the interval now starts where
+the producer wrote. The two halves are consecutive and scored separately:
+`encode_copies` for the client's half, `row_copies` for the provider's.
+
+Addresses are sampled while their storage is live and compared as integers. How
+many per publish is **not one number** — it is however many of the six roles the
+leg has. The roles: where the **producer** wrote the row (`produced_at`, added by
+PDA-DEC-A1 and sampled only on the two producer legs), the **encode window
+base**, the **delivered** row, and — per attachment — its **published** and its
+**delivered** address, plus a **retained** blob's bytes read after the subject
+has been destroyed. So a producer leg samples three; a leg carrying the two
+standard attachments samples six; `BorrowedAttachmentCostsNoCopies` samples
+seven. No counters, no allocator hooks, no sanitizer: counting catches only
 allocation-shaped copies, misses copies into a pooled or reused buffer, and on
 Windows does not interpose allocations inside a provider DLL carrying its own
 CRT — blind exactly where a loaded driver will live. A copy into recycled
@@ -187,7 +205,9 @@ storage still lands at a different address than the *live* encode window.
 
 | Entry | What it is |
 |---|---|
-| `PublishAndReceivePerformNoPayloadCopies` × 3 subjects | the forcing test: row at 64 B and 4 KiB, plus two 1 KiB attachments |
+| `PublishAndReceivePerformNoPayloadCopies` × 3 subjects | the forcing test for the PROVIDER half: row at 64 B and 4 KiB, plus two 1 KiB attachments |
+| `InPlaceEncodeWritesIntoTheDeliveredWindow` × 3 subjects | the forcing test for the CLIENT half (PDA-DEC-A1): a producer composes its row through `AppendInPlace` into the window the provider delivers from, and the same publish scores `encode_copies == 0` **and** `row_copies == 0` |
+| `StagingProducerIsCaught` | the **live negative control for the client half** — a producer that composes the identical row in its own vector and hands it over with one `Append`, which is the workaround a binding was forced into before clause 6. It must score `encode_copies == 1` **while `row_copies` stays 0**: that combination is the blindness itself, pinned as a test |
 | `StagingIsCaught` | the **live negative control** — a deliberately-copying provider the same `Judge()` must score at `row_copies == 1`, `attachment_copies == 2` |
 | `BorrowedAttachmentCostsNoCopies` | a provider's own borrowed memory, **pinned at zero** — it was `…CostsExactlyOneCopy`, pinned at one, until PDA-DEC-3 removed the copy |
 | `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable window, zero on a fixed one |
@@ -253,6 +273,27 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
 
 ### What green does NOT prove — read before trusting it
 
+- **`encode_copies == 0` claims what the interface PERMITS, and no more.** It
+  says a client that uses `AppendInPlace` (§3.1 clause 6) *can* send a row with
+  no copy at all. It does **not** say that a C#/Rust binding does so: none
+  exists, so the producer measured here is a **stand-in** written in this
+  harness, and any wider claim would rest on a stand-in standing for something
+  unbuilt (owner ruling 2026-09-04, "the guard claims what the interface permits,
+  measured with a stand-in"). It is also a permission rather than a guarantee at
+  the seam itself: a client that ignores the call composes its row elsewhere and
+  `Append`s it, pays one whole-row copy, and the seam cannot stop it —
+  `StagingProducerIsCaught` is that client, measured, at exactly 1.
+- **A producer is trusted to report what it wrote.** `AppendInPlace` commits the
+  count the writer returns, checked against the room it was lent and not against
+  what it actually touched, so a writer that reports more than it wrote publishes
+  bytes nobody wrote in this call. Nothing here measures that, and it is not
+  benign on any subclass: what leaks is whatever was last left above the
+  position — a previous producer's partially-reported payload on a growable
+  buffer, or the previous sample's bytes on the fixed buffer that wraps a
+  transport payload, which is the zero-copy path the member exists to open. The
+  header (`core/include/fletcher/core/write_buffer.hpp`) discloses it as residue
+  (b) rather than checking it away, because checking it would mean not handing
+  over real memory.
 - **It proves nothing about any transport's internals.** Green means *the
   interface* performs no copies. It is not evidence about Fast DDS or XRCE:
   not about data-sharing, not about loaned samples, not about receive-side
@@ -312,7 +353,7 @@ real A and B on every subject.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
 §3.3, §3.4, §5.1, §7 clause 1. A **third** suite in this harness, in its own
-binary (`conformance_seam_vocabulary`), eight entries, no provider SDK.
+binary (`conformance_seam_vocabulary`), nine entries, no provider SDK.
 
 It asserts what the crossing *types* make representable, which no
 provider-parameterised clause can reach:
@@ -322,6 +363,7 @@ provider-parameterised clause can reach:
 | `BorrowedTransportMemoryCrossesWithoutCopy` | §3.2: a provider hands over its own bytes where they lie, and a blob kept past the delivery — **after the provider itself has been destroyed** — still names *and reads back* those bytes, so the owner is real rather than a span with no keeper |
 | `AbandonedSubscriptionReportsNoSchemaWillArrive` | §3.4: a subscription torn down before its schema arrives says `kSubscriptionEnded`, distinct from `kOk`+null ("this transport carries no schemas"), and the unbounded wait still returns |
 | `BlobRefusesBytesNothingOwns` | §3.2 rung 1: no view-only `Blob` exists to build |
+| `AWriteBufferReferenceCanBeFilledInPlace` | §3.1 clause 6: a caller holding **nothing but a `WriteBuffer&`** — all `Publish`'s inversion ever hands a binding — can obtain writable space, be told how much, compose a variable-length row into it with a back-patched length prefix, and commit what it wrote. The representability claim no `CopyAccounting` entry can make, plus the two `kInvalidArgument` refusals a binding must be able to map back to a cause |
 | `ErrorRefusesEveryNonFailureStatus` | §5.1: a failure can never carry `kOk`, `kPending` or `kSubscriptionEnded` |
 | `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |

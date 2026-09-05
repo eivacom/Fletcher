@@ -6,7 +6,8 @@ find_package(GTest REQUIRED)
 add_executable(core_tests
     test_envelope.cpp
     test_positional_io.cpp
-    test_status_taxonomy.cpp)
+    test_status_taxonomy.cpp
+    test_write_buffer.cpp)
 
 # PDA-DEC-9: Taxonomy.PublishedNumbersMatchTheEnum reads the published error-taxonomy table out
 # of core/README.md itself rather than holding a copy of the numbers, so editing either side

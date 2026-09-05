@@ -55,6 +55,8 @@ existing "hand over bytes you already have" call has always carried, so it is no
 Declared net lines: +640 / −25 · new public surface: 1 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-09-05, PM at close):*
+**+1114/−37** vs declared +640/−25 — 1.3% over the design's 600–1100 band, ruled **earned**. Charter held; surface **1**.
+**Design cycles 1/2 · fix cycles 1.** Unpredicted: `bool lending_`, deviating from "no flag, no state" because the design's
+mechanism was **disproved** (ruled justified and minimal), and `status.hpp` as compliance F4's own fix.
+Raised for PDA-ABI: **A1-DEBT-6** — the overflow guard sits at one door, not at the arithmetic.
