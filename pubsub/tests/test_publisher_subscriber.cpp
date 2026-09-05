@@ -5,16 +5,43 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
 using namespace fletcher;
+
+namespace {
+
+// Re-anchored to the seam's taxonomy (spec §5.1): the tier ABOVE the seam now
+// reports the same causes by the same numbers the providers do, so these tests
+// assert the number rather than which std:: type happened to be thrown.
+::testing::AssertionResult RefusedWith(PubSubStatus want, const std::function<void()>& call) {
+    try {
+        call();
+    } catch (const PubSubError& e) {
+        if (e.status() == want) return ::testing::AssertionSuccess();
+        return ::testing::AssertionFailure()
+               << "refused with " << internal::PubSubStatusName(e.status()) << ", wanted "
+               << internal::PubSubStatusName(want) << " (" << e.what() << ")";
+    } catch (const std::exception& e) {
+        return ::testing::AssertionFailure()
+               << "refused with an untyped exception, which is what the taxonomy exists to "
+                  "replace: "
+               << e.what();
+    }
+    return ::testing::AssertionFailure() << "the call was not refused at all";
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Minimal in-process mock provider for testing Publisher/Subscriber.
@@ -30,13 +57,13 @@ class MockProvider : public PubSubProvider {
         }
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         std::string key = fletcher::internal::JoinSegments(segments);
 
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        const std::vector<uint8_t> buf = wb.Finish();
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
@@ -58,7 +85,7 @@ class MockProvider : public PubSubProvider {
         if (it != schemas_.end()) {
             schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
-        return {MakeReadySchemaFuture(std::move(schema))};
+        return {SchemaArrival::Ready(std::move(schema))};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -142,7 +169,9 @@ TEST(PublisherTest, CreateTopicRejectsConflictingSchema) {
     Publisher publisher(mock);
 
     publisher.CreateTopic(kTopic, TestSchema());
-    EXPECT_THROW(publisher.CreateTopic(kTopic, TestSchemaB()), std::runtime_error);
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kSchemaConflict, [&] {
+        publisher.CreateTopic(kTopic, TestSchemaB());
+    })) << "a conflicting re-declaration must carry the same number here as it does at the seam";
 }
 
 TEST(PublisherTest, ListTopics) {
@@ -162,7 +191,9 @@ TEST(PublisherTest, ListTopics) {
     EXPECT_EQ(topics[1], "c/d");
 }
 
-TEST(PublisherTest, NullProviderThrows) { EXPECT_THROW(Publisher(nullptr), std::invalid_argument); }
+TEST(PublisherTest, NullProviderThrows) {
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [] { Publisher publisher(nullptr); }));
+}
 
 // ---------------------------------------------------------------------------
 // Subscriber tests
@@ -193,9 +224,9 @@ TEST(SubscriberTest, SubscribeReturnsUniqueIds) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     Subscriber::SubscribeResult r2 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
 
     EXPECT_NE(r1.subscription_id, r2.subscription_id);
 }
@@ -206,7 +237,8 @@ TEST(SubscriberTest, SubscribeToUnknownTopicSucceeds) {
 
     // Subscribing to an unknown topic should succeed (subscriber-only process).
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        {"no", "such"}, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        {"no", "such"},
+        [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     EXPECT_GT(result.subscription_id, 0u);
 }
 
@@ -218,9 +250,10 @@ TEST(SubscriberTest, SubscribeReturnsSchemaFromProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult result = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
-    ASSERT_TRUE(result.schema.valid());
-    SharedSchema sch = result.schema.get();
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    // Re-anchored to the one waiting mechanism: a TYPED outcome, not a future.
+    SharedSchema sch;
+    ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
     ASSERT_TRUE(sch);
     EXPECT_EQ(sch->n_children, 1);
     EXPECT_EQ(std::string(sch->children[0]->name), "x");
@@ -235,10 +268,10 @@ TEST(SubscriberTest, MultiSubscriberFanOut) {
 
     int count_a = 0;
     int count_b = 0;
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_a++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
 
@@ -258,10 +291,11 @@ TEST(SubscriberTest, UnsubscribeRemovesSpecificSubscriber) {
 
     int count_a = 0;
     int count_b = 0;
-    Subscriber::SubscribeResult ra = subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_a++; });
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) { count_b++; });
+    Subscriber::SubscribeResult ra =
+        subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                         const Attachments&) { count_a++; });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) { count_b++; });
 
     publisher.Publish(kTopic, MakeTestEncoder(1));
     EXPECT_EQ(count_a, 1);
@@ -280,7 +314,7 @@ TEST(SubscriberTest, UnsubscribeLastSubscriberUnsubscribesFromProvider) {
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     EXPECT_EQ(mock->unsubscribe_count, 0);
 
     subscriber.Unsubscribe(r.subscription_id);
@@ -294,23 +328,43 @@ TEST(SubscriberTest, UnsubscribeWithRemainingSubscribersKeepsProviderSubscriptio
     publisher.CreateTopic(kTopic, TestSchema());
 
     Subscriber::SubscribeResult r1 = subscriber.Subscribe(
-        kTopic, [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
-    (void)subscriber.Subscribe(kTopic,
-                               [](uint64_t, const uint8_t*, size_t, SharedSchema, Attachments) {});
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
 
     subscriber.Unsubscribe(r1.subscription_id);
     EXPECT_EQ(mock->unsubscribe_count, 0);
 }
 
-TEST(SubscriberTest, UnsubscribeUnknownIdThrows) {
+// Replaces UnsubscribeUnknownIdThrows: cancelling something that is not live is
+// a no-op, not an error, at this tier as well as at the provider's (spec §7
+// clause 6, owner ruling 2026-09-04). Teardown in a foreign runtime calls this
+// unconditionally and cannot let an exception escape.
+TEST(SubscriberTest, UnsubscribeUnknownIdIsANoOp) {
     auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
     Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
 
-    EXPECT_THROW(subscriber.Unsubscribe(999), std::runtime_error);
+    int calls = 0;
+    const uint64_t live =
+        subscriber
+            .Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                   const Attachments&) { ++calls; })
+            .subscription_id;
+
+    EXPECT_NO_THROW(subscriber.Unsubscribe(999));
+    subscriber.Unsubscribe(live);
+    EXPECT_NO_THROW(subscriber.Unsubscribe(live));  // already cancelled
+
+    // The no-op is a no-op: it neither disturbed nor resurrected anything.
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+    EXPECT_EQ(calls, 0);
 }
 
 TEST(SubscriberTest, NullProviderThrows) {
-    EXPECT_THROW(Subscriber(nullptr), std::invalid_argument);
+    EXPECT_TRUE(
+        RefusedWith(PubSubStatus::kInvalidArgument, [] { Subscriber subscriber(nullptr); }));
 }
 
 TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
@@ -321,17 +375,91 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
 
     int32_t received_value = 0;
     Attachments received_att;
-    (void)subscriber.Subscribe(
-        kTopic, [&](uint64_t, const uint8_t* data, size_t len, SharedSchema, Attachments att) {
-            received_value = DecodeTestRow(data, len);
-            received_att = std::move(att);
-        });
+    (void)subscriber.Subscribe(kTopic, [&](uint64_t, const uint8_t* data, size_t len,
+                                           const SharedSchema&, const Attachments& att) {
+        received_value = DecodeTestRow(data, len);
+        // Borrowed, so this copies — moving from a const& would silently copy anyway.
+        received_att = att;
+    });
 
-    auto blob = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD});
+    const std::vector<uint8_t> payload{0xDE, 0xAD};
+    Blob blob{payload};
 
-    publisher.Publish(kTopic, MakeTestEncoder(99), {{"img", blob}});
+    Attachments sent;
+    sent.emplace("img", blob);
+    publisher.Publish(kTopic, MakeTestEncoder(99), sent);
 
     EXPECT_EQ(received_value, 99);
     ASSERT_EQ(received_att.count("img"), 1u);
-    EXPECT_EQ(*received_att.at("img"), *blob);
+    // A Blob kept past the borrow window still names the very bytes that were
+    // published — the copy is the shared owner, not the payload (§3.2).
+    EXPECT_EQ(received_att.at("img").data(), blob.data());
+    EXPECT_EQ(received_att.at("img").size(), payload.size());
+}
+
+// Fan-out used to iterate an unordered_map of every subscription in the process, so the order
+// callbacks ran in was arbitrary. It is now the order they subscribed in — cheaper and predictable,
+// and worth holding to.
+TEST(SubscriberTest, FanOutRunsCallbacksInSubscriptionOrder) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    std::vector<int> order;
+    for (int i = 0; i < 8; ++i) {
+        subscriber.Subscribe(kTopic, [&order, i](uint64_t, const uint8_t*, size_t, SharedSchema,
+                                                 Attachments) { order.push_back(i); });
+    }
+
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+
+    ASSERT_EQ(order.size(), 8u);
+    EXPECT_TRUE(std::is_sorted(order.begin(), order.end()));
+}
+
+// Delivery still snapshots the subscriber list and invokes outside `mu`, so a callback may
+// unsubscribe itself — or another subscriber — without deadlocking or invalidating the iteration in
+// progress. What changed is WHEN the removal takes effect: each entry is re-checked under its own
+// gate at the moment it would be invoked, so a subscription cancelled during a delivery does not
+// receive the sample that delivery is carrying. The old expectation ("the removal takes effect from
+// the next one") was the defect frozen §7 clause 6 forbids, and it is gone with no replacement.
+TEST(SubscriberTest, UnsubscribeFromInsideCallbackTakesEffectImmediately) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    int first_calls = 0;
+    int second_calls = 0;
+    uint64_t second_id = 0;
+
+    uint64_t first_id = subscriber
+                            .Subscribe(kTopic,
+                                       [&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                           const Attachments&) {
+                                           ++first_calls;
+                                           // Drop the *other* subscriber from inside this callback.
+                                           if (second_id != 0) {
+                                               subscriber.Unsubscribe(second_id);
+                                               second_id = 0;
+                                           }
+                                       })
+                            .subscription_id;
+    second_id = subscriber
+                    .Subscribe(kTopic, [&](uint64_t, const uint8_t*, size_t, SharedSchema,
+                                           Attachments) { ++second_calls; })
+                    .subscription_id;
+
+    publisher.Publish(kTopic, MakeTestEncoder(1));
+    // The second was cancelled while this sample was being fanned out, and the fan-out had not
+    // reached it yet — so it never sees it. Once Unsubscribe returned, no callback ran.
+    EXPECT_EQ(first_calls, 1);
+    EXPECT_EQ(second_calls, 0);
+
+    publisher.Publish(kTopic, MakeTestEncoder(2));
+    EXPECT_EQ(first_calls, 2);
+    EXPECT_EQ(second_calls, 0);
+
+    subscriber.Unsubscribe(first_id);
 }

@@ -10,7 +10,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FletcherClient,
@@ -86,12 +88,13 @@ function findGatewayBinary(): string {
   );
 }
 
-async function spawnGateway(cfg: ProviderConfig): Promise<ChildProcess> {
+async function spawnGateway(cfg: ProviderConfig, extraArgs: string[] = []): Promise<ChildProcess> {
   const bin = findGatewayBinary();
   const args = ['--port', String(cfg.port), '--bind-address', '127.0.0.1', '--provider', cfg.name];
   if (cfg.domainId) {
     args.push('--domain-id', cfg.domainId);
   }
+  args.push(...extraArgs);
   const child = spawn(bin, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -147,6 +150,222 @@ async function stopGateway(child: ChildProcess): Promise<void> {
     child.stdin?.end();
   });
 }
+
+// Spawn the gateway and collect its exit code plus everything it wrote to
+// stderr, for the refusal cases below — neither refusal ever prints READY, so
+// spawnGateway's READY-polling promise is the wrong shape for them.
+async function spawnGatewayExpectingExit(
+  args: string[],
+): Promise<{ code: number | null; stderr: string }> {
+  const bin = findGatewayBinary();
+  const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+  const code = await new Promise<number | null>((res) => {
+    // A refusal case that stops refusing does not hang the suite for the full test timeout: the
+    // watchdog kills a gateway that came up anyway, so the assertion below fails on the exit code
+    // with the stderr in hand rather than on a 30 s timeout with nothing.
+    const watchdog = setTimeout(() => {
+      if (!child.killed) child.kill('SIGKILL');
+    }, 10_000);
+    child.on('exit', (c) => {
+      clearTimeout(watchdog);
+      res(c);
+    });
+  });
+  return { code, stderr };
+}
+
+// ---------------------------------------------------------------------
+// PDA-DEC-5: the gateway's provider selection, PROVED not just asserted.
+//
+// "The gateway still works" is unfalsifiable against a stale binary: `npm
+// test` runs whatever gateway.exe already sits in build/, so a binary built
+// before this stage would pass the whole describe.each battery below
+// unchanged. The two refusal cases here are staleness DETECTORS, not just
+// assertions: the pre-PDA-DEC-5 binary refuses both an unknown name and a
+// path-shaped value through the SAME branch and the SAME message
+// (`unknown provider: ... (expected inprocess|fastdds)`), so neither case can
+// pass against it. Own port for the READY case (DEBT-2): TEST_PORT and
+// TEST_PORT + 3 are held by the two describe.each contexts below.
+// ---------------------------------------------------------------------
+describe('provider selection', () => {
+  it('an unregistered --provider name exits 2 naming what IS registered', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 6),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      'bogus',
+    ]);
+    expect(code).toBe(2);
+    // Wording the OLD binary cannot emit: it says "unknown provider: bogus
+    // (expected inprocess|fastdds)", which contains neither "available:" nor
+    // "no built-in provider named" — pinned to the registry's own phrasing
+    // (provider_registry.cpp), not to "names inprocess and fastdds somewhere",
+    // which the old message also satisfies.
+    expect(stderr).toContain('no built-in provider named');
+    expect(stderr).toContain('available:');
+  });
+
+  it('a path-shaped --provider value exits 2 saying this build cannot load drivers', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 7),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      './nope.so',
+    ]);
+    expect(code).toBe(2);
+    // The OLD binary's ONLY refusal message is "unknown provider: ... (expected
+    // inprocess|fastdds)", which never says "cannot load drivers" — this is the
+    // one case that cannot pass against any pre-PDA-DEC-5 gateway.exe.
+    expect(stderr).toContain('cannot load drivers');
+  });
+
+  it('--provider inprocess still resolves and prints READY', async () => {
+    const child = await spawnGateway({
+      name: 'inprocess',
+      port: TEST_PORT + 8,
+      roundtripMs: 5_000,
+    });
+    await stopGateway(child);
+  });
+});
+
+// ---------------------------------------------------------------------
+// PDA-DEC-6 fix cycle 1 (review 4b S1/S2): `--provider-config` is the ONLY
+// route by which the owner's charter requirement (b) - configure the driver
+// with protocol-specific setup at run time - is reachable from gateway.exe,
+// and nothing tested it. A regression here is silent in exactly the way that
+// matters: drop `config.document = args.document` and the gateway still
+// starts, still serves, and quietly runs on the provider's defaults.
+//
+// The property case is the one that proves the BYTES ARRIVE: the message it
+// asserts is the Fast DDS provider's own, so it cannot be produced by a
+// gateway that reads the file and forgets to forward it.
+// ---------------------------------------------------------------------
+describe('provider configuration', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'fletcher-provider-config-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function write(name: string, contents: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, contents);
+    return path;
+  }
+
+  const ANCHOR_ONLY = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">',
+    '  <profiles>',
+    '    <participant profile_name="fletcher_participant">',
+    '      <rtps>',
+    '        <propertiesPolicy>',
+    '          <properties>',
+    '            <property><name>PROPERTY_NAME</name><value>131072</value></property>',
+    '          </properties>',
+    '        </propertiesPolicy>',
+    '      </rtps>',
+    '    </participant>',
+    '  </profiles>',
+    '</dds>',
+  ].join('\n');
+
+  it('a missing --provider-config file exits 2', async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      join(dir, 'does-not-exist.xml'),
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('cannot read --provider-config');
+  });
+
+  it('an unreadable --provider-config file exits 2', async () => {
+    // A DIRECTORY. Windows refuses it at the open; on Linux open(2) on a directory SUCCEEDS and
+    // only the read fails (EISDIR), so the gateway refuses a directory explicitly instead of
+    // letting a zero-byte read masquerade as an empty file. Either wording in the "unreadable"
+    // family is accepted here, because which of the two the gateway reaches is an implementation
+    // detail; the two things that must NOT happen are pinned below - it must not fall through to
+    // "unconfigured", and it must not borrow the EMPTY-file wording, which is a different
+    // condition with a different remedy and has its own case underneath this one.
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      dir,
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toMatch(/cannot read --provider-config|error reading --provider-config/);
+    expect(stderr).not.toContain('is empty');
+  });
+
+  it('an EMPTY --provider-config file exits 2 rather than meaning "unconfigured"', async () => {
+    // S2: an empty read is as much a failure as an unreadable one. Every provider reads an
+    // empty document as "my own defaults", so accepting this would start a gateway that
+    // applies none of the operator's intent and prints nothing at all.
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider-config',
+      write('empty.xml', '   \n\t\n'),
+    ]);
+    expect(code).toBe(2);
+    expect(stderr).toContain('is empty');
+    // ...and NOT the unreadable wording: this file opened and read perfectly, it simply held
+    // nothing, and an operator told "cannot read" would go looking for a permissions problem
+    // that is not there. The case above pins the mirror image of this.
+    expect(stderr).not.toMatch(/cannot read --provider-config|error reading --provider-config/);
+  });
+
+  it("a document the provider rejects exits 2, in the provider's own wording", async () => {
+    const { code, stderr } = await spawnGatewayExpectingExit([
+      '--port',
+      String(TEST_PORT + 10),
+      '--bind-address',
+      '127.0.0.1',
+      '--provider',
+      'fastdds',
+      '--domain-id',
+      '153',
+      '--provider-config',
+      write('bad-property.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_byte')),
+    ]);
+    expect(code).toBe(2);
+    // The Fast DDS provider's wording, not the gateway's: proof the bytes crossed the seam.
+    expect(stderr).toContain('fletcher.max_schema_byte');
+  });
+
+  it('a valid --provider-config document reaches the provider and the gateway starts', async () => {
+    const child = await spawnGateway(
+      { name: 'fastdds', port: TEST_PORT + 9, domainId: '154', roundtripMs: 15_000 },
+      [
+        '--provider-config',
+        write('good.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_bytes')),
+      ],
+    );
+    await stopGateway(child);
+  });
+});
 
 // Each provider is its own test context, so `npm test` runs every case below
 // against both the in-process and FastDDS providers.
@@ -386,6 +605,62 @@ describe.each(PROVIDERS)('gateway over $name provider', (cfg) => {
       await expect(client.createTopic(CONFLICT_TOPIC, MINIMAL_SCHEMA)).rejects.toThrow(
         /conflicting schema/,
       );
+
+      client.close();
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // A topic name with an EMPTY part is refused, and an ordinary one still
+  // works (PDA-DEC-A5 fix cycle 1, §3.5 rule 4; owner ruling 2026-09-04).
+  //
+  // `WsSession::SplitTopic` used to DROP empty pieces, so `"a/b"`, `"a//b"`,
+  // `"/a/b"` and `"a/b/"` were all the segment list {"a","b"}: a client
+  // subscribing to one and a client publishing to another exchanged rows
+  // although they had named different topics. That is the silent alias the
+  // seam now refuses, and the gateway was the last place on the path still
+  // tidying a name up instead of letting the refusal happen.
+  //
+  // This case lives HERE and not in `gateway_tests` on purpose. `SplitTopic`
+  // is a private static of `WsSession`, and `gateway_tests` links
+  // `gateway_codec` alone — reaching it would mean putting Boost.Beast and a
+  // provider on that link line AND widening a private member for a test. More
+  // importantly, the claim is about what a CLIENT observes: an error frame
+  // where there used to be a silent wrong delivery. Only this harness drives
+  // the shipped WebSocket surface of the real gateway exe, so only here can
+  // restoring the two `if (!seg.empty())` guards turn something red.
+  //
+  // Both halves are required. Without the negative row the guards can come
+  // back; without the positive row a gateway that refused EVERY topic would
+  // be green.
+  // ---------------------------------------------------------------------
+  describe('topic names with an empty part are refused, not quietly repaired', () => {
+    it('"a//b" is an error frame while "a/b" still creates the topic', async () => {
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+
+      // The positive half FIRST, so a failure of the negative half cannot be
+      // read as "this gateway rejects everything".
+      await client.createTopic('emptypart/ok', MINIMAL_SCHEMA);
+
+      // A doubled separator names a middle part that is nothing. §3.5 rule 4
+      // refuses it with kInvalidArgument, which the session's existing catch
+      // turns into an error frame — so this rejects rather than resolving.
+      await expect(client.createTopic('emptypart//bad', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+      // A trailing and a leading separator are the same rule.
+      await expect(client.createTopic('emptypart/bad/', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+      await expect(client.createTopic('/emptypart/bad', MINIMAL_SCHEMA)).rejects.toThrow(
+        /empty segment/,
+      );
+
+      // And subscribe, not just createTopic: both route through SplitTopic.
+      await expect(
+        client.subscribe<Record<string, unknown>>('emptypart//bad', MINIMAL_SCHEMA, () => {}),
+      ).rejects.toThrow(/empty segment/);
 
       client.close();
     });

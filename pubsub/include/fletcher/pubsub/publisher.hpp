@@ -30,13 +30,20 @@ class Publisher {
     Publisher& operator=(const Publisher&) = delete;
 
     /// Create a topic on the underlying provider and register it in the
-    /// local topic registry. Throws if the topic already exists.
+    /// local topic registry.
+    ///
+    /// **Re-declaring an existing topic is idempotent for an identical schema**
+    /// — it returns without touching the provider, which is what lets several
+    /// publishers share one topic (fan-in). A re-declaration with a provably
+    /// DIFFERENT schema throws `PubSubError(kSchemaConflict)` (spec §7 clause
+    /// 3). Two schemas that cannot be compared are treated as identical, not as
+    /// a conflict.
     void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema);
 
     /// Publish by writing the encoded row directly into the provider's
     /// transport buffer.
-    void Publish(const std::vector<std::string>& segments, PubSubProvider::RowEncoder encoder,
-                 const Attachments& attachments = {});
+    void Publish(const std::vector<std::string>& segments,
+                 const PubSubProvider::RowEncoder& encoder, const Attachments& attachments = {});
 
     /// List all registered topic names (segments joined with "/").
     [[nodiscard]] std::vector<std::string> ListTopics() const;

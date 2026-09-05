@@ -25,6 +25,11 @@ if(TARGET fletcher-protoc::plugin)
 endif()
 
 # First look inside the Conan package itself.
+#
+# Drop any cached result first. find_program caches, and the package root moves whenever the package
+# is rebuilt, so without this a consumer keeps resolving the plugin out of the *previous* package
+# folder until someone deletes their CMake cache — new generator output silently never appears.
+unset(_fletcher_protoc_plugin CACHE)
 find_program(_fletcher_protoc_plugin
     NAMES fletcher-protoc
     PATHS "${_fletcher_protoc_pkg_root}/bin"
@@ -46,4 +51,4 @@ else()
 endif()
 
 unset(_fletcher_protoc_pkg_root)
-unset(_fletcher_protoc_plugin)
+unset(_fletcher_protoc_plugin CACHE)

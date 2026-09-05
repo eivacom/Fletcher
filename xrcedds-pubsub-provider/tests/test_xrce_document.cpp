@@ -1,0 +1,948 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// The XRCE provider's configuration document (PDA-DEC-7): `key=value`, one setting per line.
+//
+// NO AGENT IN ANY ROW. Nine cases, and the census sums (it did not before - "six of these
+// eight ... plus one plus two" was 9 of 8, review cycle 2 RECORD): FOUR touch nothing but the
+// pure reader (`EveryKeySetNonDefaultLandsWholeStruct`, `ConnectTimeoutBudgetBuysWholeAttempts`,
+// `DocumentRefusalsAreTypedAndQuoted`, `ToleranceRefusesWhatTheLoopbackRefuses`), ONE is the
+// pure reader plus a disk read (`PublishedDefaultsAreExact`), ONE is the forcing case and owns a
+// plain TCP listening socket, TWO are constructor-refusal cases that fail before or during
+// transport init (`SerialIsRefusedAsUnsupported`, `AgentUnreachableIsATransportFailure`), and
+// ONE constructs-and-fails hundreds of times on purpose to count OS handles
+// (`FailingConstructionDoesNotLeakTheTransport`). That is deliberate: the FORMAT is guarded
+// here, in the provider's own CI, and the TRANSPORT is guarded by the 24 Agent-gated
+// `conformance_xrce` cases, which are now document-configured and would all redden if the
+// document stopped reaching the client.
+//
+// Suite name is `XrceConfig` (the runbook's inner loop is `ctest -R '^XrceConfig\.'`), which is
+// also the name of the struct this item retired - the tests outlive the type.
+
+#include <gtest/gtest.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <fletcher/core/status.hpp>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
+#include "internal/xrce_document.hpp"
+
+#ifdef _WIN32
+// clang-format off
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>  // GetProcessHandleCount, for the leak row below
+// clang-format on
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>  // the accept loop waits with a deadline; see TcpListener
+#include <sys/socket.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <dirent.h>  // /proc/self/fd, for the leak row below
+#endif
+#endif
+
+using namespace fletcher;
+using fletcher::internal::ParseXrceDocument;
+using fletcher::internal::XrceSettings;
+using fletcher::internal::XrceTransportKind;
+
+namespace {
+
+// The provider README, by absolute path from `target_compile_definitions` (the tree's convention
+// for a test that reads a source-controlled artefact). `PublishedDefaultsAreExact` reads the
+// published default document out of it instead of holding a copy, so the README's drift claim is
+// enforced rather than asserted by hand. Baking the block in at CONFIGURE time (`file(READ)` /
+// `configure_file`) would re-create exactly the held-copy defect PDA-DEC-6 paid a fix cycle for,
+// so it is forbidden rather than tested: the read happens at RUN time, off disk.
+#ifndef FLETCHER_XRCE_README_PATH
+#error "FLETCHER_XRCE_README_PATH is not defined; see tests/CMakeLists.txt"
+#endif
+constexpr const char* kReadmePath = FLETCHER_XRCE_README_PATH;
+
+std::string ReadWholeFile(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+// The first ``` fenced block after `marker`. Empty if either is missing - the caller asserts, so
+// a renamed heading is a red test and never a silently skipped one.
+std::string ExtractFencedBlockAfter(const std::string& text, const std::string& marker) {
+    const size_t at = text.find(marker);
+    if (at == std::string::npos) return {};
+    const size_t fence = text.find("```", at);
+    if (fence == std::string::npos) return {};
+    const size_t body = text.find('\n', fence);
+    if (body == std::string::npos) return {};
+    const size_t close = text.find("\n```", body);
+    if (close == std::string::npos) return {};
+    return text.substr(body + 1, close - body - 1);
+}
+
+ProviderConfig ConfigWith(std::string document) {
+    ProviderConfig config;
+    config.document = std::move(document);
+    return config;
+}
+
+// The status a `PubSubError` came out with, plus its message - both, because "it threw" is what
+// the two retired constructor tests asserted and it is not enough: `PubSubError` derives from
+// `std::runtime_error`, so `EXPECT_THROW(..., std::runtime_error)` stays green even if the
+// provider goes back to throwing untyped and every refusal arrives at the caller as `kInternal`
+// through `TranslateSeamFailure`.
+struct Refusal {
+    bool threw = false;
+    bool typed = false;
+    PubSubStatus status = PubSubStatus::kOk;
+    std::string message;
+};
+
+template <typename Fn>
+Refusal Catch(Fn&& fn) {
+    Refusal out;
+    try {
+        fn();
+    } catch (const PubSubError& e) {
+        out.threw = true;
+        out.typed = true;
+        out.status = e.status();
+        out.message = e.what();
+    } catch (const std::exception& e) {
+        out.threw = true;
+        out.message = e.what();
+    }
+    return out;
+}
+
+void ExpectRefused(const std::string& document, PubSubStatus expected_status,
+                   const std::string& quoted_entry) {
+    const Refusal refusal = Catch([&] { ParseXrceDocument(ConfigWith(document)); });
+    ASSERT_TRUE(refusal.threw) << "this document was ACCEPTED: [" << document << "]";
+    ASSERT_TRUE(refusal.typed) << "refused with an untyped exception, which reaches a caller as "
+                                  "kInternal through TranslateSeamFailure: "
+                               << refusal.message;
+    EXPECT_EQ(refusal.status, expected_status) << refusal.message;
+    // The offending entry has to be IN the message: an operator with a fifty-line document and
+    // a diagnostic that says only "bad document" has to bisect it by hand.
+    EXPECT_NE(refusal.message.find("\"" + quoted_entry + "\""), std::string::npos)
+        << "the refusal does not quote the offending entry [" << quoted_entry
+        << "]: " << refusal.message;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The process's open OS-handle count, or -1 where this platform offers no cheap way to ask.
+//
+// Only a DELTA is ever used, so a constant offset (the DIR handle, the "." and ".." entries) is
+// irrelevant. `GetProcessHandleCount` counts every kernel handle, so it sees a leaked socket;
+// `/proc/self/fd` counts every descriptor, likewise. Both are exact for the question asked -
+// "did N failed constructions leave N sockets behind" - because a leak here is one handle per
+// construction, i.e. hundreds, not one.
+// ---------------------------------------------------------------------------------------------
+int CountOpenHandles() {
+#ifdef _WIN32
+    DWORD count = 0;
+    if (GetProcessHandleCount(GetCurrentProcess(), &count) == 0) return -1;
+    return static_cast<int>(count);
+#elif defined(__linux__)
+    DIR* dir = ::opendir("/proc/self/fd");
+    if (dir == nullptr) return -1;
+    int count = 0;
+    while (::readdir(dir) != nullptr) ++count;
+    ::closedir(dir);
+    return count;
+#else
+    return -1;
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------
+// A test-owned TCP listener on an EPHEMERAL port.
+//
+// This is what makes the forcing case falsifiable, and it is structural rather than clever: the
+// port is chosen by the kernel at run time, so it is no default of Fletcher's, of the XRCE
+// client's or of an Agent's, and NO build can hard-code its way to an accept. A build that
+// ignores the document, or reads the host and keeps port 2018, or reads the address but stays on
+// UDP, cannot reach this socket.
+//
+// It relies on one substrate fact, confirmed against Micro XRCE-DDS Client v3.0.1 before this
+// test was written: `uxr_init_tcp_transport` -> `uxr_init_tcp_platform` performs a blocking
+// `connect()` during INIT (`tcp_transport_windows.c` / `tcp_transport_posix.c`) and returns
+// false when every candidate address fails. There is no lazy-connect machinery in this client.
+//
+// AND ON ONE PLATFORM FACT, which cost this suite a two-hour CI hang the first time it ever ran
+// on Linux (`ci.pr / xrcedds-pubsub-provider / build-linux`, PR #126: the log's last line was
+// `Start 7: XrceConfig.DocumentConfiguresTransport` and the runner was cancelled at 2 h 04 m).
+// The accept loop must be woken by a DEADLINE, never by closing the socket underneath it:
+//
+//   * Windows: `closesocket()` on a listening socket makes a blocked `accept()` in another
+//     thread return an error at once. That is why this hung nowhere until Linux ran it.
+//   * POSIX/Linux: `close()` does NOT wake a thread already blocked in `accept()` on that
+//     descriptor. The descriptor is unhooked from the table, the blocked syscall keeps its
+//     reference, and the thread sleeps forever - so the `join()` below never returns and the
+//     TEST BODY's assertions have all already passed. Measured under WSL2, gcc 13.3.0 (the
+//     version the Linux CI profile pins) with a 40-line reduction of exactly this class: the
+//     old destructor's `close(); join();` never printed past "joining".
+//
+// So the loop below waits with `poll`/`select` for a 25 ms slice and re-checks `stop_`, and the
+// destructor joins BEFORE it closes anything. Nothing needs interrupting, on either platform.
+// Do not "simplify" this back into a bare blocking `accept()`: that is the CI hang.
+//
+// NOTE what this did NOT turn out to be, because the wrong suspect is expensive here: the XRCE
+// client's own session wait is BOUNDED on Linux. Probed against a peer that accepts and never
+// speaks, `uxr_create_session_retries` returned in 0 ms at 0 attempts and 3003 ms at 3, i.e.
+// `attempts * UXR_CONFIG_MIN_SESSION_CONNECTION_INTERVAL` (1000) exactly - `wait_session_status`
+// at session.c:734-762, whose per-attempt loop is bounded by `uxr_millis()`, over
+// `uxr_read_tcp_data_platform`'s `poll(fd, 1, timeout)` at tcp_transport_posix.c:110. The
+// provider bounds its own wait at the operator's `connect_timeout_ms`; the hang was here.
+// ---------------------------------------------------------------------------------------------
+class TcpListener {
+   public:
+    // `hold_clients` is true for the forcing row, which needs the connection to stay up so the
+    // provider's failure is "nothing here speaks XRCE" rather than "the peer hung up". The leak
+    // row passes false: it makes hundreds of connections, and accepted sockets held in THIS
+    // process would be counted by the handle probe as growth the provider did not cause.
+    explicit TcpListener(bool hold_clients = true) : hold_clients_(hold_clients) {
+#ifdef _WIN32
+        WSADATA wsa_data;
+        wsa_ = (WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0);
+        if (!wsa_) return;
+#endif
+        fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!Valid(fd_)) return;
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;  // the kernel picks; nothing in any build knows this number
+        if (::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return;
+        if (::listen(fd_, kBacklog) != 0) return;
+
+        sockaddr_in bound{};
+#ifdef _WIN32
+        int len = static_cast<int>(sizeof(bound));
+#else
+        socklen_t len = sizeof(bound);
+#endif
+        if (::getsockname(fd_, reinterpret_cast<sockaddr*>(&bound), &len) != 0) return;
+        port_ = ntohs(bound.sin_port);
+
+        // The accept runs on its own thread and LATCHES. The provider's connect and the
+        // accept race by nature, so the test asserts against the latch with a deadline rather
+        // than calling accept at a moment of its choosing.
+        //
+        // `WaitReadable` first, `accept` only when a connection is already pending: that keeps
+        // this thread out of an uninterruptible `accept()` (see the class comment - a blocked
+        // `accept()` is what a POSIX `close()` cannot wake, and it is the CI hang).
+        thread_ = std::thread([this] {
+            while (!stop_.load(std::memory_order_relaxed)) {
+                if (!WaitReadable(fd_, kAcceptSlice)) continue;  // nothing pending yet; re-check
+                // DRAIN what is pending before going back to the slice wait, so throughput is
+                // not capped at one connection per slice (40/s) - the leak row makes hundreds of
+                // connections back to back. Together with `kBacklog` this is what keeps that row
+                // a millisecond row on Linux; see kBacklog for the measurement.
+                do {
+                    const auto client = ::accept(fd_, nullptr, nullptr);
+                    // A readiness that yields no socket (a peer that reset between the readiness
+                    // and the accept: ECONNABORTED) is not a reason to stop listening -
+                    // `stop_` is.
+                    if (!Valid(client)) break;
+                    accepted_.fetch_add(1, std::memory_order_relaxed);
+                    // Held, not closed: closing immediately would let the client's connect()
+                    // succeed and its first send() fail, which is a different story from
+                    // "nothing behind this socket speaks XRCE".
+                    if (hold_clients_) {
+                        clients_.push_back(client);
+                    } else {
+                        CloseOne(client);
+                    }
+                } while (!stop_.load(std::memory_order_relaxed) &&
+                         WaitReadable(fd_, std::chrono::milliseconds(0)));
+            }
+        });
+    }
+
+    // ORDER MATTERS, and it is the opposite of the obvious one: join FIRST, close after.
+    //
+    // `stop_` plus the loop's 25 ms deadline is the whole wake-up mechanism, so the thread is
+    // gone within one slice and there is nothing left touching `fd_` or `clients_` when they are
+    // closed. Closing first (the previous shape) relied on `close()` interrupting a blocked
+    // `accept()`, which is true on Windows and false on Linux; it also raced the poll against a
+    // descriptor being closed under it. Neither is a thing this suite needs.
+    ~TcpListener() {
+        stop_.store(true, std::memory_order_relaxed);
+        if (thread_.joinable()) thread_.join();
+        if (Valid(fd_)) CloseOne(fd_);
+        for (const auto client : clients_) CloseOne(client);
+#ifdef _WIN32
+        if (wsa_) WSACleanup();
+#endif
+    }
+
+    TcpListener(const TcpListener&) = delete;
+    TcpListener& operator=(const TcpListener&) = delete;
+
+    bool ok() const { return Valid(fd_) && port_ != 0; }
+    uint16_t port() const { return port_; }
+    int accepted() const { return accepted_.load(std::memory_order_relaxed); }
+
+    // Wait for the latch, up to `budget`. Returns as soon as a connection has arrived.
+    bool WaitForAccept(std::chrono::milliseconds budget) const {
+        const auto deadline = std::chrono::steady_clock::now() + budget;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (accepted() > 0) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return accepted() > 0;
+    }
+
+   private:
+    // How long the accept loop sleeps in one wait before re-reading `stop_`. It bounds teardown
+    // (25 ms, once) and nothing else: the loop returns the instant a connection is pending, so
+    // this is not added to any test's measured elapsed time - including the forcing row's
+    // sub-1000 ms bound, which times the CONSTRUCTOR and not this thread.
+    static constexpr std::chrono::milliseconds kAcceptSlice{25};
+
+    // The listen backlog, and it is not decorative on Linux. It was 4, which is fine for the
+    // forcing row's single connection and quietly awful for the leak row, which opens hundreds
+    // back to back: once the accept queue is full Linux DROPS the SYN, and the next connect
+    // waits for a ~1 s retransmit. Measured under WSL2, 400 connections in a tight loop: 6-17 s
+    // at a backlog of 4 (the same with a plain blocking accept, so it is the backlog and not the
+    // wait above), 5-6 ms at this backlog. Windows clamps this to its own maximum and never
+    // showed the cost, which is why it lasted.
+    static constexpr int kBacklog = 128;
+
+    // True when `s` has a connection pending, false when the slice expired or the wait failed.
+    // A false return is never fatal here: the caller loops and `stop_` is what ends it.
+#ifdef _WIN32
+    using Socket = SOCKET;
+    static bool Valid(Socket s) { return s != INVALID_SOCKET; }
+    static void CloseOne(Socket s) { ::closesocket(s); }
+    // Winsock has no `poll` on the versions this project supports, so `select` it is; the first
+    // argument is ignored on Windows and a single-socket fd_set has no FD_SETSIZE question.
+    static bool WaitReadable(Socket s, std::chrono::milliseconds slice) {
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(s, &readable);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = static_cast<long>(slice.count() * 1000);
+        return ::select(0, &readable, nullptr, nullptr, &timeout) > 0;
+    }
+    Socket fd_ = INVALID_SOCKET;
+    bool wsa_ = false;
+#else
+    using Socket = int;
+    static bool Valid(Socket s) { return s >= 0; }
+    static void CloseOne(Socket s) { ::close(s); }
+    // `poll` rather than `select`: the leak row cycles hundreds of descriptors through this
+    // process, and `FD_SET` past FD_SETSIZE is undefined behaviour where `poll` has no such
+    // limit. It is also what the XRCE client's own POSIX transport uses.
+    static bool WaitReadable(Socket s, std::chrono::milliseconds slice) {
+        pollfd pending{};
+        pending.fd = s;
+        pending.events = POLLIN;
+        return ::poll(&pending, 1, static_cast<int>(slice.count())) > 0;
+    }
+    Socket fd_ = -1;
+#endif
+    uint16_t port_ = 0;
+    bool hold_clients_ = true;
+    std::atomic<bool> stop_{false};
+    std::atomic<int> accepted_{0};
+    std::vector<Socket> clients_;
+    std::thread thread_;
+};
+
+}  // namespace
+
+// =============================================================================================
+// FORCING TEST - the document reaches the transport, observed through a real socket
+// =============================================================================================
+//
+// Row 1 carries the falsifiability alone. The mutations it reddens, each measured through the
+// mechanism it uses rather than asserted:
+//   M1  ignore the document entirely  -> the client dials UDP 127.0.0.1:2018, the listener
+//                                        never accepts -> RED. (This is how red-for-the-right-
+//                                        reason was established for this item.)
+//   M3  read `agent`'s host but keep port 2018 -> ephemeral port never reached -> RED.
+//   M10 read `agent` but stay on `transport=udp` -> no TCP connect at all -> RED.
+//   C2-2 read the document correctly but pass a hard-coded 3000 ms to
+//        `uxr_create_session_retries` -> the accept still happens, so the wall-clock bound below
+//        is the ONLY thing that sees it: 3000 ms means 2 attempts of ~1000 ms each, while
+//        `connect_timeout_ms=0` means 0 retries, i.e. one send and an immediate `false`
+//        (`wait_session_status`, session.c:742-746). Measured cost of the correct build is a
+//        few milliseconds; the bound is 1000 ms, which is ~20x headroom over the truth and 2x
+//        clear of the mutation.
+//
+// Row 2 (empty document) is a HARNESS CONTROL, not a build guard, and is not claimed to be one:
+// no build can be reddened by it, because the ephemeral port cannot be hard-coded. Its jobs are
+// (a) prove row 1's accept latch is not stale and holds no cross-row state, and (b) carry H2's
+// only witness - an empty document means every published default, so it must NOT be refused as
+// `kInvalidArgument` (review C2-3). It is environment-sensitive by nature: an Agent on UDP 2018
+// changes what it DOES (construction succeeds) but not what it asserts.
+TEST(XrceConfig, DocumentConfiguresTransport) {
+    TcpListener listener;
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    // -- Row 1: the document names THIS socket, and the client dials it -----------------------
+    const std::string document =
+        "transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+        "\nconnect_timeout_ms=0";
+
+    const auto started = std::chrono::steady_clock::now();
+    const Refusal refusal = Catch([&] { XrceDDSPubSubProvider provider(ConfigWith(document)); });
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+
+    EXPECT_TRUE(listener.WaitForAccept(std::chrono::seconds(5)))
+        << "nothing ever connected to 127.0.0.1:" << listener.port()
+        << ", which the document named - so the document did not reach the transport";
+
+    // Then: the constructor fails, because nothing behind that socket speaks XRCE. Typed, not
+    // merely "it threw".
+    ASSERT_TRUE(refusal.threw) << "the constructor SUCCEEDED against a socket that speaks no "
+                                  "XRCE, which cannot happen";
+    ASSERT_TRUE(refusal.typed) << refusal.message;
+    EXPECT_EQ(refusal.status, PubSubStatus::kTransportFailure) << refusal.message;
+
+    // C2-2's guard: the deadline is the operator's, not a constant in the constructor.
+    EXPECT_LT(elapsed.count(), 1000)
+        << "connect_timeout_ms=0 means one attempt with no wait, so this must be near-instant; "
+           "~2000 ms means the constructor is using its own hard-coded budget instead of the "
+           "document's. Elapsed: "
+        << elapsed.count() << " ms";
+
+    // -- Row 2: the harness control ------------------------------------------------------------
+    const int accepted_after_row1 = listener.accepted();
+    const Refusal empty = Catch([&] { XrceDDSPubSubProvider provider(ConfigWith("")); });
+
+    // H2: an empty document is every published default, never a refusal. If it fails at all it
+    // fails at the TRANSPORT (no Agent on the default UDP port); if an Agent happens to be
+    // listening on 127.0.0.1:2018 it succeeds outright, and H2 holds even more plainly.
+    if (empty.threw) {
+        ASSERT_TRUE(empty.typed) << empty.message;
+        EXPECT_EQ(empty.status, PubSubStatus::kTransportFailure)
+            << "an empty document must mean every published default (spec 4.1, H2), so it can "
+               "only fail at the transport - never as kInvalidArgument: "
+            << empty.message;
+    }
+    EXPECT_EQ(listener.accepted(), accepted_after_row1)
+        << "the defaults are UDP 127.0.0.1:2018, so an empty document must not reach this "
+           "listener; row 1's latch is stale or something is keeping cross-row state";
+}
+
+// =============================================================================================
+// The reader boundary, closed WHOLE-STRUCT
+// =============================================================================================
+//
+// A refusal table only stops a reader that fails to refuse. It says nothing about one that
+// accepts a value, range-checks it and then drops it on the floor - the defect class the
+// 2026-09-02 "whole quality-of-service" ruling's review note names ("must mandate the form and
+// assert it, or this ruling is unfalsifiable"), and the one that cost PDA-DEC-6 a cycle.
+//
+// So: one document setting ALL FOUR keys away from their defaults, compared field-for-field
+// against the expected `XrceSettings`. `operator==` is defaulted, so the comparison is total
+// over the fields that exist and M11 (range-check a key, then use a hard-coded value) reddens in
+// exactly the field that was dropped. M12 (assign `connect_timeout_ms` from the wrong source)
+// reddens too, and a wrong-TYPE source no longer compiles at all, because the one duration left
+// is `std::chrono::milliseconds` rather than a plain integer.
+//
+// What this row does NOT do, said plainly (review C2-4): it does not police GROWTH. A fifth
+// field a future parser forgets to assign would compare default-against-default here and stay
+// green. What polices growth is the rule that a key arrives WITH its witness.
+TEST(XrceConfig, EveryKeySetNonDefaultLandsWholeStruct) {
+    const XrceSettings parsed = ParseXrceDocument(ConfigWith(
+        "transport=tcp\nagent=10.1.2.3:7401\nsession_key=305419896\nconnect_timeout_ms=250"));
+
+    XrceSettings expected;
+    expected.transport = XrceTransportKind::kTcp;
+    expected.agent_host = "10.1.2.3";
+    expected.agent_port = 7401;
+    expected.session_key = 0x12345678u;  // 305419896
+    expected.connect_timeout = std::chrono::milliseconds(250);
+
+    // Every field differs from the default, so no field can pass by accident.
+    EXPECT_TRUE(parsed == expected)
+        << "a document setting all four keys did not land whole. transport="
+        << static_cast<int>(parsed.transport) << " agent=" << parsed.agent_host << ":"
+        << parsed.agent_port << " session_key=" << parsed.session_key
+        << " connect_timeout_ms=" << parsed.connect_timeout.count();
+    EXPECT_FALSE(parsed == XrceSettings{})
+        << "the expectation is not distinguishable from the defaults, so this row proves nothing";
+}
+
+// =============================================================================================
+// The connect budget, converted where it can be pinned: ms -> whole ~1000 ms attempts
+// =============================================================================================
+//
+// This row exists because the ENDS of a range are not the range. Before fix cycle 1 the
+// conversion was `floor((ms - 1) / 1000)` and lived in the constructor, where nothing without a
+// socket could see it; the only value ever tested was `0`, where floor and ceil agree. Everything
+// from 1 to 1000 ms therefore bought ZERO attempts - and 0 attempts is not "one quick attempt",
+// it is `wait_session_status` sending one datagram and returning without ever listening
+// (session.c:742-746), after which `uxr_create_session_retries` reports failure unconditionally.
+// So a third of the published 0-60000 range could never connect to a healthy Agent, and the
+// diagnostic said "is the Agent running?" while it was (review 4b B1 / 4a F3).
+//
+// Every interior row below is red under that mapping: 1, 250, 500, 999 and 1000 all mapped to 0,
+// and 1001, 1500, 3000 and 60000 were each one attempt short - the published default spent
+// ~2000 ms of its 3000 ms budget. `0` is the one value both mappings agree on, and it stays
+// legal: "send once, do not wait" is a useful thing to ask for, which is why the fix is a ceiling
+// rather than a refusal of 1..1000.
+TEST(XrceConfig, ConnectTimeoutBudgetBuysWholeAttempts) {
+    using fletcher::internal::SessionAttempts;
+    using std::chrono::milliseconds;
+
+    // 0 is the only budget that may map to 0 attempts, because 0 attempts cannot connect.
+    EXPECT_EQ(SessionAttempts(milliseconds(0)), 0u)
+        << "connect_timeout_ms=0 means send once and do not wait - the one value that is allowed "
+           "to be unable to connect";
+
+    // The interior. Under the old floor mapping every one of these was one attempt too few, and
+    // the first four were zero.
+    EXPECT_EQ(SessionAttempts(milliseconds(1)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(250)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(500)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(999)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1000)), 1u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1001)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(1500)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(2000)), 2u);
+    EXPECT_EQ(SessionAttempts(milliseconds(3000)), 3u) << "the PUBLISHED DEFAULT: a 3000 ms "
+                                                          "budget must spend three attempts, not "
+                                                          "the two the old mapping bought";
+    EXPECT_EQ(SessionAttempts(milliseconds(59999)), 60u);
+    EXPECT_EQ(SessionAttempts(milliseconds(60000)), 60u) << "the top of the published range";
+
+    // Not a hidden second rule: nothing in 1..60000 may buy zero attempts. Stated as a property
+    // over the whole range rather than only at the rows above, because the defect this replaces
+    // was exactly "a value inside the range that the rows happened to miss".
+    for (int64_t ms = 1; ms <= 60000; ++ms) {
+        ASSERT_GE(SessionAttempts(milliseconds(ms)), 1u)
+            << "connect_timeout_ms=" << ms
+            << " is accepted by the reader but buys no attempt, so it can never connect";
+        ASSERT_EQ(SessionAttempts(milliseconds(ms)), static_cast<size_t>((ms + 999) / 1000))
+            << "connect_timeout_ms=" << ms << " does not round up to whole attempts";
+    }
+
+    // And the reader's own range check is what keeps this function's input in that band, so the
+    // two belong together: above 60000 never reaches it.
+    ExpectRefused("connect_timeout_ms=60001", PubSubStatus::kInvalidArgument,
+                  "connect_timeout_ms=60001");
+}
+
+// =============================================================================================
+// Every refusal, typed and quoting the offending entry (rung-2 cases 9-13)
+// =============================================================================================
+//
+// M4 - accept-and-default any single key - reddens that key's row. This half stops a reader that
+// fails to refuse; the accept-and-discard half is the whole-struct row above.
+TEST(XrceConfig, DocumentRefusalsAreTypedAndQuoted) {
+    // -- Structure -----------------------------------------------------------------------------
+    ExpectRefused("agent", PubSubStatus::kInvalidArgument, "agent");
+    ExpectRefused("transport", PubSubStatus::kInvalidArgument, "transport");
+    ExpectRefused("agent=127.0.0.1:2018\nagent=127.0.0.1:2019", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1:2019");
+    ExpectRefused("stream_history=8", PubSubStatus::kInvalidArgument, "stream_history=8");
+    ExpectRefused("run_loop_ms=50", PubSubStatus::kInvalidArgument, "run_loop_ms=50");
+    ExpectRefused("max_payload=512", PubSubStatus::kInvalidArgument, "max_payload=512");
+    ExpectRefused("serial_device=COM3", PubSubStatus::kInvalidArgument, "serial_device=COM3");
+    ExpectRefused("agent_ip=127.0.0.1", PubSubStatus::kInvalidArgument, "agent_ip=127.0.0.1");
+
+    // -- Values --------------------------------------------------------------------------------
+    ExpectRefused("transport=udp4", PubSubStatus::kInvalidArgument, "transport=udp4");
+    ExpectRefused("agent=127.0.0.1", PubSubStatus::kInvalidArgument, "agent=127.0.0.1");
+    ExpectRefused("agent=127.0.0.1:2018:9", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1:2018:9");
+    ExpectRefused("agent=:2018", PubSubStatus::kInvalidArgument, "agent=:2018");
+    ExpectRefused("agent=", PubSubStatus::kInvalidArgument, "agent=");
+    ExpectRefused("agent=127.0.0.1:", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:");
+    ExpectRefused("agent=127.0.0.1:0", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:0");
+    ExpectRefused("agent=127.0.0.1:65536", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:65536");
+    ExpectRefused("agent=127.0.0.1:20a8", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:20a8");
+    // Wide-then-check, never narrow: 67554 is 2018 + 65536, so a `uint16_t` parse would accept
+    // it as port 2018 and connect to the right port for the wrong reason.
+    ExpectRefused("agent=127.0.0.1:67554", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:67554");
+    ExpectRefused("connect_timeout_ms=60001", PubSubStatus::kInvalidArgument,
+                  "connect_timeout_ms=60001");
+    ExpectRefused("connect_timeout_ms=-1", PubSubStatus::kInvalidArgument, "connect_timeout_ms=-1");
+    ExpectRefused("session_key=4294967296", PubSubStatus::kInvalidArgument,
+                  "session_key=4294967296");
+    ExpectRefused("session_key=0xAABBCCDD", PubSubStatus::kInvalidArgument,
+                  "session_key=0xAABBCCDD");
+
+    // -- An embedded NUL, refused up front -----------------------------------------------------
+    // The seam's document is length-authoritative (spec 4.2) and carries a NUL unchanged, so one
+    // can legitimately arrive here; this provider's format has no representation for it, and the
+    // refusal message could not quote it anyway (it travels through `what()` -> `c_str()`).
+    const std::string with_nul = std::string("transport=udp\0agent=1.2.3.4:5", 29);
+    const Refusal nul_refusal = Catch([&] { ParseXrceDocument(ConfigWith(with_nul)); });
+    ASSERT_TRUE(nul_refusal.threw) << "a document containing a NUL was accepted";
+    ASSERT_TRUE(nul_refusal.typed) << nul_refusal.message;
+    EXPECT_EQ(nul_refusal.status, PubSubStatus::kInvalidArgument) << nul_refusal.message;
+    EXPECT_NE(nul_refusal.message.find("NUL"), std::string::npos) << nul_refusal.message;
+
+    // -- The typed core: refused by the CONSTRUCTOR, and before any I/O ------------------------
+    // Both were `std::invalid_argument` before this item, which reaches a caller as `kInternal`
+    // through a registry factory. Neither row can touch a socket: validation completes first,
+    // which is also why they cost microseconds rather than a connect timeout.
+    ProviderConfig wide_domain;
+    wide_domain.domain_id = 65536;
+    const Refusal domain = Catch([&] { XrceDDSPubSubProvider provider(wide_domain); });
+    ASSERT_TRUE(domain.threw) << "domain_id 65536 was accepted; it does not fit the XRCE wire";
+    ASSERT_TRUE(domain.typed) << domain.message;
+    EXPECT_EQ(domain.status, PubSubStatus::kInvalidArgument) << domain.message;
+    EXPECT_NE(domain.message.find("65536"), std::string::npos) << domain.message;
+
+    ProviderConfig odd_bound;
+    odd_bound.max_payload_bytes = 4097;  // not a multiple of 4
+    const Refusal bound = Catch([&] { XrceDDSPubSubProvider provider(odd_bound); });
+    ASSERT_TRUE(bound.threw) << "max_payload_bytes 4097 was accepted";
+    ASSERT_TRUE(bound.typed) << bound.message;
+    EXPECT_EQ(bound.status, PubSubStatus::kInvalidArgument) << bound.message;
+}
+
+// =============================================================================================
+// Tolerance: this reader refuses what the loopback's reader refuses, because there is one FORMAT
+// =============================================================================================
+//
+// Spec 4.1 (as landed by PDA-DEC-5) is the single tolerance oracle for both in-tree `key=value`
+// readers, and this row is the XRCE half of the pin; `pubsub`'s loopback tests are the other.
+// The two readers are deliberately separate CODE (locked decision 8 - a shared one would put a
+// config parser in Fletcher, or add a component the <75 KB Flash target must link for sixty
+// lines), so this is how their drift is bounded.
+//
+// The name says REFUSES WHAT THE LOOPBACK REFUSES, not "the same rules", and the difference is
+// the point (review cycle 2 F7). XRCE states the whitespace rule ONCE, up front, because it is
+// the only one of the two readers with a free-form value (`agent`'s host); the loopback has one
+// key matched by exact string equality and one closed value set, so it already refuses every one
+// of the documents below - by its key lookup or its value lookup rather than by a whitespace
+// rule. Same documents accepted, same documents refused, same status; one reader needs one more
+// sentence to get there. What is NOT claimed is rule-identity: four of the rows below are
+// produced by no loopback rule at all, which is why the old name
+// `ToleranceRulesMatchTheLoopback` was retired - it named a third thing the code does not do.
+//
+// M5 - add trimming, case folding or comment support - reddens here.
+TEST(XrceConfig, ToleranceRefusesWhatTheLoopbackRefuses) {
+    // Accepted: CRLF entries, blank lines, a trailing newline. All three occur in a document an
+    // operator authored on this project's primary platform, and the same text must mean the same
+    // thing in every build.
+    XrceSettings crlf;
+    ASSERT_NO_THROW(crlf = ParseXrceDocument(ConfigWith(
+                        "transport=tcp\r\n\r\nagent=127.0.0.1:2019\r\nconnect_timeout_ms=1\r\n")));
+    EXPECT_EQ(crlf.transport, XrceTransportKind::kTcp);
+    EXPECT_EQ(crlf.agent_host, "127.0.0.1");
+    EXPECT_EQ(crlf.agent_port, 2019);
+    EXPECT_EQ(crlf.connect_timeout, std::chrono::milliseconds(1));
+
+    // An empty document is the defaults, not an error (H2).
+    EXPECT_TRUE(ParseXrceDocument(ConfigWith("")) == XrceSettings{});
+    EXPECT_TRUE(ParseXrceDocument(ConfigWith("\n\r\n\n")) == XrceSettings{});
+
+    // ONE whitespace rule, and it refuses (fix cycle 1, review 4b S2): any byte below 0x21
+    // INSIDE an entry. Every row below used to be decided by a DIFFERENT check - the key lookup,
+    // the decimal parse - and one of them was not decided at all: `agent= 127.0.0.1:2018` was
+    // accepted with the space kept in the host and failed a layer down in the client's resolver,
+    // which is the one component this provider deliberately knows nothing about (H1). The state
+    // is now unrepresentable rather than documented, so these rows are one rule rather than four
+    // coincidences.
+    ExpectRefused(" agent=127.0.0.1:2018", PubSubStatus::kInvalidArgument, " agent=127.0.0.1:2018");
+    ExpectRefused("agent =127.0.0.1:2018", PubSubStatus::kInvalidArgument, "agent =127.0.0.1:2018");
+    ExpectRefused("agent= 127.0.0.1:2018", PubSubStatus::kInvalidArgument, "agent= 127.0.0.1:2018");
+    ExpectRefused("agent=127.0.0.1 :2018", PubSubStatus::kInvalidArgument, "agent=127.0.0.1 :2018");
+    ExpectRefused("agent=127.0.0.1:2018 ", PubSubStatus::kInvalidArgument, "agent=127.0.0.1:2018 ");
+    ExpectRefused("transport=tcp\t", PubSubStatus::kInvalidArgument, "transport=tcp\t");
+    ExpectRefused("session_key= 7", PubSubStatus::kInvalidArgument, "session_key= 7");
+    // A CR that is NOT the trailing one: the strip is a line-terminator tolerance, not a licence
+    // to put a control byte in the middle of an address.
+    ExpectRefused("agent=127.0.0.1\r:2018", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1\r:2018");
+    // DEL (0x7F) is a control byte that sits ABOVE the printable range, so "below 0x21" missed
+    // it: this entry used to parse, keeping a DEL inside the host, and was then left to the
+    // resolver H1 says this provider knows nothing about - the same defect S2 closed for the
+    // space, in the one byte S2's phrasing let through (fix cycle 2, review F6 RECORD). The RULE
+    // was extended rather than the comment corrected: forbidding beats documenting, and a DEL
+    // inside a host, a key or a number is never legitimate.
+    ExpectRefused("agent=127.0.0.1\x7f:2018", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1\x7f:2018");
+    // Spelled in two pieces because a hex escape is greedy: "\x7f7" would be one out-of-range
+    // escape, not DEL followed by a digit.
+    ExpectRefused(
+        "session_key=\x7f"
+        "7",
+        PubSubStatus::kInvalidArgument,
+        "session_key=\x7f"
+        "7");
+    // The rule's OTHER edge is deliberately where it is: 0x80-0xFF are not touched, so a
+    // non-ASCII hostname stays representable and is the resolver's business (review cycle 2
+    // RECORD: do not widen this).
+    EXPECT_NO_THROW(ParseXrceDocument(ConfigWith("agent=h\xc3\xa9st:2018")));
+
+    // ...and the SEPARATORS keep working, which is what this rule is careful not to touch: the
+    // CRLF document accepted above already proves the trailing strip, and a blank-only document
+    // is still the defaults.
+    EXPECT_TRUE(ParseXrceDocument(ConfigWith("transport=tcp\r\n")).transport ==
+                XrceTransportKind::kTcp);
+
+    // No case folding.
+    ExpectRefused("AGENT=127.0.0.1:2018", PubSubStatus::kInvalidArgument, "AGENT=127.0.0.1:2018");
+    ExpectRefused("transport=TCP", PubSubStatus::kInvalidArgument, "transport=TCP");
+
+    // No comments. A `#` line is not a comment, it is an entry with no `=`.
+    ExpectRefused("# the agent\nagent=127.0.0.1:2018", PubSubStatus::kInvalidArgument,
+                  "# the agent");
+    ExpectRefused("agent=127.0.0.1:2018 # the agent", PubSubStatus::kInvalidArgument,
+                  "agent=127.0.0.1:2018 # the agent");
+}
+
+// =============================================================================================
+// The README's published defaults are the code's defaults - read OFF DISK
+// =============================================================================================
+//
+// The README publishes the full default document as the operator's copy-paste starting point.
+// This reads that block out of README.md at RUN time and parses it: it must come out equal,
+// whole-struct, to a default-constructed `XrceSettings`. So editing EITHER the README block or a
+// default in the code, alone, turns this red (M6) - including a key's spelling.
+//
+// It never skips. An unreadable README is a HARD failure naming the path, because a test that
+// silently skips when its subject is missing is how the fastdds equivalent's first version
+// managed to assert nothing under `conan create` (README.md was not in `exports_sources`; it is
+// in this package's now, for the same reason).
+TEST(XrceConfig, PublishedDefaultsAreExact) {
+    const std::string readme = ReadWholeFile(kReadmePath);
+    ASSERT_FALSE(readme.empty())
+        << "could not read the provider README at " << kReadmePath
+        << " - this test compares the README's published defaults against the code, so it cannot "
+           "run without it (the path arrives via target_compile_definitions, and README.md is "
+           "exported by conanfile.py so the cache build reads the same file the repository holds)";
+
+    const std::string published =
+        ExtractFencedBlockAfter(readme, "#### The published default document");
+    ASSERT_FALSE(published.empty())
+        << "found no fenced block under '#### The published default document' in " << kReadmePath
+        << " - if that section was renamed, this test's marker moves with it";
+
+    // A truncated or mis-anchored extraction must fail loudly rather than quietly compare a
+    // fragment: an empty document parses to the defaults, so the block's own shape is asserted
+    // before the comparison that would otherwise pass on nothing.
+    for (const char* key : {"transport=", "agent=", "session_key=", "connect_timeout_ms="}) {
+        EXPECT_NE(published.find(key), std::string::npos)
+            << "the published default document no longer mentions " << key
+            << " - extracted block: [" << published << "]";
+    }
+
+    XrceSettings from_readme;
+    ASSERT_NO_THROW(from_readme = ParseXrceDocument(ConfigWith(published)))
+        << "the README's published default document is not one this provider accepts: ["
+        << published << "]";
+    EXPECT_TRUE(from_readme == XrceSettings{})
+        << "the README's published defaults no longer match the code's. README says transport="
+        << static_cast<int>(from_readme.transport) << " agent=" << from_readme.agent_host << ":"
+        << from_readme.agent_port << " session_key=" << from_readme.session_key
+        << " connect_timeout_ms=" << from_readme.connect_timeout.count();
+}
+
+// =============================================================================================
+// Serial: nameable, and refused DISTINCTLY from a typo
+// =============================================================================================
+//
+// Replaces `XrceProviderTest.SerialTransportNotImplemented`, which asserted only that something
+// derived from `std::runtime_error` came out - true of `PubSubError` whatever its status, so it
+// could not tell "this build cannot do serial" from "unknown key". Owner ruling 2026-09-02:
+// a valid-but-unsupported selection must not look like a mistake.
+//
+// M7 - route serial into the transport switch instead - reddens this: it would arrive as
+// `kTransportFailure` (or as a `std::runtime_error` before that), not `kNotSupported`. Costs
+// microseconds: no transport object is ever built.
+TEST(XrceConfig, SerialIsRefusedAsUnsupported) {
+    const Refusal refusal = Catch([&] { ParseXrceDocument(ConfigWith("transport=serial")); });
+    ASSERT_TRUE(refusal.threw) << "transport=serial was accepted";
+    ASSERT_TRUE(refusal.typed) << refusal.message;
+    EXPECT_EQ(refusal.status, PubSubStatus::kNotSupported)
+        << "serial must be refused as unsupported, distinctly from an unknown value's "
+           "kInvalidArgument: "
+        << refusal.message;
+    EXPECT_NE(refusal.message.find("\"transport=serial\""), std::string::npos) << refusal.message;
+
+    // And it is refused through the constructor too, before any transport exists.
+    const Refusal via_ctor =
+        Catch([&] { XrceDDSPubSubProvider provider(ConfigWith("transport=serial")); });
+    ASSERT_TRUE(via_ctor.typed) << via_ctor.message;
+    EXPECT_EQ(via_ctor.status, PubSubStatus::kNotSupported) << via_ctor.message;
+}
+
+// =============================================================================================
+// An unreachable Agent is a TRANSPORT failure - and registration gets an Agent-free witness
+// =============================================================================================
+//
+// Replaces `XrceProviderTest.ConstructorThrowsWithoutAgent`, which asserted "it threw". The
+// status is the point: before this item the constructor threw `std::runtime_error`, which
+// arrives at a caller through `TranslateSeamFailure` as `kInternal` and tells an operator
+// nothing about what to do next (M8).
+//
+// Routed through `RegisterXrceProvider` + `Create("xrce", ...)` rather than a direct
+// constructor call, so built-in registration gets a witness that needs no Agent: register under
+// any other name (M14) and this row reddens in the provider's own CI as an unknown selector,
+// instead of only in the Agent-gated conformance suite.
+//
+// Port 19999 is named explicitly. The default address would be 127.0.0.1:2018 - the interop
+// suite's own Agent port - and an Agent there would make construction SUCCEED and redden this
+// row for the wrong reason (review C2-5).
+//
+// `connect_timeout_ms=1`, not `=0`, since fix cycle 1: at a 0 ms budget the client sends one
+// datagram and never listens, so construction failed whether or not anything answered on 19999
+// and the `ASSERT_EQ(provider, nullptr)` below was DEAD - the row claimed to witness
+// unreachability and could not (review 4a F4). One millisecond is one whole ~1000 ms attempt
+// (`SessionAttempts`), so the handshake is now genuinely awaited and genuinely unanswered: that
+// costs this row ~1 s and buys the assertion back. It stays Agent-INSENSITIVE - nothing in this
+// tree runs an Agent on 19999, and if something did, the message says so instead of failing on
+// the status.
+TEST(XrceConfig, AgentUnreachableIsATransportFailure) {
+    ProviderRegistry registry;
+    RegisterXrceProvider(registry);
+
+    const ProviderConfig config = ConfigWith("agent=127.0.0.1:19999\nconnect_timeout_ms=1");
+
+    const Refusal refusal = Catch([&] {
+        std::shared_ptr<PubSubProvider> provider =
+            registry.Create(ProviderSelector::Parse("xrce"), config);
+        // Reachable only if something answers XRCE on 19999 within the one attempt this
+        // budget buys, which would be a broken machine rather than a broken build - say so
+        // instead of failing on the status.
+        ASSERT_EQ(provider, nullptr) << "something is answering XRCE on 127.0.0.1:19999";
+    });
+    ASSERT_TRUE(refusal.threw) << "constructing against an unreachable Agent did not fail";
+    ASSERT_TRUE(refusal.typed) << "an untyped exception reaches the caller as kInternal: "
+                               << refusal.message;
+    EXPECT_EQ(refusal.status, PubSubStatus::kTransportFailure) << refusal.message;
+    // Not an unknown-name refusal: that is `kInvalidArgument` and would mean the provider is
+    // registered under some other name than "xrce".
+    EXPECT_EQ(refusal.message.find("no built-in provider named"), std::string::npos)
+        << "\"xrce\" did not resolve through the registry: " << refusal.message;
+}
+
+// =============================================================================================
+// A construction that FAILS releases the transport it opened - counted, not argued
+// =============================================================================================
+//
+// This row exists because the fix it guards landed once with no witness (review cycle 2 F6).
+// Fix cycle 1's S1 gave `Impl` a destructor: before it, `uxr_close_*_transport` lived only in
+// `~XrceDDSPubSubProvider`, which DOES NOT RUN when the constructor throws, so every failed
+// construction leaked the socket it had just opened - and a provider whose Agent is down is
+// exactly the case an operator retries in a loop. The fix was measured by a throwaway probe and
+// the probe was deleted, which left the item with a correct implementation and nothing that
+// reddens if it regresses: an early `return`, a second close site, or a `catch` re-added above
+// the destructor would restore the leak in silence. This is that probe, landed.
+//
+// It counts HANDLES, not lines. The mutations it reddens, measured (see the fix report):
+//   * delete `Impl::~Impl`, or empty its transport-closing switch  -> ~one handle per failed
+//     construction, i.e. hundreds, versus a tolerance of tens.
+//   * make the close conditional on `session_created` instead of `open_transport` -> reddens on
+//     BOTH paths below, since neither creates a session.
+//
+// Both post-transport-init throw paths are exercised, and each asserts that it really is
+// post-init (the diagnostic must be the SESSION one): a mutation that made transport init itself
+// fail would otherwise turn this row into a probe of nothing.
+//   Path A  UDP: init cannot fail (connectionless), so the throw is the session handshake, with
+//                no Agent and no listener in the picture at all.
+//   Path B  TCP: init CONNECTS (blocking, inside init), to a test-owned listener that speaks no
+//                XRCE, so the transport is genuinely open when the session handshake throws.
+// `connect_timeout_ms=0` on both, so each iteration is one datagram and no wait.
+//
+// A throw AFTER `session_created = true` is not reachable from a test and is not claimed here:
+// the only remaining failure past that line is `std::thread` construction, which needs a live
+// Agent plus an exhausted thread limit. It is covered structurally instead - there is exactly
+// one close site, in the destructor, reached by unwinding, and it keys off `open_transport`,
+// which is set before the session exists. See the fix report.
+TEST(XrceConfig, FailingConstructionDoesNotLeakTheTransport) {
+    if (CountOpenHandles() < 0) {
+        // A counted, documented skip - the platform cannot answer the question, and asserting
+        // anyway would be a red with nothing wrong. Windows and Linux both answer, which is
+        // every platform this project builds on; the row is registered unconditionally so a
+        // third platform gets this sentence rather than silently losing the coverage.
+        GTEST_SKIP() << "no handle-count mechanism on this platform (neither "
+                        "GetProcessHandleCount nor /proc/self/fd), so a leak cannot be counted "
+                        "here; the close site is guarded structurally only";
+    }
+
+    TcpListener listener(/*hold_clients=*/false);
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    // Hundreds, so a one-per-construction leak dwarfs any incidental jitter; the tolerance below
+    // is a tenth of it. Each iteration is microseconds - nothing waits.
+    constexpr int kIterations = 200;
+    constexpr int kWarmup = 5;
+    constexpr int kTolerance = kIterations / 10;
+
+    struct Path {
+        const char* name;
+        std::string document;
+    };
+    const Path paths[] = {
+        {"UDP, throw at the session handshake", "agent=127.0.0.1:19999\nconnect_timeout_ms=0"},
+        {"TCP, connected to a listener that speaks no XRCE",
+         "transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+             "\nconnect_timeout_ms=0"}};
+
+    for (const Path& path : paths) {
+        // Warm up first: the first construction on each transport pays one-off costs (Winsock
+        // start-up, lazily created runtime handles) that are not leaks and must not be inside
+        // the measured window.
+        for (int i = 0; i < kWarmup; ++i) {
+            const Refusal warm =
+                Catch([&] { XrceDDSPubSubProvider provider(ConfigWith(path.document)); });
+            ASSERT_TRUE(warm.threw) << path.name
+                                    << ": this construction SUCCEEDED, so the row is "
+                                       "measuring the wrong thing entirely: "
+                                    << warm.message;
+        }
+
+        const int before = CountOpenHandles();
+        ASSERT_GE(before, 0) << path.name << ": the handle probe stopped answering";
+
+        int post_init_throws = 0;
+        std::string first_unexpected;
+        for (int i = 0; i < kIterations; ++i) {
+            const Refusal refusal =
+                Catch([&] { XrceDDSPubSubProvider provider(ConfigWith(path.document)); });
+            if (refusal.typed && refusal.status == PubSubStatus::kTransportFailure &&
+                refusal.message.find("failed to create a session") != std::string::npos) {
+                ++post_init_throws;
+            } else if (first_unexpected.empty()) {
+                first_unexpected = refusal.message;
+            }
+        }
+
+        const int after = CountOpenHandles();
+        ASSERT_GE(after, 0) << path.name << ": the handle probe stopped answering";
+
+        // The point of the row: the transport was open when the constructor threw, every time.
+        ASSERT_EQ(post_init_throws, kIterations)
+            << path.name
+            << ": these constructions did not fail at the SESSION handshake, so the transport was "
+               "never open and this row would prove nothing about closing it. First other "
+               "failure: "
+            << (first_unexpected.empty() ? std::string("(none recorded)") : first_unexpected);
+
+        EXPECT_LE(after - before, kTolerance)
+            << path.name << ": " << kIterations << " failed constructions leaked "
+            << (after - before) << " OS handles (" << before << " -> " << after
+            << "). A failing constructor must release the transport it opened - the close lives "
+               "in Impl::~Impl, which runs on a half-constructed Impl by unwinding; if it was "
+               "deleted, emptied, or made conditional on the session instead of the transport, "
+               "this is what that looks like";
+    }
+}

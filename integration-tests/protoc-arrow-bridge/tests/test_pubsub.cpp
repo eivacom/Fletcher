@@ -63,11 +63,11 @@ class MockPubSubProvider : public PubSubProvider {
         created_topics.push_back({segments, std::move(schema)});
     }
 
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
+    void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
-        std::vector<uint8_t> buf;
-        VectorWriteBuffer wb(buf);
+        VectorWriteBuffer wb;
         encoder(wb);
+        std::vector<uint8_t> buf = wb.Finish();
         SharedSchema sp;
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
@@ -87,11 +87,11 @@ class MockPubSubProvider : public PubSubProvider {
         subscribers[segments] = std::move(callback);
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
-                return {MakeReadySchemaFuture(
+                return {fletcher::SchemaArrival::Ready(
                     MakeSharedSchema(OwnedSchema::DeepCopy(ct.schema.get())))};
             }
         }
-        return {MakeReadySchemaFuture(nullptr)};
+        return {fletcher::SchemaArrival::Ready(nullptr)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -175,6 +175,34 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     EXPECT_EQ(received.metric_name(), "cpu");
 }
 
+TEST(PubSubProtoTest, SubscribeInPlaceReusesOneRowWithoutCarryingValuesOver) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    std::vector<const void*> addresses;
+    std::vector<std::string> names;
+    std::vector<int32_t> ids;
+    sub.SubscribeInPlace(
+        [&](const fletcher_gen::integration::pubsub::Telemetry& msg, const Attachments&) {
+            addresses.push_back(&msg);
+            names.push_back(std::string(msg.metric_name()));
+            ids.push_back(msg.device_id());
+        });
+
+    fletcher_gen::integration::pubsub::Telemetry row;
+    pub.Publish(row.set_device_id(1).set_value(1.0).set_timestamp(10LL).set_metric_name("cpu"));
+    pub.Publish(row.set_device_id(2).set_value(2.0).set_timestamp(20LL).set_metric_name("io"));
+
+    ASSERT_EQ(ids.size(), 2u);
+    EXPECT_EQ(ids[0], 1);
+    EXPECT_EQ(ids[1], 2);
+    // The second sample's shorter name must not leave any of the first behind.
+    EXPECT_EQ(names[0], "cpu");
+    EXPECT_EQ(names[1], "io");
+    EXPECT_EQ(addresses[0], addresses[1]) << "SubscribeInPlace must decode into one reused row";
+}
+
 TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
     auto mock = std::make_shared<MockPubSubProvider>();
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
@@ -202,7 +230,7 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
 
     fletcher_gen::integration::pubsub::Telemetry received;
     Attachments received_att;
-    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, Attachments att) {
+    sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry msg, const Attachments& att) {
         received = std::move(msg);
         received_att = std::move(att);
     });
@@ -210,14 +238,19 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(42).set_value(3.14).set_timestamp(1000LL).set_metric_name("cpu");
 
-    auto blob =
-        std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF});
-    pub.Publish(row, {{"image", blob}});
+    const std::vector<uint8_t> payload{0xDE, 0xAD, 0xBE, 0xEF};
+    fletcher::Blob blob{payload};
+    fletcher::Attachments sent;
+    sent.emplace("image", blob);
+    pub.Publish(row, sent);
 
     EXPECT_EQ(received.device_id(), 42);
     ASSERT_EQ(received_att.size(), 1u);
     ASSERT_EQ(received_att.count("image"), 1u);
-    EXPECT_EQ(*received_att.at("image"), (std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF}));
+    // The generated publisher hands the blob through; a Blob copy retains the
+    // owner, so the delivered bytes are the very bytes published (§3.2).
+    EXPECT_EQ(received_att.at("image").data(), blob.data());
+    EXPECT_EQ(received_att.at("image").size(), payload.size());
 }
 
 TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {

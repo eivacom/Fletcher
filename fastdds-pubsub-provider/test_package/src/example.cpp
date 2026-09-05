@@ -28,14 +28,25 @@ static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
 }
 
 int main() {
-    FastDDSPubSubProvider pub_provider(FastDDSProviderOptions{});
-    FastDDSPubSubProvider sub_provider(FastDDSProviderOptions{});
+    // ProviderConfig and nothing else — and this TU is the machine check for that: the package
+    // recipe drops `transitive_headers`, so it compiles with no Fast DDS include directories at
+    // all. An eProsima type surviving in the installed header would be a compile error HERE
+    // (PDA-DEC-6 §5, owner ruling 2026-08-31 "Fletcher never learns DDS vocabulary").
+    //
+    // The bound is written the way the header tells a caller to write it, so this TU is also the
+    // machine check for that advice: `kPayloadBytes<N>` lives in
+    // <fletcher/pubsub/payload_bound.hpp>, which the public header must include for an out-of-tree
+    // caller to compile (review 4a F7).
+    const ProviderConfig config{.max_payload_bytes = kPayloadBytes<64 * 1024>};
+    FastDDSPubSubProvider pub_provider(config);
+    FastDDSPubSubProvider sub_provider(config);
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
-        {"example", "topic"}, [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+        {"example", "topic"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));
@@ -43,7 +54,9 @@ int main() {
             }
         });
 
-    if (!result.schema.valid()) {
+    // One waiting mechanism, with a deadline and a typed outcome.
+    SharedSchema schema;
+    if (result.schema.Wait(std::chrono::seconds(5), &schema) != PubSubStatus::kOk || !schema) {
         std::fputs("FAIL: schema not received from publisher\n", stderr);
         return 1;
     }

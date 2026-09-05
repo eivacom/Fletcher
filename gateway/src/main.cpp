@@ -11,11 +11,31 @@
 // CLI:
 //   --port N               TCP port to listen on (default 9090).
 //   --bind-address ADDR    bind address (default 0.0.0.0).
-//   --provider TYPE        pub/sub provider: "inprocess" (default) or
-//                          "fastdds". Both are compiled in; the switch
-//                          selects between them at runtime.
+//   --provider NAME        pub/sub provider (default "inprocess"). This file
+//                          registers exactly two names, "inprocess" and
+//                          "fastdds" — but that list lives in the registry
+//                          below, NOT here: an unrecognised NAME is refused
+//                          at startup (exit 2) naming what IS registered, so
+//                          this comment is not the authority a third
+//                          provider would have to keep in sync.
 //   --domain-id N          DDS domain id for the fastdds provider (default 0).
 //                          Ignored by the inprocess provider.
+//   --provider-config FILE read FILE and hand its contents to the selected
+//                          provider as its configuration document. The format
+//                          is the PROVIDER's, not the gateway's: a Fast DDS XML
+//                          QoS profiles document for "fastdds", `key=value`
+//                          lines for "inprocess". The gateway does not parse it,
+//                          does not validate it and does not know what it means
+//                          — it only reads the bytes, because Fletcher never
+//                          opens a file on a provider's behalf (owner ruling
+//                          2026-09-02: the configuration setting carries the
+//                          document itself, and the convenience of reading a
+//                          file lives HERE). An unreadable FILE exits 2, like a
+//                          bad selector, and so does a FILE that is a directory
+//                          or that reads as empty - each with its own message,
+//                          because they are different mistakes; a document the
+//                          provider rejects exits 2 with the provider's own
+//                          message.
 //
 // The gateway is schema-agnostic. It knows nothing about topic schemas
 // or which topics exist before clients show up; clients establish
@@ -31,110 +51,118 @@
 //     (Windows SIGTERM semantics differ from POSIX).
 //
 // Provider note:
-//   The default provider is an in-process loopback (--provider inprocess),
-//   which only connects WebSocket clients on the same process. The
-//   DDS-backed provider (--provider fastdds) bridges the gateway to any
-//   FastDDS app on the same DDS domain, so a WebSocket client can pub/sub
-//   to data flowing over DDS. Both providers are always compiled into the
-//   exe; the switch selects between them at runtime.
+//   The default ("inprocess") is a loopback that only connects WebSocket
+//   clients on the same process. This file also registers a DDS-backed
+//   provider under "fastdds", which bridges the gateway to any FastDDS app on
+//   the same DDS domain, so a WebSocket client can pub/sub to data flowing
+//   over DDS. Both are always compiled into the exe, registered
+//   unconditionally, and selected at runtime by ONE registry lookup (spec
+//   §4) — this file keeps no separate list of valid names, and neither
+//   should a reader of this comment: the registry's own refusal, not this
+//   text, is what says which providers a given build has.
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <fletcher/core/write_buffer.hpp>
+#include <filesystem>
+#include <fletcher/core/status.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <fletcher/pubsub/internal/segments.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
-#include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/in_process_provider.hpp>
+#include <fletcher/pubsub/provider_registry.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <fstream>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <vector>
+#include <system_error>
 
 #include "gateway.hpp"
 
 namespace {
-
-// ─────────────────────────────────────────────────────────────────────
-// InProcessProvider — the only provider implementation gateway ships
-// with right now. Topics are created on first subscribe or publish so
-// no pre-registration is needed.
-//
-// The provider caches the schema a publisher announced via
-// CreateTopic and hands it back to subscribers via SubscriptionResult.
-// Gateway forwards that schema to its WebSocket clients on subscribe,
-// but never inspects or validates it — pure passthrough.
-// ─────────────────────────────────────────────────────────────────────
-class InProcessProvider : public fletcher::PubSubProvider {
-   public:
-    void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema schema) override {
-        std::lock_guard lock(mu_);
-        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
-        if (schema) {
-            slot.schema = fletcher::OwnedSchema::DeepCopy(schema.get());
-        }
-    }
-
-    void Publish(const std::vector<std::string>& segments, RowEncoder encoder,
-                 const fletcher::Attachments& attachments) override {
-        std::vector<uint8_t> buf;
-        fletcher::VectorWriteBuffer wb(buf);
-        encoder(wb);
-
-        SubscribeCallback cb;
-        {
-            std::lock_guard lock(mu_);
-            auto [it, _] = topics_.try_emplace(fletcher::internal::JoinSegments(segments));
-            cb = it->second.callback;
-        }
-        if (cb) {
-            cb(buf.data(), buf.size(), nullptr, attachments);
-        }
-    }
-
-    fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                           SubscribeCallback callback) override {
-        std::lock_guard lock(mu_);
-        auto& slot = topics_[fletcher::internal::JoinSegments(segments)];
-        slot.callback = std::move(callback);
-        fletcher::SharedSchema schema;
-        if (slot.schema) {
-            schema = fletcher::MakeSharedSchema(fletcher::OwnedSchema::DeepCopy(slot.schema.get()));
-        }
-        return {fletcher::MakeReadySchemaFuture(std::move(schema))};
-    }
-
-    void Unsubscribe(const std::vector<std::string>& segments) override {
-        std::lock_guard lock(mu_);
-        auto it = topics_.find(fletcher::internal::JoinSegments(segments));
-        if (it != topics_.end()) {
-            it->second.callback = nullptr;
-        }
-    }
-
-   private:
-    struct TopicState {
-        SubscribeCallback callback;
-        fletcher::OwnedSchema schema;
-    };
-    std::mutex mu_;
-    std::unordered_map<std::string, TopicState> topics_;
-};
 
 struct Args {
     std::string bind_address = "0.0.0.0";
     uint16_t port = 9090;
     std::string provider = "inprocess";
     uint32_t domain_id = 0;
+    // The CONTENTS of --provider-config, not its path: what crosses the seam is
+    // the document itself (§4.1), so the file is read here and the name is not
+    // kept. Empty means "no document", which is every provider's own default.
+    std::string document;
 };
+
+// Read a provider document off disk. This is the ONLY file the gateway opens on
+// a provider's behalf, and it is opened in BINARY: the document is opaque bytes
+// (§4.2, C form: "the bytes may contain NUL"), so no newline translation and no
+// text-mode truncation at a stray 0x1A.
+std::string ReadProviderDocument(const char* path) {
+    // A DIRECTORY is refused here, before the open, because the open does not refuse it
+    // everywhere: on Linux open(2) on a directory SUCCEEDS and only the first read(2)
+    // fails, with EISDIR. A directory would therefore reach the empty-document check
+    // below as zero bytes and be reported as an empty file -- the one diagnosis that has
+    // to stay reserved for a file that really was read and really did hold nothing.
+    // Windows refuses a directory at the open, so this check is also what makes the two
+    // platforms say the same thing about the same path. It is an EXTRA check and never
+    // the only one: an unreadable regular file is still caught by the open just below,
+    // and a read that dies part-way is still caught by the badbit check after it.
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec)) {
+        std::fprintf(stderr, "fletcher-gateway: cannot read --provider-config %s\n", path);
+        std::exit(2);
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::fprintf(stderr, "fletcher-gateway: cannot read --provider-config %s\n", path);
+        std::exit(2);
+    }
+
+    // Read THROUGH the istream, block by block, so that a failed read lands on THIS
+    // stream's badbit: [istream.unformatted] requires an unformatted input function to
+    // set badbit when the streambuf reports failure by exception, which is exactly what
+    // libstdc++'s filebuf does on EISDIR. The obvious `buffer << in.rdbuf()` cannot be
+    // used for this -- it drains the streambuf without ever touching `in`'s state, so
+    // `in.bad()` stays false and a read error and an empty file both reduce to "no
+    // characters inserted": indistinguishable, which is the one question this function
+    // exists to answer.
+    std::string document;
+    char block[8192];
+    while (in.read(block, sizeof block) || in.gcount() > 0) {
+        document.append(block, static_cast<std::size_t>(in.gcount()));
+    }
+    // The READ says whether this worked; the length of what came back does not. badbit
+    // means the bytes never arrived, which is a different answer from "the file opened,
+    // read cleanly and held nothing" -- and the two get deliberately different messages.
+    if (in.bad()) {
+        std::fprintf(stderr, "fletcher-gateway: error reading --provider-config %s\n", path);
+        std::exit(2);
+    }
+
+    // An EMPTY file is refused, and with its own message. Every provider reads an empty document
+    // as "my own defaults", so a zero-length, truncated or wrong-but-empty file would otherwise
+    // start a gateway that applies none of the operator's intent and says nothing at all. Whoever
+    // passed --provider-config asked to be configured FROM THAT FILE; an empty read fails that
+    // request as squarely as an unreadable one, and this is the only place that can tell "no flag"
+    // from "flag, empty file" (review 4b S2, and the item's own rule: refuse at start-up so a
+    // misconfigured instance never exists). Whitespace-only counts as empty: it is what an editor
+    // leaves behind, and no provider's format has a meaning for it.
+    if (document.find_first_not_of(" \t\r\n\f\v") == std::string::npos) {
+        std::fprintf(stderr,
+                     "fletcher-gateway: --provider-config %s is empty; omit the flag to run on "
+                     "the provider's own defaults\n",
+                     path);
+        std::exit(2);
+    }
+    return document;
+}
 
 Args ParseArgs(int argc, char* argv[]) {
     Args a;
+    // The path is remembered and read AFTER the flag loop, so `--provider-config missing.xml
+    // --help` prints help instead of exiting 2 on a file the user never meant to use.
+    const char* document_path = nullptr;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) {
@@ -145,13 +173,30 @@ Args ParseArgs(int argc, char* argv[]) {
             a.provider = argv[++i];
         } else if (arg == "--domain-id" && i + 1 < argc) {
             a.domain_id = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--provider-config" && i + 1 < argc) {
+            document_path = argv[++i];
         } else if (arg == "--version") {
             std::printf("fletcher-gateway %s\n", GATEWAY_VERSION_STRING);
             std::exit(0);
         } else if (arg == "--help" || arg == "-h") {
+            // "--provider NAME", not an enumerated grammar: the registry
+            // below is the single list, and an unrecognised NAME is refused
+            // at startup naming what IS registered, so this usage line does
+            // not duplicate it (rung-1 forbidden case 4).
+            // Nor is the list derived from the registry, and it must not be:
+            // once a path resolver is installed, an enumeration can only ever
+            // report BUILT-INS, which would hand code above the seam a way to
+            // tell built-in from loaded (decision 3). The registry's surface is
+            // frozen at Create/Register/SetPathResolver "and nothing else"
+            // (provider_registry.hpp) — a name-listing accessor is not a gap.
             std::printf(
                 "Usage: %s [--port N] [--bind-address ADDR] "
-                "[--provider inprocess|fastdds] [--domain-id N] [--version]\n",
+                "[--provider NAME] [--domain-id N] [--provider-config FILE] "
+                "[--version]\n"
+                "  --provider defaults to \"inprocess\"; an unrecognised NAME "
+                "exits 2 naming what this build supports.\n"
+                "  --provider-config FILE is passed to the provider verbatim, "
+                "in the provider's own format.\n",
                 argv[0]);
             std::exit(0);
         } else {
@@ -159,12 +204,10 @@ Args ParseArgs(int argc, char* argv[]) {
             std::exit(2);
         }
     }
-    if (a.provider != "inprocess" && a.provider != "fastdds") {
-        std::fprintf(stderr,
-                     "fletcher-gateway: unknown provider: %s (expected inprocess|fastdds)\n",
-                     a.provider.c_str());
-        std::exit(2);
-    }
+    if (document_path) a.document = ReadProviderDocument(document_path);
+    // No provider-name validation here: the registry below is the single list
+    // (spec §4), and it refuses an unknown selector itself, naming what IS
+    // registered.
     return a;
 }
 
@@ -180,12 +223,45 @@ int main(int argc, char* argv[]) {
     }
 
     std::shared_ptr<fletcher::PubSubProvider> provider;
-    if (args.provider == "fastdds") {
-        fletcher::FastDDSProviderOptions dds_opts;
-        dds_opts.domain_id = args.domain_id;
-        provider = std::make_shared<fletcher::FastDDSPubSubProvider>(std::move(dds_opts));
-    } else {
-        provider = std::make_shared<InProcessProvider>();
+    try {
+        // DEBT-4 disclosure: this `try` is new. Before this item a Fast DDS
+        // construction failure was an uncaught exception escaping `main` (a
+        // crash/abort), not a clean exit — this one `catch` now turns it into
+        // the same "exit 2 plus a message" every other provider refusal gets.
+        // An improvement, and consistent with §5.1, but it is NOT the
+        // "observably unchanged" this item's other half claims to be; said
+        // here because it is not said anywhere else durable.
+        //
+        // Both built-ins are registered UNCONDITIONALLY and before the
+        // selector is looked at: registration states availability (a
+        // link-time fact), `Create` performs selection (a runtime string).
+        // Branching registration on `args.provider` would put a selector
+        // branch back above the seam — exactly what locked decision 3
+        // forbids. The `fastdds` factory's closure is not called unless
+        // "fastdds" is selected, so an inprocess run costs exactly what it
+        // costs today.
+        fletcher::ProviderRegistry registry;
+        fletcher::RegisterInProcessProvider(registry);
+        // PDA-DEC-6: the provider registers itself, so this file no longer names
+        // a concrete provider type at all — the last one went with the inline
+        // closure that used to translate `ProviderConfig` into a Fast
+        // DDS-specific options struct. Nothing here knows any DDS vocabulary.
+        fletcher::RegisterFastDDSProvider(registry);
+
+        // PDA-DEC-5 DEBT-5 is CLOSED here: `--provider-config FILE` is the route
+        // an operator uses to configure the selected provider, which is what
+        // makes charter requirement (b) — "there is a way for me to configure
+        // the driver with protocol-specific setup details at runtime" —
+        // reachable from gateway.exe. The gateway supplies bytes and nothing
+        // else: it neither knows nor checks the format, so ONE flag serves every
+        // provider this build has and every provider a later build adds.
+        fletcher::ProviderConfig config;
+        config.domain_id = args.domain_id;
+        config.document = args.document;
+        provider = registry.Create(fletcher::ProviderSelector::Parse(args.provider), config);
+    } catch (const fletcher::PubSubError& e) {
+        std::fprintf(stderr, "fletcher-gateway: %s\n", e.what());
+        return 2;
     }
 
     auto publisher = std::make_shared<fletcher::Publisher>(provider);
