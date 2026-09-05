@@ -44,6 +44,7 @@
 #include <fletcher/core/positional_io.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
@@ -368,6 +369,16 @@ fletcher::PubSubProvider::SubscribeCallback MakeSink(size_t& sum) {
                   const fletcher::Attachments&) { sum += len ? data[0] : 0; };
 }
 
+// OrderedDelivery dispatches through a DeliveryChannel, so the two arms below
+// measure the channel's cost too: one try/catch frame and one push/pop of a
+// thread-local vector per sample. That is deliberate -- it is what the shipped
+// path pays.
+fletcher::DeliveryChannel BenchChannel(fletcher::PubSubProvider::SubscribeCallback cb) {
+    static const int kBenchProviderToken = 0;
+    return fletcher::DeliveryChannel(fletcher::DeliveryChannel::RawToken{}, &kBenchProviderToken,
+                                     std::move(cb));
+}
+
 // The floor: the callback alone, with the arguments a delivery hands it.
 void BM_Deliver_CallbackOnly(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
@@ -387,7 +398,7 @@ BENCHMARK(BM_Deliver_CallbackOnly)->FLETCHER_ROW_SIZES;
 void BM_Deliver_OfferView(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(MakeSink(sum),
+    fletcher::internal::OrderedDelivery delivery(BenchChannel(MakeSink(sum)),
                                                  fletcher::MakeSharedSchema(TransformSchema()), 10);
     for (auto _ : state) {
         delivery.OfferView(row.data(), row.size(), kNoAttachments);
@@ -408,7 +419,7 @@ BENCHMARK(BM_Deliver_OfferView)->FLETCHER_ROW_SIZES;
 void BM_Deliver_Offer(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(MakeSink(sum),
+    fletcher::internal::OrderedDelivery delivery(BenchChannel(MakeSink(sum)),
                                                  fletcher::MakeSharedSchema(TransformSchema()), 10);
     for (auto _ : state) {
         delivery.Offer(row, kNoAttachments);

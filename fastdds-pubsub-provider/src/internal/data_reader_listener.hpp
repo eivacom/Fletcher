@@ -39,19 +39,26 @@ inline bool CanLoanSamples(const eprosima::fastdds::dds::DataReaderQos& qos) {
 class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener {
    public:
     // `max_queued` bounds the pre-schema backlog.
-    DataReaderListenerBase(PubSubProvider::SubscribeCallback cb, SharedSchema schema,
-                           size_t max_queued)
-        : delivery_(std::move(cb), std::move(schema), max_queued) {}
+    DataReaderListenerBase(DeliveryChannel channel, SharedSchema schema, size_t max_queued)
+        : delivery_(std::move(channel), std::move(schema), max_queued) {}
 
-    // Nothing may escape: OrderedDelivery rethrows user code, which would terminate the process.
+    // Nothing may escape into a Fast DDS listener thread, which holds the RTPS
+    // reader mutex across this call.
+    //
+    // This is a `Take`-WIDE guard, not the dispatch-site catch: what a handler
+    // throws is absorbed by DeliveryChannel::Deliver (spec 5.3), so the callback
+    // can no longer be the thing that lands here. What still can is everything
+    // else Take() does -- std::bad_alloc from the owning copy of a sample body,
+    // from the delivery queue's push_back, or from the envelope parser. Keeping
+    // it costs nothing and preserves "log an ERROR and drop this notification"
+    // for those (review debt AG1-DEBT-16).
     void on_data_available(eprosima::fastdds::dds::DataReader* reader) final {
         try {
             Take(reader);
         } catch (const std::exception& e) {
-            EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION, "subscribe callback threw: " << e.what());
+            EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION, "reading a sample threw: " << e.what());
         } catch (...) {
-            EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
-                               "subscribe callback threw a non-std exception");
+            EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION, "reading a sample threw a non-std exception");
         }
     }
 
@@ -138,9 +145,9 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
 // Zero-copy read: samples reach the callback in the payloads Fast DDS already holds.
 class LoanableDataReaderListener : public DataReaderListenerBase {
    public:
-    LoanableDataReaderListener(uint32_t payload_bytes, PubSubProvider::SubscribeCallback cb,
-                               SharedSchema schema, size_t max_queued)
-        : DataReaderListenerBase(std::move(cb), std::move(schema), max_queued),
+    LoanableDataReaderListener(uint32_t payload_bytes, DeliveryChannel channel, SharedSchema schema,
+                               size_t max_queued)
+        : DataReaderListenerBase(std::move(channel), std::move(schema), max_queued),
           payload_bytes_(payload_bytes) {}
 
    private:

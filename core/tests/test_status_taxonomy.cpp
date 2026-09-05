@@ -76,6 +76,8 @@ std::string StatusName(PubSubStatus status) {
             return "kPending";
         case PubSubStatus::kSubscriptionEnded:
             return "kSubscriptionEnded";
+        case PubSubStatus::kReentrantCall:
+            return "kReentrantCall";
     }
     return "";  // a statement, not a `default:` label
 }

@@ -46,7 +46,9 @@
 #include <fastdds/dds/subscriber/Subscriber.hpp>
 #include <fastdds/dds/topic/Topic.hpp>
 #include <fastdds/dds/topic/TypeSupport.hpp>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
@@ -286,6 +288,17 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, BEFORE any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // runs with the RTPS reader mutex held, and this call HANGS if it is let
+        // through — probed, not assumed. Refused by name instead.
+        //
+        // "Before any lock" is not decoration: with this check one line lower,
+        // after `impl_->mu`, the refusal never runs and the call hangs on the
+        // mutex exactly as it did with no door at all. That is a measured
+        // mistake, not a hypothetical one.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+
         std::string name = internal::JoinSegments(topic_segments);
         std::lock_guard lock(impl_->mu);
 
@@ -376,6 +389,12 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // runs with the RTPS reader mutex held, and this call HANGS if it is let
+        // through — probed, not assumed. Refused by name instead.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Publish");
+
         // Reused per thread: the joined name is only a lookup key and dies with the call, and a
         // fresh std::string here was a malloc and a free on every publish. Publish holds the mutex
         // shared, so a scratch buffer on the provider would be a data race; one per thread is not.
@@ -426,6 +445,12 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     return TranslateSeamFailure([&]() -> SubscriptionResult {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // runs with the RTPS reader mutex held, and this call HANGS if it is let
+        // through — probed, not assumed. Refused by name instead.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
+
         std::string name = internal::JoinSegments(topic_segments);
         std::lock_guard lock(impl_->mu);
 
@@ -464,7 +489,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         const size_t max_queued = backlog_bound > 0 ? static_cast<size_t>(backlog_bound) : 0;
         if (internal::CanLoanSamples(rqos)) {
             ts.listener = std::make_unique<internal::LoanableDataReaderListener>(
-                impl_->payload_bytes, std::move(callback), std::move(initial), max_queued);
+                impl_->payload_bytes, DeliveryChannel(this, std::move(callback)),
+                std::move(initial), max_queued);
         } else {
             EPROSIMA_LOG_INFO(FLETCHER_SUBSCRIPTION,
                               "reader on '"
@@ -473,7 +499,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
                                      "memory policy is not PREALLOCATED, so payload nodes "
                                      "cannot be read in place");
             ts.listener = std::make_unique<internal::DataReaderListener>(
-                std::move(callback), std::move(initial), max_queued);
+                DeliveryChannel(this, std::move(callback)), std::move(initial), max_queued);
         }
 
         ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get(),
@@ -530,6 +556,13 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05).
+        // Issued from inside a delivery on this instance, the delete_datareader
+        // below waits for the very delivery this thread is executing — a
+        // self-wait, and a hang under the suite's TIMEOUT. Refused by name
+        // instead -- as are the other three, at their own doors above.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
+
         std::string name = internal::JoinSegments(topic_segments);
 
         DataReader* schema_reader = nullptr;

@@ -68,7 +68,16 @@ find_package(fletcher-pubsub REQUIRED)
 find_package(fletcher-core REQUIRED)
 
 # ── Provider library ─────────────────────────────────────────────────────
-add_library(fletcher-xrcedds-pubsub-provider
+#
+# STATIC is explicit, and is a CORRECTNESS requirement rather than a packaging
+# preference (PDA-DEC-AG1 premise P1). The delivery-frame stack that every door
+# consults is an `inline thread_local` in a header
+# (core/include/fletcher/core/internal/delivery_frame.hpp); built shared, this
+# component would get its OWN copy, and a re-entrant call through it would find
+# an empty stack and be served where every other provider refuses it. Without the
+# keyword, -DBUILD_SHARED_LIBS=ON did that silently instead of tripping P1's
+# STOP-AND-ASK.
+add_library(fletcher-xrcedds-pubsub-provider STATIC
     src/xrce_dds_pubsub_provider.cpp
     # The provider's own key=value document reader (spec 4.1/4.2, locked decision 8). Not
     # installed and not shared with the loopback's reader; see src/internal/xrce_document.hpp.

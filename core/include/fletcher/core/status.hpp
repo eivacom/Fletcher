@@ -60,6 +60,13 @@ enum class PubSubStatus : int32_t {
     /// kOk + null, which means "this transport carries no schemas at all" — the
     /// two demand opposite handling at a subscriber (§7 clause 1).
     kSubscriptionEnded = 9,
+    /// The caller re-entered the seam from inside a delivery callback, on the
+    /// same provider instance and the same thread, through a door that cannot
+    /// serve it there. ALL FOUR PubSubProvider methods refuse, on every provider
+    /// (spec §6 clause 6). Distinct from kNotSupported, which says the provider cannot
+    /// do this AT ALL rather than "not from in there" — two different operator
+    /// problems (owner ruling 2026-09-03).
+    kReentrantCall = 10,
 };
 
 // The numbering, pinned one value at a time. Not a single assert on the last
@@ -80,6 +87,8 @@ static_assert(static_cast<int32_t>(PubSubStatus::kNotSupported) == 6,
 static_assert(static_cast<int32_t>(PubSubStatus::kInternal) == 7, "PubSubStatus values are frozen");
 static_assert(static_cast<int32_t>(PubSubStatus::kPending) == 8, "PubSubStatus values are frozen");
 static_assert(static_cast<int32_t>(PubSubStatus::kSubscriptionEnded) == 9,
+              "PubSubStatus values are frozen");
+static_assert(static_cast<int32_t>(PubSubStatus::kReentrantCall) == 10,
               "PubSubStatus values are frozen");
 
 /// The ONE exception type the seam throws.

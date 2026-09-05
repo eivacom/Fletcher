@@ -56,6 +56,26 @@ re-deriving the rules.
   modes in one binary would run clause 2 against the schema-less one — present
   and failing, where the design says it should be absent. See "Clause 2 and the
   axis gate".
+- **Five of the clauses are about a MISBEHAVING callback** (PDA-DEC-AG1, spec
+  §5.3 and §6 clause 6), and they are deliberately mutually irreducible, because
+  the item that added them absorbed two questions that had been separate:
+
+  | Clause | What it pins | Which mechanism it needs |
+  |---|---|---|
+  | `HostileCallbackNeitherEscapesNorIsChargedElsewhere` | the forcing test: one handler that both fails AND calls back in — refused by name, contained, and the publisher completes normally | **both** |
+  | `ReentrantCallIsRefusedWithoutAnyThrow` | the refusal alone, with **no exception anywhere on the path** | the door only |
+  | `ThrowingCallbackIsAbsorbedWithoutReentering` | the absorption alone, with **no re-entry on the path**, asserted on the absorbed COUNT | the absorption only |
+  | `AnotherThreadIsNotRefusedDuringADelivery` | not-too-wide, THREAD axis: a second thread is not re-entrancy | neither |
+  | `EveryProviderMethodIsRefusedFromInsideADelivery` | the METHOD axis: the other three methods refuse too, **by name and without hanging** (owner ruling 2026-09-05, "refuse everywhere") | the door only |
+
+  Neither mechanism can green the other's control, in any landing order. That is
+  the condition on which the grouping was allowed, and it is structural rather
+  than a convention: clause 2 has no exception on its path for a catch to
+  convert, and clause 3 has no re-entry on its path for a door to refuse.
+
+  **Four of them redden by HANGING** on at least one subject when their mechanism
+  is absent, so the per-target ctest `TIMEOUT` is load-bearing here exactly as it
+  is for `CallerTier`'s deadlock controls. An uncapped hang is not a red.
 - **Rows are 8 opaque bytes** (magic + seq) written straight into the
   provider-supplied `WriteBuffer`. No codec, no Arrow C++, no generated type —
   so the suite cannot see payload layout and no divergence it forces can be a
@@ -99,6 +119,31 @@ surfaced immediately.
   observation. On the two `*Local` subjects `PublishRow` is a direct call, the
   clause publishes from two threads, and the assertion is real (it is a genuine
   check on the loopback, whose `Publish` holds its mutex across the callback).
+- **`HostileCallback…`'s "the publisher completes normally" is a proof on the
+  loopback and an OBSERVATION on the DDS subjects.** There the publish is
+  asynchronous and has returned before the handler ever runs, so nothing about
+  its `ok()` could have been otherwise. The loopback is the subject where the
+  publish *is* the delivery, and it is the one where the defect the clause exists
+  to close actually lived — a subscriber's `std::overflow_error` arriving at an
+  unrelated publisher as `kPayloadTooLarge`. The named-refusal half of the clause
+  is a real assertion on all six subjects.
+- **`EveryProviderMethodIsRefusedFromInsideADelivery` asserts the refusal for
+  `Subscribe` on all six subjects, and for `CreateTopic`/`Publish` only where they
+  are genuinely re-entrant.** `PeerSubject::DeclareTopic` and `PublishRow` go over
+  the peer pipe, so on `FastDdsCrossProcess` and `XrceCrossProcess` they reach a
+  DIFFERENT provider instance in a different process — expressly not re-entrancy
+  (spec §6 clause 6) — and asserting a refusal there would assert a bug. The
+  clause branches on `SubjectFactory::publishes_into_subject_instance`, which is
+  structural, and on a peer subject it asserts the opposite: those two calls must
+  still SUCCEED, so a refusal that leaked past its instance is caught. Only
+  `Subscribe`/`Unsubscribe` reach the subject's own provider directly everywhere.
+  Same shape of honesty as clause 12's, above.
+- **`AnotherThreadIsNotRefusedDuringADelivery` asserts that the other thread's
+  call was ISSUED and not refused, not that it COMPLETED during the delivery.**
+  On the loopback it cannot complete during the delivery — that provider holds
+  its instance mutex across dispatch, by design, and asserting otherwise would be
+  a guaranteed false red under `TIMEOUT`. The anti-widening force (per-thread, never per-instance)
+  rests on the DDS subjects, where the call genuinely does complete concurrently.
 - **Clause 6 is not proven able to catch the shipped data-sharing defect, and
   nobody yet knows why.** This is an OPEN question, not a closed one. Do not
   read the paragraph below as a reason to distrust cross-process conformance
@@ -678,6 +723,8 @@ green after — each observed, not asserted:
 | `ASubscribeDuringADrainKeepsItsProviderSubscription` | `newcomer_calls` **0** and `unsubscribe_calls` **1** — a subscription created while another thread was draining had its provider-level subscription torn down under it and received nothing, ever, with no error anywhere |
 | `ACancelRacingASelfCancelWaitsForThatHandler` | `other_saw_it_exit` was **false** — a handler's self-cancel took the id out of the retiring map while that handler was still on the stack, so a cancel from any OTHER thread found neither map, took the no-op branch and returned mid-callback. That caller is covered by no exception at all |
 | `ConcurrentFirstSubscribesCreateOneProviderSubscription` | `subscribe_calls` was **2** — two first-`Subscribe`s on one topic each registered a provider-level subscription |
+| `SubscribingToANewTopicFromInsideADeliveryIsRefusedByName` (PDA-DEC-AG1) | a `Subscribe` for a not-yet-subscribed topic, issued from inside a delivery, reached the provider instead of being refused. Pins `kReentrantCall` **and** `subscribe_calls` unchanged — a count on the probe, which no catch anywhere can fake |
+| `ARefusedReentrantSubscribeIsCountedRatherThanSwallowedSilently` (PDA-DEC-AG1) | the refusal escaping a handler vanished with no trace. Pins `AbsorbedCallbackFailures()` **+1** and that the fan-out keeps delivering to everyone after the absorbed failure |
 
 The remaining cases are **live negative controls**, and each was made to go red
 by mutating the thing it controls rather than asserted to be one:
@@ -693,6 +740,7 @@ by mutating the thing it controls rather than asserted to be one:
 | `CancellingASiblingRunningOnAnotherThreadKeepsItPublished` | make the deferred sweep release the id without first taking the gate barrier | **Failed** — and *only* this case reddens on that mutation. It is the sole control on the deferral being scoped to the **gate** rather than to the cancelling frame: every other case has the two coincide |
 | `ACancelOfAFullyRetiredIdReturnsWithoutWaiting` | — | only that an unknown or fully cancelled id neither throws nor waits. It does **not** redden if the two no-op branches are collapsed: an id with no drain in progress has a free barrier either way. The distinction between "gone" and "being cancelled right now" is pinned by `ADuplicateCancelWaitsForTheDrainInProgress` alone |
 | `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` | — | the gate→`mu` edge, in the permitted direction |
+| `TheCallerTierDoorIsReachedBeforeItCanBlock` (PDA-DEC-AG1) | move the caller-tier door back after `provider_cv.wait` | **Timeout** — with another thread parked inside `provider->Subscribe`, the re-entrant call waited on a flag only that thread could clear, and neither door was ever reached. It is the sole control on the door preceding the **wait** rather than merely preceding the provider; every other case has nothing parked to wait for |
 | `ALiveSubscriptionStillReceives` | — | that the gate did not simply silence delivery |
 | `AReleasedIdIsNeverReused` | — | ids are never recycled, without which "unknown id is a no-op" silently becomes "cancels a stranger" |
 
@@ -707,7 +755,17 @@ that has already cancelled itself, so the cancellation of the last remaining
 entry empties the topic and enters the provider with that entry's gate still
 ahead of the fan-out loop.
 
-**Three of these seventeen cases redden by hanging**, so `conformance_caller_tier`
+`CancelFromInsideDeliveryDoesNotEnterTheProvider` (PDA-DEC-AG1) is the eighteenth
+and belongs to the first table rather than the second: it was red before the
+behaviour it names, with `unsubscribe_calls` **1** — Fletcher's own teardown of a
+topic's last entry entered `provider->Unsubscribe` from inside that provider's own
+delivery frame, where §6 clause 6 now refuses it with `kReentrantCall`. Its
+assertion is a call COUNT on the probe, which no catch anywhere can affect. Note
+that the probe dispatches through a `DeliveryChannel` carrying its own address for
+exactly this reason: a probe that pushed no provider token would leave this case
+permanently red for a reason that has nothing to do with the seam.
+
+**Four of these twenty-one cases redden by hanging**, so `conformance_caller_tier`
 carries a declared ctest `TIMEOUT` of 60 s against a suite that costs well under
 a second. An uncapped hang is not a red; it is a hung job.
 
@@ -739,16 +797,52 @@ a second. An uncapped hang is not a red; it is a hung job.
    cancellation to a helper thread and then waits for that helper deadlocks: the
    helper is not inside a delivery, so it takes the barrier on the gate the
    handler still holds. Adjacent to limit 1, not covered by it.
-5. **What a PROVIDER does with an `Unsubscribe` re-entered from inside its own
-   delivery is untouched and unclaimed.** `Subscriber::Unsubscribe` calls
-   `provider->Unsubscribe` when a topic's last entry goes; issued from inside
-   that subscription's own callback, that is a re-entrant provider call, which
-   today deadlocks deliberately on the loopback
-   (`in_process_provider.cpp:248,270-275`), self-waits undocumented on Fast DDS
-   (`fast_dds_pubsub_provider.cpp:570-574`) and is safe on XRCE. That question is
-   open and owned by the re-entrancy item, not by this suite — which is why every
-   case here that cancels from inside a handler keeps a sibling subscription
-   alive so the provider is never re-entered.
+5. **ANSWERED, and no longer a limit — with one resource held longer than a
+   reader might expect.** This entry used to read "what a PROVIDER does with an
+   `Unsubscribe` re-entered from inside its own delivery is untouched and
+   unclaimed", and listed the three divergent answers: a deliberate deadlock on
+   the loopback, an undocumented self-wait on Fast DDS, and a served call on
+   XRCE. PDA-DEC-AG1 ended that divergence — all three refuse it by name with
+   `kReentrantCall` (spec §6 clause 6) — and `Subscriber::Unsubscribe` never
+   raises it, because it asks the same question at its own door and skips the
+   transport-level teardown.
+
+   What remains, published rather than implied (owner ruling 2026-09-05, *"leave
+   it open, and publish that"*): **the transport subscription outlives a
+   handler-initiated cancel.** It stays open and quiet — the fan-out is empty and
+   every gate retired, so no callback runs — until that `Subscriber` is destroyed
+   or the same topic is subscribed again, at which point the existing
+   subscription is reused. Nothing is unsafe. The rejected alternative was to
+   close it later on a thread the seam invents, trading a harmless held resource
+   for new lifetime and shutdown-ordering questions.
+
+   Note the older cases here still keep a sibling subscription alive when they
+   cancel from inside a handler; that is now belt-and-braces rather than the
+   thing standing between them and a hang, and
+   `CancelFromInsideDeliveryDoesNotEnterTheProvider` is the case that deliberately
+   does not.
+
+   **`Subscriber::Subscribe` does NOT get the same skip, and this is the one
+   caller-tier method that raises `kReentrantCall` at its caller.** The two
+   differ because cancel has a safe answer without the provider and subscribe
+   does not: joining a topic this `Subscriber` has **already** subscribed is
+   served from the cached arrival and enters no provider, while a topic it has
+   **not** needs a provider-level subscription — and §6 clause 6 refuses that
+   from inside a delivery on every provider. So the answer is data-dependent on
+   the same call: served for an already-subscribed topic, refused by name for a
+   new one. `SubscribingToANewTopicFromInsideADeliveryIsRefusedByName` pins the
+   refusal *and* asserts the probe's `subscribe_calls` did not move, which no
+   catch anywhere can fake;
+   `ARefusedReentrantSubscribeIsCountedRatherThanSwallowedSilently` pins that a
+   handler which does not catch it has it absorbed by the fan-out **and counted**
+   in that `Subscriber`'s `AbsorbedCallbackFailures()`, because a contained
+   failure that increments nothing is indistinguishable from success.
+   `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` is the permitted half,
+   and `TheCallerTierDoorIsReachedBeforeItCanBlock` is the control on the door
+   preceding `provider_cv.wait` rather than following it — with the wait first, a
+   handler subscribing to a topic another thread is mid-`provider->Subscribe` for
+   blocks on a flag only that thread can clear, and that thread is waiting on the
+   delivery the handler is inside. That case reddens by **hanging**.
 6. **A subscription id means something only to the `Subscriber` that issued
    it.** Ids are per-instance counters from 1, so handing one to a different
    instance silently addresses a stranger's subscription. Predates this suite and

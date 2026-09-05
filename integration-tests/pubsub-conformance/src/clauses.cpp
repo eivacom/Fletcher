@@ -13,6 +13,11 @@
 // See ScopedSubscription: a trailing Unsubscribe cannot do that job, because an
 // ASSERT_ failure path never reaches it.
 //
+// PDA-DEC-AG1 appends five more clauses at the bottom of this file, covering
+// §5.3 and §6 clause 6 — what a MISBEHAVING callback does. They are numbered in
+// their own AG1-n series in the comments, because §7's twelve are already
+// numbered here.
+//
 // Clause 2 (CallbackNeverSeesNullSchema) lives in clauses_carried.cpp, which is
 // linked only into the schema-CARRYING subjects' binaries: the axis gate is
 // applied at link/instantiation, so on a schema-less subject the clause is
@@ -20,9 +25,16 @@
 // GTEST_SKIP anywhere in this suite.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <fletcher/core/internal/status_name.hpp>
+#include <fletcher/core/status.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
+#include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -370,6 +382,386 @@ TEST_P(ProviderConformance, DeliveryIsSerializedPerSubscription) {
         << "only " << collector.Count() << " of " << kRows << " rows arrived";
     EXPECT_EQ(collector.MaxInFlight(), 1u)
         << "two deliveries were in flight at once on one subscription";
+}
+
+// ── PDA-DEC-AG1 — the misbehaving callback (§5.3, §6 clauses 5 and 6) ─
+//
+// One question, five clauses: what happens when a subscriber's delivery callback
+// misbehaves — by failing, or by calling back into the seam from inside itself?
+//
+// They are deliberately MUTUALLY IRREDUCIBLE, because this item absorbed two
+// that were separate (a throwing callback, and re-entrancy), and a grouping is
+// only legitimate if neither mechanism can green the other's control:
+//
+//   * AG1-2 has NO exception anywhere on its path — the refusal is caught and
+//     compared inside the callback's own frame — so absorption cannot green it;
+//   * AG1-3 has NO re-entry on its path, so the door check is not on it, and its
+//     absorbed-count assertion can be satisfied by nothing but the absorption;
+//   * AG1-1, the forcing test, needs BOTH;
+//   * AG1-6 needs THE DOOR, and only the door: it asserts that the other three
+//     methods refuse too, which absorption cannot produce and which a door on
+//     `Unsubscribe` alone does not reach.
+//
+// Each of them reddens by HANGING on at least one subject when its mechanism is
+// absent, so the per-target ctest TIMEOUT is load-bearing here exactly as it is
+// for the CallerTier deadlock controls: an uncapped hang is not a red.
+
+namespace {
+
+// What a callback recorded, as a number. Two sentinels outside the enum, so "not
+// refused at all" and "something that is not a seam error" stay distinguishable
+// from every real status instead of collapsing into one failure.
+constexpr int32_t kNothingRecorded = -1;
+constexpr int32_t kReturnedWithoutThrowing = -2;
+constexpr int32_t kNonSeamException = -3;
+
+std::string StatusText(int32_t recorded) {
+    switch (recorded) {
+        case kNothingRecorded:
+            return "nothing — the callback never got there";
+        case kReturnedWithoutThrowing:
+            return "no refusal at all — the call was SERVED";
+        case kNonSeamException:
+            return "an exception that is not a PubSubError";
+        default:
+            return internal::PubSubStatusName(static_cast<PubSubStatus>(recorded));
+    }
+}
+
+// Issue `Unsubscribe` on this instance and report what came back.
+//
+// The catch and the comparison are INSIDE the callback's own frame, deliberately:
+// that is what keeps every exception off the re-entrancy clauses' paths, so no
+// catch anywhere else in the tree can be the thing that makes them pass.
+int32_t RecordReentrantUnsubscribe(ProviderSubject& subject, const Topic& topic) {
+    try {
+        subject.Unsubscribe(topic);
+    } catch (const PubSubError& e) {
+        return static_cast<int32_t>(e.status());
+    } catch (...) {
+        return kNonSeamException;
+    }
+    return kReturnedWithoutThrowing;
+}
+
+// A one-shot flag with a bounded wait, so a signal that never comes is a named
+// assertion rather than the target's TIMEOUT.
+class Latch {
+   public:
+    void Set() {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            set_ = true;
+        }
+        cv_.notify_all();
+    }
+    [[nodiscard]] bool WaitUntil(std::chrono::steady_clock::time_point deadline) {
+        std::unique_lock<std::mutex> lock(mu_);
+        return cv_.wait_until(lock, deadline, [this] { return set_; });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool set_ = false;
+};
+
+}  // namespace
+
+// ── Clause AG1-1 (§5.3 + §6 clause 6) — THE FORCING TEST ────────────
+//
+// One handler that both fails AND calls back in. The call-back-in is refused by
+// a distinct named error; the failure is contained; and the publisher on the
+// other side completes normally, as does the next unrelated caller.
+//
+// Owner ruling 2026-09-05 ("nothing — the publish succeeds") is the second half.
+// Today the loopback lets `std::overflow_error` unwind out of the callback into
+// the PUBLISHER's TranslateSeamFailure, where §5.1's normative mapping turns it
+// into `kPayloadTooLarge` — a subscriber's bug reported to an unrelated
+// publisher as a payload problem it neither caused nor can act on.
+//
+// Honesty, in the shape clause 12 already uses on itself: on the DDS subjects
+// delivery is asynchronous, so `PublishRow` has returned before the handler runs
+// and the `ok()` below is an observation there rather than a proof. On the
+// loopback the publish IS the delivery, and that is the subject the mis-charging
+// lives on. The named-refusal half is a real assertion on all five subjects.
+TEST_P(ProviderConformance, HostileCallbackNeitherEscapesNorIsChargedElsewhere) {
+    const Topic topic = Fresh("hostile");
+    const Topic after = Fresh("hostile_after");
+    CONF_MUST_DECLARE(topic, DataSchema());
+
+    std::atomic<int32_t> recorded{kNothingRecorded};
+    std::atomic<int> entered{0};
+    Latch handled;
+
+    ScopedSubscription sub(Subject(), topic,
+                           [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                               if (entered.fetch_add(1) != 0) return;
+                               recorded.store(RecordReentrantUnsubscribe(Subject(), topic));
+                               handled.Set();
+                               // …and then fails, in the very frame the refusal
+                               // was just handed to.
+                               throw std::overflow_error("a hostile handler");
+                           });
+
+    const Reply published = Subject().PublishRow(topic, 1);
+    EXPECT_TRUE(published.ok()) << "a subscriber's handler failure was charged to the publisher: "
+                                << published.detail;
+
+    ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
+    EXPECT_EQ(recorded.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "cancelling from inside a delivery on this instance answered with "
+        << StatusText(recorded.load());
+
+    // The seam is not wedged and the failure did not travel: an unrelated caller
+    // afterwards succeeds.
+    EXPECT_TRUE(Subject().DeclareTopic(after, DataSchema()).ok());
+    EXPECT_TRUE(Subject().PublishRow(after, 1).ok());
+}
+
+// ── Clause AG1-2 (§6 clause 6) — live negative control for the refusal ─
+//
+// The same re-entrant cancel with NOTHING thrown anywhere on the path, so the
+// absorption half of this item cannot be what makes it pass. Remove the door and
+// it reddens by hanging on the loopback and on Fast DDS, or by recording a
+// SERVED call on XRCE — and none of those three is an exception.
+TEST_P(ProviderConformance, ReentrantCallIsRefusedWithoutAnyThrow) {
+    const Topic topic = Fresh("reentrant_only");
+    CONF_MUST_DECLARE(topic, DataSchema());
+
+    std::atomic<int32_t> recorded{kNothingRecorded};
+    std::atomic<int> entered{0};
+    Latch handled;
+
+    ScopedSubscription sub(Subject(), topic,
+                           [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                               if (entered.fetch_add(1) != 0) return;
+                               recorded.store(RecordReentrantUnsubscribe(Subject(), topic));
+                               handled.Set();
+                           });
+
+    CONF_MUST_PUBLISH(topic, 1);
+    ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
+    EXPECT_EQ(recorded.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "cancelling from inside a delivery on this instance answered with "
+        << StatusText(recorded.load());
+}
+
+// ── Clause AG1-3 (§5.3) — live negative control for the absorption ──
+//
+// A handler that throws and NEVER re-enters, so the door check is not on this
+// path and cannot be what makes it pass.
+//
+// ABSORBED, not merely unobserved. Deleting the per-provider catch blocks removed
+// the only log line a failing handler produced, and `pubsub/src` has no logging
+// facility at all, so the count is the observable that replaces it — and
+// asserting it is what stops "nothing was reported" being satisfied by "nothing
+// happened".
+TEST_P(ProviderConformance, ThrowingCallbackIsAbsorbedWithoutReentering) {
+    const Topic topic = Fresh("throwing_only");
+    CONF_MUST_DECLARE(topic, DataSchema());
+
+    std::atomic<int> entered{0};
+    Latch threw;
+
+    ScopedSubscription sub(Subject(), topic,
+                           [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                               if (entered.fetch_add(1) != 0) return;
+                               threw.Set();
+                               throw std::overflow_error("a failing handler");
+                           });
+
+    const uint64_t before = DeliveryChannel::AbsorbedTotal();
+    const Reply published = Subject().PublishRow(topic, 1);
+    EXPECT_TRUE(published.ok()) << "a subscriber's handler failure was charged to the publisher: "
+                                << published.detail;
+
+    ASSERT_TRUE(threw.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
+    // The latch is set BEFORE the throw — it has to be — so the count is waited
+    // for rather than read once. Bounded by this clause's own deadline.
+    while (DeliveryChannel::AbsorbedTotal() < before + 1 &&
+           std::chrono::steady_clock::now() < Deadline()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(DeliveryChannel::AbsorbedTotal(), before + 1)
+        << "the handler's failure was not absorbed at the dispatch site: a count that never moved "
+           "means it went somewhere else, or nowhere at all";
+
+    // Not wedged: the seam still takes the next row.
+    EXPECT_TRUE(Subject().PublishRow(topic, 2).ok());
+}
+
+// ── Clause AG1-4 — not-too-wide control, THREAD axis ────────────────
+//
+// The refusal is per THREAD, not per instance. A second thread issuing a seam
+// call while a delivery is in flight is not re-entrancy and must not be refused;
+// it waits for the drain, exactly as §7 clause 6 requires of every provider.
+//
+// It asserts only that the call was ISSUED and did not see `kReentrantCall` —
+// deliberately NOT that it completed while the delivery was still running, which
+// the loopback makes impossible by design -- it holds its instance mutex across
+// dispatch -- and which would therefore be a guaranteed false red under the
+// target's TIMEOUT. The
+// anti-widening force rests on the DDS subjects, where it does complete
+// concurrently.
+TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
+    const Topic topic = Fresh("other_thread");
+    const Topic idle = Fresh("other_thread_idle");
+    CONF_MUST_DECLARE(topic, DataSchema());
+
+    Latch in_delivery;
+    Latch may_return;
+    std::atomic<int> entered{0};
+
+    ScopedSubscription sub(Subject(), topic,
+                           [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                               if (entered.fetch_add(1) != 0) return;
+                               in_delivery.Set();
+                               (void)may_return.WaitUntil(SettleDeadline());
+                           });
+
+    std::thread publisher([&] { (void)Subject().PublishRow(topic, 1); });
+    // However this clause exits — including through the ASSERT below — the parked
+    // handler is released and the publishing thread is joined. A joinable thread
+    // destroyed on an early return is a std::terminate, not a red.
+    struct ReleaseAndJoin {
+        Latch& latch;
+        std::thread& thread;
+        ~ReleaseAndJoin() {
+            latch.Set();
+            if (thread.joinable()) thread.join();
+        }
+    } cleanup{may_return, publisher};
+
+    ASSERT_TRUE(in_delivery.WaitUntil(Deadline())) << "no delivery ever started";
+
+    std::atomic<int32_t> from_other_thread{kNothingRecorded};
+    std::thread other(
+        [&] { from_other_thread.store(RecordReentrantUnsubscribe(Subject(), idle)); });
+    // Released first and joined after: the other thread may legitimately BLOCK
+    // until the handler returns — that is the loopback's gate, and the drain
+    // every provider owes — and blocking is not being refused.
+    may_return.Set();
+    other.join();
+
+    EXPECT_NE(from_other_thread.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "a call from a SECOND thread during a delivery was refused as re-entrant; the refusal "
+           "has been widened from per-thread to per-instance";
+}
+
+// ── Clause AG1-6 — the METHOD axis of §6 clause 6: refused UNIFORMLY, and LOUDLY
+//
+// Owner ruling 2026-09-05 ("re-entry is refused on every protocol") replaced the
+// ruling this clause was first written to: the earlier one permitted
+// `CreateTopic`, `Publish` and `Subscribe` from inside a delivery, on the claim
+// they already worked on Fast DDS and XRCE. They do not — a Fast DDS listener
+// callback holds the RTPS reader mutex and each of them HANGS there, probed one
+// at a time. The clause is re-aimed, not deleted, and it now pins BOTH failure
+// directions at once:
+//
+//   * **no protocol may silently HANG** — every call must return, which the
+//     per-clause ctest TIMEOUT enforces and no in-body assertion can; and
+//   * **no protocol may silently SERVE** — each call must come back refused, by
+//     the NAME `kReentrantCall`, not merely "not ok" and not with a success.
+//
+// Measured with the doors disabled and nothing else changed, the three providers
+// give three different wrong answers, which is why one clause has to cover both
+// directions: the loopback answers `kInternal` (MSVC's "resource deadlock would
+// occur" from re-locking the mutex held across dispatch), Fast DDS HANGS and is
+// killed by the TIMEOUT, and XRCE SERVES all three calls and reports success.
+// One clause, three defects, no per-provider branch.
+//
+// WHY IT IS STILL INDEPENDENT of clauses AG1-1 and AG1-2, which is the property
+// the charter constraint rests on. Those two pin `Unsubscribe` alone, and a door
+// on `Unsubscribe` alone greens both of them — and leaves this clause red on
+// every subject. Against AG1-3 it pins the opposite edge: a refusal widened from
+// per-thread to per-instance would green this clause and RED AG1-3, and a
+// refusal narrowed back to one method greens AG1-3 and reds this. No single
+// mechanism greens all three; each needs the door to be exactly as wide as the
+// spec says and no wider.
+//
+// WHICH SUBJECTS CARRY WHICH PART. `Subscribe` reaches the provider under test
+// directly on all six subjects, so its assertion is unconditional. On a peer
+// subject `DeclareTopic` and `PublishRow` go over the pipe to a child process and
+// are NOT re-entrant — a callback reaching a second provider instance is
+// expressly not re-entrancy (§6 clause 6) — so asserting a refusal there would
+// assert a bug. They are asserted where they are genuinely re-entrant, which
+// `publishes_into_subject_instance` names structurally rather than by matching on
+// a label.
+TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
+    const bool reentrant_publish = GetParam().publishes_into_subject_instance;
+
+    const Topic driver = Fresh("refused_driver");
+    const Topic derived = Fresh("refused_derived");
+    const Topic watched = Fresh("refused_watched");
+    CONF_MUST_DECLARE(driver, DataSchema());
+
+    Reply declare_reply = Reply::HarnessFailure("the handler never got there");
+    Reply publish_reply = Reply::HarnessFailure("the handler never got there");
+    std::atomic<int32_t> subscribe_status{kNothingRecorded};
+    std::atomic<int> entered{0};
+    Latch handled;
+
+    ScopedSubscription driver_sub(
+        Subject(), driver, [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            if (entered.fetch_add(1) != 0) return;
+            declare_reply = Subject().DeclareTopic(derived, DataSchema());
+            publish_reply = Subject().PublishRow(derived, 77);
+            try {
+                SubscriptionResult opened = Subject().Subscribe(
+                    watched,
+                    [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+                (void)opened;
+                subscribe_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                subscribe_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                subscribe_status.store(kNonSeamException);
+            }
+            handled.Set();
+        });
+
+    CONF_MUST_PUBLISH(driver, 1);
+    ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
+
+    // `Subscribe` first: it is the one that carries force on every subject, and
+    // the status is asserted by NAME, so a provider that refuses for some other
+    // reason does not green this.
+    EXPECT_EQ(subscribe_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "Subscribe from inside a delivery answered with " << StatusText(subscribe_status.load())
+        << "; §6 clause 6 refuses all four methods on every provider";
+
+    if (reentrant_publish) {
+        // `refused()`, never "!ok()": Reply's third outcome exists precisely so a
+        // clause asserting a refusal cannot be satisfied by a harness failure.
+        EXPECT_TRUE(declare_reply.refused())
+            << "CreateTopic from inside a delivery on the subject's own instance was not refused: "
+            << declare_reply.detail;
+        EXPECT_TRUE(publish_reply.refused())
+            << "Publish from inside a delivery on the subject's own instance was not refused: "
+            << publish_reply.detail;
+    } else {
+        // Not re-entrancy at all — a different instance in a different process.
+        // Asserted rather than skipped, so the clause still says something here:
+        // the refusal must not have leaked across the instance boundary.
+        EXPECT_TRUE(declare_reply.ok())
+            << "CreateTopic on a PEER instance was refused from inside a delivery; the refusal has "
+               "leaked past the instance it belongs to: "
+            << declare_reply.detail;
+        EXPECT_TRUE(publish_reply.ok())
+            << "Publish on a PEER instance was refused from inside a delivery; the refusal has "
+               "leaked past the instance it belongs to: "
+            << publish_reply.detail;
+    }
+
+    // The refusal must leave the subscription usable rather than half-torn: an
+    // ordinary publish after the handler returns is still delivered.
+    Collector after;
+    ScopedSubscription after_sub(Subject(), derived, after.Callback());
+    CONF_MUST_DECLARE(derived, DataSchema());
+    CONF_MUST_PUBLISH(derived, 78);
+    EXPECT_TRUE(after.WaitForSeq(78, Deadline()))
+        << "the provider stopped serving after refusing a re-entrant call";
 }
 
 }  // namespace conformance

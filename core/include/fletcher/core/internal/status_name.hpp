@@ -42,6 +42,8 @@ namespace internal {
             return "pending";
         case PubSubStatus::kSubscriptionEnded:
             return "subscription_ended";
+        case PubSubStatus::kReentrantCall:
+            return "reentrant_call";
     }
     return "internal";
 }

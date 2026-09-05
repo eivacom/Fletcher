@@ -3,6 +3,7 @@
 //
 #include "fletcher/pubsub/in_process_provider.hpp"
 
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <memory>
@@ -13,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "fletcher/pubsub/delivery_channel.hpp"
 #include "fletcher/pubsub/internal/schema_conflict.hpp"
 #include "fletcher/pubsub/internal/segments.hpp"
 
@@ -139,7 +141,12 @@ void RegisterInProcessProvider(ProviderRegistry& registry) {
 
 struct InProcessPubSubProvider::Impl {
     struct TopicState {
-        SubscribeCallback callback;
+        // The sealed handle, not a bare std::function: a throwing callback is
+        // absorbed at the dispatch site and never reaches this provider's
+        // TranslateSeamFailure, where std::overflow_error used to become
+        // kPayloadTooLarge and charge a subscriber's bug to an unrelated
+        // publisher (owner ruling 2026-09-05).
+        DeliveryChannel channel;
         // What the LIVE subscription was told, latched when Subscribe returned.
         // Not the same thing as `schema` below: in kAsDeclared a declaration
         // that lands after a subscription exists must never reach it, so the
@@ -177,6 +184,8 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
     // Every seam entry point translates, so the only exception leaving this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+
         std::string key = internal::JoinSegments(topic_segments);
 
         if (impl_->carriage == SchemaCarriage::kCarried && !schema) {
@@ -245,10 +254,19 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
     });
 }
 
-// mu_ is held across the callback: one delivery at a time, so a callback must not re-enter.
+// `mu` is held across the callback: one delivery at a time, instance-wide (§6
+// clause 1), and that single lock is also §7.6's quiescence — an Unsubscribe on
+// another thread blocks here until the delivery in flight has returned.
+//
+// A callback that re-enters this provider never reaches `mu` at all: all four
+// methods refuse at their door first (owner ruling 2026-09-05, "Re-entry is
+// refused on every protocol"), so `mu` being non-recursive is no longer the
+// thing standing between a handler and a deadlock. The door is.
 void InProcessPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
                                       const RowEncoder& encoder, const Attachments& attachments) {
     TranslateSeamFailure([&] {
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Publish");
+
         VectorWriteBuffer wb;
         encoder(wb);
         const std::vector<uint8_t> buf = wb.Finish();
@@ -258,37 +276,39 @@ void InProcessPubSubProvider::Publish(const std::vector<std::string>& topic_segm
         std::lock_guard lock(impl_->mu);
         auto [it, _] = impl_->topics.try_emplace(std::move(key));
 
-        // Schema-before-data on a carrying instance, held by refusal: there is no
-        // implicit declaration, and no sample can be delivered with a schema that
-        // does not exist yet.
+        // Schema-before-data on a carrying instance, held by refusal: there is
+        // no implicit declaration, and no sample can be delivered with a schema
+        // that does not exist yet.
         if (impl_->carriage == SchemaCarriage::kCarried && !it->second.declared.has_value()) {
             throw PubSubError(
                 PubSubStatus::kTopicNotDeclared,
                 "InProcessPubSubProvider: publish to an undeclared topic: " + it->first);
         }
 
-        // Copy-to-locals before dispatch (HARD-4's pattern): a callback that re-enters
-        // Unsubscribe() would otherwise null the std::function being invoked. Dispatch stays
-        // under mu_ so the delivery contract's one-callback-at-a-time clause holds; mu_ is
-        // non-recursive, so a re-entering callback deadlocks rather than corrupting — which is
-        // what the contract forbids.
-        const SubscribeCallback cb = it->second.callback;
+        // Copy-to-local before dispatch (HARD-4's pattern, preserved as a copy of
+        // the CHANNEL -- which is why DeliveryChannel is copyable): even a refused
+        // re-entrant Unsubscribe unwinds through this frame, and a future
+        // permitted one must not null the std::function being invoked.
+        const DeliveryChannel channel = it->second.channel;
         // What this SUBSCRIPTION was told, not what the topic currently holds.
         const SharedSchema schema = it->second.subscription_schema;
-        if (cb) {
-            cb(buf.data(), buf.size(), schema, attachments);
-        }
+        if (channel) channel.Deliver(buf.data(), buf.size(), schema, attachments);
     });
 }
 
 SubscriptionResult InProcessPubSubProvider::Subscribe(
     const std::vector<std::string>& topic_segments, SubscribeCallback callback) {
     return TranslateSeamFailure([&]() -> SubscriptionResult {
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
+
         std::string key = internal::JoinSegments(topic_segments);
 
         std::lock_guard lock(impl_->mu);
         auto& slot = impl_->topics[key];
-        slot.callback = std::move(callback);
+        // Sealed here, once: `this` is the provider-instance identity the delivery
+        // frame carries, which is what every door on this instance recognises a
+        // re-entrant call by, and what makes a throwing callback absorbable.
+        slot.channel = DeliveryChannel(this, std::move(callback));
         // Dropping any previous subscription's resolver reports kSubscriptionEnded
         // to whoever still holds that arrival — one callback per topic per
         // instance (§7 clause 4), so the old subscription really is over.
@@ -315,18 +335,31 @@ SubscriptionResult InProcessPubSubProvider::Subscribe(
 
 void InProcessPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec section 6 clause 6, owner ruling
+        // 2026-09-05). Inside its own TranslateSeamFailure, which rethrows a
+        // PubSubError untouched. A cancellation cannot wait for the delivery it is
+        // inside of, and `mu` below is held by that very delivery -- so it is
+        // refused by name rather than deadlocked.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
+
         std::optional<SchemaResolver> ended;
         {
             std::lock_guard lock(impl_->mu);
             auto it = impl_->topics.find(internal::JoinSegments(topic_segments));
             if (it == impl_->topics.end()) return;
-            it->second.callback = nullptr;
+            it->second.channel = DeliveryChannel{};
             it->second.subscription_schema = nullptr;
             ended = std::move(it->second.resolver);
             it->second.resolver.reset();
         }
-        // Destroyed outside the lock: unresolved means kSubscriptionEnded, which
-        // is precisely what "torn down before the schema arrived" is.
+        // No separate 7.6 drain is needed: `mu` above IS the drain. Publish holds
+        // it across the whole callback, so acquiring it here already waited out
+        // any delivery in flight on this instance, and a delivery that had not yet
+        // acquired it reads the cleared channel.
+        //
+        // `ended` is destroyed outside the lock: unresolved means
+        // kSubscriptionEnded, which is precisely what "torn down before the schema
+        // arrived" is.
     });
 }
 

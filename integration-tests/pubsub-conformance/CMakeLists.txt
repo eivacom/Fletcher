@@ -288,6 +288,17 @@ endif()
 # TIMEOUTs are stated rather than left to ctest's 1500 s default: a clause's own
 # budget is 20 s plus setup, and a peer spawn is bounded, so anything past a few
 # minutes is a hang and should be reported as one.
+#
+# For the PDA-DEC-AG1 clauses the TIMEOUT is LOAD-BEARING rather than hygiene, the
+# same way it is for conformance_caller_tier's deadlock controls. Four of them --
+# HostileCallbackNeitherEscapesNorIsChargedElsewhere,
+# ReentrantCallIsRefusedWithoutAnyThrow, ThrowingCallbackIsAbsorbedWithoutReentering
+# and EveryProviderMethodIsRefusedFromInsideADelivery -- redden by HANGING on at
+# least one subject when their door is absent: the loopback dispatches under its
+# instance mutex, and every Fast DDS entry point either waits on the RTPS reader
+# mutex a listener callback holds or, for Unsubscribe, on delete_datareader for
+# the delivery the caller is inside. An uncapped hang is not a red; it is a hung
+# job.
 include(GoogleTest)
 gtest_discover_tests(conformance_inprocess DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 120)

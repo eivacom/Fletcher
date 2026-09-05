@@ -45,9 +45,19 @@ void RegisterInProcessProvider(ProviderRegistry& registry);
 /// dropped: there is no retention, so a subscriber that joins after a publish
 /// never sees it.
 ///
-/// Threading: one delivery at a time, dispatched under the instance mutex, so a
-/// callback must not re-enter the provider (the mutex is non-recursive, so one
-/// that does deadlocks rather than corrupting state).
+/// Threading: one delivery at a time, instance-wide. The callback is dispatched
+/// with the instance mutex HELD, which is both what serialises delivery (§6
+/// clause 1) and what makes §7 clause 6's drain automatic — an `Unsubscribe` on
+/// another thread blocks on that mutex until the delivery in flight has
+/// returned, so no callback for a cancelled topic can outlive the call.
+///
+/// **All four methods are refused from inside a delivery on this instance and
+/// this thread**, with `PubSubError(kReentrantCall)`, at a door BEFORE any lock
+/// (spec §6 clause 6, owner ruling 2026-09-05). The mutex being non-recursive is
+/// therefore not what stands between a handler and a deadlock — the door is; the
+/// mutex is the backstop, and a handler that reached it would get MSVC's
+/// "resource deadlock would occur" rather than a hang. Another THREAD calling
+/// during a delivery is not re-entrancy and is served.
 class InProcessPubSubProvider : public PubSubProvider {
    public:
     explicit InProcessPubSubProvider(const ProviderConfig& config = {});

@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/types.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
@@ -102,6 +103,15 @@ class Flag {
 // locks in play during a delivery are the Subscriber's own, which is what this
 // suite is about.
 //
+// It dispatches through a `DeliveryChannel` carrying its own address, exactly as
+// all three real providers do. That is not decoration: `Subscriber::Unsubscribe`
+// decides whether to enter the provider by asking whether this thread is inside a
+// delivery ON THAT PROVIDER INSTANCE, and a probe that pushed no token would make
+// `CancelFromInsideDeliveryDoesNotEnterTheProvider` unfalsifiable — permanently
+// red, for a reason that has nothing to do with the seam (review debt
+// AG1-DEBT-13). The copy-to-a-local before invoking is preserved as a copy of the
+// CHANNEL, which is why DeliveryChannel is copyable.
+//
 // `wait_for_inflight_on_unsubscribe` turns it into the OTHER kind of provider:
 // one that honours §7 clause 6 on its own side by refusing to return while a
 // delivery is in flight, exactly as `provider.hpp` requires and as Fast DDS does
@@ -117,8 +127,18 @@ class ProbeProvider : public PubSubProvider {
         // does its work without holding anything of ours, and serialising it here
         // would make the concurrent-first-Subscribe case vacuous.
         if (subscribe_delay.count() > 0) std::this_thread::sleep_for(subscribe_delay);
-        std::lock_guard<std::mutex> lock(mu_);
-        callbacks_[Join(segments)] = std::move(callback);
+        std::unique_lock<std::mutex> lock(mu_);
+        // The loopback and XRCE dispatch with their instance mutex HELD, so a
+        // Subscribe arriving during a delivery blocks until that delivery has
+        // returned. Modelled here rather than assumed, because the caller-tier
+        // door's ORDERING depends on it: a Subscriber that waited for this call
+        // to finish before refusing would be waiting on the very delivery it is
+        // running inside.
+        if (wait_for_inflight_on_subscribe) {
+            subscribe_parked.Set();
+            cv_.wait(lock, [this] { return in_flight_ == 0; });
+        }
+        callbacks_[Join(segments)] = DeliveryChannel(this, std::move(callback));
         ++subscribe_calls;
         return SubscriptionResult{SchemaArrival::Ready(nullptr)};
     }
@@ -134,15 +154,15 @@ class ProbeProvider : public PubSubProvider {
 
     // The trigger. Runs the fan-out on the calling thread.
     void Deliver(const std::vector<std::string>& segments, const std::vector<uint8_t>& row) {
-        SubscribeCallback callback;
+        DeliveryChannel channel;
         {
             std::lock_guard<std::mutex> lock(mu_);
             auto it = callbacks_.find(Join(segments));
             if (it == callbacks_.end()) return;
-            callback = it->second;
+            channel = it->second;
             ++in_flight_;
         }
-        callback(row.data(), row.size(), SharedSchema{}, Attachments{});
+        channel.Deliver(row.data(), row.size(), SharedSchema{}, Attachments{});
         {
             std::lock_guard<std::mutex> lock(mu_);
             --in_flight_;
@@ -151,6 +171,10 @@ class ProbeProvider : public PubSubProvider {
     }
 
     bool wait_for_inflight_on_unsubscribe = false;
+    // The Subscribe-side counterpart, plus a latch that fires once this call is
+    // actually parked, so a test can order events instead of sleeping.
+    bool wait_for_inflight_on_subscribe = false;
+    Flag subscribe_parked;
     // How long provider->Subscribe takes. Fast DDS's create_datareader is far
     // above the 50 us at which the unserialised window was measured 400/400.
     std::chrono::milliseconds subscribe_delay{0};
@@ -160,7 +184,7 @@ class ProbeProvider : public PubSubProvider {
    private:
     std::mutex mu_;
     std::condition_variable cv_;
-    std::unordered_map<std::string, SubscribeCallback> callbacks_;
+    std::unordered_map<std::string, DeliveryChannel> callbacks_;
     int in_flight_ = 0;
 };
 
@@ -283,6 +307,48 @@ TEST(CallerTier, UnsubscribeOfAnUnknownIdIsANoOp) {
     probe->Deliver(kT1, Row(7));
     EXPECT_EQ(live_calls.load(), 1) << "a no-op cancellation disturbed a live subscription";
     subscriber.Unsubscribe(live);
+}
+
+// ── Clause AG1-5 — Fletcher's own cancel never raises the refusal ───
+//
+// A handler that cancels its own LAST subscription on a topic reaches
+// `provider->Unsubscribe` today (`subscriber.cpp`'s empty-topic teardown), from
+// inside that provider's own delivery frame — where the provider's door now
+// refuses it with `kReentrantCall`. Catching that refusal above the seam would
+// mean the seam throwing at itself; instead `Subscriber::Unsubscribe` asks the
+// SAME question at its own door and skips the transport-level teardown.
+//
+// The assertion is a CALL COUNT on the probe, which no catch anywhere can
+// affect. It is checked inside the handler's frame as well as after it, because
+// the published residue (owner ruling 2026-09-05) is precisely that the transport
+// subscription stays open and quiet — not that it is torn down a moment later.
+TEST(CallerTier, CancelFromInsideDeliveryDoesNotEnterTheProvider) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    std::atomic<int> calls{0};
+    std::atomic<int> provider_calls_in_frame{-1};
+
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t id, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            ++calls;
+            subscriber.Unsubscribe(id);  // the LAST entry on kT1 — empties the topic
+            provider_calls_in_frame.store(probe->unsubscribe_calls.load());
+        }});
+
+    probe->Deliver(kT1, Row(1));
+
+    ASSERT_EQ(calls.load(), 1) << "the handler never ran, so nothing was tested";
+    EXPECT_EQ(provider_calls_in_frame.load(), 0)
+        << "Fletcher entered the provider's Unsubscribe from inside that provider's own delivery "
+           "frame, which the provider refuses with kReentrantCall";
+    EXPECT_EQ(probe->unsubscribe_calls.load(), 0)
+        << "the transport subscription was torn down after all; the published residue says it "
+           "stays open until the Subscriber is destroyed or the topic is subscribed again";
+
+    // The cancellation itself really happened: no further delivery reaches it.
+    probe->Deliver(kT1, Row(2));
+    EXPECT_EQ(calls.load(), 1) << "the self-cancelled entry was invoked again";
 }
 
 // ── Control — the self shape the owner's carve-out names ────────────
@@ -930,6 +996,170 @@ TEST(CallerTier, CancellingASiblingRunningOnAnotherThreadKeepsItPublished) {
     EXPECT_TRUE(third_saw_it_exit)
         << "an uninvolved thread's cancel returned while that callback was still running: the "
            "deferral was scoped to the cancelling frame, which ended first, instead of to the gate";
+}
+
+// ── §6 clause 6 at the caller tier — the SILENT wrong answer ────────
+//
+// `Subscriber::Subscribe` for a topic this Subscriber has NOT subscribed before
+// must reach `provider->Subscribe`, and from inside a delivery the provider
+// refuses that re-entrantly. Before this door existed the refusal happened deep
+// inside `EnsureProviderSubscription`, the local record rolled back, and the
+// exception unwound into the fan-out's `catch (...)` — which contained it, as
+// §5.3 requires, and thereby ERASED it. The caller was left believing it held a
+// subscription that did not exist: no status, no log, no counter. That is the
+// exact defect class this round exists to eliminate, arriving through the tier
+// meant to prevent it.
+//
+// Note this cannot be caught by a probe that merely mirrors a real provider:
+// `ProbeProvider::Subscribe` has no door of its own and would happily serve the
+// call. The refusal has to be the CALLER TIER's, which is what makes it uniform
+// across providers rather than inherited from whichever one is underneath.
+TEST(CallerTier, SubscribingToANewTopicFromInsideADeliveryIsRefusedByName) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    constexpr int32_t kNothingRecorded = -1;
+    constexpr int32_t kReturnedWithoutThrowing = -2;
+    std::atomic<int32_t> caught{kNothingRecorded};
+    std::atomic<int> entered{0};
+
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            if (entered.fetch_add(1) != 0) return;
+            try {
+                (void)subscriber.Subscribe(
+                    kT2, Sub{[](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                const Attachments&) {}});
+                caught.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                caught.store(static_cast<int32_t>(e.status()));
+            }
+        }});
+
+    const int before = probe->subscribe_calls.load();
+    probe->Deliver(kT1, Row(1));
+
+    EXPECT_EQ(caught.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "a Subscribe to a NEW topic from inside a delivery was not refused by name";
+    EXPECT_EQ(probe->subscribe_calls.load(), before)
+        << "the provider was entered from inside its own delivery frame; the caller tier's door "
+           "must refuse before the call, not rely on the provider to refuse after it";
+}
+
+// ── The same refusal when the handler does NOT catch ────────────────
+//
+// The containment is required and stays. What must not stay is its silence: a
+// contained failure that increments nothing is indistinguishable from success
+// at every observation point a caller has. This pins the counter, which is the
+// whole of the difference.
+TEST(CallerTier, ARefusedReentrantSubscribeIsCountedRatherThanSwallowedSilently) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    std::atomic<int> entered{0};
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            if (entered.fetch_add(1) != 0) return;
+            // Deliberately uncaught: this is the shape that used to vanish.
+            (void)subscriber.Subscribe(kT2, Sub{[](uint64_t, const uint8_t*, size_t,
+                                                   const SharedSchema&, const Attachments&) {}});
+        }});
+
+    const uint64_t before = subscriber.AbsorbedCallbackFailures();
+    probe->Deliver(kT1, Row(1));
+    EXPECT_EQ(subscriber.AbsorbedCallbackFailures() - before, 1u)
+        << "the fan-out absorbed a handler failure without counting it; a refusal that leaves no "
+           "trace anywhere is worse than the divergence this round removed";
+
+    // Delivery survives the absorbed failure, for everyone after it.
+    std::atomic<int> later_calls{0};
+    (void)subscriber.Subscribe(kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                            const Attachments&) { ++later_calls; }});
+    probe->Deliver(kT1, Row(2));
+    EXPECT_EQ(later_calls.load(), 1) << "the fan-out stopped delivering after absorbing one";
+}
+
+// ── The door must come BEFORE the wait, not after ───────────────────
+//
+// A deadlock control, and the third instance in this item of ONE defect class:
+// a door placed after a blocking operation instead of before it. First a Fast
+// DDS door after its `lock_guard`; then this tier's door after
+// `provider_cv.wait`. A refusal that cannot be reached is not a refusal.
+//
+// The shape: thread B is inside `provider->Subscribe` for topic T2, parked until
+// the delivery in flight returns — which is what the loopback and XRCE do, since
+// they dispatch with their instance mutex held. A handler running inside that
+// very delivery then subscribes to T2. With the door after the wait, the handler
+// blocks on a flag only B can clear, and B is waiting on the handler: neither
+// moves. With the door before the wait, the handler is refused by name and the
+// delivery returns, which releases B.
+//
+// Reddens by HANGING, so `conformance_caller_tier`'s ctest TIMEOUT is what
+// reports it (the A4 precedent: an uncapped hang is not a red, it is a hung
+// job). Everything it waits on is bounded, so a FAILURE is reported as a failure
+// on any tree where the ordering is right.
+TEST(CallerTier, TheCallerTierDoorIsReachedBeforeItCanBlock) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    constexpr int32_t kNothingRecorded = -1;
+    constexpr int32_t kReturnedWithoutThrowing = -2;
+    constexpr auto kBudget = std::chrono::seconds(10);
+
+    std::atomic<int32_t> handler_status{kNothingRecorded};
+    std::atomic<int> entered{0};
+    Flag handler_running;
+    Flag b_may_start;
+
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            if (entered.fetch_add(1) != 0) return;
+            handler_running.Set();
+            // Wait until B is demonstrably parked inside provider->Subscribe for
+            // T2, so this is the real interleaving and not a lucky one.
+            (void)probe->subscribe_parked.WaitFor(
+                std::chrono::duration_cast<std::chrono::milliseconds>(kBudget));
+            try {
+                (void)subscriber.Subscribe(
+                    kT2, Sub{[](uint64_t, const uint8_t*, size_t, const SharedSchema&,
+                                const Attachments&) {}});
+                handler_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                handler_status.store(static_cast<int32_t>(e.status()));
+            }
+        }});
+
+    probe->wait_for_inflight_on_subscribe = true;
+
+    std::thread b([&] {
+        if (!b_may_start.WaitFor(std::chrono::duration_cast<std::chrono::milliseconds>(kBudget))) {
+            return;
+        }
+        try {
+            (void)subscriber.Subscribe(kT2, Sub{[](uint64_t, const uint8_t*, size_t,
+                                                   const SharedSchema&, const Attachments&) {}});
+        } catch (const PubSubError&) {
+            // Not what this case is about; B is scenery.
+        }
+    });
+
+    // B starts only once the delivery is under way, so its provider->Subscribe
+    // parks instead of completing before the handler ever runs.
+    std::thread starter([&] {
+        if (handler_running.WaitFor(
+                std::chrono::duration_cast<std::chrono::milliseconds>(kBudget))) {
+            b_may_start.Set();
+        }
+    });
+
+    probe->Deliver(kT1, Row(1));
+
+    starter.join();
+    b.join();
+
+    EXPECT_EQ(handler_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "a Subscribe to a new topic from inside a delivery was not refused by name; if this "
+           "test did not fail but HUNG, the door is behind a blocking wait again";
 }
 
 }  // namespace

@@ -9,6 +9,7 @@ find_package(fletcher-core CONFIG REQUIRED)
 add_subdirectory(third_party/nanoarrow)
 
 add_library(fletcher-pubsub STATIC
+    src/delivery_channel.cpp
     src/in_process_provider.cpp
     src/publisher.cpp
     src/subscriber.cpp

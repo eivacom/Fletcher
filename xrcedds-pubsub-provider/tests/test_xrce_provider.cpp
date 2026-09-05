@@ -4,8 +4,10 @@
 #include <gtest/gtest.h>
 #include <uxr/client/client.h>
 
+#include <cstdint>
 #include <cstring>
 #include <fletcher/core/envelope.hpp>
+#include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <string>
 #include <vector>
@@ -16,27 +18,39 @@
 using namespace fletcher;
 
 // ---------------------------------------------------------------------------
-// #62 residual (HARD-4) — re-entrant Unsubscribe from inside a callback must
-// not use-after-free / throw std::bad_function_call in OnTopic.
+// A cancel issued from inside a delivery is REFUSED BY NAME, and the flush that
+// delivery belongs to still completes.
+//
+// REPLACED IN PLACE by PDA-DEC-AG1. The case here used to be
+// `ReentrantUnsubscribeNoUseAfterFree`, and it pinned the behaviour that
+// "cancelling from inside a handler works on XRCE" — this provider's recursive
+// `mu` let the call straight through, while the loopback deadlocked and Fast DDS
+// self-waited on reader deletion. Owner ruling 2026-09-05 ends that divergence:
+// `Unsubscribe` on this instance from inside a delivery on this thread is refused
+// with `kReentrantCall` on all three. That is a deliberate behaviour change and
+// this test now asserts the new answer rather than the old one.
 //
 // The scenario (built and driven by the internal test hook against the real
-// Impl::OnTopic schema-flush path): a topic has a callback and two buffered
+// Impl::OnTopic schema-flush path): a topic has a subscription and two buffered
 // pending envelopes; a synthesized schema sample triggers the flush; the first
-// delivery re-enters Unsubscribe on the same topic, which performs the real
-// in-place TopicState reset (ts.callback = nullptr; ts.pending.clear()) leaving
-// the map node live.
+// delivery attempts the cancel — meeting the same door the real Unsubscribe
+// opens with — and then performs the real in-place TopicState reset, leaving the
+// map node live.
 //
-// PRE-fix: the flush loop keeps reading the live ts.pending / ts.callback across
-// the reset — the second iteration reads a destroyed Envelope and then invokes
-// the now-null ts.callback, throwing std::bad_function_call (delivery_count < 2,
-// never returned). POST-fix: OnTopic snapshots callback, schema, and pending
-// into locals before invoking user code, so both envelopes are delivered from
-// local copies (delivery_count == 2, no throw).
+// #62 residual (HARD-4) rides along, and is why `DeliveryChannel` is COPYABLE:
+// OnTopic snapshots the channel, schema and pending list into locals before
+// invoking user code, so both envelopes are delivered from local copies
+// (delivery_count == 2) across a reset that would otherwise destroy the
+// std::function currently executing.
 // ---------------------------------------------------------------------------
-TEST(XrceProviderTest, ReentrantUnsubscribeNoUseAfterFree) {
+TEST(XrceProviderTest, ReentrantUnsubscribeIsRefusedAndTheFlushSurvives) {
     EXPECT_NO_THROW({
         auto result = fletcher::xrce::test::RunReentrantUnsubscribeSchemaFlushScenario();
         EXPECT_EQ(result.delivery_count, 2);
+        EXPECT_EQ(result.refusal_status,
+                  static_cast<int32_t>(fletcher::PubSubStatus::kReentrantCall))
+            << "a cancel issued from inside a delivery on this instance must be refused by "
+               "name; this provider used to serve it";
     });
 }
 

@@ -690,9 +690,26 @@ reason for one round to wait on the other.
 
 A provider invokes `SubscribeCallback` from its own thread, often from inside a C
 callback in the transport library (XRCE's session pump, a Fast DDS listener),
-where an escaping exception is a process termination rather than an unwind. The
-seam must state that a callback **must not throw**, and say what a provider does
-if one does anyway.
+where an escaping exception is a process termination rather than an unwind. A
+callback **must not throw**.
+
+**What a provider does if one does anyway** (owner ruling 2026-09-05, *"nothing —
+the publish succeeds"*): the exception is **absorbed at the dispatch site**, and
+**reported to nobody**. It is not the publisher's failure and a publisher cannot
+act on it, so a concurrent or synchronous `Publish` on the other side of that
+topic completes normally, as does every later call. In particular the §5.1
+mapping of `std::overflow_error` to `kPayloadTooLarge` — which is about a
+`RowEncoder`'s frame — must never be reachable from a *delivery* callback's
+frame; a subscriber's bug reported to an unrelated publisher as "payload too
+large" is a wrong answer, not a diagnostic.
+
+This is a property of the dispatch mechanism rather than an obligation on each
+provider: every provider reaches a callback through one shared, sealed handle
+whose invocation is `noexcept`, so no callback frame reaches a translator at all
+and there is nothing for a provider to opt out of. Because containing an
+exception and losing it are indistinguishable from the outside, the handle
+**counts** what it absorbed, and that count is what the conformance suite asserts
+on.
 
 ---
 
@@ -712,6 +729,80 @@ depend on these being written down:
    re-enter. Destruction is *not* a synchronization boundary. This mirrors what
    both concrete providers already document, and HARD-4's rule that teardown must
    not hold the provider lock while the transport waits on in-flight callbacks.
+
+   **Naming the case that used to be left implicit** (owner ruling 2026-09-05,
+   *"forbid it, and say so"*): destroying **any** seam object over a provider
+   instance — a `Subscriber`, a `Publisher`, the provider itself — requires that
+   **no delivery on that instance is in flight on this thread**. A handler on
+   subscriber X destroying a quiescent subscriber Y over the same provider is
+   therefore out of contract, and is not a shape the seam repairs. Destruction
+   reaches `Unsubscribe`, clause 6 refuses it by name, and a refusal thrown from
+   a destructor ends the program stating the cause. That is deliberate: the
+   alternative is to skip the teardown, leaking the transport subscription and
+   the object's state with no signal and no bound.
+
+6. **Re-entry from inside a delivery is refused, on every provider and for every
+   method** (owner ruling 2026-09-05, *"refuse everywhere; hand the capability to
+   PDA-ABI"*).
+
+   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe` — all
+   four of `PubSubProvider`'s methods — throw `PubSubError(kReentrantCall)`,
+   **before taking any lock**, when issued from inside a delivery callback on the
+   *same provider instance* and the *same thread*. There is no per-protocol
+   exception and no method carved out. A handler that needs to act on the seam
+   copies what it needs and acts after the callback returns.
+
+   **Why uniformly, when one protocol could serve it.** The three providers gave
+   three answers before this clause existed — deadlock, self-wait, half-serve —
+   and the narrower rule this replaces would have shipped two. On Fast DDS a
+   listener callback holds the RTPS reader mutex, so `CreateTopic`, `Publish` and
+   `Subscribe` each *hang* from a handler; on the loopback the provider mutex is
+   held across dispatch; XRCE alone serves them, one protocol of three. A
+   capability that exists on one transport is not a seam contract, and a seam that
+   answers the same question differently per protocol is the thing this document
+   exists to prevent.
+
+   **What this costs, and who is holding it.** Transform-and-republish — read a
+   row, publish a derived one — must now cross a queue of the caller's own. That
+   is not new expense: a delivered row is a bare pointer and length valid only for
+   the call, with no owner handle, so deferring it already forces a whole-row copy
+   today. **Re-permitting re-entry is a registered obligation on PDA-ABI**, where
+   the loaned-sample receive path lands and the decision can be made against the
+   real mechanism. Refused→permitted is source-compatible for callers, but this
+   text is frozen (§12.1): it needs a fresh owner ruling, and the ruling above
+   does not pre-authorise it.
+
+   The refusal is exactly this narrow. Another **thread** issuing any call during
+   a delivery is not re-entrancy and is served — it blocks on the drain §7 clause
+   6 requires. A callback reaching a **second** provider instance is not
+   re-entrancy either.
+
+   **But a cycle between instances is the caller's to avoid, and the doors cannot
+   help.** A door recognises re-entry on the instance it belongs to and nothing
+   else, so a handler on instance A that calls into instance B, while a handler on
+   B calls into A, is not refused by either — and on the loopback, which holds its
+   instance mutex across dispatch, that is a genuine ABBA deadlock rather than a
+   refusal. It is a loud hang, not a corruption, and it predates this clause; it
+   is stated because the sentence above otherwise reads as a promise that
+   cross-instance calls are safe, and they are safe only in the absence of such a
+   cycle. **A callback must not enter a provider instance that can, directly or
+   transitively, deliver back into the instance it is running on.** Fletcher does
+   not detect this and will not repair it.
+
+   Above the seam, Fletcher's own caller tier asks the same question at its own
+   doors, and its **two** methods answer differently because only one of them has
+   an answer that does not need the provider. `Subscriber::Unsubscribe` **skips**
+   the transport-level teardown rather than raising this status at its caller —
+   the cancellation completes without entering the provider, and the resource
+   that outlives that skip is published there. `Subscriber::Subscribe`
+   **refuses**, with this status, whenever this Subscriber has not already
+   established a provider-level subscription for that topic: a topic that
+   Subscriber has already subscribed is answered from the cached arrival and
+   needs no provider call, while a topic it has not needs a provider-level
+   subscription, for which there is no answer but the provider's. That refusal
+   is raised at the caller tier, before this tier waits on anything and before
+   it enters the provider — the local record the call had begun is rolled back
+   on the way out — so it is the same answer whichever provider is underneath.
 
 ---
 
@@ -793,10 +884,12 @@ The contract:
    an application author to discover.
 
    **Scoped to each tier's own machinery.** This clause is a promise about the
-   tier the call was made on. It says nothing about what a *provider* does with
-   an `Unsubscribe` re-entered from inside its own delivery — that question is
-   open and is owned elsewhere, and PDA-DEC-A4 neither answers it nor claims it
-   away.
+   tier the call was made on. What a *provider* does with an `Unsubscribe`
+   re-entered from inside its own delivery is answered by **§6 clause 6**: it is
+   refused with `kReentrantCall`. Fletcher's own cancel path never raises that
+   status — `Subscriber::Unsubscribe` asks the same question at its own door and
+   skips the transport-level teardown — so the two tiers compose rather than
+   collide.
 
 ### §7.1 — The conformance suite is the deliverable
 

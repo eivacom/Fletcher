@@ -546,16 +546,51 @@ AG1-DEBT-2 → `AbsorbedCount()`; -3 → the lift; -4, -5, -6, -7, -8 all addres
 
 | Id | Owed | Where |
 |----|------|-------|
-| AG1-DEBT-9 | **P5's headline is false and should be restated positionally.** "The loopback's new gate adds exactly one edge, pointing one way" is not true: the gate is held across the whole fan-out, so it inherits `gate → A4 gate → Subscriber::mu` and, when a handler publishes, `A4 gate → gate`. The *rule* P5 states (never acquire the gate holding `mu_`) is correct and sufficient for the pair it governs. The real safety argument is positional: **the gate occupies exactly the slot `mu_`-across-dispatch occupied** (`in_process_provider.cpp:258` → `:279`), so every cycle reachable after the change was reachable before it, and two edges are removed. Review verified the two surviving cycles (two loopback instances publishing into each other; a loopback delivery blocking on a Fast DDS `Subscriber`'s A4 gate whose holder publishes back) are both pre-existing and both loud hangs. Within one instance the cycle is unrepresentable because A4 gates of a `Subscriber` over P can only be taken by a P delivery, and P deliveries are serialised by the gate. Write that sentence into P5. | review C2 §1 |
+| AG1-DEBT-9 | **[MOOT 2026-09-05 — ruling 52.** The loopback delivery gate this entry is about was deleted: it existed solely to make re-entrant `Publish` work under superseded ruling 48. Premise P5 retires with it, the base already dispatched under the instance mutex, and the doors are purely additive. No action owed.**]** **P5's headline is false and should be restated positionally.** "The loopback's new gate adds exactly one edge, pointing one way" is not true: the gate is held across the whole fan-out, so it inherits `gate → A4 gate → Subscriber::mu` and, when a handler publishes, `A4 gate → gate`. The *rule* P5 states (never acquire the gate holding `mu_`) is correct and sufficient for the pair it governs. The real safety argument is positional: **the gate occupies exactly the slot `mu_`-across-dispatch occupied** (`in_process_provider.cpp:258` → `:279`), so every cycle reachable after the change was reachable before it, and two edges are removed. Review verified the two surviving cycles (two loopback instances publishing into each other; a loopback delivery blocking on a Fast DDS `Subscriber`'s A4 gate whose holder publishes back) are both pre-existing and both loud hangs. Within one instance the cycle is unrepresentable because A4 gates of a `Subscriber` over P can only be taken by a P delivery, and P deliveries are serialised by the gate. Write that sentence into P5. | review C2 §1 |
 | AG1-DEBT-10 | **The lifted frame stack moves A4's depth-0 sweep.** `DeliveryScope::~DeliveryScope` sweeps `g_deferred_releases` only when `g_delivery_stack.empty()` (`subscriber.cpp:134`) — A4 fix-cycle-3's mechanism. Once provider tokens share that stack the provider token sits *below* the `Subscriber` identity, so the sweep fires at `DeliveryChannel::Deliver`'s frame rather than the fan-out's. Verified safe in both directions (later = the retirement stays published longer; no A4 gate is held at that point, `:353`'s `lock_guard` being per-entry), but it is an unstated behavioural coupling with the code that needed four fix cycles. State it. Also: `Deliver` is `noexcept`, so its `DeliveryScope` must be destroyed **inside** the `try`, or a `system_error` from the sweep's `lock_guard` terminates instead of being absorbed. | review C2 §1 |
 | AG1-DEBT-11 | **The terminate message must name `kReentrantCall` in text.** The design says the rethrow from `~Subscriber` terminates "printing status and message"; the default terminate handler prints `what()` and **not** the numeric status. Ruling 2026-09-05's "a stated, **named** error instead of a silent one" is served only if the refusal string spells the status. One word in `RefuseIfInsideDeliveryOn`'s message. | review C2 §2 |
 | AG1-DEBT-12 | **Clause 6 owes clause 4's honesty sentence, and an assertion point.** (a) On a *peer* subject `DeclareTopic` and `PublishRow` go over the pipe (`peer_subject.cpp:56`, `:64`) while only `Subscribe`/`Unsubscribe` reach the provider directly (`:67-71`), so clause 6 exercises re-entrancy for `Subscribe` alone there. Name which subjects carry its force, exactly as clause 4 does, and extend **P3** — whose stop condition is written for `Unsubscribe` only — to record that the other two verbs are *already* pipe-routed. (b) On the loopback the derived row is **deferred** to the drain, so a clause asserting its arrival from inside the handler is a guaranteed false red under TIMEOUT. State that the arrival is asserted after the outer delivery returns. | review C2 §3 |
-| AG1-DEBT-13 | **`ProbeProvider` is a seventh dispatch site and clause 5 depends on it.** `ProbeProvider::Deliver` invokes the callback directly at `caller_tier.cpp:145` (copying it to a local first — a fourth instance of the HARD-4 pattern the design names three of). It pushes no provider token, so `Subscriber::Unsubscribe`'s new door check never fires under it and `CallerTier.CancelFromInsideDeliveryDoesNotEnterTheProvider` would stay red forever. Convert it to `DeliveryChannel` (`caller_tier.cpp` is already in `Files-to-touch`). Reassuringly, A4's existing controls do **not** redden: `SelfUnsubscribeInsideItsOwnCallbackReturns` (`:295-315`) and `CrossCancellingDeliveriesDoNotDeadlock` (`:323-332`) deliberately keep a sibling entry live "so neither cancellation empties its topic and neither reaches `provider->Unsubscribe`" — but that is luck the design should bank explicitly rather than silently. | review C2 §1 |
-| AG1-DEBT-14 | **P2 should name the XRCE mechanism, because it is where this item is most likely to stop.** On XRCE the permitted set is not one mechanism: `Publish` merely buffers (`uxr_buffer_topic`, `xrce_dds_pubsub_provider.cpp:819`) and the recursive `mu` (`:168`) is all it needs, but `CreateTopic` and `Subscribe` **pump the session** — `WaitForStatus`/`WaitForStatuses` call `uxr_run_session_until_all_status` (`:598-613`) — and from inside a handler that is a *nested* pump, since `OnTopic` runs inside `uxr_run_session_time` (`:260-263`). A recursive mutex serialises Fletcher's state; it does not make the XRCE client's pump re-entrant, and a nested pump consuming the outer's status replies is the issue-#41 shape (`:161-167`) on one thread. The cycle-1 "works on XRCE" table entry was a **lock-graph** claim, correct as such, not an end-to-end one. Already routed by P2's "STOP-AND-ASK if a permitted call proves unsafe on some provider after all" and detected by clause 6 on `conformance_xrce`; P2 should name the mechanism so the stop is recognised rather than debugged. | review C2 §3 |
+| AG1-DEBT-13 | **`ProbeProvider` is a seventh dispatch site and clause 5 depends on it.** `ProbeProvider::Deliver` invokes the callback directly at `caller_tier.cpp:145` (copying it to a local first — a fourth instance of the HARD-4 pattern the design names three of). It pushes no provider token, so `Subscriber::Unsubscribe`'s new door check never fires under it and `CallerTier.CancelFromInsideDeliveryDoesNotEnterTheProvider` would stay red forever. Convert it to `DeliveryChannel` (`caller_tier.cpp` is already in `Files-to-touch`). Reassuringly, A4's existing controls do **not** redden: `SelfUnsubscribeInsideItsOwnCallbackReturns` (`:295-315`) and `CrossCancellingDeliveriesDoNotDeadlock` (`:323-332`) deliberately keep a sibling entry live "so neither cancellation empties its topic and neither reaches `provider->Unsubscribe`" — but that is luck the design should bank explicitly rather than silently. | review C2 §1 · **DISCHARGED** (PM, 2026-09-05): `ProbeProvider` dispatches through a `DeliveryChannel` carrying its own address (`caller_tier.cpp:141`), and under cycle 3's typed constructor the derived→base conversion is performed by the signature rather than by a hand-written cast. `CancelFromInsideDeliveryDoesNotEnterTheProvider` is green. The README records the reason at the `CallerTier` section. |
+| AG1-DEBT-14 | **[RESOLVED 2026-09-05.** P2 fired as this entry predicted, but on **Fast DDS**, not XRCE: a listener callback holds the RTPS reader mutex. XRCE is the one provider where the capability actually worked. The hazard class was named correctly and the protocol was not; ruling 52 refuses everywhere, so the mechanism is moot.**] **P2 should name the XRCE mechanism, because it is where this item is most likely to stop.** On XRCE the permitted set is not one mechanism: `Publish` merely buffers (`uxr_buffer_topic`, `xrce_dds_pubsub_provider.cpp:819`) and the recursive `mu` (`:168`) is all it needs, but `CreateTopic` and `Subscribe` **pump the session** — `WaitForStatus`/`WaitForStatuses` call `uxr_run_session_until_all_status` (`:598-613`) — and from inside a handler that is a *nested* pump, since `OnTopic` runs inside `uxr_run_session_time` (`:260-263`). A recursive mutex serialises Fletcher's state; it does not make the XRCE client's pump re-entrant, and a nested pump consuming the outer's status replies is the issue-#41 shape (`:161-167`) on one thread. The cycle-1 "works on XRCE" table entry was a **lock-graph** claim, correct as such, not an end-to-end one. Already routed by P2's "STOP-AND-ASK if a permitted call proves unsafe on some provider after all" and detected by clause 6 on `conformance_xrce`; P2 should name the mechanism so the stop is recognised rather than debugged. | review C2 §3 |
 | AG1-DEBT-15 | **The split trigger implies a higher ceiling than it reads.** ">1300 added" is measured at the **core-half** checkpoint, and the core half is roughly 700 of the declared 1050 — so it fires only when that half is ~1.9× its share, putting the effective whole-item ceiling nearer 2000. Not wrong (splitting after the core half is green is when a split is cheapest, and the DDS / non-DDS cut is correct), but the PM should know the number it really implies. Review's independent bottom-up for revision 2 is **≈1145 against a declared 1050**. | review C2 §5 |
 | AG1-DEBT-16 | **`data_reader_listener.hpp:46-56` is a `Take`-wide catch, not a dispatch-site catch — keep it.** It wraps the whole of `Take(reader)`, which also covers `std::bad_alloc` from `make_shared<vector>` at `:196`, the owning copy at `ordered_delivery.hpp:83`, and `queue_.push_back` at `:65`, plus anything the envelope parser raises. `DeliveryChannel::Deliver` replaces only the *callback invocation*. Deleting the whole block converts "log an ERROR and drop this notification" into an unwind into a Fast DDS listener thread (which holds the RTPS reader mutex through the listener call, per `ordered_delivery.hpp:235-239`). Narrow `Files-to-delete` to the callback rationale and leave the guard in place; it costs nothing once the callback cannot throw. | review C2 §"Files" |
-| AG1-DEBT-17 | **The deferred entry must own its `Attachments` by value.** The design's "the deferral moves bytes it owns, copying nothing" covers the row only; `Publish` receives `const Attachments&` from the caller and the drain runs after `Publish` returns. This is safe *and* zero-copy provided the pending entry stores `Attachments` **by value** — a `Blob` copy retains its `shared_ptr<const void> owner_` (`core/…/types.hpp:83-95, 113`) so no payload byte moves and the PDA-DEC-2 copy-accounting guard stays green. Storing a reference or a pointer is a use-after-free on the attachment blobs. The `OrderedDelivery::PendingSample` shape the design says it is copying (`ordered_delivery.hpp:126-129`, `std::vector<uint8_t> row; Attachments att;`) already gets this right — say so. | review C2 §1 |
-| AG1-DEBT-18 | Design `:79` — "the gate is held by `shared_ptr` from the topic slot, so no map operation can invalidate it" — contradicts `:64`, "the **instance** gains one delivery gate". One gate per `Impl` needs no per-slot `shared_ptr` (nothing erases from `impl_->topics` and `unordered_map` nodes are stable anyway), and a per-*topic* gate would break §6 clause 1's instance-wide serialisation. Delete the clause or make it say what it means. | review C2 §1 |
+| AG1-DEBT-17 | **[MOOT 2026-09-05 — ruling 52.** The loopback delivery gate this entry is about was deleted: it existed solely to make re-entrant `Publish` work under superseded ruling 48. Premise P5 retires with it, the base already dispatched under the instance mutex, and the doors are purely additive. No action owed.**]** **The deferred entry must own its `Attachments` by value.** The design's "the deferral moves bytes it owns, copying nothing" covers the row only; `Publish` receives `const Attachments&` from the caller and the drain runs after `Publish` returns. This is safe *and* zero-copy provided the pending entry stores `Attachments` **by value** — a `Blob` copy retains its `shared_ptr<const void> owner_` (`core/…/types.hpp:83-95, 113`) so no payload byte moves and the PDA-DEC-2 copy-accounting guard stays green. Storing a reference or a pointer is a use-after-free on the attachment blobs. The `OrderedDelivery::PendingSample` shape the design says it is copying (`ordered_delivery.hpp:126-129`, `std::vector<uint8_t> row; Attachments att;`) already gets this right — say so. | review C2 §1 |
+| AG1-DEBT-18 | **[MOOT 2026-09-05 — ruling 52.** The loopback delivery gate this entry is about was deleted: it existed solely to make re-entrant `Publish` work under superseded ruling 48. Premise P5 retires with it, the base already dispatched under the instance mutex, and the doors are purely additive. No action owed.**]** Design `:79` — "the gate is held by `shared_ptr` from the topic slot, so no map operation can invalidate it" — contradicts `:64`, "the **instance** gains one delivery gate". One gate per `Impl` needs no per-slot `shared_ptr` (nothing erases from `impl_->topics` and `unordered_map` nodes are stable anyway), and a per-*topic* gate would break §6 clause 1's instance-wide serialisation. Delete the clause or make it say what it means. | review C2 §1 |
+
+## AG1-DEBT-19 — re-permitting re-entry from a delivery callback (PDA-ABI)
+
+**Raised by:** implementation of PDA-DEC-AG1, under owner ruling 2026-09-05 *"refuse
+everywhere; hand the capability to PDA-ABI"*, which supersedes the earlier *"refuse only
+what's unsafe"*.
+
+**What was given up, and what it cost.** All four `PubSubProvider` methods now throw
+`kReentrantCall` when issued from inside a delivery callback on the same instance and
+thread, on all three providers — spec §6 clause 6. Transform-and-republish (read a row,
+publish a derived one) must therefore cross a queue of the caller's own. **XRCE genuinely
+loses a working capability**: it was the one protocol of three that served these calls. The
+loopback answered `kInternal` from re-locking the mutex it holds across dispatch, and Fast
+DDS *hung* — a listener callback holds the reader's RTPS mutex, measured by probing each
+call on its own. No in-tree caller re-enters the seam from a handler; the gateway already
+copies and posts to its own executor.
+
+**Why PDA-ABI and not sooner.** A delivered row crosses as a bare pointer and length with
+**no owner handle** — retain exists for attachments and schemas, not for rows — so
+deferring a re-entrant publish forces a whole-row copy today regardless. That copy is
+already mandatory until the loaned-sample receive path exists, which is PDA-ABI's. The
+decision should be made with the real mechanism in hand rather than against a copy nobody
+can avoid.
+
+**Acceptable fix:** once loaned-sample receive lands, re-open whether re-entry can be
+permitted — most likely by deferring the re-entrant call to the end of the delivery frame,
+holding the loan rather than a copy.
+
+**This is NOT pre-authorised.** Refused→permitted is source-compatible for callers, but the
+spec text is frozen (§12.1) and the ruling above explicitly withholds authority: it needs a
+fresh owner ruling. The conformance clause
+`EveryProviderMethodIsRefusedFromInsideADelivery` asserts the refusal on all six subjects
+and must be re-aimed, not deleted, if that ruling ever comes.
+
+**Addressed to:** PDA-ABI, at the item that lands the loaned-sample receive path.
 
 ## Round-level — found by PDA-DEC-7, owned by nobody yet (2026-09-02)
 
@@ -578,3 +613,48 @@ entry point.
 `ReserveStorage`, where the addition actually lives, so every present and future entry
 point inherits it instead of re-implementing it.
 **Addressed to:** PDA-ABI, at the item that gives the append path its C form.
+
+## AG1-DEBT-20 — the re-entrancy identity is typed at one end only
+
+**Raised by:** PDA-DEC-AG1 cycle-3 code review (should-fix S1), 2026-09-05.
+
+Cycle 3 gave `DeliveryChannel` a typed constructor, `DeliveryChannel(const PubSubProvider*,
+SubscribeCallback)`, so the four real push sites can no longer get the provider identity
+wrong. The *ask* side did not follow: `internal::RefuseIfInsideDeliveryOn` and
+`internal::InsideDeliveryOn` still take `const void*`, because they live in `core` and
+`core` must not depend on `pubsub`. All thirteen ask sites therefore hand-write
+`static_cast<const PubSubProvider*>(this)`, and a door added later can omit the cast
+silently — it compiles, and it compares a derived address against a base address that
+happens to be equal today only because the single non-virtual base sits at offset 0.
+
+**Why it was not fixed in-round.** The fix is a `pubsub`-tier internal header wrapping the
+two `core` entry points at `const PubSubProvider*`, which is new surface in the tier PDA-ABI
+is about to re-cut. Doing it now means doing it twice.
+
+**Acceptable fix:** an inline `pubsub`-tier wrapper taking `const PubSubProvider*`, with the
+`core` `const void*` forms becoming the implementation detail no provider calls directly.
+**Addressed to:** PDA-ABI, at the item that fixes the driver-side identity token.
+
+## AG1-DEBT-21 — a refused `Subscribe` still walks the rollback path
+
+**Raised by:** PDA-DEC-AG1 cycle-3 code review (should-fix S2), 2026-09-05.
+
+`Subscriber::Subscribe` consumes a subscription id, inserts into `subscription_topic` and
+`topics`, and republishes the fan-out snapshot **before** reaching the caller-tier door. A
+re-entrant call that is then refused unwinds through the retirement-and-deferred-sweep path
+that PDA-DEC-A4 needed four fix cycles to settle, for an entry no caller ever observed.
+
+**Not a correctness defect today** — two independent reviewers traced the unwind and neither
+blocked on it; the rollback takes no gate under `mu` and the entry is removed before the
+throw leaves the tier. It is a hazard because it makes the most delicate code in the item
+reachable from a path that has no reason to touch it.
+
+**Why it was not fixed in-round.** It is a concurrency change to that same rollback path,
+arriving in fix cycle 3 of a bounded-at-three budget. Landing it would have required a
+fourth code review of the item's highest-risk code to verify a finding neither reviewer
+considered blocking. The published contract was narrowed instead to state what the code
+actually does (the local record is rolled back on the way out), so nothing false ships.
+
+**Acceptable fix:** look `key` up under `mu` and refuse before `try_emplace`, so the refused
+call never enters the rollback path at all.
+**Addressed to:** the next item to touch `subscriber.cpp`'s subscription bookkeeping.

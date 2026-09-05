@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/status.hpp>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,11 @@ namespace {
 // "Is THIS thread currently inside a delivery on THAT Subscriber?" — the one
 // question that decides whether Unsubscribe takes the barrier or skips it.
 //
+// The stack, the scope and the predicate now live in
+// `fletcher/core/internal/delivery_frame.hpp`, because the PROVIDER tier asks the
+// same question of its own instances (PDA-DEC-AG1) and two thread-locals asking
+// it would be two answers. Moved, not duplicated.
+//
 // The storage is thread-local, but the SCOPE is per Subscriber (owner ruling
 // 2026-09-04): the stack holds one identity token per delivery frame, and the
 // predicate asks for a specific token. A handler on subscriber X cancelling on
@@ -33,7 +39,7 @@ namespace {
 //
 // The token is compared by address and NEVER dereferenced: the provider callback
 // keeps it alive by shared_ptr, so it outlives the Subscriber it identifies.
-thread_local std::vector<const void*> g_delivery_stack;
+using internal::InsideDeliveryOn;
 
 // One per subscription. `retired` is stored BEFORE the barrier is taken and read
 // under `mu` at invocation, which is what makes the two interleavings total: a
@@ -89,68 +95,6 @@ class Retirements {
     std::unordered_map<uint64_t, std::shared_ptr<Gate>> map_;
 };
 
-// Retirements owed by this thread's delivery frames — see DeliveryScope. The
-// GATE is carried, not just the id, because the guarantee is about the gate's
-// lifetime and nothing narrower: the id must stay published until that gate is
-// free, wherever the callback holding it happens to be running.
-struct DeferredRelease {
-    std::shared_ptr<Retirements> retirements;
-    std::shared_ptr<Gate> gate;
-    uint64_t id;
-};
-thread_local std::vector<DeferredRelease> g_deferred_releases;
-
-class DeliveryScope {
-   public:
-    explicit DeliveryScope(const void* token) { g_delivery_stack.push_back(token); }
-
-    // When a cancellation issued from inside a delivery skips its barrier, the
-    // id must STAY published until that subscription's gate is free — otherwise
-    // the winner un-publishes the drain the moment it skips, and a cancel of the
-    // same id from any OTHER thread finds neither map, takes the no-op branch,
-    // and returns while that callback is still running. That caller is not
-    // covered by the published carve-out.
-    //
-    // The sweep therefore **drains**, it does not merely release. Ending the
-    // cancelling FRAME is not the event the promise is about: a handler may
-    // cancel a SIBLING subscription whose callback is running on another thread
-    // (§6 clause 2 permits it, and Fast DDS's listener-per-reader makes it
-    // ordinary), and that frame ends first. Taking the barrier here waits for the
-    // gate itself, which is the object whose lifetime matches the guarantee.
-    //
-    // Blocking here is safe precisely because it happens at depth 0: this thread
-    // holds no gate and no `mu`, and a thread inside a delivery never blocks on a
-    // gate, so no cycle is representable. The cost is that a delivery whose
-    // handler cancelled a busy sibling returns only once that sibling's callback
-    // does — the same unbounded-callback exposure already published, reached one
-    // step further along.
-    //
-    // Swept at depth 0, not per frame: while any frame of this thread is still on
-    // the stack, a gate it holds is still held, and draining it here would
-    // self-deadlock. Costs nothing when the list is empty, which is every
-    // delivery that did not cancel anything.
-    ~DeliveryScope() {
-        g_delivery_stack.pop_back();
-        if (!g_delivery_stack.empty() || g_deferred_releases.empty()) return;
-        std::vector<DeferredRelease> due;
-        due.swap(g_deferred_releases);
-        for (const DeferredRelease& owed : due) {
-            {
-                std::lock_guard<std::mutex> barrier(owed.gate->mu);
-            }
-            owed.retirements->Release(owed.id);
-        }
-    }
-
-    DeliveryScope(const DeliveryScope&) = delete;
-    DeliveryScope& operator=(const DeliveryScope&) = delete;
-};
-
-bool InsideDeliveryOn(const void* token) {
-    return std::find(g_delivery_stack.begin(), g_delivery_stack.end(), token) !=
-           g_delivery_stack.end();
-}
-
 }  // namespace
 
 struct Subscriber::Impl {
@@ -193,6 +137,15 @@ struct Subscriber::Impl {
     std::shared_ptr<PubSubProvider> provider;
 
     std::shared_ptr<Identity> identity = std::make_shared<Identity>();
+
+    // Callback failures THIS Subscriber's fan-out has absorbed. Held by
+    // shared_ptr for the same reason `identity` is: the provider-side callback
+    // outlives `this` on a provider that has not yet been told to stop, and it
+    // must have somewhere to count. Scoped per instance rather than per process
+    // because every observer of this number — in the suite and in an
+    // application — is holding the Subscriber whose handler failed, and a
+    // process-wide total cannot answer "did one of MY handlers fail?".
+    std::shared_ptr<std::atomic<uint64_t>> absorbed = std::make_shared<std::atomic<uint64_t>>(0);
 
     // ── The lock order, as the code actually enforces it ────────────
     //
@@ -239,7 +192,30 @@ struct Subscriber::Impl {
         gate->retired.store(true, std::memory_order_release);
         if (InsideDeliveryOn(identity.get())) {
             if (!owns_retirement) return false;
-            g_deferred_releases.push_back(DeferredRelease{retirements, gate, id});
+            // Owed until this thread leaves its OUTERMOST delivery frame, not
+            // until this cancelling frame ends. Ending the cancelling frame is
+            // not the event the promise is about: a handler may cancel a SIBLING
+            // subscription whose callback is running on another thread (§6 clause
+            // 2 permits it, and Fast DDS's listener-per-reader makes it
+            // ordinary), and that frame ends first. The GATE is captured, not just
+            // the id, because the guarantee is about the gate's lifetime and
+            // nothing narrower — the id must stay published until that gate is
+            // free, wherever the callback holding it happens to be running.
+            //
+            // Why the id must stay published at all: the winner would otherwise
+            // un-publish the drain the moment it skips, and a cancel of the same
+            // id from any OTHER thread would find neither map, take the no-op
+            // branch, and return while that callback was still running. That
+            // caller is not covered by the published carve-out.
+            //
+            // Blocking in the sweep is safe precisely because it happens at depth
+            // 0: this thread then holds no gate and no `mu`, and a thread inside a
+            // delivery never blocks on a gate, so no cycle is representable.
+            std::shared_ptr<Retirements> owner = retirements;
+            internal::DeferUntilDeliveryDepthZero([owner, gate, id] {
+                { std::lock_guard<std::mutex> barrier(gate->mu); }
+                owner->Release(id);
+            });
             return true;
         }
         // If this ever threw — only std::mutex::lock failing, which the standard
@@ -300,10 +276,51 @@ struct Subscriber::Impl {
         // Subscribe into a handler that subscribes to the same topic — a loud
         // hang under the suite's TIMEOUT, and published in the harness README.
         //
+        // ── The already-subscribed fast path, which needs no provider ──
+        //
+        // Read BEFORE the wait as well as after it. A handler that joins a topic
+        // this Subscriber has already subscribed needs no provider call at all,
+        // so it must not be made to wait for anything: that is the permitted
+        // shape `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` pins.
+        if (ts.provider_subscribed) {
+            return ts.schema_arrival;
+        }
+
+        // ── The door, BEFORE the wait ──────────────────────────────────
+        //
+        // **Ordering is the whole of this.** Past this point the call must enter
+        // the provider, and from inside that provider's own delivery frame it
+        // cannot be served — so it is refused here, by name.
+        //
+        // It must come before `provider_cv.wait` and not after. The flag that
+        // wait blocks on is cleared only by the thread inside `provider->
+        // Subscribe`, and that thread returns only once the provider lets it —
+        // which, on a provider that dispatches under its instance mutex, means
+        // once THIS delivery has returned. A handler that waited there would be
+        // waiting for itself: a deadlock on the loopback and on XRCE, in place of
+        // a refusal. Found by two reviewers independently; it is the same defect
+        // as a door placed after a lock, with a condition variable in the lock's
+        // place.
+        //
+        // Refused at THIS tier rather than left to the provider's own door, for
+        // two reasons. It is uniform: `ProbeProvider` and any future provider
+        // that forgets its door would otherwise serve a call the seam refuses
+        // everywhere else. And it is not silent: the deep refusal used to unwind
+        // through the rollback in `Subscriber::Subscribe` into the fan-out's
+        // `catch (...)`, which contained it — correctly, per §5.3 — and thereby
+        // erased it, leaving the caller believing it held a subscription that
+        // does not exist. The containment stays; what changed is that it now
+        // counts, and that the refusal is raised before this function touches
+        // any state or blocks on anything.
+
+        internal::RefuseIfInsideDeliveryOn(provider.get(), "Subscriber::Subscribe (new topic)");
+
         // `ts` stays valid across the wait and across the unlock below: nothing
         // ever erases from `topics`, and unordered_map nodes are stable.
         provider_cv.wait(lock, [&ts] { return !ts.provider_subscribe_in_progress; });
 
+        // Re-read after the wait: the thread we waited out may have been the one
+        // that established the provider subscription.
         if (ts.provider_subscribed) {
             return ts.schema_arrival;
         }
@@ -311,6 +328,7 @@ struct Subscriber::Impl {
         std::vector<std::string> segments = ts.segments;
         FanoutPtr fanout = ts.fanout;
         std::shared_ptr<Identity> token = identity;
+        std::shared_ptr<std::atomic<uint64_t>> absorbed_here = absorbed;
 
         ts.provider_subscribe_in_progress = true;
         lock.unlock();
@@ -329,13 +347,14 @@ struct Subscriber::Impl {
         } in_progress{ts, lock, provider_cv};
 
         SubscriptionResult result = provider->Subscribe(
-            segments, [fanout, token](const uint8_t* data, size_t len, const SharedSchema& schema,
-                                      const Attachments& att) {
+            segments,
+            [fanout, token, absorbed_here](const uint8_t* data, size_t len,
+                                           const SharedSchema& schema, const Attachments& att) {
                 EntryList entries = fanout->entries.load();
                 // One push/pop per sample, not per entry: it marks the whole
                 // fan-out frame, so a handler cancelling ANY subscription on this
                 // Subscriber skips the barrier rather than blocking on a gate.
-                DeliveryScope scope(token.get());
+                internal::DeliveryScope scope(token.get());
                 // Borrowed by every subscriber; a callback that keeps either one copies it.
                 for (const Entry& entry : *entries) {
                     // This reverses the deliberately lock-free fan-out recorded
@@ -365,6 +384,17 @@ struct Subscriber::Impl {
                         // Contained here rather than translated: this frame has
                         // no channel to report on, and inventing one would be a
                         // new contract.
+                        //
+                        // COUNTED, though, and that is not decoration. A
+                        // contained failure that increments nothing is
+                        // indistinguishable from success at every observation
+                        // point a caller has -- the silent wrong answer this
+                        // round exists to remove. This Subscriber's own
+                        // AbsorbedCallbackFailures() is the observable;
+                        // DeliveryChannel::AbsorbedTotal() is its counterpart
+                        // one tier down, which stays process-wide because the
+                        // clause that reads it can only see a ProviderSubject.
+                        absorbed_here->fetch_add(1, std::memory_order_relaxed);
                     }
                 }
             });
@@ -384,6 +414,10 @@ struct Subscriber::Impl {
         return current.schema_arrival;
     }
 };
+
+uint64_t Subscriber::AbsorbedCallbackFailures() const noexcept {
+    return impl_->absorbed->load(std::memory_order_relaxed);
+}
 
 Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
@@ -423,6 +457,16 @@ Subscriber::~Subscriber() {
     // The provider transition is decided after the drain, in one critical
     // section, for the reason Unsubscribe does the same: `provider_subscribed`
     // is never left false across an unbounded wait.
+    //
+    // **This does NOT ask the door question `Unsubscribe` asks, and the
+    // asymmetry is deliberate.** Unsubscribe skips the provider teardown when it
+    // is inside a delivery, which is exactly what leaves `provider_subscribed`
+    // true for this loop to find -- so the tolerated path feeds the terminating
+    // one. That is the designed answer, not an oversight: §6 clause 5 forbids
+    // destroying a seam object over a provider with a delivery in flight on this
+    // thread, and owner ruling 2026-09-05 chose a named stop over a silent leak
+    // for a forbidden act. Published in subscriber.hpp, where an application
+    // author reads it.
     {
         std::lock_guard lock(impl_->mu);
         for (auto& [key, ts] : impl_->topics) {
@@ -435,6 +479,26 @@ Subscriber::~Subscriber() {
     for (const auto& segs : to_unsub) {
         try {
             impl_->provider->Unsubscribe(segs);
+        } catch (const PubSubError& e) {
+            // §6 clause 5, as widened by owner ruling 2026-09-05: destroying any
+            // seam object over a provider instance requires that no delivery on
+            // that instance is in flight on this thread. A handler on subscriber X
+            // destroying subscriber Y over the same provider violates it, and the
+            // provider's door says so with kReentrantCall.
+            //
+            // Rethrown, out of a (noexcept) destructor, so the program STOPS
+            // naming the violation — the ruling's "a stated, named error instead
+            // of a silent one". Swallowing it would leak the transport
+            // subscription and Y's Impl with no signal and no bound, which is the
+            // silent failure the owner rejected; the message spells
+            // `kReentrantCall` in text because the default terminate handler
+            // prints what() and not the number.
+            //
+            // Every OTHER teardown failure stays swallowed: TranslateSeamFailure
+            // is total (its last arm is catch(...) -> kInternal), so a
+            // PubSubError is all a provider's Unsubscribe can produce, and there
+            // is nothing to recover during destruction.
+            if (e.status() == PubSubStatus::kReentrantCall) throw;
         } catch (...) {
         }
     }
@@ -578,7 +642,26 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
 
         auto topic_it = impl_->topics.find(key);
         if (topic_it != impl_->topics.end() && topic_it->second.fanout->entries.load()->empty() &&
-            topic_it->second.provider_subscribed) {
+            topic_it->second.provider_subscribed &&
+            // A handler cancelling its own last subscription would otherwise
+            // reach provider->Unsubscribe from inside that provider's own
+            // delivery frame, where the provider's door refuses it with
+            // kReentrantCall (spec §6 clause 6). Fletcher's own cancel path never
+            // raises that refusal: it asks the same question at its own door and
+            // skips the transport-level teardown instead.
+            //
+            // Checked HERE, inside the critical section and BEFORE the flip
+            // below, not after: skipping after clearing `provider_subscribed`
+            // would make the next Subscribe on this topic register a SECOND
+            // provider subscription over the one still live.
+            //
+            // The residue is published in subscriber.hpp beside A4's carve-out
+            // (owner ruling 2026-09-05): the transport subscription stays open and
+            // quiet until this Subscriber is destroyed or the topic is subscribed
+            // again. No callback runs either way — the fan-out is empty and every
+            // gate is retired — so nothing is unsafe; a resource is simply held
+            // longer than a reader might expect.
+            !internal::InsideDeliveryOn(impl_->provider.get())) {
             segments_to_unsub = topic_it->second.segments;
             topic_it->second.provider_subscribed = false;
         }

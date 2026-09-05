@@ -157,7 +157,8 @@ SubjectFactory MakePeerSubjectFactory(std::string label, std::string provider_na
                               return std::make_unique<PeerSubject>(
                                   MakeTraits(provider_name, schema_mode), make(), peer_exe,
                                   peer_args);
-                          }};
+                          },
+                          /*publishes_into_subject_instance=*/false};
 }
 
 }  // namespace conformance

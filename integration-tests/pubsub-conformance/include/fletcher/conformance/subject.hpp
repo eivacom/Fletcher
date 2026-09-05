@@ -159,6 +159,18 @@ struct SubjectFactory {
     std::string label;
     std::function<std::unique_ptr<ProviderSubject>()> make;
 
+    /// True when `DeclareTopic` and `PublishRow` reach the SAME provider instance
+    /// the subscriber side delivers from — i.e. a local subject. False on a peer
+    /// subject, where those two go over the pipe to a child process and the
+    /// provider under test never sees them.
+    ///
+    /// Only §6 clause 6's method-axis control needs this, and it needs it to stay
+    /// honest rather than to branch on behaviour: a re-entrancy clause asserting
+    /// that a call is REFUSED must not assert it where the call was never
+    /// re-entrant in the first place. `Subscribe` and `Unsubscribe` are direct on
+    /// every subject and need no such qualification.
+    bool publishes_into_subject_instance = true;
+
     std::unique_ptr<ProviderSubject> operator()() const { return make(); }
 };
 

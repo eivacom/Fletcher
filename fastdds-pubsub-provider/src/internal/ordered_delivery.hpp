@@ -14,9 +14,24 @@
 // one FIFO and delivered to the callback by a single drainer. A sample offered
 // while a drain is already in progress is appended behind the in-flight
 // backlog rather than delivered inline, so it can never overtake earlier
-// samples. The callback runs with the lock released (it may re-enter Offer);
-// the drain flag is cleared even if the callback throws, so delivery cannot
-// wedge.
+// samples. The callback runs with the lock released (it may re-enter Offer).
+//
+// It no longer clears the drain flag on an exception path from the CALLBACK,
+// because there is no such path left: every dispatch here goes through
+// DeliveryChannel::Deliver, which is `noexcept` and absorbs what a handler throws
+// at the site it threw (spec 5.3, owner ruling 2026-09-05). The three
+// `catch (...) { draining_ = false; throw; }` pairs that used to guard against
+// wedging are gone with the throws they guarded against; rethrowing into a Fast
+// DDS listener thread that holds the RTPS reader mutex was never a recovery
+// anyway.
+//
+// One narrower path remains, unchanged by that and never covered by those
+// catches either: the `lk.lock()` taken AFTER a delivery can itself throw
+// std::system_error under resource exhaustion, and `draining_` then stays true
+// and this reader stops draining. Pre-existing, not introduced here, and left
+// alone deliberately -- a process that cannot lock a mutex has a larger problem
+// than one wedged reader, and the honest statement is that the flag is exception-
+// safe against the callback, not against the machine.
 //
 // **That race exists only during startup, and this class charges for it only during startup.** The
 // schema listener fires once and is then finished, and Fast DDS serialises every on_data_available
@@ -32,6 +47,7 @@
 #include <deque>
 #include <fastdds/dds/log/Log.hpp>
 #include <fletcher/core/types.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <mutex>
@@ -47,9 +63,9 @@ class OrderedDelivery {
     // buffers everything that arrives until the schema does, and if no publisher ever appears that
     // is unbounded growth on a reachable path. Dropping the oldest is what KEEP_LAST would have
     // done to the same samples had the reader been able to decode them yet.
-    explicit OrderedDelivery(PubSubProvider::SubscribeCallback callback,
-                             SharedSchema schema = nullptr, size_t max_queued = 0)
-        : callback_(std::move(callback)),
+    explicit OrderedDelivery(DeliveryChannel channel, SharedSchema schema = nullptr,
+                             size_t max_queued = 0)
+        : channel_(std::move(channel)),
           schema_(std::move(schema)),
           schema_ready_(schema_ != nullptr),
           max_queued_(max_queued) {}
@@ -94,13 +110,7 @@ class OrderedDelivery {
         draining_ = true;
         SharedSchema schema = schema_;
         lk.unlock();
-        try {
-            callback_(row, len, schema, attachments);
-        } catch (...) {
-            lk.lock();
-            draining_ = false;
-            throw;
-        }
+        channel_.Deliver(row, len, schema, attachments);
         lk.lock();
         draining_ = false;
         DrainLocked(lk);
@@ -153,12 +163,7 @@ class OrderedDelivery {
         if (!draining_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             return false;
         }
-        try {
-            callback_(row, len, schema_, attachments);
-        } catch (...) {
-            draining_.store(false, std::memory_order_seq_cst);
-            throw;
-        }
+        channel_.Deliver(row, len, schema_, attachments);
         draining_.store(false, std::memory_order_seq_cst);
         // Anything queued while the callback ran is this thread's to drain, because the thread that
         // queued it saw `draining_` set and bailed. Both operations here are seq_cst, as are their
@@ -204,20 +209,25 @@ class OrderedDelivery {
             queue_.pop_front();
             NoteQueuedLocked();
             lk.unlock();
-            try {
-                callback_(sample.row.data(), sample.row.size(), schema, sample.att);
-            } catch (...) {
-                lk.lock();
-                draining_ = false;
-                throw;
-            }
+            channel_.Deliver(sample.row.data(), sample.row.size(), schema, sample.att);
             lk.lock();
         }
         draining_ = false;
         MarkSteadyLocked();
     }
 
-    PubSubProvider::SubscribeCallback callback_;
+    // The one dispatch mechanism, shared with the other two providers: a handler
+    // failure is absorbed here rather than unwound into a listener thread, and the
+    // delivery frame it pushes is what the provider's Unsubscribe door asks about.
+    // Held as a MEMBER and delivered through directly, where the loopback and
+    // XRCE copy the channel to a local first (HARD-4 / issue #62: a callback that
+    // re-entered Unsubscribe would destroy the std::function being invoked).
+    // Safe here only because the door now refuses that re-entrant Unsubscribe
+    // before it can reach `delete_datareader` and destroy this object. If §6
+    // clause 6 is ever relaxed -- AG1-DEBT-19 asks PDA-ABI to consider exactly
+    // that -- these three dispatch sites need the copy-to-local the other two
+    // providers already have.
+    DeliveryChannel channel_;
     std::mutex mu_;
     SharedSchema schema_;
     bool schema_ready_ = false;

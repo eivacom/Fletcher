@@ -54,4 +54,5 @@ down a subscriber from inside a delivery is forbidden, and said so.
 Declared net lines: +1050 / −150 · new public surface: 2 (of 3) · design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+*As landed (2026-09-05, appended by the PM at close):*
+**+2028 / −243** vs declared +1050/−150 — **93% over the declared adds**, a close finding owed a note: both owner decisions landed as recommended, but ruling 52 widened the refusal from `Unsubscribe` to all four methods on all three providers after the numbers were declared, and 12 doors cost what 3 were budgeted for. Public surface **3** (declared 2): `AbsorbedCallbackFailures()`, the `DeliveryChannel` ctor pair, `RawToken`. Retired: the process-wide counter, the base-cast normative paragraph, the ruling-48 delivery gate. Design cycles **2/2** · fix cycles **3** · implementer launches **≥4** (one interrupted launch is not in the PM's dispatch record). Debt out: AG1-DEBT-20, -21 → PDA-ABI.

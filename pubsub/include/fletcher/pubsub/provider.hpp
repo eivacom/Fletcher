@@ -150,6 +150,22 @@ class PubSubProvider {
     ///  - **One callback at a time.** Never two deliveries in flight for the same
     ///    subscription, though the thread they arrive on may differ between samples. A
     ///    provider that fans out from several threads must serialise them itself.
+    ///  - **A callback must not throw** (§5.3). If one does anyway, the provider
+    ///    absorbs it at the dispatch site and the failure is reported nowhere:
+    ///    it is not the publisher's failure and the publisher cannot act on it
+    ///    (owner ruling 2026-09-05), so a concurrent `Publish` on the other side
+    ///    completes normally. Every provider does this through the one shared
+    ///    `DeliveryChannel` (delivery_channel.hpp), whose `Deliver` is `noexcept`
+    ///    — so a provider cannot opt out and an unwind across a transport's C
+    ///    frames is a type property rather than a comment.
+    ///  - **Re-entrancy: ALL FOUR methods are REFUSED** (§6 clause 6, owner
+    ///    ruling 2026-09-05). `CreateTopic`, `Publish`, `Subscribe` and
+    ///    `Unsubscribe`, issued from inside a delivery on this same instance and
+    ///    this same thread, each throw `PubSubError(kReentrantCall)` before
+    ///    taking any lock. Copy what you need and act after the callback
+    ///    returns. Re-permitting this once a loaned-sample receive path exists
+    ///    is a registered obligation on PDA-ABI (AG1-DEBT-19); it is not
+    ///    pre-authorised, and needs a fresh owner ruling.
     using SubscribeCallback =
         std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
                            const Attachments& attachments)>;
@@ -178,6 +194,20 @@ class PubSubProvider {
     /// delivers from its own thread must not let a delivery already in flight
     /// outlive the call. Unsubscribing a topic with no subscription is a no-op,
     /// not an error, so it is safe to call unconditionally on teardown.
+    ///
+    /// **Refused from inside a delivery, as all four methods are** (§6 clause 6,
+    /// owner ruling 2026-09-05). Issued from a delivery callback on THIS instance
+    /// and THIS thread, it throws `PubSubError(kReentrantCall)` before taking any
+    /// lock — a cancellation cannot wait for the delivery it is inside of, and
+    /// every provider would otherwise deadlock or silently half-serve it. That
+    /// was the first of the four to be refused, and is still the one whose
+    /// refusal is unavoidable rather than chosen.
+    ///
+    /// The refusal is exactly that narrow: another THREAD cancelling during a
+    /// delivery is not re-entrancy and is served (it blocks on the drain), and a
+    /// callback reaching a SECOND provider instance is not re-entrancy either —
+    /// though see §6 clause 6 on cycles between instances, which the doors cannot
+    /// see and do not prevent.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
 };
 

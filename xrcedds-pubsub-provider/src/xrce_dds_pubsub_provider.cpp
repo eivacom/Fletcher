@@ -28,7 +28,9 @@
 #include <cstring>
 #include <exception>
 #include <fletcher/core/envelope.hpp>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/schema_conflict.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
@@ -90,7 +92,11 @@ struct XrceDDSPubSubProvider::Impl {
         internal::DeclaredSchema declared;
         bool is_publisher = false;
         bool has_reader = false;
-        PubSubProvider::SubscribeCallback callback;
+        // The sealed handle, not a bare std::function: a handler failure is
+        // absorbed at the dispatch site rather than unwound across the XRCE
+        // client's C frames, and the delivery frame it pushes is what
+        // Unsubscribe's door asks about (spec 5.3 and 6.6).
+        DeliveryChannel channel;
 
         // Subscriber-first support. Subscribe is non-blocking and resolves the
         // schema asynchronously through the companion __schema reader (see
@@ -243,7 +249,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         // then invoked the now-null ts.callback (std::bad_function_call). Copying
         // to locals makes the in-flight flush independent of the live TopicState.
         // Dispatch stays under impl->mu (single recursive-mutex pump model).
-        PubSubProvider::SubscribeCallback callback;
+        DeliveryChannel channel;
         SharedSchema schema_for_callbacks;
         std::vector<Envelope> pending;
         {
@@ -260,7 +266,10 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             // the XRCE session callback thread. OnTopic is invoked from inside
             // uxr_run_session_time(), so unwinding would cross C frames from the
             // XRCE client library: UB on MSVC and process termination in
-            // practice (H-INV-3 / HARD locked decision #3).
+            // practice (H-INV-3 / HARD locked decision #3). The USER callback is
+            // no longer part of that risk — DeliveryChannel::Deliver is
+            // `noexcept` and absorbs what a handler throws — so what this guard
+            // still covers is the provider's own steps below.
             //
             // The guard covers the WHOLE sequence, not just the parse, because
             // every step can throw:
@@ -293,7 +302,7 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
                 return;
             }
 
-            callback = ts.callback;
+            channel = ts.channel;
             schema_for_callbacks = ts.shared_schema;
             pending = std::move(ts.pending);
             ts.pending.clear();
@@ -301,10 +310,11 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
 
         // Deliver from locals only — do NOT read or write ts / ts.* past this
         // point; a re-entrant Unsubscribe may reset the live TopicState.
-        if (callback) {
+        if (channel) {
             for (auto& env : pending) {
                 // Borrowed: a callback that keeps the attachments copies them, per the contract.
-                callback(env.row.data(), env.row.size(), schema_for_callbacks, env.attachments);
+                channel.Deliver(env.row.data(), env.row.size(), schema_for_callbacks,
+                                env.attachments);
             }
         }
         return;
@@ -314,14 +324,15 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
     auto rit = impl->reader_to_topic.find(object_id.id);
     if (rit == impl->reader_to_topic.end()) return;
     auto tit = impl->topics.find(rit->second);
-    if (tit == impl->topics.end() || !tit->second.callback) return;
+    if (tit == impl->topics.end() || !tit->second.channel) return;
 
-    // Snapshot the callback and schema into locals before invoking user code
+    // Snapshot the channel and schema into locals before invoking user code
     // (issue #62 residual): a callback that re-enters Unsubscribe() resets the
-    // live TopicState (ts.callback = nullptr) in place, which would otherwise
-    // self-destruct the executing std::function. `envelope` is already a local.
+    // live TopicState in place, which would otherwise self-destruct the
+    // executing std::function. DeliveryChannel is COPYABLE for exactly this.
+    // `envelope` is already a local.
     // Dispatch stays under impl->mu (single recursive-mutex pump model).
-    PubSubProvider::SubscribeCallback callback;
+    DeliveryChannel channel;
     SharedSchema schema_for_callback;
     Envelope envelope;
     {
@@ -349,14 +360,14 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
         } catch (...) {
             return;
         }
-        callback = ts.callback;
+        channel = ts.channel;
         schema_for_callback = ts.shared_schema;
     }
 
     // Deliver from locals only — do NOT read or write ts / ts.* past this point.
-    if (callback) {
-        callback(envelope.row.data(), envelope.row.size(), schema_for_callback,
-                 envelope.attachments);
+    if (channel) {
+        channel.Deliver(envelope.row.data(), envelope.row.size(), schema_for_callback,
+                        envelope.attachments);
     }
 }
 
@@ -631,6 +642,14 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). This call WORKS from inside a
+        // handler here — XRCE is the one protocol of three where it does — and is
+        // refused anyway, so the seam has one answer rather than a per-protocol
+        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
+        // hand and a fresh ruling.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+
         std::string name = internal::JoinSegments(topic_segments);
 
         // Encoded before the lock, so the locked section is a byte compare rather
@@ -771,6 +790,14 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). This call WORKS from inside a
+        // handler here — XRCE is the one protocol of three where it does — and is
+        // refused anyway, so the seam has one answer rather than a per-protocol
+        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
+        // hand and a fresh ruling.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Publish");
+
         std::string name = internal::JoinSegments(topic_segments);
         std::lock_guard lock(impl_->mu);
 
@@ -826,6 +853,14 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     return TranslateSeamFailure([&]() -> SubscriptionResult {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
+        // "Re-entry is refused on every protocol"). This call WORKS from inside a
+        // handler here — XRCE is the one protocol of three where it does — and is
+        // refused anyway, so the seam has one answer rather than a per-protocol
+        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
+        // hand and a fresh ruling.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
+
         std::string name = internal::JoinSegments(topic_segments);
         std::lock_guard lock(impl_->mu);
 
@@ -940,7 +975,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             WaitForStatuses(&impl_->session, reqs, statuses, 2, "data subscriber+reader");
         }
 
-        ts.callback = std::move(callback);
+        ts.channel = DeliveryChannel(this, std::move(callback));
         ts.has_reader = true;
         impl_->reader_to_topic[ts.reader_id.id] = name;
 
@@ -964,6 +999,13 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
+        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05).
+        // This provider used to SERVE a re-entrant cancel — its recursive `mu`
+        // let the call straight through, and the in-place reset below then ran
+        // under the very delivery it was cancelling. That is the divergence this
+        // item ends: all three providers now refuse all four methods by name.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
+
         std::string name = internal::JoinSegments(topic_segments);
         std::lock_guard lock(impl_->mu);
 
@@ -1015,7 +1057,7 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
             ts.has_reader = false;
             // In-place reset — the map node stays live; OnTopic must not depend on
             // these fields across a user callback (see the copy-to-locals fix above).
-            ts.callback = nullptr;
+            ts.channel = DeliveryChannel{};
             ts.pending.clear();
         }
     });
@@ -1078,21 +1120,39 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
     ts.pending.push_back(make_env(0x01));
     ts.pending.push_back(make_env(0x02));
 
-    // Callback: count deliveries and, on the FIRST delivery, reproduce EXACTLY
-    // what the real Unsubscribe() does to a live TopicState — an in-place reset
-    // (ts.callback = nullptr; ts.pending.clear()) with the map node left live.
-    // Pre-fix this self-nulls the executing std::function and invalidates the
-    // pending iteration; post-fix the flush runs off local copies and is immune.
+    // Callback: count deliveries and, on the FIRST delivery, do what a handler
+    // that cancels its own subscription now meets — the door the real
+    // Unsubscribe() opens with — and then reproduce EXACTLY the in-place reset
+    // the real Unsubscribe() performs on a live TopicState, with the map node
+    // left live.
+    //
+    // The token is `&impl`, which is what this scenario's DeliveryChannel below
+    // pushes; in the shipped provider both are the provider's own `this`. This
+    // hook is the reason `DeliveryChannel::RawToken` exists: there is no
+    // PubSubProvider object here to name, so the ordinary constructor — which
+    // takes one, precisely so a provider cannot get the identity wrong — has
+    // nothing to be handed.
+    //
+    // Two facts, one scenario: the cancel is REFUSED by name (kReentrantCall,
+    // where this provider used to serve it), and the flush still delivers both
+    // buffered envelopes from local copies rather than off the reset state.
     Impl* impl_ptr = &impl;
-    ts.callback = [impl_ptr, topic_name, &result](const uint8_t*, size_t, SharedSchema,
-                                                  Attachments) {
-        result.delivery_count += 1;
-        if (result.delivery_count == 1) {
-            auto& live = impl_ptr->topics[topic_name];
-            live.callback = nullptr;  // real Unsubscribe in-place reset
-            live.pending.clear();     // real Unsubscribe in-place reset
-        }
-    };
+    ts.channel = DeliveryChannel(
+        DeliveryChannel::RawToken{}, &impl,
+        [impl_ptr, topic_name, &result](const uint8_t*, size_t, const SharedSchema&,
+                                        const Attachments&) {
+            result.delivery_count += 1;
+            if (result.delivery_count == 1) {
+                try {
+                    internal::RefuseIfInsideDeliveryOn(impl_ptr, "Unsubscribe");
+                } catch (const PubSubError& e) {
+                    result.refusal_status = static_cast<int32_t>(e.status());
+                }
+                auto& live = impl_ptr->topics[topic_name];
+                live.channel = DeliveryChannel{};  // real Unsubscribe in-place reset
+                live.pending.clear();              // real Unsubscribe in-place reset
+            }
+        });
 
     // Synthesize a schema sample exactly as the wire path presents it to
     // OnTopic: IPC schema bytes wrapped in the CDR sequence<octet> length prefix
@@ -1115,9 +1175,10 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
 
     uxrObjectId object_id = uxr_object_id(schema_reader_id, UXR_DATAREADER_ID);
 
-    // Drive the REAL schema-flush path. Pre-fix: throws std::bad_function_call on
-    // the 2nd pending iteration (ts.callback nulled by the re-entrant reset).
-    // Post-fix: delivers both envelopes from local copies (delivery_count == 2).
+    // Drive the REAL schema-flush path: it must deliver both envelopes from local
+    // copies (delivery_count == 2) even though the first callback reset the live
+    // TopicState underneath it, and the cancel that callback attempted must have
+    // been refused with kReentrantCall.
     Impl::OnTopic(nullptr, object_id, /*request_id=*/0, impl.reliable_in, &ub,
                   static_cast<uint16_t>(wire.size()), &impl);
 

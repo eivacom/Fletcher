@@ -38,6 +38,7 @@ summary; the normative wording is the doc comment on each enumerator in `status.
 | `kInternal` | 7 | The total catch-all. Anything with no better home arrives here carrying the original message — a taxonomy that lets an untyped exception through is not one. |
 | `kPending` | 8 | A wait **outcome**, never thrown: the answer is not available yet, within the timeout that was asked for. |
 | `kSubscriptionEnded` | 9 | A wait **outcome**, never thrown: the answer will never arrive, because the subscription that would have produced it is gone. |
+| `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. All four `PubSubProvider` methods refuse, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
 
 Values are **fixed integers, appended only** — never renumbered, reordered, reused or removed,
 because a boundary that has shipped one of these numbers to an application cannot take it back.

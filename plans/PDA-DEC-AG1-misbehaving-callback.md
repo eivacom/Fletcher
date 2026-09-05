@@ -11,6 +11,71 @@ allocated `kReentrantCall = 10`; destroying a seam object in that frame becomes 
 contract. Both mechanisms live once, in shared code. §5.3 is discharged, §6 gains a sixth
 clause, and §6 clause 5 widens.
 
+> ### CORRECTION — superseded direction (fix cycle 2, 2026-09-05)
+>
+> **The Summary above, and every part of this design that describes a *permitted* set, is
+> superseded by owner ruling 52.** The original text is left intact: the record should show what
+> was designed and what replaced it.
+>
+> **What changed and why.** This design was written under ruling 48 ("refuse only what is unsafe;
+> the rest converges up"), which rested on the cycle-1 architecture review's finding that
+> `CreateTopic`/`Publish`/`Subscribe` from a handler *work today on Fast DDS and XRCE*. That was a
+> lock-graph claim about **Fletcher's** locks. Implementation tested it **by probe rather than by
+> reading** and falsified it: a Fast DDS listener callback runs with the **RTPS reader mutex**
+> held, so both re-entrant paths hang independently. The capability works on **XRCE only** — one
+> protocol of three. Premise **P2** fired as designed and the implementer stopped rather than
+> narrowing the permitted set to make its own tests pass.
+>
+> **As landed instead:** all four methods are refused from inside a delivery on all three
+> providers — twelve doors, each **before any lock**. §6 clause 6 states the **refusal**; the
+> "read a row and publish a derived one … is contract, not luck" wording was withdrawn before it
+> ever shipped. Re-permitting is registered as **AG1-DEBT-19** against PDA-ABI, where the
+> loaned-sample receive path lands; ruling 52 does **not** pre-authorise it.
+>
+> **Retired with the ruling:** the loopback delivery gate (the `PendingRow` / `pending_mu` /
+> `gate_owner` / `DeliverOrDefer` deferral) existed *solely* to make re-entrant `Publish` work and
+> is deleted — the base already dispatched under the instance mutex, so the doors are purely
+> additive and strictly remove deadlock edges. Premise **P5** retires with it, as do
+> **AG1-DEBT-9/-17/-18**, whose subject no longer exists. The **charter constraint survives**:
+> clause 6 was re-aimed at the refusal being uniform and loud, not deleted, and both step-4
+> reviews re-verified its independence by falsification.
+
+> **Added after this block was first written (fix cycle 2, same day).** A caller-tier door in
+> `EnsureProviderSubscription`: the probe provider has **no door of its own and was serving**
+> re-entrant subscribes, so refusing per-provider was not uniform. With it, `Subscriber::Subscribe`
+> to a **new** topic from inside a delivery is refused by name, while an already-subscribed topic
+> still returns its cached arrival. Also `Subscriber::AbsorbedCallbackFailures()` — ruling 51
+> requires containment, and containment without a count is indistinguishable from swallowing.
+> New public surface is therefore **3 of 3**, not the 2 the Numbers section states.
+
+> ### CORRECTION — shapes changed by fix cycle 2's review findings (2026-09-05)
+>
+> Three details above are no longer true as written; the text stays, the corrections
+> are here.
+>
+> 1. **The caller-tier door precedes `provider_cv.wait`, not follows it.** As first
+>    landed it sat after the wait, so a handler subscribing to a topic another thread
+>    was mid-`provider->Subscribe` for blocked on a flag only that thread could clear,
+>    and that thread was waiting on the delivery the handler was inside — a deadlock
+>    where the clause promises a refusal (code review cycle 2, should-fix A). The
+>    ordering is now the contract, with `CallerTier.TheCallerTierDoorIsReachedBefore
+>    ItCanBlock` as its control; it reddens by hanging.
+> 2. **`Subscriber::AbsorbedCallbackFailures()` is a non-static member over a
+>    per-`Impl` counter**, not the process-wide static the block above landed. Every
+>    observer holds the `Subscriber` whose handler failed, so a process-wide total
+>    cannot answer the question the accessor was added for (code review cycle 2,
+>    should-fix B; narrowed now on PM ruling, published surface being expensive to
+>    narrow later and cheap to widen). `DeliveryChannel::AbsorbedTotal()` stays
+>    process-wide — the clause that reads it sees only a `ProviderSubject`.
+> 3. **`DeliveryChannel`'s ordinary constructor takes a `const PubSubProvider*`.**
+>    The base-cast rule was a normative paragraph of comment across nineteen sites and
+>    one of them already broke it (`caller_tier.cpp`, compliance N1); it is now a
+>    signature, with the `const void*` form behind `DeliveryChannel::RawToken{}` for
+>    the three sites that have no provider object — the XRCE test hook, and the Fast
+>    DDS unit-test and benchmark helpers (code review cycle 2, should-fix C). The
+>    paragraph the signature replaces is deleted. Public surface is unchanged at
+>    **3 of 3**: one type gained an overload and a tag, none was added.
+
 ## Design
 
 Two mechanisms over one thread-local — absorption and refusal — deliberately in different
@@ -228,12 +293,21 @@ scope becomes the whole suite plus `|conformance_xrce`.
 5. **`CallerTier.CancelFromInsideDeliveryDoesNotEnterTheProvider`**. The probe provider
    records its `Unsubscribe` calls; a handler cancelling its own last subscription must
    produce none while its frame is live. *Red today:* `subscriber.cpp:588` calls through.
-6. **`…DeclarePublishAndSubscribeAreServedFromInsideADelivery`** *(not-too-wide control,
+6. **`…EveryProviderMethodIsRefusedFromInsideADelivery`** *(renamed from `DeclarePublishAndSubscribeAreServed…`, ruling 52)* *(not-too-wide control,
    method axis — AG1-DEBT-5, and the clause ruling 2026-09-05 requires)*. From inside a
    delivery the callback calls `DeclareTopic`, `PublishRow` on a second topic and
    `Subscribe` on a third; all three must return `ok()` and the derived row must
    **arrive**. *Red today:* the loopback deadlocks (TIMEOUT). *Red after* if the refusal
    is widened beyond `Unsubscribe`, or the deferred row is dropped rather than drained.
+
+   > **CORRECTION (PM, 2026-09-05, cycle-3 close).** The two sentences above are the
+   > pre-ruling-52 body and were not brought forward when the case was renamed. Under
+   > ruling 52 re-entry is refused on **every** protocol, so the case asserts the
+   > opposite of what it says here: all three calls must be **refused with
+   > `kReentrantCall`**, and the case is a not-too-wide control in the sense that each
+   > refusal must be charged to the re-entrant caller and to no other party. The
+   > "derived row must arrive" clause does not survive ruling 52 at all. Raised by the
+   > cycle-3 compliance re-review; the shipped test is correct, this prose was not.
 
 ## Risks / Unknowns
 
@@ -296,5 +370,12 @@ scope becomes the whole suite plus `|conformance_xrce`.
 ## Numbers
 
 Declared net lines **+1050 / −150** (rev 1 said +520; review measured ≈910, and ruling
+
+> **SUPERSEDED — as landed 2026-09-05:** **+1713 / −235**, new public surface **3 of 3**.
+> +63% over declared adds, past the runbook's 50% threshold, and **ruled EARNED** by
+> architecture-conformance re-review: of 1469 added C++/CMake lines **890 (61%) are comment
+> or blank**, so substantive code is **~557 against the 1050 declared** — under budget. The
+> growth is published-contract prose the rulings demanded (spec ~90, harness README ~80,
+> in-source rationale), not scope creep. Design cycles 2/2 · implementer launches 5.
 2026-09-05 added the loopback fix and the permitted-set clause); split trigger >1300 at the
 core-half checkpoint. Public surface **2 of 3**: `kReentrantCall`, `DeliveryChannel`.

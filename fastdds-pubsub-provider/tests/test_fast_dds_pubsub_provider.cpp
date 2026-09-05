@@ -13,10 +13,12 @@
 #include <fastdds/dds/subscriber/Subscriber.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "internal/data_reader_listener.hpp"
@@ -38,6 +40,16 @@ SharedSchema AwaitSchema(const SubscriptionResult& result, std::chrono::millisec
     EXPECT_EQ(result.schema.Wait(budget, &schema), PubSubStatus::kOk)
         << "schema arrival: " << result.schema.Message();
     return schema;
+}
+
+// A dispatch site is a DeliveryChannel now, not a bare std::function, so these
+// unit tests build one over a lambda. The token is this file's own static: a
+// delivery frame is pushed and popped around each invocation exactly as a
+// provider's would be, and nothing in these tests asks about it.
+inline fletcher::DeliveryChannel TestChannel(fletcher::PubSubProvider::SubscribeCallback cb) {
+    static const int kTestProviderToken = 0;
+    return fletcher::DeliveryChannel(fletcher::DeliveryChannel::RawToken{}, &kTestProviderToken,
+                                     std::move(cb));
 }
 
 }  // namespace
@@ -894,7 +906,7 @@ TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
     bool injected = false;
 
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             ASSERT_GE(len, 5u);
             if (active > 0) {
                 nested = true;
@@ -913,7 +925,7 @@ TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
                 self->Offer(std::move(row), {});
             }
             --active;
-        });
+        }));
     self = &delivery;
 
     auto row_bytes = [](int32_t v) {
@@ -943,12 +955,12 @@ TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
 // until SetSchema arrives (no null-schema delivery).
 TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
     std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(
+    fletcher::internal::OrderedDelivery delivery(TestChannel(
         [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             ASSERT_GE(len, 5u);
             EXPECT_TRUE(schema) << "callback invoked with a null schema";
             order.push_back(DecodeRow(data));
-        });
+        }));
 
     std::vector<uint8_t> row(5);
     row[0] = 0x00;
@@ -967,12 +979,12 @@ TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
 // real schema arrives.
 TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
     std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(
+    fletcher::internal::OrderedDelivery delivery(TestChannel(
         [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             ASSERT_GE(len, 5u);
             EXPECT_TRUE(schema) << "callback invoked with a null schema";
             order.push_back(DecodeRow(data));
-        });
+        }));
 
     std::vector<uint8_t> row(5);
     row[0] = 0x00;
@@ -994,10 +1006,10 @@ TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
 TEST(OrderedDeliveryTest, OfferViewCopiesWhatItCannotDeliverYet) {
     std::vector<int32_t> order;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             ASSERT_GE(len, 5u);
             order.push_back(DecodeRow(data));
-        });
+        }));
 
     std::vector<uint8_t> row(5);
     row[0] = 0x00;
@@ -1019,7 +1031,9 @@ TEST(OrderedDeliveryTest, OfferViewCopiesWhatItCannotDeliverYet) {
 TEST(OrderedDeliveryTest, OfferViewDeliversInlineOnceSchemaIsKnown) {
     const uint8_t* seen = nullptr;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) { seen = data; },
+        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+            seen = data;
+        }),
         MakeSharedSchema(MakeSchema()));
 
     std::vector<uint8_t> row(5);
@@ -1033,10 +1047,10 @@ TEST(OrderedDeliveryTest, OfferViewDeliversInlineOnceSchemaIsKnown) {
 TEST(OrderedDeliveryTest, BacklogIsCappedAndDropsOldest) {
     std::vector<int32_t> order;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             ASSERT_GE(len, 5u);
             order.push_back(DecodeRow(data));
-        },
+        }),
         nullptr, /*max_queued=*/3);
 
     for (int32_t i = 0; i < 10; ++i) {
@@ -1076,11 +1090,12 @@ TEST(OrderedDeliveryTest, SteadyStateDeliversEverySampleInOrderWithASchema) {
     std::vector<int32_t> order;
     size_t with_schema = 0;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            if (schema) ++with_schema;
-            order.push_back(DecodeRow(data));
-        },
+        TestChannel(
+            [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+                ASSERT_GE(len, 5u);
+                if (schema) ++with_schema;
+                order.push_back(DecodeRow(data));
+            }),
         nullptr, /*max_queued=*/16);
 
     // Reach the steady state by draining a backlog rather than starting in it.
@@ -1109,7 +1124,9 @@ TEST(OrderedDeliveryTest, SteadyStateDeliversEverySampleInOrderWithASchema) {
 TEST(OrderedDeliveryTest, SteadyStateOfferViewStillLendsTheBytes) {
     const uint8_t* seen = nullptr;
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) { seen = data; },
+        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+            seen = data;
+        }),
         MakeSharedSchema(MakeSchema()));
 
     const std::vector<uint8_t> first(5);
@@ -1133,7 +1150,7 @@ TEST(OrderedDeliveryTest, SteadyStateReentrantOfferIsQueuedNotNested) {
     bool injected = false;
 
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
             if (active > 0) nested = true;
             ++active;
             order.push_back(DecodeRow(data));
@@ -1142,7 +1159,7 @@ TEST(OrderedDeliveryTest, SteadyStateReentrantOfferIsQueuedNotNested) {
                 self->Offer(DeliveryRow(99), {});
             }
             --active;
-        },
+        }),
         MakeSharedSchema(MakeSchema()));
     self = &delivery;
 
@@ -1154,21 +1171,34 @@ TEST(OrderedDeliveryTest, SteadyStateReentrantOfferIsQueuedNotNested) {
 }
 
 // A throwing callback must not leave the latched path wedged: the next sample still gets through.
-TEST(OrderedDeliveryTest, SteadyStateSurvivesAThrowingCallback) {
+//
+// RE-ANCHORED by PDA-DEC-AG1. It used to assert `EXPECT_THROW(delivery.Offer(...))`
+// -- the exception reached the CALLER, which on the real path is a Fast DDS
+// listener thread holding the RTPS reader mutex, and on the loopback was an
+// unrelated publisher being told kPayloadTooLarge for a subscriber's bug. Owner
+// ruling 2026-09-05: the failure is contained and reported where it happened.
+// Nothing escapes Offer now; what this pins instead is that the throw was
+// ABSORBED -- counted by the channel -- rather than merely unobserved, and that
+// delivery is not wedged afterwards.
+TEST(OrderedDeliveryTest, SteadyStateAbsorbsAThrowingCallbackAndKeepsDelivering) {
     std::vector<int32_t> order;
     bool thrown = false;
+    const uint64_t before = fletcher::DeliveryChannel::AbsorbedTotal();
     fletcher::internal::OrderedDelivery delivery(
-        [&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
+        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
             order.push_back(DecodeRow(data));
             if (!thrown) {
                 thrown = true;
                 throw std::runtime_error("callback");
             }
-        },
+        }),
         MakeSharedSchema(MakeSchema()));
 
-    EXPECT_THROW(delivery.Offer(DeliveryRow(1), {}), std::runtime_error);
+    EXPECT_NO_THROW(delivery.Offer(DeliveryRow(1), {}))
+        << "a handler's failure escaped the dispatch site";
     delivery.Offer(DeliveryRow(2), {});
+    EXPECT_EQ(fletcher::DeliveryChannel::AbsorbedTotal(), before + 1)
+        << "the throw was swallowed without being counted";
     EXPECT_EQ(order, (std::vector<int32_t>{1, 2})) << "delivery wedged after the callback threw";
 }
 
