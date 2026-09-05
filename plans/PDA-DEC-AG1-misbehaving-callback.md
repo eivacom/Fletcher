@@ -279,7 +279,7 @@ scope becomes the whole suite plus `|conformance_xrce`.
 ## Files-to-delete
 
 - **The dispatch-site catches** — `data_reader_listener.hpp:46-56` and
-  `ordered_delivery.hpp:97-103`, `:156-161` — replaced by `DeliveryChannel::Deliver`.
+  `ordered_delivery.hpp:97-103`, `:156-161`, `:209-213` — replaced by `DeliveryChannel::Deliver`.
 - **The loopback's dispatch-under-lock** and the deadlock-by-design comments documenting
   it (`in_process_provider.cpp:248`, `:270-275`) — replaced by the delivery gate; the
   comments have no replacement, because the statement stops being true.
