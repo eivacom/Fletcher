@@ -836,3 +836,31 @@ raising `std::invalid_argument` per its own `:116-118` contract — so that `Set
 handling.
 **Rejected:** refusing only locally attached labels; and deferring the receive half to its own item,
 which would close the round with the gap open and hand it to PDA-ABI.
+
+## 2026-09-06 — §5.1 states the general escape rule, not one class *(selection)*
+
+Raised as PDA-DEC-AG2's compliance review **B1, an oracle-wins tripwire**. Ruling 56 authorised
+naming **one** message class in frozen §5.1, and the amendment as landed says *"That is the only
+class of message this seam renders differently"* (`:719`). **The mechanism is broader than the owner
+was told when ruling 56 was given:** `PubSubError`'s constructor escapes every NUL in **any**
+message, `TranslateSeamFailure` rethrows a `PubSubError` unchanged, and the design's own CORRECTED
+§4 names **two** routes — `segments.hpp:103-113`'s `"…" + seg`, and a factory constructing
+`PubSubError(status, std::string)` directly. The item's own forcing test
+`Registry.ARefusalIsReconstructibleFromItsNumberAndMessageAlone` uses route (ii), so the change
+falsifies its own published sentence.
+
+**The owner selected (a), state the general rule.** Verbatim from the option as presented and chosen:
+
+> **State the general rule.** The seam escapes a zero byte in ANY message it publishes, and §5.1
+> says so — naming Fletcher's topic refusals as the class that arises in its own code today, as an
+> example rather than a limit. This publishes a wider rule than ruling 56 authorised, which is why
+> you are being asked. Nothing can truncate silently at a language boundary.
+
+**Applies to:** frozen §5.1. This **widens ruling 56** and supersedes it as to scope: the amendment
+states the escape as a general property of every message the seam publishes, with the topic-refusal
+class named as an in-tree example and **not** as a limit. Ruling 56 stands as to the fact of the
+amendment and its non-generalisation to any *other* frozen section.
+**Rejected:** narrowing the mechanism to match the one-class sentence, which would leave a
+provider-composed message able to truncate at a C#/Rust boundary — the silent-truncation class the
+owner has now refused four times; and limiting the sentence to Fletcher-composed messages, which
+would leave the spec under-describing what the code does for a binding author reading only §5.1.

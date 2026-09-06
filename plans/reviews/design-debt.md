@@ -692,3 +692,54 @@ expression, and all 12 are in Files-to-touch).
 | AG2-C2-DEBT-1 | The "`Set`'s throw is unreachable from every decode path" claim omits a fourth decoder: `fastdds…/benchmarks/legacy_fletcher_topic_type.hpp:106,127` decodes wire bytes into a real `fletcher::Attachments` (`transport_data.hpp:59`) from inside a `TopicDataType::deserialize()` override, and after migration reaches `Set`. The design's own P1 lists this file as a decoder while §3 counts three. Either give it the same `memchr` guard, or narrow the sentence to "every decode path that can receive foreign bytes" and record that the benchmark decodes only bytes it produced. Benchmark-only and loud, hence debt. | review §C2-DEBT-1 |
 | AG2-C2-DEBT-2 | Three further published statements go stale and are not in Files-to-touch: `docs/data-flow-diagrams.md:155` ("EncodedRow + Attachments **map**"), `fastdds-pubsub-provider/benchmarks/README.md:28` ("an empty `Attachments` against what `PublishData` costs"), and `fastdds-pubsub-provider/README.md:536`, whose "listener reusing one `Attachments`" row stays true only because `Clear()` exists. One-word edits each. | review §C2-DEBT-2 |
 | AG2-C2-DEBT-3 | A sorted-vector `Set` makes decode quadratic in a wire-supplied count: `ParseEnvelopeBody` bounds `att_count` only by `(total - pos) / 8` (`envelope_codec.hpp:83`), so a 1 MiB sample may claim ~131k attachments. Ascending keys (what conforming Fletcher now emits) stay O(1) amortised; a descending-key producer forces O(k²) element moves on the path whose 3.2 ns/sample cost `fastdds-pubsub-provider/README.md:536` publishes. Either give the decode paths an ordered-append fast path, or state the complexity beside `Set` and re-check the published number. Loud, not silent. | review §C2-DEBT-3 |
+
+### Implementation pass (step 3) — what was discharged, and what is carried
+
+**AG2-DEBT-7 re-measured before anything else, and revision 3's count is off by one in
+each direction.** Measured on the tree at `102e56d`: **56** source files name
+`Attachments` (not 54 — the count omitted `gateway-client-ts/src/envelope.ts` and
+`integration-tests/gateway-fastdds-ts/generated-ts/sensor_reading.fletcher.pb.h`, both of
+which name it without holding a map expression). **Eleven** C++ files held a map
+expression and needed a real edit, not twelve: revision 3 counted
+`pubsub-arrow/src/subscriber_arrow.cpp` because of `atts_.clear()`, which is
+`std::vector<Attachments>::clear()` and is unaffected. All eleven were in Files-to-touch.
+Two files outside Files-to-touch also needed real edits and were found by the compiler,
+exactly as premise P5 said they would be:
+`xrcedds-pubsub-provider/test_package/src/example.cpp` (which is in Files-to-touch) and
+`fastdds-pubsub-provider/benchmarks/bench_pub_sub_type.cpp` (which is, under `benchmarks/*`).
+
+**Discharged:**
+
+- **AG2-DEBT-2** — `SeamVocabulary.TheSameMessagePublishesTheSameWireBytes` reads the key
+  sequence off `SerializeEnvelope`'s output; `EnvelopeCodecTest.TheSameBodyIsEncodedToTheSameBytes`
+  does the same for `EncodeEnvelopeBody` in the Fast DDS suite, where it is reachable.
+  Both assert byte-identity across three build orders *and* the ascending sequence.
+- **AG2-DEBT-3** — `Registry.TheRefusalListIsAFunctionOfTheRegistrysContents` asserts the
+  rendered `available:` list equals the literal `"alpha, bravo, mike, zulu"`, which reddens
+  under any re-typing of `factories_`, as well as the insertion-order seal.
+- **AG2-DEBT-4** — the non-injectivity is stated in `status.hpp`'s class comment, in
+  `core/README.md`, and in spec §5.1, and pinned by
+  `Taxonomy.TheZeroByteEscapeIsDeliberatelyNotInjective`, whose failure message says
+  making it injective is the wider change the 2026-09-06 ruling does not authorise.
+- **AG2-C2-DEBT-1** — the benchmark decoder got the same `memchr` guard (two lines), so
+  "`Set`'s throw is unreachable from every decode path" is true with no footnote.
+- **AG2-C2-DEBT-2** — all three published statements edited.
+  `fastdds-pubsub-provider/README.md`'s two `unordered_map`-premised rows were
+  **re-measured rather than struck**: `BM_AttachmentsConstruct` reads **50.2 ns** at
+  `102e56d` and **0.616 ns** after, same machine, same session. That is where the
+  published 52 ns came from and where it went.
+- **AG2-C2-DEBT-3** — the complexity is stated beside `Set` in `types.hpp`, naming the
+  wire-supplied-count bound as what bounds `k`. The published number was re-checked and
+  is **not** the one at risk: `README.md:536`'s figure is the attachment-free delivery
+  path, which never calls `Set`. Measured either side of the change on this machine,
+  `BM_Deliver_OfferView` − `BM_Deliver_CallbackOnly` is **13.5 ns before and 11.6 ns
+  after** — no regression. Note both readings are ~4x the 3.2 ns the README publishes;
+  that gap **predates this item** and is not touched here.
+
+**Carried, with reasons:**
+
+| Id | Carried | Why |
+|----|---------|-----|
+| AG2-IMPL-1 | `gateway-client-ts/src/envelope.ts` encodes attachments in JavaScript `Map` insertion order, so a TS-produced message with two or more attachments is correct but **not canonical**. | It is a second, independent encoder, it is not in Files-to-touch, and no lane in this item's VERIFY runs `vitest` against it. Nothing breaks: every decoder matches by key, and any Fletcher C++ decoder normalises the order on ingest because the entries land in a `fletcher::Attachments`. **Published rather than implied** — `docs/wire-format-specification.md` now names this encoder as the exception instead of asserting the rule holds everywhere. Addressed to whichever item next touches the TS client. |
+| AG2-IMPL-2 | `integration-tests/gateway-fastdds-ts` cannot find its own gateway binary: the harness looks in `build/Release/gateway_build/`, and the multi-config generator writes `build/gateway_build/Release/`. | **Pre-existing, not caused here** — the harness documents `GATEWAY_BIN` as the override and that is what the three green runs used. A one-line candidate-list fix, but it is in a harness this item does not otherwise touch and it would go unverified on the single-config Linux lane. |
+
