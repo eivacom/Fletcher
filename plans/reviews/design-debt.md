@@ -658,3 +658,37 @@ actually does (the local record is rolled back on the way out), so nothing false
 **Acceptable fix:** look `key` up under `mu` and refuse before `try_emplace`, so the refused
 call never enters the rollback path at all.
 **Addressed to:** the next item to touch `subscriber.cpp`'s subscription bookkeeping.
+
+## PDA-DEC-AG2 — the two crossing types with no form (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
+
+Review: [PDA-DEC-AG2-design-review.md](PDA-DEC-AG2-design-review.md). All seven open and owed by
+the implementer. The three BLOCKERs are **not** here — they are in the review and must be
+discharged in the design revision.
+
+| Id | Owed | Where |
+|----|------|-------|
+| AG2-DEBT-1 | `clear` is in Files-to-delete with no replacement, but `fastdds …/envelope_codec.hpp:76` and `benchmarks/legacy_fletcher_topic_type.hpp:106` reset a **reused** `Attachments&` out-param on the receive path, and `fastdds-pubsub-provider/README.md:529,535` record the measured reason for reusing it. Add `void Clear() noexcept` (capacity retained; public surface stays 1 type), or state the codec assigns `Attachments{}` and own the per-sample allocation in the band. | review §DEBT-1 |
+| AG2-DEBT-2 | Nothing tests the **wire** order ruling 53 was given for — the positive test asserts the container's form. Add: `SerializeEnvelope` and `EncodeEnvelopeBody` of the same set built in two insertion orders are byte-identical, and the emitted key sequence is ascending. | review §DEBT-2 |
+| AG2-DEBT-3 | The insertion-order seal guard cannot see the variation ruling 55 names — hash order *is* a function of contents within one build. Additionally assert the rendered `available:` list is in ascending byte order, which reddens under any re-typing. | review §DEBT-3 |
+| AG2-DEBT-4 | The `PubSubError` NUL escape is non-injective, unlike `Quoted` (`provider_registry.cpp:43-51` measured and removed exactly this collision). Deliberate trade — say so in the header comment so nobody later "fixes" it into a message-changing escape. | review §DEBT-4 |
+| AG2-DEBT-5 | "UTF-8" is asserted for attachment keys (§2) and messages (§4 rule 2) but nothing validates it. Publish the order as *ascending unsigned-byte order of the key bytes*; keep UTF-8 as a stated convention, not a guarantee. | review §DEBT-5 |
+| AG2-DEBT-6 | Rung-1 item 2's justification does not hold: once `entries_` is sorted, `begin()/end()` over that vector cannot drift from positional order. The unordered container made the wire order a build artefact, not the range-`for`. Restate the case as "one mechanism, not two". | review §DEBT-6 |
+| AG2-DEBT-7 | "~15 files" (P2 and the brief) versus ~30 paths in the design's own Files-to-touch and 54 source files referencing `Attachments`. The band's ceiling is declared as set by that count — reconcile before implementation. | review §DEBT-7 |
+
+### Cycle 2 (NEEDS-REWORK, 1 BLOCKER) — revision 3
+
+Review: [PDA-DEC-AG2-design-review-c2.md](PDA-DEC-AG2-design-review-c2.md). The single
+BLOCKER (C2-B1, A7's forcing test is green at base) is **not** here — it is in the review.
+
+**Discharged in revision 3, closed:** AG2-DEBT-1 (`Clear()` added, surface still 1),
+AG2-DEBT-5 (ascending unsigned-byte order of the key bytes; UTF-8 demoted to a stated
+convention), AG2-DEBT-6 (restated as "one mechanism, not two"), AG2-DEBT-7 (counts
+reconciled and independently verified: 54 files name `Attachments`, exactly 12 hold a map
+expression, and all 12 are in Files-to-touch).
+**Still open from cycle 1:** AG2-DEBT-2, AG2-DEBT-3, AG2-DEBT-4.
+
+| Id | Owed | Where |
+|----|------|-------|
+| AG2-C2-DEBT-1 | The "`Set`'s throw is unreachable from every decode path" claim omits a fourth decoder: `fastdds…/benchmarks/legacy_fletcher_topic_type.hpp:106,127` decodes wire bytes into a real `fletcher::Attachments` (`transport_data.hpp:59`) from inside a `TopicDataType::deserialize()` override, and after migration reaches `Set`. The design's own P1 lists this file as a decoder while §3 counts three. Either give it the same `memchr` guard, or narrow the sentence to "every decode path that can receive foreign bytes" and record that the benchmark decodes only bytes it produced. Benchmark-only and loud, hence debt. | review §C2-DEBT-1 |
+| AG2-C2-DEBT-2 | Three further published statements go stale and are not in Files-to-touch: `docs/data-flow-diagrams.md:155` ("EncodedRow + Attachments **map**"), `fastdds-pubsub-provider/benchmarks/README.md:28` ("an empty `Attachments` against what `PublishData` costs"), and `fastdds-pubsub-provider/README.md:536`, whose "listener reusing one `Attachments`" row stays true only because `Clear()` exists. One-word edits each. | review §C2-DEBT-2 |
+| AG2-C2-DEBT-3 | A sorted-vector `Set` makes decode quadratic in a wire-supplied count: `ParseEnvelopeBody` bounds `att_count` only by `(total - pos) / 8` (`envelope_codec.hpp:83`), so a 1 MiB sample may claim ~131k attachments. Ascending keys (what conforming Fletcher now emits) stay O(1) amortised; a descending-key producer forces O(k²) element moves on the path whose 3.2 ns/sample cost `fastdds-pubsub-provider/README.md:536` publishes. Either give the decode paths an ordered-append fast path, or state the complexity beside `Set` and re-check the published number. Loud, not silent. | review §C2-DEBT-3 |
