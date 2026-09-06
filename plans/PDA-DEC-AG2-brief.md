@@ -1,4 +1,4 @@
-# PDA-DEC-AG2 — Stage Brief (2026-09-05)
+# PDA-DEC-AG2 — Stage Brief (2026-09-05, revised 2026-09-06 to your three answers)
 
 **In one sentence:** the two things that cross the interface with no published shape — the side data
 a message carries and the explanatory text of a refusal — get one, so another program reproduces
@@ -12,7 +12,6 @@ what Fletcher publishes rebuilds both exactly; live negative controls prove neit
 |---|---|---|
 | The side data a message carries | CHANGED | Gains a stated, repeatable order and one published way to walk it |
 | A refusal's explanatory text | CHANGED | Now part of the refusal, and survives being handed to another language |
-| "Which protocols are available?" | NEW *(decision 3)* | An application can ask, instead of reading it out of an error sentence |
 
 ## Deleted
 - The old free-form side-data container and every incidental way to poke at it — replaced by one
@@ -26,33 +25,29 @@ whose reason lives anywhere but the refusal; asking for the tenth item of a set 
 **Handled:** no message-length limit is invented — none has ever been measured; harmless odd bytes
 are left alone, because only a zero byte truncates.
 
-## Decisions for you   (3)
-1. **Should the same message always produce the same bytes on the wire?**
-   Options: (a) yes — side data goes out in a fixed, stated order · (b) no — leave it to the build
-   and publish "order is unspecified, sort it yourself".
-   **Recommendation:** (a); (b) publishes the leak instead of fixing it, which you declined seven
-   times. Cost: a message with two or more pieces of side data may go out in a different order than
-   today's build chose — nothing breaks, every reader matches by label, not by position. **Default: (a).**
-   *Background (skippable): today's on-wire order is `std::unordered_map` hash order, so two Fletcher builds can already emit different bytes for the identical message; locked decisions 11 and 13 make any wire-byte movement your call.*
-2. **A side-data label containing a zero byte: refuse it, or accept it?**
-   Options: (a) refuse it when it is attached · (b) accept it and publish the hazard.
-   **Recommendation:** (a); under (b) two different labels silently become one at a C#/Rust boundary
-   and one quietly overwrites the other — the silent-wrong-answer class you refused three times in
-   September. Cost: a label that "works" today stops working.
-   **Default: none — this adds a refusal to frozen text, so it needs your word.** Unanswered, it does not land.
-3. **When an application asks for a protocol that isn't there, may it list what is?**
-   Options: (a) yes — it can ask Fletcher for the available names · (b) no — it can only show
-   Fletcher's sentence. **Recommendation:** (a) — a C#/Rust app can then offer "did you mean…"
-   rather than re-printing English prose; the refusal text stays either way. **Default: (a).**
-   *Background (skippable): one new query on the registry; the creation signature is untouched, so a driver path stays admissible for PDA-ABI.*
+## Decisions — all three answered 2026-09-06; nothing outstanding
+1. **Same message, same bytes on the wire — DECIDED: yes, a fixed stated order.** Side data goes
+   out in one order everywhere. Your word is the sole authorisation for moving those bytes, and it
+   covers side-data ordering only; anything else that would move a byte comes back to you.
+2. **A side-data label containing a zero byte — DECIDED: refused.** A label that "works" today by
+   accident stops working, loudly, instead of silently overwriting another one abroad. Your word is
+   the sole authorisation for that new rule, and it covers this refusal only.
+3. **Listing what protocols are available — DECIDED: no, only Fletcher's sentence.** Nothing new is
+   published for an application to call. The refusal text still names what is available and is still
+   made repeatable, so an operator reads the same sentence on every machine; an application that
+   wants a "did you mean…" list must read that sentence or keep its own.
+
+**No new question this revision.** Re-checking the tree for decision 3 found the available-protocol
+list is *already* built in a stable order, so the repeatability you asked for costs nothing new —
+this stage adds a guard that keeps it that way.
 
 ## Risks accepted / debt carried
-- Decision 1 moves wire bytes for multi-attachment messages — raised to you rather than taken.
+- Side-data order on the wire changes for multi-attachment messages — authorised by you, not assumed.
 - The claim is scoped to *this* tree, measured with a stand-in client: no real C#/Rust binding exists yet.
 - Used in ~15 files; if a public surface depends on its free-form shape, the stage stops and asks.
 
 ## Numbers
-Declared net lines: +900 / −250 (band +700/+1300 adds) · new public surface: 2 · design cycles: 1/2
+Declared net lines: +830 / −250 (band +650/+1300 adds) · new public surface: 1 · design cycles: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
