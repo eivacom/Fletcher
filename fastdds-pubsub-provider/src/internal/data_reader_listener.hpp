@@ -157,7 +157,12 @@ class LoanableDataReaderListener : public DataReaderListenerBase {
     void Take(eprosima::fastdds::dds::DataReader* reader) override {
         SampleSeq samples;
         eprosima::fastdds::dds::SampleInfoSeq infos;
-        // Reused: a fresh empty unordered_map costs 51 ns on MSVC.
+        // Reused across samples. The reuse was bought by a measurement that has since expired —
+        // a fresh empty unordered_map cost 51 ns on MSVC, and PDA-DEC-AG2 retired that alias for a
+        // sealed container over a std::vector that costs 0.616 ns to default-construct. What the
+        // reuse now saves is re-GROWING the entries vector on every sample that carries
+        // attachments, which is why it is kept; ParseEnvelopeBody's bulk builder is what empties
+        // it, on entry and on every early return.
         Attachments attachments;
         // Pre-sizing would silently switch this to a deserialising take into 1-byte elements.
         assert(samples.maximum() == 0);

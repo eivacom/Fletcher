@@ -971,5 +971,213 @@ TEST(Registry, AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade) {
     }
 }
 
+// ── §5.1 — a refusal's MESSAGE is part of its value ──────────────────
+//
+// THE FORCING TEST for A7. §4's answer to "which providers are there?" lives
+// only in a refusal's message, and until PDA-DEC-AG2 nothing made that message
+// survivable: a message carrying a zero byte was truncated at that byte by
+// `what()`, which returns a `const char*`, so everything after it was lost
+// before any boundary saw it. Two refusals raised for different reasons then
+// published the SAME form, and no boundary could tell them apart.
+//
+// The stand-in boundary below is shown exactly what §5.1 asks a boundary to
+// convey — an `int32` number and the message read as a NUL-terminated byte
+// string — and rebuilds a refusal from that alone. The refusal it rebuilds must
+// be indistinguishable from the original, AND two refusals that were distinct
+// before the crossing must still be distinct after it. The second half is the
+// one that was false: without it, a build that published the empty message for
+// everything would satisfy the first.
+//
+// Ruling 2026-09-06 declined a typed name query on the registry, so the
+// determinism half is asserted THROUGH THE MESSAGE — two registries holding the
+// same names in different insertion orders must compose byte-identical refusals,
+// and the rendered list must be in ascending byte order. No new public surface.
+
+namespace {
+
+// The published form of a refusal: everything a boundary is given, and nothing
+// else. `what()` is a `const char*`, so a message is read here exactly as a
+// C#/Rust marshaller reads it — to the first zero byte.
+struct PublishedRefusal {
+    int32_t number = 0;
+    std::string message;
+
+    bool operator==(const PublishedRefusal& other) const {
+        return number == other.number && message == other.message;
+    }
+};
+
+template <typename Fn>
+PublishedRefusal RefusalPublishedBy(Fn&& fn, const char* what) {
+    try {
+        std::forward<Fn>(fn)();
+    } catch (const PubSubError& error) {
+        // The two channels, and only these two.
+        return PublishedRefusal{static_cast<int32_t>(error.status()), std::string(error.what())};
+    } catch (const std::exception& error) {
+        ADD_FAILURE() << what << " threw something that is not a PubSubError: " << error.what();
+        return PublishedRefusal{};
+    }
+    ADD_FAILURE() << what << " did not fail at all";
+    return PublishedRefusal{};
+}
+
+// The far side. It holds the number and the bytes, and rebuilds the refusal from
+// them — it has no access to the original object, and never could have.
+PubSubError RebuiltFrom(const PublishedRefusal& published) {
+    return PubSubError(static_cast<PubSubStatus>(published.number), published.message);
+}
+
+// A cause text carrying a zero byte, built without a zero byte in this source.
+std::string CauseWithZeroByte(char tail) {
+    std::string cause = "a";
+    cause.push_back(static_cast<char>(0));
+    cause.push_back(tail);
+    return cause;
+}
+
+// A registry whose one factory refuses with a caller-chosen cause. It is reached
+// through `Create`, so `TranslateSeamFailure` is in the loop and the refusal is
+// the one the seam actually publishes rather than one this test constructed.
+PublishedRefusal RefusalFromAFactoryRaising(std::string cause) {
+    ProviderRegistry registry;
+    registry.Register(
+        "thrower",
+        [cause = std::move(cause)](const ProviderConfig&) -> std::shared_ptr<PubSubProvider> {
+            throw PubSubError(PubSubStatus::kTransportFailure, cause);
+        });
+    const ProviderConfig config;
+    return RefusalPublishedBy([&] { return MakeProvider(registry, "thrower", config); },
+                              "a factory refusing");
+}
+
+// The `available:` list a refusal renders, without the surrounding sentence.
+std::string AvailableListIn(const std::string& message) {
+    const std::string marker = "available: ";
+    const size_t at = message.find(marker);
+    if (at == std::string::npos) return {};
+    return message.substr(at + marker.size());
+}
+
+}  // namespace
+
+TEST(Registry, ARefusalIsReconstructibleFromItsNumberAndMessageAlone) {
+    // ── Leg 1: the crossing preserves the refusal.
+    //
+    // The cause carries a zero byte in the middle. `TranslateSeamFailure`
+    // rethrows a `PubSubError` unchanged, so this is the message the seam
+    // publishes, not one this test composed.
+    const PublishedRefusal ab = RefusalFromAFactoryRaising(CauseWithZeroByte('b'));
+    ASSERT_EQ(ab.number, static_cast<int32_t>(PubSubStatus::kTransportFailure));
+
+    const PubSubError rebuilt = RebuiltFrom(ab);
+    const PublishedRefusal republished{static_cast<int32_t>(rebuilt.status()),
+                                       std::string(rebuilt.what())};
+    EXPECT_TRUE(republished == ab)
+        << "a refusal rebuilt from its number and message does not republish them: number "
+        << republished.number << " against " << ab.number << ", message [" << republished.message
+        << "] against [" << ab.message << "]";
+
+    // ── Leg 2: and the crossing does not COLLAPSE two refusals into one.
+    //
+    // This is the half that was false. Both causes are three bytes and agree on
+    // their first two; a channel that stops at the zero byte publishes "a" for
+    // both, and the reason the call failed is gone with no signal.
+    const PublishedRefusal ac = RefusalFromAFactoryRaising(CauseWithZeroByte('c'));
+    ASSERT_EQ(ac.number, ab.number) << "the two refusals must differ only in their message";
+    EXPECT_NE(ab.message, ac.message)
+        << "two refusals raised for different reasons publish the same form: [" << ab.message
+        << "] (" << ab.message.size() << " bytes) and [" << ac.message << "] (" << ac.message.size()
+        << " bytes). Everything after the zero byte was lost";
+
+    // The bound on the narrowing: a message with no zero byte crosses UNCHANGED.
+    // Without this, escaping every byte would satisfy both legs above and would
+    // silently rewrite every diagnostic in the tree.
+    const PublishedRefusal plain = RefusalFromAFactoryRaising("the transport would not start");
+    EXPECT_EQ(plain.message, "the transport would not start")
+        << "a message with no zero byte was rewritten on its way out of the seam";
+}
+
+// ── The live negative control for the test above ────────────────────
+//
+// It asserts the message is LOAD-BEARING rather than decorative: two genuinely
+// different refusals share one number, so a boundary forwarding the number alone
+// hands an operator the same answer for both. It breaks if a later change folds
+// the cause into the number — which would be a `PubSubStatus` append, and that
+// needs the owner's word.
+TEST(Registry, ANumberAloneCannotTellTwoRefusalsApart) {
+    ProviderRegistry registry;
+    RegisterInProcessProvider(registry);
+
+    const ProviderConfig config;
+    const PublishedRefusal mistyped = RefusalPublishedBy(
+        [&] { return MakeProvider(registry, "inprocss", config); }, "a mistyped provider name");
+    // A real built-in, not a probe: the empty-segment refusal is the seam's, so
+    // this control cannot be greened by a test double that happens to refuse.
+    const PublishedRefusal empty_topic = RefusalPublishedBy(
+        [&] {
+            std::shared_ptr<PubSubProvider> provider = MakeProvider(registry, "inprocess", config);
+            provider->Publish({}, [](WriteBuffer& buffer) { buffer.AppendByte(0x01); });
+        },
+        "an empty topic-segment list");
+
+    // Same number: a boundary that forwards only the number says the same thing
+    // about both, and an operator cannot act on either.
+    ASSERT_EQ(mistyped.number, static_cast<int32_t>(PubSubStatus::kInvalidArgument));
+    ASSERT_EQ(empty_topic.number, static_cast<int32_t>(PubSubStatus::kInvalidArgument));
+    EXPECT_EQ(mistyped.number, empty_topic.number)
+        << "these two refusals no longer share a number, so this control no longer controls "
+           "anything — re-aim it rather than deleting it";
+
+    // With the message they are distinct, and each names its own problem.
+    EXPECT_NE(mistyped.message, empty_topic.message)
+        << "the message adds nothing to the number: both refusals read [" << mistyped.message
+        << "]";
+    EXPECT_TRUE(Mentions(mistyped.message, "inprocss"))
+        << "the refusal does not name what was asked for: " << mistyped.message;
+    EXPECT_TRUE(Mentions(empty_topic.message, "topic"))
+        << "the refusal does not name what was wrong: " << empty_topic.message;
+}
+
+// ── The §4 answer is a function of the registry's CONTENTS ──────────
+//
+// Ruling 2026-09-06 declined `RegisteredNames()`, so this asserts the property
+// the ruling still names — through the message alone, which is all an
+// application gets.
+//
+// Two claims. Insertion order is a SEAL GUARD: `factories_` is already a
+// `std::map`, so this is green at base and goes red if that container is ever
+// re-typed to an unordered one. Ascending byte order is what the seal guard
+// cannot see on its own — hash order is a function of contents within one build,
+// so the insertion-order leg would stay green under a re-typing on some
+// toolchains (AG2-DEBT-3).
+TEST(Registry, TheRefusalListIsAFunctionOfTheRegistrysContents) {
+    auto journal = std::make_shared<Journal>();
+    const std::vector<std::string> names{"zulu", "alpha", "mike", "bravo"};
+
+    ProviderRegistry forwards;
+    for (const std::string& name : names) forwards.Register(name, ProbeFactory(name, journal));
+    ProviderRegistry backwards;
+    for (auto it = names.rbegin(); it != names.rend(); ++it) {
+        backwards.Register(*it, ProbeFactory(*it, journal));
+    }
+
+    const ProviderConfig config;
+    const std::string from_forwards =
+        MessageOf([&] { return MakeProvider(forwards, "absent", config); });
+    const std::string from_backwards =
+        MessageOf([&] { return MakeProvider(backwards, "absent", config); });
+
+    ASSERT_FALSE(from_forwards.empty()) << "the unknown name was not refused at all";
+    EXPECT_EQ(from_forwards, from_backwards)
+        << "the same names registered in a different order compose a different refusal: ["
+        << from_forwards << "] against [" << from_backwards << "]";
+
+    // And the order is stated, not merely stable: ascending byte order, the same
+    // total order §3.2 publishes for attachment keys. Written as a literal.
+    EXPECT_EQ(AvailableListIn(from_forwards), "alpha, bravo, mike, zulu")
+        << "the available-providers list is not in ascending byte order: " << from_forwards;
+}
+
 }  // namespace conformance
 }  // namespace fletcher

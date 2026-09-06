@@ -15,6 +15,7 @@
 #include <fletcher/pubsub/provider.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace fletcher {
@@ -38,7 +39,13 @@ inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncode
     buf.PatchU32(row_len_pos, static_cast<uint32_t>(buf.Position() - row_start));
 
     buf.AppendFixed(static_cast<uint32_t>(attachments.size()));
-    for (const auto& [key, blob] : attachments) {
+    // Positional, and therefore in the one order `Attachments` publishes:
+    // ascending unsigned-byte order of the key. That order is part of the wire
+    // format (see core/envelope.hpp), so the same message produces the same
+    // bytes on every build rather than on `std::hash`'s whim.
+    for (size_t i = 0; i < attachments.size(); ++i) {
+        const std::string_view key = attachments.KeyAt(i);
+        const Blob& blob = attachments.ValueAt(i);
         buf.AppendFixed(static_cast<uint32_t>(key.size()));
         buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
         auto blob_len = static_cast<uint32_t>(blob.size());
@@ -73,8 +80,22 @@ inline bool ParseEnvelopeBody(const std::shared_ptr<const void>& owner, const ui
     if (row_len > total - 4) return false;
     row = ptr + 4;
 
-    attachments.clear();
     size_t pos = 4 + row_len;
+    // The bulk builder clears `attachments` (the listener reuses one across samples) and, if this
+    // function returns false anywhere below, empties it again rather than handing on a half-built
+    // one. NOT Attachments::Set: `att_count` comes off the wire, the check below bounds it by the
+    // BUFFER rather than by anything the format admits, and Set's sorted-vector insert is O(k) per
+    // key for keys arriving in descending order — at the 64 KiB default payload bound that is
+    // ~6 500 keys and ~50 ms of memmove on the listener thread, per sample, streamable. The bulk
+    // build is O(k log k) for the identical published sequence.
+    //
+    // It is also what refuses the SIXTH malformation, an attachment key carrying a zero byte, and
+    // it refuses it by REPORTING rather than throwing: this function runs inside Fast DDS's own
+    // `deserialize()` and `on_data_available` frames, where a throw is a foreign frame's problem,
+    // and a wire-supplied key is a wire fault rather than a caller fault in any case. Returning
+    // false drops the sample down the existing warn path. Attachments::Set's throw is unreachable
+    // from this path by construction (owner ruling 2026-09-06).
+    AttachmentsWireBuilder build(attachments);
     if (total - pos >= 4) {
         uint32_t att_count;
         std::memcpy(&att_count, ptr + pos, 4);
@@ -97,9 +118,10 @@ inline bool ParseEnvelopeBody(const std::shared_ptr<const void>& owner, const ui
             if (blob_len > 0 && !owner) return false;
             Blob blob = blob_len > 0 ? Blob(owner, ptr + pos, blob_len) : Blob();
             pos += blob_len;
-            attachments.insert_or_assign(std::move(key), std::move(blob));
+            if (!build.Append(std::move(key), std::move(blob))) return false;
         }
     }
+    build.Finish();
     return true;
 }
 

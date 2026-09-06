@@ -49,6 +49,7 @@
 #include <string>
 #include <vector>
 
+using fletcher::PubSubError;
 using fletcher::PubSubStatus;
 
 namespace {
@@ -227,4 +228,67 @@ TEST(Taxonomy, PublishedNumbersMatchTheEnum) {
         << "an enumerator exists one past the last published row: it was added to the enum and "
            "to StatusName, but not to "
         << kReadmePath;
+}
+
+// ── §5.1 — the message is part of the error's VALUE (PDA-DEC-AG2) ────
+//
+// `what()` returns a `const char*`, so a message holding a zero byte is
+// truncated at that byte before any boundary can see it. `PubSubError`'s
+// constructor therefore escapes each zero byte as the four characters `\x00`.
+//
+// Three claims, and the third is the trade this deliberately makes.
+TEST(Taxonomy, AMessageCarryingAZeroByteSurvivesTheBoundary) {
+    // Built without a zero byte in this source file.
+    std::string cause = "before";
+    cause.push_back(static_cast<char>(0));
+    cause += "after";
+    ASSERT_EQ(cause.size(), static_cast<size_t>(12));
+
+    const PubSubError error(PubSubStatus::kTransportFailure, cause);
+
+    // 1. The whole message reaches a boundary that reads `what()` as a
+    //    NUL-terminated byte string — which is the only way it can be read.
+    const std::string published(error.what());
+    EXPECT_EQ(published, "before\\x00after")
+        << "the message did not survive: [" << published << "] (" << published.size()
+        << " bytes) from a " << cause.size() << "-byte cause";
+    EXPECT_EQ(published.find(static_cast<char>(0)), std::string::npos)
+        << "the published message still contains a zero byte";
+
+    // 2. Two causes differing only AFTER a zero byte stay distinguishable.
+    //    Without the escape both publish "before" and the reason is gone.
+    std::string other = "before";
+    other.push_back(static_cast<char>(0));
+    other += "elsewhere";
+    EXPECT_NE(std::string(PubSubError(PubSubStatus::kTransportFailure, other).what()), published)
+        << "two causes differing after a zero byte publish the same message";
+
+    // 3. The bound on the narrowing: a message with no zero byte is UNCHANGED.
+    //    The owner's rulings of 2026-09-06 permit the escape to change ANY
+    //    message that carries a zero byte; what is pinned here is that a message
+    //    carrying none is untouched.
+    const std::string untouched = "the transport would not start: \"a/b\" \\x7f \xC3\xA9";
+    EXPECT_EQ(std::string(PubSubError(PubSubStatus::kTransportFailure, untouched).what()),
+              untouched)
+        << "a message with no zero byte was rewritten";
+
+    // The status is not disturbed by any of this.
+    EXPECT_EQ(error.status(), PubSubStatus::kTransportFailure);
+}
+
+// The escape is deliberately NOT injective, and this pins that so nobody later
+// "fixes" it into something that changes messages it has no authorisation to
+// change. `Quoted` in provider_registry.cpp escapes its own backslashes to
+// remove exactly this collision; it also escapes every byte >= 0x7f, which would
+// mangle legitimate non-ASCII text, so it is not used here.
+TEST(Taxonomy, TheZeroByteEscapeIsDeliberatelyNotInjective) {
+    std::string with_zero = "a";
+    with_zero.push_back(static_cast<char>(0));
+    with_zero += "b";
+    const std::string already_escaped = "a\\x00b";
+
+    EXPECT_EQ(std::string(PubSubError(PubSubStatus::kInternal, with_zero).what()),
+              std::string(PubSubError(PubSubStatus::kInternal, already_escaped).what()))
+        << "the escape became injective. That is a WIDER change than the 2026-09-06 ruling "
+           "authorises — it would rewrite messages that contain a backslash today";
 }

@@ -139,7 +139,7 @@ class SeamProbeProvider : public PubSubProvider {
             return;
         }
 
-        // The caller's map, copied SHALLOWLY: copying shared_ptrs moves no
+        // The caller's set, copied SHALLOWLY: copying shared_ptrs moves no
         // payload byte, so it is not a copy under this oracle's definition (P3).
         Attachments delivered = attachments;
         if (loan_len_ > 0) {
@@ -148,7 +148,7 @@ class SeamProbeProvider : public PubSubProvider {
             // The owner is the arena itself — a real one, so the blob keeps
             // those bytes alive past the delivery exactly as a transport loan
             // handle would.
-            delivered.insert_or_assign(loan_key_, Blob(arena_, loan_base_, loan_len_));
+            delivered.Set(loan_key_, Blob(arena_, loan_base_, loan_len_));
         }
 
         if (mode_ != ProbeMode::kStaging) {
@@ -161,10 +161,12 @@ class SeamProbeProvider : public PubSubProvider {
         // difference and only provenance can.
         const std::vector<uint8_t> staged(slot, slot + buffer.Position());
         Attachments deep;
-        for (const auto& [key, blob] : delivered) {
-            deep.emplace(key, blob.empty() ? blob
-                                           : Blob(std::vector<uint8_t>(blob.data(),
-                                                                       blob.data() + blob.size())));
+        for (size_t i = 0; i < delivered.size(); ++i) {
+            const Blob& blob = delivered.ValueAt(i);
+            deep.Set(std::string(delivered.KeyAt(i)),
+                     blob.empty()
+                         ? blob
+                         : Blob(std::vector<uint8_t>(blob.data(), blob.data() + blob.size())));
         }
         (*cb)(staged.data(), staged.size(), NoSchema(), deep);
     }
@@ -369,23 +371,22 @@ PubSubProvider::SubscribeCallback MakeCapture(CopyLedger& ledger,
         for (AttachmentTrace& trace : ledger.attachments) {
             // Left at 0 when the key is absent: MISSING, a different failure
             // from garbled, and Judge() scores it as a copy either way.
-            auto it = attachments.find(trace.key);
-            if (it == attachments.end() || it->second.data() == nullptr) continue;
-            trace.delivered_data = At(it->second.data());
-            trace.delivered_len = it->second.size();
+            const Blob* found = attachments.Find(trace.key);
+            if (found == nullptr || found->data() == nullptr) continue;
+            trace.delivered_data = At(found->data());
+            trace.delivered_len = found->size();
             const auto* published = reinterpret_cast<const uint8_t*>(trace.published_data);
-            trace.content_ok =
-                trace.delivered_len == trace.published_len &&
-                (trace.published_len == 0 ||
-                 std::memcmp(it->second.data(), published, trace.published_len) == 0);
+            trace.content_ok = trace.delivered_len == trace.published_len &&
+                               (trace.published_len == 0 ||
+                                std::memcmp(found->data(), published, trace.published_len) == 0);
         }
 
         // §3.2 clause 1: a callee that wants to keep a borrowed blob takes its
         // own reference. Done HERE, inside the borrow window, because that is
         // the only place the rule permits it.
         if (!ledger.retain_key.empty()) {
-            auto it = attachments.find(ledger.retain_key);
-            if (it != attachments.end()) retained = it->second;
+            const Blob* found = attachments.Find(ledger.retain_key);
+            if (found != nullptr) retained = *found;
         }
     };
 }
@@ -492,7 +493,7 @@ Attachments MakeCopyAttachments() {
     for (size_t i = 0; i < kAttachmentCount; ++i) {
         std::vector<uint8_t> bytes = CopyPayload(kAttachmentBytes);
         bytes[0] = static_cast<uint8_t>(i);
-        attachments.emplace("blob" + std::to_string(i), Blob(std::move(bytes)));
+        attachments.Set("blob" + std::to_string(i), Blob(std::move(bytes)));
     }
     return attachments;
 }
@@ -505,9 +506,10 @@ RoundTrip RunRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
     // The published side comes from the CALLER's blobs, so leg 2 compares the
     // delivered data() against the published data() and never against a
     // re-derivation of it.
-    for (const auto& [key, blob] : attachments) {
+    for (size_t i = 0; i < attachments.size(); ++i) {
+        const Blob& blob = attachments.ValueAt(i);
         AttachmentTrace trace;
-        trace.key = key;
+        trace.key = std::string(attachments.KeyAt(i));
         trace.published_data = At(blob.data());
         trace.published_len = blob.size();
         ledger.attachments.push_back(std::move(trace));
@@ -561,13 +563,19 @@ RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provid
     std::vector<uint8_t> owned_bytes = CopyPayload(kAttachmentBytes);
     owned_bytes[0] = 0xEE;
     Attachments attachments;
-    attachments.emplace("owned", Blob(std::move(owned_bytes)));
+    attachments.Set("owned", Blob(std::move(owned_bytes)));
 
     CopyLedger ledger;
     AttachmentTrace owned;
     owned.key = "owned";
-    owned.published_data = At(attachments.at("owned").data());
-    owned.published_len = attachments.at("owned").size();
+    const Blob* owned_blob = attachments.Find("owned");
+    // Absence is a null pointer, not a throw (§3.2), so an absent entry would
+    // segfault this harness instead of failing it. This function returns a value,
+    // so a gtest ASSERT cannot be used here; the throw reaches the same red.
+    if (owned_blob == nullptr)
+        throw std::logic_error("the 'owned' attachment just Set is not in the set");
+    owned.published_data = At(owned_blob->data());
+    owned.published_len = owned_blob->size();
     ledger.attachments.push_back(std::move(owned));
 
     // The borrowed entry is the one kept past the callback: it is the entry whose

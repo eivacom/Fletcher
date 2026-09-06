@@ -168,6 +168,12 @@ std::shared_ptr<PubSubProvider> ProviderRegistry::Create(const ProviderSelector&
             if (factories_.empty()) {
                 available << "none — no provider has been registered with this registry";
             } else {
+                // In the container's own order, which is `std::map`'s and
+                // therefore the registry's CONTENTS rather than its insertion
+                // history (see the note on `factories_`). This list is the only
+                // route by which an application learns what is registered — the
+                // owner's 2026-09-06 ruling declined a typed query — so two
+                // registries holding the same names must render the same bytes.
                 bool first = true;
                 for (const auto& [name, unused] : factories_) {
                     if (!first) available << ", ";

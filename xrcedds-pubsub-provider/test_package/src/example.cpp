@@ -41,7 +41,7 @@ int main() {
     env.row = {0x01, 0x02, 0x03};
 
     const std::vector<uint8_t> payload{0xDE, 0xAD};
-    env.attachments["sensor"] = Blob{payload};
+    env.attachments.Set("sensor", Blob{payload});
 
     // Parsing needs an owner for the bytes: the attachments alias them.
     auto wire = std::make_shared<const std::vector<uint8_t>>(SerializeEnvelope(env));
@@ -57,7 +57,12 @@ int main() {
         return 1;
     }
 
-    const Blob& sensor = restored.attachments.at("sensor");
+    const Blob* found = restored.attachments.Find("sensor");
+    if (found == nullptr) {
+        std::fputs("FAIL: no attachment named \"sensor\" after round-trip\n", stderr);
+        return 1;
+    }
+    const Blob& sensor = *found;
     if (sensor.size() != payload.size() ||
         std::memcmp(sensor.data(), payload.data(), payload.size()) != 0) {
         std::fputs("FAIL: attachment data mismatch after round-trip\n", stderr);

@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,17 +33,24 @@ struct Envelope {
 //   [ROW_LEN       : 4 bytes]  uint32_t
 //   [ROW_DATA      : ROW_LEN bytes]
 //   [ATTACH_COUNT  : 4 bytes]  uint32_t
-//   For each attachment:
+//   For each attachment, IN ASCENDING UNSIGNED-BYTE ORDER OF THE KEY:
 //     [KEY_LEN     : 4 bytes]  uint32_t
-//     [KEY          : KEY_LEN bytes]  UTF-8
+//     [KEY          : KEY_LEN bytes]  UTF-8 by convention; never contains a zero byte
 //     [BLOB_LEN    : 4 bytes]  uint32_t
 //     [BLOB         : BLOB_LEN bytes]
+//
+// The attachment order is part of the format, not an artefact of how the sender
+// was built: `Attachments` publishes exactly one enumeration and it is sorted
+// (types.hpp). Decoders still match by key, never by position — the order is
+// what makes the same message produce the same bytes on every build.
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
     // Pre-compute total size.
     size_t total = 4 + env.row.size() + 4;
-    for (const auto& [key, blob] : env.attachments) total += 4 + key.size() + 4 + blob.size();
+    for (size_t i = 0; i < env.attachments.size(); ++i) {
+        total += 4 + env.attachments.KeyAt(i).size() + 4 + env.attachments.ValueAt(i).size();
+    }
 
     std::vector<uint8_t> buf;
     buf.reserve(total);
@@ -61,7 +70,9 @@ struct Envelope {
 
     // Attachments.
     append_u32(static_cast<uint32_t>(env.attachments.size()));
-    for (const auto& [key, blob] : env.attachments) {
+    for (size_t i = 0; i < env.attachments.size(); ++i) {
+        const std::string_view key = env.attachments.KeyAt(i);
+        const Blob& blob = env.attachments.ValueAt(i);
         append_u32(static_cast<uint32_t>(key.size()));
         append_bytes(reinterpret_cast<const uint8_t*>(key.data()), key.size());
         const auto blob_len = static_cast<uint32_t>(blob.size());
@@ -115,7 +126,8 @@ namespace internal {
 //
 // Two exception types cross this function, and they are different failures: a malformed or
 // truncated buffer is std::invalid_argument (a wire problem), a non-empty attachment with no owner
-// is PubSubError(kInvalidArgument) (a caller problem).
+// is PubSubError(kInvalidArgument) (a caller problem). An attachment key carrying a zero byte is a
+// WIRE problem and is reported as such — see the check below.
 [[nodiscard]] inline Envelope DeserializeEnvelope(std::shared_ptr<const void> owner,
                                                   const uint8_t* data, size_t size) {
     if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
@@ -141,23 +153,43 @@ namespace internal {
     // Attachments.
     const uint32_t attach_count = read_u32();
     Attachments attachments;
-    for (uint32_t i = 0; i < attach_count; ++i) {
-        const uint32_t key_len = read_u32();
-        if (pos + key_len > size)
-            throw std::invalid_argument("DeserializeEnvelope: key data truncated");
-        std::string key(reinterpret_cast<const char*>(data + pos), key_len);
-        pos += key_len;
+    {
+        // NOT Attachments::Set. `attach_count` is read off the wire and this
+        // function bounds it with nothing at all — the gateway calls it on a
+        // WebSocket frame Beast caps at 16 MiB — and Set's sorted-vector insert
+        // is O(k) per key for keys arriving in descending order, so a hostile
+        // producer could wedge this thread for minutes on one frame. The bulk
+        // builder appends in arrival order and sorts once: O(k log k) whatever
+        // order the wire chose, for the identical published sequence.
+        //
+        // It is also what refuses a wire-supplied key carrying a zero byte,
+        // WITHOUT throwing: Set throws PubSubError, which the contract note
+        // above reserves for a CALLER problem, and this is a wire problem, so
+        // the refusal is turned into this function's own wire-fault exception
+        // below. Set's throw is unreachable from this path by construction
+        // (owner ruling 2026-09-06).
+        internal::AttachmentsWireBuilder build(attachments);
+        for (uint32_t i = 0; i < attach_count; ++i) {
+            const uint32_t key_len = read_u32();
+            if (pos + key_len > size)
+                throw std::invalid_argument("DeserializeEnvelope: key data truncated");
+            std::string key(reinterpret_cast<const char*>(data + pos), key_len);
+            pos += key_len;
 
-        const uint32_t blob_len = read_u32();
-        if (pos + blob_len > size)
-            throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
-        // Where the bytes lie, not a copy of them: the caller's `owner` keeps
-        // them alive for as long as this Blob (or any copy of it) exists. An
-        // empty attachment carries no pointer at all, per §3.2 clause 5.
-        Blob blob = blob_len > 0 ? Blob(owner, data + pos, blob_len) : Blob();
-        pos += blob_len;
+            const uint32_t blob_len = read_u32();
+            if (pos + blob_len > size)
+                throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
+            // Where the bytes lie, not a copy of them: the caller's `owner` keeps
+            // them alive for as long as this Blob (or any copy of it) exists. An
+            // empty attachment carries no pointer at all, per §3.2 clause 5.
+            Blob blob = blob_len > 0 ? Blob(owner, data + pos, blob_len) : Blob();
+            pos += blob_len;
 
-        attachments[std::move(key)] = std::move(blob);
+            if (!build.Append(std::move(key), std::move(blob)))
+                throw std::invalid_argument(
+                    "DeserializeEnvelope: attachment key contains a zero byte");
+        }
+        build.Finish();
     }
 
     return Envelope{std::move(row), std::move(attachments)};

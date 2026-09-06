@@ -76,11 +76,18 @@ include(GoogleTest)
 # inside one hung test and was cancelled with no result at all. The precedent and the reasoning
 # in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`.
 #
-# 30 s, chosen from this suite's own measured wall clock: all 29 rows run in 0.02-0.03 s and the
-# whole suite in 0.93 s (msvc-194 x86_64 Release). Every row is pure in-process computation -
+# 30 s, chosen from this suite's own measured wall clock: 43 of the 44 rows run in 0.02-0.05 s and
+# the whole suite in 0.52 s (msvc-194 x86_64 Release). Every row is pure in-process computation -
 # encode/decode of a row buffer and two file reads of the READMEs - so there is no wait here that
-# a slower runner could stretch, and no subprocess whose cost is a compiler. 30 s is ~1000x the
+# a slower runner could stretch, and no subprocess whose cost is a compiler. 30 s is ~600x the
 # slowest row, which absorbs any amount of runner contention, cold page-in or AV interference
 # while still turning a future hang into a 30-second red instead of a cancelled job.
+#
+# One row now DEPENDS on this timeout being the thing that reddens, and it is the 44th:
+# `EnvelopeTest.ADescendingAttachmentKeyOrderDoesNotMakeDecodeQuadratic` decodes 200 000
+# descending attachment keys off a hand-built body. It runs in 0.27 s through the bulk decode
+# builder and took 58.7 s, measured on this box, when the decoders built through
+# `Attachments::Set` - so if that regresses, this cap turns an O(k^2) decode into a 30-second red
+# rather than a wedged job. Keep the two in step: the count is sized against this number.
 gtest_discover_tests(core_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)

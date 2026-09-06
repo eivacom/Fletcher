@@ -237,8 +237,10 @@ BENCHMARK(BM_Serialize_CurrentFastCdrFramed)->FLETCHER_ROW_SIZES;
 
 // Why the sample struct is split by direction. An empty Attachments is what the publish path used
 // to carry and never read, back when one struct held both directions: MSVC's std::unordered_map
-// allocates a sentinel node in its default constructor, so every publish allocated and freed one.
-// Against BM_PublishFieldsConstruct, which is what PublishData costs now.
+// allocated a sentinel node in its default constructor, so every publish allocated and freed one.
+// PDA-DEC-AG2 retired that alias — Attachments is a sealed container over a std::vector now — so
+// this arm measures the floor rather than that cost: 50.2 ns before the change, 0.616 ns after,
+// same machine and session. Against BM_PublishFieldsConstruct, which is what PublishData costs now.
 void BM_AttachmentsConstruct(benchmark::State& state) {
     for (auto _ : state) {
         fletcher::Attachments attachments;
@@ -436,7 +438,7 @@ void BM_Deliver_ParseAttachments(benchmark::State& state) {
     const fletcher::Blob blob{std::vector<uint8_t>(64, 0xCD)};
 
     fletcher::Attachments sent;
-    for (int i = 0; i < count; ++i) sent["attachment_" + std::to_string(i)] = blob;
+    for (int i = 0; i < count; ++i) sent.Set("attachment_" + std::to_string(i), blob);
 
     auto sample = std::make_unique<FletcherSample>();
     {

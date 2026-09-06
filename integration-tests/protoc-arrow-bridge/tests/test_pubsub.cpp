@@ -241,16 +241,17 @@ TEST(PubSubProtoTest, PublishWithAttachmentsDeliversBlobToSubscriber) {
     const std::vector<uint8_t> payload{0xDE, 0xAD, 0xBE, 0xEF};
     fletcher::Blob blob{payload};
     fletcher::Attachments sent;
-    sent.emplace("image", blob);
+    sent.Set("image", blob);
     pub.Publish(row, sent);
 
     EXPECT_EQ(received.device_id(), 42);
     ASSERT_EQ(received_att.size(), 1u);
-    ASSERT_EQ(received_att.count("image"), 1u);
+    const fletcher::Blob* arrived = received_att.Find("image");
+    ASSERT_NE(arrived, nullptr);
     // The generated publisher hands the blob through; a Blob copy retains the
     // owner, so the delivered bytes are the very bytes published (§3.2).
-    EXPECT_EQ(received_att.at("image").data(), blob.data());
-    EXPECT_EQ(received_att.at("image").size(), payload.size());
+    EXPECT_EQ(arrived->data(), blob.data());
+    EXPECT_EQ(arrived->size(), payload.size());
 }
 
 TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {

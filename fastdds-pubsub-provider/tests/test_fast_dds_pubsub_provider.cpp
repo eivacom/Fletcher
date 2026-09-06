@@ -736,16 +736,16 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
     SubscriptionResult result = sub_provider.Subscribe(
         {"loaned", "attachments"},
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
-            auto it = att.find("sidecar");
-            if (it != att.end()) {
-                blob_seen.assign(it->second.data(), it->second.data() + it->second.size());
+            const Blob* sidecar = att.Find("sidecar");
+            if (sidecar != nullptr) {
+                blob_seen.assign(sidecar->data(), sidecar->data() + sidecar->size());
             }
             if (len >= 5) received.store(DecodeRow(data));
         });
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     Attachments att;
-    att["sidecar"] = Blob{std::vector<uint8_t>{1, 2, 3}};
+    att.Set("sidecar", Blob{std::vector<uint8_t>{1, 2, 3}});
     pub_provider.Publish({"loaned", "attachments"}, MakeEncoder(7), att);
 
     EXPECT_EQ(AwaitRow(received), 7);

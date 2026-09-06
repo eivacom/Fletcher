@@ -703,10 +703,13 @@ which name it without holding a map expression). **Eleven** C++ files held a map
 expression and needed a real edit, not twelve: revision 3 counted
 `pubsub-arrow/src/subscriber_arrow.cpp` because of `atts_.clear()`, which is
 `std::vector<Attachments>::clear()` and is unaffected. All eleven were in Files-to-touch.
-Two files outside Files-to-touch also needed real edits and were found by the compiler,
-exactly as premise P5 said they would be:
-`xrcedds-pubsub-provider/test_package/src/example.cpp` (which is in Files-to-touch) and
-`fastdds-pubsub-provider/benchmarks/bench_pub_sub_type.cpp` (which is, under `benchmarks/*`).
+Two further files needed real edits and were found by the compiler, exactly as premise P5
+said they would be — **but the "outside Files-to-touch" lead-in was wrong and is corrected
+here (PM, 2026-09-06): both are in fact INSIDE it**, as the parentheses already said:
+`xrcedds-pubsub-provider/test_package/src/example.cpp` (listed) and
+`fastdds-pubsub-provider/benchmarks/bench_pub_sub_type.cpp` (listed, under `benchmarks/*`).
+P5's point stands — the compiler found them, not a hand-written ledger — but it found
+files the list already held, which is a weaker claim than the one written.
 
 **Discharged:**
 
@@ -721,15 +724,34 @@ exactly as premise P5 said they would be:
   `core/README.md`, and in spec §5.1, and pinned by
   `Taxonomy.TheZeroByteEscapeIsDeliberatelyNotInjective`, whose failure message says
   making it injective is the wider change the 2026-09-06 ruling does not authorise.
-- **AG2-C2-DEBT-1** — the benchmark decoder got the same `memchr` guard (two lines), so
-  "`Set`'s throw is unreachable from every decode path" is true with no footnote.
+- **AG2-C2-DEBT-1** — **CORRECTED (PM, 2026-09-06)**, the text below described a vehicle
+  that no longer exists. Fix cycle 1 deleted every hand-copied `memchr` guard: the benchmark
+  decoder, like the two product decode paths, now builds through
+  `AttachmentsWireBuilder`, which reports a NUL key to its caller. So "`Set`'s throw is
+  unreachable from every decode path" is true **structurally** rather than by three copies of
+  a guard — a stronger discharge than the one first recorded, and compliance re-verified it by
+  enumerating all four paths and finding no product-code `.Set(` on an `Attachments` at all.
+  *Superseded text:* ~~the benchmark decoder got the same `memchr` guard (two lines).~~
 - **AG2-C2-DEBT-2** — all three published statements edited.
   `fastdds-pubsub-provider/README.md`'s two `unordered_map`-premised rows were
   **re-measured rather than struck**: `BM_AttachmentsConstruct` reads **50.2 ns** at
   `102e56d` and **0.616 ns** after, same machine, same session. That is where the
   published 52 ns came from and where it went.
-- **AG2-C2-DEBT-3** — the complexity is stated beside `Set` in `types.hpp`, naming the
-  wire-supplied-count bound as what bounds `k`. The published number was re-checked and
+- **AG2-C2-DEBT-3** — **RE-OPENED then PROPERLY DISCHARGED (PM, 2026-09-06).** The original
+  discharge below rested on a sentence the cycle-1 code review proved FALSE: `types.hpp:161-162`
+  claimed "the wire checks that read a count off the buffer are what bound it", but that check is
+  ineffective in `ParseEnvelopeBody` (`(total-pos)/8` admits ~131k attachments in a 1 MiB sample)
+  and **absent entirely** in `core::DeserializeEnvelope`, which the gateway calls on a 16 MiB
+  WebSocket frame. Measured: k=7,000 descending = 57 ms; k=200,000 = 58 s, on the Fast DDS listener
+  thread. **The real discharge is the mechanism, not the sentence:** `AttachmentsWireBuilder` gives
+  the decode paths a bulk sorted build (O(k log k)) plus an already-ascending fast path, measured
+  **58,745 ms → 38 ms** at k=200,000, and the conforming path got faster too (k=64 asc 1,765→776 ns).
+  Pinned by `EnvelopeTest.ADescendingAttachmentKeyOrderDoesNotMakeDecodeQuadratic`, red-first as a
+  ctest Timeout at 30.03 s. `types.hpp`'s note is re-derived from the code, naming the check that is
+  absent as absent. **This is the register's own instance of the round's dominant defect class** — a
+  claim asserted from prose rather than read off the code — and it is recorded rather than tidied.
+  *Superseded text follows.* ~~The complexity is stated beside `Set` in `types.hpp`, naming the
+  wire-supplied-count bound as what bounds `k`.~~ The published number was re-checked and
   is **not** the one at risk: `README.md:536`'s figure is the attachment-free delivery
   path, which never calls `Set`. Measured either side of the change on this machine,
   `BM_Deliver_OfferView` − `BM_Deliver_CallbackOnly` is **13.5 ns before and 11.6 ns
@@ -743,3 +765,29 @@ exactly as premise P5 said they would be:
 | AG2-IMPL-1 | `gateway-client-ts/src/envelope.ts` encodes attachments in JavaScript `Map` insertion order, so a TS-produced message with two or more attachments is correct but **not canonical**. | It is a second, independent encoder, it is not in Files-to-touch, and no lane in this item's VERIFY runs `vitest` against it. Nothing breaks: every decoder matches by key, and any Fletcher C++ decoder normalises the order on ingest because the entries land in a `fletcher::Attachments`. **Published rather than implied** — `docs/wire-format-specification.md` now names this encoder as the exception instead of asserting the rule holds everywhere. Addressed to whichever item next touches the TS client. |
 | AG2-IMPL-2 | `integration-tests/gateway-fastdds-ts` cannot find its own gateway binary: the harness looks in `build/Release/gateway_build/`, and the multi-config generator writes `build/gateway_build/Release/`. | **Pre-existing, not caused here** — the harness documents `GATEWAY_BIN` as the override and that is what the three green runs used. A one-line candidate-list fix, but it is in a harness this item does not otherwise touch and it would go unverified on the single-config Linux lane. |
 
+
+## AG2-DEBT-11 — the per-envelope attachment count is unbounded on both decode paths
+
+**Raised by:** PDA-DEC-AG2 fix cycle 1, 2026-09-06 (PM decision, recorded).
+
+Neither `ParseEnvelopeBody` nor `core::DeserializeEnvelope` bounds the number of attachments a
+sample may declare. `ParseEnvelopeBody` bounds it only by `(total - pos) / 8`, so a 1 MiB sample may
+claim ~131k attachments; `DeserializeEnvelope` has no count bound at all and the gateway calls it on
+a frame up to 16 MiB. A hostile peer can therefore make a decoder allocate proportionally to the
+frame size it was already willing to receive.
+
+**Why it is not a regression, and why it was not fixed in-round.** Nothing was lost: the retired
+`std::unordered_map` allocated *k* nodes for the same *k*, so the memory exposure is exactly what
+shipped before. AG2's blocking defect was the *quadratic time*, and that is fixed
+(`AttachmentsWireBuilder`, O(k log k), measured 58,745 ms → 38 ms at k=200,000). Adding a count
+ceiling would invent a published limit with **no measured basis** — the design explicitly declined
+exactly that for key length (*"A5's 246-byte bound was measured, not reasoned … inventing either is
+over-forbidding without evidence"*) — and a new refusal would need new normative text in frozen
+§3.2, which is a fresh owner ruling. The time defect is closed on its own terms; the memory question
+is **deferred, not answered**.
+
+**Acceptable fix:** measure what a real deployment's attachment count actually is, then state a
+per-envelope ceiling in the wire format and refuse past it in both decoders (`return false` /
+`std::invalid_argument`). Measure first — the bound must be evidence, not a guess.
+**Addressed to:** PDA-ABI, at the item that gives the decode path its C form, or any round that
+first has a measured deployment figure.

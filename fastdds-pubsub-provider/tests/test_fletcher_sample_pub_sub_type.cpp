@@ -13,8 +13,10 @@
 #include <fastdds/rtps/common/SerializedPayload.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "internal/envelope_codec.hpp"
@@ -383,7 +385,7 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(32);
     fletcher::Attachments sent;
-    sent["sidecar"] = fletcher::Blob{std::vector<uint8_t>{1, 2, 3}};
+    sent.Set("sidecar", fletcher::Blob{std::vector<uint8_t>{1, 2, 3}});
     Publishing publishing(row, sent);
 
     SerializedPayload_t payload(type.max_serialized_type_size);
@@ -392,8 +394,9 @@ TEST(FletcherSamplePubSubTypeTest, RoundTripsAttachments) {
     ReceivedData received;
     ASSERT_TRUE(type.deserialize(payload, &received));
     EXPECT_EQ(received.decoded_row, row);
-    ASSERT_EQ(received.decoded_attachments.count("sidecar"), 1u);
-    const fletcher::Blob& sidecar = received.decoded_attachments.at("sidecar");
+    const fletcher::Blob* found = received.decoded_attachments.Find("sidecar");
+    ASSERT_NE(found, nullptr);
+    const fletcher::Blob& sidecar = *found;
     ASSERT_EQ(sidecar.size(), 3u);
     EXPECT_EQ(std::vector<uint8_t>(sidecar.data(), sidecar.data() + sidecar.size()),
               std::vector<uint8_t>({1, 2, 3}));
@@ -481,6 +484,149 @@ TEST(FletcherSamplePubSubTypeTest, IsNotKeyed) {
 
     EXPECT_FALSE(type.compute_key(payload, handle, false));
     EXPECT_FALSE(type.compute_key(&publishing.data, handle, false));
+}
+
+// ── PDA-DEC-AG2: the body's attachment order is part of the format ───
+//
+// `EncodeEnvelopeBody` is the second of the two encoders that put attachments on
+// the wire (the first is core's `SerializeEnvelope`, asserted in the conformance
+// harness, which links no transport SDK and cannot reach this one). The owner's
+// 2026-09-06 ruling authorised moving these bytes for attachment ordering, so
+// the claim is asserted ON THE BYTES rather than on the container.
+TEST(EnvelopeCodecTest, TheSameBodyIsEncodedToTheSameBytes) {
+    const std::vector<uint8_t> row = Row(8);
+    auto encoder = [&row](fletcher::WriteBuffer& buf) { buf.Append(row.data(), row.size()); };
+
+    const std::vector<std::pair<std::string, fletcher::Blob>> entries{
+        {"zulu", fletcher::Blob{std::vector<uint8_t>{0x01, 0x02}}},
+        {"alpha", fletcher::Blob{std::vector<uint8_t>{0x03}}},
+        {"mike", fletcher::Blob{std::vector<uint8_t>{0x04, 0x05, 0x06}}},
+        {"bravo", fletcher::Blob{std::vector<uint8_t>{0x07}}},
+    };
+    auto encode_in_order = [&](const std::vector<size_t>& order) {
+        fletcher::Attachments attachments;
+        for (const size_t i : order) attachments.Set(entries[i].first, entries[i].second);
+        fletcher::VectorWriteBuffer buf;
+        fletcher::internal::EncodeEnvelopeBody(buf, encoder, attachments);
+        return buf.Finish();
+    };
+
+    const std::vector<uint8_t> reference = encode_in_order({0, 1, 2, 3});
+    EXPECT_EQ(encode_in_order({3, 2, 1, 0}), reference)
+        << "the same body built in a different order encoded to different bytes";
+    EXPECT_EQ(encode_in_order({1, 3, 0, 2}), reference)
+        << "the same body built in a different order encoded to different bytes";
+
+    // Round-tripping through the codec's own parser recovers the same sequence,
+    // ascending — the order a decoder on another machine is told to expect.
+    auto owner = std::make_shared<const std::vector<uint8_t>>(reference);
+    const uint8_t* decoded_row = nullptr;
+    uint32_t decoded_row_len = 0;
+    fletcher::Attachments decoded;
+    ASSERT_TRUE(fletcher::internal::ParseEnvelopeBody(owner, owner->data(), owner->size(),
+                                                      decoded_row, decoded_row_len, decoded));
+    ASSERT_EQ(decoded.size(), static_cast<size_t>(4));
+    std::vector<std::string> keys;
+    for (size_t i = 0; i < decoded.size(); ++i) keys.emplace_back(decoded.KeyAt(i));
+    EXPECT_EQ(keys, (std::vector<std::string>{"alpha", "bravo", "mike", "zulu"}))
+        << "the encoded key order is not ascending unsigned-byte order";
+}
+
+// ── PDA-DEC-AG2 / owner ruling 2026-09-06: refused on arrival ────────
+//
+// A wire-supplied attachment key carrying a zero byte is a SIXTH malformation,
+// dropped exactly like the five `ParseEnvelopeBody` already refuses. Two things
+// are asserted, and the second is the one that matters: the refusal is a
+// `return false`, so NOTHING is thrown — this function runs inside Fast DDS's
+// own `deserialize()` and `on_data_available` frames, where an escaping
+// exception is a process termination rather than an unwind (§5.3). Routing this
+// through `Attachments::Set` instead would throw there, and this test is what
+// catches that.
+TEST(EnvelopeCodecTest, AnArrivingAttachmentKeyWithAZeroByteIsDroppedAsMalformed) {
+    auto append_u32 = [](std::vector<uint8_t>& out, uint32_t value) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            out.push_back(static_cast<uint8_t>((value >> shift) & 0xFFu));
+        }
+    };
+    // A body no local encoder can produce: the zero byte is in the wire bytes.
+    auto body_with_key = [&](const std::string& key) {
+        std::vector<uint8_t> body;
+        append_u32(body, 1);  // row_len
+        body.push_back(0xFF);
+        append_u32(body, 1);  // attachment count
+        append_u32(body, static_cast<uint32_t>(key.size()));
+        body.insert(body.end(), key.begin(), key.end());
+        append_u32(body, 0);  // blob_len
+        return body;
+    };
+
+    std::string nul_bearing = "a";
+    nul_bearing.push_back(static_cast<char>(0));
+    nul_bearing += "b";
+
+    const std::vector<uint8_t> malformed = body_with_key(nul_bearing);
+    auto owner = std::make_shared<const std::vector<uint8_t>>(malformed);
+    const uint8_t* row = nullptr;
+    uint32_t row_len = 0;
+    fletcher::Attachments attachments;
+
+    bool accepted = true;
+    EXPECT_NO_THROW({
+        accepted = fletcher::internal::ParseEnvelopeBody(owner, owner->data(), owner->size(), row,
+                                                         row_len, attachments);
+    }) << "the arrival refusal THREW inside a path that runs in a transport callback";
+    EXPECT_FALSE(accepted) << "a key carrying a zero byte was accepted off the wire";
+    EXPECT_EQ(attachments.size(), static_cast<size_t>(0))
+        << "the refused key was stored before the sample was dropped";
+
+    // The bound on the narrowing: the identical body with a clean key parses,
+    // so a parser that refused every attachment is not green above.
+    const std::vector<uint8_t> clean = body_with_key("axb");
+    auto clean_owner = std::make_shared<const std::vector<uint8_t>>(clean);
+    ASSERT_TRUE(fletcher::internal::ParseEnvelopeBody(
+        clean_owner, clean_owner->data(), clean_owner->size(), row, row_len, attachments));
+    ASSERT_EQ(attachments.size(), static_cast<size_t>(1));
+    EXPECT_EQ(attachments.KeyAt(0), "axb");
+}
+
+// The same refusal reached through `deserialize()` itself — the frame ruling
+// 2026-09-06 is actually about. A sample whose body carries such a key is
+// rejected by the type, and the rejection is a `false` return rather than an
+// exception crossing a Fast DDS frame.
+TEST(FletcherSamplePubSubTypeTest, ASampleWithAZeroByteAttachmentKeyIsRejected) {
+    FletcherSamplePubSubType type(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(16);
+
+    std::string nul_bearing = "a";
+    nul_bearing.push_back(static_cast<char>(0));
+    nul_bearing += "b";
+
+    // The sample is BUILT past the local refusal — `Attachments::Set` would
+    // refuse this key — so the bytes are assembled by hand, which is exactly the
+    // position a foreign or hostile producer is in.
+    fletcher::Attachments clean;
+    clean.Set("axb", fletcher::Blob{std::vector<uint8_t>{0x01}});
+    Publishing publishing(row, clean);
+    SerializedPayload_t payload(type.max_serialized_type_size);
+    ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
+
+    // Overwrite the key bytes in place: same length, one byte replaced by zero.
+    // Any other byte of the sample is untouched, so nothing but the key differs.
+    uint8_t* found = nullptr;
+    for (uint32_t i = 0; i + 3 <= payload.length; ++i) {
+        if (std::memcmp(payload.data + i, "axb", 3) == 0) {
+            found = payload.data + i;
+            break;
+        }
+    }
+    ASSERT_NE(found, nullptr) << "the key was not found in the serialized sample";
+    found[1] = 0;
+
+    ReceivedData received;
+    bool accepted = true;
+    EXPECT_NO_THROW({ accepted = type.deserialize(payload, &received); })
+        << "deserialize() let an exception escape into a Fast DDS frame";
+    EXPECT_FALSE(accepted) << "a sample carrying a zero-byte attachment key was accepted";
 }
 
 }  // namespace

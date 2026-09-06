@@ -129,7 +129,7 @@ TEST(XrceProviderTest, EnvelopeXrceUsesSameWireFormatAsFastDds) {
     env.row = {0x01, 0x02, 0x03};
 
     const std::vector<uint8_t> payload{0xDE, 0xAD};
-    env.attachments["sensor"] = Blob{payload};
+    env.attachments.Set("sensor", Blob{payload});
 
     // Parsing needs an OWNER for the bytes now: the restored attachments alias
     // them rather than being copied out (§3.2).
@@ -138,7 +138,9 @@ TEST(XrceProviderTest, EnvelopeXrceUsesSameWireFormatAsFastDds) {
 
     EXPECT_EQ(restored.row, env.row);
     ASSERT_EQ(restored.attachments.size(), 1);
-    const Blob& sensor = restored.attachments.at("sensor");
+    const Blob* found = restored.attachments.Find("sensor");
+    ASSERT_NE(found, nullptr);
+    const Blob& sensor = *found;
     ASSERT_EQ(sensor.size(), payload.size());
     EXPECT_EQ(std::memcmp(sensor.data(), payload.data(), payload.size()), 0);
     EXPECT_GE(sensor.data(), wire->data());

@@ -21,6 +21,7 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "transport_data.hpp"
@@ -63,7 +64,9 @@ class LegacyFletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
             // Attachments.
             const auto& att = *d->attachments;
             buf.AppendFixed(static_cast<uint32_t>(att.size()));
-            for (const auto& [key, blob] : att) {
+            for (size_t i = 0; i < att.size(); ++i) {
+                const std::string_view key = att.KeyAt(i);
+                const fletcher::Blob& blob = att.ValueAt(i);
                 buf.AppendFixed(static_cast<uint32_t>(key.size()));
                 buf.Append(reinterpret_cast<const uint8_t*>(key.data()), key.size());
                 uint32_t blob_len = static_cast<uint32_t>(blob.size());
@@ -102,9 +105,18 @@ class LegacyFletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
         // Deliver raw row bytes — no decoding, no Arrow dependency.
         d->decoded_row.assign(ptr + 4, ptr + 4 + row_len);
 
-        // Parse attachments in-place.
-        d->decoded_attachments.clear();
+        // Parse attachments in-place. The builder below is what clears the reused
+        // container, and empties it again on any early return.
         size_t pos = 4 + row_len;
+        // Through the same bulk decode door the shipped codec uses, for the same two
+        // reasons: it is O(k log k) whatever order the keys arrive in, where
+        // Attachments::Set is O(k^2) for descending keys; and it REPORTS a
+        // wire-supplied key carrying a zero byte rather than throwing one, so
+        // Attachments::Set's PubSubError cannot enter this TopicDataType::deserialize()
+        // frame. The legacy arm decodes only bytes it produced, but routing it the same
+        // way makes "Set is unreachable from every decode path" structurally true rather
+        // than true by a hand-copied guard (AG2-C2-DEBT-1, code review S1).
+        fletcher::internal::AttachmentsWireBuilder build(d->decoded_attachments);
         if (pos + 4 <= total) {
             uint32_t att_count;
             std::memcpy(&att_count, ptr + pos, 4);
@@ -124,9 +136,10 @@ class LegacyFletcherTopicType : public eprosima::fastdds::dds::TopicDataType {
                 if (pos + blob_len > total) return false;
                 auto blob = fletcher::Blob(std::vector<uint8_t>(ptr + pos, ptr + pos + blob_len));
                 pos += blob_len;
-                d->decoded_attachments[std::move(key)] = std::move(blob);
+                if (!build.Append(std::move(key), std::move(blob))) return false;
             }
         }
+        build.Finish();
         return true;
     }
 

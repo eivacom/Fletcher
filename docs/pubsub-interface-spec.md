@@ -183,7 +183,7 @@ C view must honour:
 ### §3.2 — `Blob` / `Attachments` — shared ownership across the seam
 
 `Blob` is an **owner plus a span** — `{shared_ptr<const void> owner, const uint8_t* data,
-size_t size}` — and `Attachments = unordered_map<string, Blob>`
+size_t size}` — and `Attachments` is a **sealed, ordered set of key/`Blob` entries**
 ([core/include/fletcher/core/types.hpp](../core/include/fletcher/core/types.hpp)).
 Shared ownership is what gives zero-copy publisher → provider → subscriber, and
 naming the bytes separately from what keeps them alive is what lets the seam
@@ -216,6 +216,56 @@ view-only form** (non-null `data` with a null `owner` is refused with
 retired `shared_ptr` alias**: that would have left every call site compiling and
 its copy in place, a coexistence window in a change whose whole point is that
 there is none.
+
+`Attachments` was `unordered_map<string, Blob>` until PDA-DEC-AG2. That published
+no form: entries were enumerated — and written onto the wire — in `std::hash`'s
+order, a property of the *build* rather than of the value, so a separately built
+binary or a language binding could not reproduce the sequence from the value it
+held.
+
+Fletcher's own replacement container goes further than the clauses below, and the
+extra is **narration rather than obligation**: it offers no iterator pair and no map
+API — one mechanism, not two, so no producer of ITS OWN can walk the set by a route
+the form does not fix — and its `Find(key)` answers absence with a null pointer
+rather than a failure. That sealing is not what the order rule requires: a sorted
+range walked by a range-`for` would satisfy it equally, since it was the unordered
+container rather than the range-`for` that made the wire order a build artefact. It
+is a design preference, argued where it is implemented
+(`core/include/fletcher/core/types.hpp`), and deliberately not imposed on a later
+round or on a second implementation of this seam. The same goes for the one
+non-enumerating door that exists beside `Set` — `internal::AttachmentsWireBuilder`,
+which Fletcher's decoders build through so that a wire-supplied entry count cannot
+be turned into a quadratic insert; it produces the same published sequence and adds
+no way to read one.
+
+Three clauses replace the retired type, and they *are* normative. They are lettered
+because clauses 1-5 above belong to `Blob`:
+
+- **A1 — enumeration is positional.** `size()`, `KeyAt(i)` and `ValueAt(i)` are
+  the enumeration, and a boundary reads the published sequence through them.
+- **A2 — the order is part of the value: ascending unsigned-byte order of the key
+  bytes**, and it is the order attachments are written in
+  ([wire-format-specification.md](wire-format-specification.md#envelope-wire-format)).
+  A boundary never sorts — it reads the sequence Fletcher publishes. UTF-8 is a
+  stated convention for keys, not a guarantee: nothing validates it, and the order
+  is defined over *bytes* precisely so that no boundary has to reproduce a
+  collation (C#'s ordinal comparison is UTF-16 code-unit order and would differ).
+  Decoders match by key, never by position.
+- **A3 — a key containing a zero byte is refused**, both when attached and on
+  arrival. A boundary marshalling a key as a NUL-terminated string truncates it
+  silently, so two distinct keys would become one abroad and one would overwrite
+  the other. Attaching such a key is `kInvalidArgument`. On arrival the refusal
+  sits with the wire checks instead, so that no exception enters a transport
+  callback: a decoder returns "malformed" (`ParseEnvelopeBody`) or raises
+  `std::invalid_argument` (`DeserializeEnvelope`) — never `PubSubError`, which is
+  reserved for caller faults. No key-length bound and no empty-key refusal are
+  imposed: neither has been measured, and an empty key survives a
+  pointer-plus-length boundary intact.
+
+Clauses A1-A3 were added by PDA-DEC-AG2 under the owner's rulings of 2026-09-06 —
+A1 and A2 under the ordering ruling, A3 under the zero-byte-label ruling, which by
+its own terms authorises **that refusal alone** and is not a general licence to
+amend this section.
 
 The C form is **conceptual, never a memory image**. `shared_ptr<const void>` is
 two words and a control block; a C `{void*, const uint8_t*, size_t}` is not a
@@ -676,8 +726,40 @@ without drifting, which is the drift this round exists to stop.
   `kInternal` — the price of a boundary that cannot let an untyped exception
   through.
 - `PubSubError` derives from `std::runtime_error`, so existing
-  `catch (const std::exception&)` sites are unaffected. Messages are unchanged;
-  what moved is branching on the error *type*, which is now branching on a number.
+  `catch (const std::exception&)` sites are unaffected. What moved is branching on
+  the error *type*, which is now branching on a number. **Messages are unchanged
+  except for a zero byte, which this seam escapes in ANY message it publishes**:
+  `PubSubError`'s constructor writes each such byte out as `\x00` rather than
+  letting the message end at it, whatever composed the message — Fletcher's own
+  text, a provider's, or a factory's — so nothing can truncate silently at a
+  language boundary. The class that arises in Fletcher's
+  own code today is a refusal built from a topic segment that itself contains a
+  zero byte, because two of `RequireSegments`' refusals concatenate the raw
+  segment into their message *before* the per-byte check that rejects a zero byte
+  reaches it; that is an **example of the rule and not a limit on it**. Amended by
+  PDA-DEC-AG2 under the owner's rulings of 2026-09-06, the later of which widened
+  the amendment from that one named class to the general rule stated here.
+- **A refusal's message is part of its value (PDA-DEC-AG2).** Three rules, because
+  §4's answer to "which providers are there?" lives only in a message and a
+  boundary that loses it hands an operator nothing to act on:
+  1. The message is retrievable **from the error instance that produced it** —
+     never from a global or thread-local `errno`-style slot. No such slot exists
+     to add to: several provider instances live in one process (§4), and a slot
+     could not say which of them refused. The sibling
+     [driver ABI spec](protocol-driver-abi-spec.md) states the same rule from its
+     own side, so the two boundaries derive one rule rather than two.
+  2. The message is **bytes plus length and contains no zero byte**. This is true
+     by construction: `PubSubError`'s constructor rewrites each zero byte as the
+     four characters `\x00`. Without it the message would be truncated at that
+     byte by `what()`, which returns a `const char*`, and everything after it
+     lost before any boundary saw it. The escape is deliberately **not
+     injective** — a message that already held those four characters renders
+     identically — because making it injective would rewrite messages this
+     round has no authorisation to rewrite. Only a zero byte truncates; only a
+     zero byte is escaped, and every other byte, printable or not, is left alone.
+  3. A boundary must convey **the number AND the message**. `kInvalidArgument` is
+     shared by many refusals, so a boundary forwarding only the number reports a
+     bare "invalid argument" for a mistyped provider name.
 
 ### §5.2 — Consistency of idiom, not of code
 

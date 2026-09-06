@@ -126,11 +126,15 @@ class PubSubProvider {
     /// callback that wants to keep either one copies it — SharedSchema is a shared_ptr, so a copy
     /// keeps the schema alive for as long as that copy lives.
     ///
-    /// They were passed by value until it was measured. An empty `Attachments` is an
-    /// `unordered_map`, and MSVC allocates a sentinel node in its default constructor, so every
-    /// delivery on every topic built and destroyed one whether or not the sample carried any:
-    /// **~110 ns per sample against 1.4 ns for the call itself**, more than the whole rest of the
-    /// delivery path. See "Measured decisions" in the FastDDS provider README.
+    /// They were passed by value until it was measured. An empty `Attachments` was an
+    /// `unordered_map` then, and MSVC allocates a sentinel node in its default constructor, so
+    /// every delivery on every topic built and destroyed one whether or not the sample carried
+    /// any: **~110 ns per sample against 1.4 ns for the call itself**, more than the whole rest
+    /// of the delivery path. PDA-DEC-AG2 retired that alias — `Attachments` is now a sealed
+    /// ordered container over a `std::vector`, whose default constructor allocates nothing — so
+    /// **that number is historical**. By-reference is kept regardless, because by value still
+    /// copies every `Blob` and its control block for a set that carries any. See "Measured
+    /// decisions" in the FastDDS provider README.
     ///
     /// Delivery contract every provider must uphold:
     ///  - **Schema before data.** The callback is never invoked with a null

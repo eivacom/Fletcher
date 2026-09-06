@@ -40,6 +40,19 @@ summary; the normative wording is the doc comment on each enumerator in `status.
 | `kSubscriptionEnded` | 9 | A wait **outcome**, never thrown: the answer will never arrive, because the subscription that would have produced it is gone. |
 | `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. All four `PubSubProvider` methods refuse, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
 
+**The message beside the number.** A refusal carries a human-readable message, and spec §5.1
+makes it part of the error's value: it is retrievable from the error instance (never a global or
+thread-local slot), it is bytes plus length, and it **contains no zero byte** — `PubSubError`'s
+constructor rewrites each zero byte as the four characters `\x00`, because `what()` returns a
+`const char*` and would otherwise truncate the message there before any boundary saw it. A
+boundary must convey **both** the number and the message: `kInvalidArgument` is shared by many
+refusals, so the number alone reports a bare "invalid argument" for a mistyped provider name.
+The escape is deliberately **not injective** — a message already holding those four characters
+renders identically — because making it injective would rewrite messages that this round has no
+authorisation to rewrite. Nothing here is machine-compared against the table above; it is pinned
+by `core_tests`' `Taxonomy.AMessageCarryingAZeroByteSurvivesTheBoundary` and
+`Taxonomy.TheZeroByteEscapeIsDeliberatelyNotInjective`.
+
 Values are **fixed integers, appended only** — never renumbered, reordered, reused or removed,
 because a boundary that has shipped one of these numbers to an application cannot take it back.
 Making an append is a stop-and-ask against the spec and the owner allocates the number (spec

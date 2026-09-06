@@ -25,7 +25,7 @@ Not part of the Conan package: this directory is outside the recipe's `exports_s
 | `BM_PublishFlow_LoanedStruct` | the same loaned write through the struct the sample used to be, when its bound was a template argument. The baseline arm for dropping that struct; see the provider README's measured decisions |
 | `BM_ProviderPublishOverhead` | what `Publish` spends per sample before the type is reached. Superseded by the Monorepo's `tools/fletcher_bench/bench_publish`, which drives the real `Publish` against a raw DDS control |
 | `BM_Deliver_*` | the subscribe-side delivery layer: `OrderedDelivery` on both read flows, and `ParseEnvelopeBody` *with* attachments, which `BM_ReadFlow` never parses. Read each as its own time minus `BM_Deliver_CallbackOnly` **from the same run** |
-| `BM_AttachmentsConstruct`, `BM_PublishFieldsConstruct` | why the sample struct is split by direction: an empty `Attachments` against what `PublishData` costs |
+| `BM_AttachmentsConstruct`, `BM_PublishFieldsConstruct` | why the sample struct is split by direction: an empty `Attachments` against what `PublishData` costs. The allocation this arm was added to expose is gone — PDA-DEC-AG2 retired the `unordered_map` alias — so read it now as the floor rather than as the cost |
 | `BM_Memcpy` | the floor: the row bytes moved once |
 | `BM_BatchRoundTrip` | a nanoarrow batch out and back, per type and per publish flow, row count swept |
 

@@ -398,7 +398,7 @@ real A and B on every subject.
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
 §3.3, §3.4, §5.1, §7 clause 1. A **third** suite in this harness, in its own
-binary (`conformance_seam_vocabulary`), nine entries, no provider SDK.
+binary (`conformance_seam_vocabulary`), thirteen entries, no provider SDK.
 
 It asserts what the crossing *types* make representable, which no
 provider-parameterised clause can reach:
@@ -414,6 +414,10 @@ provider-parameterised clause can reach:
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
 | `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
 | `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}`. §3.5's sixth refusal, the **246-byte joined-length bound**, is asserted in `pubsub_tests` (`Segments.NamesThatWouldTruncateOnTheWireAreRefused`) rather than here: it rides the same door, and keeping it in one place is what lets its two mutations redden that case alone |
+| `AnAttachmentSetIsReconstructibleFromItsPublishedFormAlone` | §3.2 clauses A1-A2 (PDA-DEC-AG2): a stand-in boundary shown **only** `size()`/`KeyAt()`/`ValueAt()` flattens an attachment set to bytes and rebuilds it through `Set` alone; the rebuilt set publishes the identical form, the same entries added in four different orders publish the identical form, and the sequence is in ascending unsigned-byte order of the key — over bytes, not a collation, so a key that is a prefix of another sorts first and a byte above 0x7f sorts after every ASCII key |
+| `AnAlteredAttachmentSetPublishesADifferentForm` *(live negative control)* | Four mutations — one key byte, one value byte, two values swapped between their keys, one entry dropped — each must publish a **different** form. Without it a `PublishedForm` returning a constant would green every line above |
+| `AnAttachmentKeyThatWouldTruncateIsRefused` | §3.2 clause A3 (PDA-DEC-AG2), **two legs with different mechanisms**: `Set` refuses a NUL-bearing key with `kInvalidArgument`, and a hand-built envelope body carrying one is refused by `DeserializeEnvelope` with `std::invalid_argument` — the wire-fault type — and **never** `PubSubError`, the caller-fault type. The second leg reddens on the exception TYPE if a later change routes decode through `Set`. Both legs carry their bound: a clean key of any length, including empty, still works |
+| `TheSameMessagePublishesTheSameWireBytes` | The owner's 2026-09-06 ordering ruling is about the **bytes**, so this reads them off `SerializeEnvelope`'s output: three build orders, one byte sequence, keys ascending. The Fast DDS encoder's identical claim is in that provider's own suite, because this binary links no transport SDK |
 
 **Why the §3.5 refusals are asserted here and in the two provider binaries, and
 never as a `ProviderConformance` clause.** `PeerSubject::RejectUnsendableTopic`
@@ -468,14 +472,49 @@ declares a schema on a schema-*less*-mode loopback is the gateway, which has no
 subject. The forcing test borrows `CopyAccounting`'s instrument outright rather
 than growing a second one, so this harness still has exactly one scoring path.
 
+### What the two "reconstructible" entries claim — read before trusting them
+
+`AnAttachmentSetIsReconstructibleFromItsPublishedFormAlone` and
+`ARefusalIsReconstructibleFromItsNumberAndMessageAlone` (in the `Registry` suite)
+are measured with a **stand-in boundary**: a few dozen lines in the same process,
+in the same binary, compiled by the same compiler.
+
+Green therefore proves that **this tree's** attachment sets and refusals are
+reproducible from what this tree publishes about them, by a consumer given
+nothing else. It proves **nothing about a real C#/Rust binding** — none exists to
+measure — and nothing about a driver built by another compiler. Both claims are
+scoped that way deliberately, the same way `CopyAccounting`'s are: no real client
+exists yet, so any wider claim would rest on a stand-in standing for something
+unbuilt.
+
+What the stand-in *does* buy is that the published form is **complete enough to
+be sufficient**. It is handed `size()`, `KeyAt()` and `ValueAt()` and nothing
+else, and an `int32` plus a NUL-terminated byte string and nothing else, so
+anything it cannot reproduce was never in the published form. That is a real
+property and it was false before PDA-DEC-AG2 — an attachment set's sequence came
+out of a hash table, and a refusal whose cause carried a zero byte lost
+everything after it at `what()`.
+
+Two limits worth stating rather than implying:
+
+- **Attachment ordering is asserted over key bytes, not over text.** UTF-8 is a
+  convention for keys; nothing in the tree validates it, and a key that is not
+  valid UTF-8 still orders and still crosses. A boundary that re-sorts by its own
+  collation will disagree, which is why the rule is that a boundary **never
+  sorts**.
+- **No message-length bound is claimed or enforced.** None has ever been
+  measured, and §3.5's 246-byte topic bound is precedent that a ceiling here
+  would be measured rather than reasoned. A boundary that truncates a long
+  message into its own buffer has chosen that itself.
+
 ## The `Registry` suite — selection, not transport
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §4,
 §4.1, §4.2. A **fourth** suite in this harness, in its own binary
-(`conformance_registry`), 19 entries, no provider SDK — plus **six** more
+(`conformance_registry`), 22 entries, no provider SDK — plus **six** more
 `Registry.` **cases** that live in the two PROVIDER binaries and are listed in
 their own sub-sections below. Cases, not entries: five of the six are ctest
-entries of their own in `conformance_fastdds` (**24** `Registry.` ctest entries
+entries of their own in `conformance_fastdds` (**27** `Registry.` ctest entries
 in all), and the sixth, `Registry.XrceResolvesAsABuiltIn`, is a case inside
 `conformance_xrce`'s single entry.
 
@@ -510,6 +549,9 @@ delivery claim.
 | `InProcessCarriageComesFromTheDocument` | the live control for the row above: the identical registry call, `document = "schema_carriage=carried"`, and the opposite behaviour — publish-before-declare is refused `kTopicNotDeclared`, and a declared topic's delivery carries a non-null schema. Neither test alone proves the mode comes from the document |
 | `InProcessRefusesAnUnrecognisedDocumentEntry` | rung-2 case 6: seven refusals — an unrecognised value, an unrecognised key, an entry with no `=`, a duplicate key, an empty value, and leading/trailing whitespace on key and value — all `kInvalidArgument` quoting the offending entry, never "threw something" and never a silently-defaulted typo |
 | `InProcessDocumentToleratesCrlfAndBlankLines` | the two tolerances the reader *adds* are the ones that had no guard: a trailing `\r` is stripped (so a CRLF document means the same on every platform — the 2026-09-02 ruling) and a blank entry is skipped. Covers CRLF, a leading blank line, an interior blank line, a trailing newline, and all composed |
+| `ARefusalIsReconstructibleFromItsNumberAndMessageAlone` (forcing, PDA-DEC-AG2) | §5.1's message rules: a stand-in boundary holding **only** an `int32` number and the message read as a NUL-terminated byte string rebuilds a refusal that republishes both unchanged — and two refusals raised for different reasons stay **distinguishable** across that crossing. The second half is the one that was false: a cause carrying a zero byte was truncated at it by `what()`, so two different refusals published the same form. The refusal is raised by a factory and reaches the test through `Create`, so `TranslateSeamFailure` is in the loop. Its bound: a message with no zero byte crosses unchanged |
+| `ANumberAloneCannotTellTwoRefusalsApart` *(live negative control)* | §5.1 rule 3: a mistyped provider name and an empty topic-segment list share `kInvalidArgument`, so a boundary forwarding only the number says the same thing about both. It breaks if a later change folds either cause into a number of its own — which would be a `PubSubStatus` append, and that needs the owner's word |
+| `TheRefusalListIsAFunctionOfTheRegistrysContents` | §4's answer, asserted **through the message alone** — the 2026-09-06 ruling declined a typed name query, so no new public surface exists to ask. Two registries holding the same four names in opposite insertion orders compose byte-identical refusals, and the rendered `available:` list is in ascending byte order — the same total order §3.2 clause A2 publishes for attachment keys, so the tree ships one order rule and not two. The insertion-order half is a **seal guard**: `factories_` is already a `std::map`, so it is green today and reddens if that container is re-typed. The ascending half is what the seal guard cannot see on its own |
 | `InProcessRefusesADocumentContainingANul` | a document carrying an embedded NUL is refused at the door with its offset, mirroring `ProviderSelector::Parse`. This is a **provider-format** rule, not a seam one — the seam's document stays length-authoritative and carries a NUL unchanged (§4.2). It is the suite's only guard against a NUL-truncating boundary |
 
 **The link line is a machine check.** `conformance_registry` names

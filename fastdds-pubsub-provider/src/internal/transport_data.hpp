@@ -50,10 +50,13 @@ struct PublishData {
 
 // What deserialize() fills, decoded in place and moved on by the listener.
 //
-// Separate from PublishData rather than one struct carrying both directions: Attachments is an
-// unordered_map, and MSVC allocates a sentinel node in its default constructor, so a bundled struct
-// made every serialised publish allocate and free a node for a member that path never reads. See
-// README "Measured decisions".
+// Separate from PublishData rather than one struct carrying both directions. The measurement that
+// forced the split: Attachments WAS an unordered_map, and MSVC allocates a sentinel node in its
+// default constructor, so a bundled struct made every serialised publish allocate and free a node
+// for a member that path never reads. PDA-DEC-AG2 retired that alias for a sealed container over a
+// std::vector, which allocates nothing when empty, so the cost is gone and the split is kept for
+// the reason rather than the number — a bundled struct would still build and destroy a member one
+// direction never touches. See README "Measured decisions".
 struct ReceivedData {
     std::vector<uint8_t> decoded_row;
     Attachments decoded_attachments;

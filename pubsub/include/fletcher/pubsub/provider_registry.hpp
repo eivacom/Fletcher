@@ -279,9 +279,16 @@ class ProviderRegistry {
 
    private:
     // Ordered, so the "available providers" in a refusal is stable and
-    // greppable rather than hash-order. Held by shared handle, not by value, so
-    // a provider can own the callable that made it — the lifetime rule above is
-    // mechanical, not advisory.
+    // greppable rather than hash-order. That is now LOAD-BEARING rather than
+    // merely tidy: the owner's 2026-09-06 ruling declined a typed name query on
+    // this registry, so §4's answer to "which providers are there?" reaches an
+    // application only through the refusal MESSAGE, which must therefore be a
+    // function of the registry's contents and not of insertion or hash order.
+    // Re-typing this to an unordered container reopens that defect silently —
+    // `Registry.TheRefusalListIsAFunctionOfTheRegistrysContents` is what would
+    // catch it. Held by shared handle, not by value, so a provider can own the
+    // callable that made it — the lifetime rule above is mechanical, not
+    // advisory.
     std::map<std::string, std::shared_ptr<Factory>> factories_;
     std::shared_ptr<PathResolver> path_resolver_;
 };

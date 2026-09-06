@@ -172,7 +172,7 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     const std::vector<uint8_t> payload{0xDE, 0xAD};
     Blob blob{payload};
     Attachments sent;
-    sent.emplace("img", blob);
+    sent.Set("img", blob);
 
     ArrowRow row = {
         std::make_shared<arrow::Int32Scalar>(1),
@@ -180,10 +180,11 @@ TEST(PubSubArrowTest, PublishWithAttachments) {
     };
     pub.Publish(kTopic, row, sent);
 
-    ASSERT_EQ(received_att.count("img"), 1);
+    const Blob* arrived = received_att.Find("img");
+    ASSERT_NE(arrived, nullptr);
     // The kept copy names the very bytes that were published (§3.2).
-    EXPECT_EQ(received_att.at("img").data(), blob.data());
-    EXPECT_EQ(received_att.at("img").size(), payload.size());
+    EXPECT_EQ(arrived->data(), blob.data());
+    EXPECT_EQ(arrived->size(), payload.size());
 }
 
 TEST(PubSubArrowTest, PublishDirectPassthrough) {
@@ -355,7 +356,7 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
 
     Attachments sent;
-    sent.emplace("img", Blob{std::vector<uint8_t>{0xBE, 0xEF}});
+    sent.Set("img", Blob{std::vector<uint8_t>{0xBE, 0xEF}});
     pub.Publish(kTopic, MakeRow(1, "a"), sent);  // row 0 has an attachment
     pub.Publish(kTopic, MakeRow(2, "b"));        // row 1 has none
 
@@ -363,7 +364,7 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     ASSERT_EQ(sink.deliveries.size(), 1u);
     ASSERT_EQ(sink.deliveries[0].num_rows, 2);
     ASSERT_EQ(sink.deliveries[0].attachments.size(), 2u);
-    EXPECT_EQ(sink.deliveries[0].attachments[0].count("img"), 1u);
+    EXPECT_NE(sink.deliveries[0].attachments[0].Find("img"), nullptr);
     EXPECT_TRUE(sink.deliveries[0].attachments[1].empty());
 }
 
@@ -381,9 +382,9 @@ TEST(SubscriberArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
 
     Blob blob{std::vector<uint8_t>{0x01}};
     Attachments good;
-    good.emplace("img", blob);
+    good.Set("img", blob);
     Attachments orphan;
-    orphan.emplace("orphan", blob);
+    orphan.Set("orphan", blob);
     pub.Publish(kTopic, MakeRow(1, "good"), good);  // decodes fine
 
     // A truncated buffer (just the 1-byte null bitfield) underruns when the
@@ -397,7 +398,7 @@ TEST(SubscriberArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
     ASSERT_EQ(sink.deliveries.size(), 1u);
     EXPECT_EQ(sink.deliveries[0].num_rows, 1);             // only the good row
     EXPECT_EQ(sink.deliveries[0].attachments.size(), 1u);  // dropped row's attachment gone
-    EXPECT_EQ(sink.deliveries[0].attachments[0].count("img"), 1u);
+    EXPECT_NE(sink.deliveries[0].attachments[0].Find("img"), nullptr);
     EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
 }
 

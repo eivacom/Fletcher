@@ -103,10 +103,39 @@ static_assert(static_cast<int32_t>(PubSubStatus::kReentrantCall) == 10,
 /// §2 outcomes of a wait, not failures, and the enum says so. A refused status
 /// is coerced to kInternal rather than throwing from inside a throw expression,
 /// where a second exception in flight would be worse than a mislabelled one.
+///
+/// ── The message is part of the error's VALUE (spec §5.1, PDA-DEC-AG2) ────────
+///
+/// 1. A refusal's message is retrievable **from the error instance that produced
+///    it** — never from a global or thread-local `errno`-style slot. There is no
+///    such slot to add to: several provider instances live in one process (§4),
+///    and a slot could not say which of them refused. The sibling driver spec
+///    states the same rule from its own side, so the two boundaries derive one
+///    rule rather than two.
+/// 2. The message is **bytes plus length** and **contains no zero byte**. That
+///    is true by construction, below.
+/// 3. A boundary must convey **the number AND the message**. For a §4
+///    configuration refusal the message *is* the answer: `kInvalidArgument` is
+///    shared with many other refusals, so a boundary forwarding only the number
+///    hands an operator a bare "invalid argument" for a mistyped provider name.
+///
+/// Rule 2 is enforced here because `what()` returns a `const char*`: a message
+/// holding a zero byte is truncated there — before it ever reaches a boundary —
+/// and everything after the zero is lost with no signal. `Escape` rewrites each
+/// zero byte as the four characters `\x00` so the whole message survives.
+///
+/// **Deliberately non-injective, and not to be "fixed".** A message that already
+/// held the literal characters `\x00` renders identically to one that held a
+/// zero byte. `Quoted` in `provider_registry.cpp` escapes its backslashes to
+/// avoid exactly this collision, and does not apply here: it also escapes every
+/// byte >= 0x7f, which would mangle legitimate non-ASCII diagnostic text, and
+/// widening this escape would change messages the owner's 2026-09-06 ruling did
+/// not authorise changing. Only a zero byte truncates; only a zero byte is
+/// escaped.
 class PubSubError : public std::runtime_error {
    public:
     PubSubError(PubSubStatus status, std::string what)
-        : std::runtime_error(std::move(what)), status_(Sanitize(status)) {}
+        : std::runtime_error(Escape(std::move(what))), status_(Sanitize(status)) {}
 
     [[nodiscard]] PubSubStatus status() const noexcept { return status_; }
 
@@ -120,6 +149,22 @@ class PubSubError : public std::runtime_error {
             default:
                 return status;
         }
+    }
+
+    // Rule 2, made true rather than asserted. The common case allocates nothing
+    // extra: a message with no zero byte is moved through untouched.
+    static std::string Escape(std::string what) {
+        if (what.find(static_cast<char>(0)) == std::string::npos) return what;
+        std::string escaped;
+        escaped.reserve(what.size() + 8);
+        for (const char c : what) {
+            if (c == static_cast<char>(0)) {
+                escaped += "\\x00";
+            } else {
+                escaped += c;
+            }
+        }
+        return escaped;
     }
 
     PubSubStatus status_;

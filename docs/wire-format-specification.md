@@ -148,12 +148,21 @@ The `Envelope` bundles an encoded row with optional binary attachments for trans
 [ROW_DATA   : ROW_LEN bytes]     — the EncodedRow (positional format)
 [ATT_COUNT  : 4 bytes uint32]    — number of attachments
 
-For each attachment:
+For each attachment, in ASCENDING UNSIGNED-BYTE ORDER OF THE KEY:
   [KEY_LEN  : 4 bytes uint32]
-  [KEY_DATA : KEY_LEN bytes]     — attachment key (UTF-8 string)
+  [KEY_DATA : KEY_LEN bytes]     — attachment key; UTF-8 by convention, never contains a zero byte
   [BLOB_LEN : 4 bytes uint32]
   [BLOB_DATA: BLOB_LEN bytes]    — binary blob data
 ```
+
+**The attachment order is stated, and every Fletcher C++ encoder emits it.** Attachments are written in ascending unsigned-byte order of the key bytes — `memcmp` order, shorter-first on a common prefix — so the same message produces the same bytes on every build. Before PDA-DEC-AG2 they went out in `std::hash` order, which differs between builds and cannot be derived from the value; a boundary or a second implementation therefore could not reproduce a message's bytes.
+
+**A decoder must still match attachments by key, never by position**, and that is what makes the rule safe to state without breaking anything. Two consequences worth having in writing rather than implied:
+
+- A decoder that predates this rule is unaffected by it, because it never depended on the order.
+- The rule binds Fletcher's C++ encoders — `SerializeEnvelope` and the Fast DDS `EncodeEnvelopeBody`, both of which enumerate a `fletcher::Attachments`, which has no other order to offer. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is a **second, independent encoder** and emits in JavaScript `Map` insertion order; a message it produces with two or more attachments is therefore accepted and correct but not canonical. Any Fletcher C++ decoder normalises it on ingest, because the entries land in a `fletcher::Attachments`.
+
+**A key containing a zero byte is malformed**, and — exactly as for the order above — the rule binds Fletcher's **C++** encoders and decoders. No Fletcher C++ encoder can produce such a key, because `fletcher::Attachments` is the only way a key reaches either encoder and both doors into it — `Set` and the decoders' bulk builder — refuse it; every Fletcher C++ decoder drops a message carrying one as malformed rather than accepting a key that would truncate at a language boundary. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is again the exception: `TextEncoder` encodes `U+0000` as the byte `0x00`, measured, so it can emit such a key and its own `deserializeEnvelope` round-trips it. What that buys the rule is still an unambiguous outcome rather than an ambiguous key — a Fletcher C++ peer drops the sample, and the gateway refuses the publish frame — so no key that would become two things abroad is ever delivered. See [pubsub-interface-spec.md §3.2](pubsub-interface-spec.md) clauses A2 and A3, which are normative for both.
 
 The codec is completely unaware of attachments — they remain a transport-layer concern.
 
@@ -162,7 +171,7 @@ The codec is completely unaware of attachments — they remain a transport-layer
 | Type | Definition | Purpose |
 |---|---|---|
 | `Blob` | `{shared_ptr<const void> owner, const uint8_t* data, size_t size}` | Zero-copy binary data, including bytes Fletcher did not allocate |
-| `Attachments` | `unordered_map<string, Blob>` | Key/value blob pairs |
+| `Attachments` | Sealed ordered set of key/`Blob` entries, walked by `size()`/`KeyAt(i)`/`ValueAt(i)` | Key/value blob pairs, in ascending key-byte order |
 | `Envelope` | Row + Attachments bundle | Wire transport unit |
 
 ---

@@ -147,12 +147,12 @@ sequenceDiagram
 
     APP->>PUB: Publish(row, {{"frame_001", blob}})
     PUB->>ENV: SerializeEnvelope(encodedRow, attachments)
-    ENV->>ENV: [ROW_LEN:4][ROW:N][ATT_COUNT:4]<br/>[KEY_LEN:4][KEY][BLOB_LEN:4][BLOB]...
+    ENV->>ENV: [ROW_LEN:4][ROW:N][ATT_COUNT:4]<br/>[KEY_LEN:4][KEY][BLOB_LEN:4][BLOB]...<br/>attachments in ascending key-byte order
     PUB->>PP: Transport serialized envelope
 
     PP->>SUB: Raw envelope bytes
     SUB->>ENV: DeserializeEnvelope(bytes)
-    ENV->>SUB: EncodedRow + Attachments map
+    ENV->>SUB: EncodedRow + Attachments (ordered by key)
     SUB->>SUB: Decode row, access attachment by key
 
     Note over APP,SUB: Attachments are a transport-layer concern.<br/>The codec is unaware of them.

@@ -386,15 +386,16 @@ TEST(SubscriberTest, PublishWithAttachmentsFansOutCorrectly) {
     Blob blob{payload};
 
     Attachments sent;
-    sent.emplace("img", blob);
+    sent.Set("img", blob);
     publisher.Publish(kTopic, MakeTestEncoder(99), sent);
 
     EXPECT_EQ(received_value, 99);
-    ASSERT_EQ(received_att.count("img"), 1u);
+    const Blob* arrived = received_att.Find("img");
+    ASSERT_NE(arrived, nullptr);
     // A Blob kept past the borrow window still names the very bytes that were
     // published — the copy is the shared owner, not the payload (§3.2).
-    EXPECT_EQ(received_att.at("img").data(), blob.data());
-    EXPECT_EQ(received_att.at("img").size(), payload.size());
+    EXPECT_EQ(arrived->data(), blob.data());
+    EXPECT_EQ(arrived->size(), payload.size());
 }
 
 // Fan-out used to iterate an unordered_map of every subscription in the process, so the order

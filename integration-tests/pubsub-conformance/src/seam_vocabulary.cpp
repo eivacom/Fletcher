@@ -15,14 +15,17 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <fletcher/core/envelope.hpp>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
+#include <initializer_list>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -514,6 +517,358 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
     // refused every topic would be green above.
     EXPECT_NO_THROW(provider.CreateTopic({"vessel.bow", "depth-raw"}, OwnedSchema{}));
     EXPECT_NO_THROW(provider.CreateTopic({"_private", "two words"}, OwnedSchema{}));
+}
+
+// ── §3.2 — the attachment set has a PUBLISHED FORM ──────────────────
+//
+// THE FORCING TEST for A6. Until PDA-DEC-AG2 `Attachments` was an
+// `unordered_map`, which published no form at all: the sequence entries came out
+// in — and were written onto the wire in — `std::hash`'s order, a property of the
+// BUILD rather than of the value. A separately built binary, or a language
+// binding, could not reproduce it from the value it held.
+//
+// The stand-in boundary below is deliberately impoverished: it is shown ONLY
+// `size()`, `KeyAt()` and `ValueAt()` — everything a C#/Rust binding would be
+// given — and it never sorts. It flattens what it is shown into bytes, and
+// rebuilds a set from those bytes through `Set` alone. Three claims, all
+// required, and the third is the one that was false before:
+//
+//   1. Round trip: the rebuilt set publishes a byte-identical form.
+//   2. Construction order is not part of the value: the same entries added in
+//      several different orders publish the identical form.
+//   3. The form is the ORDER RULE, not merely "some fixed order": the key
+//      sequence is ascending in unsigned-byte order, which is the rule a
+//      boundary is told and can check without reproducing a collation.
+//
+// Claim 3 is what a build-dependent enumeration fails.
+// `AnAlteredAttachmentSetPublishesADifferentForm` below is the live negative
+// control: without it, a `PublishedForm` returning a constant would green every
+// line here.
+
+namespace {
+
+void AppendU32(std::vector<uint8_t>& out, uint32_t value) {
+    for (int shift = 0; shift < 32; shift += 8) {
+        out.push_back(static_cast<uint8_t>((value >> shift) & 0xFFu));
+    }
+}
+
+uint32_t ReadU32(const std::vector<uint8_t>& in, size_t& pos) {
+    uint32_t value = 0;
+    for (int i = 0; i < 4; ++i) {
+        value |= static_cast<uint32_t>(in.at(pos + static_cast<size_t>(i))) << (8 * i);
+    }
+    pos += 4;
+    return value;
+}
+
+// Everything the seam publishes about an attachment set, and nothing else. A
+// boundary holding these bytes holds the whole value.
+std::vector<uint8_t> PublishedForm(const Attachments& attachments) {
+    std::vector<uint8_t> out;
+    AppendU32(out, static_cast<uint32_t>(attachments.size()));
+    for (size_t i = 0; i < attachments.size(); ++i) {
+        const std::string_view key = attachments.KeyAt(i);
+        const Blob& value = attachments.ValueAt(i);
+        AppendU32(out, static_cast<uint32_t>(key.size()));
+        out.insert(out.end(), key.begin(), key.end());
+        AppendU32(out, static_cast<uint32_t>(value.size()));
+        out.insert(out.end(), value.data(), value.data() + value.size());
+    }
+    return out;
+}
+
+// The far side of the stand-in boundary. It reads the sequence in the order it
+// was handed and never sorts — a binding is not asked to reproduce a collation.
+Attachments RebuildFromPublishedForm(const std::vector<uint8_t>& form) {
+    Attachments rebuilt;
+    size_t pos = 0;
+    const uint32_t count = ReadU32(form, pos);
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t key_len = ReadU32(form, pos);
+        std::string key(reinterpret_cast<const char*>(form.data() + pos), key_len);
+        pos += key_len;
+        const uint32_t value_len = ReadU32(form, pos);
+        std::vector<uint8_t> bytes(form.begin() + static_cast<ptrdiff_t>(pos),
+                                   form.begin() + static_cast<ptrdiff_t>(pos + value_len));
+        pos += value_len;
+        rebuilt.Set(std::move(key), value_len == 0 ? Blob() : Blob(std::move(bytes)));
+    }
+    return rebuilt;
+}
+
+Blob BlobOf(std::initializer_list<uint8_t> bytes) { return Blob(std::vector<uint8_t>(bytes)); }
+
+// One set of entries, four keys, added in a caller-chosen order.
+Attachments EntriesInOrder(const std::vector<size_t>& order) {
+    const std::vector<std::pair<std::string, Blob>> entries{
+        {"zulu", BlobOf({0x01, 0x02})},
+        {"alpha", BlobOf({0x03})},
+        {"mike", BlobOf({0x04, 0x05, 0x06})},
+        {"bravo", BlobOf({0x07})},
+    };
+    Attachments attachments;
+    for (const size_t i : order) attachments.Set(entries[i].first, entries[i].second);
+    return attachments;
+}
+
+std::string KeySequence(const Attachments& attachments) {
+    std::string out;
+    for (size_t i = 0; i < attachments.size(); ++i) {
+        if (i != 0) out += ' ';
+        out += std::string(attachments.KeyAt(i));
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(SeamVocabulary, AnAttachmentSetIsReconstructibleFromItsPublishedFormAlone) {
+    const Attachments original = EntriesInOrder({0, 1, 2, 3});
+    const std::vector<uint8_t> form = PublishedForm(original);
+
+    // Claim 1 — the boundary's rebuild publishes the same form. It was shown
+    // nothing but the sequence, so anything it fails to reproduce was never in
+    // the published form to begin with.
+    const Attachments rebuilt = RebuildFromPublishedForm(form);
+    EXPECT_EQ(PublishedForm(rebuilt), form)
+        << "a set rebuilt from its published form does not publish that form again; original keys ["
+        << KeySequence(original) << "], rebuilt keys [" << KeySequence(rebuilt) << "]";
+
+    // Claim 2 — construction order is not part of the value. Four orders,
+    // including the reverse and one that overwrites a key it already set.
+    const std::vector<std::vector<size_t>> orders{
+        {0, 1, 2, 3},
+        {3, 2, 1, 0},
+        {1, 3, 0, 2},
+        {2, 0, 3, 1, 0},
+    };
+    for (const std::vector<size_t>& order : orders) {
+        const Attachments other = EntriesInOrder(order);
+        EXPECT_EQ(PublishedForm(other), form)
+            << "the same entries added in a different order publish a different form: keys ["
+            << KeySequence(other) << "] against [" << KeySequence(original) << "]";
+    }
+
+    // Claim 3 — the order is the RULE, not merely stable within this build:
+    // ascending unsigned-byte order of the key bytes, which is what §3.2
+    // publishes and what a boundary is told to expect.
+    EXPECT_EQ(KeySequence(original), "alpha bravo mike zulu")
+        << "the published sequence is not in ascending unsigned-byte order of the key";
+
+    // And it is a BYTE order, not a collation: a key that is a prefix of another
+    // sorts first, and a byte above 0x7f sorts after every ASCII key. Written as
+    // literals rather than derived, so this does not compare a rule with itself.
+    Attachments byte_order;
+    byte_order.Set("ab", Blob());
+    byte_order.Set("\xC3\xA9", Blob());  // U+00E9, two bytes >= 0x80
+    byte_order.Set("a", Blob());
+    byte_order.Set("Z", Blob());
+    EXPECT_EQ(KeySequence(byte_order), std::string("Z a ab \xC3\xA9"))
+        << "the order is not over unsigned key bytes";
+
+    // Claim 4 — the enumeration has a BOUND, and it is the same one for both
+    // halves of the pair. Without this the positional form ships a rung nothing
+    // exercises: an index outside [0, size()) must be refused with
+    // kInvalidArgument — no clamping, no sentinel entry, no index that is valid
+    // only sometimes — and `size()` itself is the first such index, which is the
+    // off-by-one a boundary walking `i <= size()` would hit.
+    for (const size_t outside : {original.size(), original.size() + 1, ~size_t{0}}) {
+        PubSubStatus key_status = PubSubStatus::kOk;
+        try {
+            static_cast<void>(original.KeyAt(outside));
+            ADD_FAILURE() << "KeyAt accepted index " << outside << " with size " << original.size();
+        } catch (const PubSubError& error) {
+            key_status = error.status();
+        }
+        EXPECT_EQ(key_status, PubSubStatus::kInvalidArgument);
+
+        PubSubStatus value_status = PubSubStatus::kOk;
+        try {
+            static_cast<void>(original.ValueAt(outside));
+            ADD_FAILURE() << "ValueAt accepted index " << outside << " with size "
+                          << original.size();
+        } catch (const PubSubError& error) {
+            value_status = error.status();
+        }
+        EXPECT_EQ(value_status, PubSubStatus::kInvalidArgument);
+    }
+    // The bound on THAT narrowing: the last valid index is still valid, so a
+    // container refusing every index is not green above.
+    EXPECT_NO_THROW(static_cast<void>(original.KeyAt(original.size() - 1)));
+    EXPECT_NO_THROW(static_cast<void>(original.ValueAt(original.size() - 1)));
+
+    // And on an EMPTY set every index is outside, including zero.
+    const Attachments none;
+    EXPECT_THROW(static_cast<void>(none.KeyAt(0)), PubSubError);
+}
+
+// ── The live negative control for the test above ────────────────────
+//
+// Four mutations, each the smallest that keeps the set the same size where it
+// can. Without these, a `PublishedForm` that dropped the values, or the keys, or
+// returned a constant, would satisfy every line of the positive test.
+TEST(SeamVocabulary, AnAlteredAttachmentSetPublishesADifferentForm) {
+    const Attachments original = EntriesInOrder({0, 1, 2, 3});
+    const std::vector<uint8_t> form = PublishedForm(original);
+
+    // 1. One key byte changed.
+    Attachments key_changed;
+    key_changed.Set("zulu", BlobOf({0x01, 0x02}));
+    key_changed.Set("alpha", BlobOf({0x03}));
+    key_changed.Set("mikf", BlobOf({0x04, 0x05, 0x06}));  // mike -> mikf
+    key_changed.Set("bravo", BlobOf({0x07}));
+    EXPECT_NE(PublishedForm(key_changed), form) << "a changed key byte publishes the same form";
+
+    // 2. One value byte changed.
+    Attachments value_changed;
+    value_changed.Set("zulu", BlobOf({0x01, 0x02}));
+    value_changed.Set("alpha", BlobOf({0x03}));
+    value_changed.Set("mike", BlobOf({0x04, 0x05, 0x07}));  // 0x06 -> 0x07
+    value_changed.Set("bravo", BlobOf({0x07}));
+    EXPECT_NE(PublishedForm(value_changed), form) << "a changed value byte publishes the same form";
+
+    // 3. Two values swapped between their keys. Same keys, same multiset of
+    //    values — only the pairing differs, which a key-only form would miss.
+    Attachments swapped;
+    swapped.Set("zulu", BlobOf({0x07}));
+    swapped.Set("alpha", BlobOf({0x03}));
+    swapped.Set("mike", BlobOf({0x04, 0x05, 0x06}));
+    swapped.Set("bravo", BlobOf({0x01, 0x02}));
+    EXPECT_NE(PublishedForm(swapped), form) << "swapping two values publishes the same form";
+
+    // 4. One entry dropped.
+    const Attachments dropped = EntriesInOrder({0, 1, 2});
+    EXPECT_NE(PublishedForm(dropped), form) << "dropping an entry publishes the same form";
+}
+
+// ── §3.2 rung 2 — a label that cannot survive the trip is refused ────
+//
+// TWO LEGS, refused by different mechanisms on purpose.
+//
+// The ATTACH leg (owner ruling 2026-09-06, "refuse it when attached"): `Set`
+// refuses a NUL-bearing key with `kInvalidArgument`. A boundary marshalling a
+// key as a NUL-terminated string truncates it silently, so a key of three bytes
+// with a zero in the middle and its one-byte prefix would be one attachment
+// abroad, and one would overwrite the other.
+//
+// The ARRIVAL leg (owner ruling 2026-09-06, extending the above to the receive
+// side): a wire-supplied key is refused by the WIRE checks, not by `Set` —
+// `DeserializeEnvelope` raises `std::invalid_argument`, the type its own
+// contract note reserves for a wire fault, and NEVER `PubSubError`, which that
+// note reserves for a caller fault. That distinction is the point of this leg:
+// it goes red on the exception TYPE if a later change routes decode through
+// `Set`, which would label a wire fault a caller fault and put an exception into
+// a transport frame.
+TEST(SeamVocabulary, AnAttachmentKeyThatWouldTruncateIsRefused) {
+    std::string nul_bearing = "a";
+    nul_bearing.push_back(static_cast<char>(0));
+    nul_bearing += "b";
+    ASSERT_EQ(nul_bearing.size(), static_cast<size_t>(3));
+
+    // ── Leg 1: attached locally.
+    Attachments attachments;
+    PubSubStatus attach_status = PubSubStatus::kOk;
+    try {
+        attachments.Set(nul_bearing, Blob());
+        ADD_FAILURE() << "Set accepted a key carrying a zero byte";
+    } catch (const PubSubError& error) {
+        attach_status = error.status();
+    }
+    EXPECT_EQ(attach_status, PubSubStatus::kInvalidArgument);
+    EXPECT_EQ(attachments.size(), static_cast<size_t>(0)) << "the refused key was stored anyway";
+
+    // The bound on the narrowing, so a build that refused every key is not green
+    // above: a key with no zero byte is accepted, INCLUDING an empty one — no
+    // key-length bound and no empty-key refusal were adopted, because neither
+    // was measured and an empty key survives a pointer-plus-length boundary.
+    EXPECT_NO_THROW(attachments.Set("", Blob()));
+    EXPECT_NO_THROW(attachments.Set(std::string(1024, 'k'), Blob()));
+
+    // ── Leg 2: arriving from the wire.
+    //
+    // A hand-built envelope body, so the zero byte is in the BYTES rather than
+    // in a key some local code constructed. Nothing above builds this: it is
+    // what a foreign or hostile producer puts on the wire.
+    std::vector<uint8_t> wire;
+    AppendU32(wire, 1);  // row_len
+    wire.push_back(0xFF);
+    AppendU32(wire, 1);  // attachment count
+    AppendU32(wire, static_cast<uint32_t>(nul_bearing.size()));
+    wire.insert(wire.end(), nul_bearing.begin(), nul_bearing.end());
+    AppendU32(wire, 0);  // blob_len
+
+    auto owner = std::make_shared<const std::vector<uint8_t>>(wire);
+    EXPECT_THROW(static_cast<void>(DeserializeEnvelope(owner)), std::invalid_argument)
+        << "a wire-supplied key carrying a zero byte was not refused as malformed";
+
+    // ...and specifically NOT as a caller fault. `PubSubError` derives from
+    // `std::runtime_error` and `std::invalid_argument` from `std::logic_error`,
+    // so these two catch clauses are disjoint and this cannot pass by accident.
+    try {
+        static_cast<void>(DeserializeEnvelope(owner));
+        ADD_FAILURE() << "the malformed body was accepted";
+    } catch (const PubSubError& error) {
+        ADD_FAILURE() << "a wire fault was reported as a caller fault (status "
+                      << static_cast<int32_t>(error.status())
+                      << "): decode was routed through Attachments::Set";
+    } catch (const std::invalid_argument&) {
+        SUCCEED();
+    }
+
+    // The bound on THIS narrowing: the identical body with a clean key parses.
+    // Without it, a decoder that refused every attachment would be green above.
+    std::vector<uint8_t> clean;
+    AppendU32(clean, 1);
+    clean.push_back(0xFF);
+    AppendU32(clean, 1);
+    AppendU32(clean, 3);
+    clean.insert(clean.end(), {'a', 'x', 'b'});
+    AppendU32(clean, 0);
+    auto clean_owner = std::make_shared<const std::vector<uint8_t>>(clean);
+    Envelope parsed = DeserializeEnvelope(clean_owner);
+    ASSERT_EQ(parsed.attachments.size(), static_cast<size_t>(1));
+    EXPECT_EQ(parsed.attachments.KeyAt(0), "axb");
+}
+
+// ── Ruling 53's wire bytes, measured on the wire (AG2-DEBT-2) ────────
+//
+// The ruling that authorised this change is about the BYTES, so this reads them
+// off `SerializeEnvelope`'s output rather than off the container. The Fast DDS
+// codec's identical claim is asserted in that provider's own suite, where
+// `EncodeEnvelopeBody` is reachable; this file's binary links no transport SDK.
+TEST(SeamVocabulary, TheSameMessagePublishesTheSameWireBytes) {
+    auto envelope_of = [](const std::vector<size_t>& order) {
+        Envelope env;
+        env.row = {0x10, 0x20};
+        env.attachments = EntriesInOrder(order);
+        return SerializeEnvelope(env);
+    };
+
+    const std::vector<uint8_t> reference = envelope_of({0, 1, 2, 3});
+    EXPECT_EQ(envelope_of({3, 2, 1, 0}), reference)
+        << "the same message built in a different order produced different wire bytes";
+    EXPECT_EQ(envelope_of({1, 3, 0, 2}), reference)
+        << "the same message built in a different order produced different wire bytes";
+
+    // And the emitted sequence is ascending — the property that is a function of
+    // the VALUE rather than of this build's hash. Before AG2 these bytes came out
+    // in `std::hash` order, which on this toolchain is neither ascending nor
+    // derivable from the value.
+    size_t pos = 0;
+    const uint32_t row_len = ReadU32(reference, pos);
+    pos += row_len;
+    const uint32_t count = ReadU32(reference, pos);
+    ASSERT_EQ(count, static_cast<uint32_t>(4));
+    std::vector<std::string> emitted;
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t key_len = ReadU32(reference, pos);
+        emitted.emplace_back(reinterpret_cast<const char*>(reference.data() + pos), key_len);
+        pos += key_len;
+        pos += ReadU32(reference, pos);
+    }
+    EXPECT_EQ(emitted, (std::vector<std::string>{"alpha", "bravo", "mike", "zulu"}))
+        << "the wire key order is not ascending unsigned-byte order";
 }
 
 }  // namespace conformance

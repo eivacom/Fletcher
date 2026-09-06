@@ -1,7 +1,10 @@
 # Protocol Driver ABI — Specification (oracle)
 
 Status: **proposed** (round **PDA-ABI**, token `PDA-ABI`). This is the authoritative
-spec for the pure-C protocol driver ABI. On any contradiction with the plan or a
+spec for the protocol driver ABI, **both sides of which are C++** — see §0 and the
+owner's ruling of 2026-09-05. (This line read "the pure-C protocol driver ABI"
+until PDA-DEC-AG2 carried that ruling into the same file's §0; the two are now one
+answer rather than two.) On any contradiction with the plan or a
 per-item design, **this document wins** — *except* where it concerns the seam,
 where [docs/pubsub-interface-spec.md](pubsub-interface-spec.md) wins over this
 document. Locked-decision digest:
@@ -18,9 +21,14 @@ C-expressible form, the exception taxonomy is published, and a registry selects 
 provider by **name or path** with built-in versus loaded invisible to callers
 ([docs/pubsub-interface-spec.md](pubsub-interface-spec.md)).
 
-This round builds the C boundary **below** that seam, so a protocol becomes a
-**driver**: implementable by anyone in any language, in a separate binary, and
-selected at runtime without rebuilding Fletcher.
+This round builds the boundary **below** that seam, so a protocol becomes a
+**driver**: implementable by anyone, in a separate binary, and selected at runtime
+without rebuilding Fletcher. **Both sides of it are C++** — the owner ruled on
+2026-09-05 that every protocol driver will be C++, having been shown this
+paragraph as it then read ("implementable by anyone in any language") and ruled
+against it. The binary-stability constraints that hold between separately built
+C++ binaries still hold in full: exceptions may not cross, and layout may not be
+assumed.
 
 ```
    application (C++, or via a language binding)
@@ -76,9 +84,16 @@ seam (seam §4) and therefore to the *binding* surface. A driver never implement
 selection. This round contributes only a **path resolver** to the registry the
 seam already defines.
 
-A **driver written in Rust or C#** implements role 1 and is entirely legitimate.
-It is a different artifact from a Rust or C# *application binding*, which calls
-the seam. Same language, opposite directions.
+A driver is **C++**, by the owner's ruling of 2026-09-05. The licence this
+paragraph used to give — that a driver written in Rust or C# implements role 1 and
+is entirely legitimate — is **withdrawn, not relocated**: it was put to the owner
+verbatim and ruled against. A Rust or C# *application binding* is a different
+artifact entirely and is unaffected; it calls the seam from above.
+
+The test the ruling put in its place is not "could a non-C++ implementer
+construct this?" but **"does this data drill all the way up to the language
+ABI?"** A concept that stops at the protocol ABI may be expressed in C++; one
+that continues up to the language boundary must still be language-agnostic.
 
 ---
 
