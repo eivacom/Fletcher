@@ -737,3 +737,56 @@ contract text is frozen, so it needs a fresh owner ruling — this ruling does n
 **Rejected:** permitting where it works and refusing loudly on Fast DDS (ships two answers to one
 question); and spending a further design cycle on whether Fast DDS could reuse the loopback's
 delivery gate.
+
+## 2026-09-06 — The same message produces the same bytes; side data goes out in a stated order *(selection)*
+
+Asked as PDA-DEC-AG2 Stage Brief decision 1: *"Should the same message always produce the same
+bytes on the wire?"* Options given: **(a) yes — side data goes out in a fixed, stated order**;
+(b) no — leave it to the build and publish "order is unspecified, sort it yourself".
+
+**The owner selected (a).** Verbatim from the option as presented and chosen:
+
+> **Yes — fixed, stated order.** Side data goes out in a fixed order stated in the spec. Cost: a
+> message with two or more pieces of side data may go out in a different order than today's build
+> happened to choose. Nothing breaks — every reader matches by label, not position. This moves wire
+> bytes, which locked decisions 11 and 13 reserve to you.
+
+**Applies to:** §3.2's `Attachments`. This is the explicit wire-byte authorisation that locked
+decisions 11 and 13, and the config's `divergence_handling` standing decision, reserve to the owner
+— it is given here for attachment ordering only, and does not generalise to any other byte movement.
+**Rejected:** publishing the leak as "unspecified" instead of fixing it.
+
+## 2026-09-06 — A side-data label containing a zero byte is refused *(selection)*
+
+Asked as PDA-DEC-AG2 Stage Brief decision 2, presented **with no default** because it writes new
+normative text into frozen §3.2: *"A side-data label containing a zero byte: refuse it, or accept
+it?"*
+
+**The owner selected (a), refuse.** Verbatim from the option as presented and chosen:
+
+> **Refuse it when attached.** Under the alternative, two different labels silently become one at a
+> C#/Rust boundary and one quietly overwrites the other — the silent-wrong-answer class you refused
+> three times in September. Cost: a label that "works" today stops working. Requires new normative
+> text in frozen §3.2 that the BIND verification never named.
+
+**Applies to:** §3.2. This is the owner's word authorising **new normative text in frozen §3.2** for
+this refusal, which no other change may treat as a general licence to amend frozen text.
+**Rejected:** accepting the label and publishing the hazard; and deferring the question out of AG2.
+
+## 2026-09-06 — A refused application gets Fletcher's sentence, not a list of names *(selection)*
+
+Asked as PDA-DEC-AG2 Stage Brief decision 3: *"When an application asks for a protocol that isn't
+there, may it list what is?"* The architect recommended (a), yes.
+
+**The owner selected (b), AGAINST the recommendation.** Verbatim from the option as presented and
+chosen:
+
+> **No — only Fletcher's sentence.** The application can only display the refusal message Fletcher
+> composed. No new public surface on the registry.
+
+**Applies to:** PDA-DEC-AG2. `ProviderRegistry::RegisteredNames()` is **not** added; the item's new
+public surface drops from 2 to **1** (`fletcher::Attachments`). The A7 defect is **not** thereby
+withdrawn: the §4 refusal message must still be a deterministic function of the registry's contents
+rather than of `unordered_map` hash order, and must still be reconstructible from its number and
+message alone. AG2 fixes the message's composition **without** publishing a typed query.
+**Rejected:** a typed name query on the registry, in any form, this round.
