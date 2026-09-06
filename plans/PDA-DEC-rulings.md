@@ -790,3 +790,49 @@ withdrawn: the §4 refusal message must still be a deterministic function of the
 rather than of `unordered_map` hash order, and must still be reconstructible from its number and
 message alone. AG2 fixes the message's composition **without** publishing a typed query.
 **Rejected:** a typed name query on the registry, in any form, this round.
+
+## 2026-09-06 — Frozen §5.1 is amended to name the one message class that changes *(selection)*
+
+Raised as PDA-DEC-AG2's design review **B3, an oracle-wins tripwire**: the design asserted that no
+message in the tree contains a NUL, which is FALSE — `segments.hpp:103-106` and `:110-113`
+concatenate the raw segment into the message and both fire **before** the NUL check at `:115`, so
+`{"__a\0b"}` and `{"a/b\0c"}` produce NUL-bearing messages today. Escaping them at construction
+makes frozen §5.1's *"Messages are unchanged"* false. Put to the owner before implementation.
+
+**The owner selected (a), amend.** Verbatim from the option as presented and chosen:
+
+> **Amend §5.1, naming the one class.** Escape the byte so the message survives a language
+> boundary, and amend §5.1's "Messages are unchanged" to name the single class of message that now
+> changes: one built from a topic segment that itself contains a zero byte. Cost: a second piece of
+> new normative text in frozen spec, beyond the §3.2 licence you already gave. Benefit: no message
+> can truncate silently at a C#/Rust boundary.
+
+**Applies to:** frozen §5.1. This is a **second** frozen-text authorisation, separate from ruling
+54's §3.2 licence and equally non-generalising: it covers **this one message class** and nothing
+else. The design must name the class precisely rather than asserting §5.1 survives untouched.
+**Rejected:** leaving those messages unescaped (the silent-truncation class refused in A5); and
+refusing the segment earlier, which would reopen topic-name handling that A5 already settled.
+
+## 2026-09-06 — A zero-byte label is refused on arrival as well as on attachment *(selection)*
+
+Raised as PDA-DEC-AG2's design review **B1**: ruling 54's wording was *"refuse it when attached"*,
+but three decode paths insert wire-supplied keys — `envelope_codec.hpp:100` inside
+`ParseEnvelopeBody`, called from `fletcher_sample_pub_sub_type.hpp:166,177` **inside Fast DDS
+`deserialize()`** and `data_reader_listener.hpp:207`, plus `core/envelope.hpp:160`. Reachable today
+from the shipped client (`gateway-client-ts/src/envelope.ts:104`). The receive side had never been
+put to the owner.
+
+**The owner selected (a), refuse on arrival too.** Verbatim from the option as presented and chosen:
+
+> **Refuse on arrival too.** A message arriving with a zero-byte label is rejected as malformed by
+> the same wire checks that already reject five other malformations — no exception ever enters a
+> transport callback. Consistent with refusing it locally: the same label is invalid whichever
+> direction it came from.
+
+**Applies to:** the decode paths above. This EXTENDS ruling 54 to the receive side. The refusal must
+sit with the existing wire checks — `ParseEnvelopeBody` returning `false`, `DeserializeEnvelope`
+raising `std::invalid_argument` per its own `:116-118` contract — so that `Set`'s throw is
+**unreachable** from any decode path and no exception enters a transport frame. Forbidding, not
+handling.
+**Rejected:** refusing only locally attached labels; and deferring the receive half to its own item,
+which would close the round with the gap open and hand it to PDA-ABI.
