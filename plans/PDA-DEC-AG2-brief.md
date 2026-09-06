@@ -55,4 +55,5 @@ are left alone, because only a zero byte truncates.
 Declared net lines: +920 / −270 (band +700/+1600 adds) · new public surface: 1 · design cycles: 3/3
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+*As landed — 2026-09-06, `085eadb`:*
+**+1627 / −141** in code vs declared +920/−270 — **27 adds past the +1600 band ceiling** (1.7%), all of it fix-cycle work the two reviews named. Public surface **1** (`fletcher::Attachments`), as declared. Retired: the `unordered_map` alias and its whole map API, §3.2's `unordered_map` sentence, three hand-copied `memchr` guards. **Not built:** `RegisteredNames()` (ruling 55) and any attachment-count ceiling (no measured basis — AG2-DEBT-11, "measure first"). Added beyond the design: `AttachmentsWireBuilder`, which fixed a blocking O(k²) decode defect (58,745 ms → 38 ms at k=200,000) and made the conforming path faster too. **Design cycles 2/2 · fix cycles 2 · owner rulings consumed 6 (53–58), every one an authorisation to write into frozen text.**

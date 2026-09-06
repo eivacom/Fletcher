@@ -1389,3 +1389,65 @@ numbers were declared, so twelve doors cost what three were budgeted for. Public
 interrupted and is absent from the PM's dispatch record, so that figure is a floor.
 **Baselines re-based** (measured): pubsub-conformance 110→**134**, fastdds-xrce-interop 3→**5**
 gtest. Others unchanged from A1's 2026-09-05 rebaseline.
+
+## PDA-DEC-AG2 — the two crossing types with no form (2026-09-06) 🟢
+
+Absorbs A6 (§3.2's `Attachments`) and A7 (§5.1's error message). One class: **a published form
+whose content is a function of the build rather than of the value is not a form.**
+
+**Landed.** `Attachments` stops being a `std::unordered_map` alias and becomes a sealed,
+key-ordered container with positional-only enumeration — no `begin/end`, no map API, the
+unordered container being what made the wire order a build artefact. The order **is** the form:
+ascending unsigned-byte order of the key bytes, so a boundary reads the sequence Fletcher
+publishes rather than reproducing a collation. `PubSubError`'s message becomes published form —
+instance-owned, bytes plus length, escaped at construction so it cannot truncate at a language
+boundary. Wire bytes move for ≥2-attachment messages; the format is untouched, decoders match by key.
+
+**Six owner rulings, 53–58 — more than any item in the round, and all one kind.** Every one
+authorised writing into **frozen** spec text, which §12.1 reserves to the owner: attachment
+ordering (53), the NUL-key refusal in §3.2 (54), no typed name query (55), §5.1's amendment (56),
+the refusal extended to arrival (57), and §5.1 restated as a general rule (58). Each is recorded
+**non-generalising** so 53–58 cannot later be read as a blanket licence to edit frozen sections.
+Ruling 55 went **against** the architect's recommendation and removed `RegisteredNames()`; ruling
+58 **superseded 56 as to scope** after the mechanism that landed 56 falsified its own sentence.
+
+**The one real code defect, found by review.** The sorted-vector insert made decode **O(k²)** in a
+wire-supplied attachment count — 57 ms at k=7,000, **58 s at k=200,000** — reachable from a hostile
+sample on the Fast DDS listener thread and from the gateway's 16 MiB WebSocket frame. Worse, the
+debt register had already marked this **discharged**, on the strength of a `types.hpp` sentence
+claiming the wire checks bounded it: that check is ineffective on one path and **absent** on the
+other. `AttachmentsWireBuilder` gives the decode paths a bulk sorted build plus an
+already-ascending fast path: **58,745 ms → 38 ms** at k=200,000, and the conforming path got
+*faster* too (k=64 asc 1,765 → 776 ns). Pinned by
+`EnvelopeTest.ADescendingAttachmentKeyOrderDoesNotMakeDecodeQuadratic`, red-first as a ctest
+**Timeout at 30.03 s**. **No ceiling was invented** — the unbounded count is unchanged from the
+map, so nothing was lost; AG2-DEBT-11 carries it with "measure first", the same discipline that
+produced A5's 246-byte bound.
+
+**Both forcing tests reddened by MUTATION, not assertion** — `Set` mutated to insertion order gave
+`"zulu alpha mike bravo"` vs `"alpha bravo mike zulu"`; the escape removed gave `"a" vs "a"`, two
+refusals publishing the same form. Controls stayed green through both.
+
+**The round's dominant defect class, counted.** Every blocking finding across both design cycles
+and both review cycles but one was **a claim about what a value can hold, asserted from prose
+rather than read off the type**: "no message in the tree contains a NUL"; "`e.what()` is the
+untrusted entry" (false in the opposite direction); §5.1's "only class", falsified by its own
+forcing test; `types.hpp`'s bounds claim, ineffective on one path and absent on the other; a
+**test** asserting superseded ruling 56; the debt register **certifying a fix that did not
+exist**; the builder's doc claiming it prevented a case it did not guard. Seven instances — code,
+spec, headers, comments, a test, a design doc, and the register meant to catch it. The cycle-2
+reviewer's read — *procedural, not architectural* — goes to round close as the one finding.
+
+**Verification.** Full suite at `085eadb`, `conan remove -c 'fletcher-*'` first. core **44** (was
+42) · arrow-bridge 61 · pubsub 24 · pubsub-arrow 16 · fastdds 88 · xrcedds 16 · protoc 99+3 ·
+**pubsub-conformance 141/141, XRCE read back `BOOL=ON`** (`conformance_xrce` #141, live Agent) ·
+pubsub-arrow-fastdds 4/4 · fastdds-xrce-interop 1/1 · protoc-arrow-bridge 91+1skip ·
+protoc-coverage 20+2skip · gateway-end-to-end 31/31 · **gateway-fastdds-ts 4/4 ×3, rows matched
+every run, no loss**. Nothing below baseline; zero failures. All four false-green traps defeated
+with evidence, including binaries checked to postdate HEAD.
+
+**Numbers.** +1627/−141 in code vs declared +920/−270 — 27 adds past the +1600 band ceiling
+(1.7%), all fix-cycle work the reviews named. Public surface **1**, as declared.
+**Design cycles 2/2 · fix cycles 2 · implementer launches 3.**
+
+**Baseline re-based here:** core 42→**44**. All others unchanged from AG1's figures.
