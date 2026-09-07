@@ -20,6 +20,7 @@
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fletcher {
@@ -29,7 +30,101 @@ namespace fletcher {
 /// Idempotence is NOT offered: a second call is refused by
 /// `ProviderRegistry::Register` (`kInvalidArgument`) — a registry means one
 /// transport per name for its whole life.
+///
+/// A registry builds providers from a `ProviderConfig` alone, so a provider
+/// reached through one observes no statuses. `FastDDSStatusListener` needs the
+/// two-argument constructor below, which means constructing the provider
+/// directly.
 void RegisterFastDDSProvider(ProviderRegistry& registry);
+
+/// Endpoint and discovery status, translated out of DDS types. Non-owning and optional: a provider
+/// built without one observes nothing, which is what every caller gets by default.
+///
+/// Every method is a `noexcept` no-op here — override the ones worth hearing about.
+/// `FastDDSLoggingStatusListener` below is the ready-made subclass that logs them all.
+///
+/// ── Threading contract ──────────────────────────────────────────────────────
+/// A callback runs on a Fast DDS thread, or on an application thread that is
+/// inside `CreateTopic` / `Publish` / `Subscribe` of **any** provider in this
+/// process, with that provider's mutex held: intraprocess discovery and matching
+/// run synchronously inside `create_datareader` / `create_datawriter`, including
+/// between two participants in one process. So an override
+///
+///  - **must not call into any provider.** The provider mutex is a
+///    non-recursive `std::shared_mutex`; re-entering deadlocks.
+///  - **must not block**, and must not wait on the thread destroying a
+///    provider: `~FastDDSPubSubProvider` waits for in-flight callbacks.
+///  - **must not throw.** Every method is `noexcept`, so an override has to be
+///    spelled `noexcept override` too (the compiler refuses one that is not) and
+///    a throw inside it terminates. Fletcher does not catch here the way it does
+///    for a subscription callback: one bad sample must not stop a stream, but a
+///    throwing status callback is a defect worth stopping on.
+///
+/// Calls can arrive until `~FastDDSPubSubProvider` returns, so the listener must
+/// outlive the provider — the same rule as every listener handed to Fast DDS.
+class FastDDSStatusListener {
+   public:
+    virtual ~FastDDSStatusListener() = default;
+
+    /// Which endpoint the status is about. `topic` is the joined Fletcher topic;
+    /// `is_schema_channel` marks the companion `<topic>/__schema` endpoint, whose statuses are
+    /// about the schema handoff rather than the caller's rows. The view aliases a name the
+    /// transport owns and is valid for the duration of the call only.
+    struct Endpoint {
+        std::string_view topic;
+        bool is_schema_channel;
+        bool is_writer;
+    };
+
+    virtual void OnMatched(Endpoint /*endpoint*/, int32_t /*current_count*/,
+                           int32_t /*change*/) noexcept {}
+    virtual void OnIncompatibleQos(Endpoint /*endpoint*/, uint32_t /*policy_id*/,
+                                   uint32_t /*total_count*/) noexcept {}
+    virtual void OnDeadlineMissed(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
+    // Readers only.
+    virtual void OnLivelinessChanged(Endpoint /*endpoint*/, int32_t /*alive_count*/,
+                                     int32_t /*not_alive_count*/) noexcept {}
+    // Writers only.
+    virtual void OnLivelinessLost(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
+    virtual void OnSampleLost(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
+    virtual void OnSampleRejected(Endpoint /*endpoint*/, int32_t /*reason*/,
+                                  uint32_t /*total_count*/) noexcept {}
+    virtual void OnUnacknowledgedSampleRemoved(Endpoint /*endpoint*/) noexcept {}
+
+    /// Discovery of REMOTE entities, which is a strictly wider net than matching: a peer whose
+    /// `max_payload_bytes` differs registers a different type name and is refused by endpoint
+    /// matching, so `OnMatched` never fires for it and these three are the only place the
+    /// mismatch is visible. `type_name` is what carries the bound (`fletcher_65536` against
+    /// `fletcher_8192`, say). `alive` is false once the entity is removed or dropped.
+    /// Fletcher's own companion `<topic>/__schema` endpoints are not reported.
+    virtual void OnParticipantDiscovered(std::string_view /*name*/, bool /*alive*/) noexcept {}
+    virtual void OnWriterDiscovered(std::string_view /*topic*/, std::string_view /*type_name*/,
+                                    bool /*alive*/) noexcept {}
+    virtual void OnReaderDiscovered(std::string_view /*topic*/, std::string_view /*type_name*/,
+                                    bool /*alive*/) noexcept {}
+};
+
+/// The lines the provider used to log itself, as an opt-in listener — one for one, at the levels
+/// it used. Pass one of these to restore the diagnostics a provider built without a listener no
+/// longer prints.
+///
+/// Bodies live in `src/status_listener.cpp`, so the log lines cost a consumer nothing to declare.
+/// Derive from this rather than from `FastDDSStatusListener` to add behaviour and keep the line:
+/// call the base from the override, and leave alone whatever should just keep logging.
+class FastDDSLoggingStatusListener : public FastDDSStatusListener {
+   public:
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t change) noexcept override;
+    void OnIncompatibleQos(Endpoint endpoint, uint32_t policy_id,
+                           uint32_t total_count) noexcept override;
+    void OnDeadlineMissed(Endpoint endpoint, uint32_t total_count) noexcept override;
+    void OnLivelinessChanged(Endpoint endpoint, int32_t alive_count,
+                             int32_t not_alive_count) noexcept override;
+    void OnLivelinessLost(Endpoint endpoint, uint32_t total_count) noexcept override;
+    void OnSampleLost(Endpoint endpoint, uint32_t total_count) noexcept override;
+    void OnSampleRejected(Endpoint endpoint, int32_t reason,
+                          uint32_t total_count) noexcept override;
+    void OnUnacknowledgedSampleRemoved(Endpoint endpoint) noexcept override;
+};
 
 /// PubSubProvider transport backed by eProsima Fast DDS.
 ///
@@ -102,6 +197,12 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(const ProviderConfig& config = {});
+
+    /// The same construction, plus an observer for endpoint and discovery status. The pointer is
+    /// non-owning and may be null (identical to the constructor above); a non-null one must outlive
+    /// this provider, because calls arrive until `~FastDDSPubSubProvider` returns. Read
+    /// `FastDDSStatusListener` for what an override may and may not do.
+    FastDDSPubSubProvider(const ProviderConfig& config, FastDDSStatusListener* status_listener);
 
     /// Destruction precondition: the caller must ensure the provider is
     /// quiescent — no thread executing or about to enter a public API on this

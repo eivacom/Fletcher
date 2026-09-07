@@ -17,6 +17,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1269,3 +1270,155 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
 //                                            absent the same schema is delivered, so a provider
 //                                            that ignored the property goes red)
 //   AFailedSchemaAnnouncementCanBeRetried  -> FastDdsConfig.AFailedSchemaAnnouncementCanBeRetried
+
+// ---------------------------------------------------------------------------
+// Tests — FastDDSStatusListener
+//
+// The statuses are the application's now: a provider built from a `ProviderConfig` alone observes
+// nothing, and a provider handed a listener reports through Fletcher's own vocabulary rather than
+// eProsima's. Both tests below pin what a consumer actually rebuilds from these callbacks — a
+// matched count, and the one diagnostic a payload-bound mismatch has.
+// ---------------------------------------------------------------------------
+
+// One listener, both providers: the same object hears the publisher's side (`is_writer == true`)
+// and the subscriber's (`false`) for the one topic, which is what makes `Endpoint::is_writer` the
+// thing that tells them apart rather than the callback's name.
+TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
+    struct CountingListener : FastDDSStatusListener {
+        struct Match {
+            std::string topic;
+            bool is_writer;
+            int32_t current_count;
+        };
+
+        std::mutex m;
+        std::condition_variable cv;
+        std::vector<Match> matches;
+
+        void OnMatched(Endpoint endpoint, int32_t current_count, int32_t change) noexcept override {
+            // Only the gained half is asserted on below. (The companion channel cannot report
+            // here: its reader mask has no subscription_matched bit and its writer has no
+            // listener.)
+            if (change <= 0) return;
+            std::lock_guard<std::mutex> lk(m);
+            matches.push_back({std::string(endpoint.topic), endpoint.is_writer, current_count});
+            cv.notify_all();
+        }
+
+        // Called with `m` held by the waiter.
+        bool Saw(const std::string& topic, bool is_writer) const {
+            for (const auto& match : matches) {
+                if (match.topic == topic && match.is_writer == is_writer &&
+                    match.current_count == 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    };
+
+    // Declared before the providers: calls arrive until the last of them is destroyed.
+    CountingListener listener;
+    FastDDSPubSubProvider pub_provider(ProviderConfig{}, &listener);
+    FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
+
+    pub_provider.CreateTopic({"status", "x"}, MakeSchema());
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"status", "x"}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    // The DataWriter is created on the first publish, so nothing matches on the publisher side
+    // until one happens.
+    pub_provider.Publish({"status", "x"}, MakeEncoder(1));
+
+    std::unique_lock<std::mutex> lk(listener.m);
+    EXPECT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+        return listener.Saw("status/x", true) && listener.Saw("status/x", false);
+    })) << "matching was not reported on both sides";
+}
+
+// A subscriber whose payload bound differs from its publisher's never matches — the bound is part
+// of the registered type name, so endpoint matching refuses the pair — but discovery still sees the
+// remote writer, and `type_name` is where the other bound is legible. That gap is the diagnostic
+// this listener exists for: `OnMatched` and `OnIncompatibleQos` both stay silent.
+TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
+    struct DiscoveryListener : FastDDSStatusListener {
+        struct Seen {
+            std::string topic;
+            std::string type_name;
+            bool alive;
+        };
+
+        std::mutex m;
+        std::condition_variable cv;
+        std::vector<Seen> writers;
+        bool matched = false;
+        bool incompatible = false;
+
+        void OnWriterDiscovered(std::string_view topic, std::string_view type_name,
+                                bool alive) noexcept override {
+            std::lock_guard<std::mutex> lk(m);
+            writers.push_back({std::string(topic), std::string(type_name), alive});
+            cv.notify_all();
+        }
+
+        void OnMatched(Endpoint endpoint, int32_t, int32_t) noexcept override {
+            if (endpoint.topic != "bound/x") return;
+            std::lock_guard<std::mutex> lk(m);
+            matched = true;
+        }
+
+        void OnIncompatibleQos(Endpoint endpoint, uint32_t, uint32_t) noexcept override {
+            if (endpoint.topic != "bound/x") return;
+            std::lock_guard<std::mutex> lk(m);
+            incompatible = true;
+        }
+
+        // Called with `m` held by the waiter.
+        bool SawWriter(const std::string& topic, const std::string& type_name) const {
+            for (const auto& writer : writers) {
+                if (writer.topic == topic && writer.type_name == type_name && writer.alive) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    };
+
+    DiscoveryListener listener;
+    FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
+
+    ProviderConfig pub_config;
+    pub_config.max_payload_bytes = kPayloadBytes<8192>;
+    FastDDSPubSubProvider pub_provider(pub_config);
+
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"bound", "x"}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    pub_provider.CreateTopic({"bound", "x"}, MakeSchema());
+    // The DataWriter is created on the first publish, so there is nothing to discover before one.
+    pub_provider.Publish({"bound", "x"}, MakeEncoder(1));
+
+    {
+        std::unique_lock<std::mutex> lk(listener.m);
+        ASSERT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return listener.SawWriter("bound/x", FletcherTypeName(8192));
+        })) << "the writer on the other bound was never discovered";
+    }
+
+    // The companion `/__schema` channel DOES pair up — its type name carries no payload bound — so
+    // the schema arrives even though no row ever will. Worth pinning: it is why a resolved schema
+    // is not evidence that the data endpoints matched.
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    // Discovery fires from PDP::addWriterProxyData, BEFORE EDP is asked whether the pair matches,
+    // so neither wait above is a point after which "did not match" can be read off. The settle is
+    // what a negative assertion costs.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    {
+        std::lock_guard<std::mutex> lk(listener.m);
+        EXPECT_FALSE(listener.matched) << "endpoints on different bounds matched";
+        EXPECT_FALSE(listener.incompatible)
+            << "a bound mismatch surfaced as incompatible QoS; discovery is no longer the only "
+               "diagnostic and this test's premise is stale";
+    }
+}

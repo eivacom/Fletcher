@@ -10,7 +10,8 @@ find_package(fastdds REQUIRED)
 
 add_library(fletcher-fastdds-pubsub-provider STATIC
     src/fast_dds_pubsub_provider.cpp
-    src/qos_defaults.cpp)
+    src/qos_defaults.cpp
+    src/status_listener.cpp)
 
 # C++ standard comes from the Conan profile (compiler.cppstd). This only
 # states the public minimum the headers require, propagated to consumers.

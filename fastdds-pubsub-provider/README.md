@@ -116,21 +116,58 @@ That deviation has a limit worth stating plainly: **the plain claim holds betwee
 
 ### Statuses
 
-Endpoints are created with the status mask their listener implements rather than the default `StatusMask::all()` (`internal/data_writer_listener.hpp`).
+Endpoint and discovery status is **observed, not logged**: pass a `fletcher::FastDDSStatusListener*` to the provider's two-argument constructor and override the callbacks worth hearing about. Everything arrives in Fletcher's own vocabulary — no eProsima type appears on this seam, so a consumer needs no Fast DDS headers to use it.
 
-**`internal::DataWriterListener` overrides every callback `DataWriterListener` declares**, so nothing a DataWriter can report is left on the default no-op:
+```cpp
+struct MatchWatcher : fletcher::FastDDSStatusListener {
+    std::atomic<int32_t> matched_publishers{0};
+
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t /*change*/) noexcept override {
+        if (endpoint.is_writer || endpoint.is_schema_channel) return;  // subscriber side, data rows
+        matched_publishers.store(current_count);
+    }
+
+    // A writer on our topic whose type name carries another bound is a max_payload_bytes mismatch,
+    // and this is the only place it is visible — see "Why discovery is exposed" below.
+    void OnWriterDiscovered(std::string_view topic, std::string_view type_name,
+                            bool alive) noexcept override {
+        spdlog::debug("writer on '{}' type {} alive={}", topic, type_name, alive);
+    }
+};
+
+MatchWatcher watcher;  // must outlive the provider
+auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>(fletcher::ProviderConfig{},
+                                                                 &watcher);
+// watcher.matched_publishers is readable from any thread
+```
+
+`spdlog` above is illustrative, not a dependency this library takes.
+
+`FastDDSStatusListener::Endpoint` is `{std::string_view topic; bool is_schema_channel; bool is_writer;}`. `topic` is the joined Fletcher topic; the companion `<topic>/__schema` channel reports under the **same** topic with `is_schema_channel == true`, so that flag — not a name comparison — is what tells a stuck schema handoff from a lost row. `is_writer` says which end of the topic the status is about, which is why one listener object can serve a publisher and a subscriber at once. The views alias names the transport owns and are valid for the duration of the call only; copy anything you keep.
+
+**Silent by default, and that is a behaviour change.** With no listener — every provider built from a `ProviderConfig` alone, including every provider a `ProviderRegistry` builds — the provider says nothing about statuses: matches, QoS mismatches, deadline misses, lost and rejected samples all happen without a word. Earlier revisions logged them unconditionally through Fast DDS's own stdout/stderr consumer, so **an incompatible QoS used to print an error and now prints nothing.** That is the Fast DDS convention (no listener installed, no callbacks fired) and it is one line to undo: `fletcher::FastDDSLoggingStatusListener logger;` passed to the constructor restores every former line at its former level.
 
 | Status | Level | Why it matters |
 |---|---|---|
-| `offered_incompatible_qos` | error | The endpoints never match, so the only symptom is a subscriber that stays unconnected with nothing logged. Reachable whenever writer and reader QoS are configured independently. |
-| `publication_matched` | warning on loss, info on gain | A writer with no readers left keeps accepting publishes and delivers them nowhere. |
-| `offered_deadline_missed` | warning | Only fires on a writer an operator gave a `DEADLINE` to — Fletcher sets none. |
-| `liveliness_lost` | warning | Readers have marked the writer NOT_ALIVE. Fletcher leaves `LIVELINESS` at `AUTOMATIC` with an infinite lease, where it cannot fire, so this too reports a configured policy. |
-| `on_unacknowledged_sample_removed` | warning | Under `KEEP_ALL` + `RELIABLE`, history overflowed past `max_blocking_time` — loss rather than backpressure. No `StatusMask` bit; Fast DDS dispatches it whenever a listener is set at all. |
+| `OnIncompatibleQos` | error | The endpoints never match, so the only symptom is a subscriber that stays unconnected with nothing logged. Reachable whenever writer and reader QoS are configured independently. |
+| `OnMatched` | warning on loss, info on gain | An endpoint with no peers left keeps working and reaches nobody: a writer accepts publishes and delivers them nowhere, a reader receives nothing. |
+| `OnDeadlineMissed` | warning | Only fires on an endpoint an operator gave a `DEADLINE` to — Fletcher sets none. |
+| `OnLivelinessLost` | warning | Readers have marked the writer NOT_ALIVE. Fletcher leaves `LIVELINESS` at `AUTOMATIC` with an infinite lease, where it cannot fire, so this too reports a configured policy. |
+| `OnLivelinessChanged` | warning while any writer is not alive, else info | Reader side of the same policy. |
+| `OnSampleLost` / `OnSampleRejected` | warning; error for a rejected schema sample | On a data reader, resource limits are too tight. On the schema channel (`is_schema_channel`) either one leaves subscribers waiting on an arrival that never resolves, so the schema lines say so and name `fletcher.max_schema_bytes`. |
+| `OnUnacknowledgedSampleRemoved` | warning | Under `KEEP_ALL` + `RELIABLE`, history overflowed past `max_blocking_time` — loss rather than backpressure. No `StatusMask` bit; Fast DDS dispatches it whenever a listener is set at all. |
 
-The reader side, on `DataReaderListenerBase`, mirrors all of it: `requested_incompatible_qos` (error), `subscription_matched`, `requested_deadline_missed`, `liveliness_changed`, `sample_lost` and `sample_rejected`. `ReaderStatusMask()` subscribes to exactly those plus `data_available`.
+To keep a line *and* add behaviour, derive from `FastDDSLoggingStatusListener` instead and call the base from the override — `FastDDSLoggingStatusListener::OnMatched(endpoint, current_count, change);` — leaving alone whatever should just keep logging.
 
-**`EPROSIMA_LOG_INFO` compiles to nothing** unless the build defines `FASTDDS_ENFORCE_LOG_INFO` (`Log.hpp:355-359`), so the routine half of `publication_matched` needs that switch to appear. Warnings and errors are always compiled in.
+**`EPROSIMA_LOG_INFO` compiles to nothing** unless the build defines `FASTDDS_ENFORCE_LOG_INFO` (`Log.hpp`), so the routine half of `OnMatched` and `OnLivelinessChanged` needs that switch to appear. Warnings and errors are always compiled in. To route Fast DDS's own log stream (Fletcher's categories are `FLETCHER_SUBSCRIPTION`, `FLETCHER_PUBLICATION`, `FLETCHER_SCHEMA`, `FLETCHER_DELIVERY`) into an application logger, register a `LogConsumer`: `Log::RegisterConsumer` *adds* one next to the default stdout consumer, so call `Log::ClearConsumers()` first to replace it, and `Log::Flush()` before asserting on output — logging is asynchronous.
+
+**What is installed where.** Fletcher's own listeners stay the Fast DDS listeners and forward, because Fast DDS allows one listener per entity and Fletcher's reader listener *is* the data path. Endpoints are created with the status mask their listener implements rather than the default `StatusMask::all()` (`internal/data_writer_listener.hpp`), so Fast DDS dispatches only those; the `__schema` reader takes the narrower `SchemaReaderStatusMask()` (`data_available`, `sample_rejected`, `sample_lost`) and the `__schema` writer has no listener at all, so the schema channel reports lost and rejected samples and nothing else. The participant listener (`internal/participant_listener.hpp`) is installed with **`StatusMask::none()`**, which is load-bearing: a participant listener holding the `data_on_readers` bit is handed every reader's data *instead of* the reader's own listener (`DataReaderImpl::set_read_communication_status` asks the subscriber/participant chain first). The three discovery callbacks are not mask-gated, so `none()` costs nothing.
+
+**Why discovery is exposed.** `on_inconsistent_topic` is never invoked anywhere in Fast DDS 3.4.0, which leaves a real mismatch with no diagnostic at all: two Fletcher providers on different `max_payload_bytes` register different type names (`fletcher_65536` against `fletcher_8192`) and never match. `OnWriterDiscovered` / `OnReaderDiscovered` fire from `PDP::addWriterProxyData` *before* EDP pairing runs and `EDP::valid_matching` then refuses the pair on `type_name`, so the remote endpoint's `type_name` read inside the discovery callback is the only place the bound is legible. `DiscoverySeesAWriterOnAnotherBound` in the test suite pins exactly that, including the negative: `OnMatched` and `OnIncompatibleQos` both stay silent.
+
+**Threading, in full.** A callback runs on a Fast DDS thread, or — like the subscription callback — on an application thread already inside `CreateTopic`, `Publish` or `Subscribe` of *any* provider in this process, because intraprocess discovery and matching run synchronously inside `create_datareader` / `create_datawriter`, including between two participants in one process. In that second case the calling provider's mutex (a non-recursive `std::shared_mutex`) is held for the duration, so an override **must not call into any provider** — re-entering deadlocks. It must not block, and must not wait on the thread destroying a provider: `~FastDDSPubSubProvider` waits for in-flight callbacks and calls can arrive until it returns, which is why the listener is a non-owning pointer that must outlive the provider. Every method is `noexcept`, so an override has to be spelled `noexcept override` too (the compiler refuses one that is not) and a throw inside it terminates: Fletcher does not catch here the way it does for a subscription callback, because one bad sample must not stop a stream but a throwing status callback is a defect worth stopping on. A status's `*_change` counter is the delta since the last delivery *or* the last `get_*_status()` poll, so polling the same status from another thread zeroes the delta the listener would otherwise see.
+
+**Migrating from a `DataReaderListener` subclass.** Consumers that built on eiva-ddsbus's raw statuses were rebuilding three things: log lines, a reader-side matched count (`MatchedPublishers()` / `Connected()`), and a writer-side gate that blocked until a reader existed. The log lines are `FastDDSLoggingStatusListener`. The other two are `OnMatched`: store `current_count` for the count (`Connected()` is `current_count > 0`), and notify a condition variable for the gate — `is_writer` picks the side, and the identity a ddsbus subclass had to carry in a `topic_name_` member of its own arrives in `Endpoint::topic`.
 
 ### Topic name
 
@@ -514,6 +551,7 @@ topic is silently inert — see [Known limits of the document](#known-limits-of-
 - The callback can also run **on the thread that is still inside `Subscribe`**. `create_datareader` pairs with intraprocess writers synchronously, so a `TRANSIENT_LOCAL` topic that already has a publisher on this same participant replays its retained samples on the subscribing thread — while `Subscribe` is holding the provider mutex. A callback that re-enters the provider from that *first* delivery would deadlock on the provider mutex — a `std::shared_mutex`, not recursive — but no longer reaches it: since PDA-DEC-AG1 all four methods are refused at a door before any lock, from *any* delivery, first or later. See the re-entrancy bullet below.
 - **A callback must not throw, and if one does the exception goes nowhere** (spec §5.3, owner ruling 2026-09-05). It is absorbed at the dispatch site, inside `DeliveryChannel::Deliver`, which is `noexcept` — so it never unwinds into the Fast DDS listener thread that is holding the reader's RTPS mutex, and it is never reported to a publisher, which neither caused it nor can act on it. The count of absorbed failures is readable through `DeliveryChannel::AbsorbedCount()`; there is no log line, because containing an exception and losing it are otherwise indistinguishable and this layer has no logger of its own. The listener's `Take`-wide catch still stands, but for the provider's own failures (a bad allocation, a malformed envelope), not for the callback's.
 - **From inside a delivery, ALL FOUR methods are refused** (spec §6 clause 6). `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, issued on this same instance and this same thread, throw `PubSubError(kReentrantCall)` before any lock. This provider is why the rule is uniform: an earlier ruling would have kept the first three permitted on the claim that they already worked here, and **they do not**. A data listener callback runs with the reader's own RTPS mutex held, and each of the three was measured to HANG from a handler, one at a time, with the other two absent — the provider lock being uninvolved was a true statement about the wrong lock. `Unsubscribe` hung for a nearer reason: it reaches `delete_datareader`, which waits for the very delivery the caller is inside. Another **thread** calling during a delivery is not re-entrancy and is still served.
+- A `FastDDSStatusListener` callback is bound by the same rules and one more: it can run on an application thread inside `CreateTopic`, `Publish` or `Subscribe` of *any* provider in this process, with that provider's mutex held, so it must not call into a provider, must not block, and must not throw (every method is `noexcept`). See [Statuses](#statuses) for the full contract and for the lifetime rule that follows from it.
 - `FastDDSPubSubProvider` is non-copyable and non-movable (DDS entities cannot be transferred).
 - The callback's `data` pointer is a loaned DDS payload: it is valid for the duration of the callback only. Copy anything you keep. (This was always the contract — the pointer was never owned by the callback — but loans are where holding on to it actually breaks.)
 

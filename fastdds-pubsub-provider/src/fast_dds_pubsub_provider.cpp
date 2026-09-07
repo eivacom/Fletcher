@@ -24,10 +24,13 @@
 //   raw_bytes_pub_sub_type.hpp
 //                             the companion __schema channel's TopicDataType
 //   data_reader_listener.hpp  the two read flows, DataReaderListener / LoanableDataReaderListener,
-//                             feeding OrderedDelivery — plus the reader statuses logged and the
+//                             feeding OrderedDelivery — plus the reader statuses forwarded and the
 //                             predicate that decides which flow a reader QoS admits
 //   sample_writer.hpp         the two publish flows, SampleWriter / LoanableSampleWriter
-//   data_writer_listener.hpp  the writer statuses logged, and the status masks for both ends
+//   data_writer_listener.hpp  the writer statuses forwarded, and the status masks for both ends
+//   participant_listener.hpp  discovery of remote entities, forwarded
+//   status_endpoint.hpp       what all three forwarding listeners share: a Fast DDS endpoint
+//                             translated into the public FastDDSStatusListener::Endpoint
 //   schema_channel.hpp        the __schema handoff: promise + listener
 //   ordered_delivery.hpp      single-drainer FIFO preserving writer order across that handoff
 //
@@ -64,6 +67,7 @@
 #include "internal/envelope_codec.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/ordered_delivery.hpp"
+#include "internal/participant_listener.hpp"
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
 #include "internal/raw_bytes_pub_sub_type.hpp"
@@ -80,6 +84,13 @@ namespace fletcher {
 // -----------------------------------------------------------------------
 
 struct FastDDSPubSubProvider::Impl {
+    // The three listeners that forward statuses all need the observer at construction, so it
+    // arrives here rather than being assigned afterwards.
+    explicit Impl(FastDDSStatusListener* listener)
+        : status_listener(listener),
+          data_writer_listener(listener),
+          participant_listener(listener) {}
+
     struct TopicState {
         Topic* topic = nullptr;
         DataWriter* writer = nullptr;
@@ -101,6 +112,11 @@ struct FastDDSPubSubProvider::Impl {
         std::vector<uint8_t> schema_ipc;
         bool is_publisher = false;
     };
+
+    // Non-owning and possibly null: the application's observer for endpoint and discovery status
+    // (public header). Handed to every listener this provider creates; null means nothing is
+    // observed, which is what construction from a `ProviderConfig` alone gives.
+    FastDDSStatusListener* status_listener = nullptr;
 
     DomainParticipant* participant = nullptr;
     Publisher* publisher = nullptr;
@@ -128,6 +144,12 @@ struct FastDDSPubSubProvider::Impl {
 
     // Shared by every DataWriter this provider creates; carries no per-topic state either.
     internal::DataWriterListener data_writer_listener;
+
+    // Installed on the participant with StatusMask::none() (internal/participant_listener.hpp),
+    // unconditionally: the discovery callbacks are not mask-gated, and with a null observer each
+    // one is a single branch at discovery rate. `~Impl` deletes the participant in its body, so
+    // this member is still alive when the last callback returns.
+    internal::ParticipantListener participant_listener;
 
     // The Fast DDS XML profiles document, copied at construction. Held as text and re-parsed per
     // endpoint by Fast DDS itself: `get_*_qos_from_xml` registers nothing process-wide, which is
@@ -176,6 +198,8 @@ struct FastDDSPubSubProvider::Impl {
 // Construction / destruction
 // -----------------------------------------------------------------------
 
+// A registry factory is handed a `ProviderConfig` and nothing else, so a provider reached through
+// one observes no statuses. Passing a listener means constructing the provider directly.
 void RegisterFastDDSProvider(ProviderRegistry& registry) {
     registry.Register("fastdds", [](const ProviderConfig& config) {
         return std::make_shared<FastDDSPubSubProvider>(config);
@@ -191,7 +215,11 @@ constexpr uint32_t kDefaultPayloadBytes = 64 * 1024;
 }  // namespace
 
 FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
-    : impl_(std::make_unique<Impl>()) {
+    : FastDDSPubSubProvider(config, nullptr) {}
+
+FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
+                                             FastDDSStatusListener* status_listener)
+    : impl_(std::make_unique<Impl>(status_listener)) {
     impl_->document = config.document;
 
     // Everything the document decides about the PARTICIPANT — the payload bound, the anchor's
@@ -225,8 +253,13 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
         impl_->sample_writer = std::make_unique<internal::SampleWriter>();
     }
 
-    impl_->participant =
-        DomainParticipantFactory::get_instance()->create_participant(config.domain_id, pqos);
+    // StatusMask::none() is load-bearing, not tidiness: a participant listener that holds the
+    // `data_on_readers` bit is handed every reader's data INSTEAD of the reader's own listener, so
+    // the default all() here would silently take over the data path
+    // (internal/participant_listener.hpp has the source citations). Discovery is dispatched
+    // regardless of the mask, which is why none() still delivers it.
+    impl_->participant = DomainParticipantFactory::get_instance()->create_participant(
+        config.domain_id, pqos, &impl_->participant_listener, StatusMask::none());
     if (!impl_->participant)
         throw PubSubError(PubSubStatus::kTransportFailure,
                           "FastDDS: failed to create DomainParticipant");
@@ -490,7 +523,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         if (internal::CanLoanSamples(rqos)) {
             ts.listener = std::make_unique<internal::LoanableDataReaderListener>(
                 impl_->payload_bytes, DeliveryChannel(this, std::move(callback)),
-                std::move(initial), max_queued);
+                std::move(initial), max_queued, impl_->status_listener);
         } else {
             EPROSIMA_LOG_INFO(FLETCHER_SUBSCRIPTION,
                               "reader on '"
@@ -499,7 +532,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
                                      "memory policy is not PREALLOCATED, so payload nodes "
                                      "cannot be read in place");
             ts.listener = std::make_unique<internal::DataReaderListener>(
-                DeliveryChannel(this, std::move(callback)), std::move(initial), max_queued);
+                DeliveryChannel(this, std::move(callback)), std::move(initial), max_queued,
+                impl_->status_listener);
         }
 
         ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get(),
@@ -538,7 +572,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
                 chan->Resolve(sch);                        // resolve the future (channel mutex)
                 data_listener->SetSchema(std::move(sch));  // flush buffered samples
             };
-            ts.schema_listener = std::make_unique<internal::SchemaListener>(std::move(on_schema));
+            ts.schema_listener = std::make_unique<internal::SchemaListener>(std::move(on_schema),
+                                                                            impl_->status_listener);
             ts.schema_reader = impl_->subscriber->create_datareader(
                 ts.schema_topic, internal::MakeSchemaChannelReaderQos(), ts.schema_listener.get(),
                 internal::SchemaReaderStatusMask());

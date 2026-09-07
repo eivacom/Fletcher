@@ -21,8 +21,10 @@
 #include <vector>
 
 #include "envelope_codec.hpp"
+#include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 #include "fletcher_sample.hpp"
 #include "ordered_delivery.hpp"
+#include "status_endpoint.hpp"
 #include "transport_data.hpp"
 
 namespace fletcher {
@@ -35,12 +37,16 @@ inline bool CanLoanSamples(const eprosima::fastdds::dds::DataReaderQos& qos) {
            policy == eprosima::fastdds::rtps::PREALLOCATED_WITH_REALLOC_MEMORY_MODE;
 }
 
-// What both flows share: the delivery queue, the schema handoff, and the statuses worth logging.
+// What both flows share: the delivery queue, the schema handoff, and the statuses forwarded to the
+// application. A null `status_listener` observes nothing, which is what a provider built from a
+// `ProviderConfig` alone gets.
 class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener {
    public:
     // `max_queued` bounds the pre-schema backlog.
-    DataReaderListenerBase(DeliveryChannel channel, SharedSchema schema, size_t max_queued)
-        : delivery_(std::move(channel), std::move(schema), max_queued) {}
+    DataReaderListenerBase(DeliveryChannel channel, SharedSchema schema, size_t max_queued,
+                           FastDDSStatusListener* status_listener)
+        : delivery_(std::move(channel), std::move(schema), max_queued),
+          status_listener_(status_listener) {}
 
     // Nothing may escape into a Fast DDS listener thread, which holds the RTPS
     // reader mutex across this call.
@@ -62,75 +68,56 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
         }
     }
 
-    // INFO needs FASTDDS_ENFORCE_LOG_INFO to appear at all (Log.hpp).
+    // `change` carries the sign: negative means writers were lost, and that is the half worth
+    // acting on — a reader with none left receives nothing and reports nothing else about it.
     void on_subscription_matched(
         eprosima::fastdds::dds::DataReader* reader,
         const eprosima::fastdds::dds::SubscriptionMatchedStatus& info) final {
-        if (info.current_count_change < 0) {
-            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
-                                 "reader on '" << reader->get_topicdescription()->get_name()
-                                               << "' lost a writer, " << info.current_count
-                                               << " still matched");
-        } else {
-            EPROSIMA_LOG_INFO(FLETCHER_SUBSCRIPTION,
-                              "reader on '" << reader->get_topicdescription()->get_name()
-                                            << "' matched a writer, " << info.current_count
-                                            << " now matched");
-        }
+        if (status_listener_)
+            status_listener_->OnMatched(ReaderEndpoint(reader), info.current_count,
+                                        info.current_count_change);
     }
 
     // Only fires on a reader whose profile in the provider document gives it a DEADLINE.
     void on_requested_deadline_missed(
         eprosima::fastdds::dds::DataReader* reader,
         const eprosima::fastdds::dds::RequestedDeadlineMissedStatus& status) final {
-        EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
-                             "reader on '" << reader->get_topicdescription()->get_name()
-                                           << "' missed its requested deadline, "
-                                           << status.total_count << " times in all");
+        if (status_listener_)
+            status_listener_->OnDeadlineMissed(ReaderEndpoint(reader), status.total_count);
     }
 
     // Under AUTOMATIC with an infinite lease, not-alive means the writer vanished.
     void on_liveliness_changed(
         eprosima::fastdds::dds::DataReader* reader,
         const eprosima::fastdds::dds::LivelinessChangedStatus& status) final {
-        if (status.not_alive_count_change > 0) {
-            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
-                                 "reader on '" << reader->get_topicdescription()->get_name()
-                                               << "' has " << status.not_alive_count
-                                               << " writer(s) no longer asserting liveliness, "
-                                               << status.alive_count << " still alive");
-        } else {
-            EPROSIMA_LOG_INFO(FLETCHER_SUBSCRIPTION,
-                              "reader on '" << reader->get_topicdescription()->get_name()
-                                            << "' has " << status.alive_count << " live writer(s)");
-        }
+        if (status_listener_)
+            status_listener_->OnLivelinessChanged(ReaderEndpoint(reader), status.alive_count,
+                                                  status.not_alive_count);
     }
 
     // A mismatch leaves the subscriber unconnected forever.
     void on_requested_incompatible_qos(
         eprosima::fastdds::dds::DataReader* reader,
         const eprosima::fastdds::dds::RequestedIncompatibleQosStatus& status) final {
-        EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
-                           "reader on '" << reader->get_topicdescription()->get_name()
-                                         << "' rejected by a writer over QoS policy id "
-                                         << status.last_policy_id << "; no samples will arrive");
+        if (status_listener_)
+            status_listener_->OnIncompatibleQos(ReaderEndpoint(reader),
+                                                static_cast<uint32_t>(status.last_policy_id),
+                                                status.total_count);
     }
 
     void on_sample_lost(eprosima::fastdds::dds::DataReader* reader,
                         const eprosima::fastdds::dds::SampleLostStatus& status) final {
-        EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
-                             "reader on '" << reader->get_topicdescription()->get_name()
-                                           << "' lost " << status.total_count << " sample(s)");
+        if (status_listener_)
+            status_listener_->OnSampleLost(ReaderEndpoint(reader),
+                                           static_cast<uint32_t>(status.total_count));
     }
 
     void on_sample_rejected(eprosima::fastdds::dds::DataReader* reader,
                             const eprosima::fastdds::dds::SampleRejectedStatus& status) final {
-        EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
-                             "reader on '" << reader->get_topicdescription()->get_name()
-                                           << "' rejected a sample (reason "
-                                           << static_cast<int>(status.last_reason) << ", "
-                                           << status.total_count
-                                           << " total); resource limits are too tight");
+        if (status_listener_)
+            status_listener_->OnSampleRejected(ReaderEndpoint(reader),
+                                               static_cast<int32_t>(status.last_reason),
+                                               status.total_count);
     }
 
     // Delivers backlog then live samples in order, with the callback outside any provider lock.
@@ -140,14 +127,18 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
     virtual void Take(eprosima::fastdds::dds::DataReader* reader) = 0;
 
     OrderedDelivery delivery_;
+
+   private:
+    FastDDSStatusListener* status_listener_;
 };
 
 // Zero-copy read: samples reach the callback in the payloads Fast DDS already holds.
 class LoanableDataReaderListener : public DataReaderListenerBase {
    public:
     LoanableDataReaderListener(uint32_t payload_bytes, DeliveryChannel channel, SharedSchema schema,
-                               size_t max_queued)
-        : DataReaderListenerBase(std::move(channel), std::move(schema), max_queued),
+                               size_t max_queued, FastDDSStatusListener* status_listener)
+        : DataReaderListenerBase(std::move(channel), std::move(schema), max_queued,
+                                 status_listener),
           payload_bytes_(payload_bytes) {}
 
    private:

@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Publish-side statuses worth hearing about. One instance per provider, shared by every DataWriter
-// it creates — none of these callbacks carries per-topic state, and the topic name is on the
-// writer.
+// Publish-side statuses, forwarded to the application's FastDDSStatusListener. One instance per
+// provider, shared by every DataWriter it creates — none of these callbacks carries per-topic
+// state, and the topic name is on the writer.
 //
 // The reader's half of this lives on DataReaderListenerBase, which needs per-topic state anyway.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_WRITER_LISTENER_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_WRITER_LISTENER_HPP_
 
+#include <cstdint>
 #include <fastdds/dds/core/status/StatusMask.hpp>
-#include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/publisher/DataWriter.hpp>
 #include <fastdds/dds/publisher/DataWriterListener.hpp>
-#include <fastdds/dds/topic/Topic.hpp>
+
+#include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
+#include "status_endpoint.hpp"
 
 namespace fletcher {
 namespace internal {
@@ -47,27 +49,22 @@ inline eprosima::fastdds::dds::StatusMask SchemaReaderStatusMask() {
 }
 
 // Every callback DataWriterListener declares is overridden, in the order it declares them, so that
-// nothing a DataWriter can report is left on the default no-op.
+// nothing a DataWriter can report is left on the default no-op. Each one translates the DDS status
+// into Fletcher's own vocabulary and hands it on; a null listener observes nothing, which is what
+// a provider built from a `ProviderConfig` alone gets.
 class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
    public:
-    // Discovery, both directions. Losing a reader is the half worth hearing about: a writer with
-    // none left keeps accepting publishes and delivers them nowhere. Gaining one is routine, so it
-    // goes to INFO — which compiles to nothing unless the build defines FASTDDS_ENFORCE_LOG_INFO
-    // (Log.hpp), the switch to turn this file's routine half on.
+    explicit DataWriterListener(FastDDSStatusListener* status_listener)
+        : status_listener_(status_listener) {}
+
+    // Discovery, both directions. Losing a reader is the half worth acting on: a writer with none
+    // left keeps accepting publishes and delivers them nowhere. `change` carries the sign.
     void on_publication_matched(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::PublicationMatchedStatus& info) override {
-        if (info.current_count_change < 0) {
-            EPROSIMA_LOG_WARNING(FLETCHER_PUBLICATION,
-                                 "writer on '" << writer->get_topic()->get_name()
-                                               << "' lost a reader, " << info.current_count
-                                               << " still matched");
-        } else {
-            EPROSIMA_LOG_INFO(FLETCHER_PUBLICATION, "writer on '" << writer->get_topic()->get_name()
-                                                                  << "' matched a reader, "
-                                                                  << info.current_count
-                                                                  << " now matched");
-        }
+        if (status_listener_)
+            status_listener_->OnMatched(WriterEndpoint(writer), info.current_count,
+                                        info.current_count_change);
     }
 
     // Fletcher sets no DEADLINE, so this only fires on a writer an operator gave one to through
@@ -75,10 +72,8 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
     void on_offered_deadline_missed(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::OfferedDeadlineMissedStatus& status) override {
-        EPROSIMA_LOG_WARNING(FLETCHER_PUBLICATION, "writer on '"
-                                                       << writer->get_topic()->get_name()
-                                                       << "' missed its offered deadline, "
-                                                       << status.total_count << " times in all");
+        if (status_listener_)
+            status_listener_->OnDeadlineMissed(WriterEndpoint(writer), status.total_count);
     }
 
     // The mirror of DataReaderListenerBase::on_requested_incompatible_qos, and the reason both
@@ -88,10 +83,10 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
     void on_offered_incompatible_qos(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::OfferedIncompatibleQosStatus& status) override {
-        EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
-                           "writer on '" << writer->get_topic()->get_name()
-                                         << "' rejected by a reader over QoS policy id "
-                                         << status.last_policy_id << "; samples are going nowhere");
+        if (status_listener_)
+            status_listener_->OnIncompatibleQos(WriterEndpoint(writer),
+                                                static_cast<uint32_t>(status.last_policy_id),
+                                                status.total_count);
     }
 
     // Readers have marked this writer NOT_ALIVE and stop expecting its samples. Fletcher leaves
@@ -99,10 +94,9 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
     // it cannot fire, so this too reports a policy an operator configured.
     void on_liveliness_lost(eprosima::fastdds::dds::DataWriter* writer,
                             const eprosima::fastdds::dds::LivelinessLostStatus& status) override {
-        EPROSIMA_LOG_WARNING(FLETCHER_PUBLICATION,
-                             "writer on '" << writer->get_topic()->get_name()
-                                           << "' lost liveliness, " << status.total_count
-                                           << " times in all; readers consider it not alive");
+        if (status_listener_)
+            status_listener_->OnLivelinessLost(WriterEndpoint(writer),
+                                               static_cast<uint32_t>(status.total_count));
     }
 
     // KEEP_ALL + RELIABLE means the writer blocks rather than drops, so an unacknowledged sample
@@ -112,10 +106,12 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
     void on_unacknowledged_sample_removed(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::InstanceHandle_t& /*instance*/) override {
-        EPROSIMA_LOG_WARNING(FLETCHER_PUBLICATION,
-                             "writer on '" << writer->get_topic()->get_name()
-                                           << "' dropped a sample no reader had acknowledged");
+        if (status_listener_)
+            status_listener_->OnUnacknowledgedSampleRemoved(WriterEndpoint(writer));
     }
+
+   private:
+    FastDDSStatusListener* status_listener_;
 };
 
 }  // namespace internal

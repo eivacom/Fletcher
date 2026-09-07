@@ -6,6 +6,7 @@
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SCHEMA_CHANNEL_HPP_
 
 #include <atomic>
+#include <cstdint>
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/subscriber/DataReader.hpp>
 #include <fastdds/dds/subscriber/DataReaderListener.hpp>
@@ -20,6 +21,8 @@
 #include <string>
 #include <utility>
 
+#include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
+#include "status_endpoint.hpp"
 #include "transport_data.hpp"
 
 namespace fletcher {
@@ -77,8 +80,9 @@ struct SchemaChannel {
 // future and flushes buffered data samples).
 class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
    public:
-    explicit SchemaListener(std::function<void(SharedSchema)> on_schema)
-        : on_schema_(std::move(on_schema)) {}
+    SchemaListener(std::function<void(SharedSchema)> on_schema,
+                   FastDDSStatusListener* status_listener)
+        : on_schema_(std::move(on_schema)), status_listener_(status_listener) {}
 
     void on_data_available(eprosima::fastdds::dds::DataReader* reader) override {
         RawBytes raw;
@@ -125,26 +129,27 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
         }
     }
 
-    // Unreported, either leaves subscribers waiting on a schema future that never resolves.
-    void on_sample_rejected(eprosima::fastdds::dds::DataReader* /*reader*/,
+    // Unobserved, either leaves subscribers waiting on a schema arrival that never resolves. The
+    // Endpoint these forward carries `is_schema_channel == true`, which is how a listener tells
+    // this from a rejected or lost row.
+    void on_sample_rejected(eprosima::fastdds::dds::DataReader* reader,
                             const eprosima::fastdds::dds::SampleRejectedStatus& status) override {
-        EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
-                           "a schema sample was rejected (reason "
-                               << static_cast<int>(status.last_reason) << ", " << status.total_count
-                               << " total); if it was too large for the channel, raise "
-                                  "max_schema_bytes on this endpoint");
+        if (status_listener_)
+            status_listener_->OnSampleRejected(ReaderEndpoint(reader),
+                                               static_cast<int32_t>(status.last_reason),
+                                               status.total_count);
     }
 
-    void on_sample_lost(eprosima::fastdds::dds::DataReader* /*reader*/,
+    void on_sample_lost(eprosima::fastdds::dds::DataReader* reader,
                         const eprosima::fastdds::dds::SampleLostStatus& status) override {
-        EPROSIMA_LOG_WARNING(FLETCHER_SCHEMA, "a schema sample was lost ("
-                                                  << status.total_count
-                                                  << " total); the schema future stays unresolved "
-                                                     "until the writer's retained sample arrives");
+        if (status_listener_)
+            status_listener_->OnSampleLost(ReaderEndpoint(reader),
+                                           static_cast<uint32_t>(status.total_count));
     }
 
    private:
     std::function<void(SharedSchema)> on_schema_;
+    FastDDSStatusListener* status_listener_;
     std::atomic<bool> fired_{false};
 };
 
