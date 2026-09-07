@@ -864,3 +864,34 @@ amendment and its non-generalisation to any *other* frozen section.
 provider-composed message able to truncate at a C#/Rust boundary — the silent-truncation class the
 owner has now refused four times; and limiting the sentence to Fletcher-composed messages, which
 would leave the spec under-describing what the code does for a binding author reading only §5.1.
+
+## 2026-09-07 — The seam spec is amended to match ruling 46 *(selection)*
+
+Raised by BIND-C#'s **second** review pass on PR #126 (finding **B2**), verified against the tree
+before being put to the owner. `docs/pubsub-interface-spec.md:29` still says *"a pure C ABI below
+it"* — the very phrase AG2 amended out of `docs/protocol-driver-abi-spec.md:3-6` under ruling 46 —
+and ruling 46 appears nowhere in the seam spec. Our own frozen text contradicts our own ruling.
+
+**The owner selected (a), amend.** Verbatim from the option as presented and chosen:
+
+> **Amend the spec to match ruling 46.** Correct the sentences that contradict the ruling — 8 sites,
+> of which two are already true as written and stay untouched. Frozen text, so it needs your word.
+> Leaving it means the next reader derives from the wrong sentence, which is exactly the failure the
+> ledger exists to prevent, and it is what let this contradiction reach a reviewer.
+
+**Applies to:** `docs/pubsub-interface-spec.md` and the sites that inherit the claim. This is a
+**third** frozen-text authorisation (after 54's §3.2 and 56/58's §5.1) and is equally
+non-generalising: it licenses **only** bringing the C-boundary description into line with ruling 46,
+at the sites verified to contradict it. **Two of the eight sites are true as written and must NOT be
+edited** — the verification names them; a find-and-replace over the phrase would break them.
+**Rejected:** relying on ruling 46's own precedence clause and leaving the frozen text
+self-contradictory (a BIND reader hit it twice); and deferring to PDA-ABI, which already inherits
+four debt items and would leave PR #126 blocked.
+
+**Not accepted from the same packet:** **B1** — verified FALSE. `AppendInPlace` calls
+`writer(dst, room)`, two arguments (`write_buffer.hpp:242`), against the C form's three, so a C
+function pointer cannot be the `Writer` and a C++ adapter is structurally mandatory; clause 6
+already publishes *"an exception from the writer commits nothing and propagates unchanged"*, and
+`used > room` is a second spec-normative refusal that commits nothing. **The packet's drafted
+amendment would contradict clause 6 four bullets above it.** B1 belongs to BIND. **B3** — a `core/`
+comment, not frozen text, and not an owner ask; the PM sharpened it.

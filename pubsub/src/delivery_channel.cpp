@@ -10,7 +10,10 @@
 namespace fletcher {
 namespace {
 
-// Every absorption in this process. Not a diagnostic and not a ledger: one
+// Every absorption in this BINARY -- a function-local static, so one instance per
+// linked module, one per process only because the tree links everything into one.
+// Same scope as delivery_frame.hpp's P1, and its STOP-AND-ASK covers this counter
+// too. Not a diagnostic and not a ledger: one
 // integer, so a conformance clause that can only see a ProviderSubject can still
 // assert that a throw was ABSORBED rather than merely unobserved.
 std::atomic<uint64_t>& AbsorbedTotalCounter() noexcept {

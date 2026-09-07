@@ -26,10 +26,22 @@ it is not yet *registered* — that is PDA-DEC-5).
 
 Two things are queued **on opposite sides of that seam**:
 
-- **PDA-ABI** — a pure C ABI *below* it, so a protocol becomes a driver chosen and
-  configured at runtime ([docs/protocol-driver-abi-spec.md](protocol-driver-abi-spec.md)).
+- **PDA-ABI** — a protocol driver ABI *below* it, **both sides of which are C++**,
+  so a protocol becomes a driver chosen and configured at runtime
+  ([docs/protocol-driver-abi-spec.md](protocol-driver-abi-spec.md)).
 - **BIND-C# / BIND-Rust** — a C ABI *above* it, so an application in another
   language can publish and subscribe.
+
+**Ruling of 2026-09-05 — every protocol driver is C++, so both sides of the driver
+ABI are C++.** The first bullet read *"a pure C ABI below it"* until 2026-09-07, when
+the owner authorised the correction; the sibling
+[driver ABI spec](protocol-driver-abi-spec.md) amended the same phrase out of its own
+`:3-6` and §0 under the same ruling. **Where a ruling and this document disagree, the
+ruling wins** — as this document wins over the plan and over any per-item design. The
+ruling leaves that spec's §3 *"The C types"* standing (`fletcher_blob`,
+`fletcher_write_buffer`, `fletcher_status`), so *"a C boundary"* and *"both C
+boundaries"* below still hold as written: they name the C **forms** that appear at
+each of the two boundaries, not the language either ABI is implemented in.
 
 Neither can be built cleanly against the seam as it stands, for reasons that are
 the same in both directions: the types crossing it are C++ types with no stated

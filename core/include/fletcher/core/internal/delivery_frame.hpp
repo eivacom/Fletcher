@@ -18,12 +18,21 @@
 // token points at. A provider token and a Subscriber token can never collide:
 // they are the addresses of distinct live objects.
 //
-// P1 — ONE FRAME STACK PER PROCESS. Every Fletcher component is a STATIC library
+// P1 — ONE FRAME STACK PER BINARY. Every Fletcher component is a STATIC library
 // (`pubsub/CMakeLists.txt`; `fletcher-core` is INTERFACE), so this `inline
-// thread_local` has exactly one instance however many components include it.
-// **STOP-AND-ASK** if any component becomes a shared library, or if PDA-ABI puts
-// the dispatch adapter inside a driver DLL rather than host-side: a forked
-// thread-local must not be papered over with a registration handshake.
+// thread_local` has exactly one instance per LINKED MODULE, however many
+// components include it — one per *process* only because the tree links them all
+// into one. **STOP-AND-ASK** if any component becomes a shared library, or if
+// PDA-ABI puts the dispatch adapter inside a driver DLL rather than host-side: a
+// forked thread-local must not be papered over with a registration handshake.
+//
+// A language binding (BIND-C#/BIND-Rust) linking `core` — and the pubsub and
+// provider components with it — statically into its own module is the FIRST
+// CLAUSE's case, not a new one: that module gets its own stack, and the doors go
+// on working, because every push and every door for one provider instance then
+// executes inside that same module. What the clause refuses is a SPLIT — the
+// components in different shared objects, so an instance's `Deliver` marks one
+// stack while its `Unsubscribe` door asks another.
 #ifndef FLETCHER_INCLUDE_CORE_INTERNAL_DELIVERY_FRAME_HPP_
 #define FLETCHER_INCLUDE_CORE_INTERNAL_DELIVERY_FRAME_HPP_
 

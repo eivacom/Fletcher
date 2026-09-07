@@ -233,7 +233,10 @@ Handled residue — each with *why it could not be forbidden*:
 
 ## Premises and stop conditions
 
-- **P1 — one frame stack per process.** Every component is a STATIC library
+- **P1 — one frame stack per binary** *(restated 2026-09-07: the design said "per process",
+  which is true only because the tree links every component into one module; corrected in
+  `delivery_frame.hpp` after BIND-C#'s second PR pass read it as a constraint on bindings)*.
+  Every component is a STATIC library
   (`pubsub/CMakeLists.txt:11`; `fletcher-core` is INTERFACE), so the inline `thread_local`
   has exactly one instance. **STOP-AND-ASK** if any component becomes a shared library, or
   if PDA-ABI places the dispatch adapter inside the driver DLL rather than host-side — do
