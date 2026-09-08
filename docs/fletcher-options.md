@@ -233,6 +233,21 @@ some files import the declaring `.proto`.
 - The inner field of a `(fletcher.flatten)` wrapper is not reachable — only the
   wrapper's `MessageOptions` and the referencing field's `FieldOptions`.
 - `--fletcher_opt=ts` output does not carry mapped metadata.
+- **A mapped value containing a zero byte is truncated at that byte** — silently,
+  and on both paths. The generated C++ hands the value to nanoarrow as
+  `ArrowCharView(...)`, which is `strlen`-based
+  (`protoc/src/cpp_backend_schema_visitor.cpp:263-264`), and the in-process
+  `--fletcher_opt=ipc` sink truncates identically through `value.c_str()` (`:344-345`).
+  The two paths therefore still agree byte-for-byte, which is why this was accepted
+  rather than fixed in GIR-13: NUL-bearing metadata is not a promised capability.
+  The same applies to a mapped **key**. *Do not carry a zero byte in a metadata
+  value or key.*
+
+  **This is not how the pub/sub seam behaves, so do not reason across from it.** The
+  seam never truncates on a zero byte: it **escapes** it in any message it publishes
+  (`docs/pubsub-interface-spec.md` §5.1, owner ruling of 2026-09-06) and **refuses**
+  an attachment label that contains one (§3.2 clause A3). Options metadata does
+  neither — it drops the tail and reports nothing.
 
 ## Extension field number registry
 

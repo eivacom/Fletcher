@@ -174,6 +174,60 @@ binary frames:
 
 `ENVELOPE` is Fletcher's `[ROW_LEN :4][ROW_DATA][ATTACH_COUNT :4][attachments...]` envelope format from `core/envelope.hpp`.
 
+### Topic names — BREAKING CHANGE (round PDA-decouple, item A5)
+
+**A topic string that the gateway used to tidy up is now refused.** The gateway
+splits `topic` on `/` and keeps **every** piece, including empty ones
+([`gateway/src/ws_session.cpp:149-162`](src/ws_session.cpp)), and the seam then
+validates the resulting segment list against the six rules of
+[`docs/pubsub-interface-spec.md`](../docs/pubsub-interface-spec.md) §3.5. It used to
+drop empty pieces, so `"a//b"`, `"/a/b"`, `"a/b/"` and `"//a//b//"` all became the
+segment list `{"a","b"}` and silently exchanged rows with `"a/b"` — a client
+subscribing to one and a client publishing to another traded data although they had
+named different topics. That alias is gone; the name is refused instead of repaired.
+
+**What a client receives.** Nothing about the transport changed: the refusal is a
+`PubSubError` the frame handler catches and reports as an ordinary error frame,
+
+```json
+{"type":"error","message":"topic: an empty segment names nothing"}
+```
+
+on the same connection, which then stays open. There is **no machine-readable code
+in the frame** — `type` is `"error"` and `message` is the seam's sentence — so match
+on the text if you must distinguish causes. It applies to all three surfaces that
+name a topic: `create_topic`, `subscribe`, and the binary PUBLISH frame (which
+returns the error frame in place of `{"type":"published"}`).
+
+The refusals a WebSocket client can trigger, with the exact `message`:
+
+| `topic` you send | Was | `message` now |
+|---|---|---|
+| `"a//b"`, `"/a/b"`, `"a/b/"`, `"//a//b//"` | accepted as `"a/b"` | `topic: an empty segment names nothing` |
+| `""` | accepted, named the empty topic | `topic: an empty segment list names no topic` |
+| any segment starting `__`, e.g. `"a/__schema"` | accepted, and collided with the schema channel a DDS provider derives for `"a"` | `topic: segments beginning "__" are reserved for provider-derived companion channels: __schema` |
+| a `/`-joined name over **246 bytes** | accepted, then silently truncated onto another name on the wire | `topic: the joined name is <n> bytes, above the 246-byte limit that keeps it and its companion channel from being silently truncated on the wire` |
+| a topic carrying a zero byte, e.g. `"a\u0000b"` | accepted, and truncated to `"a"` on XRCE | `topic: a segment may not contain a zero byte, which would truncate the name on the wire` |
+| `"a/b"` | `{"a","b"}` | **unchanged — still accepted, same wire bytes** |
+
+The 246 bytes are UTF-8 **bytes** of the `/`-joined name, not characters, and they
+leave room for the `"/__schema"` companion channel a DDS provider derives from it.
+§3.5's remaining rule — a segment containing `/` — is unreachable from here, because
+splitting on `/` is what produces the segments in the first place.
+
+**No accepted name's wire bytes changed**, in any provider: only the accepted set
+narrowed. If your client relied on the old tidy-up, normalise the string before you
+send it — the gateway will not do it for you, because doing it silently is what made
+two different names one topic.
+
+See the control-message table in
+[`docs/wire-format-specification.md`](../docs/wire-format-specification.md#control-messages-json-text-frames)
+(lines 180-195) for the frames themselves.
+
 ## Tracked gaps
 
-- Per-topic QoS is not configurable from the gateway CLI — the `fastdds` provider uses Fletcher's default QoS profile for every topic.
+None. The one entry here — *"per-topic QoS is not configurable from the gateway CLI"* —
+was closed by round PDA-decouple item 6: `--provider-config FILE` takes a Fast DDS XML
+profiles document, and a profile named after the `/`-joined topic is that topic's
+override. See [Configuring the provider](#configuring-the-provider).
+

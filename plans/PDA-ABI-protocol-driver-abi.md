@@ -1,6 +1,7 @@
 # PDA-ABI — The Protocol Driver ABI — Execution Plan
 
-Round plan + tracker for the pure-C protocol driver ABI **below** the pub/sub seam.
+Round plan + tracker for the protocol driver ABI **below** the pub/sub seam —
+**both sides of which are C++**, by the owner's ruling of 2026-09-05 (ruling 46).
 Round token **`PDA-ABI`**.
 
 Spec (oracle): [docs/protocol-driver-abi-spec.md](../docs/protocol-driver-abi-spec.md).
@@ -23,9 +24,21 @@ seam that proves insufficient is a stop-and-ask against *that* spec.
 
 ## Goal
 
-Turn a protocol into a **driver**: a separate binary, implementable by anyone in
-any language, loaded and configured at runtime with no Fletcher rebuild — and
-indistinguishable, to everything above the seam, from a built-in provider.
+Turn a protocol into a **driver**: a separate binary — **written in C++, as both
+sides of this ABI are** (owner's ruling of 2026-09-05) — loaded and configured at
+runtime with no Fletcher rebuild, and indistinguishable, to everything above the
+seam, from a built-in provider.
+
+*"Implementable by anyone in any language"* stood in this Goal until 2026-09-08. It
+is **verbatim the sentence the owner was shown and ruled against** on 2026-09-05:
+ruling 46 supersedes it, the driver ABI spec records the licence as *"withdrawn,
+not relocated"* (§0.2, and seam §9 since ruling 60), and ruling 60 authorised
+correcting this line. What survives is the C **forms** at the boundary (ABI spec §3
+— `fletcher_blob`, `fletcher_write_buffer`, `fletcher_status`, which ruling 46
+explicitly left standing) and the binary-stability constraints between separately
+built C++ binaries: no exception may cross, no `longjmp`, no assumed layout. A Rust
+or C# *application binding* is a different artifact and is unaffected — it calls the
+seam from above. **Do not re-derive a multi-language driver licence from this Goal.**
 
 The seam already carries runtime selection and configuration (PDA-decouple), so
 this round is narrower than it looks: a C header for what a driver *implements*

@@ -205,6 +205,88 @@ with no observable.
 
 ---
 
+## 9 — A refused `Subscribe` still walks the rollback path (inherited debt)
+
+**Derives from:** `AG1-DEBT-21`, migrated at PDA-DEC's close from
+`plans/reviews/design-debt.md` (archived with that round's reviews). Raised by
+PDA-DEC-AG1 cycle-3 code review (should-fix S2), 2026-09-05, and **addressed to
+"the next item to touch `subscriber.cpp`'s subscription bookkeeping"** — which is
+the caller tier this binding wraps, not the driver tier PDA-ABI re-cuts.
+
+`Subscriber::Subscribe` consumes a subscription id, inserts into
+`subscription_topic` and `topics`, and republishes the fan-out snapshot **before**
+reaching the caller-tier door. A re-entrant call that is then refused unwinds
+through the retirement-and-deferred-sweep path that PDA-DEC-A4 needed four fix
+cycles to settle, for an entry no caller ever observed.
+
+**Not a correctness defect today** — two independent reviewers traced the unwind and
+neither blocked on it; the rollback takes no gate under `mu` and the entry is
+removed before the throw leaves the tier. It is a hazard because it makes the most
+delicate code in the item reachable from a path that has no reason to touch it.
+
+**Why it was not fixed in-round.** It is a concurrency change to that same rollback
+path, arriving in fix cycle 3 of a bounded-at-three budget. Landing it would have
+required a fourth code review of the item's highest-risk code to verify a finding
+neither reviewer considered blocking. The published contract was narrowed instead to
+state what the code actually does (the local record is rolled back on the way out),
+so nothing false ships.
+
+**Acceptable fix:** look `key` up under `mu` and refuse before `try_emplace`, so the
+refused call never enters the rollback path at all.
+
+**Owed here:** item 4 tells the binding to queue any `Subscribe` issued from inside
+a delivery, which is what keeps this path out of reach from managed code. If the
+binding instead lets such a call through and catches `kReentrantCall`, it is
+exercising this path on purpose.
+
+---
+
+## Standing rulings this list rests on
+
+Migrated at PDA-DEC's close (2026-09-08) from `plans/PDA-DEC-rulings.md`, which is
+archived with that round's execution corpus. Ruling numbers are positions in that
+ledger (ruling *n* = its *n*-th `## 2026` entry). These are not seam text and not
+new obligations; they are the owner's own words, and the first one is the premise
+several items above rest on.
+
+**BIND are full pub/sub clients, not read-only accessors** — ruling 5(2),
+2026-08-31, the owner's own prose: *"They're full pub/sub clients."* Asked about
+what BIND-C# and BIND-Rust are meant to do. It is the load-bearing premise under
+the `Unsubscribe`-idempotence ruling (a finaliser cancels unconditionally and cannot
+let an exception escape), and items 2, 3 and 8 all rest on it. Seam §9's table says
+BIND *"implements the caller side of `Publisher`/`Subscriber` + §4 selection"* —
+which is a scope statement, not this ruling. A binding that publishes as well as
+subscribes is what was asked for; a read-only accessor is not.
+
+**Fix a leaking guarantee at the scope the guarantee is about — do not publish the
+leak** — ruling 39, 2026-09-04. Given after PDA-DEC-A4 had scoped one promise four
+ways (process-wide → per-`Impl` → per-frame → per-gate, the last being the first
+scope whose lifetime matched the guarantee). The preference is conditional: it
+applies **provided the root cause has been NAMED** rather than another instance
+patched. **Its stop condition stands for any future item:** *a further case after
+the root-cause fix means the premise is broken and the item stops.* BIND will meet
+this the first time a published promise leaks at the managed boundary — items 2 and
+8 are both promises of exactly that kind.
+
+**Narrowing a published claim may be inferred; widening it never may** — rulings 32
+(2026-09-03) and 37 (2026-09-04). Ruling 32 granted a licence to infer the owner's
+standing preference for a narrow claim stated honestly over a wide one implied, so a
+design need not ask again. Ruling 37 bounds it: that licence *"permits **narrowing**
+without asking, never **widening**"*. Seam §12.4 records the preference but not the
+asymmetry, and the asymmetry is the half that decides whether an item must stop and
+ask.
+
+**A Linux-only difference in seam behaviour is a question for the owner** — ruling
+32's third instruction, frozen into seam §12.4: it is *a stop-and-ask against that
+spec, not a local fix*, because a local fix by one round would silently change the
+seam both rounds share. No automated build ever ran on `feature/protocol-driver-abi`
+before PR #126, so eight items of Linux-side correctness exist as local Windows runs
+plus one WSL compile: **treat Linux as unverified.** This is not theoretical for
+BIND — three of the seven defects the PR #126 packets raised were exactly
+Linux-only differences.
+
+---
+
 ## Two mapping details that bite once each
 
 **`Timeout.Infinite` is `-1`, and the seam refuses it.**

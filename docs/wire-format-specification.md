@@ -193,6 +193,14 @@ The `gateway` component uses a split text/binary WebSocket protocol:
 | Server to Client | `topics_list` | `{"type":"topics_list","topics":["..."]}` |
 | Server to Client | `error` | `{"type":"error","message":"..."}` |
 
+**Topic names are validated, not normalised** — and that is a breaking change from
+round PDA-decouple. `"a//b"`, `"/a/b"` and `"a/b/"` used to be accepted as `"a/b"`;
+they, an empty topic, a segment beginning `__`, a `/`-joined name over 246 UTF-8
+bytes and a topic carrying a zero byte all now come back as an `error` frame. The
+per-case messages are in
+[gateway/README.md](../gateway/README.md#topic-names--breaking-change-round-pda-decouple-item-a5);
+the rules themselves are [pubsub-interface-spec.md](pubsub-interface-spec.md) §3.5.
+
 The `subscribed` response includes the schema in two forms:
 - `schema` — a JSON object with field names, wire types, nullability, and composite structure (for easy JS consumption)
 - `schemaIpc` — base64-encoded Arrow IPC bytes (for full fidelity)

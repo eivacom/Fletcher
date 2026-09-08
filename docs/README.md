@@ -11,7 +11,7 @@ data-flow-diagrams.md          # Encode/decode, pub/sub, browser flows
 wire-format-specification.md   # Positional wire format, type mapping, envelope
 recordbatch-accessor-spec.md   # Column-oriented C++/Rust RecordBatch accessors (accessor/rust opts)
 pubsub-interface-spec.md       # The pub/sub provider seam: crossing types, registry, delivery contract (round PDA-decouple)
-protocol-driver-abi-spec.md    # Pure-C protocol driver ABI below that seam (round PDA-ABI)
+protocol-driver-abi-spec.md    # Protocol driver ABI below that seam, both sides C++ (round PDA-ABI)
 technology-decisions.md        # Technology decision log (TD-001 through TD-007)
 fletcher-options.md            # (fletcher.flatten) schema-flattening option
 ```

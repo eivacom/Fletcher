@@ -895,3 +895,36 @@ already publishes *"an exception from the writer commits nothing and propagates 
 `used > room` is a second spec-normative refusal that commits nothing. **The packet's drafted
 amendment would contradict clause 6 four bullets above it.** B1 belongs to BIND. **B3** — a `core/`
 comment, not frozen text, and not an owner ask; the PM sharpened it.
+
+## 2026-09-08 — Frozen §9 loses the Rust/C# driver licence *(selection)*
+
+Found at round close by the rulings inspection, in frozen §9 — a **second** ruling-46 contradiction
+that ruling 59 could not reach. `docs/pubsub-interface-spec.md:1123-1126` says *"A driver written in
+Rust or C# is entirely legitimate … the former implements the driver ABI"*, while
+`docs/protocol-driver-abi-spec.md:87-91` says of that exact sentence: *"The licence this paragraph
+used to give … is **withdrawn, not relocated**: it was put to the owner verbatim and ruled
+against."* Ruling 59's verification enumerated its eight sites by phrase-matching *"pure C"* and
+*"C boundaries"*, so it structurally could not see a site stating the same licence in other words —
+and ruling 59 authorises only *"the sites verified to contradict it"*.
+
+**The owner selected (a), amend.** Verbatim from the option as presented and chosen:
+
+> **Amend §9 to match ruling 46.** §9 loses the Rust/C# driver licence, matching ruling 46 and the
+> driver spec's record that you rejected it. A fourth frozen-text authorisation this round,
+> recorded non-generalising like the others. Cost: one paragraph. Benefit: the frozen spec stops
+> licensing something you declined, in the section a binding author reads.
+
+**Applies to:** frozen §9 at `:1123-1126`. **Fourth** frozen-text authorisation of this round
+(after 54's §3.2, 56/58's §5.1, 59's §0) and equally **non-generalising**: it licenses removing
+**this licence sentence** and nothing else in §9. Per the inspection's advice these four are
+deliberately **not** aggregated into an "authorisations granted" list anywhere — four in one table
+reads as precedent, and §12.1 is already the general gate.
+**Also authorised as consequential and NON-frozen**, under ruling 59's existing scope: the same
+claim at `plans/PDA-ABI-protocol-driver-abi.md:3` and `:25-27` — where *"implementable by anyone in
+any language"* is verbatim the sentence the owner was shown and rejected, and is still the **next
+round's stated Goal** — plus `plans/PDA-ABI-locked-decisions.md:37`, `docs/README.md:14` and
+`docs/technology-decisions.md:123`.
+**Rejected:** reopening ruling 46 to re-legitimise non-C++ drivers (AG2 has already amended the
+driver spec under it and PDA-ABI is scoped on it, so both would need revisiting); and leaving the
+contradiction to ruling 46's precedence clause, which is the condition an external reviewer already
+caught once in this same pair of documents.

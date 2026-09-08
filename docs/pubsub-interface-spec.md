@@ -6,8 +6,8 @@ between Fletcher and a protocol. On any contradiction with the plan or a per-ite
 **this document wins**. **§12 states what "frozen" binds, who may act on each class, and how
 each handoff condition was actually verified** — read it before proposing any change here.
 Locked-decision digest:
-[plans/PDA-decouple-locked-decisions.md](../plans/PDA-decouple-locked-decisions.md).
-Plan + tracker: [plans/PDA-decouple-interface.md](../plans/PDA-decouple-interface.md).
+[docs/archive/PDA-DEC/PDA-decouple-locked-decisions.md](archive/PDA-DEC/PDA-decouple-locked-decisions.md).
+Plan + tracker: [docs/archive/PDA-DEC/PDA-decouple-interface.md](archive/PDA-DEC/PDA-decouple-interface.md).
 
 **This document is also the meeting point for two later rounds that do not
 otherwise touch each other** — see §1.
@@ -1004,7 +1004,7 @@ modernization merge shipped a receive-side data-sharing defect that lost
 `TRANSIENT_LOCAL` samples for cross-process late joiners, and the provider's
 entire 70-test suite was green throughout, because every test ran in one process
 (see `fastdds-pubsub-provider/README.md` and
-[plans/PDA-decouple-progress-log.md](../plans/PDA-decouple-progress-log.md)).
+[docs/archive/PDA-DEC/PDA-decouple-progress-log.md](archive/PDA-DEC/PDA-decouple-progress-log.md)).
 
 So the suite must have a **cross-process subject** for the DDS providers. A
 conformance suite that cannot observe the transport would certify the seam on
@@ -1021,7 +1021,7 @@ mix and count of data-sharing endpoints per participant, which needs a subscribi
 peer this harness does not have. The evidence table lives in
 `integration-tests/pubsub-conformance/README.md`, the defect is owned by
 **PDA-ABI-7**, and the owner ruled on 2026-09-01 that the suite ships with the
-blind spot documented (`plans/PDA-DEC-rulings.md`). **Do not read a green
+blind spot documented (`docs/archive/PDA-DEC/PDA-DEC-rulings.md`). **Do not read a green
 conformance run as evidence about that defect class.**
 
 ---
@@ -1120,10 +1120,19 @@ the *seam's* surface and therefore of the binding ABI, **not** of the driver ABI
 The driver ABI's own surface is only what a driver implements and what the host
 calls back; a driver never implements selection.
 
-A **driver written in Rust or C#** is entirely legitimate and is unrelated to a
-Rust or C# *application binding*: the former implements the driver ABI, the
-latter calls the seam. Same language, opposite directions — worth naming, because
-the two are constantly conflated.
+A driver is **C++**, by the owner's ruling of 2026-09-05. The licence this
+paragraph used to give — that a driver written in Rust or C# implements the driver
+ABI and is entirely legitimate — is **withdrawn, not relocated**: it was put to the
+owner verbatim and ruled against. A Rust or C# *application binding* is a different
+artifact entirely and is unaffected; it calls the seam from above. Same language,
+opposite directions — worth naming, because the two are constantly conflated.
+
+**Ruling of 2026-09-08 — frozen §9 loses the Rust/C# driver licence.** The paragraph
+above stated that licence in words neither of ruling 59's matched phrases could
+see, so it survived that correction; the owner authorised removing **this licence
+sentence and nothing else in §9**. The sibling
+[driver ABI spec](protocol-driver-abi-spec.md) records the same withdrawal of the
+same sentence at its own §0.2.
 
 ---
 

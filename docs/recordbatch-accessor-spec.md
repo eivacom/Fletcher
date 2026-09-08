@@ -3,8 +3,8 @@
 Status: **proposed** (round **RBA**). This is the authoritative spec for the
 generated RecordBatch-accessor feature. On any contradiction with the plan or a
 per-item design, **this document wins**. Locked-decision digest:
-[plans/RBA-locked-decisions.md](../plans/RBA-locked-decisions.md). Plan + tracker:
-[plans/RBA-recordbatch-accessor.md](../plans/RBA-recordbatch-accessor.md).
+[docs/archive/RBA/RBA-locked-decisions.md](archive/RBA/RBA-locked-decisions.md). Plan + tracker:
+[docs/archive/RBA/RBA-recordbatch-accessor.md](archive/RBA/RBA-recordbatch-accessor.md).
 
 ---
 
@@ -433,3 +433,26 @@ item are green acceptance tests added in the same item.
   layout is a validation error, never silently accepted.
 - Languages beyond C++ and Rust (TypeScript already has its descriptor path).
 - Teaching the schema generator to bake any new (domain) metadata into schemas.
+
+### Known limitation — a proto field named `row`
+
+**A `.proto` field literally named `row` makes the generated accessor fail to
+compile.** The generated `RowView` holds the row index as a data member —
+`int64_t row = 0;` — and emits one forwarder per field named after that field
+(`protoc/src/recordbatch_accessor_emitter.cpp:901-903` and `:374-384`), so a field
+named `row` produces a member function and a data member with the same name in the
+same class, which C++ forbids. Reproduced against MSVC 19.44 on the emitted shape:
+*"error C2365: `RowView::row`: redefinition; previous definition was 'data
+member'"*. The accessor-level getter (`T row(int64_t row) const`) is legal on its
+own; it is the `RowView` forwarder that cannot be spelled. Every emitted getter
+takes `int64_t row`, so the name is effectively reserved.
+
+**Workaround:** rename the field (its number and type may stay, so the change is
+wire-neutral — this is what GIR-1 did to `ServiceRequest.row`), or omit
+`--fletcher_opt=accessor` for that message's file. There is no guard in the emitter
+and no diagnostic: the failure is a C++ compile error in generated code.
+
+Found during GIR-1 (2026-07-10) and left unfixed because the RBA emitter was
+read-only for that round. **The fix belongs to RIR**, the RBA↔IR reconciliation
+round; the natural shape is to rename the emitted index parameter and the `RowView`
+member when a field collides with it.

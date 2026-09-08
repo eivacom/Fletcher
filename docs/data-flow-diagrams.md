@@ -48,10 +48,14 @@ sequenceDiagram
 
     SUB->>PP: Subscribe(segments, callback)
     PP->>DDS: Subscribe to data topic
-    PP->>DDS: Read from companion schema topic
-    DDS->>PP: Schema IPC bytes
+    PP->>DDS: Create persistent companion __schema reader
+    PP->>SUB: SubscriptionResult { SchemaArrival } — returns at once
+
+    Note over PP,SUB: Subscribe NEVER blocks (spec §7 clause 5).<br/>The schema is waited on AFTERWARDS, on the<br/>arrival handle, with a typed outcome (spec §3.4).
+
+    DDS->>PP: Schema IPC bytes (when a publisher announces)
     PP->>PP: Deserialize to OwnedSchema
-    PP->>SUB: SubscriptionResult { schema }
+    PP->>SUB: arrival resolves; Wait(timeout, &out) answers kOk
 
     Note over PUB,SUB: Both sides now share the same schema.<br/>Positional wire format works without<br/>per-field metadata.
 
@@ -79,7 +83,7 @@ sequenceDiagram
     WC->>WS: Connect ws://host:port
     WC->>WG: JSON: {"action":"subscribe","topic":"pkg/svc/method"}
     WG->>DRV: Subscribe with fan-out
-    DRV->>WG: SubscriptionResult { schema, subId }
+    DRV->>WG: SubscriptionResult { SchemaArrival }<br/>(the gateway assigns subId itself)
 
     WG->>WS: JSON: {"type":"subscribed","subId":"1",<br/>"topic":"...","schema":{fields...},<br/>"schemaIpc":"base64..."}
     WS->>WC: Parse schema descriptor

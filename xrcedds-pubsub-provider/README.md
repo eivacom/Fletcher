@@ -22,7 +22,15 @@ Wire compatibility is necessary but not sufficient: DDS matches endpoints by **t
 
 ### Topic name
 
-Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "TelemetryStream"}` produce the DDS topic name `"integration/TelemetryFeed/TelemetryStream"`.
+The `std::vector<std::string>` topic segments from `PubSubProvider` are joined with `/` to form the DDS topic name. For example, segments `{"integration", "TelemetryFeed", "TelemetryStream"}` become the DDS topic `"integration/TelemetryFeed/TelemetryStream"`. The join is the **seam's**, not this provider's choice (spec §3.5): the joined name *is* the topic's identity, and this provider hands that one string to the Agent as the participant name, the topic name and — with `"/__schema"` appended — the schema companion's name.
+
+**A segment may not contain a zero byte, and this provider is the reason.** Every name this provider sends crosses as a `const char*` with no length form: `uxr_buffer_create_participant_bin` and `uxr_buffer_create_topic_bin` take `name.c_str()` (`:692-700`, `:888-895`) and the schema companion takes `schema_name.c_str()` (`:742`, `:920`). A zero byte inside the name therefore truncates it *at the sink*, where nothing can repair it — and PDA-DEC-A5 found the **participant** name truncated the same way, so the two sinks disagreed about which topic was being named. The seam refuses it instead, at `internal::RequireSegments` with `kInvalidArgument`. Owner ruling 2026-09-04.
+
+**The joined name is capped at 246 bytes, and this provider inherits the cap** rather than causing it: the Agent builds the Fast DDS entities from the name the client sent, so Fast DDS's silently-truncating `fastcdr::string_255` announcement is this provider's ceiling too (`XRCE`'s own `UXR_BINARY_SEQUENCE_MAX` is 512, which is not the binding limit). 246 is 255 less the 9 bytes of `"/__schema"`, so the companion channel derived below stays under the ceiling as well; bounded at 255 the data name would survive while its companion truncated back onto it, moving the collision to the hidden channel rather than closing it. Owner ruling 2026-09-04; pinned by `Segments.NamesThatWouldTruncateOnTheWireAreRefused` in `pubsub_tests`.
+
+**The `__` prefix is reserved** — directly relevant to the schema companion below. A segment beginning `__` is refused, the prefix and not just the literal `__schema`, so the whole provider-derived companion namespace is out of reach and a future companion name needs no further ruling. Without it the accepted list `{"a","__schema"}` would join onto the schema channel of `{"a"}`. Owner ruling 2026-09-04.
+
+Six refusals in all, every one `kInvalidArgument` from `internal::RequireSegments` (`pubsub/include/fletcher/pubsub/internal/segments.hpp`), unconditional at every entry point: the empty **list**; a segment containing a zero byte; a segment containing `/`; an **empty** segment; a segment beginning `__`; and a joined length above 246 bytes. Spec §3.5 is the contract; the sibling [fastdds-pubsub-provider](../fastdds-pubsub-provider/README.md#topic-name) README states the same rules from the other provider's side.
 
 ### QoS
 
@@ -33,7 +41,7 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 
 ### Schema discovery
 
-`CreateTopic` publishes serialized schema bytes to a companion `<topic>/__schema` DDS topic. When `Subscribe` is called before `CreateTopic` (subscriber-side), it polls the `__schema` topic for up to 5 seconds to retrieve the schema.
+`CreateTopic` publishes serialized schema bytes to a companion `<topic>/__schema` DDS topic. When `Subscribe` is called before any `CreateTopic` (subscriber-side), it creates a **persistent companion `__schema` reader** and routes its samples to `OnTopic`, which resolves that subscription's `SchemaArrival` when a publisher announces the schema (`src/xrce_dds_pubsub_provider.cpp:906-911`). **No poll, no callback swap, no throw, and no timeout** — so a subscriber can subscribe before any publisher exists, and `Subscribe` never blocks (spec §7 clause 5). The 5-second `__schema` poll this section used to describe was replaced in PDA-DEC-3 along with the `shared_future` schema wait; the waiting is now the caller's, on the `SchemaArrival` handle, with a typed outcome (spec §3.4).
 
 ## Usage
 
