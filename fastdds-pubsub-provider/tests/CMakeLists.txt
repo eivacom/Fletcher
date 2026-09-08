@@ -4,12 +4,24 @@
 find_package(GTest REQUIRED)
 
 add_executable(fastdds_pubsub_tests
-    test_fast_dds_pubsub_provider.cpp)
+    test_fast_dds_pubsub_provider.cpp
+    test_fletcher_sample_pub_sub_type.cpp
+    test_profile_document.cpp)
 
-# The OrderedDelivery white-box test includes the provider's internal header
-# directly (it is header-only and std-only).
+# The OrderedDelivery white-box test, the DDS-type test and the profile-document test include
+# the provider's internal headers directly (they are header-only). The profile-document test
+# needs `internal/profile_document.hpp` and `internal/qos_defaults.hpp` in particular: the
+# resolution ladders and Fletcher's built-in profiles are asserted whole and in-process, because
+# `history` and `resource_limits` are not observable in DDS discovery data.
 target_include_directories(fastdds_pubsub_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+# B1: `DefaultProfileTranscriptionIsExact` reads the published starting-point XML block out of
+# README.md itself rather than holding a copy of it, so editing either the README block or
+# `MakeFletcherDefault*Qos()` alone turns the test red. The README is exported by conanfile.py
+# so the cache build reads the same file the repository holds.
+target_compile_definitions(fastdds_pubsub_tests PRIVATE
+    FLETCHER_FASTDDS_README_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../README.md")
 
 target_link_libraries(fastdds_pubsub_tests PRIVATE
     GTest::gtest_main

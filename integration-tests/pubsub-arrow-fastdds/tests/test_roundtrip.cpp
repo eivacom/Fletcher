@@ -16,10 +16,11 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
+#include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,6 +30,20 @@ using namespace fletcher;
 using namespace std::chrono_literals;
 
 namespace {
+
+// The Arrow tier no longer hands back an arrow::Schema: it hands back the seam's
+// own SchemaArrival (one waiting mechanism, spec §3.4), and a caller that wants
+// an arrow::Schema converts with fletcher::ImportArrowSchema — the one safe
+// conversion, public precisely so nobody writes the unsafe one. Spelled out here
+// once, so every call site below reads the same way.
+std::shared_ptr<arrow::Schema> AwaitArrowSchema(const SchemaArrival& arrival,
+                                                std::chrono::milliseconds budget) {
+    SharedSchema nano;
+    const PubSubStatus status = arrival.Wait(budget, &nano);
+    EXPECT_EQ(status, PubSubStatus::kOk)
+        << "schema arrival: " << internal::PubSubStatusName(status) << " " << arrival.Message();
+    return ImportArrowSchema(nano);
+}
 
 // Use a high domain id to keep this test isolated from any other DDS
 // traffic on the host running CI.
@@ -53,12 +68,10 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
 }  // namespace
 
 TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
-    FastDDSProviderOptions pub_opts;
-    pub_opts.domain_id = kTestDomain;
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
-    FastDDSProviderOptions sub_opts;
-    sub_opts.domain_id = kTestDomain;
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -82,9 +95,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
         cv.notify_all();
     });
 
-    // Subscribe internally polls until the schema arrives via the companion
-    // /__schema topic, so once it returns the subscriber knows the schema.
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    // The schema arrives via the companion /__schema topic; the arrival is what
+    // the subscriber waits on, with a stated budget rather than forever.
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr);
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
@@ -111,12 +125,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
-    FastDDSProviderOptions pub_opts;
-    pub_opts.domain_id = kTestDomain;
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
-    FastDDSProviderOptions sub_opts;
-    sub_opts.domain_id = kTestDomain;
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a late DDS callback that fires while
     // the subscriber is tearing down would otherwise touch destroyed locals.
@@ -140,7 +152,7 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         cv.notify_all();
     });
 
-    ASSERT_NE(result.schema.get(), nullptr);
+    ASSERT_NE(AwaitArrowSchema(result.schema, std::chrono::seconds(15)), nullptr);
 
     // No sleep before publish. KEEP_ALL durability retains every sample
     // until the reader matches and consumes them in published order.
@@ -174,12 +186,10 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 //     sample, which is the subscriber-only mode for the batched path
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
-    FastDDSProviderOptions pub_opts;
-    pub_opts.domain_id = kTestDomain;
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
-    FastDDSProviderOptions sub_opts;
-    sub_opts.domain_id = kTestDomain;
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     // Capture state must outlive `sub`: a delivery on the FastDDS listener
     // thread could otherwise touch destroyed locals during teardown.
@@ -216,7 +226,8 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
         },
         opt);
 
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr);
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
@@ -277,12 +288,10 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
 // test's XrceSubscribeBeforeFastDDSPublish.
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
-    FastDDSProviderOptions pub_opts;
-    pub_opts.domain_id = kTestDomain;
-    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(pub_opts));
-    FastDDSProviderOptions sub_opts;
-    sub_opts.domain_id = kTestDomain;
-    auto sub_provider = std::make_shared<FastDDSPubSubProvider>(std::move(sub_opts));
+    auto pub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    auto sub_provider =
+        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
     std::mutex mu;
     std::condition_variable cv;
@@ -303,17 +312,19 @@ TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
         cv.notify_all();
     });
 
-    // The Arrow schema future is deferred and resolves from the publisher's
+    // The Arrow schema arrives from the publisher's
     // /__schema; with no publisher yet it must not be ready.
-    EXPECT_NE(result.schema.wait_for(0s), std::future_status::ready);
+    SharedSchema not_yet;
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &not_yet), PubSubStatus::kPending);
 
     // Bring the publisher up now. RELIABLE + TRANSIENT_LOCAL + KEEP_ALL retains
     // the schema + row for the already-subscribed, late-matching DataReader.
     pub.CreateTopic(topic, schema);
     pub.Publish(topic, SensorRow(42, 23.5, "alpha"));
 
-    // The deferred future resolves once /__schema arrives — guaranteed non-null.
-    std::shared_ptr<arrow::Schema> sub_schema = result.schema.get();
+    // The arrival answers once /__schema arrives — guaranteed non-null.
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
     ASSERT_NE(sub_schema, nullptr);
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 

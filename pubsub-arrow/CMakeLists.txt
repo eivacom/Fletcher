@@ -10,7 +10,8 @@ find_package(Arrow CONFIG REQUIRED)
 
 add_library(fletcher-pubsub-arrow STATIC
     src/publisher_arrow.cpp
-    src/subscriber_arrow.cpp)
+    src/subscriber_arrow.cpp
+    src/schema_import.cpp)
 
 # C++ standard comes from the Conan profile (compiler.cppstd). This only
 # states the public minimum the headers require, propagated to consumers.

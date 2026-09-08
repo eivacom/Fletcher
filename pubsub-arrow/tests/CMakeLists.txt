@@ -11,7 +11,27 @@ target_link_libraries(pubsub_arrow_tests PRIVATE
     fletcher-pubsub-arrow)
 
 include(GoogleTest)
-gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# `pubsub-arrow/CMakeLists.txt` calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded test here runs until the CI job itself is cancelled. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
+# 2 h 04 m inside one hung test before the job was cancelled with no result at all.
+#
+# 30 s, chosen from this suite's own measured wall clock: the two slowest gtest rows are
+# `SubscriberArrowBatchTest.FlushesAtTimeout` and
+# `SubscriberArrowBatchTest.OnlyDroppedRowsStillDeliversEmptyBatch` at 0.15 s each, with the
+# other 13 at 0.04 s (msvc-194 x86_64 Release). Both slow rows are WAITS, not work - they set
+# `opt.timeout = 100 ms` and then wait for the batch flush timer to fire, which is wall clock and
+# therefore does not stretch on a slower or more contended runner. 30 s is ~200x the slowest row
+# for a suite whose real ceiling is fixed by a 100 ms timer, and it turns a future hang into a
+# 30-second red instead of a cancelled job. The NodiscardTest entry below is a compile
+# invocation, not a gtest row, and gets its own longer cap for that reason.
+gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 30)
 
 # ---------------------------------------------------------------------------
 # HARD-6 forcing test: compile-fails-on-discard of a [[nodiscard]] return.
@@ -66,5 +86,28 @@ add_test(
             --target discard_probe_tu
             --config $<CONFIG>)
 
+# FAIL_REGULAR_EXPRESSION is the fix for how this gate rotted once already: the TU
+# is EXPECTED not to build, so a line that stops being a discard and becomes a hard
+# compile error is invisible — the entry keeps passing on the diagnostics the OTHER
+# lines emit. That is exactly what happened when PDA-DEC-3 changed
+# DeserializeEnvelope's overload set: two probe lines became C3861/C2664 and the
+# probe silently stopped guarding that function.
+#
+# MSVC hard errors are C2xxx/C3xxx; the promoted nodiscard warning is C4834, so the
+# two are distinguishable by code and this cannot self-match. FAIL wins over PASS in
+# ctest, so any hard error now turns the entry red instead of hiding behind a
+# neighbouring diagnostic. Inert on gcc/clang, which report `error: ignoring return
+# value` for the same promotion — those platforms keep the PASS-only behaviour the
+# comment at the top of this file already qualifies.
+#
+# TIMEOUT is 300 s rather than the 30 s the gtest rows get, and it is stated for the same reason
+# they state theirs - `enable_testing()` leaves this entry with no cap at all. This one shells out
+# to `cmake --build`, so its cost is a compiler invocation (2.73 s measured, once the libraries it
+# links are already built) and not a fixed wait: that IS the kind of cost a slower runner
+# stretches, and a cold MSBuild/ninja startup plus an Arrow-heavy TU is the worst case. 300 s is
+# ~110x the measured figure and matches the identical probe in
+# `xrcedds-pubsub-provider/tests/CMakeLists.txt`.
 set_tests_properties(NodiscardTest.CompileFailsOnDiscard PROPERTIES
-    PASS_REGULAR_EXPRESSION "C4834|ignoring return value")
+    PASS_REGULAR_EXPRESSION "C4834|ignoring return value"
+    FAIL_REGULAR_EXPRESSION "error C2[0-9][0-9][0-9]|error C3[0-9][0-9][0-9]"
+    TIMEOUT 300)

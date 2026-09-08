@@ -66,14 +66,46 @@ if(EXISTS "${AGENT_BINARY}" AND _agent_runtime_libs)
     message(STATUS "MicroXRCEAgent found at ${AGENT_BINARY} — skipping ExternalProject build.")
     add_custom_target(microxrcedds_agent_proj)
 else()
+    # The Agent uses *this* project's Fast DDS and Fast CDR — the ones Conan resolved and the ones
+    # the test binary itself links — rather than building its own.
+    #
+    # Left to itself the Agent's superbuild clones Fast DDS from the moving `3.x` branch
+    # (Micro-XRCE-DDS-Agent's CMakeLists: `set(_fastdds_tag 3.x)`), so an Agent built today gets
+    # whatever Fast DDS released most recently while this repo pins fast-dds/3.4.0. Nobody chooses
+    # that version and nothing pins it, which is how the Agent here ended up on 3.6 — and its
+    # from-source build on MSVC 19.4 then failed inside create_participant with
+    # "foonathan::memory ... received invalid size/alignment 64, max supported is 56", a node-size
+    # table Fast DDS fixes at build time for the toolchains it knows. Conan's 3.4.0 has no such
+    # problem; every other suite in this repo creates participants against it constantly.
+    #
+    # UAGENT_USE_SYSTEM_FASTDDS/FASTCDR switch the superbuild from cloning those two to
+    # find_package(fastdds 3) / find_package(fastcdr 2); CMAKE_PREFIX_PATH is what lets them
+    # resolve, and it is this project's own — so the Agent links the very packages the test binary
+    # links. Conan builds fast-dds static here, so there is not even a DLL to resolve at run time.
+    #
+    # Passing CMAKE_PREFIX_PATH rather than CMAKE_TOOLCHAIN_FILE is deliberate. The Agent's
+    # SuperBuild.cmake forwards only CMAKE_TOOLCHAIN_FILE to its own nested ExternalProjects and
+    # nothing else, so handing it the Conan toolchain makes spdlog's configure fail on
+    # "CMake policy CMP0091 must be NEW" — the policy Conan normally sets on the command line beside
+    # the toolchain, which never reaches that far. The prefix path needs no such companion. Its
+    # final stage shares this binary dir (and therefore this cache) with the superbuild pass, so the
+    # options set here are the ones its find_package sees.
+    #
+    # LIST_SEPARATOR because CMAKE_PREFIX_PATH is a CMake list and would otherwise be cut at its
+    # first semicolon.
+    string(REPLACE ";" "|" _agent_prefix_path "${CMAKE_PREFIX_PATH}")
     ExternalProject_Add(microxrcedds_agent_proj
         PREFIX         ${AGENT_PREFIX}
         GIT_REPOSITORY https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
         GIT_TAG        v3.0.1
+        LIST_SEPARATOR |
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${AGENT_INSTALL_DIR}
             -DCMAKE_BUILD_TYPE=$<CONFIG>
+            -DCMAKE_PREFIX_PATH=${_agent_prefix_path}
             -DUAGENT_SUPERBUILD=ON
+            -DUAGENT_USE_SYSTEM_FASTDDS=ON
+            -DUAGENT_USE_SYSTEM_FASTCDR=ON
             -DUAGENT_BUILD_TESTS=OFF
             -DUAGENT_BUILD_EXAMPLES=OFF
         BUILD_BYPRODUCTS ${AGENT_BINARY}
@@ -98,8 +130,49 @@ target_link_libraries(integration_tests PRIVATE
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
     fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
+if(WIN32)
+    # PDA-DEC-1H: the Agent fixture proves that OUR child holds the UDP port the three interop
+    # cases run across, and on Windows that answer comes from GetExtendedUdpTable. A system
+    # library, not a new dependency: no package, no option, nothing to fetch. The POSIX side
+    # reads /proc and links nothing. The same two lines exist in
+    # integration-tests/pubsub-conformance/CMakeLists.txt.
+    target_link_libraries(integration_tests PRIVATE iphlpapi)
+endif()
+
 # A single ctest entry that runs all gtest cases inside one process.
 # This is intentional: the MicroXRCEAgent fixture binds UDP port 2018,
 # so two ctest-spawned processes would race for the port. Sharing one
 # process means one Agent setup/teardown for the whole suite.
+# 4 gtest cases in this one entry: the three interop directions plus
+# PDA-DEC-1H's `AForeignAgentDoesNotSatisfyTheHarness`, which stands up two
+# more Agents of its own on port 2118 inside its own scope.
 add_test(NAME integration_tests COMMAND integration_tests)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# This directory calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded entry here runs until the CI job itself is cancelled. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
+# 2 h 04 m inside one hung test before the job was cancelled with no result at all. That risk is
+# concentrated here more than anywhere else in the tree, because the single entry above is the
+# WHOLE binary: a hang in any one of its five gtest cases hangs the only row ctest can see.
+#
+# 300 s, chosen from this entry's own measured wall clock AND from the budgets the tests impose on
+# themselves. Measured: 7.04 s for the entry (msvc-194 x86_64 Release), of which ~3.7 s is inside
+# gtest - AForeignAgentDoesNotSatisfyTheHarness 1.03 s, AFailedOwnershipQuery... 1.02 s, and the
+# three interop directions 0.45-0.70 s - and the remaining ~3.3 s is the fixture forking
+# MicroXRCEAgent and waiting for it to answer an XRCE probe. That is a MIXTURE, not a pure wait:
+# the Agent spawn, the DDS discovery handshake and the row round-trips are work a slower runner
+# stretches, while the ownership probes' 1 s poll budgets are wall clock and do not stretch.
+# So the cap is set from the ceiling the suite already enforces on itself rather than from the
+# 7 s happy path: each interop case bounds itself at 15 s (AwaitArrowSchema) + 10 s (row
+# delivery), the reachability probe at 15 s, and the foreign-Agent case stands up two more Agents
+# with the same 15 s budget each - about 120 s in total if every single deadline were spent. A
+# PASSING run therefore cannot exceed ~120 s no matter how slow the runner, so 300 s (43x the
+# measured figure, 2.5x the self-imposed ceiling) cannot false-red, and it turns a hang below
+# those deadlines - a `connect()` that never returns, an Agent that never dies - into a
+# five-minute red instead of a cancelled job.
+set_tests_properties(integration_tests PROPERTIES
+    TIMEOUT 300)

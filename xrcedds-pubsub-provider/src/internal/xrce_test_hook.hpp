@@ -21,12 +21,19 @@
 
 namespace fletcher::xrce::test {
 
-// Observable POD result of the re-entrant-Unsubscribe scenario. `delivery_count`
-// is the number of buffered envelopes the schema-flush path delivered before
-// returning. Pre-fix the scenario throws std::bad_function_call (so the count is
-// < 2 and never returned); post-fix it returns with delivery_count == 2.
+// Observable POD result of the re-entrant-Unsubscribe scenario.
+//
+// `delivery_count` is the number of buffered envelopes the schema-flush path
+// delivered; it must be 2, from local copies, even though the first callback
+// reset the live TopicState underneath the flush.
+//
+// `refusal_status` is the PubSubStatus the callback's own cancellation attempt
+// was refused with, as a number: `kReentrantCall` (10) after PDA-DEC-AG1, and 0
+// if nothing was thrown at all — which is what this provider used to do, since
+// its recursive mutex let a re-entrant cancel straight through.
 struct ReentrantUnsubscribeResult {
     int delivery_count = 0;
+    int32_t refusal_status = 0;
 };
 
 // Builds a topic state with two buffered pending envelopes and a callback that

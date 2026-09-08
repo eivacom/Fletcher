@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-xrcedds-pubsub-provider"
-    version = "0.5.0-alpha"
+    version = "0.5.1-alpha"
     description = "Fletcher XRCE-DDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -20,6 +20,10 @@ class FletcherPubsubConan(ConanFile):
 
     exports_sources = (
         "CMakeLists.txt",
+        # README.md is exported for the TESTS, not for documentation:
+        # XrceConfig.PublishedDefaultsAreExact reads the published default document out of it,
+        # so the cache build must have the file the repository holds.
+        "README.md",
         "src/*",
         "include/*",
         "cmake/*",
@@ -28,8 +32,8 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("fletcher-pubsub/0.4.0-alpha", transitive_headers=True)
-        self.requires("fletcher-core/0.4.0-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.5.0-alpha", transitive_headers=True)
+        self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
@@ -91,6 +95,13 @@ class FletcherPubsubConan(ConanFile):
             "microcdr",
         ]
         self.cpp_info.includedirs = ["include"]
+        # microxrcedds_client's UDP/TCP transports call straight into Winsock, so
+        # a consumer linking THIS package alone (as the pub/sub conformance
+        # harness deliberately does — one provider per binary) has to be given
+        # ws2_32. It used to resolve by accident: every consumer also linked the
+        # Fast DDS provider, whose Conan package declares ws2_32 itself.
+        if self.settings.os == "Windows":
+            self.cpp_info.system_libs = ["ws2_32", "iphlpapi"]
         self.cpp_info.set_property("cmake_file_name", "fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_target_name", "fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider")
         self.cpp_info.set_property("cmake_build_modules", [

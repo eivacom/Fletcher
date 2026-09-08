@@ -16,12 +16,11 @@ namespace {
 
 // Encode a 2-field row of two int32s and return the raw bytes.
 std::vector<uint8_t> EncodeTwoInts(int32_t a, int32_t b) {
-    std::vector<uint8_t> buf;
-    VectorWriteBuffer wb(buf);
+    VectorWriteBuffer wb;
     PositionalWriter w(wb, 2);
     w.WriteInt32(a);
     w.WriteInt32(b);
-    return buf;
+    return wb.Finish();
 }
 
 }  // namespace
@@ -107,12 +106,10 @@ TEST(AppendTrailingUint64FieldTest, PureAppendWhenBitfieldDoesNotGrow) {
 }
 
 TEST(AppendTrailingUint64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
-    std::vector<uint8_t> row;
-    {
-        VectorWriteBuffer wb(row);
-        PositionalWriter w(wb, 8);  // 8 fields -> 1-byte bitfield
-        for (int32_t i = 0; i < 8; ++i) w.WriteInt32(i * 10);
-    }
+    VectorWriteBuffer wb;
+    PositionalWriter w(wb, 8);  // 8 fields -> 1-byte bitfield
+    for (int32_t i = 0; i < 8; ++i) w.WriteInt32(i * 10);
+    const std::vector<uint8_t> row = wb.Finish();
     ASSERT_EQ(row.size(), 1u + 8u * sizeof(int32_t));
 
     const uint64_t offset = 42;
@@ -134,14 +131,12 @@ TEST(AppendTrailingUint64FieldTest, GrowsBitfieldWhenBaseIsMultipleOfEight) {
 }
 
 TEST(AppendTrailingUint64FieldTest, PreservesExistingNullBits) {
-    std::vector<uint8_t> row;
-    {
-        VectorWriteBuffer wb(row);
-        PositionalWriter w(wb, 3);
-        w.WriteInt32(11);  // field 0 (non-null)
-        w.SetNull(1);      // field 1 null (no payload)
-        w.WriteInt32(33);  // field 2 (non-null)
-    }
+    VectorWriteBuffer wb;
+    PositionalWriter w(wb, 3);
+    w.WriteInt32(11);  // field 0 (non-null)
+    w.SetNull(1);      // field 1 null (no payload)
+    w.WriteInt32(33);  // field 2 (non-null)
+    const std::vector<uint8_t> row = wb.Finish();
 
     const uint64_t offset = 0xFEDCBA9876543210ULL;  // high bit set, exercises all 8 bytes
     auto out = AppendTrailingUint64Field(row, /*base_num_fields=*/3, offset);
@@ -194,12 +189,10 @@ TEST(ReadTrailingUint64FieldTest, RoundTripsWithoutBitfieldGrowth) {
 }
 
 TEST(ReadTrailingUint64FieldTest, RoundTripsAcrossBitfieldGrowth) {
-    std::vector<uint8_t> row;
-    {
-        VectorWriteBuffer wb(row);
-        PositionalWriter w(wb, 8);  // append grows the bitfield (8 -> 9 fields)
-        for (int32_t i = 0; i < 8; ++i) w.WriteInt32(i * 10);
-    }
+    VectorWriteBuffer wb;
+    PositionalWriter w(wb, 8);  // append grows the bitfield (8 -> 9 fields)
+    for (int32_t i = 0; i < 8; ++i) w.WriteInt32(i * 10);
+    const std::vector<uint8_t> row = wb.Finish();
     const uint64_t offset = 0xFFFFFFFFFFFFFFFFULL;  // max uint64 round-trips intact
     auto out = AppendTrailingUint64Field(row, 8, offset);
     EXPECT_EQ(ReadTrailingUint64Field(out), offset);
@@ -208,4 +201,70 @@ TEST(ReadTrailingUint64FieldTest, RoundTripsAcrossBitfieldGrowth) {
 TEST(ReadTrailingUint64FieldTest, RejectsRowShorterThanUint64) {
     std::vector<uint8_t> tiny = {0x00, 0x01, 0x02};  // < 8 bytes
     EXPECT_THROW(ReadTrailingUint64Field(tiny), std::invalid_argument);
+}
+
+TEST(WriteBufferTest, AppendZerosWritesZerosAndRespectsCapacity) {
+    VectorWriteBuffer vb(std::vector<uint8_t>{0xFF});
+    vb.AppendZeros(3);
+    EXPECT_EQ(vb.Finish(), (std::vector<uint8_t>{0xFF, 0, 0, 0}));
+
+    uint8_t fixed[4] = {1, 2, 3, 4};
+    FixedWriteBuffer fb(fixed, sizeof(fixed));
+    fb.AppendByte(9);
+    fb.AppendZeros(3);
+    EXPECT_EQ(fb.Position(), 4u);
+    EXPECT_EQ(fixed[0], 9);
+    EXPECT_EQ(fixed[1], 0);
+    EXPECT_EQ(fixed[3], 0);
+    EXPECT_THROW(fb.AppendZeros(1), std::overflow_error);
+}
+
+TEST(WriteBufferTest, VectorFinishTrimsToPositionAndPatchesStayBehindIt) {
+    VectorWriteBuffer vb(std::vector<uint8_t>{0xAA, 0xBB});
+    EXPECT_EQ(vb.Position(), 2u);
+    size_t len_pos = vb.WriteLengthPlaceholder();
+    for (int i = 0; i < 300; ++i) vb.AppendByte(static_cast<uint8_t>(i));
+    EXPECT_EQ(vb.Position(), 306u);
+    vb.PatchU32(len_pos, 300);
+    EXPECT_THROW(vb.PatchU32(vb.Position() - 3, 0), std::out_of_range);
+    EXPECT_THROW(vb.PatchByte(vb.Position(), 1), std::out_of_range);
+
+    const std::vector<uint8_t> vec = vb.Finish();
+    EXPECT_EQ(vec.size(), 306u);
+    EXPECT_EQ(vec[1], 0xBB);
+    EXPECT_EQ(vec[2], 300 - 256);
+    EXPECT_EQ(vec[3], 1);
+    EXPECT_EQ(vec[6 + 299], static_cast<uint8_t>(299));
+    EXPECT_EQ(vb.Position(), 0u);
+    EXPECT_TRUE(vb.Finish().empty());
+
+    uint8_t fixed[8];
+    FixedWriteBuffer fb(fixed, sizeof(fixed));
+    fb.AppendFixed<uint32_t>(0);
+    EXPECT_THROW(fb.PatchByte(4, 1), std::out_of_range);
+    EXPECT_THROW(fb.Append(fixed, 5), std::overflow_error);
+    fb.Append(fixed, 4);
+    EXPECT_THROW(fb.AppendByte(0), std::overflow_error);
+}
+
+// A large append bypasses the window and lands with one copy; the window refills after it.
+TEST(WriteBufferTest, VectorLargeAppendThenSmallOnesRoundTrip) {
+    const std::vector<uint8_t> big(4096, 0x5A);
+    VectorWriteBuffer vb;
+    vb.AppendByte(1);
+    vb.Append(big.data(), big.size());
+    vb.AppendZeros(3);
+    vb.AppendByte(2);
+    vb.Append(big.data(), 700);
+    EXPECT_EQ(vb.Position(), 1u + 4096u + 3u + 1u + 700u);
+
+    const std::vector<uint8_t> out = vb.Finish();
+    ASSERT_EQ(out.size(), 4801u);
+    EXPECT_EQ(out[0], 1);
+    EXPECT_TRUE(
+        std::all_of(out.begin() + 1, out.begin() + 1 + 4096, [](uint8_t b) { return b == 0x5A; }));
+    EXPECT_EQ(out[4097], 0);
+    EXPECT_EQ(out[4099], 0);
+    EXPECT_EQ(out[4100], 2);
+    EXPECT_TRUE(std::all_of(out.begin() + 4101, out.end(), [](uint8_t b) { return b == 0x5A; }));
 }

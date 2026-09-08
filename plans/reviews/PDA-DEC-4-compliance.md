@@ -1,0 +1,546 @@
+# PDA-DEC-4 — compliance review (step 4a, independent)
+
+Diff: `94ae4bc..aea67f0`, 9 files, **+1069 / −20**. Branch `feature/protocol-driver-abi`.
+Oracles: design `plans/PDA-DEC-4-provider-registry.md`, brief, design review + `design-debt.md`
+(10 items), spec §1/§4/§4.1/§4.2/§9, locked decisions 2/3/4/8/14, the 28-entry rulings ledger.
+
+**Verdict: ISSUES — 2 blocking (both small), 1 minor. The defining claim HOLDS.**
+
+Everything below the `Findings` heading is a finding. What is not listed was checked and
+conforms. All measurements were made from `git show aea67f0:<path>` blobs, not the working
+tree — see RECORD-6.
+
+---
+
+## The signature claim — attacked empirically, and it holds
+
+This is the item the round exists for, so it was attacked with a build rather than a
+reading. I compiled the committed `provider_registry.cpp` + `registry.cpp` against the
+packaged `fletcher-pubsub` and pushed 28 selector strings through `Parse` + `Create`:
+
+| Class | Inputs | Result |
+|---|---|---|
+| name | `fastdds` `FastDDS` `in-process` `xrce_dds` `a` `myDriver` `libzenoh` | name; unknown ones → `kInvalidArgument` listing what is registered |
+| path | `fastdds.v2` `libzenoh.so` `zenoh.dll` `z.dylib` `./x.so` `../x.so` `/opt/fletcher/libzenoh.so` `/opt/fletcher` `C:driver.dll` UNC and backslash spellings `~/x.so` `fastdds ` `fastdds<CR><LF>` ` fastdds` `fast dds` UTF-8 `<01>` | path; no resolver → `kNotSupported` naming the offending offset and hex byte |
+| refused at `Parse` | the empty string, `fastdds<NUL>/../evil.so` | `kInvalidArgument`; the NUL message carries offset 7 and `Quoted` renders the byte as an escape |
+
+Total, disjoint, registry-independent — verified against a registry with `fastdds`
+registered and against one holding only a resolver. The single misclassification
+(`myDriver` / `libzenoh`: a bare relative filename with no dot and no separator reads as a
+name) **is ruling 27 as written** — "a plain word like `fastdds` is a name; anything else,
+like `/opt/x.so`, is a path" — it is loud, and the operator's repair is `./myDriver`, a
+config edit. No input misclassifies silently, and none is repaired by an overload, a flag or
+a disambiguator.
+
+Three further widening routes were checked and are closed:
+
+- **A mutable module cache inside the resolver against a `const Create`.**
+  `std::function::operator()` is const-qualified and type-erases the target's constness, so
+  a mutable closure holding a module cache compiles and runs against `Create() const`. No
+  `mutable` member, no non-const overload, no widening. (Verified by compiling one.)
+- **A loaded driver reached by *name*, and MCU static registration.** Both go through
+  `Register(name, Factory)`, which already exists; all four (built-in|loaded) × (name|path)
+  combinations are expressible through the frozen surface. (This is also the root of
+  finding F2.)
+- **Distinct error reporting for an unloadable path.** `TranslateSeamFailure` rethrows a
+  `PubSubError` unchanged, so a resolver picks its own status without touching the seam.
+  Verified: a factory throwing `PubSubError(kTransportFailure)` surfaces as
+  `kTransportFailure` through `Create`.
+
+`static_assert` pins the member-pointer type, not the return type (DEBT-3 discharged), and
+it lives in the header the suite includes, so the suite cannot build against a widened call.
+
+## Falsifiability — M2 and M6 re-derived, plus M4/M7/M8
+
+Built from the committed blobs in an isolated tree; baseline 12/12 green. Each mutation
+applied singly to production code.
+
+| Mutation | Result | Note |
+|---|---|---|
+| **M2** `Create` uses `factories_.begin()` | forcing test RED **at `registry.cpp:196` only** — `rows[1].tag` is `alpha`, expected `beta` | Confirms the design review's warning exactly: the *first* direction stays green under M2. Asserting `alpha`→alpha alone would have been vacuous. |
+| **M6a** path-without-resolver returns the first factory's provider | negative control RED; **`PathSelectorResolvesThroughTheSameCall` GREEN** (11 passed) | The control is genuinely independent, not a restatement. |
+| **M6b** path-without-resolver returns a default-constructed provider | negative control RED + `SelectorShapeDecides…` RED; positive path GREEN | Same conclusion by a second route. |
+| M4 `Parse` classifies everything as a name | 4 RED | as claimed |
+| M7 `Register` last-wins | `DuplicateRegistrationIsRefused` RED | as claimed |
+| M8 `Create` memoizes | 5 RED | as claimed |
+
+The cached Conan package header is byte-identical to the tree's, so the harness's 12/12
+(`ctest -R 'Registry\.'`, entries #38–#49) is not the design's named stale-cache false green.
+
+---
+
+# Findings
+
+## F1 (BLOCKING, ~10 lines) — the resolver seat's failure path is normative and unfalsified
+
+`provider_registry.hpp` (the `Create` doc block) and spec §5.1 promise:
+
+> - a factory **or resolver** that returns null → `kInternal`, named;
+> - anything a factory **or resolver** throws → translated by §5.1's rule.
+
+The code implements both for the resolver (`TranslateSeamFailure` around
+`path_resolver_(...)`, then the null check). **Nothing tests either half.**
+`AFactoryThatFailsIsReportedAsATypedSeamFailure` covers four factory shapes and no resolver
+shape. Two single mutations, each applied alone, leave **all 12 entries green**:
+
+- **E13a** — delete `TranslateSeamFailure` around the resolver call, so a
+  `std::runtime_error` out of a loader escapes the seam untranslated: **12/12 PASSED**.
+- **E13b** — delete the resolver's null check, so `Create` hands a caller `nullptr`:
+  **12/12 PASSED**.
+
+This is the branch PDA-ABI fills, and its failure mode is the one ruling 26 is about ("an
+unloadable driver path… fails distinctly"). The round has four prior instances of this
+defect class and the config's rule is that green tests do not compensate. The item bought
+six entries beyond the design's six and 67% of budget; the one entry that would guard the
+seat is not among them.
+
+**Remedy:** two `RefusalOf` lines inside the existing test — a resolver that throws
+`std::runtime_error` (expect `kInternal`, original message preserved) and one that returns
+`std::shared_ptr<PubSubProvider>{}` (expect `kInternal`).
+
+## F2 (BLOCKING, one word in two places) — DEBT-1's lifetime rule binds only half the route PDA-ABI takes
+
+The rule as landed (beside `SetPathResolver`, and spec §4 clause 2) obliges **a resolver**:
+
+> A **resolver** must keep everything the provider it returns depends on — including a
+> loaded module … — alive for **at least as long as that provider**, independently of this
+> registry's lifetime and of the resolver's own.
+
+Read as PDA-ABI must read it, unable to ask a question: the obligation does not reach a
+`Factory`. But the design review's §C — which the design's §3 and premise P2 rely on — says
+PDA-ABI reaches a loaded driver through `Register` as well, twice:
+
+> "PDA-ABI wraps the C entry point in a `Factory` lambda in its own component and calls
+> `Register(name, …)`." · "**A loaded driver reachable by *name*** … `Register("zenoh",
+> factory_that_dlopens)`."
+
+The registry owns `factories_` exactly as it owns `path_resolver_`. A `Factory` closure
+holding a module handle, plus the sanctioned "populate, then share" discard of the registry
+(tested by `ProvidersOutliveTheRegistryThatMadeThem`), is the identical use-after-unload
+DEBT-1 was raised to close — reached by the route the linkage ruling's static half and the
+"one config on MCU and desktop" idiom both use. As landed, PDA-ABI can satisfy the spec's
+letter and still unload a `.so` under a running provider.
+
+The rule is otherwise unambiguous: module ⊒ provider, independent of both the registry's and
+the resolver's lifetime, with the `shared_ptr`-deleter idiom named and the
+registry-owned-cache anti-pattern named. The code does not contradict it (the registry holds
+no reference to what it made).
+
+**Remedy:** "A **resolver or a factory** must keep …" in `provider_registry.hpp` and in
+spec §4 clause 2; the header sentence belongs beside `Register` too, or in the class comment.
+
+## F3 (minor) — DEBT-5's C form for the *selector* landed in the header, not in the oracle
+
+Locked decision 1: PDA-ABI and BIND-C#/BIND-Rust "meet **only** at
+`docs/pubsub-interface-spec.md`". §9: the bindings "implement … §4 selection". DEBT-5 asked
+for the selector's C form precisely because "§4 selection is binding-visible surface (§9), so
+a binding must not have to invent it."
+
+The landed §4.1 states the **document's** C form (pointer + length, borrowed, length
+authoritative). The **selector's** C form is stated only in `provider_registry.hpp`. The
+operative half — the embedded-NUL refusal — did reach spec §4 clause 1, so the hazard is
+covered; what is missing is the one sentence telling a parallel round the selector is
+bytes-plus-length rather than a NUL-terminated string. One sentence in §4 clause 1.
+
+## Non-blocking observations (book, do not fix here)
+
+- **Concurrency obligation on caller-supplied callables.** The header promises "`Create` is
+  `const` and safe to call concurrently" while `Create` invokes a caller's `Factory` /
+  `PathResolver`. Nothing obliges either to be reentrant, and PDA-ABI's natural module cache
+  lives inside exactly those closures. Same family as DEBT-1; it does not require widening
+  (a resolver can lock internally), so it is forward debt, not a fix.
+- **The §4 clause 2 freeze is written unqualified.** "The registry's **whole public surface**
+  is fixed here — `Create`, `Register`, `SetPathResolver`, and nothing else." DEBT-2 asked
+  only that *PDA-ABI* add no method; as written this also binds PDA-DEC-5/8 — e.g. a
+  `Names()` accessor for a gateway `--provider` help listing is now a stop-and-ask. Likely
+  intended and safe (the unknown-name refusal already lists what is registered), but the PM
+  should know the freeze is broader than the debt item asked for.
+
+---
+
+# What was checked and conforms
+
+- **Rulings 26 / 27 / 28.** 26: a path is a valid selection, refused `kNotSupported`,
+  distinct from an unknown name's `kInvalidArgument`, both asserted as *statuses*; the
+  stand-in resolver proves the identical call end-to-end. 27: shape decides, no prefix, one
+  setting, the rule never consults the registry (asserted in an empty registry). 28: the
+  typed core is exactly `{max_payload_bytes, domain_id}`; spec §4.1 and the header both say
+  "exactly", and widening is a stop-and-ask.
+- **Decision 8.** Nothing in `provider_registry.cpp` reads, inspects, validates or
+  schema-checks `document`; `config` is forwarded by `const&` and never touched. No parser,
+  no format, no new dependency in `pubsub/CMakeLists.txt` (one source line) or in
+  `conanfile.py`. `ConfigurationReachesTheProviderAndIsNeverRead` pushes non-UTF-8 bytes with
+  an embedded NUL through byte-for-byte.
+- **Decision 14 / no ABI.** No `extern "C"`, no C header, no vtable, no version negotiation,
+  no host-callback struct. `dlopen` / `dlfcn` / `LoadLibrary` appear nowhere in `pubsub/`
+  except in prose explaining their absence. `PathResolver` is a seat — a `std::function` over
+  C++ types that says nothing about what a loader looks like — nothing calls it, no build
+  depends on one, and the name branch never touches it.
+- **Decisions 3 and 4 above the seam.** `provider.hpp` changed by comment only; no
+  `PubSubProvider` method added, removed or reordered; `Publish` still inverted. No caller
+  branches on built-in vs loaded; `MakeProvider` is byte-for-byte the same call for both.
+  `gateway-fastdds-ts` untouched.
+- **The corner-case ladder.** Rung-1 items 2–6 and rung-2 items 7–11 all hold in code and are
+  each covered by a status assertion or a tagged-row assertion. No refusal became a recovery
+  path; no forbidden state is tolerated with a fallback. Rung-1 item 1 is correctly
+  downgraded per DEBT-6, and the replacement wording is *true* (the rule is public and pure,
+  RTTI is available, and what decision 3 guarantees — config edit, never caller edit — is
+  what is claimed instead).
+- **All 10 DEBT items discharged**: 1 (partially — F2), 2, 3, 4, 5 (partially — F3), 6, 7, 8,
+  9, 10a, 10b (10b overshot — RECORD-1).
+- **Scope, both directions.** `Files-to-delete: none`, and nothing was deleted from product
+  code. The converse — a construct the design ordered deleted that survived — has no
+  candidates, because the design ordered none. No shim, alias, re-export or coexistence
+  window is created; nothing here is scheduled for later deletion. Nothing pre-empts
+  PDA-DEC-5: `InProcessProvider` is not registered, `SchemaCarriage` is untouched, the
+  gateway is untouched. No `retired:` / `re-anchored:` citations were made and none was owed.
+- **Spec amendments are warranted and in charter.** §4 clause 1 records the landed rule and
+  the two statuses (design `Files-to-touch` + rulings 26/27); clause 2 freezes the whole
+  surface and carries the lifetime rule (DEBT-2, DEBT-1); §4.1 fixes the two fields and the
+  document's C form (ruling 28, DEBT-5). Nothing normative was removed or weakened — every
+  edit tightens the constraint on PDA-ABI rather than bending the oracle toward the code. The
+  only stretch beyond the `Files-to-touch` note is §4.1's `IsPayloadBound(0)` sentence, which
+  is the design's own residue 13 and benign.
+- **Public surface is exactly 5** — `ProviderSelector`, `ProviderConfig`, `ProviderRegistry`,
+  `ProviderRegistry::Factory`, `ProviderRegistry::PathResolver`. Nothing else leaked into a
+  public header; only `provider.hpp` and the new header changed under `include/`.
+- **The link line is the machine check it claims to be**: `conformance_registry` names
+  `fletcher-pubsub::fletcher-pubsub` + GTest, no transport SDK, no `conformance_support`, no
+  `RESOURCE_LOCK`.
+
+---
+
+# RECORD (fix in place; not a fix cycle)
+
+1. **`pubsub/include/fletcher/pubsub/provider.hpp` (the block replacing lines 68-70)
+   overclaims in the present tense.** "Provider-specific configuration (e.g. QoS) **is
+   supplied** when the provider is created, through `ProviderConfig`" — no provider in this
+   tree takes a `ProviderConfig`; Fast DDS still takes `FastDDSProviderOptions` and XRCE
+   `XrceConfig` until PDA-DEC-6/7, as the same paragraph's last sentence admits. DEBT-10(b)
+   asked for an update; the update states the end state as current. One-line fix (future
+   tense, or "at the registry seam").
+2. **Budget +1069/−20 against declared +640/−25 = +67%,** above the 50% threshold. Counted:
+   header 251 (182 comment / 48 code), impl 176 (25 / 138), suite 503 (91 / 345), spec +41,
+   README +47, harness CMake +27, design doc +15, `pubsub/CMakeLists.txt` +2, `provider.hpp`
+   +7. The account ("the header's normative documentation plus a 12-entry suite where the
+   design named 6") names the two largest contributors correctly — the six extra entries are
+   ~170 lines and the header's comments are 182 — but omits a third: ~115 lines of
+   DEBT-driven documentation ripple (spec, README, CMake comments) the design budgeted at a
+   fraction. **Remedy: nothing.** Executable product code is 186 lines; four of the six extra
+   entries discharge DEBT-4, DEBT-5 and the design's own rung-2 items, so consolidation would
+   cost a guard. Record it as the round's third under-costing.
+3. `Files-to-touch` lists `.claude/runbook.PDA-DEC.config.md`; that file is untracked and
+   already carried `-R 'Registry\.'` before `94ae4bc`. The item touched 9 files, not 10.
+4. `plans/PDA-DEC-4-provider-registry.md` was edited inside the implementation commit
+   (forbidden case 5, P2, Risks, `Files-to-touch`). The edits match DEBT-6/7/10a exactly, so
+   this is the sanctioned fold-in rather than a design bent to fit code — noted because a
+   design doc moving inside a `feat(` commit normally is not.
+5. Design §5 says "`document` is **copied** and handed to the factory"; the implementation
+   forwards `const ProviderConfig&` without copying, which is what the header and §4.2's C
+   form actually specify. The design prose is the loose one, not the code.
+6. **The working tree was not stable during this review.** An untracked
+   `plans/reviews/PDA-DEC-4-codereview.md` appeared mid-session and
+   `pubsub/src/provider_registry.cpp` briefly contained a `// MUTATION M2` edit — a
+   concurrent step-4b agent mutating in place. All findings above were derived from
+   `git show aea67f0:` blobs in an isolated build tree. Process note: if a mutating reviewer
+   exits uncleanly it leaves the tree mutated.
+
+---
+
+# Re-check — fix cycle 1, `7f2dc5b..9bf99c4` (2026-09-02)
+
+Focused re-check of my own two blocking findings plus the mechanism the fix introduced.
+Done in an isolated worktree (`git worktree add C:/tmp/pda4-recheck 9bf99c4`), built
+standalone from that tree's blobs against the packaged `fletcher-pubsub`; the main checkout
+was never touched. Baseline **14/14 green**.
+
+**Verdict: F1 CLOSED · F2 CLOSED · F3 CLOSED. S3's mechanism is correct — and I agree the
+code review's snippet was wrong. One new blocking finding (S3-1) and one spec-honesty
+finding (S3-2), one edit each.**
+
+## Mutants run this cycle (each applied singly, whole suite)
+
+| Mutant | Result |
+|---|---|
+| delete `TranslateSeamFailure` around `(*resolver)(...)` | `AResolverThatFails…` **RED** at `registry.cpp:138/556` — "threw something that is not a PubSubError: the driver would not load" |
+| delete the resolver null check | `AResolverThatFails…` **RED** |
+| drop the resolver keepalive | `AModuleHeldOnlyByTheSeam…` **RED** at `registry.cpp:623` |
+| drop the factory keepalive | `AModuleHeldOnlyByTheSeam…` **RED** at `registry.cpp:651` |
+| **swap `Anchor`'s two members** | **14/14 GREEN — not caught.** See S3-1. |
+
+Line numbers match the implementer's report exactly.
+
+## F1 — CLOSED
+
+`AResolverThatFailsIsReportedAsATypedSeamFailure` asserts three shapes on three registries
+(a second `SetPathResolver` being refused forces that): untyped throw → `kInternal` **with
+the loader's own message preserved**; `PubSubError` → passes through as `kTransportFailure`;
+null → `kInternal`. Both mutants I derived independently redden it, and both were 12/12 green
+before. The typed-throw case additionally discharges ruling 26's "fails distinctly" for a
+*real* resolver, not just for the empty seat — more than F1 asked for.
+
+## F2 — CLOSED
+
+`provider_registry.hpp` (class comment) and spec §4 clause 2 both now read "a **resolver or a
+factory**", both name `Register("zenoh", factory_that_dlopens)` and the linkage ruling's
+static half as the second route, and `Register`'s and `SetPathResolver`'s own doc blocks each
+point back at the class comment. Read cold by PDA-ABI it is unambiguous about who must
+outlive whom — the captured module ⊒ the provider, independent of the registry's lifetime and
+of the callable's own — and it now matches what the code enforces rather than exceeding it.
+
+## F3 — CLOSED
+
+Spec §4 clause 1 now carries the selector's C form — pointer + length, borrowed, length
+authoritative, "not a NUL-terminated string" — with the embedded-NUL refusal explained as its
+consequence. That is the oracle where decision 1 says PDA-ABI and BIND actually meet.
+
+## S3 — the mechanism: correct, but its load-bearing invariant is unguarded
+
+**The mechanism is sound.** `KeepSeatAlive` builds one control block owning
+`Anchor{seat, provider}` and returns an aliasing `shared_ptr<PubSubProvider>` pointing at the
+provider. Destruction is reverse declaration order, so `provider` (declared last) is released
+first and the seat after — the provider's destructor still runs with its module loaded. I
+verified this directly with a probe whose *destructor* reads the module-unloaded flag:
+baseline prints `provider destructor ran with module already unloaded = false (correct)`.
+`Create`'s signature, the `static_assert` and the public surface are untouched; one
+allocation per `Create`, on the startup path.
+
+### S3-1 (BLOCKING, ~5 lines) — swapping `Anchor`'s two members reintroduces the defect, silently
+
+Same probe, member order swapped:
+
+```
+provider destructor ran with module already unloaded = TRUE  <-- USE-AFTER-UNLOAD
+```
+
+and the whole suite is **14/14 GREEN**. The guarantee is correctly stated immediately above
+the struct ("the member order is the load-bearing part … `provider` (declared last) is
+released FIRST"), so a future edit *would* see it — but nothing enforces it.
+`AModuleHeldOnlyByTheSeam…` cannot catch it: it observes the flag before and after
+`provider.reset()`, and under the swap both observations are still `false` then `true`. The
+window that opens is exactly the one the mechanism exists to close — the provider's own
+destructor calling back into module code to close endpoints.
+
+This is F1's defect class one level down: the fix replaced a paragraph with a mechanism
+precisely so it would not depend on an author remembering something, and the mechanism now
+depends on a maintainer remembering something, unfalsified. The round's most common defect
+stands at five instances.
+
+**Remedy:** give the lifetime test's probe a destructor that records whether the module was
+already unloaded, and assert it was not — about five lines inside the existing entry, no new
+entry. (A `static_assert` on `offsetof` is not reliable here: `Anchor` holds `shared_ptr`s and
+is not guaranteed standard-layout.)
+
+### S3-2 (blocking, one sentence) — the residue list is asserted exhaustive and is not
+
+Spec §4 clause 2 and the header both say: "**Two** residues remain the author's, **because no
+seam can reach them**: a handle the provider mints for itself (`shared_from_this`) and a raw
+pointer into module memory handed to something that outlives the provider."
+
+Both are honestly drawn and genuinely unreachable — and no in-tree provider uses
+`enable_shared_from_this` (only `gateway/`'s `WsSession`/`Listener`, unrelated), so neither
+bites today. But the list is not exhaustive, and the missing one is the case PDA-ABI meets
+first: **the shared handles the seam itself carries out of a provider.** `Blob` holds a
+`std::shared_ptr<const void> owner_` expressly so a provider can hand over memory it did not
+allocate (`core/include/fletcher/core/types.hpp`, decision 6 / PDA-DEC-3), and `SharedSchema`
+is a `shared_ptr<const ArrowSchema>` the provider mints (`owned_schema.hpp:105`). A loaded
+driver's deleter for either — releasing a transport loan, calling `ArrowSchema::release` —
+**is module code**, and a caller may hold a `Blob` or a schema after the provider is gone. The
+anchor does not reach those handles, so that deleter runs into an unloaded module. It is not
+`shared_from_this` and it is not a raw pointer; it is a third residue, and it is precisely
+what PDA-ABI-7's zero-copy receive is made of.
+
+The mechanism could not have caught it — doing so would mean changing PDA-DEC-3's crossing
+types, out of this item's scope. The defect is the claim of **exhaustiveness**, in the one
+document PDA-ABI and BIND meet at, in a round already bitten twice by documents claiming more
+than the code delivers.
+
+**Remedy:** name the third residue in the same sentence — "and any handle the provider mints
+that the seam carries out (`Blob`, `SharedSchema`, a loan release), whose deleter is module
+code" — and say it is PDA-ABI's to own.
+
+### Observable behaviour for a built-in provider — no in-tree change
+
+`EachCreateReturnsAnIndependentInstance` (a `.get()` comparison) and
+`ProvidersOutliveTheRegistryThatMadeThem` are unaffected and green. Nothing in the tree calls
+`use_count()`, holds a `weak_ptr<PubSubProvider>`, or derives a provider from
+`enable_shared_from_this`, so nothing observes the substituted control block. See RECORD-9 for
+the one sentence that is a shade stronger than that.
+
+## The code review's snippet — I agree it was wrong
+
+`std::shared_ptr<PubSubProvider>(std::shared_ptr<void>(keepalive), provider.get())` is an
+aliasing handle over the control block that owns **`keepalive` only**. The local `provider`
+handle then dies at the end of `Create`, its use count reaches zero, and the provider object
+is deleted while the caller holds a pointer to it. Run, with a poisoned destructor:
+
+```
+provider destroyed while the caller still holds the handle = TRUE  <-- DANGLES
+seat destroyed = false (kept alive)
+handle->magic reads 0xdead
+```
+
+It keeps alive exactly the wrong one of the two. The `Anchor` form — one control block owning
+both, provider released first — is the correct shape, and the implementer was right to refuse
+the snippet. Landing it would have been strictly worse than the prose it replaced.
+
+## Still true after the fix cycle
+
+Public surface still exactly **5**; `ProviderRegistry` still exactly
+`Create` / `Register` / `SetPathResolver`; no `dlopen` / `dlfcn` / `LoadLibrary` /
+`GetProcAddress` anywhere in `pubsub/` except in prose explaining their absence; the registry
+still assumes no loader (the seat is empty, nothing calls it, no build depends on one);
+`document` is never named in the implementation, let alone read (decision 8); no
+`PubSubProvider` method added, removed or reordered and `provider.hpp` untouched by this
+cycle; `gateway-fastdds-ts` untouched. The forcing test is **unchanged** —
+`Registry.SelectsByNameWithoutCallerKnowingTheProvider` at `registry.cpp:170`, zero lines
+touched by this diff, green.
+
+## My two "book, do not fix" observations — view unchanged
+
+The concurrency obligation on caller-supplied callables is marginally *better* (`Create` now
+copies the seat handle before invoking it) and is still forward debt, not a fix. The §4
+clause 2 freeze being broader than DEBT-2 asked is unchanged and still a PM call — though
+clause 2 now carries considerably more normative weight than a freeze clause usually does.
+
+## RECORD — this cycle
+
+7. **The implementer's report calls `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` "the
+   forcing test". It is not.** The forcing test is
+   `Registry.SelectsByNameWithoutCallerKnowingTheProvider`, `registry.cpp:170`, unchanged in
+   meaning and untouched by this diff.
+8. **My earlier RECORD-1 is closed.** `provider.hpp` now reads "**will be** supplied … the
+   providers themselves are migrated onto it by PDA-DEC-6 (Fast DDS) and PDA-DEC-7 (XRCE), so
+   today they still take their own options structs." Accurate.
+9. `provider_registry.hpp`, on `Create`: "it is otherwise an ordinary
+   `shared_ptr<PubSubProvider>` and **nothing above the seam can tell**." `use_count()`,
+   `weak_ptr` expiry and `owner_before` on the returned handle observe the anchor rather than
+   the provider — a factory that keeps its own copy no longer shows in `use_count()`. Nothing
+   in this tree does any of those; "no caller has cause to tell" is the accurate form.
+10. **The harness README was not updated and now contradicts the tree.** It still says the
+    `Registry` suite has "**12 entries**" (`README.md:361`); it is 14. Neither
+    `AResolverThatFailsIsReportedAsATypedSeamFailure` nor
+    `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` appears in its entry table or in its
+    "Mutation evidence" paragraph — so the suite's newly *mechanical* lifetime guarantee, the
+    largest thing this cycle added, is absent from the document the design designates as
+    "what the `Registry` suite claims".
+
+---
+
+# Re-check — fix cycle 2, `24c7f85..6ba466d` (2026-09-02)
+
+**S3-1 CLOSED · S3-2 CLOSED. Nothing blocking. The implementer's mutation method is sound.**
+
+Isolated worktree (`git worktree add C:/tmp/pda4-rc2 6ba466d`, removed afterwards), standalone
+build from that tree's sources against the packaged `fletcher-pubsub`, worktree headers first —
+the cached `provider_registry.hpp` is two cycles stale. Baseline **14/14**.
+
+## S3-1 — CLOSED, re-derived independently
+
+Swapping `Anchor`'s two members now reddens `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade`
+at `registry.cpp:672` **and** `:706` — both routes — **13 passed / 1 failed, nothing else
+moving**. Exactly the reported line numbers and split, from a different worktree and a different
+build tree.
+
+`ModuleUserProvider` is the right instrument, and the comment says why in one sentence: sampling
+the flag from the test body cannot see the ordering, because around `provider.reset()` it reads
+`false` then `true` whichever member the anchor releases first. The only observer inside the
+window is the provider's own destructor — and `~ModuleUserProvider()` runs before
+`~ProbeProvider()` and before the base, which is exactly where a real driver closes endpoints
+through module code. No production change, no new entry, count still 14.
+
+Siblings re-run unchanged: dropping the resolver keepalive → RED at `:623`; dropping the factory
+keepalive → RED at `:651`.
+
+**Nit, also guarded:** neutralising `Quoted`'s backslash/quote branch reddens
+`PathSelectorWithoutResolverIsRefusedAsUnsupported`. The
+`EXPECT_FALSE(Mentions(quoted, windows_path))` half is the load-bearing one — it separates
+"escaped" from "reproduced raw", which an `EXPECT_TRUE` on the escaped spelling alone would not.
+
+## S3-2 — CLOSED
+
+Read cold, as PDA-ABI, unable to ask:
+
+- **The general rule now does the work, not the list.** "The anchor reaches the provider `Create`
+  returned and nothing else" is a decidable criterion; the three items are examples under it.
+  That is why "not exhaustive" reads as honest rather than as a hedge — an implementer who meets
+  a fourth case can classify it without asking anyone. An open list under a closed rule is the
+  right repair.
+- **Residue 3 is precise enough to act on.** It names the types (`Blob`'s
+  `std::shared_ptr<const void>` owner, `SharedSchema`, a PDA-DEC-3 loan release), the anchor's
+  missing edge and *why* it is missing (a product of the provider, not the provider; does not
+  pass through `Create`'s return), the hazard (the deleter is module code and a caller routinely
+  holds one after the provider is gone), and the owner (PDA-ABI, because covering it means
+  changing what crosses the seam). Nothing is left to guess.
+- Dropping "because no seam can reach them" is correct: the reason is scope, not impossibility,
+  and the old wording asserted the stronger one.
+
+### The sibling sweep
+
+I swept the header and spec §4 for claims of the same shape — a completeness assertion a
+mechanism cannot support. Two results.
+
+1. **My RECORD-9 from cycle 1 is fixed, and fixed well.** "nothing above the seam can tell" is
+   gone; the header now states that `use_count`, `weak_ptr` and `owner_before` **do** observe the
+   anchor, and that this is "a rule about what callers may rely on, not a thing the type system
+   hides". That is the honest form of precisely the claim S3-2 was about.
+2. **One sibling remains** (RECORD-11, non-blocking): "they throw `PubSubError` carrying a stable
+   `PubSubStatus`, and **nothing else escapes**". By inspection, `KeepSeatAlive`'s
+   `make_shared<Anchor>`, `Register`'s `make_shared<Factory>`, `SetPathResolver`'s
+   `make_shared<PathResolver>`, `Parse`'s string work and `Refuse`'s `ostringstream` all sit
+   *outside* `TranslateSeamFailure`, so `std::bad_alloc` escapes untyped from all three methods.
+   Not blocking: pre-existing (cycle 1 widened it by exactly one allocation), OOM is its only
+   falsifier, and decision 10 has each C boundary translate independently.
+
+Everything else absolute in that header is either bounded by its own next sentence (the "every
+spelling of a shared library on every target" universal is immediately followed by "`myDriver` is
+the one misclassification") or is a normative constraint on future rounds rather than a claim
+about a mechanism's reach (the §4 clause 2 surface freeze, already booked as an observation).
+
+## The implementer's mutation method — sound evidence
+
+It is materially my own method: a standalone target compiling a mutated *copy* of
+`provider_registry.cpp` ahead of the packaged static library, with gtest and the library
+read-only from the Conan cache. Two properties make it sound. MSVC links every object file given
+on the command line and pulls a library member only to resolve an *undefined* symbol, so the
+mutated TU is provably the one running — a duplicate would be `LNK2005`, which does not occur.
+And mutating a copy leaves the shared cache untouched, which is this design's own named
+false-green trap; it is strictly safer than mutating in place, which is how a live
+`// MUTATION M2` came to be sitting in the shared checkout during my first pass.
+
+Two caveats, neither a finding: the harness must take the **header** from the tree rather than
+the cache (the cached one is two cycles stale here — I verified mine came from the worktree), and
+it exercises no CMake or link wiring, so it is evidence about behaviour only. The close gate
+still needs one real `conan create pubsub` + harness `ctest -R 'Registry\.'`. My re-derivation
+reproduced their exact line numbers and pass/fail split from an independent tree; two harnesses
+agreeing is the strongest cross-check available here.
+
+## Still true
+
+Public surface still exactly **5**; `ProviderRegistry` still exactly
+`Create` / `Register` / `SetPathResolver`; no `#include <dlfcn.h>` / `<windows.h>` and no
+`dlopen(` / `LoadLibrary` / `GetProcAddress` call anywhere in `pubsub/` (one prose mention);
+`ProviderConfig`'s fields are never named in the implementation, let alone read (decision 8);
+`provider.hpp` untouched by this cycle, so no `PubSubProvider` change; `gateway-fastdds-ts`
+untouched. Forcing test `Registry.SelectsByNameWithoutCallerKnowingTheProvider` at
+`registry.cpp:170` — zero lines touched by this diff, unchanged in meaning, green.
+
+## RECORD — this cycle
+
+11. `provider_registry.hpp` class comment: "they throw `PubSubError` carrying a stable
+    `PubSubStatus`, and **nothing else escapes**". The seam's *own* allocations are outside
+    `TranslateSeamFailure`, so `std::bad_alloc` does escape untyped. The accurate form is what
+    the rest of that sentence already implies: "nothing a factory or resolver throws escapes
+    untyped."
+12. Same paragraph: "The idiom that covers **1 and 2**…". It covers 1 — a `shared_from_this`
+    handle shares the provider's own control block, so the module outlives it — and is a starting
+    point for 3, but it cannot cover 2: a raw pointer handed to something that outlives the
+    provider dangles under any ownership idiom. One word — "covers 1".
+13. My RECORD-10 is **half** discharged. The README's count is corrected to 14, but its entry
+    table still has rows for only 12: `AResolverThatFailsIsReportedAsATypedSeamFailure` and
+    `AModuleHeldOnlyByTheSeamOutlivesTheProvidersItMade` have none, and the "Mutation evidence"
+    paragraph is verbatim from cycle 0, so it names none of the five strongest mutations now
+    guarding the suite (resolver translate, resolver null, both keepalives, the anchor's member
+    order). The mechanical lifetime guarantee — the largest thing cycles 1 and 2 added — is
+    absent from the document the design designates as "what the `Registry` suite claims".
+14. My RECORD-9 from cycle 1 is **closed** (see the sibling sweep above).

@@ -7,7 +7,11 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "fletcher/core/types.hpp"
@@ -29,18 +33,24 @@ struct Envelope {
 //   [ROW_LEN       : 4 bytes]  uint32_t
 //   [ROW_DATA      : ROW_LEN bytes]
 //   [ATTACH_COUNT  : 4 bytes]  uint32_t
-//   For each attachment:
+//   For each attachment, IN ASCENDING UNSIGNED-BYTE ORDER OF THE KEY:
 //     [KEY_LEN     : 4 bytes]  uint32_t
-//     [KEY          : KEY_LEN bytes]  UTF-8
+//     [KEY          : KEY_LEN bytes]  UTF-8 by convention; never contains a zero byte
 //     [BLOB_LEN    : 4 bytes]  uint32_t
 //     [BLOB         : BLOB_LEN bytes]
+//
+// The attachment order is part of the format, not an artefact of how the sender
+// was built: `Attachments` publishes exactly one enumeration and it is sorted
+// (types.hpp). Decoders still match by key, never by position — the order is
+// what makes the same message produce the same bytes on every build.
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] inline std::vector<uint8_t> SerializeEnvelope(const Envelope& env) {
     // Pre-compute total size.
     size_t total = 4 + env.row.size() + 4;
-    for (const auto& [key, blob] : env.attachments)
-        total += 4 + key.size() + 4 + (blob ? blob->size() : 0);
+    for (size_t i = 0; i < env.attachments.size(); ++i) {
+        total += 4 + env.attachments.KeyAt(i).size() + 4 + env.attachments.ValueAt(i).size();
+    }
 
     std::vector<uint8_t> buf;
     buf.reserve(total);
@@ -60,18 +70,66 @@ struct Envelope {
 
     // Attachments.
     append_u32(static_cast<uint32_t>(env.attachments.size()));
-    for (const auto& [key, blob] : env.attachments) {
+    for (size_t i = 0; i < env.attachments.size(); ++i) {
+        const std::string_view key = env.attachments.KeyAt(i);
+        const Blob& blob = env.attachments.ValueAt(i);
         append_u32(static_cast<uint32_t>(key.size()));
         append_bytes(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-        const uint32_t blob_len = blob ? static_cast<uint32_t>(blob->size()) : 0;
+        const auto blob_len = static_cast<uint32_t>(blob.size());
         append_u32(blob_len);
-        if (blob_len > 0) append_bytes(blob->data(), blob_len);
+        if (blob_len > 0) append_bytes(blob.data(), blob_len);
     }
 
     return buf;
 }
 
-[[nodiscard]] inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
+namespace internal {
+
+// How many attachments the buffer claims, without parsing them. 0 for a buffer that carries none
+// or is too short to say.
+//
+// INTERNAL, and deliberately so: it exists only so a parse can decide whether it needs a shared
+// OWNER for these bytes before it pays for one. A caller never has to reason about that — the
+// two-argument DeserializeEnvelope below does it for them, and the three-argument form is for the
+// receive path that already holds its bytes in shared storage and must not pay a second copy.
+//
+// Shared with the Fast DDS envelope codec rather than written twice: it is the same 14-line parse
+// of the same wire header, and two copies of it are two chances to disagree about the layout.
+[[nodiscard]] inline uint32_t EnvelopeAttachmentCount(const uint8_t* data, size_t size) {
+    if (size < 4) return 0;
+    uint32_t row_len = 0;
+    std::memcpy(&row_len, data, 4);
+    if (row_len > size - 4) return 0;
+    const size_t pos = 4 + static_cast<size_t>(row_len);
+    if (size - pos < 4) return 0;
+    uint32_t count = 0;
+    std::memcpy(&count, data + pos, 4);
+    return count;
+}
+
+}  // namespace internal
+
+// Parse `[data, data+size)` into an Envelope whose attachment blobs ALIAS that
+// buffer — `owner` is what keeps it alive, and every Blob produced here takes
+// its own reference to it (spec §3.2). No attachment byte is copied.
+//
+// The caller must therefore hand over a shared owner for the bytes it is
+// parsing: a receive path whose payload lives in a local `std::vector` makes
+// that vector a `shared_ptr` first. `Envelope::row` is still a copy — the
+// residue §8/§11 assign to the zero-copy-receive stage.
+//
+// `owner` may be null ONLY for a buffer carrying no attachments. A buffer that claims a non-empty
+// attachment with no owner to hand it is refused — with PubSubError(kInvalidArgument), from Blob's
+// own constructor, rather than by producing a blob nothing keeps alive. **Prefer the two-argument
+// overload below**, which cannot be called wrongly; this form is for a caller that already holds
+// the bytes in shared storage and would otherwise pay a second copy for them.
+//
+// Two exception types cross this function, and they are different failures: a malformed or
+// truncated buffer is std::invalid_argument (a wire problem), a non-empty attachment with no owner
+// is PubSubError(kInvalidArgument) (a caller problem). An attachment key carrying a zero byte is a
+// WIRE problem and is reported as such — see the check below.
+[[nodiscard]] inline Envelope DeserializeEnvelope(std::shared_ptr<const void> owner,
+                                                  const uint8_t* data, size_t size) {
     if (size < 8) throw std::invalid_argument("DeserializeEnvelope: buffer too small");
 
     size_t pos = 0;
@@ -95,27 +153,70 @@ struct Envelope {
     // Attachments.
     const uint32_t attach_count = read_u32();
     Attachments attachments;
-    for (uint32_t i = 0; i < attach_count; ++i) {
-        const uint32_t key_len = read_u32();
-        if (pos + key_len > size)
-            throw std::invalid_argument("DeserializeEnvelope: key data truncated");
-        std::string key(reinterpret_cast<const char*>(data + pos), key_len);
-        pos += key_len;
+    {
+        // NOT Attachments::Set. `attach_count` is read off the wire and this
+        // function bounds it with nothing at all — the gateway calls it on a
+        // WebSocket frame Beast caps at 16 MiB — and Set's sorted-vector insert
+        // is O(k) per key for keys arriving in descending order, so a hostile
+        // producer could wedge this thread for minutes on one frame. The bulk
+        // builder appends in arrival order and sorts once: O(k log k) whatever
+        // order the wire chose, for the identical published sequence.
+        //
+        // It is also what refuses a wire-supplied key carrying a zero byte,
+        // WITHOUT throwing: Set throws PubSubError, which the contract note
+        // above reserves for a CALLER problem, and this is a wire problem, so
+        // the refusal is turned into this function's own wire-fault exception
+        // below. Set's throw is unreachable from this path by construction
+        // (owner ruling 2026-09-06).
+        internal::AttachmentsWireBuilder build(attachments);
+        for (uint32_t i = 0; i < attach_count; ++i) {
+            const uint32_t key_len = read_u32();
+            if (pos + key_len > size)
+                throw std::invalid_argument("DeserializeEnvelope: key data truncated");
+            std::string key(reinterpret_cast<const char*>(data + pos), key_len);
+            pos += key_len;
 
-        const uint32_t blob_len = read_u32();
-        if (pos + blob_len > size)
-            throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
-        auto blob = std::make_shared<const std::vector<uint8_t>>(data + pos, data + pos + blob_len);
-        pos += blob_len;
+            const uint32_t blob_len = read_u32();
+            if (pos + blob_len > size)
+                throw std::invalid_argument("DeserializeEnvelope: blob data truncated");
+            // Where the bytes lie, not a copy of them: the caller's `owner` keeps
+            // them alive for as long as this Blob (or any copy of it) exists. An
+            // empty attachment carries no pointer at all, per §3.2 clause 5.
+            Blob blob = blob_len > 0 ? Blob(owner, data + pos, blob_len) : Blob();
+            pos += blob_len;
 
-        attachments[std::move(key)] = std::move(blob);
+            if (!build.Append(std::move(key), std::move(blob)))
+                throw std::invalid_argument(
+                    "DeserializeEnvelope: attachment key contains a zero byte");
+        }
+        build.Finish();
     }
 
     return Envelope{std::move(row), std::move(attachments)};
 }
 
-[[nodiscard]] inline Envelope DeserializeEnvelope(const std::vector<uint8_t>& buf) {
-    return DeserializeEnvelope(buf.data(), buf.size());
+// Parse a buffer the caller does NOT hold in shared storage — a transport read buffer, a WebSocket
+// frame — and hand back attachments that stay valid after it returns.
+//
+// It takes ONE shared copy of the buffer, and **only when the envelope carries attachments**; an
+// attachment-free envelope is parsed in place and copies nothing beyond `Envelope::row`, which was
+// always an owning copy. That is byte-for-byte what every caller of the three-argument form used
+// to hand-roll, minus the chance of getting the owner rule wrong: there is no way to call this and
+// produce a blob nothing keeps alive.
+[[nodiscard]] inline Envelope DeserializeEnvelope(const uint8_t* data, size_t size) {
+    if (internal::EnvelopeAttachmentCount(data, size) == 0) {
+        return DeserializeEnvelope(nullptr, data, size);
+    }
+    auto owner = std::make_shared<const std::vector<uint8_t>>(data, data + size);
+    return DeserializeEnvelope(owner, owner->data(), size);
+}
+
+// Convenience form for a buffer Fletcher already holds in shared storage: the
+// vector is its own owner.
+[[nodiscard]] inline Envelope DeserializeEnvelope(
+    const std::shared_ptr<const std::vector<uint8_t>>& buf) {
+    if (!buf) throw std::invalid_argument("DeserializeEnvelope: null buffer");
+    return DeserializeEnvelope(buf, buf->data(), buf->size());
 }
 
 }  // namespace fletcher

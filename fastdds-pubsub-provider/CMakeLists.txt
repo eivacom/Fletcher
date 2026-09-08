@@ -16,13 +16,16 @@ add_library(fletcher-fastdds-pubsub-provider STATIC
 # states the public minimum the headers require, propagated to consumers.
 target_compile_features(fletcher-fastdds-pubsub-provider PUBLIC cxx_std_20)
 target_include_directories(fletcher-fastdds-pubsub-provider PUBLIC include)
-# fast-dds is PUBLIC because FastDDSProviderOptions exposes DataWriterQos
-# and DataReaderQos in the public header — consumers need the FastDDS
-# headers transitively to construct the options.
+# fast-dds is PRIVATE, and that is a machine check rather than hygiene: the public header names
+# no eProsima type, so no consumer needs the Fast DDS headers to configure this provider (owner
+# ruling 2026-08-31, "Fletcher never learns DDS vocabulary"). With `transitive_headers` also
+# dropped from conanfile.py, `test_package` compiles with NO Fast DDS include directories at all,
+# so any eProsima type that creeps back into the installed header is a compile error there. The
+# library is STATIC, so `transitive_libs` must stay — consumers still LINK the chain.
 target_link_libraries(fletcher-fastdds-pubsub-provider
     PUBLIC  fletcher-pubsub::fletcher-pubsub
-            fastdds
-    PRIVATE fletcher-core::fletcher-core)
+    PRIVATE fletcher-core::fletcher-core
+            fastdds)
 
 if(FLETCHER_BUILD_TESTS)
     include(CTest)

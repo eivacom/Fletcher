@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+import os
+
+from conan import ConanFile
+from conan.tools.cmake import CMake, cmake_layout
+
+
+class PubsubConformanceIntegrationConan(ConanFile):
+    """The pub/sub delivery contract, run against every provider.
+
+    docs/pubsub-interface-spec.md §7 says a callback never sees a null
+    schema, per-writer order holds across the schema handoff, and no
+    callback runs after Unsubscribe returns. That was prose honoured by
+    three providers under review; this harness encodes it once and runs
+    it against five subjects — the in-process loopback plus Fast DDS and
+    XRCE-DDS, each in-process AND with the publisher in a child process.
+
+    The cross-process subjects are the point (§7.2): Fast DDS serves
+    same-process endpoints over intra-process delivery, so a
+    single-process suite cannot see the transport at all. The provider's
+    own 70-test suite was green throughout a shipped receive-side
+    data-sharing defect for exactly that reason.
+
+    KNOWN BLIND SPOT, so nobody reads the paragraph above as more than it
+    is: this suite does NOT reproduce that particular defect. Clause 6
+    stayed green 12/12 against a provider with the defect deliberately
+    restored, while integration-tests/gateway-fastdds-ts failed against
+    the same package. The evidence table and both refuted hypotheses are
+    in README.md; the hunt is owned by PDA-ABI-7 (zero-copy receive), per
+    the owner's 2026-09-01 ruling. The suite guards the delivery
+    contract, which it does; it is not a data-sharing regression test.
+
+    Deliberately does NOT require fletcher-pubsub-arrow: no Arrow C++,
+    no codec, no generated types. Rows are 8 opaque bytes, so the suite
+    cannot see payload layout and no divergence it forces can be a
+    wire-format change (locked decision 13).
+
+    Not published as a Conan package — this conanfile resolves the deps,
+    writes the CMake toolchain, and drives the build. The components
+    themselves are expected to be in the local Conan cache (built
+    earlier in the workflow via `conan create <component>/.`).
+    """
+
+    settings = "os", "compiler", "build_type", "arch"
+    generators = "CMakeDeps", "CMakeToolchain"
+
+    def requirements(self):
+        # Version ranges resolve to whatever the workflow's `conan create`
+        # just put in the local cache. include_prerelease is needed
+        # because component versions are alpha-suffixed.
+        self.requires("fletcher-pubsub/[*, include_prerelease]")
+        self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
+        self.requires("fletcher-xrcedds-pubsub-provider/[*, include_prerelease]")
+        self.requires("gtest/1.17.0")
+        # NOT for our code: for the MicroXRCEAgent the CMakeLists builds from
+        # source. PDA-DEC-6 dropped `transitive_headers=True` from the Fast DDS
+        # provider's own require -- correctly, since its public header names no
+        # eProsima type -- so Fast DDS and Fast CDR now reach this graph with
+        # headers=False, and Conan's CMakeDeps then emits their `fastdds` /
+        # `fastcdr` targets with EMPTY include directories. Everything Fletcher
+        # compiles is fine with that; the Agent is not. Its CMake resolves
+        # UAGENT_USE_SYSTEM_FASTDDS/FASTCDR through find_package(fastdds 3) /
+        # find_package(fastcdr 2) on our CMAKE_PREFIX_PATH, which SUCCEEDS
+        # against those targets and then compiles `#include <fastcdr/Cdr.h>`
+        # with no -I for it. Requiring Fast DDS here restores headers=True for
+        # both (fast-dds re-exports fast-cdr's headers), which is what the Agent
+        # superbuild needs and all it needs.
+        #
+        # What it costs, stated rather than glossed: the provider's target links
+        # `fastdds` (transitive_libs), so those include dirs now also reach the
+        # subject binaries that link the provider, and a subject COULD include a
+        # Fast DDS header and compile. So this harness is no longer even an
+        # incidental witness to PDA-DEC-6's claim. That claim's machine check is
+        # the provider's own test_package, which links the provider and nothing
+        # else and is unaffected by anything here -- and this is exactly the
+        # visibility the harness had before 2026-09-02, when it built the Agent
+        # green. Nothing that reads a Fast DDS header is added here.
+        #
+        # Same require, same reason, as fastdds-pubsub-provider/benchmarks.
+        self.requires("fast-dds/3.4.0")
+
+    def layout(self):
+        cmake_layout(self)
+
+    def build(self):
+        # `conan build .` configures + builds (including the
+        # MicroXRCEAgent ExternalProject) + runs ctest through the active
+        # profile, so the same call works on the Linux single-config and
+        # the Windows multi-config (MSVC) generators.
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
+        os.environ["CTEST_OUTPUT_ON_FAILURE"] = "1"
+        cmake.test()

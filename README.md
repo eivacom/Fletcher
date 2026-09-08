@@ -35,7 +35,7 @@ Fletcher began as part of EIVA's upcoming NaviSuite 5 architecture for marine su
 - **Arrow-native from the start.** Every row is defined by an Arrow schema. The generated code, the wire format, and the pub/sub layer all speak Arrow types — no intermediate representations, no impedance mismatch between edge and server.
 - **Edge-compatible by default.** The core publish/subscribe path depends only on [nanoarrow](https://arrow.apache.org/nanoarrow/) (~100 KB). Heavyweight Apache Arrow C++ is a separate, server-only tier. Edge binaries stay tiny (publish + subscribe in well under 75 KB of flash).
 - **Code generation over boilerplate.** Your `.proto` file is the single source of truth. `protoc-gen-fletcher` emits typed C++ message classes, Arrow view classes, and TypeScript interfaces — no hand-written serialization, no schema drift across languages.
-- **Transport-agnostic pub/sub.** One `PubSub` interface decouples encoding from transport. Implementations ship for Fast DDS (desktop/server), Micro XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding MQTT, Zenoh, or a custom transport means implementing one interface — no codec or generated-code changes.
+- **Transport-agnostic pub/sub.** One `PubSub` interface decouples encoding from transport. Implementations ship for Fast DDS (desktop/server), Micro XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding MQTT, Zenoh, or a custom transport means implementing that one interface **and registering it under a name**; callers then select it at run time through `ProviderRegistry` — no codec or generated-code changes, and no caller naming a provider type. A driver loaded at run time will arrive through the same call (see [the pub/sub interface specification](docs/pubsub-interface-spec.md) §4).
 - **Zero-copy where it matters.** Publishers encode directly into the transport's buffer; subscribers decode in place. The `PositionalWriter`/`PositionalReader` pair runs without allocation on the hot path.
 - **Schema transport, not self-description.** The wire format omits field numbers, type tags, and schema hashes — fields are written in schema order with a compact null bitfield. Schemas are delivered to subscribers out-of-band, so there is near-zero per-row overhead (~14 bytes for a typical 10-field row).
 
@@ -152,7 +152,7 @@ sub.Subscribe([](fletcher_gen::myapp::SensorReading msg, fletcher::Attachments a
 });
 ```
 
-Swap `FastDDSPubSubProvider` for `XrceDDSPubSubProvider` to publish from an MCU/embedded node — the generated publisher/subscriber code is identical.
+Swap `FastDDSPubSubProvider` for `XrceDDSPubSubProvider` to publish from an MCU/embedded node — the generated publisher/subscriber code is identical. Either one is also selectable **by name at runtime** (`"fastdds"`, `"xrce"`, `"inprocess"`) through `ProviderRegistry`, configured by a `ProviderConfig` whose typed core is `{max_payload_bytes, domain_id}` plus a document in that protocol's own format — Fast DDS's native XML QoS profile, or `key=value` for XRCE.
 
 ### 5. Consume in the browser
 
@@ -312,7 +312,7 @@ The `gateway-client-ts` package is published to npm as [`@eiva/fletcher-gateway-
 
 Fletcher is at an early (`0.3.x-alpha`) stage. Planned work, roughly in priority order:
 
-- **Dynamically loadable transport plugins.** Make transport providers (Fast DDS, XRCE-DDS, …) loadable at runtime as plugins, so an application can pick a transport without compile-time coupling to its library.
+- **Dynamically loadable transport plugins.** Make transport providers (Fast DDS, XRCE-DDS, …) **loadable** at runtime as plugins, so an application can pick a transport without compile-time coupling to its library. Runtime *selection* among the providers a build links in already ships — by name, through `ProviderRegistry`, with the provider configured by an opaque per-protocol document. What is still ahead is the loading itself, and with it the freedom from linking the transport's library at all.
 - **A protocol bridge service.** A standalone service that loads two transport plugins and bridges traffic between them — e.g. relay XRCE-DDS telemetry from an embedded segment onto a Fast DDS backbone, or DDS onto WebSocket — without bespoke glue code.
 - **GeoArrow-compliant schemas.** Ship reference `.proto` definitions for geometry types that, via the `(fletcher.flatten)` option, generate [GeoArrow](https://geoarrow.org/)-compliant Arrow schemas out of the box.
 - **Conan Center distribution.** Build and publish the Fletcher Conan packages to [Conan Center](https://conan.io/center) so consumers can depend on them without restoring release archives manually.
@@ -335,7 +335,7 @@ For Conan and gateway components the tag version **must match** the version sour
 
 ### Version scheme — `MAJOR.MINOR` signals compatibility
 
-Every Fletcher component follows `MAJOR.MINOR.PATCH`, and **`MAJOR.MINOR` is a cross-component compatibility marker**: all components that share the same `MAJOR.MINOR` are designed, built, and tested to interoperate as one coherent set. Components carrying the same `MAJOR.MINOR` — regardless of their individual `PATCH` levels — are guaranteed compatible across the build graph (Conan dependencies), the wire format, and the generated-code / gateway-client contracts. The current line is **`0.3.x-alpha`**.
+Every Fletcher component follows `MAJOR.MINOR.PATCH`, and **`MAJOR.MINOR` is a cross-component compatibility marker**: all components that share the same `MAJOR.MINOR` are designed, built, and tested to interoperate as one coherent set. Components carrying the same `MAJOR.MINOR` — regardless of their individual `PATCH` levels — are guaranteed compatible across the build graph (Conan dependencies), the wire format, and the generated-code / gateway-client contracts. The current line is **`0.5.x-alpha`**.
 
 - **`MAJOR` / `MINOR` — moves in lockstep.** A new compatibility series is cut by bumping every component to the same new `MAJOR.MINOR` (e.g. `0.3.x` → `0.4.x`), even components with no source change, so the shared line stays unambiguous. A `MAJOR` bump signals a breaking change to a public API, the wire format, or the gateway protocol; a `MINOR` bump signals backward-compatible additions within the series. Mixing components from different `MAJOR.MINOR` lines is unsupported.
 - **`PATCH` — moves independently per component.** Bug fixes and other changes that preserve compatibility within the current series advance only the affected component's `PATCH`. So `fletcher-core/0.3.2-alpha` and `fletcher-pubsub/0.3.5-alpha` are an expected, supported combination; their matching `0.3` says they belong together.

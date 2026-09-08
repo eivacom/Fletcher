@@ -22,7 +22,7 @@ class StubProvider : public PubSubProvider {
     void CreateTopic(const std::vector<std::string>& /*segments*/,
                      OwnedSchema /*schema*/) override {}
 
-    void Publish(const std::vector<std::string>& /*segments*/, RowEncoder /*encoder*/,
+    void Publish(const std::vector<std::string>& /*segments*/, const RowEncoder& /*encoder*/,
                  const Attachments& /*attachments*/) override {}
 
     SubscriptionResult Subscribe(const std::vector<std::string>& /*segments*/,

@@ -446,17 +446,45 @@ target_compile_definitions(coverage_scalar_nested_ts_visitor_tests PRIVATE
 target_link_libraries(coverage_scalar_nested_ts_visitor_tests PRIVATE GTest::gtest_main)
 
 include(GoogleTest)
-gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST)
-gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST)
-gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST)
-gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST)
-gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST)
-gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# This directory calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded test here runs until the CI job itself is cancelled. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
+# 2 h 04 m inside one hung test before the job was cancelled with no result at all.
+#
+# 60 s for every gtest row below, chosen from this suite's own measured wall clock: the slowest is
+# `enum.TsVisitor.DescriptorByteIdentical` at 0.29 s, then `TsVisitor.DescriptorByteIdentical` at
+# 0.18 s and `scalar_nested.TsVisitor.DescriptorByteIdentical` at 0.11 s, with the remaining rows
+# at 0.04-0.07 s (msvc-194 x86_64 Release). Every row is WORK, not a wait - the visitor rows diff
+# a generated .ts against its golden, the harness/accessor/nesting rows encode and read back
+# generated code - and none sleeps. 60 s is ~200x the slowest row, so contention cannot false-red
+# it, and it turns a future hang into a one-minute red instead of a cancelled job. The two
+# external-toolchain entries at the bottom of this file are a different cost class and get their
+# own, longer cap.
+gtest_discover_tests(coverage_harness_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_parity_oracle_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_enum_ts_visitor_tests DISCOVERY_MODE PRE_TEST
-    TEST_PREFIX "enum.")
-gtest_discover_tests(coverage_nesting_tests DISCOVERY_MODE PRE_TEST)
+    TEST_PREFIX "enum."
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_nesting_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_scalar_nested_ts_visitor_tests DISCOVERY_MODE PRE_TEST
-    TEST_PREFIX "scalar_nested.")
+    TEST_PREFIX "scalar_nested."
+    PROPERTIES TIMEOUT 60)
 
 # ---------------------------------------------------------------------------
 # GIR-8 forcing tests (negative generation + zero-ValueOrDie assertion).
@@ -499,12 +527,23 @@ foreach(_variant
             -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
             -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_unsupported_generation_check.cmake)
+    # 60 s, same basis as the gtest rows and stated for the same reason - a
+    # `gtest_discover_tests(PROPERTIES ...)` argument does not reach an `add_test` entry, so
+    # without this these rows have no cap at all. One protoc + plugin invocation each on a
+    # single-message fixture: 0.12-0.13 s measured, work rather than a wait, so ~460x headroom.
+    set_tests_properties(GenErrors.${_test_name} PROPERTIES
+        TIMEOUT 60)
 endforeach()
 
 add_test(NAME GenErrors.NoValueOrDieInIrGeneratedCode
     COMMAND "${CMAKE_COMMAND}"
         -DGENERATED_DIR=${GENERATED_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_no_value_or_die.cmake)
+
+# 60 s, same basis as above. A `cmake -P` script walking the generated tree: 0.08 s measured, work
+# rather than a wait, so ~750x headroom.
+set_tests_properties(GenErrors.NoValueOrDieInIrGeneratedCode PROPERTIES
+    TIMEOUT 60)
 
 # ---------------------------------------------------------------------------
 # GIR-10 backend-availability guard (locked #3) forcing tests. Generating a proto
@@ -527,6 +566,9 @@ foreach(_gopt accessor rust)
             -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
             -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_backend_guard_check.cmake)
+    # 60 s, same basis as above. One protoc + plugin invocation each: 0.12-0.13 s measured.
+    set_tests_properties(GenErrors.ScalarLeafNestedListRejectedBy_${_gopt} PROPERTIES
+        TIMEOUT 60)
 endforeach()
 
 # ---------------------------------------------------------------------------
@@ -548,8 +590,18 @@ add_test(NAME CoverageHarness.GeneratedTypescriptCompiles
         -DGENERATED_DIR=${GENERATED_DIR}
         -DTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/ts
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_tsc_check.cmake)
+# TIMEOUT is 300 s rather than the 60 s the gtest rows get, and it is stated for the same
+# no-default-cap reason: this entry runs `tsc` over the generated TypeScript, so its cost is an
+# external compiler, which is the cost class a slower runner really does stretch. It could NOT be
+# measured here - `tsc` is not on PATH on this machine, so the row reports Skipped and contributes
+# 0.06 s of wrapper-script time and nothing else - so the value is not derived from a timing of
+# this row. It is set equal to its sibling `GeneratedRustAccessorCompiles` below, which is the same
+# cost class (external toolchain compiling the generated output) and which WAS measured cold at
+# 11.86 s. If the tsc row ever becomes the suite's real ceiling on a runner that has tsc, this
+# number should be re-derived from that runner's log rather than left to inherit.
 set_tests_properties(CoverageHarness.GeneratedTypescriptCompiles
-    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER")
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER"
+               TIMEOUT 300)
 
 add_test(NAME CoverageHarness.GeneratedRustAccessorCompiles
     COMMAND "${CMAKE_COMMAND}"
@@ -559,8 +611,17 @@ add_test(NAME CoverageHarness.GeneratedRustAccessorCompiles
         -DRUST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/rust-accessor
         -DCARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-target
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_cargo_check.cmake)
+# TIMEOUT is 300 s rather than the 60 s the gtest rows get, for the same no-default-cap reason but
+# a different cost class: this entry runs `cargo check --locked --tests` over the generated Rust
+# accessor against arrow-rs. Measured 11.86 s with an EMPTY CARGO_TARGET_DIR and a warm crate
+# registry, and 0.54 s with the target dir already populated (msvc-194 x86_64 Release) - so the
+# 0.54 s figure is a caching artefact and the 11.86 s one is the number this cap is derived from.
+# CI is colder still: it also pays the registry fetch. This is pure external-toolchain WORK, the
+# most runner-sensitive row in the suite, hence the smallest headroom multiple here: 300 s is ~25x
+# the cold measurement.
 set_tests_properties(CoverageHarness.GeneratedRustAccessorCompiles
-    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER")
+    PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP_MARKER"
+               TIMEOUT 300)
 
 # The TS/Rust checks read the emitted generated files, so they must run after
 # generation. They invoke external toolchains, not the C++ test binaries, so

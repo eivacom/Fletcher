@@ -39,3 +39,20 @@ add_test(NAME GenErrors.NoValueOrDieInEmitterSources
     COMMAND "${CMAKE_COMMAND}"
         -DEMITTER_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../src
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_no_value_or_die_in_emitters.cmake)
+
+# TIMEOUT, stated for the same reason the gtest rows above state theirs, and easy to miss for one
+# reason worth recording: a `gtest_discover_tests(PROPERTIES ...)` argument does NOT reach an
+# `add_test` entry, so the 120 s above never applied here. `protoc/CMakeLists.txt` calls
+# `enable_testing()` rather than `include(CTest)`, so no `DartConfiguration.tcl` is generated and
+# ctest's usual 1500 s per-test cap DOES NOT APPLY either - this entry had no cap of any kind. It
+# was the last such entry in the tree after the nine suites capped alongside it; the full
+# reasoning, and the 2 h 04 m cancelled job that prompted it, are in
+# `xrcedds-pubsub-provider/tests/CMakeLists.txt`.
+#
+# 60 s, matching the sibling `cmake -P` source scans in
+# `integration-tests/protoc-coverage/CMakeLists.txt` and `arrow-bridge/tests/CMakeLists.txt`, and
+# chosen the same way: this entry is a script interpreter walking `protoc/src` with no subprocess
+# and no wait, measured at 0.15 s, so 60 s is ~400x it. Work rather than a fixed wait, but a file
+# scan is not the kind of work a slower runner stretches by 400.
+set_tests_properties(GenErrors.NoValueOrDieInEmitterSources PROPERTIES
+    TIMEOUT 60)

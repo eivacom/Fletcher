@@ -789,10 +789,9 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// Useful for testing, WAL storage, or any context where you need\n"
       << "    /// the encoded bytes as a standalone value.\n";
     o << "    fletcher::EncodedRow Encode() const {\n"
-      << "        fletcher::EncodedRow row;\n"
-      << "        fletcher::VectorWriteBuffer buf(row);\n"
+      << "        fletcher::VectorWriteBuffer buf;\n"
       << "        EncodeTo(buf);\n"
-      << "        return row;\n"
+      << "        return buf.Finish();\n"
       << "    }\n\n";
 }
 
@@ -826,11 +825,9 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
     o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
       << "    /// received from a Subscriber callback or read from a WAL.\n";
     o << "    explicit " << cls << "(const uint8_t* data, size_t len) {\n"
-      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        cpp_backend::EmitFieldDecodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
-                                           fields[i].descriptor->file());
-    o << "    }\n\n";
+      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n"
+      << "        DecodeFrom_(r);\n"
+      << "    }\n\n";
 
     // Constructor from EncodedRow
     o << "    /// Convenience overload that accepts an EncodedRow directly,\n"
@@ -842,11 +839,27 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
     o << "    /// Used internally when this message is embedded as a struct\n"
       << "    /// field inside another message — the parent reader is passed\n"
       << "    /// through so nested fields are decoded in position.\n";
-    o << "    explicit " << cls << "(fletcher::PositionalReader& r) {\n";
-    for (size_t i = 0; i < fields.size(); ++i)
-        cpp_backend::EmitFieldDecodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
-                                           fields[i].descriptor->file());
-    o << "    }\n\n";
+    o << "    explicit " << cls << "(fletcher::PositionalReader& r) { DecodeFrom_(r); }\n\n";
+
+    // Decode in place, keeping whatever the fields have already allocated.
+    o << "    /// Re-decodes this row from a wire-format buffer **in place**, keeping the "
+         "capacity\n"
+      << "    /// its fields already hold. The constructors above allocate per call, which for a "
+         "row\n"
+      << "    /// carrying a large list costs far more than the copy itself; a subscriber that "
+         "keeps\n"
+      << "    /// one row and calls this instead pays only the copy.\n"
+      << "    ///\n"
+      << "    /// Every field is written or cleared, so no value survives from the previous row.\n";
+    o << "    void DecodeInto(const uint8_t* data, size_t len) {\n"
+      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n"
+      << "        DecodeFrom_(r);\n"
+      << "    }\n\n";
+
+    o << "    /// Convenience overload, matching the EncodedRow constructor.\n";
+    o << "    void DecodeInto(const fletcher::EncodedRow& row) {\n"
+      << "        DecodeInto(row.data(), row.size());\n"
+      << "    }\n\n";
 
     // Setters
     EmitSetters(o, cls, fields);
@@ -861,6 +874,17 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
 
     // ---- private section ------------------------------------------------
     o << " private:\n";
+
+    // The one copy of this row's field-by-field decode. Both byte-buffer entry points, the
+    // nested-struct constructor and DecodeInto all call it, so they cannot drift apart, and the
+    // body is emitted once per message class instead of three times.
+    o << "    /// Decodes every field in position from `r`. Each field is written or cleared,\n"
+      << "    /// so no value survives from whatever this row held before.\n";
+    o << "    void DecodeFrom_(fletcher::PositionalReader& r) {\n";
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitFieldDecodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
+                                           fields[i].descriptor->file());
+    o << "    }\n\n";
 
     // Storage members
     for (const auto& fi : fields) o << "    " << StorageDecl(fi) << ";\n";
@@ -994,14 +1018,39 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
       << "    /// Returns the subscription ID (used for Unsubscribe).\n";
     o << "    uint64_t Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", fletcher::Attachments)> cb)\n"
+      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb)\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
       << "                                 const uint8_t* data, size_t len,\n"
-      << "                                 fletcher::SharedSchema /*schema*/,\n"
-      << "                                 fletcher::Attachments att) {\n"
-      << "                cb(" << msg_class << "(data, len), std::move(att));\n"
+      << "                                 const fletcher::SharedSchema& /*schema*/,\n"
+      << "                                 const fletcher::Attachments& att) {\n"
+      << "                cb(" << msg_class << "(data, len), att);\n"
+      << "            });\n"
+      << "        return result.subscription_id;\n"
+      << "    }\n\n";
+
+    // SubscribeInPlace - the same delivery, decoded into one row the subscription keeps.
+    o << "    /// Begins receiving rows on this topic, decoding each one **into a single row\n"
+      << "    /// this subscription owns** instead of constructing a fresh one per sample. For a\n"
+      << "    /// row carrying a large list that allocation dwarfs the copy, so prefer this form\n"
+      << "    /// in a callback; the protoc README has the measurement.\n"
+      << "    ///\n"
+      << "    /// The row is borrowed for the duration of the call - copy it if you keep it. That\n"
+      << "    /// is safe because a provider delivers at most one callback at a time per\n"
+      << "    /// subscription, which is part of PubSubProvider's delivery contract.\n";
+    o << "    uint64_t SubscribeInPlace(\n"
+      << "        std::function<void(const " << msg_class
+      << "&, const fletcher::Attachments&)> cb)\n"
+      << "    {\n"
+      << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
+      << "            [cb = std::move(cb), row = " << msg_class << "()](\n"
+      << "                uint64_t /*subscription_id*/,\n"
+      << "                const uint8_t* data, size_t len,\n"
+      << "                const fletcher::SharedSchema& /*schema*/,\n"
+      << "                const fletcher::Attachments& att) mutable {\n"
+      << "                row.DecodeInto(data, len);\n"
+      << "                cb(row, att);\n"
       << "            });\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";

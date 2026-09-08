@@ -21,6 +21,7 @@
 #include <fletcher/core/detail/bitfield.hpp>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -43,8 +44,7 @@ class PositionalWriter {
         : buf_(buf), num_fields_(num_fields), bitfield_offset_(buf.Position()) {
         if (num_fields < 0)
             throw std::invalid_argument("PositionalWriter: num_fields must be >= 0");
-        size_t nbytes = detail::BitfieldBytes(num_fields);
-        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
+        buf_.AppendZeros(detail::BitfieldBytes(num_fields));
     }
 
     // Mark field at field_index as null.  Call before writing payloads.
@@ -73,6 +73,20 @@ class PositionalWriter {
     // Timestamp/Duration are int64 on the wire.
     void WriteTimestamp(int64_t v) { buf_.AppendFixed(v); }
     void WriteDuration(int64_t v) { buf_.AppendFixed(v); }
+
+    // Write a contiguous run of fixed-width values in one Append instead of one per element.
+    // Byte-identical to the equivalent loop: both are a raw copy of the object representation,
+    // and this format is little-endian only (static_assert above).
+    //
+    // Only valid where every element is present — a null element writes no payload, so a list that
+    // has any has to go through the per-element path.
+    template <typename T>
+    void WriteFixedArray(const T* data, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "WriteFixedArray requires a trivially copyable type");
+        if (count == 0) return;
+        buf_.Append(reinterpret_cast<const uint8_t*>(data), count * sizeof(T));
+    }
 
     // --- Variable-length writers ---
 
@@ -110,8 +124,7 @@ class PositionalWriter {
     ListContext BeginList(uint32_t count) {
         buf_.AppendFixed(count);
         size_t bf_offset = buf_.Position();
-        size_t nbytes = detail::BitfieldBytes(static_cast<int64_t>(count));
-        for (size_t i = 0; i < nbytes; ++i) buf_.AppendByte(0);
+        buf_.AppendZeros(detail::BitfieldBytes(static_cast<int64_t>(count)));
         return ListContext{buf_, bf_offset, count};
     }
 
@@ -124,8 +137,7 @@ class PositionalWriter {
         // Call after writing all key payloads.  Writes value null bitfield.
         ListContext BeginValues() {
             size_t bf_offset = buf.Position();
-            size_t nbytes = detail::BitfieldBytes(static_cast<int64_t>(count));
-            for (size_t i = 0; i < nbytes; ++i) buf.AppendByte(0);
+            buf.AppendZeros(detail::BitfieldBytes(static_cast<int64_t>(count)));
             return ListContext{buf, bf_offset, count};
         }
     };
@@ -298,6 +310,35 @@ class PositionalReader {
         uint32_t len = Read<uint32_t>();
         const uint8_t* p = ReadBytes(len);
         return {p, len};
+    }
+
+    // Divide, never multiply: a wrapped `count * sizeof(T)` would pass ReadBytes' own check.
+    template <typename T>
+    void CheckFixedArrayFits(size_t count) const {
+        if (count > (len_ - pos_) / sizeof(T))
+            throw std::invalid_argument("PositionalReader: buffer underrun (fixed array)");
+    }
+
+    // Read a contiguous run of fixed-width values in one memcpy, the mirror of WriteFixedArray.
+    // `out` must have room for `count` elements.
+    template <typename T>
+    void ReadFixedArray(T* out, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "ReadFixedArray requires a trivially copyable type");
+        CheckFixedArrayFits<T>(count);
+        if (count == 0) return;
+        std::memcpy(out, ReadBytes(count * sizeof(T)), count * sizeof(T));
+    }
+
+    // Sizes the vector only once the count is known to fit; ReadListHeader admits 8x that.
+    template <typename T>
+    void ReadFixedArrayInto(std::vector<T>& out, size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "ReadFixedArrayInto requires a trivially copyable type");
+        CheckFixedArrayFits<T>(count);
+        out.resize(count);
+        if (count == 0) return;
+        std::memcpy(out.data(), ReadBytes(count * sizeof(T)), count * sizeof(T));
     }
 
     // --- Composite readers ---

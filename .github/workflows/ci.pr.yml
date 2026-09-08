@@ -46,6 +46,7 @@ jobs:
       integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
+      integration-pubsub-conformance: ${{ steps.filter.outputs.integration-pubsub-conformance }}
       integration-protoc-gen-fletcher-npm: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-npm }}
       integration-protoc-gen-fletcher-rust: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-rust }}
       integration-protoc-plugin-cli: ${{ steps.filter.outputs.integration-protoc-plugin-cli }}
@@ -246,6 +247,18 @@ jobs:
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            integration-pubsub-conformance:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'integration-tests/pubsub-conformance/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.pubsub-conformance.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
             integration-protoc-gen-fletcher-npm:
               - 'protoc/**'
               - 'gateway-client-ts/**'
@@ -437,6 +450,18 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The delivery contract (spec section 7) against all three providers, two of
+  # them cross-process. This is the round's standing guard; it also carries the
+  # CI coverage that used to sit in the Fast DDS provider's own
+  # DefaultQosReplaysEveryRetainedRowToALateJoiner, retired with it.
+  integration-test-pubsub-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-conformance == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.pubsub-conformance.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-gen-fletcher-npm:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-gen-fletcher-npm == 'true' }}
@@ -482,6 +507,7 @@ jobs:
       - integration-test-protoc-coverage
       - integration-test-protoc-gateway-client-ts
       - integration-test-pubsub-arrow-fastdds
+      - integration-test-pubsub-conformance
       - integration-test-protoc-gen-fletcher-npm
       - integration-test-protoc-gen-fletcher-rust
       - integration-test-protoc-plugin-cli
@@ -514,6 +540,7 @@ jobs:
             ${{ needs.integration-test-protoc-coverage.result }},
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
+            ${{ needs.integration-test-pubsub-conformance.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-plugin-cli.result }}

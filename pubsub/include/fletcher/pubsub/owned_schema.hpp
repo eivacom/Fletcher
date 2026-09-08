@@ -7,8 +7,8 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <cstring>
+#include <fletcher/core/status.hpp>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -51,13 +51,32 @@ class OwnedSchema {
     explicit operator bool() const noexcept { return valid(); }
 
     /// Create a deep copy of src.
+    ///
+    /// Throws `PubSubError(kInternal)` if the copy cannot be made — silently returning an empty
+    /// schema would let a topic be declared with no schema at all, which the delivery contract
+    /// (schema-before-data) relies on never happening.
+    ///
+    /// **Why the seam's typed error and not `std::runtime_error`.** This function is public
+    /// because spec §3.3 makes it the only memory-safe way to consume a borrowed `SharedSchema`:
+    /// a binding that hands a shared schema straight to a consuming importer destroys it under
+    /// every other holder. So a language binding is *told* to call it directly, and §5.1 promises
+    /// that what leaves the seam is one error type carrying one stable number. An untyped
+    /// exception here is that promise failing at exactly the sanctioned call.
+    ///
+    /// `kInternal` is the number because a failed `ArrowSchemaDeepCopy` is an allocation or
+    /// nanoarrow-internal failure with no better home, and because it is the number this failure
+    /// already reached seam callers as: every in-tree call site is inside a
+    /// `TranslateSeamFailure`, whose `std::exception` arm maps to `kInternal`. Nothing observable
+    /// through a seam entry point changes; what changes is that a DIRECT caller now gets the
+    /// number too. `PubSubError` derives from `std::runtime_error`, so any existing
+    /// `catch (const std::runtime_error&)` still catches it.
     [[nodiscard]] static OwnedSchema DeepCopy(const ArrowSchema* src) {
         OwnedSchema copy;
         ArrowErrorCode code = ArrowSchemaDeepCopy(src, copy.get());
         if (code != NANOARROW_OK) {
-            throw std::runtime_error(
-                "OwnedSchema::DeepCopy: ArrowSchemaDeepCopy failed with code " +
-                std::to_string(code));
+            throw PubSubError(PubSubStatus::kInternal,
+                              "OwnedSchema::DeepCopy: ArrowSchemaDeepCopy failed with code " +
+                                  std::to_string(code));
         }
         return copy;
     }
@@ -72,6 +91,34 @@ class OwnedSchema {
 /// a const pointer to its ArrowSchema.  Safe to pass into callbacks
 /// and store across threads — the schema lives as long as any copy
 /// of the shared_ptr exists.
+///
+/// ── The normative rule (spec §3.3, which imports §3.2's clauses) ────────────
+///
+/// `ArrowSchema` is already the Arrow C Data Interface, so schema *content*
+/// crosses a C boundary for free and no Fletcher schema format is invented. What
+/// does not cross for free is the OWNERSHIP: the C Data Interface's `release` is
+/// **unique** ownership, while this handle is **shared** and is documented as
+/// storable by a callback across threads. So a SharedSchema crossing the seam is
+/// an owner-handle pair `{owner, const ArrowSchema*}` obeying §3.2's five
+/// clauses — retain/release safe from any thread, release never throwing or
+/// re-entering the seam, contents immutable once they cross, an argument
+/// borrowed for the call and a callee that keeps it taking its own reference.
+///
+/// **A boundary releases the OWNER HANDLE. It must never call the Arrow C Data
+/// Interface `release` on a shared schema** — that destroys the schema under
+/// every other holder, including holders in other languages. This is the one
+/// memory-unsafe reading available here, so it is written down rather than
+/// implied. `arrow::ImportSchema` consumes what it is given, which is why
+/// `fletcher::ImportArrowSchema` (pubsub-arrow) deep-copies first and why it is
+/// public: so no caller writes the unsafe conversion.
+///
+/// No shape change is owed: MakeSharedSchema below already returns the aliasing
+/// `SharedSchema(owner, owner->get())` — an owner plus a pointer — so it can
+/// already name a schema Fletcher did not allocate. §3.3 owed the written rule,
+/// not a reshape.
+///
+/// `CreateTopic` transfers ownership IN (by-value OwnedSchema); delivery to a
+/// subscriber callback BORROWS.
 using SharedSchema = std::shared_ptr<const ArrowSchema>;
 
 /// Creates a SharedSchema from an OwnedSchema (move semantics).

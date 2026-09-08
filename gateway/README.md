@@ -29,7 +29,16 @@ The gateway routes between WebSocket clients and a pub/sub provider chosen with 
 - **`inprocess`** (default) — an in-process loopback that only connects WebSocket clients on the same gateway process. This is what the [gateway-end-to-end](../integration-tests/gateway-end-to-end/README.md) integration test exercises.
 - **`fastdds`** — a [FastDDS](../fastdds-pubsub-provider/README.md)-backed provider that bridges the gateway to any FastDDS app on the same DDS domain (`--domain-id`). The gateway becomes a DDS subscriber/publisher on behalf of its WebSocket clients, so a TypeScript client can subscribe to — or publish to — data flowing over DDS. The end-to-end coverage lives in [integration-tests/gateway-fastdds-ts](../integration-tests/gateway-fastdds-ts/README.md).
 
-Both providers are always compiled into the exe and the released binary; `--provider` selects between them at runtime. The `fastdds` provider runs on Fletcher's default QoS profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`); per-topic QoS is not configurable from the gateway CLI.
+Both providers are always compiled into the exe and the released binary; `--provider` selects between them at runtime.
+
+### Configuring the provider
+
+`--provider-config FILE` reads `FILE` and hands its contents to the selected provider as its configuration document. **The format is the provider's, not the gateway's** — the gateway does not parse it, validate it or know what it means; it reads the bytes and passes them on. That is why one flag serves every provider, including ones a later build adds.
+
+- for **`fastdds`**, the document is a [Fast DDS XML QoS profiles document](../fastdds-pubsub-provider/README.md#qos-configuration). Reserved profile names are `fletcher_participant` (mandatory in a non-empty document), `fletcher_writer`, `fletcher_reader`, and a profile named after the `/`-joined topic for a per-topic override. Note that **a supplied profile is that endpoint's whole quality-of-service** — start from the published starting-point block rather than from a bare profile.
+- for **`inprocess`**, it is `key=value` lines; the only key is `schema_carriage`.
+
+Without the flag the document is empty and each provider uses its own defaults, which for `fastdds` is Fletcher's profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`, with the resource limits and reader-side `data_sharing OFF` that profile carries). An unreadable `FILE` exits 2, as a bad `--provider` does; a document the provider rejects exits 2 with the provider's own message. An **empty or whitespace-only** `FILE` also exits 2, with its own message: passing the flag asks to be configured from that file, and every provider reads an empty document as "my own defaults", so accepting it would start a gateway that applies none of your intent and says nothing. Omit the flag if that is what you want.
 
 ## Installing
 
@@ -65,7 +74,8 @@ gateway --port 9090 --bind-address 0.0.0.0
 | `--port N` | `9090` | TCP port to listen on. |
 | `--bind-address ADDR` | `0.0.0.0` | Interface to bind. Use `127.0.0.1` for loopback-only deployments. |
 | `--provider TYPE` | `inprocess` | Pub/sub provider: `inprocess` (loopback between WebSocket clients) or `fastdds` (bridge to FastDDS apps on a DDS domain). Both are compiled in; the switch selects at runtime. |
-| `--domain-id N` | `0` | DDS domain id for the `fastdds` provider. Ignored by `inprocess`. |
+| `--domain-id N` | `0` | DDS domain id for the `fastdds` provider. Ignored by `inprocess`. Always wins over a domain named in the provider document. |
+| `--provider-config FILE` | — | Read `FILE` and hand its contents to the selected provider as its configuration document, in **that provider's** own format (Fast DDS XML QoS profiles for `fastdds`, `key=value` lines for `inprocess`). See [Configuring the provider](#configuring-the-provider). |
 | `--version` | — | Print `fletcher-gateway <version>` and exit. The version string is read from `gateway/VERSION` at build time. |
 | `--help`, `-h` | — | Print usage and exit. |
 

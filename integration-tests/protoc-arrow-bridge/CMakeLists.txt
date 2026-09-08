@@ -258,7 +258,26 @@ target_link_libraries(integration_tests PRIVATE
     fletcher-pubsub::fletcher-pubsub)
 
 include(GoogleTest)
-gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# TIMEOUT, stated because this suite has no default one to fall back on.
+#
+# This directory calls `enable_testing()` rather than `include(CTest)`, so no
+# `DartConfiguration.tcl` is generated and ctest's usual 1500 s per-test cap DOES NOT APPLY: an
+# unbounded test here runs until the CI job itself is cancelled. The precedent and the reasoning
+# in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
+# 2 h 04 m inside one hung test before the job was cancelled with no result at all.
+#
+# 30 s for the `integration_tests` binary, chosen from its own measured wall clock: the slowest of
+# its 76 rows is `NullabilityConsistencyTest.MetricsToArrowRowTypesMatchSchema` at 0.06 s, then
+# `TimedEventTest.SchemaStructure` and `IpcParityTest.FlatMessageIpcFileMatchesRuntimeSchemaBytes`
+# at 0.05 s, with the rest at 0.04 s (msvc-194 x86_64 Release). Every row is WORK, not a wait -
+# encode/decode of pre-generated headers plus reading back the emitted .ipc files - and none of
+# them spawns a process or sleeps. 30 s is ~500x the slowest row, so contention cannot false-red
+# it, and it turns a future hang into a 30-second red instead of a cancelled job. `accessor_tests`
+# below is a different cost class and gets its own, longer cap.
+gtest_discover_tests(integration_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 30)
 
 # ----------------------------------------------------------------------------
 # RBA-1 accessor no-drift test (AccessorTest.*). Scoped by `ctest -R 'Accessor'`.
@@ -300,4 +319,15 @@ target_compile_definitions(accessor_tests PRIVATE
     # from the source tree (NOT a copy), so it stays the single source of truth.
     CAPSTONE_FIXTURES_DIR="${CAPSTONE_DIR}/fixtures")
 
-gtest_discover_tests(accessor_tests DISCOVERY_MODE PRE_TEST)
+# 120 s rather than the 30 s the `integration_tests` rows get, for the same
+# no-default-cap reason (see above) but a different cost class: the slow rows in this binary shell
+# out to protoc + the fletcher plugin repeatedly and diff whole output trees byte for byte.
+# Measured (msvc-194 x86_64 Release): `MetadataNoDriftTest.InertRulesLeaveEveryOutputByteIdentical`
+# 3.97 s and `AccessorTest.OptGatedEmissionLeavesExistingOutputsByteIdentical` 3.29 s - two orders
+# of magnitude above their siblings (the next is 0.42 s, and the accessor/capstone rows are
+# 0.04-0.05 s). Those two are WORK, and subprocess work is exactly what a slower runner stretches,
+# so this cap keeps a much smaller multiple than the pure-computation suites: 120 s is ~30x the
+# 3.97 s row. `AccessorTest.GeneratedRustFileParsesWithRustc` is an unconditional GTEST_SKIP and so
+# contributes no time on any platform.
+gtest_discover_tests(accessor_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 120)

@@ -4,30 +4,28 @@
 #include "fletcher/pubsub/publisher.hpp"
 
 #include <cstdint>
+#include <fletcher/core/status.hpp>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
+#include "fletcher/pubsub/internal/schema_conflict.hpp"
 #include "fletcher/pubsub/internal/segments.hpp"
-#include "fletcher/pubsub/schema_ipc.hpp"
 
 namespace fletcher {
 
 struct Publisher::Impl {
-    struct TopicState {
-        std::vector<std::string> segments;
-        OwnedSchema schema;
-    };
-
     std::shared_ptr<PubSubProvider> provider;
     mutable std::mutex mu;
-    std::unordered_map<std::string, TopicState> topics;
+    // The declared schema per topic, as internal::DeclaredSchema — the same type, and the same
+    // comparison, the in-process provider uses for its own conflict check.
+    std::unordered_map<std::string, internal::DeclaredSchema> topics;
 };
 
 Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
     if (!provider) {
-        throw std::invalid_argument("Publisher: provider must not be null");
+        throw PubSubError(PubSubStatus::kInvalidArgument, "Publisher: provider must not be null");
     }
     impl_->provider = std::move(provider);
 }
@@ -37,41 +35,32 @@ Publisher::~Publisher() = default;
 void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
     std::string key = internal::JoinSegments(segments);
 
-    // Atomically claim the topic key under the lock. Re-declaring an existing
-    // topic is idempotent for an identical schema — which lets several
-    // publishers share one topic (fan-in) — while a different schema for the
-    // same topic is a genuine conflict that must not be silently accepted.
+    // Re-declaring an existing topic is idempotent for an identical schema — which lets several
+    // publishers share one topic (fan-in) — while a different schema for the same topic is a
+    // genuine conflict that must not be silently accepted.
+    //
+    // Encode before taking the lock, so the locked section is a byte compare rather than two IPC
+    // encodes that every concurrent CreateTopic queues behind. A first declaration pays an encode
+    // where it previously only deep-copied; see the FastDDS provider README, "Measured decisions".
+    internal::DeclaredSchema incoming = internal::DeclaredSchema::Encode(schema.get());
+
     {
         std::lock_guard lock(impl_->mu);
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
-            // Compare via serialized Arrow IPC. Some valid schemas cannot be
-            // IPC-encoded (e.g. dictionary types, which nanoarrow's IPC writer
-            // rejects); if either side fails to serialize we cannot prove a
-            // conflict, so accept the re-declaration rather than throwing.
-            bool conflicting = false;
-            try {
-                std::vector<uint8_t> incoming =
-                    schema ? SerializeSchemaIpc(schema.get()) : std::vector<uint8_t>{};
-                std::vector<uint8_t> existing = it->second.schema
-                                                    ? SerializeSchemaIpc(it->second.schema.get())
-                                                    : std::vector<uint8_t>{};
-                conflicting = (incoming != existing);
-            } catch (const std::exception&) {
-                conflicting = false;
-            }
-            if (conflicting) {
-                throw std::runtime_error(
+            if (incoming.ConflictsWith(it->second)) {
+                // The SAME numbered cause a provider reports for the same fact
+                // (spec §5.1). This tier short-circuits before the provider — it
+                // is the layer the gateway and PublisherArrow sit on, so it is
+                // where an application actually meets a schema conflict, and it
+                // must not be the one place the number goes missing.
+                throw PubSubError(
+                    PubSubStatus::kSchemaConflict,
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }
             return;  // identical (or non-comparable) re-declaration — no-op
         }
-        Impl::TopicState ts;
-        ts.segments = segments;
-        if (schema) {
-            ts.schema = OwnedSchema::DeepCopy(schema.get());
-        }
-        impl_->topics.emplace(key, std::move(ts));
+        impl_->topics.emplace(key, std::move(incoming));
     }
 
     try {
@@ -86,8 +75,8 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
 }
 
 void Publisher::Publish(const std::vector<std::string>& segments,
-                        PubSubProvider::RowEncoder encoder, const Attachments& attachments) {
-    impl_->provider->Publish(segments, std::move(encoder), attachments);
+                        const PubSubProvider::RowEncoder& encoder, const Attachments& attachments) {
+    impl_->provider->Publish(segments, encoder, attachments);
 }
 
 std::vector<std::string> Publisher::ListTopics() const {

@@ -9,9 +9,10 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
-#include <future>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <vector>
 
 #include "publish_frame.hpp"
 #include "schema_codec.hpp"
@@ -145,18 +146,33 @@ void WsSession::HandleBinaryFrame(const uint8_t* data, size_t len) {
 // Action handlers
 // -----------------------------------------------------------------------
 
+// Splits on `/` and keeps EVERY piece, including empty ones.
+//
+// It used to drop empty pieces, which made `"a/b"`, `"a//b"`, `"/a/b"`, `"a/b/"`
+// and `"//a//b//"` all the segment list {"a","b"} — so a client subscribing to
+// one and a client publishing to another exchanged rows although they had named
+// different topics. That was the same silent alias PDA-DEC-A5 removed at the
+// seam, one tier above it, and this was the last place on the path still tidying
+// a name up instead of letting it be refused.
+//
+// Keeping the empty piece means the seam's §3.5 rule 4 sees it and refuses with
+// `kInvalidArgument`, which the handler's existing catch turns into an error
+// frame. Strictly less code, strictly fewer representable states, and a loud
+// refusal where there was a silent wrong delivery. `""` still yields an empty
+// list, which §3.5 rule 1 already refuses.
 std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
     std::vector<std::string> segments;
+    if (topic.empty()) return segments;
     std::string seg;
     for (char c : topic) {
         if (c == '/') {
-            if (!seg.empty()) segments.push_back(std::move(seg));
+            segments.push_back(std::move(seg));
             seg.clear();
         } else {
             seg += c;
         }
     }
-    if (!seg.empty()) segments.push_back(std::move(seg));
+    segments.push_back(std::move(seg));
     return segments;
 }
 
@@ -184,9 +200,9 @@ void WsSession::OnSubscribe(const std::string& topic) {
     // This closes a race where samples delivered synchronously during
     // Subscribe() (e.g. retained TRANSIENT_LOCAL data) would have been
     // framed with sub-id 0 before the outer code could write the real id.
-    auto result =
-        subscriber_->Subscribe(segments, [weak](uint64_t sub_id, const uint8_t* data, size_t len,
-                                                SharedSchema /*schema*/, Attachments att) {
+    auto result = subscriber_->Subscribe(
+        segments, [weak](uint64_t sub_id, const uint8_t* data, size_t len,
+                         const SharedSchema& /*schema*/, const Attachments& att) {
             auto self = weak.lock();
             if (!self) return;
 
@@ -221,26 +237,22 @@ void WsSession::OnSubscribe(const std::string& topic) {
         {"subId", std::to_string(sub_id)},
         {"topic", topic},
     };
-    // The schema future resolves asynchronously for late-joining DDS
-    // subscribers; only forward it in the subscribed response when it is
-    // already available (publisher-first / in-process loopback). Otherwise
-    // the client relies on its own schema (e.g. protoc-generated).
-    if (result.schema.valid() &&
-        result.schema.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        // A ready future can still hold an exception — e.g. the provider breaks
-        // the promise when a subscription is dropped before the schema arrives.
-        // Omit the schema fields in that case rather than letting get() throw
-        // and tear down the session.
-        try {
-            SharedSchema schema = result.schema.get();
-            if (schema) {
-                auto ipc_bytes = SerializeSchemaIpc(schema.get());
-                response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
-                response["schema"] = gateway::ArrowSchemaToJson(schema.get());
-            }
-        } catch (const std::exception&) {
-            // No schema available — fall through with routing-only response.
-        }
+    // The schema arrives asynchronously for late-joining DDS subscribers; only
+    // forward it in the subscribed response when it is already in hand
+    // (publisher-first / in-process loopback). Otherwise the client relies on its
+    // own schema (e.g. protoc-generated).
+    //
+    // A zero timeout POLLS — Subscribe must not block, and neither must this. The
+    // three answers this used to distinguish by catching an exception out of
+    // get() are now three values: kOk with a schema, kOk with null (this
+    // transport carries no schemas — the client brings its own), and anything
+    // else (not yet, or this subscription is already over). Only the first has
+    // anything to send.
+    SharedSchema schema;
+    if (result.schema.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kOk && schema) {
+        auto ipc_bytes = SerializeSchemaIpc(schema.get());
+        response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+        response["schema"] = gateway::ArrowSchemaToJson(schema.get());
     }
     SendText(response.dump());
 }
@@ -257,6 +269,13 @@ void WsSession::OnPublish(const uint8_t* data, size_t len) {
     // that parser rejects.
     auto parts = gateway::ParsePublishFrame(data, len);
     auto segments = SplitTopic(parts.topic);
+
+    // The frame bytes belong to the read buffer, which is reused the moment this
+    // handler returns — so an attachment that ALIASES them (spec §3.2) needs an
+    // owner that outlives the publish. This overload takes that owner itself, and
+    // only when the frame carries attachments: one copy of the envelope replaces
+    // the copy this path used to make of every attachment, and an
+    // attachment-free frame still copies nothing.
     auto envelope = DeserializeEnvelope(parts.envelope_data, parts.envelope_size);
 
     publisher_->Publish(

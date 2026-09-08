@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// The XRCE-DDS peer child. Same shape as the Fast DDS peer: a factory only.
+//
+// Its session key must differ from every other client on one Agent, including
+// every EARLIER child of this same subject — a key reused across sequential
+// children makes each create_session race the previous session's teardown. The
+// parent passes a base and this process adds its own pid, which is unique per
+// child by construction and needs no coordination.
+
+#include <cstdint>
+#include <fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp>
+#include <memory>
+#include <string>
+
+#include "fletcher/conformance/peer.hpp"
+
+#ifdef _WIN32
+#include <process.h>
+#define FLETCHER_GETPID _getpid
+#else
+#include <unistd.h>
+#define FLETCHER_GETPID getpid
+#endif
+
+int main(int argc, char** argv) {
+    return fletcher::conformance::RunPeerMain(
+        argc, argv, [](int count, char** args) -> std::shared_ptr<fletcher::PubSubProvider> {
+            // PDA-DEC-7: the Agent address and the session key are document lines now, and the
+            // address is ONE line - so this child builds `agent=HOST:PORT` complete rather than
+            // setting a port beside a host it never mentions.
+            uint16_t agent_port = 2018;
+            uint32_t session_key = 0xAABBCCDDu;
+            fletcher::ProviderConfig config;
+            for (int i = 1; i < count; ++i) {
+                const std::string arg = args[i];
+                if (arg == "--domain-id" && i + 1 < count) {
+                    config.domain_id = static_cast<uint32_t>(std::stoul(args[++i]));
+                } else if (arg == "--agent-port" && i + 1 < count) {
+                    agent_port = static_cast<uint16_t>(std::stoul(args[++i]));
+                } else if (arg == "--session-key-base" && i + 1 < count) {
+                    const uint32_t base = static_cast<uint32_t>(std::stoul(args[++i], nullptr, 0));
+                    // 24 bits of pid, not 12: a 12-bit slice collided on any
+                    // 4096-multiple pid gap, which is one wrap of the pid space.
+                    // The bases are an octet apart, so this cannot reach the
+                    // next role's range.
+                    session_key = base + (static_cast<uint32_t>(FLETCHER_GETPID()) & 0x00FFFFFFu);
+                }
+            }
+            config.document = "agent=127.0.0.1:" + std::to_string(agent_port) +
+                              "\nsession_key=" + std::to_string(session_key) +
+                              "\nconnect_timeout_ms=5000";
+            return std::make_shared<fletcher::XrceDDSPubSubProvider>(config);
+        });
+}
