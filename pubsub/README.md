@@ -10,9 +10,20 @@ Wire-compatible Arrow IPC schema serialization helpers are included.
 Headers are located under `include/fletcher/pubsub/` and consumed as `#include <fletcher/pubsub/<header>.hpp>`:
 - `provider.hpp` — `PubSubProvider` abstract interface and supporting types.
 - `publisher.hpp` — `Publisher` (CreateTopic + Publish + topic registry).
-- `subscriber.hpp` — `Subscriber` (Subscribe + Unsubscribe + multi-subscriber fan-out + subscription IDs).
+- `subscriber.hpp` — `Subscriber` (Subscribe + Unsubscribe + multi-subscriber fan-out + subscription IDs; SubscribeSchema / UnsubscribeSchema for the schema without the data).
 - `owned_schema.hpp` — RAII wrapper around `ArrowSchema`.
 - `schema_ipc.hpp` — Arrow IPC schema serialize/deserialize helpers.
+
+`Subscriber::SubscribeSchema` answers the catalog question — *what shape is this
+topic?* — without opening a data subscription for it. It returns the same
+`SchemaArrival` `Subscribe` does, never blocks, and resolves once a publisher has
+announced the topic. There is no subscription id, because a watch registers no
+callback and delivers nothing: watches are counted per `Subscriber` and
+idempotent per topic, and the provider's watch is released by the last
+`UnsubscribeSchema` or by `~Subscriber`. A data `Unsubscribe` does not release it.
+Both methods are optional at the provider tier — a transport with no out-of-band
+schema channel refuses with `kNotSupported`, and inside a delivery callback they
+are refused with `kReentrantCall` like every other seam method.
 
 A vendored copy of [nanoarrow](https://github.com/apache/arrow-nanoarrow) 0.8.0
 (amalgamation: core + IPC + flatcc) is bundled under `third_party/nanoarrow/`

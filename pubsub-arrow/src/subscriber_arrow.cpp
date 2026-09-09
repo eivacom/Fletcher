@@ -424,4 +424,12 @@ void SubscriberArrow::Unsubscribe(uint64_t subscription_id) {
     }
 }
 
+SchemaArrival SubscriberArrow::SubscribeSchema(const std::vector<std::string>& segments) {
+    return subscriber_->SubscribeSchema(segments);
+}
+
+void SubscriberArrow::UnsubscribeSchema(const std::vector<std::string>& segments) {
+    subscriber_->UnsubscribeSchema(segments);
+}
+
 }  // namespace fletcher

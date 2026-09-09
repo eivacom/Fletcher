@@ -78,6 +78,7 @@ class MockProvider : public PubSubProvider {
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                  SubscribeCallback callback) override {
+        subscribe_count++;
         std::string key = fletcher::internal::JoinSegments(segments);
         callbacks_[key] = std::move(callback);
         auto it = schemas_.find(key);
@@ -93,12 +94,45 @@ class MockProvider : public PubSubProvider {
         unsubscribe_count++;
     }
 
+    // The schema-only side: no callback is registered, so a watch is invisible
+    // to Publish — which is the property the tests below assert.
+    SchemaArrival SubscribeSchema(const std::vector<std::string>& segments) override {
+        subscribe_schema_count++;
+        auto it = schemas_.find(fletcher::internal::JoinSegments(segments));
+        SharedSchema schema;
+        if (it != schemas_.end()) {
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
+        }
+        return SchemaArrival::Ready(std::move(schema));
+    }
+
+    void UnsubscribeSchema(const std::vector<std::string>& /*segments*/) override {
+        unsubscribe_schema_count++;
+    }
+
     std::vector<std::string> topics_created;
     int unsubscribe_count = 0;
+    int subscribe_count = 0;
+    int subscribe_schema_count = 0;
+    int unsubscribe_schema_count = 0;
 
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
+};
+
+// A transport with no out-of-band schema channel: it implements the four
+// data-path methods and leaves the two schema-only ones at their PubSubProvider
+// defaults, which is what "optional" has to mean for a provider author who never
+// reads about them.
+class DataOnlyProvider : public PubSubProvider {
+   public:
+    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {}
+    void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
+    SubscriptionResult Subscribe(const std::vector<std::string>&, SubscribeCallback) override {
+        return {SchemaArrival::Ready(nullptr)};
+    }
+    void Unsubscribe(const std::vector<std::string>&) override {}
 };
 
 /// Build a nanoarrow schema: struct{ x: int32 }.
@@ -463,4 +497,104 @@ TEST(SubscriberTest, UnsubscribeFromInsideCallbackTakesEffectImmediately) {
     EXPECT_EQ(second_calls, 0);
 
     subscriber.Unsubscribe(first_id);
+}
+
+// ---------------------------------------------------------------------------
+// SubscribeSchema / UnsubscribeSchema — the schema without the data.
+// ---------------------------------------------------------------------------
+
+TEST(SubscriberTest, SubscribeSchemaDoesNotCreateAProviderSubscription) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival arrival = subscriber.SubscribeSchema(kTopic);
+
+    SharedSchema sch;
+    ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+    ASSERT_TRUE(sch);
+    ASSERT_EQ(sch->n_children, 1);
+    EXPECT_EQ(std::string(sch->children[0]->name), "x");
+    EXPECT_EQ(mock->subscribe_schema_count, 1);
+    // The whole point: the data side was never touched, so no callback exists
+    // anywhere and a publish reaches nobody.
+    EXPECT_EQ(mock->subscribe_count, 0);
+    EXPECT_NO_THROW(publisher.Publish(kTopic, MakeTestEncoder(1)));
+    EXPECT_EQ(mock->subscribe_count, 0);
+}
+
+TEST(SubscriberTest, SchemaWatchesAreCountedPerTopic) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival first = subscriber.SubscribeSchema(kTopic);
+    SchemaArrival second = subscriber.SubscribeSchema(kTopic);
+
+    // Idempotent per topic: the second caller is answered from the cached
+    // arrival and never reaches the provider — and it is answered, not handed a
+    // default-constructed handle that would report kSubscriptionEnded.
+    EXPECT_EQ(mock->subscribe_schema_count, 1);
+    SharedSchema sch;
+    EXPECT_EQ(second.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+    EXPECT_TRUE(sch);
+
+    // Two watches, so the first release is not the last: the provider keeps its
+    // own until the second.
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+
+    // Nothing left to release, and none of this touched the data side.
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+    EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+TEST(SubscriberTest, UnsubscribeSchemaWithoutAWatchDoesNotForward) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+
+    EXPECT_NO_THROW(subscriber.UnsubscribeSchema(kTopic));
+
+    EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+// Optional means optional: a provider that never heard of the schema-only side
+// refuses by name rather than returning an arrival nothing will ever resolve.
+TEST(SubscriberTest, DefaultProviderRefusesSchemaOnlyWithNotSupported) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+    Subscriber subscriber(plain);
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kNotSupported,
+                            [&] { (void)subscriber.SubscribeSchema(kTopic); }));
+
+    // The refusal rolled the count back, so releasing is still a no-op and
+    // teardown may call it unconditionally.
+    EXPECT_NO_THROW(subscriber.UnsubscribeSchema(kTopic));
+}
+
+// A watch outlives the call that opened it and has no id to cancel, so the
+// destructor is the backstop — the data path's residue rule applied to it.
+TEST(SubscriberTest, DestructorReleasesOutstandingSchemaWatches) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    {
+        Subscriber subscriber(mock);
+        SchemaArrival arrival = subscriber.SubscribeSchema(kTopic);
+        SharedSchema sch;
+        ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+        EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    }
+
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+    // Released once, and only the watch: no data subscription existed to tear
+    // down, and none was invented.
+    EXPECT_EQ(mock->unsubscribe_count, 0);
 }

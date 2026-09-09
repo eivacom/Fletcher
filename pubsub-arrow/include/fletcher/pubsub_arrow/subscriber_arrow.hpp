@@ -117,6 +117,13 @@ class SubscriberArrow {
 
     void Unsubscribe(uint64_t subscription_id);
 
+    /// The topic's schema without its data — Subscriber::SubscribeSchema, forwarded as is. Poll or
+    /// wait on the arrival; convert with fletcher::ImportArrowSchema when it reports kOk. Released
+    /// by UnsubscribeSchema.
+    [[nodiscard]] SchemaArrival SubscribeSchema(const std::vector<std::string>& segments);
+    /// Subscriber::UnsubscribeSchema, forwarded as is (watches are counted per topic there).
+    void UnsubscribeSchema(const std::vector<std::string>& segments);
+
    private:
     class RecordBatchBatcher;  // defined in subscriber_arrow.cpp
 

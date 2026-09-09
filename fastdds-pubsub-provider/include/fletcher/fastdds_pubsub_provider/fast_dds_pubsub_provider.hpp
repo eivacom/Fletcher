@@ -228,6 +228,15 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 
+    /// Both optional seam methods are served here: the `__schema` channel this provider already
+    /// runs for every subscription IS the schema-only subscription, so a watch is that channel
+    /// with no data reader beside it. Read `PubSubProvider::SubscribeSchema` for the contract; the
+    /// README's `## Usage` has the catalog recipe.
+    [[nodiscard]] SchemaArrival SubscribeSchema(
+        const std::vector<std::string>& topic_segments) override;
+
+    void UnsubscribeSchema(const std::vector<std::string>& topic_segments) override;
+
     /// The payload bound in force — `ProviderConfig::max_payload_bytes` exactly as given, or
     /// 65536 if it was 0 (unset). An unsupported one never gets past the constructor. It is the
     /// number in the registered type name, and the size a row has to fit.

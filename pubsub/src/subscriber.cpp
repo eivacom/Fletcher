@@ -132,6 +132,22 @@ struct Subscriber::Impl {
         // Set while THIS topic's first Subscribe is inside provider->Subscribe,
         // which runs with `mu` released. See EnsureProviderSubscription.
         bool provider_subscribe_in_progress = false;
+        // Outstanding SubscribeSchema watches. The provider's watch is
+        // idempotent per topic, so it is the LAST release here that forwards,
+        // not the first — the same shape as the fan-out one line up, counted
+        // rather than listed because a watch has no callback to address.
+        uint32_t schema_watches = 0;
+        // The provider's schema-only arrival, cached so a second watch on this
+        // topic observes the same one.
+        SchemaArrival schema_watch_arrival;
+        // Set while THIS topic's first SubscribeSchema is inside
+        // provider->SubscribeSchema, with `mu` released. Same flag+cv protocol
+        // as provider_subscribe_in_progress, and it is the count alone that
+        // cannot replace it: the first caller increments BEFORE it unlocks, so a
+        // second caller testing only `schema_watches > 0` would return the
+        // arrival that has not been stored yet — a default-constructed one,
+        // which reports kSubscriptionEnded for a schema that is on its way.
+        bool schema_watch_in_progress = false;
     };
 
     std::shared_ptr<PubSubProvider> provider;
@@ -428,6 +444,7 @@ Subscriber::Subscriber(std::shared_ptr<PubSubProvider> provider) : impl_(std::ma
 
 Subscriber::~Subscriber() {
     std::vector<std::vector<std::string>> to_unsub;
+    std::vector<std::vector<std::string>> schema_to_release;
     // Ids as well as gates: a drain that lands in the carve-out defers its
     // release by id, exactly as Unsubscribe's does.
     std::vector<std::pair<uint64_t, std::shared_ptr<Gate>>> gates;
@@ -467,13 +484,39 @@ Subscriber::~Subscriber() {
     // thread, and owner ruling 2026-09-05 chose a named stop over a silent leak
     // for a forbidden act. Published in subscriber.hpp, where an application
     // author reads it.
+    //
+    // The schema watches collected alongside it DO ask the door question, and
+    // the asymmetry is the other way round for a reason that is not a
+    // preference: a watch has no delivery frame of its own, so skipping its
+    // release strands a transport resource and nothing else, whereas the
+    // provider's door would answer this forward with kReentrantCall and that
+    // status leaving a `noexcept` destructor is the stop above. One named stop
+    // per violation is the ruling; a second one reached through a path with a
+    // harmless alternative would be noise. Published in subscriber.hpp.
     {
         std::lock_guard lock(impl_->mu);
+        const bool may_enter_provider = !internal::InsideDeliveryOn(impl_->provider.get());
         for (auto& [key, ts] : impl_->topics) {
+            if (ts.schema_watches > 0 && may_enter_provider) {
+                schema_to_release.push_back(ts.segments);
+                ts.schema_watches = 0;
+            }
             if (ts.provider_subscribed) {
                 to_unsub.push_back(ts.segments);
                 ts.provider_subscribed = false;
             }
+        }
+    }
+    // Before the data teardown: a provider that shares one schema channel
+    // between the two sides then releases the watch while the data reader is
+    // still up and tears the channel down once, instead of re-opening a
+    // schema-only reader it is about to destroy.
+    for (const auto& segs : schema_to_release) {
+        try {
+            impl_->provider->UnsubscribeSchema(segs);
+        } catch (...) {
+            // Nothing to recover during destruction, and no kReentrantCall to
+            // rethrow: that question was asked and answered above.
         }
     }
     for (const auto& segs : to_unsub) {
@@ -669,6 +712,102 @@ void Subscriber::Unsubscribe(uint64_t subscription_id) {
 
     if (!segments_to_unsub.empty()) {
         impl_->provider->Unsubscribe(segments_to_unsub);
+    }
+}
+
+SchemaArrival Subscriber::SubscribeSchema(const std::vector<std::string>& segments) {
+    // ── The door, before `mu` and before the wait ──────────────────
+    //
+    // Same ordering argument as EnsureProviderSubscription's, and it applies
+    // here without the fast path that softens it there: this call has nothing to
+    // serve from the cache before a first watch exists, so it must be able to
+    // enter the provider, and from inside that provider's own delivery frame it
+    // cannot be. Waiting on `schema_watch_in_progress` instead would be waiting
+    // for a flag only a thread inside the provider can clear — which, on a
+    // provider that dispatches under its instance mutex, is a thread this
+    // delivery is blocking. Refused at THIS tier so a provider that forgot its
+    // own door still answers uniformly, and so the refusal is not buried under
+    // a rollback — the two reasons EnsureProviderSubscription spells out.
+    internal::RefuseIfInsideDeliveryOn(impl_->provider.get(), "Subscriber::SubscribeSchema");
+
+    std::string key = internal::JoinSegments(segments);
+    std::unique_lock lock(impl_->mu);
+
+    auto [it, inserted] = impl_->topics.try_emplace(key);
+    if (inserted) {
+        it->second.segments = segments;
+    }
+    Impl::TopicState& ts = it->second;
+
+    // `ts` stays valid across the wait and the unlock below: nothing ever erases
+    // from `topics`, and unordered_map nodes are stable.
+    impl_->provider_cv.wait(lock, [&ts] { return !ts.schema_watch_in_progress; });
+
+    // Read AFTER that wait, never before it: the thread we waited out is the one
+    // that stored the arrival, and the count it incremented on the way in was
+    // already visible while the arrival was not.
+    if (ts.schema_watches > 0) {
+        ++ts.schema_watches;
+        return ts.schema_watch_arrival;
+    }
+
+    ts.schema_watch_in_progress = true;
+    ++ts.schema_watches;
+    lock.unlock();
+
+    SchemaArrival arrival;
+    try {
+        // Never with `mu` held — the lock-order note on Impl::RetireAndDrain.
+        arrival = impl_->provider->SubscribeSchema(segments);
+    } catch (...) {
+        // Roll the count back so a later call retries the provider rather than
+        // handing out an arrival nothing opened, and wake the waiters either way
+        // or every later SubscribeSchema on this topic waits forever.
+        lock.lock();
+        --ts.schema_watches;
+        ts.schema_watch_in_progress = false;
+        impl_->provider_cv.notify_all();
+        throw;
+    }
+
+    lock.lock();
+    ts.schema_watch_arrival = arrival;
+    ts.schema_watch_in_progress = false;
+    impl_->provider_cv.notify_all();
+    return arrival;
+}
+
+void Subscriber::UnsubscribeSchema(const std::vector<std::string>& segments) {
+    std::unique_lock lock(impl_->mu);
+
+    auto it = impl_->topics.find(internal::JoinSegments(segments));
+    // Nothing counted here: not this Subscriber's watch to release. A no-op, not
+    // an error, exactly as cancelling an unknown id is.
+    if (it == impl_->topics.end() || it->second.schema_watches == 0) return;
+    Impl::TopicState& ts = it->second;
+    // Not serialised against a first SubscribeSchema still inside the provider
+    // on another thread — deliberately. Reaching this line while that call is in
+    // flight means releasing a watch whose SubscribeSchema has not returned,
+    // which no caller is legitimately in a position to do, and waiting for
+    // `schema_watch_in_progress` here would be the wait the door on the other
+    // side exists to prevent: this tier has no door of its own to raise first.
+    if (--ts.schema_watches > 0) return;
+
+    std::vector<std::string> segments_to_release = ts.segments;
+    lock.unlock();
+
+    try {
+        impl_->provider->UnsubscribeSchema(segments_to_release);
+    } catch (...) {
+        // The provider still holds the watch — its door refuses a call from
+        // inside a delivery like every other method's, and this tier has no
+        // carve-out to offer, a watch having no delivery frame to wait for. So
+        // restore the count and let the refusal reach the caller: the watch stays
+        // this Subscriber's, releasable later or by ~Subscriber, instead of
+        // becoming a resource neither tier believes it holds.
+        lock.lock();
+        ++ts.schema_watches;
+        throw;
     }
 }
 

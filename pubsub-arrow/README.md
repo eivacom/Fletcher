@@ -24,6 +24,13 @@ creates a `Codec` from the schema received from the publisher. The wire
 format remains byte-identical to what edge code produces via the raw
 `Publisher` / `Subscriber`.
 
+A consumer that wants a topic's shape without any of its data uses
+`SubscriberArrow::SubscribeSchema` — it forwards `Subscriber::SubscribeSchema` as is and opens no
+data path at all, returning the same `SchemaArrival` a `Subscribe` on that topic would. Convert with
+`fletcher::ImportArrowSchema(const SharedSchema&)` once the arrival reports `kOk`; release the watch
+with `UnsubscribeSchema`. A later `Subscribe` on the topic reuses what `SubscribeSchema` opened but
+does not take it over — the watch outlives the subscription, and watches are counted per topic.
+
 ---
 
 ## Batched RecordBatch subscribe

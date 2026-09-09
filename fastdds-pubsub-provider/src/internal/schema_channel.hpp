@@ -6,6 +6,7 @@
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SCHEMA_CHANNEL_HPP_
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/subscriber/DataReader.hpp>
@@ -38,6 +39,11 @@ namespace internal {
 // The resolver is single-use by construction, so "resolved twice" is
 // unrepresentable rather than guarded by a `resolved` flag; this mutex now only
 // serialises the two threads that might reach for the one token.
+//
+// The channel also carries a one-shot continuation, installed by Subscribe when the schema is
+// still pending, that hands the schema to the data listener. SubscribeSchema opens a channel with
+// no continuation; a Subscribe that follows adds one, and an Unsubscribe that keeps the channel
+// for a watch Withdraws it — the listener it points at is about to be destroyed.
 struct SchemaChannel {
     SchemaChannel() {
         auto pair = SchemaArrival::Create();
@@ -48,36 +54,80 @@ struct SchemaChannel {
     std::mutex m;
     SchemaArrival arrival;
     std::optional<SchemaResolver> resolver;
+    // At most one: the data listener's SetSchema, when a Subscribe found the schema still pending.
+    std::function<void(SharedSchema)> on_resolved;
 
     void Resolve(SharedSchema schema) {
-        std::optional<SchemaResolver> token;
+        std::function<void(SharedSchema)> fn;
         {
             std::lock_guard<std::mutex> lk(m);
             if (!resolver.has_value()) return;
-            token = std::move(resolver);
+            std::optional<SchemaResolver> token = std::move(resolver);
             resolver.reset();
+            fn = std::move(on_resolved);
+            on_resolved = nullptr;
+            // Settled UNDER `m`, unlike the continuation below: OnResolved decides "already
+            // resolved?" by polling `arrival`, so a transition that landed after this lock was
+            // released would let it install a continuation onto a channel whose only chance to
+            // run one has just gone by. Nothing caller-written runs in here — SchemaResolver
+            // only wakes waiters — so this holds the lock across a notify, not across user code.
+            std::move(*token).Resolve(schema);
         }
-        std::move(*token).Resolve(std::move(schema));
+        // Outside the lock: it flushes the backlog through user code.
+        if (fn) fn(std::move(schema));
     }
 
     // Unsubscribed before the schema arrived. Dropping the token unresolved IS
     // the outcome — kSubscriptionEnded — which is what the broken promise used
     // to say by throwing out of get(), only now it is a value a binding can read
-    // and cannot confuse with "this transport carries no schemas".
+    // and cannot confuse with "this transport carries no schemas". Under `m` for the reason
+    // Resolve gives.
     void Break() {
-        std::optional<SchemaResolver> token;
+        std::lock_guard<std::mutex> lk(m);
+        resolver.reset();
+    }
+
+    // The transport could not open the channel at all. Distinct from Break: a waiter must not read
+    // a fault as the normal end of a subscription.
+    void Fail(PubSubStatus status, std::string message) {
+        std::lock_guard<std::mutex> lk(m);
+        if (!resolver.has_value()) return;
+        std::optional<SchemaResolver> token = std::move(resolver);
+        resolver.reset();
+        std::move(*token).Fail(status, std::move(message));
+    }
+
+    // Runs `fn` with the schema exactly once: inline if it has already arrived, otherwise from
+    // Resolve. A channel that has already ended drops `fn` rather than running it with null —
+    // unreachable in practice, since Break only follows a channel being moved out of its topic
+    // state, where no Subscribe can find it any more.
+    void OnResolved(std::function<void(SharedSchema)> fn) {
+        SharedSchema schema;
         {
             std::lock_guard<std::mutex> lk(m);
-            token = std::move(resolver);
-            resolver.reset();
+            // The existing arrival IS the record of what Resolve delivered; a second
+            // `SharedSchema` member here would be a second copy of that fact to keep in step.
+            if (arrival.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kPending) {
+                on_resolved = std::move(fn);
+                return;
+            }
         }
+        if (schema) fn(std::move(schema));
+    }
+
+    // Drops a continuation that has not run. Safe only once nothing can call Resolve any more —
+    // the schema reader whose listener would have is deleted — because a Resolve already past the
+    // lock has taken the continuation out and is running it.
+    void Withdraw() {
+        std::lock_guard<std::mutex> lk(m);
+        on_resolved = nullptr;
     }
 };
 
 // DataReaderListener for the companion __schema topic. Fires once when the
-// retained schema sample arrives and forwards the deserialised schema to the
-// callback installed by Subscribe (which resolves the subscription's schema
-// future and flushes buffered data samples).
+// retained schema sample arrives and resolves the topic's SchemaChannel with the
+// deserialised schema; the channel then runs the continuation a Subscribe
+// installed, which flushes the buffered data samples.
 class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
    public:
     SchemaListener(std::function<void(SharedSchema)> on_schema,

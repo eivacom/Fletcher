@@ -1422,3 +1422,290 @@ TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
                "diagnostic and this test's premise is stale";
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests — SubscribeSchema / UnsubscribeSchema: the schema without the data.
+//
+// The watch IS the companion `__schema` channel with no data reader beside it, so these read the
+// same `SchemaArrival` a `Subscribe` hands back — `Wait(0ms)` for a poll, a budget for a wait, and
+// the TYPED outcome (kOk / kPending / kSubscriptionEnded) as the assertion.
+// ---------------------------------------------------------------------------
+
+// The one waiting mechanism again, for an arrival that arrives on its own rather than inside a
+// SubscriptionResult.
+static SharedSchema AwaitWatch(const SchemaArrival& arrival, std::chrono::milliseconds budget) {
+    SharedSchema schema;
+    EXPECT_EQ(arrival.Wait(budget, &schema), PubSubStatus::kOk)
+        << "schema arrival: " << arrival.Message();
+    return schema;
+}
+
+// The proof the feature exists for: a watch pairs with the publisher's `__schema` writer and never
+// with its data writer. The positive half is the schema arriving at all — nothing else can deliver
+// it — and the negative half is the publisher's own OnMatched staying silent for the data topic,
+// which is the only endpoint on that side with a listener and a subscription_matched bit (the
+// companion channel's reader mask has none and its writer has no listener, so it cannot report
+// here either way).
+TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
+    struct WriterMatchListener : FastDDSStatusListener {
+        std::mutex m;
+        std::vector<std::string> data_writer_matches;
+
+        void OnMatched(Endpoint endpoint, int32_t, int32_t change) noexcept override {
+            if (change <= 0 || !endpoint.is_writer || endpoint.is_schema_channel) return;
+            std::lock_guard<std::mutex> lk(m);
+            data_writer_matches.emplace_back(endpoint.topic);
+        }
+    };
+
+    // Declared before the providers: calls arrive until the last of them is destroyed.
+    WriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    pub.CreateTopic({"schemaonly", "x"}, MakeSchema());
+    pub.Publish({"schemaonly", "x"}, MakeEncoder(1));  // creates the data writer
+
+    SchemaArrival watch = sub.SubscribeSchema({"schemaonly", "x"});
+    SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(schema);
+    ASSERT_EQ(schema->n_children, 1);
+    EXPECT_STREQ(schema->children[0]->name, "x");
+
+    // Grace for a data-writer match that must not come. The schema above proves discovery ran, so
+    // this is a settle rather than a hope.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    {
+        std::lock_guard<std::mutex> lk(pub_listener.m);
+        EXPECT_THAT(pub_listener.data_writer_matches,
+                    testing::Not(testing::Contains("schemaonly/x")))
+            << "a schema-only watch created a data reader";
+    }
+
+    sub.UnsubscribeSchema({"schemaonly", "x"});
+}
+
+TEST(FastDDSPubSubProviderTest, SubscribeAfterSchemaWatchReusesTheSchema) {
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    pub.CreateTopic({"watchthen", "sub"}, MakeSchema());
+
+    SchemaArrival watch = sub.SubscribeSchema({"watchthen", "sub"});
+    SharedSchema s = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(s);
+    // Idempotent: a second watch is the same channel, so the same schema object.
+    EXPECT_EQ(AwaitWatch(sub.SubscribeSchema({"watchthen", "sub"}), std::chrono::seconds(0)).get(),
+              s.get());
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int32_t> received{-1};
+    int deliveries = 0;
+    SharedSchema rx_schema;
+    SubscriptionResult result = sub.Subscribe(
+        {"watchthen", "sub"},
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+            std::lock_guard<std::mutex> lk(mu);
+            ++deliveries;
+            rx_schema = schema;
+            if (len >= 5) received.store(DecodeRow(data));
+            cv.notify_all();
+        });
+    // Same channel, same schema object — no second fetch, and the arrival is already resolved
+    // when Subscribe returns rather than pending.
+    EXPECT_EQ(AwaitSchema(result, std::chrono::milliseconds(0)).get(), s.get());
+
+    pub.Publish({"watchthen", "sub"}, MakeEncoder(7));
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return received.load() != -1; }));
+        EXPECT_EQ(received.load(), 7);
+        EXPECT_EQ(deliveries, 1);
+        // The data listener started with the watched schema: no handoff, no copy.
+        EXPECT_EQ(rx_schema.get(), s.get());
+    }
+
+    sub.Unsubscribe({"watchthen", "sub"});
+    sub.UnsubscribeSchema({"watchthen", "sub"});
+}
+
+TEST(FastDDSPubSubProviderTest, SchemaWatchBeforeAnyPublisherResolvesWhenOneAppears) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    SchemaArrival watch = sub.SubscribeSchema({"watchfirst", "x"});
+    SharedSchema polled;
+    EXPECT_EQ(watch.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+    EXPECT_EQ(polled, nullptr) << "*out is untouched unless the answer is kOk";
+
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    pub.CreateTopic({"watchfirst", "x"}, MakeSchema());
+
+    SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(schema);
+    EXPECT_EQ(schema->n_children, 1);
+
+    sub.UnsubscribeSchema({"watchfirst", "x"});
+}
+
+TEST(FastDDSPubSubProviderTest, UnsubscribeSchemaBreaksAPendingWatch) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    SchemaArrival watch = sub.SubscribeSchema({"watch", "broken"});
+    sub.UnsubscribeSchema({"watch", "broken"});
+
+    // kSubscriptionEnded, not a failure: the watch was released, which is the caller's own doing
+    // and nothing a retry would cure.
+    SharedSchema polled;
+    EXPECT_EQ(watch.Wait(std::chrono::seconds(5), &polled), PubSubStatus::kSubscriptionEnded);
+    EXPECT_EQ(polled, nullptr);
+
+    // A topic this provider has never seen: nothing to release, nothing thrown.
+    EXPECT_NO_THROW(sub.UnsubscribeSchema({"never", "seen"}));
+}
+
+TEST(FastDDSPubSubProviderTest, UnsubscribeSchemaLeavesALiveDataSubscriptionAlone) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int32_t> received{-1};
+    SharedSchema rx_schema;
+    SubscriptionResult result = sub.Subscribe(
+        {"keep", "data"},
+        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+            std::lock_guard<std::mutex> lk(mu);
+            rx_schema = schema;
+            if (len >= 5) received.store(DecodeRow(data));
+            cv.notify_all();
+        });
+
+    // A watch on the same topic shares the data subscription's channel. Releasing it must not
+    // take that channel down: the data side is live and its arrival stays pending.
+    SchemaArrival watch = sub.SubscribeSchema({"keep", "data"});
+    sub.UnsubscribeSchema({"keep", "data"});
+    SharedSchema early;
+    EXPECT_EQ(watch.Wait(std::chrono::milliseconds(0), &early), PubSubStatus::kPending)
+        << "releasing the watch ended the arrival a live data subscription still owns";
+
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    pub.CreateTopic({"keep", "data"}, MakeSchema());
+    pub.Publish({"keep", "data"}, MakeEncoder(5));
+
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+    // The same arrival, seen through the released watch's copy, resolved with the data side.
+    SharedSchema via_watch;
+    EXPECT_EQ(watch.Wait(std::chrono::milliseconds(0), &via_watch), PubSubStatus::kOk);
+    EXPECT_TRUE(via_watch);
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return received.load() != -1; }));
+        EXPECT_EQ(received.load(), 5);
+        ASSERT_TRUE(rx_schema);
+    }
+
+    sub.Unsubscribe({"keep", "data"});
+}
+
+// A catalog's watch has to survive the Unsubscribe of a data subscription it knows nothing about —
+// here with the schema still pending, so the kept channel gets a fresh `__schema` reader.
+TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAPendingSchemaWatch) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    SchemaArrival watch = sub.SubscribeSchema({"keepwatch", "pending"});
+    SharedSchema polled;
+    ASSERT_EQ(watch.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+
+    static_cast<void>(
+        sub.Subscribe({"keepwatch", "pending"},
+                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    sub.Unsubscribe({"keepwatch", "pending"});
+
+    // Not ended by that Unsubscribe: the publisher appears only now.
+    ASSERT_EQ(watch.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    pub.CreateTopic({"keepwatch", "pending"}, MakeSchema());
+
+    SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(schema);
+    EXPECT_EQ(schema->n_children, 1);
+
+    sub.UnsubscribeSchema({"keepwatch", "pending"});
+}
+
+TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    pub.CreateTopic({"keepwatch", "resolved"}, MakeSchema());
+
+    SchemaArrival watch = sub.SubscribeSchema({"keepwatch", "resolved"});
+    SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(schema);
+
+    static_cast<void>(
+        sub.Subscribe({"keepwatch", "resolved"},
+                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    sub.Unsubscribe({"keepwatch", "resolved"});
+
+    // The channel stayed with the watch, so the schema is still there — the same object, with no
+    // re-fetch and no new reader (a resolved channel ignores a second Resolve).
+    EXPECT_EQ(
+        AwaitWatch(sub.SubscribeSchema({"keepwatch", "resolved"}), std::chrono::seconds(0)).get(),
+        schema.get());
+
+    // UnsubscribeSchema is what ends it: the next watch is a new channel with its own schema.
+    sub.UnsubscribeSchema({"keepwatch", "resolved"});
+    SharedSchema again =
+        AwaitWatch(sub.SubscribeSchema({"keepwatch", "resolved"}), std::chrono::seconds(5));
+    ASSERT_TRUE(again);
+    EXPECT_NE(again.get(), schema.get());
+
+    sub.UnsubscribeSchema({"keepwatch", "resolved"});
+}
+
+// The door, on the two new methods: refused by name from inside a delivery on this instance, like
+// the four data-path methods. Not decoration — SubscribeSchema can reach create_datareader and
+// UnsubscribeSchema can reach delete_datareader, and both hang if let through on a Fast DDS
+// listener thread.
+TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    pub.CreateTopic({"reentrant", "watch"}, MakeSchema());
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int32_t> subscribe_refusal{-1};
+    std::atomic<int32_t> unsubscribe_refusal{-1};
+
+    SubscriptionResult result =
+        sub.Subscribe({"reentrant", "watch"},
+                      [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                          try {
+                              static_cast<void>(sub.SubscribeSchema({"reentrant", "watch"}));
+                          } catch (const PubSubError& e) {
+                              subscribe_refusal.store(static_cast<int32_t>(e.status()));
+                          }
+                          try {
+                              sub.UnsubscribeSchema({"reentrant", "watch"});
+                          } catch (const PubSubError& e) {
+                              unsubscribe_refusal.store(static_cast<int32_t>(e.status()));
+                          }
+                          std::lock_guard<std::mutex> lk(mu);
+                          cv.notify_all();
+                      });
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    pub.Publish({"reentrant", "watch"}, MakeEncoder(1));
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return subscribe_refusal.load() != -1 && unsubscribe_refusal.load() != -1;
+        })) << "the delivery never ran, or neither call was answered";
+    }
+    EXPECT_EQ(subscribe_refusal.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+    EXPECT_EQ(unsubscribe_refusal.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+
+    sub.Unsubscribe({"reentrant", "watch"});
+}

@@ -56,6 +56,7 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
                    fletcher::PubSubProvider& provider, const ArrowSchema* schema) {
     publisher.ListTopics();
     subscriber.Subscribe({"probe"}, {});
+    subscriber.SubscribeSchema({"probe"});
     // NOTE: PubSubProvider::Subscribe is VIRTUAL, and gcc (measured: 13.3.0, the
     // version the Linux CI profile pins) emits no -Wunused-result diagnostic for a
     // discarded [[nodiscard]] virtual call — through the base OR the concrete type.
@@ -80,6 +81,7 @@ void DiscardArrowWrappers(fletcher::PublisherArrow& publisher,
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{},
                          fletcher::SubscriberArrow::BatchOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{});
+    subscriber.SubscribeSchema({"probe"});
 }
 
 void DiscardCodec(fletcher::Codec& codec, const fletcher::ArrowRow& row,

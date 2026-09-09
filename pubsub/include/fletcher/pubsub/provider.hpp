@@ -35,7 +35,10 @@ namespace fletcher {
 /// A subscription torn down before either happens is answered
 /// kSubscriptionEnded, so a consumer that waits never hangs and never mistakes
 /// "this subscription is over" for "this transport has no schemas". See
-/// SchemaArrival for the whole outcome set.
+/// SchemaArrival for the whole outcome set. One exception, by design: while a
+/// schema-only watch on the same topic is outstanding (`SubscribeSchema`), the
+/// arrival is the watch's as well, and a data `Unsubscribe` leaves it pending —
+/// it is answered when the schema arrives or `UnsubscribeSchema` releases it.
 struct SubscriptionResult {
     SchemaArrival schema;
 };
@@ -162,13 +165,14 @@ class PubSubProvider {
     ///    `DeliveryChannel` (delivery_channel.hpp), whose `Deliver` is `noexcept`
     ///    — so a provider cannot opt out and an unwind across a transport's C
     ///    frames is a type property rather than a comment.
-    ///  - **Re-entrancy: ALL FOUR methods are REFUSED** (§6 clause 6, owner
-    ///    ruling 2026-09-05). `CreateTopic`, `Publish`, `Subscribe` and
-    ///    `Unsubscribe`, issued from inside a delivery on this same instance and
-    ///    this same thread, each throw `PubSubError(kReentrantCall)` before
-    ///    taking any lock. Copy what you need and act after the callback
-    ///    returns. Re-permitting this once a loaned-sample receive path exists
-    ///    is a registered obligation on PDA-ABI (AG1-DEBT-19); it is not
+    ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6, owner
+    ///    ruling 2026-09-05). The four data-path methods `CreateTopic`,
+    ///    `Publish`, `Subscribe` and `Unsubscribe` and the two schema-only ones
+    ///    below, issued from inside a delivery on this same instance and this
+    ///    same thread, each throw `PubSubError(kReentrantCall)` before taking
+    ///    any lock. Copy what you need and act after the callback returns.
+    ///    Re-permitting this once a loaned-sample receive path exists is a
+    ///    registered obligation on PDA-ABI (AG1-DEBT-19); it is not
     ///    pre-authorised, and needs a fresh owner ruling.
     using SubscribeCallback =
         std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
@@ -199,7 +203,7 @@ class PubSubProvider {
     /// outlive the call. Unsubscribing a topic with no subscription is a no-op,
     /// not an error, so it is safe to call unconditionally on teardown.
     ///
-    /// **Refused from inside a delivery, as all four methods are** (§6 clause 6,
+    /// **Refused from inside a delivery, as every seam method is** (§6 clause 6,
     /// owner ruling 2026-09-05). Issued from a delivery callback on THIS instance
     /// and THIS thread, it throws `PubSubError(kReentrantCall)` before taking any
     /// lock — a cancellation cannot wait for the delivery it is inside of, and
@@ -213,6 +217,48 @@ class PubSubProvider {
     /// though see §6 clause 6 on cycles between instances, which the doors cannot
     /// see and do not prevent.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
+
+    /// The topic's schema without its data (owner ruling 2026-09-09, spec §2
+    /// addendum). Opens only the schema side of a subscription and returns the
+    /// same arrival `Subscribe` would — **never blocks**, and resolves once a
+    /// publisher has announced the topic, at once if one already has. That is
+    /// the whole point: a catalog client learns a topic's shape without asking
+    /// for one row of it.
+    ///
+    /// Idempotent per topic — a second call opens nothing further, and a later
+    /// `Subscribe` reuses what this opened. The watch is released **only** by
+    /// `UnsubscribeSchema`: a data `Unsubscribe` leaves a pending watch in
+    /// place, because the two were asked for separately and the data
+    /// subscription is not what the watcher is waiting on.
+    ///
+    /// **Refused from inside a delivery, as every seam method is** (§6 clause 6)
+    /// — `PubSubError(kReentrantCall)` before any lock.
+    ///
+    /// **Optional**, unlike the four above, which are pure. A transport with no
+    /// out-of-band schema channel does not override it and the default below
+    /// throws `PubSubError(kNotSupported)` — the named refusal, distinct from
+    /// `kReentrantCall`'s "not from in there". Ask for the data instead: a
+    /// `Subscribe` on such a transport still answers its `SchemaArrival`.
+    [[nodiscard]] virtual SchemaArrival SubscribeSchema(
+        const std::vector<std::string>& topic_segments) {
+        (void)topic_segments;
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          "PubSubProvider: this transport has no schema-only subscription");
+    }
+
+    /// Release the watch `SubscribeSchema` opened. A still-pending arrival then
+    /// reports kSubscriptionEnded, so a waiter is answered rather than left
+    /// hanging. Releasing a topic with no watch is a no-op, not an error, so it
+    /// is safe to call unconditionally on teardown — which is also why the
+    /// default is a no-op and not a `kNotSupported` refusal: a provider that
+    /// never opens a watch has nothing to refuse.
+    ///
+    /// A live data subscription shares the schema channel AND its arrival: the
+    /// watch ends here, but the arrival is then that subscription's and stays
+    /// pending until its schema arrives or it is unsubscribed — never ended from
+    /// under a live subscription. The endpoints go with that subscription's
+    /// `Unsubscribe`.
+    virtual void UnsubscribeSchema(const std::vector<std::string>& /*topic_segments*/) {}
 };
 
 }  // namespace fletcher

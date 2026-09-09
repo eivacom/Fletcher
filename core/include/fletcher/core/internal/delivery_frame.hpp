@@ -128,10 +128,12 @@ class DeliveryScope {
 /// The door. Refuse `method` when this thread is already inside a delivery on
 /// `token`, and do nothing otherwise.
 ///
-/// **The refused set is ALL FOUR methods, on every provider** — `CreateTopic`,
-/// `Publish`, `Subscribe`, `Unsubscribe` — on the same instance and the same
-/// thread (owner ruling 2026-09-05, "Re-entry is refused on every protocol",
-/// which SUPERSEDES the earlier ruling that refused only `Unsubscribe`).
+/// **The refused set is EVERY seam method, on every provider** — the four
+/// data-path methods `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe` and
+/// the two schema-only ones, `SubscribeSchema` and `UnsubscribeSchema` — on the
+/// same instance and the same thread (owner ruling 2026-09-05, "Re-entry is
+/// refused on every protocol", which SUPERSEDES the earlier ruling that refused
+/// only `Unsubscribe`).
 ///
 /// The earlier ruling rested on the claim that the other three "work today on
 /// Fast DDS and XRCE". Probing found that false: a Fast DDS listener callback

@@ -117,6 +117,31 @@ What this round *may* change is the **types** in those signatures, and only wher
 a type has no C-expressible form (§3). Adding, removing or reordering methods is
 a stop-and-ask.
 
+**Addendum, 2026-09-09 — that stop-and-ask was asked, and answered by adding two
+OPTIONAL methods.** A catalog client needs a topic's shape and not one row of it,
+and the only way to get it was to open a data subscription and throw the data
+away:
+
+```cpp
+[[nodiscard]] virtual SchemaArrival SubscribeSchema(const std::vector<std::string>& segments);
+virtual void UnsubscribeSchema(const std::vector<std::string>& segments) {}
+```
+
+Neither is pure. The base class throws `PubSubError(kNotSupported)` for the first
+and does nothing for the second, so a transport with no out-of-band schema
+channel stays conforming without writing a line, and a caller that asks anyway
+gets a **named** refusal instead of an arrival nothing will ever resolve. They
+are therefore **not among the conformance suite's four data-path methods**
+(§7.1): nothing in the suite requires them, and a provider is not measured on
+them. They are seam entry points all the same, so §5.1's translation rule and §6
+clause 6's re-entrancy refusal bind them exactly as they bind the other four, and
+a C form is owed to PDA-ABI like every other method here — §3.5's segment list
+in, §3.4's arrival handle out.
+
+The watch is idempotent per topic, a later `Subscribe` reuses what it opened, and
+it is released **only** by `UnsubscribeSchema`: a data `Unsubscribe` leaves a
+pending watch in place, because the two were asked for separately.
+
 **`Publish` is inverted, and stays inverted.** The provider supplies the buffer
 and Fletcher encodes into it. That inversion is the entire zero-copy encode path
 and the reason `FixedWriteBuffer` exists; a change that has the provider hand
@@ -311,7 +336,9 @@ handle with a single-use `SchemaResolver` on the write end
 ([pubsub/include/fletcher/pubsub/schema_arrival.hpp](../pubsub/include/fletcher/pubsub/schema_arrival.hpp)).
 There is **one waiting mechanism**: the `shared_future` is retired, not kept as a
 C++ convenience beside it, so the path a C#/Rust caller uses is the path the
-tree's own tests exercise.
+tree's own tests exercise. §2's `SubscribeSchema` returns that same
+`SchemaArrival`, so learning a topic's shape without subscribing to its data adds
+no second mechanism to bridge.
 
 `Wait(timeout, out)` returns a **typed** outcome, never a bare bool:
 
@@ -720,7 +747,9 @@ without drifting, which is the drift this round exists to stop.
   and throwing from inside a throw expression would be worse than a mislabelled
   status. The property is the same either way: no failure ever carries a
   non-failure number.
-- **Every seam entry point translates.** Each provider wraps its four methods, so
+- **Every seam entry point translates.** Each provider wraps every seam method it
+  implements — the four data-path ones and, where it has them, the two
+  schema-only ones — so
   the only exception that leaves is a `PubSubError`; anything else — including
   `std::bad_alloc` or a transport SDK's own type — becomes `kInternal` carrying
   the original `what()`. A taxonomy that lets an untyped exception through is not

@@ -484,6 +484,55 @@ provider->Subscribe({"my", "topic"}, [](const uint8_t* data, size_t len,
 provider->Unsubscribe({"my", "topic"});
 ```
 
+### The schema without the data: a catalog
+
+`SubscribeSchema` opens only the `__schema` side — one reader on `<topic>/__schema`, no data
+reader, one retained sample — and returns the same `SchemaArrival` a `Subscribe` would. That is
+what a catalog needs: a topic's shape without asking for one row of it.
+
+```cpp
+// On your own thread, never in the discovery callback (see below).
+fletcher::SchemaArrival watch = provider->SubscribeSchema({"my", "topic"});
+
+// On your tick. Zero timeout polls; kPending just means "not yet".
+fletcher::SharedSchema schema;
+switch (watch.Wait(std::chrono::milliseconds(0), &schema)) {
+    case fletcher::PubSubStatus::kOk:
+        // `fletcher::ImportArrowSchema(schema)` turns it into an `arrow::Schema` — that function
+        // lives in the `fletcher-pubsub-arrow` package (`fletcher/pubsub_arrow/schema_import.hpp`),
+        // not here: this provider carries no Arrow C++ dependency.
+        break;
+    case fletcher::PubSubStatus::kPending:
+        break;  // no publisher has announced this topic yet
+    case fletcher::PubSubStatus::kSubscriptionEnded:
+        break;  // the watch was released; nothing will arrive on this arrival
+    default:
+        break;  // a transport fault — `watch.Message()` says what
+}
+
+provider->UnsubscribeSchema({"my", "topic"});
+```
+
+Topic names come from discovery: record the `topic` handed to
+`FastDDSStatusListener::OnWriterDiscovered` and call `SubscribeSchema` **from your own thread**.
+Never from the callback — an override must not call into any provider at all (the threading
+contract on `FastDDSStatusListener`): the callback can be running on an application thread that is
+already inside `Publish` or `Subscribe` with this provider's non-recursive mutex held, and
+re-entering it deadlocks. Copy the name, return, and act on your next tick. Note what discovery
+does and does not show: Fletcher's own `<topic>/__schema` endpoints are filtered out of
+`OnWriterDiscovered`, and the data writer is created on a topic's first `Publish`, so a topic
+that has been declared but never published to is not visible there.
+
+`Unsubscribe` and `UnsubscribeSchema` release different things and neither substitutes for the
+other. `Unsubscribe` releases the data subscription — its reader and listener — and leaves a watch
+in place: the schema channel is kept, re-armed with a fresh `__schema` reader if the schema has
+still not arrived, so the watcher's arrival keeps waiting rather than reporting
+`kSubscriptionEnded`. `UnsubscribeSchema` releases the watch, and with no data subscription left
+on the topic it takes the `__schema` reader down and ends a still-pending arrival with
+`kSubscriptionEnded`; with a live data subscription sharing the channel it clears the watch only,
+and those endpoints go with that subscription's `Unsubscribe`. Both are safe to call on a topic
+that has neither.
+
 ### Per-topic QoS overrides
 
 A per-topic override is a profile **named after the topic** — the `/`-joined topic string. It is

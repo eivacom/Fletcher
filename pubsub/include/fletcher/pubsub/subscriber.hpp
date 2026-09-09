@@ -58,6 +58,15 @@ class Subscriber {
     /// bound, which is the silent failure this seam exists to refuse. Do not
     /// destroy a Subscriber from a handler; hand it to whoever owns its
     /// lifetime and let the callback return.
+    ///
+    /// Outstanding `SubscribeSchema` watches are released here as well, and that
+    /// half is SKIPPED rather than fatal when this destructor runs from inside a
+    /// delivery: the door question is asked before the forward, and a watch this
+    /// Subscriber still holds is then simply left with the provider — the same
+    /// "a transport resource is held until the provider dies" residue
+    /// `Unsubscribe`'s carve-out publishes below. So it is neither a second way
+    /// to reach the stop above nor an escape from it: the data path still gets
+    /// there first.
     ~Subscriber();
 
     Subscriber(const Subscriber&) = delete;
@@ -175,6 +184,50 @@ class Subscriber {
     /// same number, or does nothing. This predates the guarantees above and is
     /// unchanged by them.
     void Unsubscribe(uint64_t subscription_id);
+
+    /// The topic's schema without its data — `PubSubProvider::SubscribeSchema`,
+    /// whose contract this forwards verbatim: never blocks, resolves when a
+    /// publisher has announced the topic, and answers with the same
+    /// `SchemaArrival` a `Subscribe` on that topic would.
+    ///
+    /// **No subscription id, deliberately.** There is nothing to address: a
+    /// watch registers no callback and delivers nothing, so the only state it
+    /// has is "how many of this Subscriber's callers want it". It is therefore
+    /// COUNTED per Subscriber and idempotent per topic — the second call on a
+    /// topic this Subscriber already watches is answered from the cached arrival
+    /// and never reaches the provider — and the provider's watch is released by
+    /// the LAST `UnsubscribeSchema`, or by `~Subscriber` for whatever is still
+    /// outstanding. A data `Unsubscribe` does not release it, and holding a
+    /// watch does not keep a data subscription alive: the two are separate
+    /// requests over one transport-level channel.
+    ///
+    /// **Refused with `kReentrantCall` from inside a delivery on this
+    /// Subscriber's provider**, always — unlike `Subscribe`, whose answer
+    /// depends on whether the provider has to be entered at all. The refusal is
+    /// raised at this tier, before this Subscriber waits on anything, so the
+    /// answer is the same whatever provider is underneath; a handler that lets
+    /// it escape has it absorbed and counted by the fan-out, exactly as the
+    /// paragraph above `Subscribe` describes.
+    ///
+    /// A transport with no out-of-band schema channel refuses with
+    /// `kNotSupported`: the method is optional at the provider tier and this
+    /// tier does not paper over that.
+    [[nodiscard]] SchemaArrival SubscribeSchema(const std::vector<std::string>& segments);
+
+    /// Release one of this Subscriber's watches on `segments`. The provider is
+    /// entered only by the last one; releasing a topic this Subscriber does not
+    /// watch is a no-op, not an error, like cancelling an unknown id.
+    ///
+    /// A still-pending arrival handed out by `SubscribeSchema` then reports
+    /// kSubscriptionEnded — a waiter is answered, never left hanging.
+    ///
+    /// This carries **no carve-out of its own** for a call issued from inside a
+    /// delivery: a schema watch has no delivery frame to wait for, so there is
+    /// nothing this tier could usefully skip, and the provider's door answers
+    /// the re-entrancy question with `kReentrantCall` as it does for every other
+    /// method. The count is restored when that happens, so the watch stays this
+    /// Subscriber's to release later or at destruction.
+    void UnsubscribeSchema(const std::vector<std::string>& segments);
 
     /// How many subscriber-callback failures **this Subscriber's** fan-out has
     /// absorbed.

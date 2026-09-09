@@ -81,6 +81,47 @@ class MockProvider : public PubSubProvider {
     std::unordered_map<std::string, OwnedSchema> schemas_;
 };
 
+// A schema-carrying provider that never receives a data subscription in the
+// test below — SubscribeSchema is the only thing exercised through it, so
+// `subscribe_count` staying 0 is the whole point of the test.
+class SchemaOnlyProvider : public PubSubProvider {
+   public:
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
+        std::string key = fletcher::internal::JoinSegments(segments);
+        if (schema) {
+            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        }
+    }
+
+    void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
+
+    SubscriptionResult Subscribe(const std::vector<std::string>&, SubscribeCallback) override {
+        ++subscribe_count;
+        return {SchemaArrival::Ready(nullptr)};
+    }
+
+    void Unsubscribe(const std::vector<std::string>&) override {}
+
+    SchemaArrival SubscribeSchema(const std::vector<std::string>& segments) override {
+        auto it = schemas_.find(fletcher::internal::JoinSegments(segments));
+        SharedSchema schema;
+        if (it != schemas_.end()) {
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
+        }
+        return SchemaArrival::Ready(std::move(schema));
+    }
+
+    void UnsubscribeSchema(const std::vector<std::string>& /*segments*/) override {
+        ++unsubscribe_schema_count;
+    }
+
+    int subscribe_count = 0;
+    int unsubscribe_schema_count = 0;
+
+   private:
+    std::unordered_map<std::string, OwnedSchema> schemas_;
+};
+
 static auto TestSchema() {
     return arrow::schema({
         arrow::field("x", arrow::int32()),
@@ -180,6 +221,41 @@ TEST(SubscriberArrowTest, SubscribeReturnsArrowSchema) {
     EXPECT_TRUE(sch->field(0)->type()->Equals(*arrow::int32()));
     EXPECT_EQ(sch->field(1)->name(), "name");
     EXPECT_TRUE(sch->field(1)->type()->Equals(*arrow::utf8()));
+}
+
+TEST(SubscriberArrowTest, SubscribeSchemaYieldsAnImportableSchemaWithoutADataSubscription) {
+    auto provider = std::make_shared<SchemaOnlyProvider>();
+    PublisherArrow pub(provider);
+    SubscriberArrow sub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival arrival = sub.SubscribeSchema(kTopic);
+
+    SharedSchema nano;
+    ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &nano), PubSubStatus::kOk);
+    std::shared_ptr<arrow::Schema> schema = ImportArrowSchema(nano);
+    ASSERT_TRUE(schema);
+    EXPECT_TRUE(schema->Equals(*TestSchema()));
+
+    // No data subscription was ever opened for this.
+    EXPECT_EQ(provider->subscribe_count, 0);
+
+    sub.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(provider->unsubscribe_schema_count, 1);
+}
+
+// Optional means optional: MockProvider never overrode SubscribeSchema, so the
+// base class's default refusal is what SubscriberArrow forwards.
+TEST(SubscriberArrowTest, SubscribeSchemaOnATransportWithoutOneThrowsNotSupported) {
+    auto mock = std::make_shared<MockProvider>();
+    SubscriberArrow sub(mock);
+
+    try {
+        static_cast<void>(sub.SubscribeSchema(kTopic));
+        FAIL() << "expected PubSubError(kNotSupported)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kNotSupported);
+    }
 }
 
 TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
