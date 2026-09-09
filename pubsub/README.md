@@ -181,6 +181,7 @@ target_link_libraries(my-project PRIVATE fletcher::pubsub)
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 ```

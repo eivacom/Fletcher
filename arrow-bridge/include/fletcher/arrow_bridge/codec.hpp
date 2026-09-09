@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <fletcher/core/types.hpp>
+#include <fletcher/core/write_buffer.hpp>
 #include <memory>
 #include <vector>
 
@@ -45,6 +46,9 @@ class Codec {
    public:
     explicit Codec(std::shared_ptr<arrow::Schema> schema);
 
+    // Encodes one row straight into `out` — the provider's buffer when called from a RowEncoder.
+    void EncodeRow(const ArrowRow& values, WriteBuffer& out) const;
+    // The same bytes in a fresh vector.
     [[nodiscard]] EncodedRow EncodeRow(const ArrowRow& values) const;
 
     [[nodiscard]] ArrowRow DecodeRow(const EncodedRow& buf) const;

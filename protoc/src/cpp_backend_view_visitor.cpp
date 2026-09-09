@@ -11,9 +11,9 @@
 namespace fletcher::cpp_backend {
 
 // ---------------------------------------------------------------------------
-// GIR-6 Arrow view getter + ToArrowRow() recursive visitors. Maps IR recursion
-// to generated-code recursion, reproducing the former FieldMapping-switch
-// EmitViewGetters + GenerateToArrowRow byte-for-byte: getter/row field order,
+// GIR-6 Arrow view getter + ToArrowRow() + AppendTo() recursive visitors. Maps
+// IR recursion to generated-code recursion, reproducing the former
+// FieldMapping-switch EmitViewGetters + GenerateToArrowRow: getter/row field order,
 // nullable vs non-nullable branching, string/bytes std::string_view vs owned
 // std::string handling, whole-shape nested-list (depth-2 ArrowNestedList /
 // depth-3 ArrowNestedList2) classification with leaf-struct identity, and
@@ -22,6 +22,12 @@ namespace fletcher::cpp_backend {
 // Nested-list depth is structural (ListNode has no list_depth): the visitor walks
 // nested ListNode elements to the leaf StructNode and counts levels, matching the
 // GIR-4 decode visitor and the IR->FieldMapping projection.
+//
+// AppendTo() is the third emitter here and the only one that writes Arrow data
+// through typed child builders rather than one arrow::Scalar per value; the
+// ToArrowRow() branches whose elements are messages (repeated struct, nested
+// list of struct, map with a message value) route through it, so a composite
+// field is materialised once, in typed form, on either path.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -341,6 +347,244 @@ class EdgeViewGetterVisitor {
     const google::protobuf::FileDescriptor* context_file_;
 };
 
+// ---- AppendTo() visitor ---------------------------------------------------
+
+// Appends one message as ONE element of a pre-built arrow::StructBuilder,
+// driving that struct's already-typed child builders directly instead of
+// materialising one arrow::Scalar per element. Found via ADL in the generated
+// header, and used recursively for every nested struct (nested STRUCT, repeated
+// struct, nested list of struct, map with a message value) by AppendTo() itself
+// and by ToArrowRow()'s composite branches.
+//
+// Unlike the two visitors above, `field_index` is load-bearing: it is the
+// `b.field_builder(<i>)` slot this field writes. Composite builder types are
+// literals (arrow::StructBuilder / arrow::ListBuilder / arrow::MapBuilder) —
+// only the SCALAR leaf spelling comes from the C++ lookup table (locked #1).
+// Every field is emitted as one brace-scoped block, so the child-builder
+// reference names (fb/sb/lb.../mb) never collide between fields.
+class EdgeAppendToVisitor {
+   public:
+    EdgeAppendToVisitor(std::ostringstream& out, std::string getter_expr, std::size_t field_index)
+        : out_(out), getter_(std::move(getter_expr)), si_(std::to_string(field_index)) {}
+
+    void EmitField(const ir::IrNode& node) {
+        switch (node.kind) {
+            case ir::NodeKind::SCALAR:
+                EmitScalar(std::get<ir::ScalarNode>(node.node), node.facts.nullable);
+                break;
+            case ir::NodeKind::STRUCT:
+                EmitStruct(node.facts.nullable);
+                break;
+            case ir::NodeKind::LIST:
+                EmitList(node);
+                break;
+            case ir::NodeKind::MAP:
+                EmitMap(std::get<ir::MapNode>(node.node));
+                break;
+            case ir::NodeKind::FIXED_SIZE_LIST:
+            case ir::NodeKind::UNSUPPORTED:
+                // GatherFields drops these before view emission, so no builder
+                // slot is consumed and the indices stay aligned with the schema.
+                break;
+        }
+    }
+
+   private:
+    // The public getter already applies value_or(default) for a non-nullable
+    // scalar (generator.cpp EmitGetters), so this branches only on nullable vs
+    // non-nullable and never re-applies a default. String/bytes arrive as a
+    // std::string_view, which every Arrow binary builder appends directly (no
+    // owning std::string is needed here: the builder copies into its buffer,
+    // unlike ToArrowRow, whose arrow::Scalar has to own the bytes).
+    void EmitScalar(const ir::ScalarNode& s, bool nullable) {
+        const CppScalarInfo& sc = LookupScalar(s.logical_type, s.enum_identity);
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& fb = static_cast<" << sc.builder_type << "&>(*b.field_builder("
+             << si_ << "));\n";
+        if (nullable) {
+            out_ << "        if (" << getter_ << ".has_value()) ARROW_RETURN_NOT_OK(fb.Append(*"
+                 << getter_ << "));\n"
+                 << "        else ARROW_RETURN_NOT_OK(fb.AppendNull());\n";
+        } else {
+            out_ << "        ARROW_RETURN_NOT_OK(fb.Append(" << getter_ << "));\n";
+        }
+        out_ << "    }\n";
+    }
+
+    // No class name is needed: AppendTo() is a free function resolved by overload
+    // on the message type, and OrderedMessages() has already emitted the nested
+    // message's AppendTo() above this one.
+    void EmitStruct(bool nullable) {
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& sb = static_cast<arrow::StructBuilder&>(*b.field_builder(" << si_
+             << "));\n";
+        if (nullable) {
+            out_ << "        if (const auto* v = " << getter_
+                 << ") ARROW_RETURN_NOT_OK(AppendTo(sb, *v));\n"
+                 << "        else ARROW_RETURN_NOT_OK(sb.AppendNull());\n";
+        } else {
+            out_ << "        ARROW_RETURN_NOT_OK(AppendTo(sb, " << getter_ << "));\n";
+        }
+        out_ << "    }\n";
+    }
+
+    void EmitList(const ir::IrNode& list_node) {
+        const ir::IrNode& elem = *std::get<ir::ListNode>(list_node.node).element;
+        switch (elem.kind) {
+            case ir::NodeKind::SCALAR:
+                EmitRepeatedScalar(std::get<ir::ScalarNode>(elem.node));
+                break;
+            case ir::NodeKind::STRUCT:
+                EmitRepeatedStruct();
+                break;
+            case ir::NodeKind::LIST:
+                EmitNestedList(list_node);
+                break;
+            default:
+                break;
+        }
+    }
+
+    void EmitRepeatedScalar(const ir::ScalarNode& e) {
+        const CppScalarInfo& el = LookupScalar(e.logical_type, e.enum_identity);
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& lb = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si_
+             << "));\n"
+             << "        ARROW_RETURN_NOT_OK(lb.Append());\n"
+             << "        auto& vb = static_cast<" << el.builder_type
+             << "&>(*lb.value_builder());\n";
+        EmitLeafRun(el, getter_, "        ");
+        out_ << "    }\n";
+    }
+
+    void EmitRepeatedStruct() {
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& lb = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si_
+             << "));\n"
+             << "        ARROW_RETURN_NOT_OK(lb.Append());\n"
+             << "        auto& sb = static_cast<arrow::StructBuilder&>(*lb.value_builder());\n"
+             << "        for (const auto& v : " << getter_
+             << ") ARROW_RETURN_NOT_OK(AppendTo(sb, v));\n"
+             << "    }\n";
+    }
+
+    // list<list<...<leaf>>>, depth-generic up to the cap this file's emitters
+    // share, with a struct OR a scalar leaf (GIR-10). Nullability comes from the
+    // chained (fletcher.flatten) wrapper walk, whose getter is a pointer.
+    void EmitNestedList(const ir::IrNode& list_node) {
+        const NestedListShape shape = ClassifyNestedList(list_node);
+        if (shape.depth > kMaxRenderableNestedListDepth) {
+            EmitNestedListDepthUnsupported(out_, getter_, shape.depth, "AppendTo");
+            return;
+        }
+        const bool nullable = list_node.facts.nullable;
+        const bool scalar_leaf = shape.leaf->kind == ir::NodeKind::SCALAR;
+
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& lb0 = static_cast<arrow::ListBuilder&>(*b.field_builder(" << si_
+             << "));\n";
+
+        std::string indent = "        ";
+        if (nullable) {
+            out_ << indent << "if (" << getter_ << " == nullptr) {\n"
+                 << indent << "    ARROW_RETURN_NOT_OK(lb0.AppendNull());\n"
+                 << indent << "} else {\n";
+            indent += "    ";
+        }
+
+        out_ << indent << "ARROW_RETURN_NOT_OK(lb0.Append());\n";
+        for (int d = 1; d < shape.depth; ++d) {
+            out_ << indent << "auto& lb" << d << " = static_cast<arrow::ListBuilder&>(*lb"
+                 << (d - 1) << ".value_builder());\n";
+        }
+
+        const std::string innermost = "lb" + std::to_string(shape.depth - 1);
+        const CppScalarInfo* leaf_scalar = nullptr;
+        if (scalar_leaf) {
+            const auto& e = std::get<ir::ScalarNode>(shape.leaf->node);
+            leaf_scalar = &LookupScalar(e.logical_type, e.enum_identity);
+            out_ << indent << "auto& vb = static_cast<" << leaf_scalar->builder_type << "&>(*"
+                 << innermost << ".value_builder());\n";
+        } else {
+            out_ << indent << "auto& sb = static_cast<arrow::StructBuilder&>(*" << innermost
+                 << ".value_builder());\n";
+        }
+
+        // One loop per list level above the innermost; each opens its own list.
+        std::string src = nullable ? ("*" + getter_) : getter_;
+        for (int d = 0; d < shape.depth - 1; ++d) {
+            const std::string var = "l" + std::to_string(d);
+            out_ << indent << "for (const auto& " << var << " : " << src << ") {\n";
+            indent += "    ";
+            out_ << indent << "ARROW_RETURN_NOT_OK(lb" << (d + 1) << ".Append());\n";
+            src = var;
+        }
+        if (scalar_leaf) {
+            EmitLeafRun(*leaf_scalar, src, indent);
+        } else {
+            out_ << indent << "for (const auto& v : " << src
+                 << ") ARROW_RETURN_NOT_OK(AppendTo(sb, v));\n";
+        }
+        for (int d = 0; d < shape.depth - 1; ++d) {
+            indent.resize(indent.size() - 4);
+            out_ << indent << "}\n";
+        }
+
+        if (nullable) out_ << "        }\n";  // close else
+        out_ << "    }\n";
+    }
+
+    void EmitMap(const ir::MapNode& map) {
+        const ir::ScalarNode& key = std::get<ir::ScalarNode>(map.key->node);
+        const CppScalarInfo& mk = LookupScalar(key.logical_type, key.enum_identity);
+
+        out_ << "    {\n"
+             << "        // " << getter_ << "\n"
+             << "        auto& mb = static_cast<arrow::MapBuilder&>(*b.field_builder(" << si_
+             << "));\n"
+             << "        ARROW_RETURN_NOT_OK(mb.Append());\n"
+             << "        auto& kb = static_cast<" << mk.builder_type << "&>(*mb.key_builder());\n";
+        if (map.value->kind == ir::NodeKind::STRUCT) {
+            out_ << "        auto& vsb = static_cast<arrow::StructBuilder&>(*mb.item_builder());\n"
+                 << "        for (const auto& [k, v] : " << getter_ << ") {\n"
+                 << "            ARROW_RETURN_NOT_OK(kb.Append(k));\n"
+                 << "            ARROW_RETURN_NOT_OK(AppendTo(vsb, v));\n"
+                 << "        }\n";
+        } else {
+            const ir::ScalarNode& val = std::get<ir::ScalarNode>(map.value->node);
+            const CppScalarInfo& mv = LookupScalar(val.logical_type, val.enum_identity);
+            out_ << "        auto& vb = static_cast<" << mv.builder_type
+                 << "&>(*mb.item_builder());\n"
+                 << "        for (const auto& [k, v] : " << getter_ << ") {\n"
+                 << "            ARROW_RETURN_NOT_OK(kb.Append(k));\n"
+                 << "            ARROW_RETURN_NOT_OK(vb.Append(v));\n"
+                 << "        }\n";
+        }
+        out_ << "    }\n";
+    }
+
+    // Append a whole run of scalar leaves into `vb`. A fixed-width leaf goes in
+    // one AppendValues() over the storage vector; a string/bytes leaf has no
+    // vector overload, so it appends per element.
+    void EmitLeafRun(const CppScalarInfo& leaf, const std::string& src, const std::string& indent) {
+        if (leaf.value_is_buffer) {
+            out_ << indent << "for (const auto& v : " << src
+                 << ") ARROW_RETURN_NOT_OK(vb.Append(v));\n";
+        } else {
+            out_ << indent << "ARROW_RETURN_NOT_OK(vb.AppendValues(" << src << "));\n";
+        }
+    }
+
+    std::ostringstream& out_;
+    const std::string getter_;  // public getter expression, e.g. "msg.field()"
+    const std::string si_;      // b.field_builder() slot this field writes
+};
+
 // ---- ToArrowRow() visitor -------------------------------------------------
 
 class EdgeToArrowRowVisitor {
@@ -454,14 +698,13 @@ class EdgeToArrowRowVisitor {
              << "            detail::ImportSchema(" << nc << "Schema())->fields());\n"
              << "        auto builder = detail::FletcherValueOrThrow(\n"
                 "            arrow::MakeBuilder(type), \"arrow::MakeBuilder\");\n"
-             << "        for (const auto& v : " << getter_ << ") {\n"
-             << "            auto s = std::make_shared"
-                "<arrow::StructScalar>(\n"
-             << "                ToArrowRow(v), type);\n"
-             << "            (void)builder->AppendScalar(*s);\n"
-             << "        }\n"
+             << "        auto& sb = static_cast<arrow::StructBuilder&>(*builder);\n"
+             << "        for (const auto& v : " << getter_ << ")\n"
+             << "            detail::FletcherThrowIfNotOk(AppendTo(sb, v),\n"
+                "                                         \"ToArrowRow: AppendTo\");\n"
              << "        row.push_back(std::make_shared<arrow::ListScalar>(\n"
-             << "            *builder->Finish(),\n"
+             << "            detail::FletcherValueOrThrow(sb.Finish(), "
+                "\"ToArrowRow: Finish\"),\n"
              << "            arrow::list(arrow::field(\"item\", type,"
                 " true))));\n"
              << "    }\n";
@@ -500,25 +743,22 @@ class EdgeToArrowRowVisitor {
                         " inner_list_type, true))));\n"
                      << "        } else {\n";
             }
-            out_ << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
+            out_ << "        auto builder = detail::FletcherValueOrThrow(\n"
                     "            arrow::MakeBuilder(inner_list_type), \"arrow::MakeBuilder\");\n"
+                 << "        auto& lb = static_cast<arrow::ListBuilder&>(*builder);\n"
+                 << "        auto& sb = static_cast<arrow::StructBuilder&>"
+                    "(*lb.value_builder());\n"
                  << "        for (const auto& ring : " << data_ref << ") {\n"
-                 << "            auto inner_builder = detail::FletcherValueOrThrow(\n"
-                    "                arrow::MakeBuilder(coord_type), \"arrow::MakeBuilder\");\n"
-                 << "            for (const auto& v : ring) {\n"
-                 << "                auto s = std::make_shared"
-                    "<arrow::StructScalar>(\n"
-                 << "                    ToArrowRow(v), coord_type);\n"
-                 << "                (void)inner_builder->AppendScalar"
-                    "(*s);\n"
-                 << "            }\n"
-                 << "            (void)outer_builder->AppendScalar(\n"
-                 << "                arrow::ListScalar(*inner_builder->"
-                    "Finish(), inner_list_type));\n"
+                 << "            detail::FletcherThrowIfNotOk(lb.Append(), "
+                    "\"ToArrowRow: Append\");\n"
+                 << "            for (const auto& v : ring)\n"
+                 << "                detail::FletcherThrowIfNotOk(AppendTo(sb, v),\n"
+                    "                                             \"ToArrowRow: AppendTo\");\n"
                  << "        }\n"
                  << "        row.push_back(std::make_shared"
                     "<arrow::ListScalar>(\n"
-                 << "            *outer_builder->Finish()));\n";
+                 << "            detail::FletcherValueOrThrow(lb.Finish(), "
+                    "\"ToArrowRow: Finish\")));\n";
         } else if (shape.depth == 3) {
             out_ << "        auto ring_list_type = arrow::list(\n"
                  << "            arrow::field(\"item\", coord_type,"
@@ -533,32 +773,29 @@ class EdgeToArrowRowVisitor {
                         " poly_list_type, true))));\n"
                      << "        } else {\n";
             }
-            out_ << "        auto outer_builder = detail::FletcherValueOrThrow(\n"
+            out_ << "        auto builder = detail::FletcherValueOrThrow(\n"
                     "            arrow::MakeBuilder(poly_list_type), \"arrow::MakeBuilder\");\n"
+                 << "        auto& lb0 = static_cast<arrow::ListBuilder&>(*builder);\n"
+                 << "        auto& lb1 = static_cast<arrow::ListBuilder&>"
+                    "(*lb0.value_builder());\n"
+                 << "        auto& sb = static_cast<arrow::StructBuilder&>"
+                    "(*lb1.value_builder());\n"
                  << "        for (const auto& poly : " << data_ref << ") {\n"
-                 << "            auto mid_builder = detail::FletcherValueOrThrow(\n"
-                    "                arrow::MakeBuilder(ring_list_type), \"arrow::MakeBuilder\");\n"
+                 << "            detail::FletcherThrowIfNotOk(lb0.Append(), "
+                    "\"ToArrowRow: Append\");\n"
                  << "            for (const auto& ring : poly) {\n"
-                 << "                auto inner_builder = detail::FletcherValueOrThrow(\n"
-                    "                    arrow::MakeBuilder(coord_type), \"arrow::MakeBuilder\");\n"
-                 << "                for (const auto& v : ring) {\n"
-                 << "                    auto s = std::make_shared"
-                    "<arrow::StructScalar>(\n"
-                 << "                        ToArrowRow(v), coord_type);\n"
-                 << "                    (void)inner_builder->AppendScalar"
-                    "(*s);\n"
-                 << "                }\n"
-                 << "                (void)mid_builder->AppendScalar(\n"
-                 << "                    arrow::ListScalar("
-                    "*inner_builder->Finish(), ring_list_type));\n"
+                 << "                detail::FletcherThrowIfNotOk(lb1.Append(), "
+                    "\"ToArrowRow: Append\");\n"
+                 << "                for (const auto& v : ring)\n"
+                 << "                    detail::FletcherThrowIfNotOk(AppendTo(sb, v),\n"
+                    "                                                 "
+                    "\"ToArrowRow: AppendTo\");\n"
                  << "            }\n"
-                 << "            (void)outer_builder->AppendScalar(\n"
-                 << "                arrow::ListScalar(*mid_builder->"
-                    "Finish(), poly_list_type));\n"
                  << "        }\n"
                  << "        row.push_back(std::make_shared"
                     "<arrow::ListScalar>(\n"
-                 << "            *outer_builder->Finish()));\n";
+                 << "            detail::FletcherValueOrThrow(lb0.Finish(), "
+                    "\"ToArrowRow: Finish\")));\n";
         }
 
         if (nullable) {
@@ -654,15 +891,16 @@ class EdgeToArrowRowVisitor {
                  << "            detail::ImportSchema(" << mvc << "Schema())->fields());\n"
                  << "        auto val_builder = detail::FletcherValueOrThrow(\n"
                     "            arrow::MakeBuilder(val_type), \"arrow::MakeBuilder\");\n"
+                 << "        auto& vsb = static_cast<arrow::StructBuilder&>(*val_builder);\n"
                  << "        for (const auto& [k, v] : " << getter_ << ") {\n"
                  << "            (void)key_builder.Append(k);\n"
-                 << "            auto s = std::make_shared"
-                    "<arrow::StructScalar>(\n"
-                 << "                ToArrowRow(v), val_type);\n"
-                 << "            (void)val_builder->AppendScalar(*s);\n"
+                 << "            detail::FletcherThrowIfNotOk(AppendTo(vsb, v),\n"
+                    "                                         \"ToArrowRow: AppendTo\");\n"
                  << "        }\n"
                  << "        auto keys = *key_builder.Finish();\n"
-                 << "        auto vals = *val_builder->Finish();\n";
+                 << "        auto vals = detail::FletcherValueOrThrow(vsb.Finish(),\n"
+                    "                                                 "
+                    "\"ToArrowRow: Finish\");\n";
         } else {
             const ir::ScalarNode& val = std::get<ir::ScalarNode>(map.value->node);
             const CppScalarInfo& mv = LookupScalar(val.logical_type, val.enum_identity);
@@ -712,6 +950,18 @@ void EmitToArrowRowFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
                                const std::string& getter_expr, std::size_t /*field_index*/,
                                const google::protobuf::FileDescriptor* context_file) {
     EdgeToArrowRowVisitor visitor(out, getter_expr, context_file);
+    visitor.EmitField(node);
+}
+
+void EmitAppendToFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
+                             const std::string& getter_expr, std::size_t field_index,
+                             const google::protobuf::FileDescriptor* /*context_file*/) {
+    // context_file is accepted for signature parity with the two visitors above
+    // and is deliberately unused: AppendTo() names no generated class — every
+    // nested message is reached through the ADL-resolved AppendTo() overload,
+    // and every builder is either an Arrow composite literal or a lookup-table
+    // scalar builder.
+    EdgeAppendToVisitor visitor(out, getter_expr, field_index);
     visitor.EmitField(node);
 }
 

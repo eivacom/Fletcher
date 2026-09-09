@@ -11,30 +11,19 @@
 #include <arrow/scalar.h>
 #include <arrow/type.h>
 
-#include <cstddef>
-#include <cstdint>
+#include <fletcher/core/write_buffer.hpp>
 #include <memory>
-#include <vector>
 
 #include "row_reader.hpp"
 
 namespace fletcher {
 
-// Append value's raw object representation to buf (sizeof(T) little-endian
-// bytes on a little-endian host). Single source of truth shared by codec.cpp
-// and scalar_codec.cpp.
-template <typename T>
-inline void AppendFixed(std::vector<uint8_t>& buf, T value) {
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
-    buf.insert(buf.end(), bytes, bytes + sizeof(T));
-}
-
 namespace detail {
 
-// Append the binary encoding of scalar to buf.
+// Append the binary encoding of scalar to out.
 // A DICTIONARY scalar is encoded as its resolved value (the value type must be
 // a scalar type). Throws std::invalid_argument for unsupported types.
-void EncodeScalar(std::vector<uint8_t>& buf, const arrow::Scalar& scalar);
+void EncodeScalar(WriteBuffer& out, const arrow::Scalar& scalar);
 
 // Decode one scalar of the given type from a Reader, advancing its position.
 // Handles scalar types only.  Composite types (list, map, struct, union) are

@@ -56,6 +56,25 @@ nor an attachment, so a window with only dropped rows still delivers a zero-row
 batch to report the loss. The partial batch is flushed with reason `kClosing`
 on `Unsubscribe`. The callback target must outlive the subscription.
 
+Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
+`fletcher-arrow-bridge`) rather than through per-row scalars, so the batched
+path never pays for the ArrowRow round trip. A topic whose schema `BatchDecoder`
+cannot build into columns (a dictionary nested below the top level, or an Arrow
+type it doesn't support) delivers a null `batch` with every row counted in
+`rows_dropped` instead — the per-row `Subscribe` overload still decodes it fine,
+since `Codec::DecodeRow` supports strictly more schemas than the columnar path
+does. A window that would overflow a 32-bit Arrow offset (a utf8/binary/list
+column growing past 2 GiB) is flushed early with reason `kRowLimit`, same as
+hitting `max_rows`.
+
+Measured on 2026-09-02 (`arrow-bridge/benchmarks`, per row at 8000 rows per batch): a 10-scalar
+row 1.23 → 0.16 µs, a pose row with two nested `list<double>` 9.5 → 0.13 µs, a 2 × 2667-float cloud
+row 566 → 4.4 µs, a 1000-point `list<struct>` row 5.46 ms → 57 µs, with allocations per row falling
+from tens or thousands to under 0.2. The planner bridge, which subscribes this way, went from 79 % to
+4 % of a core at 60 000 points per frame. The table and the method are in
+[`arrow-bridge/README.md`](../arrow-bridge/README.md#measured-decisions-2026-09-02) and
+[`arrow-bridge/benchmarks/README.md`](../arrow-bridge/benchmarks/README.md).
+
 ### Dictionary columns
 
 A dictionary is a columnar optimisation that means nothing for a single row, so

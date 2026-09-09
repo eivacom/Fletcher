@@ -27,7 +27,6 @@
 #include <fletcher/pubsub/provider.hpp>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 #include "envelope_codec.hpp"
 #include "fletcher_sample.hpp"

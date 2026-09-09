@@ -1214,6 +1214,44 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 }
 
 // -----------------------------------------------------------------------
+// AppendTo() free function generation
+//
+// Generates an inline free function per message that appends one message as
+// ONE element of a pre-built arrow::StructBuilder, driving that struct's
+// already-typed child builders directly (no per-element arrow::Scalar).
+// Found via ADL, used recursively for every nested message by AppendTo()
+// itself and by ToArrowRow()'s composite branches, and usable directly to
+// fill a struct column without going through ArrowRow at all.
+//
+// No forward declaration is needed: GenerateViewFile() emits messages in
+// OrderedMessages() dependency order, so a nested message's AppendTo() always
+// precedes the AppendTo() that calls it — the same property today's
+// ToArrowRow(*nested) calls rely on.
+// -----------------------------------------------------------------------
+
+std::string GenerateAppendTo(const std::string& cls, const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+    o << "/// Appends `msg` as one element of the struct builder `b` — typed child\n"
+      << "/// builders, no arrow::Scalar.  `b` must have been made for\n"
+      << "/// arrow::struct_(detail::ImportSchema(" << cls << "Schema())->fields()).\n"
+      << "inline arrow::Status AppendTo(arrow::StructBuilder& b, const " << cls << "& msg) {\n"
+      << "    ARROW_RETURN_NOT_OK(b.Append(true));\n";
+
+    // Same IR-driven view visitor that emits the `<Class>View` getters and the
+    // ToArrowRow() body (cpp_backend::EmitAppendToFieldFromIr): it reads each
+    // field through the public getter "msg.<name>()" and writes it into the
+    // matching `b.field_builder(<i>)` slot, so the slot index is positional
+    // against the same schema the row and view layers use.
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitAppendToFieldFromIr(o, *fields[i].ir, "msg." + fields[i].name + "()", i,
+                                             fields[i].descriptor->file());
+
+    o << "    return arrow::Status::OK();\n"
+      << "}\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
 // ToArrowRow() free function generation
 //
 // Generates an inline free function per message that converts a nanoarrow
@@ -1365,6 +1403,34 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
           << "#endif\n\n";
     }
 
+    // GIR-8 (#53) sibling for a bare arrow::Status. ToArrowRow() returns a row,
+    // not a Status, so the AppendTo() calls in its composite branches cannot
+    // ARROW_RETURN_NOT_OK; this throws the same descriptive std::runtime_error
+    // FletcherValueOrThrow does instead of dropping the status on the floor.
+    // Guarded like the two helpers above, for the same reason.
+    {
+        std::string guard = "FLETCHER_DETAIL_THROW_IF_NOT_OK_";
+        for (char c : file->package()) guard += (c == '.' ? '_' : std::toupper(c));
+        guard += "_DEFINED";
+        o << "#ifndef " << guard << "\n"
+          << "#define " << guard << "\n"
+          << "namespace detail {\n"
+          << "/// Returns normally when `status` is ok, otherwise throws a\n"
+          << "/// std::runtime_error carrying `context` and the failing status.\n"
+          << "/// Used by generated ToArrowRow() code, which has no Status to\n"
+          << "/// return, so a failed Arrow append surfaces as a descriptive\n"
+          << "/// exception instead of a silently short array.\n"
+          << "inline void FletcherThrowIfNotOk(const arrow::Status& status,\n"
+          << "                                 const char* context) {\n"
+          << "    if (!status.ok()) {\n"
+          << "        throw std::runtime_error(\n"
+          << "            std::string(context) + \": \" + status.ToString());\n"
+          << "    }\n"
+          << "}\n"
+          << "}  // namespace detail\n"
+          << "#endif\n\n";
+    }
+
     for (const auto* msg : messages) {
         if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
 
@@ -1374,6 +1440,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         const std::string view_cls = cls + "View";
 
         o << GenerateViewClass(view_cls, fields) << "\n";
+        o << GenerateAppendTo(cls, fields) << "\n";
         o << GenerateToArrowRow(cls, fields) << "\n";
     }
 

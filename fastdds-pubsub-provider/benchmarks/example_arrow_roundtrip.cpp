@@ -193,7 +193,8 @@ int main() {
         loaned->length, kExamplePayloadBytes, sizeof(FletcherSample));
     const bool same_body =
         loaned->length == sample_length &&
-        std::memcmp(loaned->body, payload.data + header + 4, loaned->length) == 0;
+        std::memcmp(loaned->body, payload.data + header + fletcher::internal::kSampleLengthPrefix,
+                    loaned->length) == 0;
     std::printf("  body matches serialised  %s\n", same_body ? "yes" : "NO");
 
     // -----------------------------------------------------------------------------------------
