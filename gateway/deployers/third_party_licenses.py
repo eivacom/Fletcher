@@ -58,17 +58,18 @@ RULE = "=" * 78
 THIN_RULE = "-" * 78
 
 
-def _read_text(path):
-    """Read a licence file, preserving its bytes as faithfully as possible."""
+def _read_bytes(path):
+    """Read a licence file as bytes.
+
+    Deliberately no decode step. The notice claims to reproduce these texts
+    verbatim, and the only way to keep that claim true for a file in an
+    encoding we did not anticipate is never to re-encode it: bytes in, the same
+    bytes out. Decoding would also mean guessing, and a wrong guess corrupts a
+    copyright holder's name silently -- in the one document whose whole purpose
+    is to carry that name accurately.
+    """
     with open(path, "rb") as handle:
-        raw = handle.read()
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        # A few upstream licence files spell a copyright holder's name in a
-        # legacy encoding. latin-1 decodes any byte sequence, so the text still
-        # travels rather than the release failing on a stray accent.
-        return raw.decode("latin-1")
+        return handle.read()
 
 
 def _license_files(package_folder):
@@ -137,10 +138,10 @@ The libraries listed below are compiled or linked into the binary shipped
 beside this file -- statically in the default build, shipped as runtime
 libraries next to it in the shared variant. Their licenses require their
 copyright notices and license texts to be reproduced in binary distributions,
-so those texts are reproduced verbatim below, including any license text a
-package carries for code it in turn vendors. Where a package ships several
-texts, the license the package itself is under is the one on its `License:`
-line.
+so those texts are copied in below byte for byte, exactly as each package ships
+them -- including any license text a package carries for code it in turn
+vendors. Where a package ships several texts, the license the package itself is
+under is the one on its `License:` line.
 
 This file is generated at release time from the resolved Conan dependency graph
 by gateway/deployers/third_party_licenses.py. It is not maintained by hand: it
@@ -157,13 +158,19 @@ Libraries covered by this notice
 
 
 def _render(subject, entries):
-    parts = [_preamble(subject, entries)]
+    """The whole notice as bytes.
+
+    Assembled as bytes rather than text so each licence file is copied through
+    exactly as its package ships it. Only the parts this file writes itself --
+    preamble and section headers, all ASCII -- are encoded here.
+    """
+    parts = [_preamble(subject, entries).encode("utf-8")]
     for dep, files in entries:
-        parts.append(_section_header(dep))
-        for relative, text in files:
-            parts.append(f"--- {relative} ---\n")
-            parts.append(text if text.endswith("\n") else text + "\n")
-    return "\n".join(parts)
+        parts.append(_section_header(dep).encode("utf-8"))
+        for relative, raw in files:
+            parts.append(f"--- {relative} ---\n".encode("utf-8"))
+            parts.append(raw if raw.endswith(b"\n") else raw + b"\n")
+    return b"\n".join(parts)
 
 
 def _subject(graph):
@@ -190,7 +197,7 @@ def deploy(graph, output_folder, **kwargs):
         if not files:
             missing.append(str(dep.ref))
             continue
-        entries.append((dep, [(relative, _read_text(path)) for relative, path in files]))
+        entries.append((dep, [(relative, _read_bytes(path)) for relative, path in files]))
 
     if missing:
         raise ConanException(
@@ -210,7 +217,7 @@ def deploy(graph, output_folder, **kwargs):
             f"dependency-free binary.")
 
     target = os.path.join(output_folder, OUTPUT_FILENAME)
-    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+    with open(target, "wb") as handle:
         handle.write(_render(_subject(graph), entries))
 
     output.success(f"Wrote {OUTPUT_FILENAME} covering {len(entries)} third-party "
