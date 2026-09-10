@@ -42,13 +42,14 @@ Without the flag the document is empty and each provider uses its own defaults, 
 
 ## Installing
 
-Pre-built binaries are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Pick the asset for your platform:
+Pre-built archives are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Each archive holds the executable, the two [licence files](#licences-in-the-archive) a binary distribution has to carry — `LICENSE` and `THIRD-PARTY-LICENSES.txt` — and, in a shared build, the runtime libraries that belong beside the exe. Pick the asset for your platform:
 
-**Windows** — download `gateway.exe` and run it directly. No archive to unpack:
+**Windows** — download and unpack `gateway-windows.zip`:
 
 ```powershell
-gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway.exe
-.\gateway.exe --port 9090
+gh release download gateway-v0.1.0-alpha --repo eivacom/Fletcher --pattern gateway-windows.zip
+Expand-Archive gateway-windows.zip -DestinationPath gateway
+.\gateway\gateway.exe --port 9090
 ```
 
 **Linux** — download and extract `gateway-linux.tar.gz`. The exec bit is preserved inside the tarball:
@@ -60,6 +61,35 @@ tar -xzf gateway-linux.tar.gz
 ```
 
 To build from source instead of using a release binary, see [Building](#building) below.
+
+### Licences in the archive
+
+Both archives carry two licence files next to the executable. Keep both with the binary if you redistribute the gateway.
+
+`LICENSE` is the gateway's own: the exe and the `fletcher-*` libraries inside it are LGPL-3.0-or-later, which asks for its text to accompany the binary. It is a verbatim copy of the [repository LICENSE](../LICENSE).
+
+`THIRD-PARTY-LICENSES.txt` covers everything else linked in. The gateway pulls in a stack of permissively licensed libraries — boost (BSL-1.0), Fast DDS and Fast CDR (Apache-2.0), asio (BSL-1.0), foonathan_memory, tinyxml2 and zlib (Zlib), bzip2 (BSD-style), nlohmann_json (MIT) — and every one of those licences asks that its copyright notice and licence text be reproduced when the binary is redistributed. The default build is static, so those libraries are *inside* `gateway(.exe)` and there is nothing else in the archive for the texts to travel with; the file is how the release satisfies that condition.
+
+**The file is generated, never hand-maintained.** [`deployers/third_party_licenses.py`](deployers/third_party_licenses.py) is a Conan deployer that reads the *resolved* dependency graph of the exact package being released and copies each dependency's own `licenses/` texts in byte for byte — it never decodes or re-encodes them, so no guess about a file's encoding can corrupt a copyright holder's name — under a header naming the package, its version, its declared licence and its homepage. Bump, add or drop a dependency and the notice follows on the next release with no second edit to remember. It covers the whole host graph, including packages the consumer never compiles against directly — asio reaches the gateway only through Fast DDS, but it is header-only, so its code really is in the binary and its licence really does have to ship.
+
+If any third-party package in the graph contributes no licence text, the deployer raises and the build fails rather than publishing a notice that quietly omits a library.
+
+`ci.gateway.yml` stages both files on both platforms on **every** run, not only on a tag push, so a dependency change the deployer cannot describe fails the pull request that introduces it instead of the release weeks later. On a tag push the same `dist/` is then filled by `runtime_deploy` and archived, and the workflow unpacks the finished archive and fails unless the exe and both licence files are in it — so a change to the archiving step cannot drop one silently either. To produce the notice locally:
+
+```bash
+cd gateway
+```
+
+```bash
+conan install --requires="fletcher-gateway/[*, include_prerelease]" \
+  --deployer=deployers/third_party_licenses.py --deployer-folder=dist \
+  -c tools.graph:skip_binaries=False \
+  -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Release
+```
+
+That resolves `fletcher-gateway` out of the local cache, so run it after the `conan create` chain in [Building](#building) has put the gateway and its dependencies there.
+
+`-c tools.graph:skip_binaries=False` is not optional. A static application needs none of its dependencies at run time, so Conan marks their binaries `Skip` and leaves them with no package folder — which is exactly where the licence texts live. (It may also fetch a package that was skipped during the build and never downloaded, such as asio.) Without the conf the deployer finds nothing and says so.
 
 ## Running
 
