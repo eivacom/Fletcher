@@ -138,6 +138,15 @@ class ProviderSubject {
                                                        SubscribeCallback callback) = 0;
 
     virtual void Unsubscribe(const Topic& topic) = 0;
+
+    /// Schema-only subscribe/unsubscribe (S6). LOCAL-ONLY on every provider
+    /// (the class doc above already says the subscriber side is always this
+    /// process and this instance, for every subject), so there is no peer-pipe
+    /// protocol for them to need — each subject forwards straight to its own
+    /// provider, exactly as it does for `Subscribe`/`Unsubscribe` above.
+    [[nodiscard]] virtual SchemaArrival SubscribeSchema(const Topic& topic) = 0;
+
+    virtual void UnsubscribeSchema(const Topic& topic) = 0;
 };
 
 /// "<type>: <what>" for `e`, with the numbered status appended when `e` is a

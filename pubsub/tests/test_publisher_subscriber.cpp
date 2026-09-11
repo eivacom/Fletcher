@@ -66,14 +66,14 @@ class MockProvider : public PubSubProvider {
         encoder(wb);
         const std::vector<uint8_t> buf = wb.Finish();
 
-        auto it = callbacks_.find(key);
-        if (it != callbacks_.end()) {
+        auto it = channels_.find(key);
+        if (it != channels_.end()) {
             SharedSchema sp;
             auto sit = schemas_.find(key);
             if (sit != schemas_.end()) {
                 sp = MakeSharedSchema(OwnedSchema::DeepCopy(sit->second.get()));
             }
-            it->second(buf.data(), buf.size(), sp, attachments);
+            it->second.Deliver(buf.data(), buf.size(), sp, attachments);
         }
     }
 
@@ -81,7 +81,12 @@ class MockProvider : public PubSubProvider {
                                  SubscribeCallback callback) override {
         subscribe_count++;
         std::string key = fletcher::internal::JoinSegments(segments);
-        callbacks_[key] = std::move(callback);
+        // A real provider dispatches to a Subscriber's registered callback from inside its OWN
+        // delivery frame, keyed by the provider instance (DeliveryChannel's contract — see
+        // delivery_channel.hpp). Without this, MockProvider could never exercise a seam door: it
+        // would deliver with no delivery frame at all, and `RefuseIfInsideDeliveryOn(this, ...)`
+        // on every provider method would never find anything on the stack.
+        channels_[key] = DeliveryChannel(this, std::move(callback));
         auto it = schemas_.find(key);
         SharedSchema schema;
         if (it != schemas_.end()) {
@@ -91,7 +96,7 @@ class MockProvider : public PubSubProvider {
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
-        callbacks_.erase(fletcher::internal::JoinSegments(segments));
+        channels_.erase(fletcher::internal::JoinSegments(segments));
         unsubscribe_count++;
     }
 
@@ -118,7 +123,7 @@ class MockProvider : public PubSubProvider {
     int unsubscribe_schema_count = 0;
 
    private:
-    std::unordered_map<std::string, SubscribeCallback> callbacks_;
+    std::unordered_map<std::string, DeliveryChannel> channels_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
 };
 
@@ -621,6 +626,27 @@ TEST(SubscriberTest, DefaultSchemaMethodsAreRefusedFromInsideADelivery) {
     EXPECT_EQ(subscribe_status, PubSubStatus::kReentrantCall);
     EXPECT_TRUE(unsubscribe_threw);
     EXPECT_EQ(unsubscribe_status, PubSubStatus::kReentrantCall);
+}
+
+// S8: Subscriber::SubscribeSchema's door is unconditional — unlike Subscribe's
+// EnsureProviderSubscription, which has an already-subscribed fast path that never enters the
+// provider at all, subscriber.cpp documents SubscribeSchema's refusal as running "this call has
+// nothing to serve from the cache before a first watch exists, so it must be able to enter the
+// provider... Refused at THIS tier" — i.e. ALWAYS, with no fast path to skip it. Driven through
+// MockProvider (not DataOnlyProvider + a raw DeliveryChannel, as
+// DefaultSchemaMethodsAreRefusedFromInsideADelivery above does for the PROVIDER's own default
+// door) so this is the SUBSCRIBER's own door, reached through an ordinary Subscribe/Publish pair.
+TEST(SubscriberTest, SubscribeSchemaFromInsideADeliveryThroughTheMockProviderIsRefused) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+
+    static_cast<void>(subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            EXPECT_TRUE(RefusedWith(PubSubStatus::kReentrantCall,
+                                    [&] { (void)subscriber.SubscribeSchema(kTopic); }));
+        }));
+
+    mock->Publish(kTopic, MakeTestEncoder(1), Attachments());
 }
 
 // A watch outlives the call that opened it and has no id to cancel, so the

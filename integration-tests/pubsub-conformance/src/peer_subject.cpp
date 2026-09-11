@@ -70,6 +70,12 @@ class PeerSubject : public ProviderSubject {
 
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
 
+    SchemaArrival SubscribeSchema(const Topic& topic) override {
+        return provider_->SubscribeSchema(topic);
+    }
+
+    void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
+
    private:
     /// Unsendable over the peer PIPE, or unsendable through the SEAM — both are
     /// harness failures, and neither may reach the provider under test.

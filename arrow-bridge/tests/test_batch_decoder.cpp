@@ -401,6 +401,95 @@ TEST(BatchDecoderTest, MatchesDecodeRowForEveryShape) {
         }
         RunShapeTest(schema, rows);
     }
+
+    // --- large_list<float32>, through the bulk-run path (T11). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::large_list(arrow::float32()), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        constexpr int kCount = 300;
+        arrow::FloatBuilder fb;
+        for (int i = 0; i < kCount; ++i) ASSERT_TRUE(fb.Append(static_cast<float>(i) * 0.5f).ok());
+        rows.push_back({std::make_shared<arrow::LargeListScalar>(fb.Finish().ValueOrDie(),
+                                                                 schema->field(0)->type())});
+        RunShapeTest(schema, rows);
+    }
+
+    // --- A bulk run appended after a row whose list already put a null into the shared value
+    // builder, so the run does not start at offset 0 (T11). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::list(arrow::int32()), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        // Row 0: one null forces the per-element path, leaving the value builder at length 3.
+        {
+            arrow::Int32Builder b;
+            ASSERT_TRUE(b.Append(1).ok());
+            ASSERT_TRUE(b.AppendNull().ok());
+            ASSERT_TRUE(b.Append(3).ok());
+            rows.push_back({std::make_shared<arrow::ListScalar>(b.Finish().ValueOrDie(),
+                                                                schema->field(0)->type())});
+        }
+        // Row 1: an all-valid run of 300 elements — it must land starting at offset 3 in the
+        // shared value builder, not offset 0.
+        {
+            arrow::Int32Builder b;
+            for (int i = 0; i < 300; ++i) ASSERT_TRUE(b.Append(i * 10).ok());
+            rows.push_back({std::make_shared<arrow::ListScalar>(b.Finish().ValueOrDie(),
+                                                                schema->field(0)->type())});
+        }
+        RunShapeTest(schema, rows);
+    }
+
+    // --- large_binary (T14: BatchDecoder accepts this with nothing proving it). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::large_binary(), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        for (int i = 0; i < 5; ++i) {
+            std::string data(4, static_cast<char>(0));
+            for (int b = 0; b < 4; ++b)
+                data[static_cast<size_t>(b)] = static_cast<char>((i + b) & 0xFF);
+            rows.push_back(
+                {std::make_shared<arrow::LargeBinaryScalar>(arrow::Buffer::FromString(data))});
+        }
+        RunShapeTest(schema, rows);
+    }
+
+    // --- large_list<int32>, varying counts incl. empty (T14). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::large_list(arrow::int32()), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        const int counts[5] = {0, 1, 4, 2, 3};
+        for (int i = 0; i < 5; ++i) {
+            arrow::Int32Builder b;
+            for (int j = 0; j < counts[i]; ++j) ASSERT_TRUE(b.Append(i * 10 + j).ok());
+            rows.push_back({std::make_shared<arrow::LargeListScalar>(b.Finish().ValueOrDie(),
+                                                                     schema->field(0)->type())});
+        }
+        RunShapeTest(schema, rows);
+    }
+
+    // --- utf8_view / StringViewScalar (T14). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::utf8_view(), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        for (int i = 0; i < 5; ++i)
+            rows.push_back({std::make_shared<arrow::StringViewScalar>(
+                arrow::Buffer::FromString("view-" + std::to_string(i)))});
+        RunShapeTest(schema, rows);
+    }
+
+    // --- binary_view / BinaryViewScalar (T14). ---
+    {
+        auto schema = arrow::schema({arrow::field("v", arrow::binary_view(), true)});
+        std::vector<fletcher::ArrowRow> rows;
+        for (int i = 0; i < 5; ++i) {
+            std::string data(4, static_cast<char>(0));
+            for (int b = 0; b < 4; ++b)
+                data[static_cast<size_t>(b)] = static_cast<char>((i + b) & 0xFF);
+            rows.push_back(
+                {std::make_shared<arrow::BinaryViewScalar>(arrow::Buffer::FromString(data))});
+        }
+        RunShapeTest(schema, rows);
+    }
 }
 
 // ---------------------------------------------------------------------------

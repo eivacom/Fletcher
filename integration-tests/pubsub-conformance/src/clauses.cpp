@@ -688,6 +688,11 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
 // assert a bug. They are asserted where they are genuinely re-entrant, which
 // `publishes_into_subject_instance` names structurally rather than by matching on
 // a label.
+//
+// S6 added `SubscribeSchema`/`UnsubscribeSchema` beside `Subscribe`: they are
+// LOCAL-ONLY on every subject (subject.hpp), never routed over the peer pipe,
+// so their assertion is unconditional on all six subjects too — the same
+// reason `Subscribe`'s is.
 TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     const bool reentrant_publish = GetParam().publishes_into_subject_instance;
 
@@ -699,6 +704,8 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     Reply declare_reply = Reply::HarnessFailure("the handler never got there");
     Reply publish_reply = Reply::HarnessFailure("the handler never got there");
     std::atomic<int32_t> subscribe_status{kNothingRecorded};
+    std::atomic<int32_t> subscribe_schema_status{kNothingRecorded};
+    std::atomic<int32_t> unsubscribe_schema_status{kNothingRecorded};
     std::atomic<int> entered{0};
     Latch handled;
 
@@ -718,18 +725,45 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
             } catch (...) {
                 subscribe_status.store(kNonSeamException);
             }
+            try {
+                SchemaArrival opened = Subject().SubscribeSchema(watched);
+                (void)opened;
+                subscribe_schema_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                subscribe_schema_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                subscribe_schema_status.store(kNonSeamException);
+            }
+            try {
+                Subject().UnsubscribeSchema(watched);
+                unsubscribe_schema_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                unsubscribe_schema_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                unsubscribe_schema_status.store(kNonSeamException);
+            }
             handled.Set();
         });
 
     CONF_MUST_PUBLISH(driver, 1);
     ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
 
-    // `Subscribe` first: it is the one that carries force on every subject, and
-    // the status is asserted by NAME, so a provider that refuses for some other
-    // reason does not green this.
+    // `Subscribe`, `SubscribeSchema` and `UnsubscribeSchema` all carry force on
+    // every subject — the subscriber side is always this process and this
+    // instance (subject.hpp), peer or not — and each status is asserted by
+    // NAME, so a provider that refuses for some other reason does not green
+    // this.
     EXPECT_EQ(subscribe_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
         << "Subscribe from inside a delivery answered with " << StatusText(subscribe_status.load())
         << "; §6 clause 6 refuses all four methods on every provider";
+    EXPECT_EQ(subscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "SubscribeSchema from inside a delivery answered with "
+        << StatusText(subscribe_schema_status.load())
+        << "; §6 clause 6 refuses the schema-only methods too";
+    EXPECT_EQ(unsubscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "UnsubscribeSchema from inside a delivery answered with "
+        << StatusText(unsubscribe_schema_status.load())
+        << "; §6 clause 6 refuses the schema-only methods too";
 
     if (reentrant_publish) {
         // `refused()`, never "!ok()": Reply's third outcome exists precisely so a

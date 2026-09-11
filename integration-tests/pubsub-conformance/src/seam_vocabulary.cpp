@@ -393,8 +393,9 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
 // `SplitTopic("")` yields an empty vector — which is why it is refused at the
 // door rather than trusted not to happen.
 //
-// Asserted on every one of the four methods: the check lives in one place
-// (`internal::RequireSegments`), and this is what says all four still route
+// Asserted on every one of the six methods (S6 added `SubscribeSchema` and
+// `UnsubscribeSchema` beside the original four): the check lives in one place
+// (`internal::RequireSegments`), and this is what says all six still route
 // through it.
 TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
     InProcessPubSubProvider provider;
@@ -422,6 +423,10 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
     })) << "Subscribe accepted an empty topic";
     EXPECT_TRUE(refused([&] { provider.Unsubscribe(none); }))
         << "Unsubscribe accepted an empty topic";
+    EXPECT_TRUE(refused([&] { static_cast<void>(provider.SubscribeSchema(none)); }))
+        << "SubscribeSchema accepted an empty topic";
+    EXPECT_TRUE(refused([&] { provider.UnsubscribeSchema(none); }))
+        << "UnsubscribeSchema accepted an empty topic";
 
     // And a one-segment topic is still perfectly ordinary — the refusal is of
     // EMPTY, not of short.
@@ -450,8 +455,8 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
 //      (owner ruling 2026-09-04).
 //
 // This is the SIBLING of the empty-list case above and is deliberately beside
-// it: same provider, same four methods, same shape of assertion. Both rules
-// live in `internal::RequireSegments`, and asserting all four methods is what
+// it: same provider, same six methods, same shape of assertion. Both rules
+// live in `internal::RequireSegments`, and asserting all six methods is what
 // says the door is still the one door every entry point routes through.
 //
 // The peer subjects are excluded by construction, not by omission:
@@ -509,6 +514,10 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
             << why;
         EXPECT_TRUE(refused([&] { provider.Unsubscribe(topic); }))
             << "Unsubscribe accepted " << why;
+        EXPECT_TRUE(refused([&] { static_cast<void>(provider.SubscribeSchema(topic)); }))
+            << "SubscribeSchema accepted " << why;
+        EXPECT_TRUE(refused([&] { provider.UnsubscribeSchema(topic); }))
+            << "UnsubscribeSchema accepted " << why;
     }
 
     // The bound on the narrowing. A dot, a space, a hyphen and a SINGLE leading

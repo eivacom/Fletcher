@@ -155,6 +155,30 @@ TEST(ToArrowRowTest, EncodesTheSameBytesAsEncodeTo) {
             fletcher_gen::integration::FlattenTestRowSchema()));
         EXPECT_EQ(codec.EncodeRow(ToArrowRow(r)), r.Encode());
     }
+
+    // Roster: a repeated enum, a map<string, Message>, and a depth-3 nested list
+    // (2026-09-11 type-space audit, T13) — none of the fixtures above exercise any of the three.
+    {
+        fletcher_gen::integration::Player captain;
+        captain.set_name("Casey").set_level(9);
+
+        fletcher_gen::integration::Card ace, king, queen, jack;
+        ace.set_label("ace").set_rank(14);
+        king.set_label("king").set_rank(13);
+        queen.set_label("queen").set_rank(12);
+        jack.set_label("jack").set_rank(11);
+
+        fletcher_gen::integration::Roster roster;
+        roster.set_captain(captain)
+            .set_suits({static_cast<int32_t>(fletcher_gen::integration::Suit::SUIT_HEARTS),
+                        static_cast<int32_t>(fletcher_gen::integration::Suit::SUIT_SPADES),
+                        static_cast<int32_t>(fletcher_gen::integration::Suit::SUIT_CLUBS)})
+            .set_by_name({{"ace", ace}, {"king", king}})
+            .set_spreads({{{queen, jack}, {ace}}, {{king}}});
+        fletcher::Codec codec(fletcher_gen::integration::detail::ImportSchema(
+            fletcher_gen::integration::RosterSchema()));
+        EXPECT_EQ(codec.EncodeRow(ToArrowRow(roster)), roster.Encode());
+    }
 }
 
 TEST(ToArrowRowTest, WithEmptyCollections) {
@@ -206,6 +230,7 @@ TEST(ToArrowRowTest, AppendToFillsAStructColumn) {
     t0.set_name("Alpha").set_members({"Alice"}).set_scores({1.0}).set_roster({p1});
     t1.set_name("Beta");  // no members, scores, or roster.
     t2.set_name("Gamma").set_members({"Bob"}).set_scores({2.0}).set_roster({p2});
+    std::vector<fletcher_gen::integration::Team> teams = {t0, t1, t2};
 
     auto schema =
         fletcher_gen::integration::detail::ImportSchema(fletcher_gen::integration::TeamSchema());
@@ -214,17 +239,79 @@ TEST(ToArrowRowTest, AppendToFillsAStructColumn) {
         arrow::MakeBuilder(arrow::struct_(schema->fields())), "test: MakeBuilder");
     auto& sb = static_cast<arrow::StructBuilder&>(*builder);
 
-    for (const auto& t : {t0, t1, t2}) ASSERT_TRUE(AppendTo(sb, t).ok());
+    for (const auto& t : teams) ASSERT_TRUE(AppendTo(sb, t).ok());
 
     auto arr = fletcher::detail::ValueOrThrow(sb.Finish(), "test: Finish");
     EXPECT_TRUE(arr->ValidateFull().ok());
     ASSERT_EQ(arr->length(), 3);
 
+    // Every field, not just a sample (name): each column's value must match what the message's
+    // own Encode() bytes decode to through Codec::DecodeRow — an oracle AppendTo never runs, so
+    // this checks the struct-column path against an independent one, not against itself.
     const auto& struct_arr = static_cast<const arrow::StructArray&>(*arr);
-    auto names = std::static_pointer_cast<arrow::StringArray>(struct_arr.field(0));
-    EXPECT_EQ(names->GetString(0), "Alpha");
-    EXPECT_EQ(names->GetString(1), "Beta");
-    EXPECT_EQ(names->GetString(2), "Gamma");
+    fletcher::Codec team_codec(schema);
+    for (size_t row = 0; row < teams.size(); ++row) {
+        auto expected = team_codec.DecodeRow(teams[row].Encode());
+        ASSERT_EQ(expected.size(), static_cast<size_t>(struct_arr.num_fields()));
+        for (int c = 0; c < struct_arr.num_fields(); ++c) {
+            auto got = fletcher::detail::ValueOrThrow(
+                struct_arr.field(c)->GetScalar(static_cast<int64_t>(row)), "test: GetScalar");
+            EXPECT_TRUE(got->Equals(*expected[static_cast<size_t>(c)]))
+                << "row " << row << " field " << c << ": got " << got->ToString() << ", want "
+                << expected[static_cast<size_t>(c)]->ToString();
+        }
+    }
+
+    // A message carrying struct + map + nested-list fields together (2026-09-11 type-space
+    // audit, T13): a direct AppendTo(Roster) call dispatches EmitStruct (captain), EmitMap
+    // (by_name) and EmitNestedList (spreads, depth 3) in the SAME call, so all three actually run
+    // at runtime rather than only being emitted.
+    fletcher_gen::integration::Player captain0, captain1;
+    captain0.set_name("Casey").set_level(9);
+    captain1.set_name("Drew").set_level(4);
+
+    fletcher_gen::integration::Card ace, king, queen, jack;
+    ace.set_label("ace").set_rank(14);
+    king.set_label("king").set_rank(13);
+    queen.set_label("queen").set_rank(12);
+    jack.set_label("jack").set_rank(11);
+
+    fletcher_gen::integration::Roster r0, r1;
+    r0.set_captain(captain0)
+        .set_suits({static_cast<int32_t>(fletcher_gen::integration::Suit::SUIT_HEARTS),
+                    static_cast<int32_t>(fletcher_gen::integration::Suit::SUIT_SPADES)})
+        .set_by_name({{"ace", ace}, {"king", king}})
+        .set_spreads({{{queen, jack}, {ace}}, {{king}}});
+    r1.set_captain(captain1);  // empty suits, empty map, empty spreads
+    std::vector<fletcher_gen::integration::Roster> rosters = {r0, r1};
+
+    auto roster_schema =
+        fletcher_gen::integration::detail::ImportSchema(fletcher_gen::integration::RosterSchema());
+    ASSERT_NE(roster_schema, nullptr);
+    auto roster_builder = fletcher::detail::ValueOrThrow(
+        arrow::MakeBuilder(arrow::struct_(roster_schema->fields())), "test: MakeBuilder");
+    auto& rb = static_cast<arrow::StructBuilder&>(*roster_builder);
+
+    for (const auto& r : rosters) ASSERT_TRUE(AppendTo(rb, r).ok());
+
+    auto roster_arr = fletcher::detail::ValueOrThrow(rb.Finish(), "test: Finish");
+    EXPECT_TRUE(roster_arr->ValidateFull().ok());
+    ASSERT_EQ(roster_arr->length(), 2);
+
+    const auto& roster_struct_arr = static_cast<const arrow::StructArray&>(*roster_arr);
+    fletcher::Codec roster_codec(roster_schema);
+    for (size_t row = 0; row < rosters.size(); ++row) {
+        auto expected = roster_codec.DecodeRow(rosters[row].Encode());
+        ASSERT_EQ(expected.size(), static_cast<size_t>(roster_struct_arr.num_fields()));
+        for (int c = 0; c < roster_struct_arr.num_fields(); ++c) {
+            auto got = fletcher::detail::ValueOrThrow(
+                roster_struct_arr.field(c)->GetScalar(static_cast<int64_t>(row)),
+                "test: GetScalar");
+            EXPECT_TRUE(got->Equals(*expected[static_cast<size_t>(c)]))
+                << "row " << row << " field " << c << ": got " << got->ToString() << ", want "
+                << expected[static_cast<size_t>(c)]->ToString();
+        }
+    }
 }
 
 // A6: AppendTo checks the struct builder's field count against the schema's

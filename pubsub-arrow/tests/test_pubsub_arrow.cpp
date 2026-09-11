@@ -824,6 +824,48 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
     EXPECT_EQ(sink.deliveries[1].status.rows_dropped, 0);
 }
 
+// A4 (2026-09-11 type-space/case audit) — the last remaining batched-subscriber case: Unsubscribe
+// called from INSIDE the batch callback, itself invoked synchronously from Flush() on the
+// publishing thread. A real BatchCapacityExceeded needs a column that trips Arrow's ~2 GiB
+// builder limit (BatchDecoderTest.CapacityExceededLeavesBuildersUntouched in arrow-bridge/tests/
+// test_batch_decoder.cpp needs 300 rows of an 8 MiB column to force it) — unforceable here without
+// allocating gigabytes in a unit test, so this drives the identical reentrant-Unsubscribe-during-
+// Flush path through the ordinary row-limit flush instead (max_rows = 1). Cycle 1 added the
+// `if (stopped_) return;` guard in the BatchCapacityExceeded handler (subscriber_arrow.cpp)
+// precisely so a mid-flush Unsubscribe doesn't touch a decoder Stop() already tore down; this
+// pins the observable half of that fix: no further delivery after Unsubscribe returns, and the
+// process does not crash.
+TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    int delivery_count = 0;
+    uint64_t sub_id = 0;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 1;  // every published row is its own row-limit flush
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(
+        kTopic,
+        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
+            ++delivery_count;
+            // Reentrant: this runs from inside RecordBatchBatcher::Flush(), on the publishing
+            // thread, with the batcher's own mutex released.
+            sub.Unsubscribe(sub_id);
+        },
+        opt);
+    sub_id = result.subscription_id;
+
+    pub.Publish(kTopic, MakeRow(1, "a"));  // triggers the row-limit flush -> the callback above
+    EXPECT_EQ(delivery_count, 1);
+
+    // No further delivery: the subscription is gone, and the process has not crashed getting here.
+    pub.Publish(kTopic, MakeRow(2, "b"));
+    pub.Publish(kTopic, MakeRow(3, "c"));
+    EXPECT_EQ(delivery_count, 1);
+}
+
 TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);

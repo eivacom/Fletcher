@@ -332,6 +332,25 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
 }
 
+// T3 (cycle 2): a payload of arbitrary bytes that is not a valid RawBytes (sequence<octet>)
+// encoding must fail cleanly rather than throw out of deserialize() or read out of bounds. This
+// buffer is too short to even hold a DDS_CDR encapsulation header (4 bytes: a dummy octet, the
+// representation id, and a 2-byte options field) — fastcdr's read_encapsulation() cannot advance
+// past the end of the FastBuffer it is told the payload's length is, so it must fail there, before
+// any sequence-length logic runs at all. Direct unit test: no DDS participant, no writer, no
+// reader.
+TEST(RawBytesPubSubTypeTest, DeserializeOnGarbageReturnsFalse) {
+    fletcher::internal::RawBytesPubSubType type(kTestPayloadBytes);
+    SerializedPayload_t payload(type.max_serialized_type_size);
+
+    const std::vector<uint8_t> garbage = {0x12, 0x34, 0x56};
+    std::memcpy(payload.data, garbage.data(), garbage.size());
+    payload.length = static_cast<uint32_t>(garbage.size());
+
+    fletcher::internal::RawBytes received;
+    EXPECT_FALSE(type.deserialize(payload, &received));
+}
+
 // P18: the guard at the top of serialize() now accounts for the row's OWN 4-byte length prefix
 // (EncodeEnvelopeBody's ROW_LEN) as well as the sample's — even an EMPTY row needs it. A buffer one
 // byte too small for that must be refused quietly, before the encoder ever runs, rather than
@@ -350,6 +369,43 @@ TEST(FletcherSamplePubSubTypeTest, ABufferTooSmallForAnEmptyRowIsRefusedQuietly)
 TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(kTestPayloadBytes);  // + the envelope: too big.
+    Publishing publishing(row);
+    SerializedPayload_t payload(type.max_serialized_type_size);
+
+    EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
+    EXPECT_EQ(payload.length, 0u);
+}
+
+// T1 (cycle 2), the exact-fit edge P18's guard leaves untested. `capacity` in serialize() is
+// `min(payload_bytes_, payload.max_size - kFraming)`, and the payload below reserves
+// `max_serialized_type_size == kFraming + payload_bytes_`, so here `capacity == kTestPayloadBytes`
+// exactly. EncodeEnvelopeBody's body framing for a ZERO-attachment row is 8 bytes — a 4-byte
+// ROW_LEN placeholder plus a 4-byte ATTACH_COUNT of zero (envelope_codec.hpp) — not the CDR
+// encapsulation header or the sample length prefix, both of which `kFraming` already accounts
+// for separately. So `body_size = 8 + row.size()`, and a row of `bound - 8` bytes is the largest
+// that fits `capacity` at all.
+TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAndRoundTrips) {
+    FletcherSamplePubSubType type(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(kTestPayloadBytes - 8, 0x37);
+    Publishing publishing(row);
+    SerializedPayload_t payload(type.max_serialized_type_size);
+
+    ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
+
+    ReceivedData received;
+    ASSERT_TRUE(type.deserialize(payload, &received));
+    EXPECT_EQ(received.decoded_row, row);
+    EXPECT_TRUE(received.decoded_attachments.empty());
+}
+
+// The other edge: one byte more than the exact fit above cannot fit `capacity` at all, so
+// EncodeEnvelopeBody's overflow throws inside serialize()'s try block and is turned into a quiet
+// `false` (the "capacity outcome of a bounded type" catch(std::overflow_error) arm), the same
+// refusal AnOversizedRowFailsAndEmptiesThePayload pins for a row far past the bound.
+TEST(FletcherSamplePubSubTypeTest,
+     ARowOneByteOverTheAvailableCapacityIsRefusedAndEmptiesThePayload) {
+    FletcherSamplePubSubType type(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(kTestPayloadBytes - 8 + 1, 0x37);
     Publishing publishing(row);
     SerializedPayload_t payload(type.max_serialized_type_size);
 
@@ -602,6 +658,100 @@ TEST(EnvelopeCodecTest, AnArrivingAttachmentKeyWithAZeroByteIsDroppedAsMalformed
         clean_owner, clean_owner->data(), clean_owner->size(), row, row_len, attachments));
     ASSERT_EQ(attachments.size(), static_cast<size_t>(1));
     EXPECT_EQ(attachments.KeyAt(0), "axb");
+}
+
+// T2 (cycle 2): one malformation per row, each refused by `ParseEnvelopeBody` with a quiet
+// `false` that leaves `attachments` empty — never a throw, for the same reason the zero-byte-key
+// refusal above is a `return false` rather than an exception: this parse runs inside Fast DDS's
+// own `deserialize()`/`on_data_available` frames.
+//
+// This belongs HERE rather than in core/tests/test_envelope.cpp, where the brief first pointed:
+// core's own decoder, `fletcher::DeserializeEnvelope` (core/include/fletcher/core/envelope.hpp),
+// is a DIFFERENT function that THROWS `std::invalid_argument` on every one of these same
+// malformations instead of returning `false` — see EnvelopeTest.ThrowsOnTruncatedBuffer and
+// neighbours in that file. `ParseEnvelopeBody`, the bool-returning decoder these four rows are
+// actually about, is private to this component (`fastdds-pubsub-provider/src/internal/`);
+// `fletcher-core` is a header-only base library this component depends ON, never the reverse
+// (core/conanfile.py, fastdds-pubsub-provider/conanfile.py), so core's tests have no include path
+// to it at all.
+TEST(EnvelopeCodecTest, MalformedBodiesAreRefusedAndLeaveAttachmentsEmpty) {
+    auto append_u32 = [](std::vector<uint8_t>& out, uint32_t value) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            out.push_back(static_cast<uint8_t>((value >> shift) & 0xFFu));
+        }
+    };
+
+    struct Case {
+        std::string name;
+        std::vector<uint8_t> body;
+        bool supply_owner;
+    };
+    std::vector<Case> cases;
+
+    // att_count bomb: claims far more attachments than the buffer could name entries for at all
+    // (the bound check is `att_count > (total - pos) / 8`, and here there is nothing left).
+    {
+        std::vector<uint8_t> body;
+        append_u32(body, 0);           // row_len = 0
+        append_u32(body, UINT32_MAX);  // att_count: bomb
+        cases.push_back({"att_count bomb", body, true});
+    }
+
+    // key_len past the buffer: att_count is within bounds (1 <= 8/8), but the key it names cannot
+    // fit in what remains.
+    {
+        std::vector<uint8_t> body;
+        append_u32(body, 0);               // row_len = 0
+        append_u32(body, 1);               // att_count = 1
+        append_u32(body, 100);             // key_len = 100
+        body.insert(body.end(), 4, 0x00);  // pads the buffer without supplying a key
+        cases.push_back({"key_len past the buffer", body, true});
+    }
+
+    // blob_len past the buffer: the key fits (3 <= 7 remaining), the blob it names does not.
+    {
+        std::vector<uint8_t> body;
+        append_u32(body, 0);  // row_len = 0
+        append_u32(body, 1);  // att_count = 1
+        append_u32(body, 3);  // key_len = 3
+        body.insert(body.end(), {'a', 'b', 'c'});
+        append_u32(body, 100);  // blob_len = 100, nothing follows
+        cases.push_back({"blob_len past the buffer", body, true});
+    }
+
+    // blob_len > 0 with no owner: an otherwise well-formed body — the bound checks all pass —
+    // refused only because the caller supplied no shared owner for the bytes the resulting Blob
+    // would have to alias.
+    {
+        std::vector<uint8_t> body;
+        append_u32(body, 0);  // row_len = 0
+        append_u32(body, 1);  // att_count = 1
+        append_u32(body, 3);  // key_len = 3
+        body.insert(body.end(), {'a', 'b', 'c'});
+        append_u32(body, 1);  // blob_len = 1
+        body.push_back(0xAB);
+        cases.push_back({"blob_len > 0 with no owner", body, false});
+    }
+
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        std::shared_ptr<const std::vector<uint8_t>> owner =
+            c.supply_owner ? std::make_shared<const std::vector<uint8_t>>(c.body) : nullptr;
+        const uint8_t* data = c.body.data();
+        const uint8_t* row = nullptr;
+        uint32_t row_len = 0;
+        // Pre-populated so a `false` return that left it untouched could not pass by accident:
+        // `AttachmentsWireBuilder`'s constructor clears it, and the destructor clears it again if
+        // `Finish()` never ran (fletcher/core/types.hpp) — both must actually have fired.
+        fletcher::Attachments attachments;
+        attachments.Set("stale", fletcher::Blob{std::vector<uint8_t>{0x01}});
+
+        const bool accepted = fletcher::internal::ParseEnvelopeBody(owner, data, c.body.size(), row,
+                                                                    row_len, attachments);
+
+        EXPECT_FALSE(accepted);
+        EXPECT_EQ(attachments.size(), static_cast<size_t>(0));
+    }
 }
 
 // The same refusal reached through `deserialize()` itself — the frame ruling

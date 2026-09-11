@@ -28,3 +28,10 @@
 void DiscardConcreteFastDDSProvider(fletcher::FastDDSPubSubProvider& provider) {
     provider.Subscribe({"probe"}, {});
 }
+
+// P21: the same forcing shape, for the concrete override of SubscribeSchema — added in the same
+// round that gave the provider a schema-only subscription, and just as liable to lose its
+// [[nodiscard]] silently on a future edit as Subscribe was.
+void DiscardConcreteFastDDSProviderSubscribeSchema(fletcher::FastDDSPubSubProvider& provider) {
+    provider.SubscribeSchema({"probe"});
+}

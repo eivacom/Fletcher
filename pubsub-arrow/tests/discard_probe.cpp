@@ -64,6 +64,7 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
     // and the test stays green purely on the non-virtual discards around it. Do not
     // read a passing Linux run as proof that this line is guarded.
     provider.Subscribe({"probe"}, {});
+    provider.SubscribeSchema({"probe"});
     fletcher::OwnedSchema::DeepCopy(schema);
 }
 

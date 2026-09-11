@@ -1331,6 +1331,137 @@ TEST(CodecTest, EncodeMatchesPositionalWriter_Unions) {
     EXPECT_EQ(codec_bytes, hand_bytes);
 }
 
+// The type-space gaps a 2026-09-11 audit found in the oracle above: int8, int16, uint8, uint16,
+// uint64, float16, date32, date64, time32, time64, fixed_size_binary, decimal256, large_list,
+// large_utf8, large_binary, utf8_view, binary_view, and a fixed_size_list with a null element (so
+// the element bitfield byte is non-zero). Every arm below still compares Codec::EncodeRow against
+// the hand-built PositionalWriter twin, never against itself.
+TEST(CodecTest, EncodeMatchesPositionalWriter_TypeSpaceGapFillers) {
+    auto time32_type = arrow::time32(arrow::TimeUnit::SECOND);
+    auto time64_type = arrow::time64(arrow::TimeUnit::MICRO);
+    auto fsb_type = arrow::fixed_size_binary(5);
+    auto dec256_type = arrow::decimal256(20, 4);
+    auto large_list_type = arrow::large_list(arrow::int32());
+    auto fsl_type = arrow::fixed_size_list(arrow::int32(), 4);
+
+    auto schema = arrow::schema({
+        arrow::field("f0_i8", arrow::int8(), true),
+        arrow::field("f1_i16", arrow::int16(), true),
+        arrow::field("f2_u8", arrow::uint8(), true),
+        arrow::field("f3_u16", arrow::uint16(), true),
+        arrow::field("f4_u64", arrow::uint64(), true),
+        arrow::field("f5_f16", arrow::float16(), true),
+        arrow::field("f6_date32", arrow::date32(), true),
+        arrow::field("f7_date64", arrow::date64(), true),
+        arrow::field("f8_time32", time32_type, true),
+        arrow::field("f9_time64", time64_type, true),
+        arrow::field("f10_fsb", fsb_type, true),
+        arrow::field("f11_dec256", dec256_type, true),
+        arrow::field("f12_large_list", large_list_type, true),
+        arrow::field("f13_large_utf8", arrow::large_utf8(), true),
+        arrow::field("f14_large_binary", arrow::large_binary(), true),
+        arrow::field("f15_utf8_view", arrow::utf8_view(), true),
+        arrow::field("f16_binary_view", arrow::binary_view(), true),
+        arrow::field("f17_fsl_with_null", fsl_type, true),
+    });
+    fletcher::Codec codec(schema);
+
+    const int8_t v0 = -100;
+    const int16_t v1 = -30000;
+    const uint8_t v2 = 200;
+    const uint16_t v3 = 60000;
+    const uint64_t v4 = 18'000'000'000'000'000'000ull;
+    const uint16_t v5 = 0x3C00u;  // HalfFloatScalar's storage is its raw uint16 bit pattern
+    const int32_t v6 = 19345;
+    const int64_t v7 = 1'700'000'000'000LL;
+    const int32_t v8 = 3600;
+    const int64_t v9 = 123456789LL;
+    const std::vector<uint8_t> v10 = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+    const arrow::Decimal256 v11(123456789LL);
+    const std::vector<int32_t> v12 = {11, 22, 33, 44};
+    const std::string v13 = "large-utf8-oracle";
+    const std::vector<uint8_t> v14 = {0x01, 0x02, 0x03, 0xFF};
+    const std::string v15 = "view-oracle";
+    const std::vector<uint8_t> v16 = {0x10, 0x20, 0x30, 0x40, 0x50};
+
+    arrow::Int32Builder large_list_b;
+    ASSERT_TRUE(large_list_b.AppendValues(v12).ok());
+    auto large_list_arr = large_list_b.Finish().ValueOrDie();
+
+    // fixed_size_list<int32, 4> with element 1 null: the element bitfield byte must be non-zero.
+    arrow::Int32Builder fsl_b;
+    ASSERT_TRUE(fsl_b.Append(10).ok());
+    ASSERT_TRUE(fsl_b.AppendNull().ok());
+    ASSERT_TRUE(fsl_b.Append(30).ok());
+    ASSERT_TRUE(fsl_b.Append(40).ok());
+    auto fsl_arr = fsl_b.Finish().ValueOrDie();
+
+    fletcher::ArrowRow row = {
+        std::make_shared<arrow::Int8Scalar>(v0),
+        std::make_shared<arrow::Int16Scalar>(v1),
+        std::make_shared<arrow::UInt8Scalar>(v2),
+        std::make_shared<arrow::UInt16Scalar>(v3),
+        std::make_shared<arrow::UInt64Scalar>(v4),
+        std::make_shared<arrow::HalfFloatScalar>(v5),
+        std::make_shared<arrow::Date32Scalar>(v6),
+        std::make_shared<arrow::Date64Scalar>(v7),
+        std::make_shared<arrow::Time32Scalar>(v8, time32_type),
+        std::make_shared<arrow::Time64Scalar>(v9, time64_type),
+        std::make_shared<arrow::FixedSizeBinaryScalar>(
+            std::make_shared<arrow::Buffer>(v10.data(), static_cast<int64_t>(v10.size())),
+            fsb_type),
+        std::make_shared<arrow::Decimal256Scalar>(v11, dec256_type),
+        std::make_shared<arrow::LargeListScalar>(large_list_arr, large_list_type),
+        std::make_shared<arrow::LargeStringScalar>(v13),
+        std::make_shared<arrow::LargeBinaryScalar>(
+            std::make_shared<arrow::Buffer>(v14.data(), static_cast<int64_t>(v14.size()))),
+        std::make_shared<arrow::StringViewScalar>(arrow::Buffer::FromString(v15)),
+        std::make_shared<arrow::BinaryViewScalar>(
+            std::make_shared<arrow::Buffer>(v16.data(), static_cast<int64_t>(v16.size()))),
+        std::make_shared<arrow::FixedSizeListScalar>(fsl_arr, fsl_type),
+    };
+    auto codec_bytes = codec.EncodeRow(row);
+
+    fletcher::VectorWriteBuffer buf;
+    fletcher::PositionalWriter pw(buf, 18);
+    pw.WriteInt8(v0);
+    pw.WriteInt16(v1);
+    pw.WriteUint8(v2);
+    pw.WriteUint16(v3);
+    pw.WriteUint64(v4);
+    pw.WriteUint16(v5);                  // float16's wire payload is its raw uint16 bit pattern
+    pw.WriteInt32(v6);                   // date32's wire payload is its raw int32 value
+    pw.WriteInt64(v7);                   // date64
+    pw.WriteInt32(v8);                   // time32
+    pw.WriteInt64(v9);                   // time64
+    buf.Append(v10.data(), v10.size());  // fixed_size_binary: raw bytes, no length prefix
+    {
+        uint8_t bytes[32];
+        v11.ToBytes(bytes);
+        buf.Append(bytes, 32);
+    }
+    pw.BeginList(static_cast<uint32_t>(v12.size()));
+    pw.WriteFixedArray(v12.data(), v12.size());
+    pw.WriteString(v13);
+    pw.WriteBinary(v14.data(), v14.size());
+    pw.WriteString(v15);
+    pw.WriteBinary(v16.data(), v16.size());
+    {
+        // fixed_size_list<int32, 4> with element 1 null: 1 bitfield byte, bit 1 set, payloads for
+        // elements 0, 2, 3 only — a null element carries no payload, same rule as a regular list.
+        size_t off = buf.Position();
+        buf.AppendZeros(1);
+        fletcher::PositionalWriter::ListContext lc{buf, off, 4};
+        lc.SetElementNull(1);
+        pw.WriteInt32(10);
+        pw.WriteInt32(30);
+        pw.WriteInt32(40);
+    }
+    auto hand_bytes = buf.Finish();
+
+    EXPECT_EQ(codec_bytes, hand_bytes);
+}
+
 // ---------------------------------------------------------------------------
 // Red-first negative tests (Step 1b).
 // ---------------------------------------------------------------------------

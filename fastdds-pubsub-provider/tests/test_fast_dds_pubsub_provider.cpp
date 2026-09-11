@@ -679,6 +679,99 @@ TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
     EXPECT_NO_THROW(pub_provider.Publish({"loaned", "oversized"}, MakeEncoder(3)));
 }
 
+// T6: a row large enough that Fast DDS must FRAGMENT it at the RTPS level still crosses intact.
+// `bound` is the payload bound both endpoints resolve to here (65536, BoundedConfig()'s default —
+// see FastDdsConfig.AnUnsetPayloadBoundResolvesToSixtyFourKiB in test_profile_document.cpp).
+// `- 8` is EncodeEnvelopeBody's own zero-attachment body framing — a 4-byte ROW_LEN placeholder
+// plus a 4-byte ATTACH_COUNT of zero (envelope_codec.hpp; see
+// FletcherSamplePubSubTypeTest.ARowOfExactlyTheAvailableCapacitySerializesAndRoundTrips in
+// test_fletcher_sample_pub_sub_type.cpp) — which keeps the row inside FletcherSamplePubSubType's
+// own serialize() capacity. The total wire length this produces — row size + 16, that same 8 plus
+// the 4-byte CDR encapsulation header and the 4-byte sample length prefix — then lands at exactly
+// `bound - 8` = 65528 bytes: past `eprosima::fastdds::rtps::s_maximumMessageSize` (65500,
+// TransportInterface.hpp), the default UDPv4Transport ceiling for one RTPS message, so this
+// sample cannot go out as a single DATA submessage and Fast DDS must fragment it (DATA_FRAG).
+// Synchronous writers fragment fine on 3.4.0 — the upstream "async required" note is stale here.
+TEST(FastDDSPubSubProviderTest, AFragmentingRowCrossesIntact) {
+    FastDDSPubSubProvider pub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    pub_provider.CreateTopic({"fragmenting", "x"}, MakeSchema());
+
+    const size_t row_size = static_cast<size_t>(pub_provider.PayloadBytes()) - 8 - 16;
+    std::vector<uint8_t> expected(row_size);
+    for (size_t i = 0; i < row_size; ++i) expected[i] = static_cast<uint8_t>(i);
+
+    std::mutex mtx;
+    std::vector<uint8_t> received_row;
+    bool received = false;
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"fragmenting", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            std::lock_guard<std::mutex> lock(mtx);
+            received_row.assign(data, data + len);
+            received = true;
+        });
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    pub_provider.Publish({"fragmenting", "x"},
+                         [&](WriteBuffer& buf) { buf.Append(expected.data(), expected.size()); });
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (received) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    std::lock_guard<std::mutex> lock(mtx);
+    ASSERT_TRUE(received) << "the fragmenting row never arrived";
+    EXPECT_EQ(received_row, expected);
+}
+
+// The loaned-publish variant of the same row: the writer encodes straight into the loaned payload
+// (no serialize()/deserialize() pair on the publish side), so this also proves a loan can span a
+// fragmenting sample. LoanPublishConfig() is this file's existing fletcher.loan_publish=true
+// profile document (see LoanedRoundTrip above) — no new profile is invented for this variant.
+TEST(FastDDSPubSubProviderTest, ALoanPublishedFragmentingRowCrossesIntact) {
+    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
+    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    pub_provider.CreateTopic({"fragmenting", "loaned"}, MakeSchema());
+
+    const size_t row_size = static_cast<size_t>(pub_provider.PayloadBytes()) - 8 - 16;
+    std::vector<uint8_t> expected(row_size);
+    for (size_t i = 0; i < row_size; ++i) expected[i] = static_cast<uint8_t>((i * 7) & 0xFF);
+
+    std::mutex mtx;
+    std::vector<uint8_t> received_row;
+    bool received = false;
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"fragmenting", "loaned"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            std::lock_guard<std::mutex> lock(mtx);
+            received_row.assign(data, data + len);
+            received = true;
+        });
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    pub_provider.Publish({"fragmenting", "loaned"},
+                         [&](WriteBuffer& buf) { buf.Append(expected.data(), expected.size()); });
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (received) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    std::lock_guard<std::mutex> lock(mtx);
+    ASSERT_TRUE(received) << "the loan-published fragmenting row never arrived";
+    EXPECT_EQ(received_row, expected);
+}
+
 // A throwing callback runs on a Fast DDS listener thread, where an escaping exception terminates
 // the process. On the loaned path it must also not take the loan with it: the reader has only
 // max_samples + extra_samples loans, so a handful of leaks starves delivery for good.
@@ -1428,6 +1521,251 @@ TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
             << "a bound mismatch surfaced as incompatible QoS; discovery is no longer the only "
                "diagnostic and this test's premise is stale";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — FastDDSLoggingStatusListener / FastDDSStatusListener (cycle 2, T7 + P22)
+//
+// Deadline, liveliness, sample-lost and sample-rejected coverage THROUGH A LIVE PROVIDER (forcing
+// the real DDS conditions that drive them) is NOT attempted here — deferred to a later cycle,
+// per the brief, and listed as untested in this cycle's report. P22 below exercises every one of
+// FastDDSLoggingStatusListener's eight bodies directly instead, which needs no DDS condition to be
+// forced at all; the four FastDDSStatusListener subclass tests that follow it drive the ones that
+// ARE reachable through a real provider pair (OnIncompatibleQos, OnReaderDiscovered,
+// OnParticipantDiscovered). A fourth item the brief asked for — is_schema_channel == true reaching
+// OnMatched for a __schema reader — is NOT reachable at all on the current provider:
+// internal::SchemaReaderStatusMask() (data_writer_listener.hpp) carries no subscription_matched
+// bit, SchemaListener (schema_channel.hpp) overrides no on_subscription_matched, and the __schema
+// DataWriter is created with no listener whatsoever (fast_dds_pubsub_provider.cpp, the
+// create_datawriter call for ts.schema_writer) — matching StatusListenerReportsMatchingBothWays'
+// existing comment that "the companion channel cannot report here". Making this reachable is a
+// production change (adding the status bit and the override), which this test-only cycle may not
+// make; escalated and confirmed blocked rather than worked around.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The Cycle 1 conflict test's pattern (ConflictingCrossProviderSchemaIsLoggedNotSwallowed):
+// RegisterConsumer only ADDS a consumer, never Log::ClearConsumers, which would drop the default
+// stdout consumer along with it.
+class CapturingLogConsumer : public eprosima::fastdds::dds::LogConsumer {
+   public:
+    void Consume(const eprosima::fastdds::dds::Log::Entry& entry) override {
+        std::lock_guard<std::mutex> lk(m);
+        messages.push_back(entry.message);
+    }
+
+    bool SawContaining(const std::string& needle) {
+        std::lock_guard<std::mutex> lk(m);
+        for (const auto& msg : messages) {
+            if (msg.find(needle) != std::string::npos) return true;
+        }
+        return false;
+    }
+
+    std::mutex m;
+    std::vector<std::string> messages;
+};
+
+}  // namespace
+
+// P22: FastDDSLoggingStatusListener driven directly — no DDS participant at all, since every one
+// of its eight bodies (status_listener.cpp) only formats `endpoint` and its arguments into a log
+// line. Each call below names a topic string found nowhere else in this process, so a hit against
+// it can only be the call that named it, never another test's own transport traffic running
+// concurrently.
+//
+// Verbosity is raised on purpose: probing this test empirically (not assumed from Log.hpp's
+// comments) showed this process's DEFAULT runtime verbosity admits ERROR only — EPROSIMA_LOG_ERROR
+// is unconditional, but EPROSIMA_LOG_WARNING is gated at runtime by
+// `Log::GetVerbosity() >= Log::Kind::Warning`, and that gate is closed by default here. Without
+// raising it, every WARNING-level body below is silently dropped before it ever reaches a
+// consumer, which is what the first run of this test found the hard way. Each test runs in its own
+// process (ctest invokes one `--gtest_filter` per test), so this has no other test to leak into.
+// EPROSIMA_LOG_INFO needs FASTDDS_ENFORCE_LOG_INFO besides, which this build does not define, so it
+// compiles to nothing regardless of verbosity — no call here is chosen to need it.
+//
+// The two is_schema_channel branches of OnSampleLost and OnSampleRejected are called ALONGSIDE
+// their data-channel siblings (the "plus both is_schema_channel branches" half of this item), but
+// their fixed messages (status_listener.cpp) do not carry `endpoint.topic` at all — a schema
+// rejection or loss is reported once per channel, not per topic — so those two are asserted on
+// their own literal, distinctive text instead of a topic string.
+TEST(FastDDSLoggingStatusListenerTest, EveryCallbackLogsIncludingBothSchemaChannelBranches) {
+    eprosima::fastdds::dds::Log::SetVerbosity(eprosima::fastdds::dds::Log::Kind::Warning);
+
+    auto* consumer = new CapturingLogConsumer();
+    eprosima::fastdds::dds::Log::RegisterConsumer(
+        std::unique_ptr<eprosima::fastdds::dds::LogConsumer>(consumer));
+
+    FastDDSLoggingStatusListener listener;
+    using Endpoint = FastDDSStatusListener::Endpoint;
+
+    listener.OnMatched(Endpoint{"logprobe/matched", false, true}, 3, -1);
+    listener.OnIncompatibleQos(Endpoint{"logprobe/incompatible", false, false}, 7, 2);
+    listener.OnDeadlineMissed(Endpoint{"logprobe/deadline", false, true}, 4);
+    listener.OnLivelinessChanged(Endpoint{"logprobe/liveliness", false, false}, 1, 2);
+    listener.OnLivelinessLost(Endpoint{"logprobe/livelost", false, true}, 5);
+    listener.OnSampleLost(Endpoint{"logprobe/samplelost_data", false, false}, 6);
+    listener.OnSampleLost(Endpoint{"logprobe/samplelost_schema", true, false}, 6);
+    listener.OnSampleRejected(Endpoint{"logprobe/samplerejected_data", false, false}, 1, 8);
+    listener.OnSampleRejected(Endpoint{"logprobe/samplerejected_schema", true, false}, 1, 8);
+    listener.OnUnacknowledgedSampleRemoved(Endpoint{"logprobe/unacked", false, true});
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        eprosima::fastdds::dds::Log::Flush();
+        if (consumer->SawContaining("logprobe/unacked")) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    eprosima::fastdds::dds::Log::Flush();
+
+    EXPECT_TRUE(consumer->SawContaining("logprobe/matched")) << "OnMatched did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/incompatible"))
+        << "OnIncompatibleQos did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/deadline")) << "OnDeadlineMissed did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/liveliness"))
+        << "OnLivelinessChanged did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/livelost")) << "OnLivelinessLost did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/samplelost_data"))
+        << "OnSampleLost (data channel) did not log";
+    EXPECT_TRUE(consumer->SawContaining("a schema sample was lost"))
+        << "OnSampleLost (schema channel) did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/samplerejected_data"))
+        << "OnSampleRejected (data channel) did not log";
+    EXPECT_TRUE(consumer->SawContaining("a schema sample was rejected"))
+        << "OnSampleRejected (schema channel) did not log";
+    EXPECT_TRUE(consumer->SawContaining("logprobe/unacked"))
+        << "OnUnacknowledgedSampleRemoved did not log";
+}
+
+// A test-local FastDDSStatusListener subclass, driven through a real provider pair: a RELIABLE
+// reader against a BEST_EFFORT writer is a REQUESTED_INCOMPATIBLE_QOS on the reliability policy,
+// so the reader's side of OnIncompatibleQos must fire. The __schema channel keeps its own fixed
+// QoS regardless of what the data channel's document says (this file's "A supplied profile is
+// that endpoint's WHOLE quality-of-service" note, above BoundedDocument), so the schema still
+// resolves even though the data endpoints never match.
+TEST(FastDDSStatusListenerTest, OnIncompatibleQosFiresForAReliableReaderAgainstABestEffortWriter) {
+    DocumentParts best_effort_writer;
+    best_effort_writer.writer_qos = R"(
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>)";
+
+    struct IncompatibleListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        bool reader_incompatible = false;
+
+        void OnIncompatibleQos(Endpoint endpoint, uint32_t /*policy_id*/,
+                               uint32_t /*total_count*/) noexcept override {
+            if (endpoint.is_writer || endpoint.topic != "incompatible/x") return;
+            std::lock_guard<std::mutex> lk(m);
+            reader_incompatible = true;
+            cv.notify_all();
+        }
+    };
+
+    IncompatibleListener listener;
+    FastDDSPubSubProvider pub_provider(BoundedConfig(best_effort_writer));
+    FastDDSPubSubProvider sub_provider(BoundedConfig(), &listener);
+
+    pub_provider.CreateTopic({"incompatible", "x"}, MakeSchema());
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"incompatible", "x"},
+        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    // The DataWriter is created on the first publish (see StatusListenerReportsMatchingBothWays),
+    // so there is nothing for the reader to discover — and therefore no QoS to be incompatible
+    // with — until one happens.
+    pub_provider.Publish({"incompatible", "x"}, MakeEncoder(1));
+
+    std::unique_lock<std::mutex> lk(listener.m);
+    EXPECT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+        return listener.reader_incompatible;
+    })) << "OnIncompatibleQos was never reported for the RELIABLE reader";
+}
+
+// The mirror of DiscoverySeesAWriterOnAnotherBound above: this time the LISTENER sits on the
+// publisher side, and it is the SUBSCRIBER whose bound differs, so discovery must report the
+// remote READER rather than the remote writer.
+TEST(FastDDSStatusListenerTest, OnReaderDiscoveredMirrorsOnWriterDiscovered) {
+    struct DiscoveryListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        std::vector<std::pair<std::string, std::string>> readers;
+
+        void OnReaderDiscovered(std::string_view topic, std::string_view type_name,
+                                bool alive) noexcept override {
+            if (!alive) return;
+            std::lock_guard<std::mutex> lk(m);
+            readers.emplace_back(std::string(topic), std::string(type_name));
+            cv.notify_all();
+        }
+
+        bool SawReader(const std::string& topic, const std::string& type_name) const {
+            for (const auto& r : readers) {
+                if (r.first == topic && r.second == type_name) return true;
+            }
+            return false;
+        }
+    };
+
+    DiscoveryListener listener;
+    FastDDSPubSubProvider pub_provider(ProviderConfig{}, &listener);
+
+    ProviderConfig sub_config;
+    sub_config.max_payload_bytes = kPayloadBytes<8192>;
+    FastDDSPubSubProvider sub_provider(sub_config);
+
+    pub_provider.CreateTopic({"readerbound", "x"}, MakeSchema());
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"readerbound", "x"},
+        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    pub_provider.Publish({"readerbound", "x"}, MakeEncoder(1));
+
+    {
+        std::unique_lock<std::mutex> lk(listener.m);
+        ASSERT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return listener.SawReader("readerbound/x", FletcherTypeName(8192));
+        })) << "the reader on the other bound was never discovered";
+    }
+
+    // The companion channel pairs up regardless (same reasoning as
+    // DiscoverySeesAWriterOnAnotherBound).
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+}
+
+// OnParticipantDiscovered fires for a remote participant joining the same domain, independent of
+// any topic or endpoint — the widest of the three discovery callbacks.
+TEST(FastDDSStatusListenerTest, OnParticipantDiscoveredFiresForARemoteParticipant) {
+    struct ParticipantListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        std::vector<std::string> names;
+
+        void OnParticipantDiscovered(std::string_view name, bool alive) noexcept override {
+            if (!alive) return;
+            std::lock_guard<std::mutex> lk(m);
+            names.emplace_back(name);
+            cv.notify_all();
+        }
+    };
+
+    ParticipantListener listener;
+    FastDDSPubSubProvider provider(ProviderConfig{}, &listener);
+
+    DomainParticipant* other =
+        DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
+    ASSERT_NE(other, nullptr);
+
+    {
+        std::unique_lock<std::mutex> lk(listener.m);
+        EXPECT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return !listener.names.empty();
+        })) << "no remote participant was ever discovered";
+    }
+
+    DomainParticipantFactory::get_instance()->delete_participant(other);
 }
 
 // ---------------------------------------------------------------------------
