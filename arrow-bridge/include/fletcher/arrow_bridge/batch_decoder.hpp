@@ -25,10 +25,17 @@ class BatchCapacityExceeded : public std::length_error {
 // DecodeRow stays the per-row ArrowRow path. Not thread-safe.
 class BatchDecoder {
    public:
-    // std::invalid_argument for a schema this decoder cannot build (null/extension/decimal32/64/
+    // std::invalid_argument for a schema this decoder cannot build: null/extension/decimal32/64/
     // run-end/list-view types, a dictionary below the top level, a dictionary whose value type is
-    // nested or float16, or an ordered dictionary). Codec::DecodeRow still handles every one of
-    // those.
+    // nested or float16, or an ordered dictionary. Two different reasons hide behind that one list.
+    // The first six are not supported AT ALL — `scalar_codec.cpp` has no case for NA, EXTENSION,
+    // RUN_END_ENCODED, LIST_VIEW, LARGE_LIST_VIEW, DECIMAL32 or DECIMAL64, so
+    // `Codec::DecodeRow`/`EncodeRow` throw `std::invalid_argument` on the identical schema too (NA
+    // is the one exception that looks supported: a NA-typed field is always null, so it is encoded
+    // and decoded through the null bit alone and never reaches the type switch that would throw).
+    // The three dictionary shapes are different: `Codec::DecodeRow` decodes all three fine — the
+    // refusal here is this decoder's builder-tree shape, which is stricter, not a wire-format
+    // limit.
     explicit BatchDecoder(std::shared_ptr<arrow::Schema> schema);
     ~BatchDecoder();
     BatchDecoder(BatchDecoder&&) noexcept;

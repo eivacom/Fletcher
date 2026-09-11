@@ -219,7 +219,10 @@ class Subscriber {
     /// watch is a no-op, not an error, like cancelling an unknown id.
     ///
     /// A still-pending arrival handed out by `SubscribeSchema` then reports
-    /// kSubscriptionEnded — a waiter is answered, never left hanging.
+    /// kSubscriptionEnded — a waiter is answered, never left hanging. Unless a
+    /// live data subscription shares this topic's channel: the watch still ends,
+    /// but the arrival is then that subscription's, and stays kPending until its
+    /// own schema arrives or it is unsubscribed.
     ///
     /// This carries **no carve-out of its own** for a call issued from inside a
     /// delivery: a schema watch has no delivery frame to wait for, so there is

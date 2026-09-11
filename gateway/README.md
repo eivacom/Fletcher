@@ -31,6 +31,8 @@ The gateway routes between WebSocket clients and a pub/sub provider chosen with 
 
 Both providers are always compiled into the exe and the released binary; `--provider` selects between them at runtime.
 
+The gateway builds its provider through `fletcher::ProviderRegistry`, whose `Create` takes only a `ProviderConfig` — there is no listener parameter. So the gateway observes no endpoint or discovery statuses: for `fastdds`, that means no `FastDDSStatusListener` is ever installed, and callbacks like `OnMatched` or `OnIncompatibleQos` never fire for the gateway's own endpoints (see [Statuses](../fastdds-pubsub-provider/README.md#statuses)). A caller who wants them constructs `FastDDSPubSubProvider` directly, outside the registry, rather than going through the gateway.
+
 ### Configuring the provider
 
 `--provider-config FILE` reads `FILE` and hands its contents to the selected provider as its configuration document. **The format is the provider's, not the gateway's** — the gateway does not parse it, validate it or know what it means; it reads the bytes and passes them on. That is why one flag serves every provider, including ones a later build adds.

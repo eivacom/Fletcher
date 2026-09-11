@@ -29,6 +29,10 @@ inline FastDDSStatusListener::Endpoint MakeEndpoint(const std::string& topic_nam
     // apart from the caller's rows on the public seam.
     constexpr std::string_view kSchemaSuffix = "/__schema";
     const bool is_schema_channel = topic.ends_with(kSchemaSuffix);
+    // `remove_suffix` only shrinks the view's size; `.data()` still points into `topic_name`'s
+    // buffer, so for a schema channel `topic.data()[topic.size()]` is `/` (the suffix this just cut
+    // off), not `\0`. `topic.data()` is therefore NOT NUL-terminated at `topic.size()` here — a
+    // caller must go through the `string_view`, never treat `.data()` as a C string.
     if (is_schema_channel) topic.remove_suffix(kSchemaSuffix.size());
     return {topic, is_schema_channel, is_writer};
 }

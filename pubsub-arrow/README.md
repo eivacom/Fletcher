@@ -65,12 +65,25 @@ on `Unsubscribe`. The callback target must outlive the subscription.
 
 Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
 `fletcher-arrow-bridge`) rather than through per-row scalars, so the batched
-path never pays for the ArrowRow round trip. A topic whose schema `BatchDecoder`
-cannot build into columns (a dictionary nested below the top level, or an Arrow
-type it doesn't support) delivers a null `batch` with every row counted in
-`rows_dropped` instead — the per-row `Subscribe` overload still decodes it fine,
-since `Codec::DecodeRow` supports strictly more schemas than the columnar path
-does. A window that would overflow a 32-bit Arrow offset (a utf8/binary/list
+path never pays for the ArrowRow round trip. A topic whose schema
+`BatchDecoder`'s constructor rejects delivers a null `batch` with **every**
+row counted in `rows_dropped` instead, for the entire life of the
+subscription — there is no later recovery once the schema is known, and no
+partial decoding.
+
+That refusal has two different causes, and only one of them has a fallback.
+Null, extension, decimal32/64, run-end-encoded, and list-view types are not
+decodable through either `SubscriberArrow::Subscribe` overload: `Codec`'s
+scalar codec has no case for any of them, so the per-row overload throws on
+the identical schema too, and there is nothing to switch to. A dictionary
+nested below the top level, an ordered dictionary, and a dictionary whose
+value type is nested or `float16` are different — `Codec::DecodeRow` (the
+per-row overload) decodes all three fine. A caller whose topic uses one of
+those three dictionary shapes and wants the data at all uses the per-row
+`Subscribe` overload for that topic instead of the batched one; there is no
+way to get a `RecordBatch` for it.
+
+A window that would overflow a 32-bit Arrow offset (a utf8/binary/list
 column growing past 2 GiB) is flushed early with reason `kRowLimit`, same as
 hitting `max_rows`.
 
@@ -133,7 +146,7 @@ conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Relea
 
 ```python
 def requirements(self):
-    self.requires("fletcher-pubsub-arrow/0.5.0-alpha")
+    self.requires("fletcher-pubsub-arrow/0.5.1-alpha")
 ```
 
 ```cmake

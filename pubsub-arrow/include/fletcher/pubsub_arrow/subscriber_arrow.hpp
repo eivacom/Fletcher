@@ -96,11 +96,23 @@ class SubscriberArrow {
     /// its attachment lived in that row. If a window contains only dropped
     /// rows, a zero-row batch is still delivered so the loss is reported.
     ///
-    /// `batch` is null only when the topic's schema cannot be decoded into
-    /// columns (a dictionary below the top level, or an Arrow type
-    /// `BatchDecoder` rejects); every row is then counted in `rows_dropped`.
-    /// Otherwise it is never null, and may have zero rows when a window
-    /// contained only dropped rows.
+    /// `batch` is null only when `BatchDecoder`'s constructor rejected the
+    /// topic's schema; every row is then counted in `rows_dropped`, with a
+    /// null batch, for the entire life of this subscription — there is no
+    /// later recovery once the schema is known. Otherwise `batch` is never
+    /// null, and may have zero rows when a window contained only dropped
+    /// rows.
+    ///
+    /// What that costs depends on WHY `BatchDecoder` rejected the schema.
+    /// Null, extension, decimal32/64, run-end-encoded and list-view types are
+    /// not decodable through EITHER `SubscriberArrow::Subscribe` overload —
+    /// `Codec::DecodeRow` (the per-row one) throws on the same schema, so
+    /// there is no fallback to switch to. A dictionary nested below the top
+    /// level, an ordered dictionary, and a dictionary whose value type is
+    /// nested or `float16` are different: `Codec::DecodeRow` decodes all
+    /// three fine, so a caller who needs one of those three shapes and wants
+    /// data at all uses the per-row `Subscribe` overload for that topic
+    /// instead of this one.
     using RecordBatchCallback =
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;

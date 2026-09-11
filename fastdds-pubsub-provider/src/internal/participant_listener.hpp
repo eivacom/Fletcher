@@ -41,6 +41,10 @@ class ParticipantListener : public eprosima::fastdds::dds::DomainParticipantList
         // security off, so it never fires and is not overridden here.)
         const bool alive = reason == ParticipantDiscoveryStatus::DISCOVERED_PARTICIPANT ||
                            reason == ParticipantDiscoveryStatus::CHANGED_QOS_PARTICIPANT;
+        // CHANGED_QOS_PARTICIPANT reports the SAME participant, with `alive` freshly true again —
+        // not a second join. A census that just counts `true` calls double-counts it; key by
+        // `participant_name` (the only identity this callback carries) and let a repeat overwrite
+        // an existing entry instead of adding to it.
         status_listener_->OnParticipantDiscovered(
             std::string_view(info.participant_name.c_str(), info.participant_name.size()), alive);
     }
@@ -54,6 +58,10 @@ class ParticipantListener : public eprosima::fastdds::dds::DomainParticipantList
         // DISCOVERED and CHANGED_QOS is "here"; REMOVED and IGNORED are not.
         const bool alive = reason == ReaderDiscoveryStatus::DISCOVERED_READER ||
                            reason == ReaderDiscoveryStatus::CHANGED_QOS_READER;
+        // Same idiom as participant discovery above: CHANGED_QOS_READER resends `alive == true` for
+        // a reader already reported alive, not a new one. A census keyed on a bare counter
+        // double-counts it — key by `(topic, type_name)`, the identity this callback carries (and
+        // the same is true of `on_data_writer_discovery` below).
         status_listener_->OnReaderDiscovered(
             std::string_view(info.topic_name.c_str(), info.topic_name.size()),
             std::string_view(info.type_name.c_str(), info.type_name.size()), alive);

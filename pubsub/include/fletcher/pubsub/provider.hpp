@@ -233,6 +233,17 @@ class PubSubProvider {
     /// place, because the two were asked for separately and the data
     /// subscription is not what the watcher is waiting on.
     ///
+    /// **The arrival this opens resolves at most once.** `SchemaArrival`'s write
+    /// end is a single-use `SchemaResolver` (schema_arrival.hpp): once consumed,
+    /// nothing can resolve it again. A same-topic conflict from a publisher IN
+    /// THIS PROCESS is caught earlier than that and never reaches a watch at
+    /// all — `CreateTopic` itself refuses it, `PubSubError(kSchemaConflict)`
+    /// (spec §7 clause 3). A conflict from another PROCESS, arriving after this
+    /// arrival has already resolved, has nothing left to refuse; the reference
+    /// Fast DDS provider logs it and drops it (`SchemaListener::on_data_available`,
+    /// `fastdds-pubsub-provider/src/internal/schema_channel.hpp`) — there is no
+    /// second `SchemaArrival` to carry the disagreement to a caller.
+    ///
     /// **Refused from inside a delivery, as every seam method is** (§6 clause 6)
     /// — `PubSubError(kReentrantCall)` before any lock. An invalid segment list
     /// is refused the same way every other seam method refuses one — before the

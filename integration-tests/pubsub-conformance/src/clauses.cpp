@@ -755,7 +755,7 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     // this.
     EXPECT_EQ(subscribe_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
         << "Subscribe from inside a delivery answered with " << StatusText(subscribe_status.load())
-        << "; §6 clause 6 refuses all four methods on every provider";
+        << "; §6 clause 6 refuses every seam method on every provider";
     EXPECT_EQ(subscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
         << "SubscribeSchema from inside a delivery answered with "
         << StatusText(subscribe_schema_status.load())

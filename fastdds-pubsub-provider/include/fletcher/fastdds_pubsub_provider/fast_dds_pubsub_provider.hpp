@@ -48,7 +48,11 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// inside `CreateTopic` / `Publish` / `Subscribe` of **any** provider in this
 /// process, with that provider's mutex held: intraprocess discovery and matching
 /// run synchronously inside `create_datareader` / `create_datawriter`, including
-/// between two participants in one process. So an override
+/// between two participants in one process. One `DataWriterListener` and one
+/// `ParticipantListener` instance is shared by every endpoint a provider owns, so two of these
+/// calls can be in flight on two different threads at once — nothing here serialises callbacks
+/// against each other, only each one against the provider mutex it happens to be running under.
+/// So an override
 ///
 ///  - **must not call into any provider.** The provider mutex is a
 ///    non-recursive `std::shared_mutex`; re-entering deadlocks.
@@ -78,6 +82,8 @@ class FastDDSStatusListener {
 
     virtual void OnMatched(Endpoint /*endpoint*/, int32_t /*current_count*/,
                            int32_t /*change*/) noexcept {}
+    // `policy_id` is DDS's `QosPolicyId_t`, narrowed to a plain integer so this DDS-free header
+    // names no eProsima type; it identifies which QoS policy the two ends disagreed on.
     virtual void OnIncompatibleQos(Endpoint /*endpoint*/, uint32_t /*policy_id*/,
                                    uint32_t /*total_count*/) noexcept {}
     virtual void OnDeadlineMissed(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
@@ -86,9 +92,13 @@ class FastDDSStatusListener {
                                      int32_t /*not_alive_count*/) noexcept {}
     // Writers only.
     virtual void OnLivelinessLost(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
+    // Readers only.
     virtual void OnSampleLost(Endpoint /*endpoint*/, uint32_t /*total_count*/) noexcept {}
+    // Readers only. `reason` is DDS's `SampleRejectedStatusKind`, narrowed the same way as
+    // `policy_id` above.
     virtual void OnSampleRejected(Endpoint /*endpoint*/, int32_t /*reason*/,
                                   uint32_t /*total_count*/) noexcept {}
+    // Writers only.
     virtual void OnUnacknowledgedSampleRemoved(Endpoint /*endpoint*/) noexcept {}
 
     /// Discovery of REMOTE entities, which is a strictly wider net than matching: a peer whose

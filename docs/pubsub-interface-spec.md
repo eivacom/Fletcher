@@ -868,8 +868,9 @@ depend on these being written down:
    method** (owner ruling 2026-09-05, *"refuse everywhere; hand the capability to
    PDA-ABI"*).
 
-   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe` — all
-   four of `PubSubProvider`'s methods — throw `PubSubError(kReentrantCall)`,
+   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, and the
+   two schema-only methods `SubscribeSchema` and `UnsubscribeSchema` — every
+   seam method `PubSubProvider` declares — throw `PubSubError(kReentrantCall)`,
    **before taking any lock**, when issued from inside a delivery callback on the
    *same provider instance* and the *same thread*. There is no per-protocol
    exception and no method carved out. A handler that needs to act on the seam

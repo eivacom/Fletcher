@@ -493,6 +493,10 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
         // Reused per thread: the joined name is only a lookup key and dies with the call, and a
         // fresh std::string here was a malloc and a free on every publish. Publish holds the mutex
         // shared, so a scratch buffer on the provider would be a data race; one per thread is not.
+        // This one instance is shared by every `FastDDSPubSubProvider` on this thread, not scoped
+        // to `this` — safe only because nothing below reads `name` again once `Write` is called, so
+        // a nested Publish on another instance overwriting it on the way back out changes nothing
+        // this call still looks at.
         static thread_local std::string name;
         internal::JoinSegmentsInto(name, topic_segments);
 

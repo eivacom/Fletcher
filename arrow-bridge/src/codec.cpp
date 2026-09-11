@@ -620,6 +620,8 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
 Codec::Codec(std::shared_ptr<arrow::Schema> schema) : schema_(std::move(schema)) {}
 
 void Codec::EncodeRow(const ArrowRow& values, WriteBuffer& out) const {
+    // Writes straight into `out` field by field (see the declaration): a throw anywhere below
+    // leaves earlier fields already appended to it.
     const int num_fields = schema_->num_fields();
 
     if (static_cast<int>(values.size()) != num_fields)

@@ -5,6 +5,10 @@
 
 #include <arrow/api.h>
 #include <arrow/compute/api.h>
+// `DictionaryEncode` and `Cast` (used in Finish(), below) are CORE compute kernels: this package
+// links against Arrow built with `compute=False` and both link and pass every test regardless. Do
+// not add a kernel here by analogy without checking it is core too — a non-core one only fails at
+// link time, against this exact build configuration, not at review time.
 
 #include <array>
 #include <cstring>

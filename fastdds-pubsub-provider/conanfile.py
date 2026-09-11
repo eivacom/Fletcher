@@ -9,7 +9,7 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-fastdds-pubsub-provider"
-    version = "0.5.0-alpha"
+    version = "0.5.1-alpha"
     description = "Fletcher FastDDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
@@ -44,7 +44,7 @@ class FletcherPubsubConan(ConanFile):
     )
 
     def requirements(self):
-        self.requires("fletcher-pubsub/0.5.0-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.5.1-alpha", transitive_headers=True)
         self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
         # NO transitive_headers: the public header names no eProsima type (PDA-DEC-6), so a
         # consumer configures this provider through ProviderConfig and an XML profiles document

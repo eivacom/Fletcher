@@ -59,11 +59,20 @@ same row again. A `std::runtime_error` means an internal failure
 (allocation) — the pending rows are undefined at that point, so `Finish()`
 and discard the batch rather than trusting it.
 
-The constructor rejects a schema it cannot build into columns: null,
-extension, decimal32/64, run-end-encoded, and list-view types; a dictionary
-nested below the top level; and a dictionary whose value type is nested or
-`float16`. `Codec::DecodeRow` still handles every one of those. A top-level
-dictionary column *is* supported — the wire carries only the value type (see
+The constructor rejects a schema it cannot build into columns, for two
+different reasons. Null, extension, decimal32/64, run-end-encoded, and
+list-view types are not supported **at all**: `scalar_codec.cpp` has no case
+for any of them, so `Codec::DecodeRow`/`EncodeRow` throw
+`std::invalid_argument` on the identical schema too. (Null only looks
+supported: a null-typed field is always encoded and decoded through the
+row's null bit, so it never reaches the type switch that would throw for
+either code path.) A dictionary nested below the top level, an ordered
+dictionary, and a dictionary whose value type is nested or `float16` are
+different: `Codec::DecodeRow` decodes all three of those schemas fine, and
+this constructor's refusal is this decoder's own builder-tree shape, not a
+wire-format limit. A top-level, unordered dictionary column with a scalar,
+non-`float16` value type *is* supported here too — the wire carries only the
+value type (see
 [Dictionary Types](../docs/wire-format-specification.md#dictionary-types)),
 and `Finish()` re-folds the accumulated values into a `DictionaryArray` of
 the field's declared type on the way out.
@@ -101,7 +110,7 @@ conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Relea
 
 ```python
 def requirements(self):
-    self.requires("fletcher-arrow-bridge/0.5.0-alpha")
+    self.requires("fletcher-arrow-bridge/0.5.1-alpha")
 ```
 
 ```cmake
