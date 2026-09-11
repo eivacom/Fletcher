@@ -14,8 +14,8 @@
 namespace fletcher {
 
 // Append() throws this when the row is well-formed but appending it would overflow an Arrow 32-bit
-// offset (utf8/binary, list, map and dense-union builders stop at 2^31-1 bytes or elements).
-// Nothing was appended: Finish() the batch and Append() the same row again.
+// offset (utf8/binary, list, map and dense-union builders stop at Arrow's builder limit (2^31-2)
+// bytes or elements). Nothing was appended: Finish() the batch and Append() the same row again.
 class BatchCapacityExceeded : public std::length_error {
     using std::length_error::length_error;
 };
@@ -26,8 +26,9 @@ class BatchCapacityExceeded : public std::length_error {
 class BatchDecoder {
    public:
     // std::invalid_argument for a schema this decoder cannot build (null/extension/decimal32/64/
-    // run-end/list-view types, a dictionary below the top level, or a dictionary whose value type
-    // is nested or float16). Codec::DecodeRow still handles every one of those.
+    // run-end/list-view types, a dictionary below the top level, a dictionary whose value type is
+    // nested or float16, or an ordered dictionary). Codec::DecodeRow still handles every one of
+    // those.
     explicit BatchDecoder(std::shared_ptr<arrow::Schema> schema);
     ~BatchDecoder();
     BatchDecoder(BatchDecoder&&) noexcept;
@@ -41,7 +42,7 @@ class BatchDecoder {
     // Pre-sizes the top-level builders for `rows` more rows.
     void Reserve(int64_t rows);
 
-    int64_t num_rows() const noexcept;
+    [[nodiscard]] int64_t num_rows() const noexcept;
 
     // The pending rows as a RecordBatch (zero rows is valid) and resets for reuse.
     [[nodiscard]] std::shared_ptr<arrow::RecordBatch> Finish();

@@ -169,6 +169,29 @@ TEST(PublisherArrowTest, PublishTypeMismatchThrowsToCaller) {
     EXPECT_TRUE(mock->published.empty());
 }
 
+TEST(PublisherArrowTest, PublishAfterATypeMismatchStillDelivers) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    auto schema = arrow::schema({arrow::field("a", arrow::int32())});
+    pub.CreateTopic(kTopic, schema);
+
+    ArrowRow bad_row = {std::make_shared<arrow::StringScalar>("nope")};
+    EXPECT_THROW(pub.Publish(kTopic, bad_row), std::invalid_argument);
+    EXPECT_TRUE(mock->published.empty());
+
+    // The scratch buffer survives the throw (A5): a correct publish right
+    // after, on the same thread, is delivered intact.
+    ArrowRow good_row = {std::make_shared<arrow::Int32Scalar>(7)};
+    pub.Publish(kTopic, good_row);
+
+    ASSERT_EQ(mock->published.size(), 1u);
+    Codec codec(schema);
+    ArrowRow decoded = codec.DecodeRow(mock->published[0].data(), mock->published[0].size());
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_TRUE(decoded[0]->Equals(*good_row[0]));
+}
+
 TEST(PublisherArrowTest, PublishTwiceReusesScratchAndDeliversBothRows) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
@@ -757,6 +780,48 @@ TEST(SubscriberArrowBatchTest, NestedDictionarySchemaReportsEveryRowDropped) {
     EXPECT_EQ(d.batch, nullptr);
     EXPECT_EQ(d.status.rows_dropped, 3);
     EXPECT_TRUE(d.attachments.empty());
+}
+
+TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto dict_type = arrow::dictionary(arrow::int8(), arrow::utf8());
+    pub.CreateTopic(kTopic, arrow::schema({arrow::field("d", dict_type, true)}));
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 200;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
+
+    // 200 distinct values overflow an int8 dictionary index (128 representable
+    // values) when BatchDecoder::Finish() re-folds the column and casts it to
+    // dictionary<int8>. That failure is an internal invariant (A1/A3), not a
+    // malformed row, and must not terminate the process.
+    for (int i = 0; i < 200; ++i) {
+        pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("v" + std::to_string(i))});
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 1u);
+        EXPECT_EQ(sink.deliveries[0].batch, nullptr);
+        EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 200);
+    }
+
+    // The decoder was reset, not left broken: a following window with few
+    // distinct values delivers a normal batch (closing flush forces it out
+    // rather than waiting on the 10-minute timeout).
+    for (const auto& v : {"a", "b", "c"}) {
+        pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>(v)});
+    }
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 2u);
+    EXPECT_EQ(sink.deliveries[1].num_rows, 3);
+    EXPECT_EQ(sink.deliveries[1].status.rows_dropped, 0);
 }
 
 TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {

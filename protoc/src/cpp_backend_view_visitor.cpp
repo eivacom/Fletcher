@@ -897,7 +897,9 @@ class EdgeToArrowRowVisitor {
                  << "            detail::FletcherThrowIfNotOk(AppendTo(vsb, v),\n"
                     "                                         \"ToArrowRow: AppendTo\");\n"
                  << "        }\n"
-                 << "        auto keys = *key_builder.Finish();\n"
+                 << "        auto keys = detail::FletcherValueOrThrow(key_builder.Finish(),\n"
+                    "                                                 "
+                    "\"ToArrowRow: Finish\");\n"
                  << "        auto vals = detail::FletcherValueOrThrow(vsb.Finish(),\n"
                     "                                                 "
                     "\"ToArrowRow: Finish\");\n";
@@ -909,8 +911,12 @@ class EdgeToArrowRowVisitor {
                  << "            (void)key_builder.Append(k);\n"
                  << "            (void)val_builder.Append(v);\n"
                  << "        }\n"
-                 << "        auto keys = *key_builder.Finish();\n"
-                 << "        auto vals = *val_builder.Finish();\n";
+                 << "        auto keys = detail::FletcherValueOrThrow(key_builder.Finish(),\n"
+                    "                                                 "
+                    "\"ToArrowRow: Finish\");\n"
+                 << "        auto vals = detail::FletcherValueOrThrow(val_builder.Finish(),\n"
+                    "                                                 "
+                    "\"ToArrowRow: Finish\");\n";
         }
 
         if (val_is_msg) {

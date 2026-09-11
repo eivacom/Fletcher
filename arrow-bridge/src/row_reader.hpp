@@ -137,8 +137,8 @@ void AppendNumericRun(arrow::ArrayBuilder& builder, const uint8_t* bytes, int64_
 // little-endian wire bytes, with ONE memcpy and no reinterpret_cast of the wire pointer. Returns
 // false (and appends nothing) for any type this function does not recognise; the caller falls
 // back to the per-element path in that case.
-inline bool AppendRun(arrow::ArrayBuilder& builder, arrow::Type::type id, const uint8_t* bytes,
-                      int64_t count) {
+[[nodiscard]] inline bool AppendRun(arrow::ArrayBuilder& builder, arrow::Type::type id,
+                                    const uint8_t* bytes, int64_t count) {
     using T = arrow::Type;
     switch (id) {
         case T::INT8:

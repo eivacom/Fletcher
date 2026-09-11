@@ -108,9 +108,11 @@ struct FastDDSPubSubProvider::Impl {
         DataReader* schema_reader = nullptr;
         std::unique_ptr<internal::SchemaListener> schema_listener;
         std::shared_ptr<internal::SchemaChannel> schema_channel;
-        // A SubscribeSchema watch is outstanding, so the channel outlives the data subscription:
-        // Unsubscribe re-arms it (RearmSchemaWatch) instead of breaking it.
-        bool schema_watch = false;
+        // How many outstanding SubscribeSchema watches share this topic's channel. While this is
+        // non-zero the channel outlives the data subscription: Unsubscribe leaves it in the slot
+        // instead of tearing it down, and only the matching count of UnsubscribeSchema calls ends
+        // it. A count rather than a flag, so two independent watchers cannot end each other's.
+        uint32_t schema_watches = 0;
         // Schema (nanoarrow ArrowSchema).
         OwnedSchema schema;
         // The same schema as Arrow IPC bytes, kept from the announcement so a re-declaration is a
@@ -213,11 +215,10 @@ struct FastDDSPubSubProvider::Impl {
                                   "FastDDS: failed to create schema topic: " + schema_name);
         }
 
-        // The lambda captures the channel and nothing else: what the schema is handed on to is the
-        // channel's continuation, installed by Subscribe, so this listener outlives any one data
-        // subscription without pointing at it.
-        auto schema_listener = std::make_unique<internal::SchemaListener>(
-            [chan](SharedSchema sch) { chan->Resolve(std::move(sch)); }, status_listener);
+        // Holds the channel directly (no lambda indirection): what the schema is handed on to is
+        // the channel's own continuation, installed by Subscribe, so this listener outlives any one
+        // data subscription without pointing at it.
+        auto schema_listener = std::make_unique<internal::SchemaListener>(chan, status_listener);
         DataReader* schema_reader = subscriber->create_datareader(
             ts.schema_topic, internal::MakeSchemaChannelReaderQos(), schema_listener.get(),
             internal::SchemaReaderStatusMask());
@@ -228,47 +229,6 @@ struct FastDDSPubSubProvider::Impl {
         // Stored only now, so a throw above leaves nothing half-open for a retry to trip on.
         ts.schema_listener = std::move(schema_listener);
         ts.schema_reader = schema_reader;
-    }
-
-    // Puts a kept watch's channel back after a released data subscription took the schema reader
-    // down with it, and opens a fresh reader for it when the schema is still pending. Called
-    // WITHOUT `mu` held, after both readers are gone.
-    void RearmSchemaWatch(const std::string& name, std::shared_ptr<internal::SchemaChannel> chan) {
-        // The continuation points at the data listener that dies with the subscription being
-        // released. Dropping it HERE is safe and nowhere else is: the schema reader whose listener
-        // could have run it is already deleted, and the new one below does not exist yet. Getting
-        // this window wrong is what crashed the branch this is ported from (SEH 0xc0000005 — a
-        // kept continuation pointing at a destroyed data listener).
-        chan->Withdraw();
-
-        std::lock_guard lock(mu);
-        auto it = topics.find(name);
-        // Released, the watch cleared, or a Subscribe raced in and opened a channel of its own
-        // while the caller was unlocked: end the orphan so a waiter reads kSubscriptionEnded
-        // instead of waiting forever on a channel nothing feeds any more.
-        if (it == topics.end() || !it->second.schema_watch || it->second.schema_channel) {
-            chan->Break();
-            return;
-        }
-        SharedSchema already;
-        if (chan->arrival.Wait(std::chrono::milliseconds(0), &already) != PubSubStatus::kOk) {
-            // Still pending, so it needs a reader again. A channel that has its schema does not:
-            // it ignores a second Resolve, so a new reader could only re-deliver what the arrival
-            // already holds.
-            try {
-                OpenSchemaReader(it->second, name, chan);
-            } catch (const std::exception& e) {
-                // The release has already happened, so this is reported THROUGH the arrival
-                // rather than out of it — and as a fault, not Break()'s kSubscriptionEnded: a
-                // waiter must not read a transport failure as a normal release.
-                chan->Fail(PubSubStatus::kTransportFailure, e.what());
-                // The arrival has failed, so nothing is watching any more: a flag left set here
-                // would have every later Unsubscribe re-arm a __schema reader for nobody.
-                it->second.schema_watch = false;
-                return;
-            }
-        }
-        it->second.schema_channel = std::move(chan);
     }
 
     // Teardown lives here, not in ~FastDDSPubSubProvider, so a constructor that throws part-way
@@ -652,20 +612,32 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
             // (create_datareader, etc.), which holds Fast DDS' internal subscriber mutex ->
             // deadlock. Keeping it off impl_->mu is what lets the provider lock be held across
             // the Fast DDS call below.
-            ts.schema_channel->OnResolved([data_listener = ts.listener.get()](SharedSchema sch) {
-                data_listener->SetSchema(std::move(sch));  // flush buffered samples
-            });
+            ts.schema_channel->OnResolved(
+                [data_listener = ts.listener.get()](SharedSchema sch) {
+                    data_listener->SetSchema(std::move(sch));  // flush buffered samples
+                },
+                ts.listener.get());
         }
 
         ts.reader = impl_->subscriber->create_datareader(ts.topic, rqos, ts.listener.get(),
                                                          internal::ReaderStatusMask());
         if (!ts.reader) {
-            // The schema side is released exactly as Unsubscribe releases it, so the watch flag
-            // and the channel can never disagree: a watch keeps its channel (re-armed below,
-            // which is also what Withdraws the continuation pointing at the listener about to
-            // die), anything else goes with the failed subscription. Everything comes out of the
-            // topic state under the lock, so this call can only ever destroy what it detached.
-            const bool keep_watch = ts.schema_watch;
+            const bool keep_watch = ts.schema_watches > 0;
+            if (keep_watch) {
+                // A kept watch's channel stays in the slot; only the data listener comes out, and
+                // Withdraw (see SchemaChannel::Withdraw) runs before it dies at scope end.
+                std::shared_ptr<internal::SchemaChannel> chan = ts.schema_channel;
+                std::unique_ptr<internal::DataReaderListenerBase> listener = std::move(ts.listener);
+                lock.unlock();
+
+                chan->Withdraw(listener.get());
+                throw PubSubError(PubSubStatus::kTransportFailure,
+                                  "FastDDS: failed to create DataReader for: " + name);
+            }
+
+            // No watch: the schema side goes with the failed subscription, same as the data side.
+            // Everything comes out of the topic state under the lock, so this call can only ever
+            // destroy what it detached.
             DataReader* schema_reader = ts.schema_reader;
             ts.schema_reader = nullptr;
             std::unique_ptr<internal::SchemaListener> schema_listener =
@@ -674,12 +646,10 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
             std::unique_ptr<internal::DataReaderListenerBase> listener = std::move(ts.listener);
             lock.unlock();
 
-            if (!keep_watch) chan->Break();
-            // Outside the lock: deleting the schema reader waits out an in-flight schema delivery
-            // — and the continuation it runs on `listener` — so both listeners die in the unwind
-            // below with nothing still calling into them.
+            chan->Break();
+            // Outside the lock: deleting the schema reader waits out an in-flight schema delivery,
+            // and `schema_listener` / `listener` die at the end of this scope, after it.
             if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
-            if (keep_watch) impl_->RearmSchemaWatch(name, std::move(chan));
 
             throw PubSubError(PubSubStatus::kTransportFailure,
                               "FastDDS: failed to create DataReader for: " + name);
@@ -704,7 +674,10 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
 
         DataReader* schema_reader = nullptr;
         DataReader* data_reader = nullptr;
+        // Taken out of the slot ONLY when no watch keeps it (see below); `chan_keep` is a copy
+        // left IN the slot, for Withdraw once both readers are gone.
         std::shared_ptr<internal::SchemaChannel> chan;
+        std::shared_ptr<internal::SchemaChannel> chan_keep;
         bool keep_watch = false;
         // The listeners are taken out of the topic state here, under the lock, with the readers
         // that use them, and destroyed at the end of this function — after both readers are gone.
@@ -725,15 +698,14 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
             data_reader = ts.reader;
             ts.reader = nullptr;
             listener = std::move(ts.listener);
-            keep_watch = ts.schema_watch;
+            keep_watch = ts.schema_watches > 0;
 
-            // The schema side comes out with the data side — unless a watch is keeping it and
-            // there is no data listener whose SetSchema the channel could still be about to call,
-            // in which case this call has nothing to do with the schema side and leaves it open.
-            // Moved OUT of the slot, not copied: a channel left in a topic state after this
-            // function breaks it would hand the next Subscribe an arrival already at
-            // kSubscriptionEnded.
-            if (!keep_watch || listener) {
+            if (keep_watch) {
+                // Kept watch: the channel stays in the slot (see SchemaChannel::Withdraw); this
+                // call only needs a copy, to Withdraw the continuation once both readers are gone.
+                chan_keep = ts.schema_channel;
+            } else {
+                // No watch: the schema side goes with the data subscription, same as the reader.
                 schema_reader = ts.schema_reader;
                 ts.schema_reader = nullptr;
                 schema_listener = std::move(ts.schema_listener);
@@ -743,11 +715,8 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
 
         // With no watch the channel goes with the subscription: if the schema never arrived, end
         // the arrival so a waiter wakes with kSubscriptionEnded instead of blocking forever
-        // (channel's own mutex, not the provider lock). With one, the channel is put back at the
-        // end of this function instead — its arrival keeps waiting, or keeps the schema it has.
-        if (chan && !keep_watch) {
-            chan->Break();
-        }
+        // (channel's own mutex, not the provider lock).
+        if (chan) chan->Break();
 
         // Delete the readers OUTSIDE the lock: their listener callbacks (the
         // schema listener in particular) acquire the provider mutex. Deleting the
@@ -755,11 +724,9 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
         if (data_reader) impl_->subscriber->delete_datareader(data_reader);
 
-        // Both readers are gone, so no callback can still be running: `listener` and
-        // `schema_listener` die at the end of scope, and nothing else can be looking at them.
-        // Only now — with nothing left that could still call into them — is it safe to give a
-        // kept watch its channel back, because that is where its continuation is Withdrawn.
-        if (chan && keep_watch) impl_->RearmSchemaWatch(name, std::move(chan));
+        // Withdraw after both deletes, before `listener` goes out of scope — see
+        // SchemaChannel::Withdraw for why that ordering is what makes this safe.
+        if (chan_keep) chan_keep->Withdraw(listener.get());
     });
 }
 
@@ -778,12 +745,12 @@ SchemaArrival FastDDSPubSubProvider::SubscribeSchema(
         std::lock_guard lock(impl_->mu);
 
         // Idempotent per topic: EnsureSchemaChannel opens nothing a Subscribe or an earlier watch
-        // has already opened, and the flag is what makes the channel outlive a data Unsubscribe.
-        // Set only after the channel exists, so a throwing EnsureSchemaChannel cannot leave a
-        // watch flagged on a topic with no channel.
+        // has already opened, and the count is what makes the channel outlive a data Unsubscribe.
+        // Incremented only after the channel exists, so a throwing EnsureSchemaChannel cannot leave
+        // a watch counted on a topic with no channel.
         auto& ts = impl_->topics[name];
         impl_->EnsureSchemaChannel(ts, name);
-        ts.schema_watch = true;
+        ++ts.schema_watches;
         return ts.schema_channel->arrival;
     });
 }
@@ -809,10 +776,10 @@ void FastDDSPubSubProvider::UnsubscribeSchema(const std::vector<std::string>& to
             if (it == impl_->topics.end()) return;
 
             auto& ts = it->second;
-            if (!ts.schema_watch) return;
-            ts.schema_watch = false;
+            if (ts.schema_watches == 0) return;
+            if (--ts.schema_watches > 0) return;
             // A live data subscription shares the channel; its endpoints go when that is
-            // unsubscribed. Clearing the flag is the whole of this call then.
+            // unsubscribed. Decrementing the count to zero is the whole of this call then.
             if (ts.reader) return;
             schema_reader = ts.schema_reader;
             ts.schema_reader = nullptr;

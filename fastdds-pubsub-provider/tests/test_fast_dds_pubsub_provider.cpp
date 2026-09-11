@@ -10,7 +10,12 @@
 #include <cstring>
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
+#include <fastdds/dds/log/Log.hpp>
+#include <fastdds/dds/publisher/DataWriter.hpp>
+#include <fastdds/dds/publisher/Publisher.hpp>
 #include <fastdds/dds/subscriber/Subscriber.hpp>
+#include <fastdds/dds/topic/Topic.hpp>
+#include <fastdds/dds/topic/TypeSupport.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/delivery_channel.hpp>
@@ -26,6 +31,8 @@
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/ordered_delivery.hpp"
 #include "internal/profile_document.hpp"
+#include "internal/qos_defaults.hpp"
+#include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/transport_data.hpp"
 
 using namespace fletcher;
@@ -1650,10 +1657,13 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
     sub.Unsubscribe({"keepwatch", "resolved"});
 
     // The channel stayed with the watch, so the schema is still there — the same object, with no
-    // re-fetch and no new reader (a resolved channel ignores a second Resolve).
+    // re-fetch and no new reader (a resolved channel ignores a second Resolve). That call is its
+    // own watch under the count (P1), not a free peek, so it is balanced by its own release right
+    // after — otherwise the ONE UnsubscribeSchema below would not be the last one out.
     EXPECT_EQ(
         AwaitWatch(sub.SubscribeSchema({"keepwatch", "resolved"}), std::chrono::seconds(0)).get(),
         schema.get());
+    sub.UnsubscribeSchema({"keepwatch", "resolved"});
 
     // UnsubscribeSchema is what ends it: the next watch is a new channel with its own schema.
     sub.UnsubscribeSchema({"keepwatch", "resolved"});
@@ -1663,6 +1673,82 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
     EXPECT_NE(again.get(), schema.get());
 
     sub.UnsubscribeSchema({"keepwatch", "resolved"});
+}
+
+// The watch count: two watchers on the same topic share one channel, and releasing one of them
+// must not end the arrival the other is still holding — that is what a bool `schema_watch` flag
+// could not tell apart from a single watcher's own release.
+TEST(FastDDSPubSubProviderTest, TwoWatchersOneRelease) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    SchemaArrival first = sub.SubscribeSchema({"twowatchers", "release"});
+    SchemaArrival second = sub.SubscribeSchema({"twowatchers", "release"});
+
+    SharedSchema polled;
+    EXPECT_EQ(first.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+    EXPECT_EQ(second.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+
+    sub.UnsubscribeSchema({"twowatchers", "release"});
+    EXPECT_EQ(first.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending)
+        << "one release must not end a watch a second caller is still holding";
+
+    sub.UnsubscribeSchema({"twowatchers", "release"});
+    EXPECT_EQ(first.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kSubscriptionEnded);
+}
+
+// P2 — the channel never leaves its topic slot: a Subscribe racing an Unsubscribe that keeps a
+// watch must never find `schema_channel == nullptr` and open a second one, and the watch's own
+// arrival must survive every one of these cycles undisturbed. This is what RearmSchemaWatch's
+// move-out/move-back window used to get wrong.
+TEST(FastDDSPubSubProviderTest, SubscribeRacingUnsubscribeKeepsTheWatch) {
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    const std::vector<std::string> t = {"racing", "watch"};
+    auto noop = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {};
+
+    SchemaArrival watch = sub.SubscribeSchema(t);
+
+    for (int i = 0; i < 20; ++i) {
+        static_cast<void>(sub.Subscribe(t, noop));
+
+        // -1: no exception; otherwise the PubSubStatus thread B's own attempt saw.
+        std::atomic<int32_t> b_status{-1};
+        bool a_joined_by_b = false;
+        std::thread a([&] { sub.Unsubscribe(t); });
+        std::thread b([&] {
+            try {
+                static_cast<void>(sub.Subscribe(t, noop));
+            } catch (const PubSubError& e) {
+                // Lost the race: A had not cleared `ts.reader` yet. Wait for A to finish — the
+                // retry is then guaranteed to find the topic unsubscribed — and try once more.
+                b_status.store(static_cast<int32_t>(e.status()));
+                a.join();
+                a_joined_by_b = true;
+                static_cast<void>(sub.Subscribe(t, noop));
+            }
+        });
+        b.join();
+        if (!a_joined_by_b) a.join();
+
+        if (b_status.load() != -1) {
+            EXPECT_EQ(b_status.load(), static_cast<int32_t>(PubSubStatus::kInvalidArgument))
+                << "iteration " << i;
+        }
+
+        sub.Unsubscribe(t);
+    }
+
+    SharedSchema polled;
+    EXPECT_EQ(watch.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending)
+        << "twenty racing Subscribe/Unsubscribe cycles must not have ended the watch";
+
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    pub.CreateTopic(t, MakeSchema());
+
+    SharedSchema schema;
+    EXPECT_EQ(watch.Wait(std::chrono::seconds(5), &schema), PubSubStatus::kOk);
+    ASSERT_TRUE(schema);
+
+    sub.UnsubscribeSchema(t);
 }
 
 // The door, on the two new methods: refused by name from inside a delivery on this instance, like
@@ -1708,4 +1794,111 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
     EXPECT_EQ(unsubscribe_refusal.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
 
     sub.Unsubscribe({"reentrant", "watch"});
+}
+
+// P5 — an undecodable __schema sample fails the arrival outright rather than leaving it pending
+// forever: a raw Fast DDS writer, entirely outside this provider, announces garbage bytes on the
+// companion channel, and a watch on that topic must come back with a diagnostic status instead of
+// hanging.
+TEST(FastDDSPubSubProviderTest, UndecodableSchemaSampleFailsTheArrival) {
+    const std::vector<std::string> t = {"undecodable", "schema"};
+    const std::string joined = "undecodable/schema";
+
+    DomainParticipant* raw_participant =
+        DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
+    ASSERT_NE(raw_participant, nullptr);
+
+    TypeSupport raw_type_support(new internal::RawBytesPubSubType(65536));
+    ASSERT_EQ(raw_type_support.register_type(raw_participant), RETCODE_OK);
+
+    Topic* schema_topic = raw_participant->create_topic(
+        joined + "/__schema", raw_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+    ASSERT_NE(schema_topic, nullptr);
+
+    Publisher* raw_publisher = raw_participant->create_publisher(PUBLISHER_QOS_DEFAULT);
+    ASSERT_NE(raw_publisher, nullptr);
+    DataWriter* raw_writer =
+        raw_publisher->create_datawriter(schema_topic, internal::MakeSchemaChannelWriterQos());
+    ASSERT_NE(raw_writer, nullptr);
+
+    internal::RawBytes garbage;
+    garbage.data = {0xde, 0xad, 0xbe, 0xef, 1, 2, 3};
+    ASSERT_EQ(raw_writer->write(&garbage), RETCODE_OK);
+
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    SchemaArrival watch = sub.SubscribeSchema(t);
+
+    SharedSchema schema;
+    const PubSubStatus status = watch.Wait(std::chrono::seconds(5), &schema);
+    EXPECT_NE(status, PubSubStatus::kOk);
+    EXPECT_NE(status, PubSubStatus::kPending);
+    EXPECT_NE(status, PubSubStatus::kSubscriptionEnded);
+    EXPECT_EQ(status, PubSubStatus::kInternal);
+    EXPECT_FALSE(watch.Message().empty());
+
+    sub.UnsubscribeSchema(t);
+    raw_publisher->delete_datawriter(raw_writer);
+    raw_participant->delete_publisher(raw_publisher);
+    raw_participant->delete_topic(schema_topic);
+    DomainParticipantFactory::get_instance()->delete_participant(raw_participant);
+}
+
+// P6 — a conflicting later announcement from a second publisher is logged rather than silently
+// swallowed: this is the cross-process half of the seam's conflict refusal
+// (CreateTopicRejectsConflictingSchema above is the local, same-instance half, which throws
+// instead — there is no local caller here to throw at).
+namespace {
+
+class SchemaConflictLogConsumer : public eprosima::fastdds::dds::LogConsumer {
+   public:
+    void Consume(const eprosima::fastdds::dds::Log::Entry& entry) override {
+        if (entry.message.find("different schema") == std::string::npos) return;
+        std::lock_guard<std::mutex> lk(m);
+        ++count;
+    }
+
+    std::mutex m;
+    int count = 0;
+};
+
+}  // namespace
+
+TEST(FastDDSPubSubProviderTest, ConflictingCrossProviderSchemaIsLoggedNotSwallowed) {
+    // Not Log::ClearConsumers: that would drop the default stdout consumer along with it.
+    // RegisterConsumer only adds one, so the test binary's stderr gets one harmless extra line.
+    auto* consumer = new SchemaConflictLogConsumer();
+    eprosima::fastdds::dds::Log::RegisterConsumer(
+        std::unique_ptr<eprosima::fastdds::dds::LogConsumer>(consumer));
+
+    FastDDSPubSubProvider a(ProviderConfig{});
+    FastDDSPubSubProvider c(ProviderConfig{});
+    const std::vector<std::string> t = {"schemaconflict", "x"};
+    a.CreateTopic(t, MakeSchema());
+
+    SchemaArrival watch = c.SubscribeSchema(t);
+    SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
+    ASSERT_TRUE(schema);
+
+    // B declares only NOW, strictly after C already resolved from A: both orders are otherwise
+    // possible (a fan-in from A and B racing each other), and only serialising B after C's
+    // resolution makes B's announcement unambiguously the LATER, conflicting one.
+    FastDDSPubSubProvider b(ProviderConfig{});
+    b.CreateTopic(t, MakeOtherSchema());
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        eprosima::fastdds::dds::Log::Flush();
+        {
+            std::lock_guard<std::mutex> lk(consumer->m);
+            if (consumer->count >= 1) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    eprosima::fastdds::dds::Log::Flush();
+    std::lock_guard<std::mutex> lk(consumer->m);
+    EXPECT_GE(consumer->count, 1)
+        << "a conflicting cross-process schema announcement was not logged";
+
+    c.UnsubscribeSchema(t);
 }

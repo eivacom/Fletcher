@@ -1235,6 +1235,10 @@ std::string GenerateAppendTo(const std::string& cls, const std::vector<FieldInfo
       << "/// builders, no arrow::Scalar.  `b` must have been made for\n"
       << "/// arrow::struct_(detail::ImportSchema(" << cls << "Schema())->fields()).\n"
       << "inline arrow::Status AppendTo(arrow::StructBuilder& b, const " << cls << "& msg) {\n"
+      << "    if (b.num_fields() != " << fields.size() << ")\n"
+      << "        return arrow::Status::Invalid(\"AppendTo(" << cls
+      << "): struct builder has \", b.num_fields(), \" fields, schema has \", " << fields.size()
+      << ");\n"
       << "    ARROW_RETURN_NOT_OK(b.Append(true));\n";
 
     // Same IR-driven view visitor that emits the `<Class>View` getters and the

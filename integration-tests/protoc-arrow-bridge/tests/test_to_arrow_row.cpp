@@ -16,6 +16,7 @@
 #include <fletcher/arrow_bridge/detail/arrow_result.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+#include <vector>
 
 #include "collections.fletcher.arrow.pb.h"
 #include "collections.fletcher.pb.h"
@@ -224,4 +225,27 @@ TEST(ToArrowRowTest, AppendToFillsAStructColumn) {
     EXPECT_EQ(names->GetString(0), "Alpha");
     EXPECT_EQ(names->GetString(1), "Beta");
     EXPECT_EQ(names->GetString(2), "Gamma");
+}
+
+// A6: AppendTo checks the struct builder's field count against the schema's
+// before touching it, so a caller-supplied builder built for the wrong
+// message (or a stale one, after a schema change) fails cleanly instead of
+// writing a child value into the wrong slot.
+TEST(ToArrowRowTest, AppendToRejectsAStructBuilderWithTheWrongFieldCount) {
+    auto full_fields =
+        fletcher_gen::integration::detail::ImportSchema(fletcher_gen::integration::PlayerSchema())
+            ->fields();
+    ASSERT_EQ(full_fields.size(), 2u);  // Player: name, level
+    std::vector<std::shared_ptr<arrow::Field>> wrong_fields = {full_fields[0]};  // drop "level"
+
+    auto builder = fletcher::detail::ValueOrThrow(arrow::MakeBuilder(arrow::struct_(wrong_fields)),
+                                                  "test: MakeBuilder");
+    auto& sb = static_cast<arrow::StructBuilder&>(*builder);
+
+    fletcher_gen::integration::Player p;
+    p.set_name("Alice").set_level(5);
+
+    auto status = AppendTo(sb, p);
+    EXPECT_TRUE(status.IsInvalid()) << status.ToString();
+    EXPECT_EQ(sb.length(), 0);
 }

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
@@ -576,6 +577,50 @@ TEST(SubscriberTest, DefaultProviderRefusesSchemaOnlyWithNotSupported) {
     // The refusal rolled the count back, so releasing is still a no-op and
     // teardown may call it unconditionally.
     EXPECT_NO_THROW(subscriber.UnsubscribeSchema(kTopic));
+}
+
+// The default bodies validate segments before deciding whether the schema-only side is supported
+// at all — called directly on the provider (not through Subscriber), which is what lets an EMPTY
+// segment list reach the check that fires first.
+TEST(SubscriberTest, DefaultSubscribeSchemaValidatesSegmentsBeforeRefusingSupport) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)plain->SubscribeSchema({});
+    })) << "an empty segment list must be refused by the segment rule, not by kNotSupported";
+}
+
+// The door, on the default bodies, exactly as on every provider's own seam methods: a call from
+// inside a delivery on the SAME instance is refused before either default body runs its own logic.
+TEST(SubscriberTest, DefaultSchemaMethodsAreRefusedFromInsideADelivery) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    PubSubStatus subscribe_status = PubSubStatus::kOk;
+    PubSubStatus unsubscribe_status = PubSubStatus::kOk;
+    bool subscribe_threw = false;
+    bool unsubscribe_threw = false;
+
+    DeliveryChannel channel(plain.get(),
+                            [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                                try {
+                                    (void)plain->SubscribeSchema(kTopic);
+                                } catch (const PubSubError& e) {
+                                    subscribe_threw = true;
+                                    subscribe_status = e.status();
+                                }
+                                try {
+                                    plain->UnsubscribeSchema(kTopic);
+                                } catch (const PubSubError& e) {
+                                    unsubscribe_threw = true;
+                                    unsubscribe_status = e.status();
+                                }
+                            });
+    channel.Deliver(nullptr, 0, SharedSchema(), Attachments());
+
+    EXPECT_TRUE(subscribe_threw);
+    EXPECT_EQ(subscribe_status, PubSubStatus::kReentrantCall);
+    EXPECT_TRUE(unsubscribe_threw);
+    EXPECT_EQ(unsubscribe_status, PubSubStatus::kReentrantCall);
 }
 
 // A watch outlives the call that opened it and has no id to cancel, so the

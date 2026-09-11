@@ -2,7 +2,6 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 #include <arrow/api.h>
-#include <arrow/compute/api.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -750,7 +749,9 @@ TEST(BatchDecoderTest, SparseUnionInactiveChildrenAreNull) {
 
 TEST(BatchDecoderTest, TopLevelDictionaryRefolded) {
     for (const auto& index_type : {arrow::int8(), arrow::int16(), arrow::int32(), arrow::int64()}) {
-        auto dict_type = arrow::dictionary(index_type, arrow::utf8(), /*ordered=*/true);
+        // Not ordered: BatchDecoder now rejects an ordered dictionary at
+        // construction (A10) since the re-fold below cannot preserve order.
+        auto dict_type = arrow::dictionary(index_type, arrow::utf8(), /*ordered=*/false);
         auto schema = arrow::schema({arrow::field("v", dict_type, true)});
         fletcher::Codec codec(schema);
         fletcher::BatchDecoder decoder(schema);
@@ -836,6 +837,20 @@ TEST(BatchDecoderTest, DictionaryOfHalfFloatRejectedAtConstruction) {
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::float16());
     auto schema = arrow::schema({arrow::field("v", dict_type, true)});
     EXPECT_THROW(fletcher::BatchDecoder{schema}, std::invalid_argument);
+}
+
+TEST(BatchDecoderTest, OrderedDictionaryRejectedAtConstruction) {
+    // An ordered dictionary cannot be re-folded on Finish() and preserve its
+    // order (DictionaryEncode assigns indices by first appearance), so
+    // BatchDecoder refuses it up front rather than silently reordering it.
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8(), /*ordered=*/true);
+    auto schema = arrow::schema({arrow::field("v", dict_type, true)});
+    try {
+        fletcher::BatchDecoder decoder(schema);
+        FAIL() << "expected std::invalid_argument for an ordered dictionary";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("'v'"), std::string::npos) << e.what();
+    }
 }
 
 // ---------------------------------------------------------------------------

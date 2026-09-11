@@ -50,7 +50,7 @@ class SubscriberArrow::RecordBatchBatcher {
             try {
                 decoder_ = std::make_unique<BatchDecoder>(schema_);
                 decoder_->Reserve(max_rows_);
-            } catch (const std::invalid_argument&) {
+            } catch (...) {
                 decoder_.reset();
             }
         }
@@ -79,6 +79,9 @@ class SubscriberArrow::RecordBatchBatcher {
             // A well-formed row that does not fit a 32-bit Arrow offset any
             // more: close this batch and start the next one with it.
             Flush(lk, BatchStatus::Reason::kRowLimit);
+            // Flush() ran the callback with mu_ released, so it may have called
+            // Unsubscribe -> Stop() in the meantime; don't touch the decoder if so.
+            if (stopped_) return;
             try {
                 decoder_->Append(data, len);
                 atts_.push_back(att);
@@ -196,12 +199,12 @@ class SubscriberArrow::RecordBatchBatcher {
         if (decoder_) {
             try {
                 batch = decoder_->Finish();
-            } catch (const std::runtime_error&) {
-                // Finish() itself failed (allocation): the decoder's row
-                // count is now undefined. Count every pending row dropped —
-                // its attachment goes with it, since there's no batch row
-                // left to align it with — and reset the decoder with a
-                // second Finish(), discarding the result.
+            } catch (...) {
+                // Finish() itself failed (an internal invariant — allocation,
+                // say): the decoder's row count is now undefined. Count every
+                // pending row dropped — its attachment goes with it, since
+                // there's no batch row left to align it with — and reset the
+                // decoder with a second Finish(), discarding the result.
                 dropped_ += decoder_->num_rows();
                 atts.clear();
                 try {
@@ -209,7 +212,12 @@ class SubscriberArrow::RecordBatchBatcher {
                 } catch (...) {
                 }
             }
-            decoder_->Reserve(max_rows_);
+            // A failed pre-size is not fatal: the next Append() just grows the
+            // builders as it goes.
+            try {
+                decoder_->Reserve(max_rows_);
+            } catch (...) {
+            }
         }
         int64_t dropped = dropped_;
         dropped_ = 0;

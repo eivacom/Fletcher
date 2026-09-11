@@ -70,7 +70,12 @@ void PublisherArrow::Publish(const std::vector<std::string>& segments, const Arr
     thread_local std::vector<uint8_t> scratch;
     scratch.clear();
     VectorWriteBuffer buf(std::move(scratch));
-    codec->EncodeRow(row, buf);
+    try {
+        codec->EncodeRow(row, buf);
+    } catch (...) {
+        scratch = buf.Finish();  // keep the capacity for the next publish
+        throw;
+    }
     scratch = buf.Finish();
     publisher_->Publish(
         segments, [&](WriteBuffer& out) { out.Append(scratch.data(), scratch.size()); },

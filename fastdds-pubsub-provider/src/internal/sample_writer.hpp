@@ -124,19 +124,31 @@ class LoanableSampleWriter : public SampleWriterBase {
             // and read back (contrast SampleWriter below). Propagated AS THROWN, deliberately: an
             // oversized row surfaces as the std::overflow_error FixedWriteBuffer raised, which is
             // what distinguishes "did not fit the bound" from an encoder defect.
-            writer->discard_loan(sample);
+            const eprosima::fastdds::dds::ReturnCode_t discard_rc = writer->discard_loan(sample);
+            if (discard_rc != eprosima::fastdds::dds::RETCODE_OK) {
+                EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                                   "writer on '" << writer->get_topic()->get_name()
+                                                 << "' discard_loan returned " << discard_rc
+                                                 << " while unwinding an encoding failure");
+            }
             throw;
         }
 
-        // On failure Fast DDS re-registers the loan and returns without publishing
-        // (DataWriterImpl.cpp), so dropping the pointer here would cost the writer a loan slot
-        // permanently — and there are only max_samples + extra_samples of them.
+        // On failure Fast DDS re-registers the loan only for RETCODE_TIMEOUT (`add_pub_change`
+        // failed); for RETCODE_OUT_OF_RESOURCES (`create_change` failed) the loan record is
+        // already gone, so `discard_loan` below returns RETCODE_BAD_PARAMETER instead.
         const eprosima::fastdds::dds::ReturnCode_t rc = writer->write(sample);
         if (rc != eprosima::fastdds::dds::RETCODE_OK) {
-            writer->discard_loan(sample);
+            const eprosima::fastdds::dds::ReturnCode_t discard_rc = writer->discard_loan(sample);
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
                                "writer on '" << writer->get_topic()->get_name()
                                              << "' dropped a loaned sample, return code " << rc);
+            if (discard_rc != eprosima::fastdds::dds::RETCODE_OK) {
+                EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
+                                   "writer on '" << writer->get_topic()->get_name()
+                                                 << "' discard_loan returned " << discard_rc
+                                                 << " after the dropped write");
+            }
         }
     }
 

@@ -72,8 +72,12 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         constexpr uint32_t kHeader =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
 
-        // Truncated after the bytes in use, so a small row stays small on the wire.
-        if (payload.max_size < kHeader + kSampleLengthPrefix) {
+        // Truncated after the bytes in use, so a small row stays small on the wire. The extra 4 is
+        // the row's OWN length prefix inside the body (EncodeEnvelopeBody's ROW_LEN): even an EMPTY
+        // row needs it, so a buffer too small to hold it is refused here, quietly, rather than
+        // reaching the encoder and failing there with the "oversized row" diagnostic below — which
+        // is the wrong story for a buffer that could never have held anything.
+        if (payload.max_size < kHeader + kSampleLengthPrefix + 4) {
             payload.length = 0;
             return false;
         }
@@ -137,7 +141,14 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         auto* d = static_cast<ReceivedData*>(data);
         const uint32_t header =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
-        if (payload.length < header + kSampleLengthPrefix) return false;
+        if (payload.length < header + kSampleLengthPrefix) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
+                                 "deserialize dropped a sample for "
+                                     << get_name() << ": length " << payload.length
+                                     << " is shorter than the " << (header + kSampleLengthPrefix)
+                                     << "-byte header and length prefix");
+            return false;
+        }
 
         // Host-order lengths, so a big-endian or parameter-list payload has to be refused.
         const uint8_t representation_id = payload.data[1];
@@ -145,13 +156,24 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
                 RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR) &&
             representation_id !=
                 RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR2)) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION, "deserialize dropped a sample for "
+                                                            << get_name()
+                                                            << ": unknown representation id "
+                                                            << static_cast<int>(representation_id));
             return false;
         }
         payload.encapsulation = CDR_LE;
 
         // Bounded by what arrived, since a serialised sample stops after the bytes in use.
         const uint32_t length = ReadSampleLength(payload.data + header);
-        if (length > payload.length - header - kSampleLengthPrefix) return false;
+        if (length > payload.length - header - kSampleLengthPrefix) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
+                                 "deserialize dropped a sample for "
+                                     << get_name() << ": length " << length << " exceeds the "
+                                     << (payload.length - header - kSampleLengthPrefix)
+                                     << " bytes available");
+            return false;
+        }
 
         const uint8_t* body = SampleBody(payload.data + header);
         const uint8_t* row = nullptr;

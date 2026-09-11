@@ -332,6 +332,21 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
 }
 
+// P18: the guard at the top of serialize() now accounts for the row's OWN 4-byte length prefix
+// (EncodeEnvelopeBody's ROW_LEN) as well as the sample's — even an EMPTY row needs it. A buffer one
+// byte too small for that must be refused quietly, before the encoder ever runs, rather than
+// reaching it and failing with the "oversized row" diagnostic, which is the wrong story for a
+// buffer that could never have held anything.
+TEST(FletcherSamplePubSubTypeTest, ABufferTooSmallForAnEmptyRowIsRefusedQuietly) {
+    FletcherSamplePubSubType type(kTestPayloadBytes);
+    const std::vector<uint8_t> row = Row(0);
+    Publishing publishing(row);
+    SerializedPayload_t payload(kHeader + kLengthPrefix + 4 - 1);
+
+    EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
+    EXPECT_EQ(payload.length, 0u);
+}
+
 TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(kTestPayloadBytes);  // + the envelope: too big.

@@ -34,8 +34,13 @@ class ParticipantListener : public eprosima::fastdds::dds::DomainParticipantList
                                   bool& /*should_be_ignored*/) override {
         if (!status_listener_) return;
         using eprosima::fastdds::rtps::ParticipantDiscoveryStatus;
-        const bool alive = reason != ParticipantDiscoveryStatus::REMOVED_PARTICIPANT &&
-                           reason != ParticipantDiscoveryStatus::DROPPED_PARTICIPANT;
+        // DISCOVERED and CHANGED_QOS are "here"; REMOVED, DROPPED and IGNORED are not — an
+        // `!= REMOVED && != DROPPED` used to stand in for that and silently counted IGNORED as
+        // alive too. (Authentication is a distinct, `HAVE_SECURITY`-gated callback —
+        // `onParticipantAuthentication`, not a value of this enum at all — and this build has
+        // security off, so it never fires and is not overridden here.)
+        const bool alive = reason == ParticipantDiscoveryStatus::DISCOVERED_PARTICIPANT ||
+                           reason == ParticipantDiscoveryStatus::CHANGED_QOS_PARTICIPANT;
         status_listener_->OnParticipantDiscovered(
             std::string_view(info.participant_name.c_str(), info.participant_name.size()), alive);
     }
@@ -44,31 +49,49 @@ class ParticipantListener : public eprosima::fastdds::dds::DomainParticipantList
                                   eprosima::fastdds::rtps::ReaderDiscoveryStatus reason,
                                   const eprosima::fastdds::dds::SubscriptionBuiltinTopicData& info,
                                   bool& /*should_be_ignored*/) override {
-        if (!status_listener_ || IsCompanionChannel(info.topic_name)) return;
+        if (!status_listener_ || IsCompanionChannel(info)) return;
+        using eprosima::fastdds::rtps::ReaderDiscoveryStatus;
+        // DISCOVERED and CHANGED_QOS is "here"; REMOVED and IGNORED are not.
+        const bool alive = reason == ReaderDiscoveryStatus::DISCOVERED_READER ||
+                           reason == ReaderDiscoveryStatus::CHANGED_QOS_READER;
         status_listener_->OnReaderDiscovered(
             std::string_view(info.topic_name.c_str(), info.topic_name.size()),
-            std::string_view(info.type_name.c_str(), info.type_name.size()),
-            reason != eprosima::fastdds::rtps::ReaderDiscoveryStatus::REMOVED_READER);
+            std::string_view(info.type_name.c_str(), info.type_name.size()), alive);
     }
 
     void on_data_writer_discovery(eprosima::fastdds::dds::DomainParticipant* /*participant*/,
                                   eprosima::fastdds::rtps::WriterDiscoveryStatus reason,
                                   const eprosima::fastdds::dds::PublicationBuiltinTopicData& info,
                                   bool& /*should_be_ignored*/) override {
-        if (!status_listener_ || IsCompanionChannel(info.topic_name)) return;
+        if (!status_listener_ || IsCompanionChannel(info)) return;
+        using eprosima::fastdds::rtps::WriterDiscoveryStatus;
+        // DISCOVERED and CHANGED_QOS is "here"; REMOVED and IGNORED are not.
+        const bool alive = reason == WriterDiscoveryStatus::DISCOVERED_WRITER ||
+                           reason == WriterDiscoveryStatus::CHANGED_QOS_WRITER;
         status_listener_->OnWriterDiscovered(
             std::string_view(info.topic_name.c_str(), info.topic_name.size()),
-            std::string_view(info.type_name.c_str(), info.type_name.size()),
-            reason != eprosima::fastdds::rtps::WriterDiscoveryStatus::REMOVED_WRITER);
+            std::string_view(info.type_name.c_str(), info.type_name.size()), alive);
     }
 
    private:
     // Fletcher's own `<topic>/__schema` endpoints are not reported: a catalog built from discovery
     // would otherwise hold a name `Subscribe` refuses (a `__`-prefixed segment), and the schema
     // channel's type name carries no payload bound, so there is nothing to diagnose from it either.
-    static bool IsCompanionChannel(const eprosima::fastcdr::string_255& topic_name) {
-        const std::string_view name(topic_name.c_str(), topic_name.size());
-        return name.ends_with("/__schema");
+    // The topic name suffix alone is not enough — a foreign DDS topic may legitimately end in
+    // "/__schema" on its own — so the type name is checked too: only the pair identifies Fletcher's
+    // own companion channel.
+    static bool IsCompanionChannel(
+        const eprosima::fastdds::dds::SubscriptionBuiltinTopicData& info) {
+        const std::string_view name(info.topic_name.c_str(), info.topic_name.size());
+        const std::string_view type(info.type_name.c_str(), info.type_name.size());
+        return name.ends_with("/__schema") && type == kSchemaTypeName;
+    }
+
+    static bool IsCompanionChannel(
+        const eprosima::fastdds::dds::PublicationBuiltinTopicData& info) {
+        const std::string_view name(info.topic_name.c_str(), info.topic_name.size());
+        const std::string_view type(info.type_name.c_str(), info.type_name.size());
+        return name.ends_with("/__schema") && type == kSchemaTypeName;
     }
 
     FastDDSStatusListener* status_listener_;

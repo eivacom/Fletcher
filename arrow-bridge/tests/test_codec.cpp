@@ -629,6 +629,30 @@ TEST(CodecTest, DictionaryScalarEncodesResolvedValue) {
     EXPECT_TRUE(decoded[0]->Equals(arrow::StringScalar("z")));
 }
 
+TEST(CodecTest, DictionaryScalarWithAnotherIndexTypeEncodesTheValue) {
+    // The scalar's index type need not match the schema's dictionary index
+    // type: only the value type has to agree, since the index itself is
+    // never sent on the wire (A9).
+    auto schema_dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    auto schema = arrow::schema({arrow::field("v", schema_dict_type, /*nullable=*/true)});
+    fletcher::Codec codec(schema);
+
+    auto scalar_dict_type = arrow::dictionary(arrow::int8(), arrow::utf8());
+    arrow::StringBuilder vb;
+    ASSERT_TRUE(vb.AppendValues({"x", "y", "z"}).ok());
+    auto dict_values = vb.Finish().ValueOrDie();
+    arrow::Int8Builder ib;
+    ASSERT_TRUE(ib.Append(2).ok());
+    auto indices = ib.Finish().ValueOrDie();
+    auto dict_arr =
+        arrow::DictionaryArray::FromArrays(scalar_dict_type, indices, dict_values).ValueOrDie();
+    auto ds = dict_arr->GetScalar(0).ValueOrDie();
+
+    auto encoded = codec.EncodeRow({ds});
+    auto plain_encoded = codec.EncodeRow({std::make_shared<arrow::StringScalar>("z")});
+    EXPECT_EQ(encoded, plain_encoded);
+}
+
 TEST(CodecTest, DictionaryNestedValueTypeRejected) {
     // Nested dictionary value types are not supported and must error clearly.
     auto nested = arrow::dictionary(arrow::int32(), arrow::list(arrow::int32()));

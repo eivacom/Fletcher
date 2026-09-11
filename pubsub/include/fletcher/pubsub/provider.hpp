@@ -5,6 +5,7 @@
 #define FLETCHER_INCLUDE_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
@@ -13,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "fletcher/pubsub/internal/segments.hpp"
 #include "fletcher/pubsub/owned_schema.hpp"
 #include "fletcher/pubsub/schema_arrival.hpp"
 
@@ -232,7 +234,10 @@ class PubSubProvider {
     /// subscription is not what the watcher is waiting on.
     ///
     /// **Refused from inside a delivery, as every seam method is** (§6 clause 6)
-    /// — `PubSubError(kReentrantCall)` before any lock.
+    /// — `PubSubError(kReentrantCall)` before any lock. An invalid segment list
+    /// is refused the same way every other seam method refuses one — before the
+    /// default even gets to decide whether it supports the schema-only side at
+    /// all.
     ///
     /// **Optional**, unlike the four above, which are pure. A transport with no
     /// out-of-band schema channel does not override it and the default below
@@ -241,7 +246,8 @@ class PubSubProvider {
     /// `Subscribe` on such a transport still answers its `SchemaArrival`.
     [[nodiscard]] virtual SchemaArrival SubscribeSchema(
         const std::vector<std::string>& topic_segments) {
-        (void)topic_segments;
+        internal::RefuseIfInsideDeliveryOn(this, "SubscribeSchema");
+        internal::RequireSegments(topic_segments);
         throw PubSubError(PubSubStatus::kNotSupported,
                           "PubSubProvider: this transport has no schema-only subscription");
     }
@@ -258,7 +264,14 @@ class PubSubProvider {
     /// pending until its schema arrives or it is unsubscribed — never ended from
     /// under a live subscription. The endpoints go with that subscription's
     /// `Unsubscribe`.
-    virtual void UnsubscribeSchema(const std::vector<std::string>& /*topic_segments*/) {}
+    ///
+    /// **Refused from inside a delivery, and an invalid segment list refused too**
+    /// — exactly like every other seam method (§6 clause 6), before the default
+    /// no-op body below ever runs.
+    virtual void UnsubscribeSchema(const std::vector<std::string>& topic_segments) {
+        internal::RefuseIfInsideDeliveryOn(this, "UnsubscribeSchema");
+        internal::RequireSegments(topic_segments);
+    }
 };
 
 }  // namespace fletcher

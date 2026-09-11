@@ -157,7 +157,8 @@ class LoanableDataReaderListener : public DataReaderListenerBase {
         Attachments attachments;
         // Pre-sizing would silently switch this to a deserialising take into 1-byte elements.
         assert(samples.maximum() == 0);
-        while (reader->take(samples, infos) == eprosima::fastdds::dds::RETCODE_OK) {
+        eprosima::fastdds::dds::ReturnCode_t rc;
+        while ((rc = reader->take(samples, infos)) == eprosima::fastdds::dds::RETCODE_OK) {
             // ~LoanableSequence only warns, and a leaked loan costs a payload slot for good.
             LoanReturn loan_return{reader, samples, infos};
             for (eprosima::fastdds::dds::LoanableCollection::size_type i = 0; i < samples.length();
@@ -216,6 +217,14 @@ class LoanableDataReaderListener : public DataReaderListenerBase {
                 }
                 delivery_.OfferView(row, row_len, attachments);
             }
+        }
+        // Mirrors the copy path below: not retried, since looping on a sample Fast DDS may not
+        // have consumed would spin this thread.
+        if (rc != eprosima::fastdds::dds::RETCODE_NO_DATA) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
+                                 "reader on '" << reader->get_topicdescription()->get_name()
+                                               << "' take failed with return code " << rc
+                                               << "; the rest of this notification was not read");
         }
     }
 

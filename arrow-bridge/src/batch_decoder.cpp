@@ -25,7 +25,6 @@ using detail::AppendRun;
 using detail::BitfieldBytes;
 using detail::FixedWidth;
 using detail::ReadNullBit;
-using detail::ThrowIfNotOk;
 using detail::ValueOrThrow;
 
 // One node per schema position, mirroring the builder tree 1:1 so the wire walk below never has to
@@ -266,9 +265,10 @@ struct SkipSink {
             const int64_t have =
                 static_cast<arrow::BaseBinaryBuilder<arrow::BinaryType>&>(*node.builder)
                     .value_data_length();
-            if (have + node.pending > std::numeric_limits<int32_t>::max())
+            if (have + node.pending > arrow::BaseBinaryBuilder<arrow::BinaryType>::memory_limit())
                 throw BatchCapacityExceeded(
-                    "BatchDecoder: utf8/binary column would exceed 2^31-1 bytes");
+                    "BatchDecoder: utf8/binary column would exceed Arrow's builder limit "
+                    "(2^31-2 bytes)");
         }
     }
     void Run(Node&, const uint8_t*, int64_t) {}
@@ -278,21 +278,28 @@ struct SkipSink {
     void ListBegin(Node& node, int64_t count) {
         if (node.id != arrow::Type::LIST) return;  // LargeList has 64-bit offsets, FSL none
         node.pending += count;
-        if (node.children[0].builder->length() + node.pending > std::numeric_limits<int32_t>::max())
-            throw BatchCapacityExceeded("BatchDecoder: list column would exceed 2^31-1 elements");
+        if (node.children[0].builder->length() + node.pending >
+            arrow::BaseListBuilder<arrow::ListType>::maximum_elements())
+            throw BatchCapacityExceeded(
+                "BatchDecoder: list column would exceed Arrow's builder limit (2^31-2 elements)");
     }
     void MapBegin(Node& node, int64_t count) {
         node.pending += count;
-        if (node.children[1].builder->length() + node.pending > std::numeric_limits<int32_t>::max())
-            throw BatchCapacityExceeded("BatchDecoder: map column would exceed 2^31-1 entries");
+        if (node.children[1].builder->length() + node.pending >
+            arrow::BaseListBuilder<arrow::ListType>::maximum_elements())
+            throw BatchCapacityExceeded(
+                "BatchDecoder: map column would exceed Arrow's builder limit (2^31-2 entries)");
     }
     void UnionBegin(Node& node, int8_t, int child) {
         if (node.id != arrow::Type::DENSE_UNION) return;
         node.pending += 1;  // one value offset into that child
+        // DenseUnionBuilder has no maximum_elements()-style constant to reuse; INT32_MAX - 1 is the
+        // same 32-bit offset ceiling every other budgeted builder here enforces.
         if (node.children[static_cast<size_t>(child)].builder->length() + node.pending >
-            std::numeric_limits<int32_t>::max())
+            std::numeric_limits<int32_t>::max() - 1)
             throw BatchCapacityExceeded(
-                "BatchDecoder: dense union child would exceed 2^31-1 elements");
+                "BatchDecoder: dense union child would exceed Arrow's builder limit "
+                "(2^31-2 elements)");
     }
     void RowEnd(const detail::Reader& r) {
         if (r.pos != r.size)
@@ -304,16 +311,30 @@ struct SkipSink {
 
 // ---------------------------------------------------------------------------
 // AppendSink — cannot fail on validated input (Skip already proved the row well-formed and within
-// every 32-bit budget), so every Status here is an internal invariant, not a bad-input condition.
+// every 32-bit budget), so every Status here is an internal invariant, not a bad-input condition:
+// throw std::runtime_error (via ThrowInternal/ValueOrThrowInternal below), never
+// std::invalid_argument. Reserve() and Finish() throw the same way, for the same reason — a
+// failure there is an allocation/internal problem, not a bad wire row.
 // ---------------------------------------------------------------------------
+
+void ThrowInternal(const arrow::Status& st, const char* operation) {
+    if (!st.ok()) throw std::runtime_error(std::string(operation) + ": " + st.ToString());
+}
+
+template <typename T>
+T ValueOrThrowInternal(arrow::Result<T>&& result, const char* operation) {
+    if (!result.ok())
+        throw std::runtime_error(std::string(operation) + ": " + result.status().ToString());
+    return std::move(result).ValueUnsafe();
+}
 
 template <typename ArrowType>
 void AppendFixed(arrow::ArrayBuilder& b, detail::Reader& r) {
     using CType = typename ArrowType::c_type;
     CType v;
     std::memcpy(&v, r.ReadBytes(sizeof(CType)), sizeof(CType));
-    ThrowIfNotOk(static_cast<arrow::NumericBuilder<ArrowType>&>(b).Append(v),
-                 "BatchDecoder: Append fixed-width");
+    ThrowInternal(static_cast<arrow::NumericBuilder<ArrowType>&>(b).Append(v),
+                  "BatchDecoder: Append fixed-width");
 }
 
 struct AppendSink {
@@ -321,8 +342,8 @@ struct AppendSink {
         arrow::ArrayBuilder& b = *node.builder;
         switch (node.id) {
             case arrow::Type::BOOL:
-                ThrowIfNotOk(static_cast<arrow::BooleanBuilder&>(b).Append(r.Read<uint8_t>() != 0),
-                             "BatchDecoder: Append bool");
+                ThrowInternal(static_cast<arrow::BooleanBuilder&>(b).Append(r.Read<uint8_t>() != 0),
+                              "BatchDecoder: Append bool");
                 return;
             case arrow::Type::INT8:
                 AppendFixed<arrow::Int8Type>(b, r);
@@ -387,32 +408,32 @@ struct AppendSink {
             case arrow::Type::DECIMAL128:
             case arrow::Type::DECIMAL256:
             case arrow::Type::FIXED_SIZE_BINARY:
-                ThrowIfNotOk(static_cast<arrow::FixedSizeBinaryBuilder&>(b).Append(
-                                 r.ReadBytes(static_cast<size_t>(node.byte_width))),
-                             "BatchDecoder: Append fixed-size binary");
+                ThrowInternal(static_cast<arrow::FixedSizeBinaryBuilder&>(b).Append(
+                                  r.ReadBytes(static_cast<size_t>(node.byte_width))),
+                              "BatchDecoder: Append fixed-size binary");
                 return;
             case arrow::Type::STRING:
             case arrow::Type::BINARY: {
                 const uint32_t len = r.Read<uint32_t>();
-                ThrowIfNotOk(static_cast<arrow::BinaryBuilder&>(b).Append(
-                                 r.ReadBytes(len), static_cast<int32_t>(len)),
-                             "BatchDecoder: Append binary");
+                ThrowInternal(static_cast<arrow::BinaryBuilder&>(b).Append(
+                                  r.ReadBytes(len), static_cast<int32_t>(len)),
+                              "BatchDecoder: Append binary");
                 return;
             }
             case arrow::Type::LARGE_STRING:
             case arrow::Type::LARGE_BINARY: {
                 const uint32_t len = r.Read<uint32_t>();
-                ThrowIfNotOk(static_cast<arrow::LargeBinaryBuilder&>(b).Append(
-                                 r.ReadBytes(len), static_cast<int64_t>(len)),
-                             "BatchDecoder: Append large binary");
+                ThrowInternal(static_cast<arrow::LargeBinaryBuilder&>(b).Append(
+                                  r.ReadBytes(len), static_cast<int64_t>(len)),
+                              "BatchDecoder: Append large binary");
                 return;
             }
             case arrow::Type::STRING_VIEW:
             case arrow::Type::BINARY_VIEW: {
                 const uint32_t len = r.Read<uint32_t>();
-                ThrowIfNotOk(static_cast<arrow::BinaryViewBuilder&>(b).Append(
-                                 r.ReadBytes(len), static_cast<int64_t>(len)),
-                             "BatchDecoder: Append binary view");
+                ThrowInternal(static_cast<arrow::BinaryViewBuilder&>(b).Append(
+                                  r.ReadBytes(len), static_cast<int64_t>(len)),
+                              "BatchDecoder: Append binary view");
                 return;
             }
             default:
@@ -425,49 +446,49 @@ struct AppendSink {
             throw std::runtime_error("BatchDecoder: no run path for " +
                                      elem.type->ToString());  // byte_width > 0 implies one exists
     }
-    void Null(Node& node) { ThrowIfNotOk(node.builder->AppendNull(), "BatchDecoder: AppendNull"); }
+    void Null(Node& node) { ThrowInternal(node.builder->AppendNull(), "BatchDecoder: AppendNull"); }
     void Nulls(Node& elem, int64_t n) {
-        ThrowIfNotOk(elem.builder->AppendNulls(n), "BatchDecoder: AppendNulls");
+        ThrowInternal(elem.builder->AppendNulls(n), "BatchDecoder: AppendNulls");
     }
     void StructBegin(Node& node) {
-        ThrowIfNotOk(static_cast<arrow::StructBuilder&>(*node.builder).Append(true),
-                     "BatchDecoder: StructBuilder::Append");
+        ThrowInternal(static_cast<arrow::StructBuilder&>(*node.builder).Append(true),
+                      "BatchDecoder: StructBuilder::Append");
     }
     void ListBegin(Node& node, int64_t) {
         switch (node.id) {
             case arrow::Type::LIST:
-                ThrowIfNotOk(static_cast<arrow::ListBuilder&>(*node.builder).Append(true),
-                             "BatchDecoder: ListBuilder::Append");
+                ThrowInternal(static_cast<arrow::ListBuilder&>(*node.builder).Append(true),
+                              "BatchDecoder: ListBuilder::Append");
                 return;
             case arrow::Type::LARGE_LIST:
-                ThrowIfNotOk(static_cast<arrow::LargeListBuilder&>(*node.builder).Append(true),
-                             "BatchDecoder: LargeListBuilder::Append");
+                ThrowInternal(static_cast<arrow::LargeListBuilder&>(*node.builder).Append(true),
+                              "BatchDecoder: LargeListBuilder::Append");
                 return;
             case arrow::Type::FIXED_SIZE_LIST:
-                ThrowIfNotOk(static_cast<arrow::FixedSizeListBuilder&>(*node.builder).Append(),
-                             "BatchDecoder: FixedSizeListBuilder::Append");
+                ThrowInternal(static_cast<arrow::FixedSizeListBuilder&>(*node.builder).Append(),
+                              "BatchDecoder: FixedSizeListBuilder::Append");
                 return;
             default:
                 throw std::runtime_error("BatchDecoder: unreachable list type");
         }
     }
     void MapBegin(Node& node, int64_t) {
-        ThrowIfNotOk(static_cast<arrow::MapBuilder&>(*node.builder).Append(),
-                     "BatchDecoder: MapBuilder::Append");
+        ThrowInternal(static_cast<arrow::MapBuilder&>(*node.builder).Append(),
+                      "BatchDecoder: MapBuilder::Append");
     }
     void UnionBegin(Node& node, int8_t code, int child) {
         if (node.id == arrow::Type::DENSE_UNION) {
-            ThrowIfNotOk(static_cast<arrow::DenseUnionBuilder&>(*node.builder).Append(code),
-                         "BatchDecoder: DenseUnionBuilder::Append");
+            ThrowInternal(static_cast<arrow::DenseUnionBuilder&>(*node.builder).Append(code),
+                          "BatchDecoder: DenseUnionBuilder::Append");
             return;
         }
-        ThrowIfNotOk(static_cast<arrow::SparseUnionBuilder&>(*node.builder).Append(code),
-                     "BatchDecoder: SparseUnionBuilder::Append");
+        ThrowInternal(static_cast<arrow::SparseUnionBuilder&>(*node.builder).Append(code),
+                      "BatchDecoder: SparseUnionBuilder::Append");
         // A sparse union keeps every child the same length: the inactive children get a null each.
         for (size_t k = 0; k < node.children.size(); ++k)
             if (static_cast<int>(k) != child)
-                ThrowIfNotOk(node.children[k].builder->AppendNull(),
-                             "BatchDecoder: sparse union AppendNull");
+                ThrowInternal(node.children[k].builder->AppendNull(),
+                              "BatchDecoder: sparse union AppendNull");
     }
     void RowEnd(const detail::Reader&) {}
 };
@@ -520,8 +541,12 @@ BatchDecoder::BatchDecoder(std::shared_ptr<arrow::Schema> schema) : impl_(new Im
         const auto& field = schema->field(i);
         std::shared_ptr<arrow::DataType> build_type = field->type();
         if (build_type->id() == arrow::Type::DICTIONARY) {
-            const auto& value_type =
-                static_cast<const arrow::DictionaryType&>(*build_type).value_type();
+            const auto& dict_type = static_cast<const arrow::DictionaryType&>(*build_type);
+            if (dict_type.ordered())
+                throw std::invalid_argument("BatchDecoder: field '" + field->name() +
+                                            "' is an ordered dictionary; the re-fold cannot "
+                                            "preserve order");
+            const auto& value_type = dict_type.value_type();
             if (IsNestedType(value_type->id()) || value_type->id() == arrow::Type::HALF_FLOAT)
                 throw std::invalid_argument("BatchDecoder: field '" + field->name() +
                                             "' has unsupported dictionary value type " +
@@ -560,7 +585,7 @@ void BatchDecoder::Append(const uint8_t* data, size_t len) {
 }
 
 void BatchDecoder::Reserve(int64_t rows) {
-    for (auto& c : impl_->columns) ThrowIfNotOk(c->Reserve(rows), "BatchDecoder: Reserve");
+    for (auto& c : impl_->columns) ThrowInternal(c->Reserve(rows), "BatchDecoder: Reserve");
 }
 
 int64_t BatchDecoder::num_rows() const noexcept { return impl_->rows; }
@@ -568,16 +593,17 @@ int64_t BatchDecoder::num_rows() const noexcept { return impl_->rows; }
 std::shared_ptr<arrow::RecordBatch> BatchDecoder::Finish() {
     std::vector<std::shared_ptr<arrow::Array>> columns(impl_->columns.size());
     for (size_t i = 0; i < columns.size(); ++i) {
-        auto values = ValueOrThrow(impl_->columns[i]->Finish(), "BatchDecoder: Finish");
+        auto values = ValueOrThrowInternal(impl_->columns[i]->Finish(), "BatchDecoder: Finish");
         if (const auto& dict_type = impl_->dict_types[i]) {
             // The wire carries plain values (see codec.hpp); re-fold them into the declared
             // dictionary type here, on the way out, rather than on every row in.
-            auto encoded = ValueOrThrow(arrow::compute::DictionaryEncode(arrow::Datum(values)),
-                                        "BatchDecoder: DictionaryEncode");
+            auto encoded =
+                ValueOrThrowInternal(arrow::compute::DictionaryEncode(arrow::Datum(values)),
+                                     "BatchDecoder: DictionaryEncode");
             auto array = encoded.make_array();
             if (!array->type()->Equals(*dict_type))
-                array = ValueOrThrow(arrow::compute::Cast(arrow::Datum(array), dict_type),
-                                     "BatchDecoder: Cast")
+                array = ValueOrThrowInternal(arrow::compute::Cast(arrow::Datum(array), dict_type),
+                                             "BatchDecoder: Cast")
                             .make_array();
             values = array;
         }

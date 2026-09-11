@@ -467,7 +467,9 @@ std::shared_ptr<arrow::Array> DecodeListElements(
         if (static_cast<uint64_t>(count) > r.remaining() / static_cast<size_t>(width))
             throw std::invalid_argument("Codec: list payload exceeds remaining buffer");
         const uint8_t* bytes = r.ReadBytes(static_cast<size_t>(count) * static_cast<size_t>(width));
-        AppendRun(*builder, elem_type->id(), bytes, count);
+        if (!AppendRun(*builder, elem_type->id(), bytes, count))
+            throw std::runtime_error("Codec: no bulk append for fixed-width type " +
+                                     elem_type->ToString());
         return detail::ValueOrThrow(builder->Finish(), "Codec: list builder Finish failed");
     }
     for (int64_t i = 0; i < count; ++i) {
@@ -637,11 +639,16 @@ void Codec::EncodeRow(const ArrowRow& values, WriteBuffer& out) const {
         const auto& field_type = *schema_->field(i)->type();
         bool type_ok = field_type.Equals(*scalar->type);
         if (!type_ok && field_type.id() == arrow::Type::DICTIONARY) {
-            // A dictionary field may be supplied as a DictionaryScalar or as a
-            // plain value-type scalar; it is transferred as its value type.
+            // A dictionary field may be supplied as a DictionaryScalar (any index type — only
+            // the value type has to agree, since the index is never sent on the wire) or as a
+            // plain value-type scalar; it is transferred as its value type either way.
             const auto& value_type =
                 *static_cast<const arrow::DictionaryType&>(field_type).value_type();
-            type_ok = value_type.Equals(*scalar->type);
+            const auto& supplied_type =
+                scalar->type->id() == arrow::Type::DICTIONARY
+                    ? *static_cast<const arrow::DictionaryType&>(*scalar->type).value_type()
+                    : *scalar->type;
+            type_ok = value_type.Equals(supplied_type);
         }
         if (!type_ok)
             throw std::invalid_argument(
