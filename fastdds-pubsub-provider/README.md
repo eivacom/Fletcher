@@ -6,9 +6,9 @@ Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds
 
 ## How it works
 
-A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`. DataWriters and DataReaders are created lazily on the first call to `Publish` and `Subscribe` respectively.
+A single `FastDDSPubSubProvider` instance manages one DDS `DomainParticipant`, one `Publisher`, and one `Subscriber`. Topics are created on demand via `CreateTopic`, which is also where the topic's `DataWriter` is created. DataReaders are created lazily on the first call to `Subscribe`.
 
-The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. Custom `TopicDataType`s handle the CDR serialisation without requiring IDL generation as a build step, named as `fastddsgen` would have named them: `FletcherSamplePubSubType` over the sample layout, plus `RawBytesPubSubType` for the companion schema channel.
+The binary payload sent over the DDS bus is a raw `EncodedRow` (the positional wire format produced by generated code or `Codec::EncodeRow`), wrapped in a minimal CDR-LE framing: a 4-byte encapsulation header followed by a 4-byte length prefix. A single custom `TopicDataType` handles the CDR serialisation without requiring IDL generation as a build step, named as `fastddsgen` would have named it: `FletcherSamplePubSubType` over the sample layout. The companion schema channel uses `SchemaBytesPubSubType`, a subclass that only changes the registered name and the bound — the schema rides as an ordinary Fletcher sample, a row with no attachments, through the same layout.
 
 ### Zero-copy: the plain sample
 
@@ -101,16 +101,14 @@ free, and the framing is hand-written only on the path where it is not:
 
 - The representation id is `EncodingAlgorithmFlag | Cdr::LITTLE_ENDIANNESS` and the padding octet is
   `Cdr::alignment(length, 4)` — both fastcdr, both `constexpr`, both free.
-- The `__schema` channel builds a real `FastBuffer` and `Cdr` and serialises a `sequence<octet>`
-  outright. It writes once per topic, so the ~36 ns costs nothing there.
-- Only the data channel's eight framing bytes are placed by hand, and a unit test pins them to what
-  fastcdr produces (see the measured decisions table below).
+- Everything else — the eight framing bytes of `serialize()`/`deserialize()` — is placed by hand, and
+  a unit test pins them to what fastcdr produces (see the measured decisions table below).
 
-The two channels are therefore the **same shape on the wire** — a CDR `sequence<octet>`, because a
-sample's length sits at exactly the offset and width of the sequence length field. They differ only
-in memory: a length followed by raw bytes, which can be plain and loaned, against a `std::vector`,
-which cannot. `TheSchemaChannelFramesTheSameShapeAsTheDataChannel` asserts the byte equality, since
-the two are framed by different code.
+The two channels are the **same type**: `SchemaBytesPubSubType` is a subclass of
+`FletcherSamplePubSubType` that only sets the registered name and the bound, so the `__schema`
+channel is serialised by the exact same `serialize()`/`deserialize()` as the data channel — no
+separate `FastBuffer`/`Cdr` path remains. The schema rides as an ordinary Fletcher sample, a row
+with no attachments.
 
 That deviation has a limit worth stating plainly: **the plain claim holds between Fletcher endpoints, not against a `fastddsgen`-generated peer.** A generated type support for the equivalent IDL reads `length` and then a fixed `octet[N]`, so a serialised Fletcher sample — which stops after the bytes in use — is short by however much of the bound the row did not need, and its `Cdr` refuses it. Fletcher's own reader is unaffected because it bounds itself by `length` on the copying path and by `internal::CanLoanSamples` on the loaned one. A peer that has to read these samples has to read them the same way, which in practice means through this provider (or the XRCE one, which forwards the bytes opaquely).
 
@@ -194,10 +192,10 @@ it, which moves the collision to the hidden channel rather than closing it. Owne
 
 QoS is configured up-front, at construction, by **a Fast DDS XML profiles document handed to the
 provider as text** in `fletcher::ProviderConfig::document`. There are no runtime setters and no
-typed C++ QoS API — one way to do it. Fletcher itself gains no parser and this provider gains no
-dependency: the document is passed straight to Fast DDS's own
-`get_participant_extended_qos_from_xml` / `get_datawriter_qos_from_xml` /
-`get_datareader_qos_from_xml`, which parse a *string* and return a QoS.
+typed C++ QoS API — one way to do it. **An empty document means Fletcher's built-in QoS everywhere,
+and the registry is never consulted.** A non-empty document is loaded **once per process** into
+Fast DDS's own profile registry (`DomainParticipantFactory::load_XML_profiles_string`), and from
+then on the registry decides every endpoint's QoS — see [Reserved profile names](#reserved-profile-names).
 
 `ProviderConfig` carries exactly three things:
 
@@ -205,7 +203,7 @@ dependency: the document is passed straight to Fast DDS's own
 |---|---|
 | `domain_id` | The DDS domain. Used exactly as given, and it always wins over the document. |
 | `max_payload_bytes` | The row payload ceiling. **0 means unset** and resolves to 65536. The bound is part of the registered DDS type name, so two endpoints on different bounds do not discover each other *at all*. |
-| `document` | The XML profiles document, as **text**. Empty means "Fletcher's built-in profile everywhere" — exactly what every caller got before this existed. |
+| `document` | The XML profiles document, as **text**. Empty means Fletcher's built-in profile everywhere and the registry is never consulted — exactly what every caller got before this existed. |
 
 The setting holds the XML itself, never a filename: Fletcher never opens a file on a provider's
 behalf. If you want the convenience of a file, `fletcher-gateway` has `--provider-config FILE`,
@@ -213,12 +211,20 @@ which reads the bytes and hands them over unexamined.
 
 #### Reserved profile names
 
-| Role | Profile looked up, in order | Falls back to |
-|---|---|---|
-| participant | `fletcher_participant` — **mandatory in a non-empty document** | Fast DDS's default, named `FletcherParticipant` |
-| data writer on topic `T` | `T` (the `/`-joined topic name), then `fletcher_writer` | Fletcher's built-in writer profile |
-| data reader on topic `T` | `T`, then `fletcher_reader` | Fletcher's built-in reader profile |
-| the internal `__schema` channel | *nothing, ever* | its own fixed QoS |
+The only reserved name is the participant anchor. Everything else resolves through Fast DDS's own
+default-profile mechanism, not through a second reserved name:
+
+- **participant** — `fletcher_participant`, **mandatory in a non-empty document**; an empty
+  document never consults the registry and uses Fast DDS's own default, named `FletcherParticipant`.
+- **data writer on topic `T`** — the profile named `T` (the `/`-joined topic name) if the registry
+  has one, else the document's `is_default_profile="true"` `<data_writer>` profile, else Fast DDS's
+  own default.
+- **data reader on topic `T`** — the mirror: `T`, else the document's `is_default_profile="true"`
+  `<data_reader>` profile, else Fast DDS's own default.
+- **the internal `__schema` channel** — *nothing, ever*: its own fixed QoS.
+
+With an **empty** document both the writer and reader default to Fletcher's built-in profile below,
+and the registry is never consulted at all.
 
 A **per-topic override** is therefore just a profile named after the topic.
 
@@ -228,6 +234,8 @@ There is no merge and no floor. Anything a profile you supply leaves out takes *
 default, not Fletcher's. This is not a convenience trade — the XML API returns a filled QoS and
 cannot report which policies the document actually mentioned, so an overlay rule would rest on a
 fact the substrate does not expose, and could be neither implemented reliably nor tested honestly.
+A non-empty document that marks no `is_default_profile="true"` profile therefore gets Fast DDS's
+own defaults, not Fletcher's — the honest reading of the same rule.
 
 One rule instead: **supply a profile for a role, and you own that role's QoS.** Start from the
 block below rather than from a bare profile.
@@ -254,13 +262,15 @@ by `FastDdsConfig.DefaultProfileTranscriptionIsExact`, which **reads the fenced 
 this file**, parses it, and compares the result against `MakeFletcherDefault{Writer,Reader}Qos()`
 **whole-struct**. There is one copy of this XML in the repository and it is the one you are
 reading, so editing either this block or the code alone turns that test red.
+`is_default_profile="true"` is what makes these two the defaults — eProsima's own mechanism, not a
+Fletcher convention.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <participant profile_name="fletcher_participant"/>
-    <data_writer profile_name="fletcher_writer">
+    <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
@@ -274,7 +284,7 @@ reading, so editing either this block or the code alone turns that test red.
         </resourceLimitsQos>
       </topic>
     </data_writer>
-    <data_reader profile_name="fletcher_reader">
+    <data_reader profile_name="default_reader" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
@@ -315,16 +325,12 @@ would break "one way to do it", so they ride as **vendor properties inside the a
 
 Both are provider-wide switches, which is what a participant profile is for. A `fletcher.`-prefixed
 property that is not one of these two, or whose value does not parse, is **refused** — a typo'd
-`fletcher.loanpublish` must not be inert.
+`fletcher.loanpublish` must not be inert. `fletcher.max_schema_bytes` obeys the same rule as
+`max_payload_bytes`: it must be a multiple of 4 within the supported range, because it bounds the
+same plain sample type (`SchemaBytesPubSubType`) the data channel uses.
 
-**The anchor is the only place they are read, and putting one anywhere else is refused too.** A
-correctly spelled `fletcher.loan_publish` inside a `<data_writer>` or `<data_reader>` profile would
-do nothing at all, which is the same failure as the typo, so it is refused with `kInvalidArgument`
-quoting the property and the profile it sat in: at construction for `fletcher_writer` /
-`fletcher_reader`, and at the first endpoint on that topic for a per-topic profile, because a
-document can only be asked about a profile name and never enumerated. The other spelling someone
-tries — `<propertiesPolicy>` *inside* the profile's `<qos>` — is rejected by Fast DDS's own parser
-and takes the malformed-document refusal below.
+The anchor is the only place they are read; a `fletcher.*` property in an endpoint profile is not
+read (Fast DDS's own endpoint properties pass through untouched).
 
 The two the provider consumes are **stripped before `create_participant`**, so a
 `<propagate>true</propagate>` on one cannot put a Fletcher key into DDS participant discovery data.
@@ -337,15 +343,24 @@ misconfigured provider never exists at all:
 
 - a non-empty document Fast DDS cannot parse, or that does not define
   `<participant profile_name="fletcher_participant">`. The anchor is mandatory even when it carries
-  no policies: Fast DDS reports "malformed XML" and "no such profile" with the *same* return code,
-  so without one profile a document must define, a broken document — or an XRCE `key=value`
-  document pasted into the wrong field — would resolve to "no profiles found" and run happily on
-  the defaults;
+  no policies: a well-formed document can still define no profiles at all — Fast DDS accepts a
+  `<dds>` with no `<profiles>` element as a silent no-op, `load_XML_profiles_string` registers
+  nothing and returns OK — so without the anchor, a document that registered nothing would run on
+  the built-in defaults unnoticed;
+- a second, different document in the same process. Fast DDS profile names are process-wide, the
+  first profile registered under a name wins, and nothing unloads — and Fast DDS alone would
+  *accept* a partially colliding document (`XMLProfileManager::extractProfiles` downgrades a
+  duplicate name to `XML_NOK` and carries on, which `load_XML_profiles_string` reports as OK). So
+  the provider enforces the rule itself, before Fast DDS sees the bytes: every
+  `FastDDSPubSubProvider` in one process is built from the same byte-identical document, or from an
+  empty one; a different one is refused, quoting the rule;
 - an unknown or unparseable `fletcher.*` property, quoting it;
 - a non-zero `<domainId>` in the anchor that disagrees with `ProviderConfig::domain_id`, quoting
   both numbers;
 - a `max_payload_bytes` that cannot bound a payload (it must be a multiple of 4 within the
-  supported range).
+  supported range);
+- a `fletcher.max_schema_bytes` that cannot bound a payload — the same multiple-of-4-in-range
+  rule, quoting the value.
 
 **The domain rule, stated positively:** the deployment's domain always wins. An anchor's
 `<domainId>` must either match `ProviderConfig::domain_id` or be absent. An explicit
@@ -362,22 +377,49 @@ as absent.
   does not really configure QoS. Be aware that data-sharing on the receive side has a measured
   defect — part of the `TRANSIENT_LOCAL` backlog can be dropped to a late-joining reader with no
   error anywhere.
+- **A supplied reader profile that turns data-sharing on also gets a `DataSharingListener` thread
+  per reader,** and Fast DDS 3.4.0 can hang that reader's deletion forever: `StatefulReader::
+  ~StatefulReader` clears `is_alive_` before `DataSharingListener::stop()`, and `DataSharingListener
+  ::process_new_data` only advances its pool cursor when `process_data_msg` succeeds and never
+  checks `is_running_`, so a payload still pending on the pool at teardown spins that thread
+  forever and `stop()`'s join never returns. This is about teardown, not the backlog-loss defect
+  above. Fletcher's own built-in reader profiles are OFF, so a caller only meets this by supplying
+  a profile that turns data-sharing back on.
 - **A profile's `resource_limits` can oversize the data-sharing segment.** Fletcher does not know
   your memory budget, so it does not second-guess the number; see the 5000-sample note above.
-- **A document containing an `&` anywhere, or a topic whose name contains whitespace, may log one
-  `[XMLPARSER Error] ... profile not found` line per endpoint.** Fast DDS logs a profile miss at
-  ERROR level, and the resolution ladder above treats a miss as "try the next name". The provider
-  skips a lookup that provably cannot succeed — a profile named `N` occurs literally as
-  `profile_name="N"` unless the name came through one of the two channels that let an attribute
-  value differ from the text between its quotes: an XML entity or character reference, which needs
-  an `&` in the document, or attribute-value whitespace normalisation, which can only affect a
-  name that itself contains whitespace. Neither case is reasoned about — it takes the lookup and
-  the log line with it — so an ordinary document with ordinary topic names produces no such line
-  at all. Those lines are expected; the profile still resolves correctly.
+- **One document per process.** Fast DDS profile names are process-wide (see
+  [Refused at construction](#refused-at-construction)), so two differently configured providers in
+  the same process express their differences as per-topic profiles inside **one** document rather
+  than as two documents. `fletcher.loan_publish` and `fletcher.max_schema_bytes` are therefore
+  per-process settings too, not per-provider ones. Two corollaries. A document that loads and is
+  *then* refused — anchor missing, a bad `fletcher.*` value, a domain mismatch — has already been
+  registered and is the process's document from then on; a later provider must bring the same
+  bytes and is refused the same way. And an **empty** document is deterministic — Fletcher's
+  built-in everywhere, registry never consulted — even when another provider in the process loaded
+  a document.
+- **Fast DDS's own default profiles file participates only for a provider with a non-empty
+  document.** `DomainParticipantFactory::load_profiles` loads `FASTDDS_DEFAULT_PROFILES_FILE` /
+  `DEFAULT_FASTDDS_PROFILES.xml` internally, at the top of every `create_participant*` call — this
+  is eProsima's own mechanism, the one rmw_fastrtps relies on too, not a Fletcher extension — and
+  its `fletcher_participant`, its `is_default_profile` writer/reader, and its per-topic profiles
+  resolve exactly like the document's. A provider built from an **empty** document never reaches
+  this file's profiles either, for the same reason it never reaches the registry at all. Where both
+  load, the default profiles file loads first, so a same-named profile there wins over the
+  document's and Fast DDS logs `Error adding profile '<name>'` for the loser; the provider cannot
+  tell the two apart.
+- **`<library_settings>`, `<log>`, `<types>` and `<transport_descriptors>` apply once, process-wide,
+  at the first provider's construction** — that is how eProsima designed `XMLParser::parseXML`, not
+  a Fletcher restriction. Before this change they were re-applied on every endpoint creation, and a
+  document with a `<transport_descriptor>` logged an "Error adding the transport" line per topic
+  after the first.
 - **Every non-empty document loses the `FletcherParticipant` participant name** unless its anchor
   sets one, because the anchor *is* the participant's QoS. This is universal rather than exotic,
   and it is diagnostic-only — nothing in the tree keys on that name. Set
   `<name>` in the anchor if you rely on it for tooling.
+- **The `__schema` wire changed in this line:** the sample body now carries a row length and a
+  trailing zero attachment count (`[length][row_len][ipc bytes][attachment_count = 0]`), where it
+  used to be just `[length][ipc bytes]`. Peers built before this change do not understand the new
+  announcements — both in-tree providers changed together.
 
 #### Two Fast DDS defaults worth knowing
 
@@ -388,8 +430,13 @@ likewise (`RELIABLE` for a writer). The policies where Fletcher and Fast DDS gen
 `history` and `resource_limits`, which is why the starting-point block spells both out.
 
 The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` +
-`TRANSIENT_LOCAL`. **No profile name is ever consulted for it**: it is a Fletcher-internal
-implementation detail and not configurable. Only `fletcher.max_schema_bytes` bounds it.
+`TRANSIENT_LOCAL` and `data_sharing` OFF at both ends. Its sample is now carried as a Fletcher
+sample (`SchemaBytesPubSubType`), the same plain, bounded type as the data channel — but
+data-sharing stays off regardless: going without it avoids a `DataSharingListener` thread and a
+shared-memory segment per topic, and a Fast DDS 3.4.0 teardown hang (see [Known limits of the
+document](#known-limits-of-the-document)). **No profile name is ever consulted for it**: it is a
+Fletcher-internal implementation detail and not configurable. Only `fletcher.max_schema_bytes`
+bounds it.
 
 ### Delivery guarantees
 
@@ -432,7 +479,7 @@ loaned.document = R"XML(<?xml version="1.0" encoding="UTF-8"?>
         </propertiesPolicy>
       </rtps>
     </participant>
-    <data_writer profile_name="fletcher_writer">
+    <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
@@ -540,11 +587,11 @@ that has neither.
 ### Per-topic QoS overrides
 
 A per-topic override is a profile **named after the topic** — the `/`-joined topic string. It is
-looked up before `fletcher_writer` / `fletcher_reader`, and a topic with no profile of its own
-falls back to those, then to Fletcher's built-in.
+looked up first, and a topic with no profile of its own falls back to the document's
+`is_default_profile="true"` writer/reader profile if one exists, else to Fast DDS's own default.
 
 Remember the whole-QoS rule: each of these profiles is complete in itself, so each restates the
-policies it wants rather than inheriting them from `fletcher_writer`.
+policies it wants rather than inheriting them from the default profile.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -582,7 +629,7 @@ policies it wants rather than inheriting them from `fletcher_writer`.
     </data_writer>
 
     <!-- everything else on this instance -->
-    <data_writer profile_name="fletcher_writer">
+    <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
@@ -597,7 +644,7 @@ topic is silently inert — see [Known limits of the document](#known-limits-of-
 
 ### Constraints
 
-- `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict.
+- `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict. The topic's `DataWriter` is created inside `CreateTopic` itself, not on first `Publish` — first-publish latency moves to setup — so `Publish` on a topic this provider never `CreateTopic`ed, including one it only `Subscribe`d to, is refused `kTopicNotDeclared`. The writer's pool is reserved then and there: at the built-in defaults (`max_samples` 100, 64 KiB bound, `data_sharing` AUTOMATIC) that is roughly 6.6 MB of shared segment per declared topic, published to or not, so size `max_payload_bytes` and `resource_limits` for a many-topic deployment deliberately.
 - On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `SchemaArrival` whose `Wait` reports `kOk` with the schema once it is known (and `kSubscriptionEnded` if the subscription is torn down first), and the provider buffers incoming data until then so the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.) Per-writer order is preserved across this handoff — see [Delivery guarantees](#delivery-guarantees).
 - Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
 - The subscription callback is invoked from a Fast DDS internal listener thread, **while Fast DDS holds that reader's own RTPS mutex**: `StatefulReader::process_data_msg` takes it and still holds it through `change_received`, `NotifyChanges` and the listener call, and the data-sharing thread reaches the same place through the same function. Two consequences. Shared state touched from the callback must be protected externally — and a slow or blocking callback stalls reception for that reader entirely, because nothing else can enter it. Hand work off to your own thread if it is not short.

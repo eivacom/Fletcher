@@ -11,6 +11,10 @@
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // using SerializeEnvelope/DeserializeEnvelope from pubsub/envelope.hpp.
 //
+// The companion __schema channel rides the SAME envelope, as a row with no attachments: the Arrow
+// IPC bytes are ROW_DATA and ATTACH_COUNT is always 0 (design owner-approved 2026-09-14) -- the
+// same shape fastdds-pubsub-provider's SchemaBytesPubSubType produces.
+//
 // On the XRCE wire, the envelope is wrapped in an OMG-CDR
 // `sequence<octet>` length prefix (uint32) before being handed to
 // `uxr_buffer_topic`. MicroXRCEAgent's TopicPubSubType then prepends
@@ -273,7 +277,8 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             //
             // The guard covers the WHOLE sequence, not just the parse, because
             // every step can throw:
-            //   * DeserializeSchemaIpc — malformed/truncated __schema sample;
+            //   * DeserializeEnvelope — malformed/truncated envelope;
+            //   * DeserializeSchemaIpc — malformed/truncated IPC bytes;
             //   * OwnedSchema::DeepCopy — throws on a failed deep copy (#54);
             //   * MakeSharedSchema — allocates;
             //   * resolving the arrival — allocation, and a refusal if the
@@ -282,7 +287,18 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             // retained TRANSIENT_LOCAL/KEEP_LAST(1) __schema sample is
             // redelivered and resolution is retried.
             try {
-                OwnedSchema schema = DeserializeSchemaIpc(body, seq_len);
+                // The schema rides as a row with no attachments (design owner-approved
+                // 2026-09-14): `body`/`seq_len` is the same envelope the data path below decodes
+                // with DeserializeEnvelope — reused here rather than re-parsed, so there is one
+                // reading of the wire header, not two chances to disagree about it. A sample
+                // carrying an attachment is malformed for this channel and dropped the same as an
+                // undecodable one: return without consuming the resolver, so a later, well-formed
+                // redelivery can still resolve it.
+                Envelope schema_env = DeserializeEnvelope(body_owner, body, seq_len);
+                if (!schema_env.attachments.empty()) return;
+
+                OwnedSchema schema =
+                    DeserializeSchemaIpc(schema_env.row.data(), schema_env.row.size());
                 if (!schema) return;
                 ts.schema = OwnedSchema::DeepCopy(schema.get());
                 ts.shared_schema = MakeSharedSchema(std::move(schema));
@@ -762,15 +778,20 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             WaitForStatuses(&impl_->session, schema_reqs, schema_statuses, 2,
                             "schema publisher+writer");
 
-            // Publish schema bytes, wrapped in the CDR `sequence<octet>`
-            // length prefix the Agent will forward to FastDDS peers.
-            auto ipc_bytes = SerializeSchemaIpc(schema.get());
-            const uint32_t ipc_len = static_cast<uint32_t>(ipc_bytes.size());
+            // Publish the schema as a row with no attachments, through the same envelope the data
+            // channel uses (SerializeEnvelope, below in Publish): [u32 row_len][ipc bytes]
+            // [u32 attachment_count = 0]. The CDR `sequence<octet>` length prefix the Agent
+            // forwards to FastDDS peers now counts that whole envelope, not just the IPC bytes --
+            // see fletcher_sample.hpp for why the two are the same field.
+            Envelope schema_env;
+            schema_env.row = SerializeSchemaIpc(schema.get());
+            std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
+            const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
             std::vector<uint8_t> wire;
-            wire.reserve(sizeof(ipc_len) + ipc_bytes.size());
-            wire.resize(sizeof(ipc_len));
-            std::memcpy(wire.data(), &ipc_len, sizeof(ipc_len));
-            wire.insert(wire.end(), ipc_bytes.begin(), ipc_bytes.end());
+            wire.reserve(sizeof(body_len) + schema_envelope.size());
+            wire.resize(sizeof(body_len));
+            std::memcpy(wire.data(), &body_len, sizeof(body_len));
+            wire.insert(wire.end(), schema_envelope.begin(), schema_envelope.end());
 
             uxr_buffer_topic(&impl_->session, impl_->reliable_out, ts.schema_writer_id, wire.data(),
                              static_cast<uint32_t>(wire.size()));
@@ -1155,21 +1176,24 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
             }
         });
 
-    // Synthesize a schema sample exactly as the wire path presents it to
-    // OnTopic: IPC schema bytes wrapped in the CDR sequence<octet> length prefix
-    // (the Agent has already stripped the CDR encapsulation header).
+    // Synthesize a schema sample exactly as the wire path presents it to OnTopic: the schema
+    // envelope [u32 row_len][ipc bytes][u32 attachment_count = 0], wrapped in the CDR
+    // sequence<octet> length prefix (the Agent has already stripped the CDR encapsulation header).
     OwnedSchema schema;
     ArrowSchemaInit(schema.get());
     ArrowSchemaSetTypeStruct(schema.get(), 1);
     ArrowSchemaSetName(schema->children[0], "x");
     ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32);
 
-    std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
-    const uint32_t ipc_len = static_cast<uint32_t>(ipc.size());
+    Envelope schema_env;
+    schema_env.row = SerializeSchemaIpc(schema.get());
+    std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
+    const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
     std::vector<uint8_t> wire;
-    wire.resize(sizeof(ipc_len));
-    std::memcpy(wire.data(), &ipc_len, sizeof(ipc_len));
-    wire.insert(wire.end(), ipc.begin(), ipc.end());
+    wire.reserve(sizeof(body_len) + schema_envelope.size());
+    wire.resize(sizeof(body_len));
+    std::memcpy(wire.data(), &body_len, sizeof(body_len));
+    wire.insert(wire.end(), schema_envelope.begin(), schema_envelope.end());
 
     ucdrBuffer ub;
     ucdr_init_buffer(&ub, wire.data(), wire.size());

@@ -164,10 +164,23 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
         : chan_(std::move(chan)), status_listener_(status_listener) {}
 
     void on_data_available(eprosima::fastdds::dds::DataReader* reader) override {
-        RawBytes raw;
+        ReceivedData sample;
         eprosima::fastdds::dds::SampleInfo info;
-        while (reader->take_next_sample(&raw, &info) == eprosima::fastdds::dds::RETCODE_OK) {
+        while (reader->take_next_sample(&sample, &info) == eprosima::fastdds::dds::RETCODE_OK) {
             if (!info.valid_data) continue;
+
+            // The schema rides as a row with no attachments (design owner-approved 2026-09-14); any
+            // that arrived is a malformed sample, on the same footing as one that will not decode.
+            if (!sample.decoded_attachments.empty()) {
+                EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
+                                   "ignoring a schema sample that carries attachments: the schema "
+                                   "channel only ever sends a row");
+                // Terminal, not merely delayed: a later valid sample cannot retract this one.
+                chan_->Fail(PubSubStatus::kInternal,
+                            "FastDDS: a schema sample carried attachments; the schema channel "
+                            "carries a bare row");
+                return;
+            }
 
             if (fired_.load()) {
                 // Later samples are only compared: a resend of the same schema (fan-in) is silent;
@@ -175,7 +188,7 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
                 bool differs;
                 {
                     std::lock_guard<std::mutex> lk(fired_bytes_m_);
-                    differs = raw.data != fired_bytes_;
+                    differs = sample.decoded_row != fired_bytes_;
                 }
                 if (differs) {
                     EPROSIMA_LOG_ERROR(
@@ -189,11 +202,11 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
             // Fast DDS listener thread, nor mark the listener fired with no schema to show for it.
             OwnedSchema owned;
             try {
-                owned = DeserializeSchemaIpc(raw.data.data(), raw.data.size());
+                owned = DeserializeSchemaIpc(sample.decoded_row.data(), sample.decoded_row.size());
             } catch (const std::exception& e) {
                 EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
                                    "ignoring a schema sample that will not decode ("
-                                       << raw.data.size() << " bytes): " << e.what());
+                                       << sample.decoded_row.size() << " bytes): " << e.what());
                 // Terminal, not merely delayed: a later valid sample cannot retract this one.
                 chan_->Fail(PubSubStatus::kInternal,
                             std::string("FastDDS: schema sample would not decode: ") + e.what());
@@ -212,7 +225,7 @@ class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
                 // the same one (above).
                 {
                     std::lock_guard<std::mutex> lk(fired_bytes_m_);
-                    fired_bytes_ = raw.data;
+                    fired_bytes_ = sample.decoded_row;
                 }
                 // Resolving the schema flushes the buffered backlog through the user callback, so
                 // user code throws on this thread too. Same reason as the catch above.

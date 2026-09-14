@@ -59,6 +59,25 @@ If `conan build` reports `Missing prebuilt package for fletcher-fastdds-pubsub-p
 provider was last created with `-o:a run_tests=True`, which changes its dependencies' package ids —
 re-run with `--build=missing`.
 
+### exp_zero_copy
+
+Takes `<loan 0|1> <sharing 0|1> <slots>` and runs ONE combo. Fast DDS's profile registry is
+process-wide (`src/internal/profile_document.hpp`): two different (loan, sharing, slots) triples
+are two different documents under the same profile names, which collide if loaded in one process —
+so each combo is its own process. Run with no arguments to print the valid combos, then loop over
+them:
+
+```powershell
+build\Release\exp_zero_copy.exe   # prints the valid <loan> <sharing> <slots> combos
+foreach ($loan in 0, 1) {
+    foreach ($sharing in 0, 1) {
+        foreach ($slots in 16, 32) {
+            & build\Release\exp_zero_copy.exe $loan $sharing $slots
+        }
+    }
+}
+```
+
 Report medians with their standard deviations — several arms are a few nanoseconds, so a single run
 says nothing. `BM_ReadFlow_Loaned` reads a buffer that never changes and returns a pointer into it,
 so it calls `benchmark::ClobberMemory()` per iteration; without that the compiler hoists the parse

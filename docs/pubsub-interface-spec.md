@@ -595,27 +595,38 @@ Configuration at the seam is a small typed core plus an opaque blob:
 
 **As landed** (PDA-DEC-6), Fast DDS's document is **its own native XML QoS
 profiles document, as text** — the setting carries the XML itself, never a
-filename (owner ruling 2026-09-02), and Fast DDS parses it through
-`get_participant_extended_qos_from_xml` / `get_datawriter_qos_from_xml` /
-`get_datareader_qos_from_xml`, which take a *string* and register nothing
-process-wide. Reserved profile names are `fletcher_participant` (**mandatory** in
-a non-empty document, because "malformed" and "no such profile" share one return
-code), `fletcher_writer`, `fletcher_reader`, and a profile named after the
-`/`-joined topic for a per-topic override. **A supplied profile is that
+filename (owner ruling 2026-09-02). The document is loaded once per process into
+Fast DDS's own profile registry, `DomainParticipantFactory::load_XML_profiles_string`
+— eProsima's own documented model for XML profiles — and each endpoint then resolves
+its QoS through `get_datawriter_qos_from_profile` / `get_datareader_qos_from_profile`
+(the participant through `get_participant_extended_qos_from_profile`). Fast DDS
+profile names are process-wide, so every Fast DDS provider in one process shares
+one byte-identical document, or an empty one; a different one is refused
+`kInvalidArgument` at construction, by the provider itself before the bytes reach
+Fast DDS (which would accept a partially colliding document) — the one place §4 clause 3's "multiple
+instances with different configs" is bounded by the vendor, stated here rather
+than hidden. The only reserved profile name is `fletcher_participant` (**mandatory** in
+a non-empty document, because a document with no `<profiles>` element parses fine
+and silently registers nothing — the anchor turns that silent no-op into a
+construction-time refusal); `fletcher_writer` and `fletcher_reader` are ordinary
+names now. The default writer/reader QoS is the document's `is_default_profile="true"`
+`<data_writer>` / `<data_reader>` profile — Fast DDS's own mechanism — and a
+per-topic override is a profile named after the `/`-joined topic, resolved ahead of
+that default. An empty document is Fletcher's built-in QoS everywhere and never
+consults the registry at all. **A supplied profile is that
 endpoint's whole quality-of-service** — no merge, no floor — because the XML API
 cannot report which policies a document mentioned. The two settings a QoS profile
 cannot express (`fletcher.loan_publish`, `fletcher.max_schema_bytes`) ride as
 vendor properties inside the anchor's `<rtps><propertiesPolicy>`, which is native
 Fast DDS XML, so there is still exactly one reader and one format. `domain_id`
 always wins over an anchor's `<domainId>`, and a non-zero disagreement is refused
-rather than silently resolved. **Not every document refusal is a construction-time
-refusal, and a provider must say which are not:** the misplaced-`fletcher.*`-property
-refusal fires when the profile carrying it is resolved — inside the constructor for the
-two role profiles, but on a topic's first `Publish` / `Subscribe` for a profile named
-after that topic, which is the first moment its name is known. A constructed provider is
-therefore one whose *participant* configuration is good, not one whose whole document has
-been read, and the provider's public header states this rather than promising the
-stronger thing. The convenience of reading a document out of a file lives in the
+rather than silently resolved. **Every document refusal is a construction-time
+refusal.** The misplaced-`fletcher.*`-property refusal that used to fire on a
+topic's first `Publish` / `Subscribe` is gone along with the two role profiles it
+guarded — a `fletcher.*` property outside the anchor is simply not read, not
+refused — so a constructed provider is now one whose whole document has been
+read, not merely one whose *participant* configuration is good. The convenience
+of reading a document out of a file lives in the
 **gateway** (`--provider-config FILE`), never in Fletcher.
 
 **As landed** (PDA-DEC-7), XRCE's document is a sequence of `\n`-separated

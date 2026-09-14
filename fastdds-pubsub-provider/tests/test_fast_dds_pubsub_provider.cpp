@@ -32,7 +32,6 @@
 #include "internal/ordered_delivery.hpp"
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
-#include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/transport_data.hpp"
 
 using namespace fletcher;
@@ -334,13 +333,17 @@ struct DocumentParts {
     std::string anchor_body;
 };
 
+// Both endpoint profiles carry `is_default_profile="true"`: `fletcher_writer` / `fletcher_reader`
+// are not special names any more (design rule 2, internal/profile_document.hpp) -- none of the
+// topics these tests use are literally named that, so without the marking the document below
+// would configure nothing and every test through it would silently run on Fast DDS's own default.
 std::string BoundedDocument(const DocumentParts& parts = {}) {
     return std::string(R"(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <participant profile_name="fletcher_participant">)") +
            parts.anchor_body + R"(</participant>
-    <data_writer profile_name="fletcher_writer">
+    <data_writer profile_name="fletcher_writer" is_default_profile="true">
       <qos>)" +
            parts.writer_qos +
            R"(
@@ -350,7 +353,7 @@ std::string BoundedDocument(const DocumentParts& parts = {}) {
            R"(
       </topic>
     </data_writer>
-    <data_reader profile_name="fletcher_reader">
+    <data_reader profile_name="fletcher_reader" is_default_profile="true">
       <qos>)" +
            parts.reader_qos +
            R"(
@@ -440,9 +443,13 @@ TEST(FastDDSPubSubProviderTest, ALargeBoundIsFine) {
     ProviderConfig large = BoundedConfig();
     large.max_payload_bytes = kPayloadBytes<256 * 1024 * 1024>;
     EXPECT_NO_THROW(FastDDSPubSubProvider provider(large));
+}
 
-    // And with Fast DDS's own default max_samples behind it, which the old check rejected
-    // outright — now a line in the document rather than a field.
+// And with Fast DDS's own default max_samples behind it, which the old check rejected outright —
+// now a line in the document rather than a field. Own TEST/process: this document's
+// "fletcher_writer" profile (max_samples 5000) differs from BoundedConfig()'s default one above
+// (max_samples 10, kTenSlots), and Fast DDS profile names are process-wide.
+TEST(FastDDSPubSubProviderTest, ALargeBoundWithFastDdsDefaultMaxSamplesIsFine) {
     DocumentParts unbounded;
     unbounded.writer_topic = R"(
         <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
@@ -471,8 +478,11 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
 // loan_publish: the writer encodes into a loaned payload and the reader reads the row out of the
 // loan it takes, with no serialise/deserialise pair in between.
 TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
+    // Both providers share LoanPublishConfig()'s document (Fast DDS profile names are
+    // process-wide): fletcher.loan_publish only steers the publishing side, so sub_provider's
+    // reader resolves identically to BoundedConfig()'s default.
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
 
     pub_provider.CreateTopic({"loaned", "x"}, MakeSchema());
 
@@ -501,13 +511,20 @@ TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
       <historyMemoryPolicy>DYNAMIC</historyMemoryPolicy>)";
     const ProviderConfig sub_config = BoundedConfig(dynamic_reader);
     {
+        // The load happens BEFORE the Subscriber below is created: its default reader QoS is
+        // seeded from the registry's is_default_profile reader profile at construction time, and
+        // "any/topic" below matches no profile by name, so it resolves to that seeded default.
+        {
+            std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+            internal::LoadDocumentOnce(sub_config.document);
+        }
         DomainParticipant* probe = DomainParticipantFactory::get_instance()->create_participant(
             0, PARTICIPANT_QOS_DEFAULT);
         ASSERT_NE(probe, nullptr);
         Subscriber* subscriber = probe->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
         ASSERT_NE(subscriber, nullptr);
         const DataReaderQos resolved =
-            internal::ResolveReaderQos(*subscriber, sub_config.document, "any/topic");
+            internal::ResolveReaderQos(*subscriber, "any/topic", /*registry=*/true);
         EXPECT_EQ(resolved.endpoint().history_memory_policy,
                   eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE)
             << "the document's <historyMemoryPolicy> did not reach the reader QoS";
@@ -516,7 +533,10 @@ TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
         DomainParticipantFactory::get_instance()->delete_participant(probe);
     }
 
-    FastDDSPubSubProvider pub_provider(BoundedConfig());
+    // Both providers share this document (Fast DDS profile names are process-wide): dynamic_reader
+    // only touches the reader profile, so pub_provider's writer role resolves identically to
+    // BoundedConfig()'s default.
+    FastDDSPubSubProvider pub_provider(BoundedConfig(dynamic_reader));
     FastDDSPubSubProvider sub_provider(sub_config);
 
     pub_provider.CreateTopic({"dynamic", "reader"}, MakeSchema());
@@ -735,8 +755,9 @@ TEST(FastDDSPubSubProviderTest, AFragmentingRowCrossesIntact) {
 // fragmenting sample. LoanPublishConfig() is this file's existing fletcher.loan_publish=true
 // profile document (see LoanedRoundTrip above) — no new profile is invented for this variant.
 TEST(FastDDSPubSubProviderTest, ALoanPublishedFragmentingRowCrossesIntact) {
+    // Both providers share the document (see LoanedRoundTrip's comment).
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
     pub_provider.CreateTopic({"fragmenting", "loaned"}, MakeSchema());
 
     const size_t row_size = static_cast<size_t>(pub_provider.PayloadBytes()) - 8 - 16;
@@ -776,8 +797,9 @@ TEST(FastDDSPubSubProviderTest, ALoanPublishedFragmentingRowCrossesIntact) {
 // the process. On the loaned path it must also not take the loan with it: the reader has only
 // max_samples + extra_samples loans, so a handful of leaks starves delivery for good.
 TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoans) {
+    // Both providers share the document (see LoanedRoundTrip's comment).
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
 
     pub_provider.CreateTopic({"loaned", "throwing"}, MakeSchema());
 
@@ -827,8 +849,9 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
 
 // Attachments ride the same envelope on the loaned path.
 TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
+    // Both providers share the document (see LoanedRoundTrip's comment).
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(BoundedConfig());
+    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
 
     pub_provider.CreateTopic({"loaned", "attachments"}, MakeSchema());
 
@@ -1427,8 +1450,6 @@ TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
         {"status", "x"}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
-    // The DataWriter is created on the first publish, so nothing matches on the publisher side
-    // until one happens.
     pub_provider.Publish({"status", "x"}, MakeEncoder(1));
 
     std::unique_lock<std::mutex> lk(listener.m);
@@ -1495,7 +1516,6 @@ TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
     SubscriptionResult result = sub_provider.Subscribe(
         {"bound", "x"}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     pub_provider.CreateTopic({"bound", "x"}, MakeSchema());
-    // The DataWriter is created on the first publish, so there is nothing to discover before one.
     pub_provider.Publish({"bound", "x"}, MakeEncoder(1));
 
     {
@@ -1665,8 +1685,11 @@ TEST(FastDDSStatusListenerTest, OnIncompatibleQosFiresForAReliableReaderAgainstA
     };
 
     IncompatibleListener listener;
+    // Both providers share the document (Fast DDS profile names are process-wide): writer_qos
+    // only touches the writer role, so sub_provider's reader still resolves to the default
+    // RELIABLE reader profile, which is what makes the two incompatible.
     FastDDSPubSubProvider pub_provider(BoundedConfig(best_effort_writer));
-    FastDDSPubSubProvider sub_provider(BoundedConfig(), &listener);
+    FastDDSPubSubProvider sub_provider(BoundedConfig(best_effort_writer), &listener);
 
     pub_provider.CreateTopic({"incompatible", "x"}, MakeSchema());
     SubscriptionResult result = sub_provider.Subscribe(
@@ -1674,9 +1697,6 @@ TEST(FastDDSStatusListenerTest, OnIncompatibleQosFiresForAReliableReaderAgainstA
         [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
-    // The DataWriter is created on the first publish (see StatusListenerReportsMatchingBothWays),
-    // so there is nothing for the reader to discover — and therefore no QoS to be incompatible
-    // with — until one happens.
     pub_provider.Publish({"incompatible", "x"}, MakeEncoder(1));
 
     std::unique_lock<std::mutex> lk(listener.m);
@@ -2146,7 +2166,7 @@ TEST(FastDDSPubSubProviderTest, UndecodableSchemaSampleFailsTheArrival) {
         DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
     ASSERT_NE(raw_participant, nullptr);
 
-    TypeSupport raw_type_support(new internal::RawBytesPubSubType(65536));
+    TypeSupport raw_type_support(new internal::SchemaBytesPubSubType(65536));
     ASSERT_EQ(raw_type_support.register_type(raw_participant), RETCODE_OK);
 
     Topic* schema_topic = raw_participant->create_topic(
@@ -2159,9 +2179,17 @@ TEST(FastDDSPubSubProviderTest, UndecodableSchemaSampleFailsTheArrival) {
         raw_publisher->create_datawriter(schema_topic, internal::MakeSchemaChannelWriterQos());
     ASSERT_NE(raw_writer, nullptr);
 
-    internal::RawBytes garbage;
-    garbage.data = {0xde, 0xad, 0xbe, 0xef, 1, 2, 3};
-    ASSERT_EQ(raw_writer->write(&garbage), RETCODE_OK);
+    // The row rides the ordinary envelope -- same as any other schema announcement -- but its
+    // bytes are not a valid Arrow IPC stream, which is what must fail the arrival.
+    const std::vector<uint8_t> garbage_row = {0xde, 0xad, 0xbe, 0xef, 1, 2, 3};
+    const PubSubProvider::RowEncoder encoder = [&garbage_row](WriteBuffer& b) {
+        b.Append(garbage_row.data(), garbage_row.size());
+    };
+    const Attachments none;
+    internal::PublishData transport;
+    transport.encoder = &encoder;
+    transport.attachments = &none;
+    ASSERT_EQ(raw_writer->write(&transport), RETCODE_OK);
 
     FastDDSPubSubProvider sub(ProviderConfig{});
     SchemaArrival watch = sub.SubscribeSchema(t);

@@ -23,7 +23,6 @@
 #include "internal/fletcher_sample.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/qos_defaults.hpp"
-#include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/transport_data.hpp"
 
 namespace {
@@ -263,58 +262,39 @@ TEST(FletcherSamplePubSubTypeTest, FastCdrReproducesTheBytesExactly) {
         << "XCDR2 must not reuse the XCDR1 representation id";
 }
 
-// One wire shape for both channels, though they are framed by different code.
-TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelFramesTheSameShapeAsTheDataChannel) {
+// The companion __schema channel's TopicDataType: the same plain sample as the data channel, under
+// a different registered name (design owner-approved 2026-09-14). One TopicDataType
+// implementation, so its claims about itself are the data type's, checked once here rather than
+// duplicated per bound.
+TEST(SchemaBytesPubSubTypeTest, NameBoundAndPlainness) {
+    fletcher::internal::SchemaBytesPubSubType schema_type(kTestPayloadBytes);
     FletcherSamplePubSubType data_type(kTestPayloadBytes);
-    const std::vector<uint8_t> row = Row(214);
-    Publishing publishing(row);
 
-    SerializedPayload_t framed(data_type.max_serialized_type_size);
-    ASSERT_TRUE(data_type.serialize(&publishing.data, framed, kXcdr1));
-
-    // The same envelope bytes through the schema channel's non-plain sequence<octet>.
-    const uint32_t body_size = framed.length - kHeader - kLengthPrefix;
-    fletcher::internal::RawBytes raw;
-    raw.data.assign(framed.data + kHeader + kLengthPrefix,
-                    framed.data + kHeader + kLengthPrefix + body_size);
-
-    fletcher::internal::RawBytesPubSubType schema_type(kTestPayloadBytes);
-    SerializedPayload_t via_fastcdr(schema_type.max_serialized_type_size);
-    ASSERT_TRUE(schema_type.serialize(&raw, via_fastcdr, kXcdr1));
-
-    ASSERT_EQ(framed.length, via_fastcdr.length);
-    EXPECT_EQ(0, std::memcmp(framed.data, via_fastcdr.data, framed.length))
-        << "the hand-framed data channel and the fastcdr-framed schema channel disagree about the "
-           "same wire shape";
+    EXPECT_EQ(schema_type.get_name(), fletcher::kSchemaTypeName);
+    EXPECT_TRUE(schema_type.is_bounded());
+    EXPECT_TRUE(schema_type.is_plain(kXcdr1));
+    EXPECT_TRUE(schema_type.is_plain(kXcdr2));
+    EXPECT_EQ(schema_type.max_serialized_type_size, data_type.max_serialized_type_size);
 }
 
-// Bounded but not plain, and construct_sample must keep answering false for a non-plain type.
-TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelIsBoundedButNotPlain) {
-    fletcher::internal::RawBytesPubSubType schema_type(kTestPayloadBytes);
-    EXPECT_TRUE(schema_type.is_bounded());
-    EXPECT_FALSE(schema_type.is_plain(kXcdr1));
-    EXPECT_FALSE(schema_type.is_plain(kXcdr2));
-    EXPECT_FALSE(schema_type.construct_sample(nullptr));
-    EXPECT_EQ(4u + 4u + kTestPayloadBytes, schema_type.max_serialized_type_size);
+// The schema rides as a row with no attachments, through the same envelope the data channel uses:
+// [u32 length][u32 row_len][ipc bytes][u32 attachment_count = 0]. This pins the shape the XRCE
+// side must produce on the wire.
+TEST(SchemaBytesPubSubTypeTest, AnIpcBlobRoundTripsAsARowWithNoAttachments) {
+    fletcher::internal::SchemaBytesPubSubType type(kTestPayloadBytes);
+    const std::vector<uint8_t> blob = Row(300, 0x77);
+    Publishing publishing(blob);
 
-    // 4 + 100'001 = 100'005, padded to 100'008, plus the 4-byte encapsulation.
-    fletcher::internal::RawBytesPubSubType odd_type(100'001);
-    EXPECT_EQ(100'012u, odd_type.max_serialized_type_size);
+    SerializedPayload_t payload(type.max_serialized_type_size);
+    ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
 
-    // Saturates rather than wraps: 32-bit arithmetic would have reported eight bytes.
-    fletcher::internal::RawBytesPubSubType absurd_type(UINT32_MAX);
-    EXPECT_EQ(UINT32_MAX, absurd_type.max_serialized_type_size);
+    // The body's own row-length prefix, right after the sample length.
+    EXPECT_EQ(ReadU32(payload.data + kHeader + kLengthPrefix), blob.size());
 
-    // And the size of an actual sample comes out of fastcdr, not out of that ceiling.
-    fletcher::internal::RawBytes sample;
-    sample.data.assign(214, 0xAB);
-    EXPECT_EQ(4u + 4u + 214u, schema_type.calculate_serialized_size(&sample, kXcdr1));
-
-    // The data channel claims all three, which is what earns it loans.
-    FletcherSamplePubSubType data_type(kTestPayloadBytes);
-    EXPECT_TRUE(data_type.is_bounded());
-    EXPECT_TRUE(data_type.is_plain(kXcdr1));
-    EXPECT_TRUE(data_type.is_plain(kXcdr2));
+    ReceivedData received;
+    ASSERT_TRUE(type.deserialize(payload, &received));
+    EXPECT_EQ(received.decoded_row, blob);
+    EXPECT_TRUE(received.decoded_attachments.empty());
 }
 
 // The pool is sized for the one sample the channel can hold, which is why bounded is affordable.
@@ -330,25 +310,6 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.history().depth);
     EXPECT_EQ(1, rqos.resource_limits().max_samples);
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
-}
-
-// T3 (cycle 2): a payload of arbitrary bytes that is not a valid RawBytes (sequence<octet>)
-// encoding must fail cleanly rather than throw out of deserialize() or read out of bounds. This
-// buffer is too short to even hold a DDS_CDR encapsulation header (4 bytes: a dummy octet, the
-// representation id, and a 2-byte options field) — fastcdr's read_encapsulation() cannot advance
-// past the end of the FastBuffer it is told the payload's length is, so it must fail there, before
-// any sequence-length logic runs at all. Direct unit test: no DDS participant, no writer, no
-// reader.
-TEST(RawBytesPubSubTypeTest, DeserializeOnGarbageReturnsFalse) {
-    fletcher::internal::RawBytesPubSubType type(kTestPayloadBytes);
-    SerializedPayload_t payload(type.max_serialized_type_size);
-
-    const std::vector<uint8_t> garbage = {0x12, 0x34, 0x56};
-    std::memcpy(payload.data, garbage.data(), garbage.size());
-    payload.length = static_cast<uint32_t>(garbage.size());
-
-    fletcher::internal::RawBytes received;
-    EXPECT_FALSE(type.deserialize(payload, &received));
 }
 
 // P18: the guard at the top of serialize() now accounts for the row's OWN 4-byte length prefix

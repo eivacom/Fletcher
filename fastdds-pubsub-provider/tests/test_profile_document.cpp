@@ -10,7 +10,7 @@
 // Fast DDS, or if a policy silently fell back? Six silences are guarded here:
 //
 //   1. an empty document                     -> Fletcher's built-in       (forcing row 1)
-//   2. an anchor-only, non-empty document    -> Fletcher's built-in       (forcing row 2)
+//   2. an anchor-only, non-empty document    -> Fast DDS's own default   (forcing row 2)
 //   3. a whole profile absent for one role   -> that role's built-in      (SchemaChannel..., C2-2)
 //   4. a whole document that will not parse  -> refused, never defaulted  (Malformed...)
 //   5. the POLICIES a supplied profile omits -> Fast DDS's default, NOT Fletcher's
@@ -29,6 +29,17 @@
 // green. Where the claim is about RESOLUTION, the QoS structs are compared WHOLE and in-process
 // — no discovery, every policy — because `history` and `resource_limits` are `optional` in
 // `PublicationBuiltinTopicData` and are simply not observable on the network.
+//
+// ── One TEST, at most one distinct non-empty document ──────────────────────────────────────
+// Fast DDS's profile registry is process-wide and keeps a profile for the life of the process
+// (internal/profile_document.hpp): a second document naming a profile another document in this
+// process already registered is refused, even if it is refused only after the first has already
+// won. So within ONE `TEST()` every provider built from a non-empty document must use the SAME
+// bytes, and a TEST may load at most one distinct non-empty document — a TEST whose second,
+// different document is MEANT to be refused is the exception. `gtest_discover_tests(...
+// DISCOVERY_MODE PRE_TEST)` in `tests/CMakeLists.txt` already runs one `TEST()` per process under
+// CTest, which is what makes this workable; running this binary bare on the whole suite collides
+// by design (`FastDdsConfig.*` run together would fight over the same profile names).
 
 #include <gtest/gtest.h>
 
@@ -95,8 +106,9 @@ std::string ExtractFencedXmlAfter(const std::string& text, const std::string& ma
     return text.substr(body + 1, close - body - 1);
 }
 
-// Every non-empty document must carry this anchor, even empty of policies: `get_*_from_xml`
-// reports "malformed" and "no such profile" with the same code, so one mandatory profile is the
+// Every non-empty document must carry this anchor, even empty of policies: Fast DDS accepts a
+// document with no <profiles> element as a silent no-op (XMLProfileManager::loadXMLString),
+// registering nothing and erroring at neither load nor lookup, so one mandatory profile is the
 // only self-identification a document can carry.
 constexpr const char* kAnchorOnly =
     R"(<?xml version="1.0" encoding="UTF-8"?>
@@ -131,9 +143,15 @@ std::string AnchorProperty(const std::string& name, const std::string& value) {
       </rtps>)";
 }
 
+// `is_default` marks the profile `is_default_profile="true"`: Fast DDS seeds the Publisher's /
+// Subscriber's own default QoS from it when each is created (rule 2,
+// internal/profile_document.hpp). `fletcher_writer` / `fletcher_reader` are not special names any
+// more -- a document that wants a role's default must say so explicitly, same as the operator
+// would.
 std::string WriterProfile(const std::string& profile_name, const std::string& qos_body,
-                          const std::string& topic_body = "") {
-    return R"(    <data_writer profile_name=")" + profile_name + R"(">
+                          const std::string& topic_body = "", bool is_default = false) {
+    return R"(    <data_writer profile_name=")" + profile_name + R"(")" +
+           (is_default ? R"( is_default_profile="true")" : std::string()) + R"(>
       <qos>)" +
            qos_body +
            R"(</qos>
@@ -144,8 +162,9 @@ std::string WriterProfile(const std::string& profile_name, const std::string& qo
 }
 
 std::string ReaderProfile(const std::string& profile_name, const std::string& qos_body,
-                          const std::string& topic_body = "") {
-    return R"(    <data_reader profile_name=")" + profile_name + R"(">
+                          const std::string& topic_body = "", bool is_default = false) {
+    return R"(    <data_reader profile_name=")" + profile_name + R"(")" +
+           (is_default ? R"( is_default_profile="true")" : std::string()) + R"(>
       <qos>)" +
            qos_body +
            R"(</qos>
@@ -200,6 +219,15 @@ int32_t AwaitRow(const std::atomic<int32_t>& cell,
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return cell.load();
+}
+
+// A row 16 bytes past `bound`, for the two loan-publish tests: the loaned path throws out of
+// Publish, the serialising path swallows the overflow inside serialize().
+PubSubProvider::RowEncoder OversizedRow(uint32_t bound) {
+    return [bound](WriteBuffer& buf) {
+        std::vector<uint8_t> blob(bound + 16, 0x5A);
+        buf.Append(blob.data(), blob.size());
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +319,9 @@ class DiscoveryObserver : public DomainParticipantListener {
 
 // A bare participant + publisher + subscriber, so the in-process resolution tests can call the
 // production ladders (`internal::Resolve{Writer,Reader}Qos`) without a provider, a topic or any
-// discovery at all. `get_*_qos_from_xml` lives on Publisher / Subscriber, hence the scaffolding.
+// discovery at all. `get_*_qos_from_profile` -- what those ladders call -- lives on Publisher /
+// Subscriber, hence the scaffolding. `DefaultProfileTranscriptionIsExact` also borrows it, for its
+// own deliberate `get_*_qos_from_xml` string call, which bypasses the registry entirely.
 class XmlProbe {
    public:
     explicit XmlProbe(uint32_t domain) {
@@ -313,8 +343,11 @@ class XmlProbe {
     XmlProbe& operator=(const XmlProbe&) = delete;
 
     bool ok() const { return publisher_ != nullptr && subscriber_ != nullptr; }
-    const Publisher& publisher() const { return *publisher_; }
-    const Subscriber& subscriber() const { return *subscriber_; }
+    // Non-const despite `const`: AnEmptyDocumentIsFletchersBuiltInEverywhere needs to call
+    // set_default_datawriter_qos / set_default_datareader_qos, which mutate the Publisher /
+    // Subscriber, not this probe.
+    Publisher& publisher() const { return *publisher_; }
+    Subscriber& subscriber() const { return *subscriber_; }
 
    private:
     DomainParticipant* participant_ = nullptr;
@@ -337,72 +370,167 @@ constexpr uint32_t kDomainSchemaBound = 99;
 }  // namespace
 
 // ===========================================================================
-// THE FORCING TEST
+// THE FORCING TEST(S)
 //
 // The setting an endpoint ANNOUNCES on the network is the document's — not merely that the
-// document loaded. One TEST rather than a TEST_P so the ctest name is exact, looping a
-// four-row table. Rows 3 and 4 differ from Fast DDS's default AND from each other, so a
-// provider that hard-codes any single value reddens at least one row; rows 1 and 2 are the
-// omission guards, and row 2 is the only row that catches a provider which reads the document
-// but drops Fletcher's built-in whenever the document is non-empty — the shape every
-// `fletcher.*`-property document has.
+// document loaded. Originally one TEST looping a four-row table; now four TESTs, one per row,
+// because Fast DDS's profile registry is process-wide. Rows 3 and 4 each define a DIFFERENT
+// "default_writer" profile, which collides if both are loaded in one process (see the
+// one-document-per-TEST note at the top of this file). Row 1 (the empty document) moved out to
+// its own TEST too, now for a different reason than it used to: an empty document ignores the
+// registry outright, unconditionally (design rule 1 -- AnEmptyDocumentIgnoresTheRegistry pins
+// that directly against a registry that is NOT empty), so its own process here is only about
+// keeping row 1's document from colliding with rows 2-4's, not about an empty-registry
+// precondition. Rows 3 and 4 still differ from Fast DDS's default AND from each other, so a
+// provider that hard-codes any single value reddens at least one of the four TESTs; row 2 (here)
+// pins that an anchor-only document — the shape every `fletcher.*`-property document has — still
+// reaches Fast DDS's registry and gets a live writer, not that its QoS differs from Fletcher's
+// built-in: durability and reliability happen to coincide with both.
+// `AnAnchorOnlyDocumentResolvesToFastDdsDefaults` is the in-process, whole-struct test that
+// actually tells them apart, on history and resource_limits, which are not on the wire.
 // ===========================================================================
-TEST(FastDdsConfig, ProfileDocumentConfiguresQos) {
-    struct Row {
-        const char* what;
-        std::string document;
-        const char* topic_leaf;
-        DurabilityQosPolicyKind durability;
-        ReliabilityQosPolicyKind reliability;
-    };
 
-    const std::vector<Row> rows = {
-        {"an empty document is Fletcher's built-in profile", "", "empty",
-         TRANSIENT_LOCAL_DURABILITY_QOS, RELIABLE_RELIABILITY_QOS},
-        // The most common document there is: an anchor and nothing else, which is the shape of
-        // every document that exists only to carry a `fletcher.*` property.
-        {"an anchor-only document is STILL Fletcher's built-in, not Fast DDS's", kAnchorOnly,
-         "anchor", TRANSIENT_LOCAL_DURABILITY_QOS, RELIABLE_RELIABILITY_QOS},
-        {"a fletcher_writer profile decides durability",
-         Document(WriterProfile("fletcher_writer", "<durability><kind>VOLATILE</kind></durability>",
-                                kTenSlots)),
-         "volatile", VOLATILE_DURABILITY_QOS, RELIABLE_RELIABILITY_QOS},
-        // Expected durability here is TRANSIENT_LOCAL and that is NOT Fletcher's built-in
-        // leaking through — it is MEASURED to be Fast DDS's own default on the XML path, which
-        // for a writer's `durability` is TRANSIENT_LOCAL rather than `DataWriterQos()`'s
-        // VOLATILE (the XML parser fills an RTPS-level `WriterQos`, whose durability default
-        // differs from the DDS-level one). `MinimalProfileTakesFastDdsDefaultsNotFletchers`
-        // pins that fact directly and distinguishes the two answers to the merge question on
-        // `history` and `resource_limits`, where Fletcher's and Fast DDS's DO differ. What this
-        // row exists to prove is reliability, and BEST_EFFORT differs from every other row.
-        {"a fletcher_writer profile decides reliability",
-         Document(WriterProfile("fletcher_writer",
-                                "<reliability><kind>BEST_EFFORT</kind></reliability>", kTenSlots)),
-         "besteffort", TRANSIENT_LOCAL_DURABILITY_QOS, BEST_EFFORT_RELIABILITY_QOS},
-    };
+// Row 1, split into its own TEST/process (see the note above), whole-struct rather than through
+// discovery: `history` and `resource_limits` are not on the wire, and they are exactly where
+// Fletcher's built-in and Fast DDS's own default disagree. The seeding mirrors what the
+// constructor does for an empty document (fast_dds_pubsub_provider.cpp): Publisher::
+// set_default_datawriter_qos / Subscriber::set_default_datareader_qos, never a registry lookup.
+TEST(FastDdsConfig, AnEmptyDocumentIsFletchersBuiltInEverywhere) {
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
+
+    ASSERT_EQ(
+        probe.publisher().set_default_datawriter_qos(internal::MakeFletcherDefaultWriterQos()),
+        RETCODE_OK);
+    ASSERT_EQ(
+        probe.subscriber().set_default_datareader_qos(internal::MakeFletcherDefaultReaderQos()),
+        RETCODE_OK);
+
+    const DataWriterQos writer =
+        internal::ResolveWriterQos(probe.publisher(), "forcing/empty", /*registry=*/false);
+    const DataReaderQos reader =
+        internal::ResolveReaderQos(probe.subscriber(), "forcing/empty", /*registry=*/false);
+    EXPECT_TRUE(writer == internal::MakeFletcherDefaultWriterQos());
+    EXPECT_TRUE(reader == internal::MakeFletcherDefaultReaderQos());
+}
+
+// Rule 1 in the flesh: an EMPTY document ignores the registry entirely, even when another
+// provider in the SAME process has already loaded a non-empty one -- `fletcher_writer` /
+// `fletcher_reader` are not special names any more, so there is no name left for an empty
+// document to accidentally collide with; if it consulted the registry it would pick up A's
+// default writer profile instead of Fletcher's built-in. Durability tells the two apart: VOLATILE
+// (A's document) vs TRANSIENT_LOCAL (Fletcher's built-in, B's empty document).
+TEST(FastDdsConfig, AnEmptyDocumentIgnoresTheRegistry) {
+    const std::string document_a = Document(
+        WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
+
+    DiscoveryObserver observer(kDomainTwoInstances);
+    ASSERT_TRUE(observer.ok());
+
+    ProviderConfig config_a;
+    config_a.domain_id = kDomainTwoInstances;
+    config_a.document = document_a;
+    ProviderConfig config_b;
+    config_b.domain_id = kDomainTwoInstances;
+    config_b.document = "";
+
+    FastDDSPubSubProvider a(config_a);
+    FastDDSPubSubProvider b(config_b);
+
+    a.CreateTopic({"ignoresregistry", "a"}, MakeSchema());
+    b.CreateTopic({"ignoresregistry", "b"}, MakeSchema());
+    a.Publish({"ignoresregistry", "a"}, MakeEncoder(1));
+    b.Publish({"ignoresregistry", "b"}, MakeEncoder(1));
+
+    Announced from_a;
+    Announced from_b;
+    ASSERT_TRUE(observer.AwaitWriter("ignoresregistry/a", &from_a));
+    ASSERT_TRUE(observer.AwaitWriter("ignoresregistry/b", &from_b));
+    EXPECT_EQ(from_a.durability, VOLATILE_DURABILITY_QOS);
+    EXPECT_EQ(from_b.durability, TRANSIENT_LOCAL_DURABILITY_QOS)
+        << "the empty document consulted the registry: it picked up provider a's default writer "
+           "profile instead of Fletcher's built-in";
+}
+
+// Row 2: the most common document there is — an anchor and nothing else, which is the shape of
+// every document that exists only to carry a `fletcher.*` property. It registers no writer
+// profile, so Fast DDS's own default decides here, not Fletcher's built-in.
+TEST(FastDdsConfig, ProfileDocumentConfiguresQos) {
+    DiscoveryObserver observer(kDomainForcing);
+    ASSERT_TRUE(observer.ok());
+
+    ProviderConfig config;
+    config.domain_id = kDomainForcing;
+    config.document = kAnchorOnly;
+
+    FastDDSPubSubProvider provider(config);
+    provider.CreateTopic({"forcing", "anchor"}, MakeSchema());
+    // CreateTopic already creates the DataWriter with the resolved QoS; publish anyway so the
+    // sample write path is exercised too, same as every other row here.
+    provider.Publish({"forcing", "anchor"}, MakeEncoder(1));
+
+    Announced announced;
+    ASSERT_TRUE(observer.AwaitWriter("forcing/anchor", &announced))
+        << "no writer discovery for forcing/anchor — nothing was compared";
+    EXPECT_EQ(announced.durability, TRANSIENT_LOCAL_DURABILITY_QOS);
+    EXPECT_EQ(announced.reliability, RELIABLE_RELIABILITY_QOS);
+}
+
+// Row 3, split into its own TEST/process: this document's "default_writer" profile differs from
+// the reliability row's below, and Fast DDS profile names are process-wide.
+TEST(FastDdsConfig, AFletcherWriterProfileDecidesDurability) {
+    const std::string document = Document(
+        WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
 
     DiscoveryObserver observer(kDomainForcing);
     ASSERT_TRUE(observer.ok());
 
-    for (const Row& row : rows) {
-        SCOPED_TRACE(row.what);
-        ProviderConfig config;
-        config.domain_id = kDomainForcing;
-        config.document = row.document;
+    ProviderConfig config;
+    config.domain_id = kDomainForcing;
+    config.document = document;
+    FastDDSPubSubProvider provider(config);
 
-        FastDDSPubSubProvider provider(config);
-        const std::string topic = std::string("forcing/") + row.topic_leaf;
-        provider.CreateTopic({"forcing", row.topic_leaf}, MakeSchema());
-        // The DataWriter is created lazily on first publish, so the row has to publish before
-        // there is anything for the observer to discover.
-        provider.Publish({"forcing", row.topic_leaf}, MakeEncoder(1));
+    provider.CreateTopic({"forcing", "volatile"}, MakeSchema());
+    provider.Publish({"forcing", "volatile"}, MakeEncoder(1));
 
-        Announced announced;
-        ASSERT_TRUE(observer.AwaitWriter(topic, &announced))
-            << "no writer discovery for " << topic << " — nothing was compared";
-        EXPECT_EQ(announced.durability, row.durability);
-        EXPECT_EQ(announced.reliability, row.reliability);
-    }
+    Announced announced;
+    ASSERT_TRUE(observer.AwaitWriter("forcing/volatile", &announced))
+        << "no writer discovery for forcing/volatile — nothing was compared";
+    EXPECT_EQ(announced.durability, VOLATILE_DURABILITY_QOS);
+    EXPECT_EQ(announced.reliability, RELIABLE_RELIABILITY_QOS);
+}
+
+// Row 4, split into its own TEST/process. Expected durability here is TRANSIENT_LOCAL and that is
+// NOT Fletcher's built-in leaking through — it is MEASURED to be Fast DDS's own default on the
+// XML path, which for a writer's `durability` is TRANSIENT_LOCAL rather than `DataWriterQos()`'s
+// VOLATILE (the XML parser fills an RTPS-level `WriterQos`, whose durability default differs from
+// the DDS-level one). `MinimalProfileTakesFastDdsDefaultsNotFletchers` pins that fact directly and
+// distinguishes the two answers to the merge question on `history` and `resource_limits`, where
+// Fletcher's and Fast DDS's DO differ. What this row exists to prove is reliability, and
+// BEST_EFFORT differs from every other row.
+TEST(FastDdsConfig, AFletcherWriterProfileDecidesReliability) {
+    const std::string document = Document(WriterProfile(
+        "default_writer", "<reliability><kind>BEST_EFFORT</kind></reliability>", kTenSlots,
+        /*is_default=*/true));
+
+    DiscoveryObserver observer(kDomainForcing);
+    ASSERT_TRUE(observer.ok());
+
+    ProviderConfig config;
+    config.domain_id = kDomainForcing;
+    config.document = document;
+    FastDDSPubSubProvider provider(config);
+
+    provider.CreateTopic({"forcing", "besteffort"}, MakeSchema());
+    provider.Publish({"forcing", "besteffort"}, MakeEncoder(1));
+
+    Announced announced;
+    ASSERT_TRUE(observer.AwaitWriter("forcing/besteffort", &announced))
+        << "no writer discovery for forcing/besteffort — nothing was compared";
+    EXPECT_EQ(announced.durability, TRANSIENT_LOCAL_DURABILITY_QOS);
+    EXPECT_EQ(announced.reliability, BEST_EFFORT_RELIABILITY_QOS);
 }
 
 // A profile named after the topic wins over `fletcher_writer`. Two topics on ONE instance, only
@@ -411,8 +539,8 @@ TEST(FastDdsConfig, ProfileDocumentConfiguresQos) {
 // everywhere cannot produce.
 TEST(FastDdsConfig, PerTopicProfileOverridesTheDefault) {
     const std::string document =
-        Document(WriterProfile("fletcher_writer", "<durability><kind>VOLATILE</kind></durability>",
-                               kTenSlots) +
+        Document(WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>",
+                               kTenSlots, /*is_default=*/true) +
                  "\n" +
                  WriterProfile("pertopic/special",
                                "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots));
@@ -442,8 +570,9 @@ TEST(FastDdsConfig, PerTopicProfileOverridesTheDefault) {
 // resolved writer profile to its readers as well reddens the forcing test, and one that applied
 // the reader profile to writers reddens this. Neither test alone is sufficient.
 TEST(FastDdsConfig, ReaderProfileConfiguresTheReader) {
-    const std::string document = Document(ReaderProfile(
-        "fletcher_reader", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
+    const std::string document = Document(
+        ReaderProfile("default_reader", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
 
     DiscoveryObserver observer(kDomainReader);
     ASSERT_TRUE(observer.ok());
@@ -463,19 +592,17 @@ TEST(FastDdsConfig, ReaderProfileConfiguresTheReader) {
     EXPECT_EQ(announced.durability, VOLATILE_DURABILITY_QOS);
 }
 
-// C2-2 — THE READER'S SILENCE, and it touches a live defect.
-//
-// A document that says something about the writer and NOTHING about the reader must leave the
-// reader on `MakeFletcherDefaultReaderQos()`, whose `data_sharing().off()` is the single line
-// holding back the measured receive-side row-loss defect: with data-sharing on both ends a
-// reader that joins after publication intermittently receives only a subset of the
-// TRANSIENT_LOCAL backlog, with no error anywhere (src/qos_defaults.cpp). If the reader's
-// fallback slipped to `DATAREADER_QOS_DEFAULT`, data-sharing comes back on (its default kind is
-// AUTO) and the signature is silent row loss. `gateway-fastdds-ts` cannot cover this — it runs
-// with an empty document, so it never exercises the non-empty-document reader path at all.
-TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFletchersDefault) {
-    const std::string document = Document(WriterProfile(
-        "fletcher_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
+// C2-2's RENAME — the built-in floor under a non-empty document is gone (design rule 2, owner
+// ruling 2026-09-14): `fletcher_writer` / `fletcher_reader` are not special names any more, so a
+// document that configures only the default WRITER profile leaves the reader on FAST DDS's OWN
+// default now, not Fletcher's. The receive-side data-sharing protection C2-2 used to pin
+// (`MakeFletcherDefaultReaderQos()`'s `data_sharing().off()`) only still applies to an EMPTY
+// document (AnEmptyDocumentIsFletchersBuiltInEverywhere) — an operator who supplies a document
+// must say what the reader gets, same as the writer.
+TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFastDdsDefault) {
+    const std::string document = Document(
+        WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
 
     DiscoveryObserver observer(kDomainReaderSilence);
     ASSERT_TRUE(observer.ok());
@@ -492,12 +619,24 @@ TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFletchersDefault) {
 
     Announced announced;
     ASSERT_TRUE(observer.AwaitReader("readersilence/topic", &announced));
-    // The one that matters: OFF, not AUTO.
-    EXPECT_EQ(announced.data_sharing, eprosima::fastdds::dds::OFF)
-        << "the reader fell off MakeFletcherDefaultReaderQos(): receive-side data-sharing is back "
-           "on, which is the known intermittent row-loss defect";
-    EXPECT_EQ(announced.durability, TRANSIENT_LOCAL_DURABILITY_QOS);
-    EXPECT_EQ(announced.reliability, RELIABLE_RELIABILITY_QOS);
+    // MEASURED (QosPolicies.hpp: "By default the value for DataReaders: VOLATILE_DURABILITY_QOS,
+    // for DataWriters TRANSIENT_LOCAL_DURABILITY_QOS") -- the two default asymmetrically, so this
+    // is genuinely VOLATILE and not a fallback that slipped: `AFletcherWriterProfileDecidesXxx`'s
+    // TRANSIENT_LOCAL is the WRITER's XML-parsed default, which never applies here at all.
+    EXPECT_EQ(announced.durability, VOLATILE_DURABILITY_QOS)
+        << "the reader's durability moved off Fast DDS's own default";
+
+    // Whole-struct, in-process, for the policies discovery cannot carry (history,
+    // resource_limits): the reader's default is Fast DDS's OWN default end to end, not merely on
+    // data_sharing -- `document` is already loaded (by `provider` above), and this registry
+    // lookup still misses, because the document registers no default reader profile.
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
+    const DataReaderQos reader_default =
+        internal::ResolveReaderQos(probe.subscriber(), "readersilence/topic", /*registry=*/true);
+    EXPECT_TRUE(reader_default == DATAREADER_QOS_DEFAULT)
+        << "the reader's default is no longer Fletcher's built-in -- fletcher_writer / "
+           "fletcher_reader are not special names any more";
 }
 
 // The internal `__schema` channel consults NO profile name, ever. It is also this file's negative
@@ -505,8 +644,9 @@ TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFletchersDefault) {
 // writer VOLATILE must leave the schema writer TRANSIENT_LOCAL, so a provider that applied one
 // resolved profile to every writer it creates reddens here while greening the forcing test.
 TEST(FastDdsConfig, SchemaChannelIgnoresTheDocument) {
-    const std::string document = Document(WriterProfile(
-        "fletcher_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
+    const std::string document = Document(
+        WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
 
     DiscoveryObserver observer(kDomainSchemaChannel);
     ASSERT_TRUE(observer.ok());
@@ -528,16 +668,13 @@ TEST(FastDdsConfig, SchemaChannelIgnoresTheDocument) {
     EXPECT_EQ(schema_writer.durability, TRANSIENT_LOCAL_DURABILITY_QOS);
 }
 
-// P1's global-state half, measured rather than assumed. `get_*_qos_from_xml` is documented not to
-// register anything process-wide, but the Conan package is binary-only so no header can prove it.
-// Two providers alive at once, the SAME profile names, DIFFERENT values: under process-global
-// registration either the second load collides (construction fails) or the first wins (instance
-// B's writer announces A's durability). Both failure modes land here.
-TEST(FastDdsConfig, TwoInstancesResolveTheirOwnDocuments) {
-    const std::string document_a = Document(WriterProfile(
-        "fletcher_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
-    const std::string document_b = Document(WriterProfile(
-        "fletcher_writer", "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots));
+// Fast DDS's profile registry is process-wide (internal/profile_document.hpp): two providers in
+// one process, the SAME byte-identical document, both resolve the SAME registered profile — not
+// two independent copies. This is the positive half of the process-wide-registry consequence.
+TEST(FastDdsConfig, TwoInstancesShareOneDocument) {
+    const std::string document_a = Document(
+        WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
+                      /*is_default=*/true));
 
     DiscoveryObserver observer(kDomainTwoInstances);
     ASSERT_TRUE(observer.ok());
@@ -545,8 +682,7 @@ TEST(FastDdsConfig, TwoInstancesResolveTheirOwnDocuments) {
     ProviderConfig config_a;
     config_a.domain_id = kDomainTwoInstances;
     config_a.document = document_a;
-    ProviderConfig config_b = config_a;
-    config_b.document = document_b;
+    ProviderConfig config_b = config_a;  // byte-identical: a no-op the second time it loads
 
     FastDDSPubSubProvider a(config_a);
     FastDDSPubSubProvider b(config_b);
@@ -561,7 +697,57 @@ TEST(FastDdsConfig, TwoInstancesResolveTheirOwnDocuments) {
     ASSERT_TRUE(observer.AwaitWriter("twoinstances/a", &from_a));
     ASSERT_TRUE(observer.AwaitWriter("twoinstances/b", &from_b));
     EXPECT_EQ(from_a.durability, VOLATILE_DURABILITY_QOS);
-    EXPECT_EQ(from_b.durability, TRANSIENT_LOCAL_DURABILITY_QOS);
+    EXPECT_EQ(from_b.durability, VOLATILE_DURABILITY_QOS);
+}
+
+// The negative half: a SECOND, DIFFERENT document in the same process collides on the profile
+// name Fast DDS's registry already holds, and is refused rather than silently winning or losing.
+TEST(FastDdsConfig, ASecondDifferentDocumentInOneProcessIsRefused) {
+    const std::string document_a = Document(WriterProfile(
+        "fletcher_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
+    // document_b also registers a NEW profile name ("twoinstances/b") beside the colliding
+    // "fletcher_writer": XMLProfileManager::extractProfiles turns that collision into XML_NOK and
+    // keeps going, so Fast DDS ALONE would accept this document -- only Fletcher's own check below
+    // refuses it, which is what this test actually pins.
+    const std::string document_b =
+        Document(WriterProfile("fletcher_writer",
+                               "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots) +
+                 "\n" +
+                 WriterProfile("twoinstances/b", "<durability><kind>VOLATILE</kind></durability>",
+                               kTenSlots));
+
+    ProviderConfig config_a;
+    config_a.domain_id = kDomainTwoInstances;
+    config_a.document = document_a;
+    ProviderConfig config_b = config_a;
+    config_b.document = document_b;
+
+    FastDDSPubSubProvider a(config_a);
+    try {
+        FastDDSPubSubProvider b(config_b);
+        ADD_FAILURE() << "a second, different document in one process was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("process"), std::string::npos) << e.what();
+    }
+}
+
+// The anchor stays mandatory because `loadXMLString` accepts a `<dds>` with no `<profiles>`
+// element as a silent no-op: nothing registers, nothing errors, and without this test a document
+// shaped like this one would resolve to "no such profile" and run on the built-in defaults.
+TEST(FastDdsConfig, ADocumentWithoutAProfilesElementIsRefused) {
+    ProviderConfig config;
+    config.domain_id = kDomainProbe;
+    config.document =
+        R"(<?xml version="1.0" encoding="UTF-8"?><dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles"><participant profile_name="fletcher_participant"/></dds>)";
+    try {
+        FastDDSPubSubProvider provider(config);
+        ADD_FAILURE() << "a document with no <profiles> element was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("fletcher_participant"), std::string::npos)
+            << e.what();
+    }
 }
 
 // ===========================================================================
@@ -611,71 +797,62 @@ TEST(FastDdsConfig, DefaultProfileTranscriptionIsExact) {
     ASSERT_NE(published.find("profile_name=\"fletcher_participant\""), std::string::npos)
         << "the published starting point no longer carries the mandatory anchor";
 
+    // The DEFAULT lookup, not the by-name one: it fills `qos` from whichever profile carries
+    // `is_default_profile="true"`, so a block that lost that attribute fails this lookup outright
+    // instead of still resolving by the literal name "default_writer" / "default_reader" — which
+    // is what keeps this test honest about the one thing the published block claims to prove.
     DataWriterQos writer;
-    ASSERT_EQ(probe.publisher().get_datawriter_qos_from_xml(published, writer, "fletcher_writer"),
-              RETCODE_OK)
-        << "the README's published starting point no longer defines a 'fletcher_writer' profile "
-           "Fast DDS can parse";
+    ASSERT_EQ(probe.publisher().get_default_datawriter_qos_from_xml(published, writer), RETCODE_OK)
+        << "the README's published starting point no longer defines an is_default_profile=\"true\" "
+           "data_writer profile Fast DDS can parse";
     EXPECT_TRUE(writer == internal::MakeFletcherDefaultWriterQos())
         << "the README's published starting point no longer transcribes "
            "MakeFletcherDefaultWriterQos() exactly";
 
     DataReaderQos reader;
-    ASSERT_EQ(probe.subscriber().get_datareader_qos_from_xml(published, reader, "fletcher_reader"),
-              RETCODE_OK)
-        << "the README's published starting point no longer defines a 'fletcher_reader' profile "
-           "Fast DDS can parse";
+    ASSERT_EQ(probe.subscriber().get_default_datareader_qos_from_xml(published, reader), RETCODE_OK)
+        << "the README's published starting point no longer defines an is_default_profile=\"true\" "
+           "data_reader profile Fast DDS can parse";
     EXPECT_TRUE(reader == internal::MakeFletcherDefaultReaderQos())
         << "the README's published starting point no longer transcribes "
            "MakeFletcherDefaultReaderQos() exactly";
 }
 
-// DEBT-1's SILENCE, and the guard that actually catches M12.
-//
-// DEBT-1 asked for one forcing-table row: an anchor-only, non-empty document must resolve to
-// **Fletcher's** built-in QoS, not Fast DDS's, because that is the shape of every document whose
-// only purpose is to carry a `fletcher.*` property, and a provider that fell back to
-// `DATAWRITER_QOS_DEFAULT` whenever the document was non-empty would lose rows in production.
-// That row is in the forcing test and it stays.
-//
-// It is not sufficient, and this is MEASURED rather than argued. Fast DDS's own writer defaults
-// are durability TRANSIENT_LOCAL and reliability RELIABLE — bit-identical to Fletcher's built-in
-// on **both** policies DDS discovery carries (`DataWriterQos()`'s durability is TRANSIENT_LOCAL,
-// not the DDS spec's VOLATILE, and the XML path agrees). So the M12 mutation — return Fast DDS's
-// default instead of Fletcher's built-in on the not-found branch — was verified to leave the
-// WHOLE SUITE green with only the designed row in place (measured when the suite was 80 ctest
-// entries / 79 gtest cases; review 4b then measured M12 against the suite AS LANDED, where it
-// reddens four tests, this one among them). The two policies that DO differ are `history`
-// (Fletcher KEEP_ALL vs Fast DDS KEEP_LAST(1) — the one that stops a RELIABLE writer overwriting
-// unacked samples, i.e. silent row loss) and `resource_limits` (100 vs 5000 — 5000 overflows the
-// data-sharing segment's 32-bit size and drops the endpoint back to the transport), and both are
-// `fastcdr::optional` in the builtin topic data and are simply not on the wire.
-//
-// Hence: in-process, WHOLE-STRUCT, on the production ladder, for both roles. This is the same
-// conclusion BLOCKER B3 reached about the transcription guard, applied to the other direction.
-TEST(FastDdsConfig, AnAnchorOnlyDocumentResolvesToFletchersBuiltIn) {
+// DEBT-1's RENAME (owner ruling 2026-09-14) — an anchor-only, non-empty document used to resolve
+// to Fletcher's built-in QoS; the built-in floor under a non-empty document is gone now
+// (design rule 2), so it resolves to FAST DDS's OWN default instead, because this document
+// registers no `is_default_profile="true"` profile for either role. In-process, WHOLE-STRUCT, on
+// the production ladder: `history` and `resource_limits` are not on the wire, and they are
+// exactly where Fletcher's built-in and Fast DDS's own default disagree, so durability and
+// reliability alone could not tell a leftover Fletcher-fallback from the correct answer.
+TEST(FastDdsConfig, AnAnchorOnlyDocumentResolvesToFastDdsDefaults) {
+    const std::string document(kAnchorOnly);
+    {
+        std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+        internal::LoadDocumentOnce(document);
+    }
+
+    // Created AFTER the load: the Publisher's / Subscriber's default QoS is seeded from the
+    // registry at construction, and this anchor-only document registers no default profile for
+    // either role.
     XmlProbe probe(kDomainProbe);
     ASSERT_TRUE(probe.ok());
 
-    const std::string document(kAnchorOnly);
-
     const DataWriterQos writer =
-        internal::ResolveWriterQos(probe.publisher(), document, "anchoronly/topic");
-    EXPECT_TRUE(writer == internal::MakeFletcherDefaultWriterQos())
-        << "a non-empty document that names no writer profile did not fall back to Fletcher's "
-           "built-in writer profile — the not-found branch is returning something else, and "
-           "durability and reliability cannot see the difference because Fast DDS's writer "
-           "defaults happen to agree with Fletcher's on exactly those two";
+        internal::ResolveWriterQos(probe.publisher(), "anchoronly/topic", /*registry=*/true);
+    EXPECT_TRUE(writer == DataWriterQos())
+        << "a non-empty document that names no writer profile did not fall back to Fast DDS's own "
+           "default -- fletcher_writer / fletcher_reader are not special names any more, so "
+           "nothing here should still resolve to Fletcher's built-in";
 
     const DataReaderQos reader =
-        internal::ResolveReaderQos(probe.subscriber(), document, "anchoronly/topic");
-    EXPECT_TRUE(reader == internal::MakeFletcherDefaultReaderQos())
-        << "a non-empty document that names no reader profile did not fall back to "
-           "MakeFletcherDefaultReaderQos() — whose data_sharing().off() is what holds back the "
-           "measured receive-side row-loss defect";
+        internal::ResolveReaderQos(probe.subscriber(), "anchoronly/topic", /*registry=*/true);
+    EXPECT_TRUE(reader == DataReaderQos())
+        << "a non-empty document that names no reader profile did not fall back to Fast DDS's own "
+           "default";
 
-    // Not vacuous: Fletcher's built-in and Fast DDS's default must actually differ, or the two
-    // asserts above are satisfied by any implementation. They differ on history and on
+    // Not vacuous: Fletcher's built-in and Fast DDS's default actually differ, or a leftover
+    // Fletcher-fallback would pass this test by accident. They differ on history and on
     // resource_limits, and on nothing discovery can carry.
     ASSERT_FALSE(internal::MakeFletcherDefaultWriterQos() == DataWriterQos())
         << "Fletcher's built-in writer profile is now identical to Fast DDS's default, so this "
@@ -718,8 +895,12 @@ TEST(FastDdsConfig, MinimalProfileTakesFastDdsDefaultsNotFletchers) {
     ASSERT_EQ(internal::MakeFletcherDefaultWriterQos().history().kind, KEEP_ALL_HISTORY_QOS);
     ASSERT_EQ(DataWriterQos().history().kind, KEEP_LAST_HISTORY_QOS);
 
+    {
+        std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+        internal::LoadDocumentOnce(document);
+    }
     const DataWriterQos resolved =
-        internal::ResolveWriterQos(probe.publisher(), document, "minimal/topic");
+        internal::ResolveWriterQos(probe.publisher(), "fletcher_writer", /*registry=*/true);
 
     EXPECT_EQ(resolved.durability().kind, VOLATILE_DURABILITY_QOS) << "the profile was not applied";
     EXPECT_EQ(resolved.history().kind, KEEP_LAST_HISTORY_QOS)
@@ -728,30 +909,52 @@ TEST(FastDdsConfig, MinimalProfileTakesFastDdsDefaultsNotFletchers) {
     EXPECT_EQ(resolved.history().depth, DataWriterQos().history().depth);
     EXPECT_EQ(resolved.resource_limits().max_samples, DataWriterQos().resource_limits().max_samples)
         << "resource_limits came from Fletcher's built-in rather than from Fast DDS's default";
+}
 
-    // MEASURED, not assumed: "Fast DDS's default" means the default of the path the document
-    // actually travels, and the XML parser fills an RTPS-level `WriterQos` whose `durability`
-    // default is TRANSIENT_LOCAL — NOT `DataWriterQos()`'s VOLATILE. So a writer profile that
-    // omits durability announces TRANSIENT_LOCAL, which happens to coincide with Fletcher's
-    // built-in and therefore cannot distinguish the two answers to the merge question. That is
-    // exactly why C2-1's assert is anchored on `history` and `resource_limits` above, where the
-    // two genuinely differ. Pinned here so a Fast DDS upgrade that changed it is visible.
+// MEASURED, not assumed: "Fast DDS's default" means the default of the path the document
+// actually travels, and the XML parser fills an RTPS-level `WriterQos` whose `durability`
+// default is TRANSIENT_LOCAL — NOT `DataWriterQos()`'s VOLATILE. So a writer profile that omits
+// durability announces TRANSIENT_LOCAL, which happens to coincide with Fletcher's built-in and
+// therefore cannot distinguish the two answers to the merge question. That is exactly why C2-1's
+// assert (above) is anchored on `history` and `resource_limits`, where the two genuinely differ.
+// Pinned here so a Fast DDS upgrade that changed it is visible. Own TEST/process: this document's
+// "fletcher_writer" profile differs from the one above, and Fast DDS profile names are
+// process-wide.
+TEST(FastDdsConfig, AWriterProfileSilentOnDurabilityGetsFastDdsTransientLocal) {
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
+
     const std::string silent_document = Document(
         WriterProfile("fletcher_writer", "<reliability><kind>BEST_EFFORT</kind></reliability>"));
+    {
+        std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+        internal::LoadDocumentOnce(silent_document);
+    }
     const DataWriterQos silent_on_durability =
-        internal::ResolveWriterQos(probe.publisher(), silent_document, "minimal/topic");
+        internal::ResolveWriterQos(probe.publisher(), "fletcher_writer", /*registry=*/true);
     EXPECT_EQ(silent_on_durability.durability().kind, TRANSIENT_LOCAL_DURABILITY_QOS)
-        << "the XML path's writer durability default moved; the forcing test's row-4 expectation "
-           "and this comment both describe it and must move with it";
+        << "the XML path's writer durability default moved; "
+           "AFletcherWriterProfileDecidesReliability's expectation and this comment both describe "
+           "it and must move with it";
+}
 
-    // The same rule on the reader, and here it is the data-sharing line that moves: Fletcher's
-    // built-in turns receive-side data-sharing OFF, Fast DDS's default is AUTO. A supplied reader
-    // profile owns that decision (handled residue H2 — a Fletcher floor would mean the document
-    // does not really configure QoS, and the PDA-ABI-7 defect hunt needs it on).
+// The same rule on the reader, and here it is the data-sharing line that moves: Fletcher's
+// built-in turns receive-side data-sharing OFF, Fast DDS's default is AUTO. A supplied reader
+// profile owns that decision (handled residue H2 — a Fletcher floor would mean the document does
+// not really configure QoS, and the PDA-ABI-7 defect hunt needs it on). Own TEST/process: a
+// distinct document from the two writer-side TESTs above.
+TEST(FastDdsConfig, AMinimalReaderProfileTakesFastDdsDefaultsNotFletchers) {
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
+
     const std::string reader_document = Document(
         ReaderProfile("fletcher_reader", "<durability><kind>VOLATILE</kind></durability>"));
+    {
+        std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+        internal::LoadDocumentOnce(reader_document);
+    }
     const DataReaderQos reader_resolved =
-        internal::ResolveReaderQos(probe.subscriber(), reader_document, "minimal/topic");
+        internal::ResolveReaderQos(probe.subscriber(), "fletcher_reader", /*registry=*/true);
     ASSERT_EQ(internal::MakeFletcherDefaultReaderQos().data_sharing().kind(),
               eprosima::fastdds::dds::OFF);
     EXPECT_EQ(reader_resolved.history().kind, KEEP_LAST_HISTORY_QOS);
@@ -780,18 +983,18 @@ TEST(FastDdsConfig, ForeignPropertiesSurviveTheStrip) {
     EXPECT_EQ(names, (std::vector<std::string>{"dds.sec.auth.plugin", "fletcherish.but.not.ours"}));
 }
 
-// 4a F5 — a correctly spelled `fletcher.*` property in the WRONG PROFILE is refused, not inert.
-//
-// The two settings are provider-wide and are read from the anchor and nowhere else, so the same
-// key inside a `<data_writer>` or `<data_reader>` profile does nothing at all. That is the failure
-// a MISSPELLED name is already refused for ("a typo'd `fletcher.loanpublish` must not be inert"),
-// and it was reachable: an operator writing a per-topic writer profile is the likeliest person to
-// put a Fletcher key in it. Unlike the inert-per-topic-PROFILE-NAME limit, this one is NOT a
-// substrate limit — `Data{Writer,Reader}Qos::properties()` carries it — so it is refused.
-//
-// The other placement, `<propertiesPolicy>` inside `<qos>`, is rejected by Fast DDS's own parser,
-// which makes the whole document unparseable and takes the existing malformed-document refusal.
-// The last row here pins that, so "refused" covers both placements someone might try.
+// Pins the fix for the Fast DDS 3.4.0 teardown hang: `~StatefulReader` clears `is_alive_` before
+// `DataSharingListener::stop()`, and `DataSharingListener::process_new_data` spins on a refused
+// payload without checking `is_running_`. Reproduced by
+// `ConflictingCrossProviderSchemaIsLoggedNotSwallowed` at roughly 1 in 2 isolated runs before the
+// fix. No DDS entities needed: the QoS is data, not discovery.
+TEST(FastDdsConfig, TheSchemaChannelDeclinesDataSharing) {
+    EXPECT_EQ(internal::MakeSchemaChannelWriterQos().data_sharing().kind(),
+              eprosima::fastdds::dds::OFF);
+    EXPECT_EQ(internal::MakeSchemaChannelReaderQos().data_sharing().kind(),
+              eprosima::fastdds::dds::OFF);
+}
+
 namespace {
 
 std::string EndpointProperty(const std::string& name, const std::string& value) {
@@ -804,63 +1007,13 @@ std::string EndpointProperty(const std::string& name, const std::string& value) 
       </propertiesPolicy>)";
 }
 
-// A `<data_writer>`/`<data_reader>` profile carrying `body` directly (NOT inside <qos>).
-std::string EndpointProfileWithBody(const std::string& element, const std::string& profile_name,
-                                    const std::string& body) {
-    return "    <" + element + " profile_name=\"" + profile_name + "\">" + body + "\n    </" +
-           element + ">";
-}
-
 }  // namespace
 
-TEST(FastDdsConfig, AFletcherPropertyInAnEndpointProfileIsRefused) {
-    // The ROLE profiles are refused at CONSTRUCTION, before any endpoint exists.
-    for (const char* element : {"data_writer", "data_reader"}) {
-        const std::string profile =
-            std::string("fletcher_") +
-            (std::strcmp(element, "data_writer") == 0 ? "writer" : "reader");
-        ProviderConfig config;
-        config.domain_id = kDomainProbe;
-        config.document = Document(EndpointProfileWithBody(
-            element, profile, EndpointProperty("fletcher.loan_publish", "true")));
-        try {
-            FastDDSPubSubProvider provider(config);
-            ADD_FAILURE() << "a fletcher.* property inside the " << element
-                          << " profile was accepted, so it is silently inert";
-        } catch (const PubSubError& e) {
-            const std::string message = e.what();
-            EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << message;
-            EXPECT_NE(message.find("fletcher.loan_publish"), std::string::npos) << message;
-            EXPECT_NE(message.find(element), std::string::npos) << message;
-            EXPECT_NE(message.find(profile), std::string::npos) << message;
-        }
-    }
-
-    // A PER-TOPIC profile can only be checked when its topic's endpoint is resolved — the document
-    // cannot be enumerated, only asked about a name — which for a writer is the first publish
-    // (the DataWriter is created lazily). It is refused there, so no DataWriter is ever created
-    // from a profile carrying a setting nobody reads.
-    ProviderConfig per_topic;
-    per_topic.domain_id = kDomainProbe;
-    per_topic.document = Document(EndpointProfileWithBody(
-        "data_writer", "misplaced/topic", EndpointProperty("fletcher.max_schema_bytes", "4096")));
-    FastDDSPubSubProvider provider(per_topic);
-    provider.CreateTopic({"misplaced", "topic"}, MakeSchema());
-    try {
-        provider.Publish({"misplaced", "topic"}, MakeEncoder(1));
-        ADD_FAILURE() << "a fletcher.* property in a per-topic writer profile was accepted";
-    } catch (const PubSubError& e) {
-        const std::string message = e.what();
-        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << message;
-        EXPECT_NE(message.find("fletcher.max_schema_bytes"), std::string::npos) << message;
-        EXPECT_NE(message.find("misplaced/topic"), std::string::npos) << message;
-    }
-}
-
-// The other placement someone might try, `<propertiesPolicy>` inside a `<data_writer>`'s `<qos>`,
-// is rejected by Fast DDS's own parser — and P6 holds for it: the failure propagates to the
-// anchor lookup, so the whole document is refused at construction. Between this row and the three
-// above, a `fletcher.*` property has nowhere left to sit inertly.
+// Design rule 2: a `fletcher.*` property outside the anchor is simply not read any more — no
+// guard, because there is nothing left for it to defeat (the built-in floor a misplaced-but-inert
+// property used to bypass is gone). The one placement that is STILL refused is this one, and for
+// an unrelated reason: `<propertiesPolicy>` inside a `<data_writer>`'s `<qos>` is rejected by Fast
+// DDS's own parser, so the whole document fails to load — a parse failure, not a semantic refusal.
 TEST(FastDdsConfig, AFletcherPropertyInsideAnEndpointQosIsRefusedAsMalformed) {
     ProviderConfig config;
     config.domain_id = kDomainProbe;
@@ -869,8 +1022,8 @@ TEST(FastDdsConfig, AFletcherPropertyInsideAnEndpointQosIsRefusedAsMalformed) {
     try {
         FastDDSPubSubProvider provider(config);
         ADD_FAILURE() << "a <propertiesPolicy> inside <qos> was accepted; the writer profile is "
-                         "unparseable, so this document would run on Fletcher's built-in with "
-                         "nothing said";
+                         "unparseable, so a document shaped like this would silently register "
+                         "nothing for it";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
         EXPECT_NE(std::string(e.what()).find("not a Fast DDS XML profiles document"),
@@ -879,118 +1032,39 @@ TEST(FastDdsConfig, AFletcherPropertyInsideAnEndpointQosIsRefusedAsMalformed) {
     }
 }
 
-// The strip must not over-reach on an endpoint profile either: a FOREIGN property there is the
-// operator's business (Fast DDS has its own endpoint properties) and must be left alone. Without
-// this row, "refuse anything with a property" would pass the test above.
-TEST(FastDdsConfig, AForeignPropertyInAnEndpointProfileIsAccepted) {
-    XmlProbe probe(kDomainProbe);
-    ASSERT_TRUE(probe.ok());
-
-    const std::string document = Document(EndpointProfileWithBody(
-        "data_writer", "fletcher_writer", EndpointProperty("fletcherish.but.not.ours", "kept")));
-
-    DataWriterQos resolved;
-    ASSERT_NO_THROW(
-        { resolved = internal::ResolveWriterQos(probe.publisher(), document, "foreign/topic"); });
-    ASSERT_EQ(resolved.properties().properties().size(), 1u);
-    EXPECT_EQ(resolved.properties().properties()[0].name(), "fletcherish.but.not.ours");
-}
-
 // 4a F4 — the READER's per-topic lookup, which nothing asserted:
 // `PerTopicProfileOverridesTheDefault` is writer-only and `ReaderProfileConfiguresTheReader`
-// supplies only `fletcher_reader`, so deleting the reader ladder's topic-name lookup reddened
+// supplies only `default_reader`, so deleting the reader ladder's topic-name lookup reddened
 // nothing. In-process on the production ladder, because the interesting half is the NEGATIVE one:
 // the same document must NOT resolve that profile for a different topic.
 TEST(FastDdsConfig, ReaderPerTopicProfileOverridesTheDefault) {
-    XmlProbe probe(kDomainProbe);
-    ASSERT_TRUE(probe.ok());
-
     const std::string document =
         Document(ReaderProfile("readertopic/special",
                                "<durability><kind>VOLATILE</kind></durability>", kTenSlots) +
                  "\n" +
-                 ReaderProfile("fletcher_reader",
-                               "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots));
+                 ReaderProfile("default_reader",
+                               "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots,
+                               /*is_default=*/true));
+    {
+        std::lock_guard<std::mutex> lock(internal::profile_registry_mutex);
+        internal::LoadDocumentOnce(document);
+    }
+
+    // Created AFTER the load: the Subscriber's default reader QoS is seeded from the registry's
+    // is_default_profile reader profile at construction, which is what "ordinary" (no per-topic
+    // match) below resolves to.
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
 
     const DataReaderQos special =
-        internal::ResolveReaderQos(probe.subscriber(), document, "readertopic/special");
+        internal::ResolveReaderQos(probe.subscriber(), "readertopic/special", /*registry=*/true);
     EXPECT_EQ(special.durability().kind, VOLATILE_DURABILITY_QOS)
         << "the reader profile named after the topic did not win";
 
     const DataReaderQos ordinary =
-        internal::ResolveReaderQos(probe.subscriber(), document, "readertopic/ordinary");
+        internal::ResolveReaderQos(probe.subscriber(), "readertopic/ordinary", /*registry=*/true);
     EXPECT_EQ(ordinary.durability().kind, TRANSIENT_LOCAL_DURABILITY_QOS)
         << "a per-topic reader profile resolved for a topic it is not named after";
-}
-
-// 4b S3 — the ladder no longer reports an expected miss as an ERROR.
-//
-// `get_*_qos_from_xml` logs a miss at ERROR level, and the ladder used a miss as ordinary control
-// flow: the whole suite emitted 43 `[XMLPARSER Error] ... profile not found` lines, 4 of them per
-// topic on the most common document there is (an anchor plus a `fletcher.*` property). It now
-// emits none, because a lookup that provably cannot succeed is not made. What is asserted here is
-// the PROOF the skip rests on, since a wrong skip would silently change a QoS:
-//
-//   * a profile named `N` occurs literally as `profile_name="N"` — UNLESS the name reached the
-//     parser through one of the TWO channels that let an attribute value differ from the text
-//     between its quotes: an entity or character reference, which needs an `&` in the document,
-//     or whitespace normalisation, which needs whitespace in the requested name (review 4c F9);
-//   * so a document with no `&`, asked for a name with no whitespace, cannot name a profile that
-//     is not a substring of it;
-//   * and either precondition takes the lookup, unreasoned.
-//
-// The last two rows are the ones that matter: each channel's precondition sends the lookup to
-// Fast DDS rather than skipping it. Deleting either hatch reddens one of them.
-TEST(FastDdsConfig, ALookupThatCannotSucceedIsNotAttempted) {
-    XmlProbe probe(kDomainProbe);
-    ASSERT_TRUE(probe.ok());
-
-    const std::string anchor_only(kAnchorOnly);
-    EXPECT_FALSE(internal::DocumentMayName(anchor_only, internal::kWriterProfile));
-    EXPECT_FALSE(internal::DocumentMayDefineWriterProfile(anchor_only));
-    EXPECT_FALSE(internal::DocumentMayDefineReaderProfile(anchor_only));
-
-    const std::string writer_only = Document(
-        WriterProfile("fletcher_writer", "<durability><kind>VOLATILE</kind></durability>"));
-    EXPECT_TRUE(internal::DocumentMayDefineWriterProfile(writer_only));
-    EXPECT_TRUE(internal::DocumentMayName(writer_only, internal::kWriterProfile));
-    EXPECT_FALSE(internal::DocumentMayDefineReaderProfile(writer_only))
-        << "a writer-only document was probed for reader profiles";
-    EXPECT_FALSE(internal::DocumentMayName(writer_only, "some/other/topic"));
-
-    // The escape hatch, and the reason the rule is a proof rather than a guess: a topic name
-    // holding a character XML must escape does NOT occur literally, so the substring test says
-    // "no" — and the `&` test overrides it, the lookup happens, and the profile still wins.
-    const std::string escaped = Document(WriterProfile(
-        "a&amp;b/topic", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
-    EXPECT_FALSE(escaped.find("a&b/topic") != std::string::npos)
-        << "this row is vacuous unless the name really is absent as a literal";
-    EXPECT_TRUE(internal::DocumentMayName(escaped, "a&b/topic"));
-    const DataWriterQos resolved =
-        internal::ResolveWriterQos(probe.publisher(), escaped, "a&b/topic");
-    EXPECT_EQ(resolved.durability().kind, VOLATILE_DURABILITY_QOS)
-        << "a per-topic profile whose name is XML-escaped in the document stopped resolving - the "
-           "lookup skip is no longer sound";
-
-    // The second channel (review 4c F9): XML's attribute-value rules can yield a literal tab/CR/LF
-    // inside the quotes as a space, and a CR/CRLF line end as an LF, so a profile the operator
-    // wrote as `profile_name="a<LF>b/topic"` can be NAMED `a b/topic` — which is not a literal
-    // substring of the document. The substring test alone would then skip a lookup that CAN
-    // succeed, silently changing a QoS. The precondition is whitespace in the REQUESTED name, not
-    // in the document: an ordinary document is full of LFs between elements, where they are not
-    // attribute values and normalise nothing, so scanning the document would skip no lookup at
-    // all. Drop the `find_first_of(" \t\r\n")` hatch and this row goes red.
-    //
-    // MEASURED on fast-dds/3.4.0: resolving `a b/topic` against this document MISSES, so this
-    // parser does not apply attribute-value normalisation today — the channel is latent, not
-    // live. That is not asserted here: pinning a parser behaviour Fletcher must not depend on
-    // either way is exactly what the hatch exists to avoid.
-    const std::string normalised = Document(
-        WriterProfile("a\nb/topic", "<durability><kind>VOLATILE</kind></durability>", kTenSlots));
-    EXPECT_EQ(normalised.find("a b/topic"), std::string::npos)
-        << "this row is vacuous unless the name really is absent as a literal";
-    EXPECT_TRUE(internal::DocumentMayName(normalised, "a b/topic"))
-        << "a name XML could have normalised out of the document's whitespace was not looked up";
 }
 
 // ===========================================================================
@@ -1001,11 +1075,19 @@ TEST(FastDdsConfig, ALookupThatCannotSucceedIsNotAttempted) {
 // Each row asserts the STATUS and the quoted text, so a refusal for the wrong reason is not a
 // pass.
 //
-// P6 — "a document containing any malformed profile fails EVERY `get_*_from_xml` call on it" — is
-// measured by the fourth row: a valid anchor plus a syntactically broken `fletcher_writer`. That
-// row must PASS against the correct implementation. If it FAILS, the document was accepted, P6 is
-// false, and the `fletcher_participant` anchor is not sufficient to catch partial malformation —
-// STOP AND ASK, and do not delete or weaken the row.
+// One document per TEST, so this table keeps only the rows refused at PARSE/LOAD time, before
+// anything is registered (truncated XML, the XRCE paste, and P6's syntactically broken
+// fletcher_writer — the anchor is well-formed but the whole document still fails to parse, so
+// nothing from it reaches the registry either), plus, LAST, the no-anchor row — the only one that
+// registers a profile ("fletcher_writer"), so nothing after it could collide. The typo'd-property
+// and unparseable-value rows, and the <domainId> row, moved to their own TESTs below: each of
+// those documents DOES register the anchor, so two of them together in one process would collide.
+//
+// P6 — "a document containing any malformed profile fails the WHOLE registry load" — is measured
+// by the third row: a valid anchor plus a syntactically broken `fletcher_writer`. That row must
+// PASS against the correct implementation. If it FAILS, the document was accepted, P6 is false,
+// and the `fletcher_participant` anchor is not sufficient to catch partial malformation — STOP AND
+// ASK, and do not delete or weaken the row.
 TEST(FastDdsConfig, MalformedProfileDocumentIsRefused) {
     struct Row {
         const char* what;
@@ -1019,6 +1101,11 @@ TEST(FastDdsConfig, MalformedProfileDocumentIsRefused) {
          "not a Fast DDS XML profiles document"},
         {"an XRCE key=value document pasted into the wrong field", "schema_carriage=carried", 0,
          "not a Fast DDS XML profiles document"},
+        // P6: the anchor itself is well-formed; only fletcher_writer is broken.
+        {"a valid anchor plus a syntactically broken fletcher_writer (P6)",
+         Document(WriterProfile("fletcher_writer", "<durabilty><kind>VOLATILE</durabilty></kind>")),
+         0, "not a Fast DDS XML profiles document"},
+        // LAST: the only row that registers anything (just "fletcher_writer" — no anchor).
         {"a profiles document with no fletcher_participant anchor",
          R"(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -1029,18 +1116,6 @@ TEST(FastDdsConfig, MalformedProfileDocumentIsRefused) {
   </profiles>
 </dds>)",
          0, "fletcher_participant"},
-        // P6: the anchor itself is well-formed; only fletcher_writer is broken.
-        {"a valid anchor plus a syntactically broken fletcher_writer (P6)",
-         Document(WriterProfile("fletcher_writer", "<durabilty><kind>VOLATILE</durabilty></kind>")),
-         0, "not a Fast DDS XML profiles document"},
-        {"a typo'd fletcher property is not inert",
-         Document("", AnchorProperty("fletcher.loanpublish", "true")), 0, "fletcher.loanpublish"},
-        {"an unparseable fletcher.loan_publish value",
-         Document("", AnchorProperty("fletcher.loan_publish", "yes")), 0, "yes"},
-        {"an unparseable fletcher.max_schema_bytes value",
-         Document("", AnchorProperty("fletcher.max_schema_bytes", "lots")), 0, "lots"},
-        {"an anchor <domainId> disagreeing with the deployment's domain",
-         Document("", "<domainId>3</domainId>"), 7, "3"},
     };
 
     for (const Row& row : rows) {
@@ -1056,6 +1131,63 @@ TEST(FastDdsConfig, MalformedProfileDocumentIsRefused) {
             EXPECT_NE(std::string(e.what()).find(row.quoted), std::string::npos)
                 << "refused, but not for this reason: " << e.what();
         }
+    }
+}
+
+// Moved out of the table above: this document registers the anchor (unlike the parse-failure
+// rows), so it needs its own process.
+TEST(FastDdsConfig, ATypodFletcherPropertyIsRefused) {
+    ProviderConfig config;
+    config.document = Document("", AnchorProperty("fletcher.loanpublish", "true"));
+    try {
+        FastDDSPubSubProvider provider(config);
+        ADD_FAILURE() << "the document was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("fletcher.loanpublish"), std::string::npos)
+            << "refused, but not for this reason: " << e.what();
+    }
+}
+
+TEST(FastDdsConfig, AnUnparseableLoanPublishValueIsRefused) {
+    ProviderConfig config;
+    config.document = Document("", AnchorProperty("fletcher.loan_publish", "yes"));
+    try {
+        FastDDSPubSubProvider provider(config);
+        ADD_FAILURE() << "the document was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("yes"), std::string::npos)
+            << "refused, but not for this reason: " << e.what();
+    }
+}
+
+TEST(FastDdsConfig, AnUnparseableSchemaBoundValueIsRefused) {
+    ProviderConfig config;
+    config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "lots"));
+    try {
+        FastDDSPubSubProvider provider(config);
+        ADD_FAILURE() << "the document was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("lots"), std::string::npos)
+            << "refused, but not for this reason: " << e.what();
+    }
+}
+
+// The schema channel's TopicDataType is FletcherSamplePubSubType too, under a different registered
+// name, so its bound has to satisfy the same rule max_payload_bytes does: a value that parses fine
+// as an integer but is not a multiple of 4 is refused just the same.
+TEST(FastDdsConfig, AnUnusableSchemaBoundIsRefused) {
+    ProviderConfig config;
+    config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "10"));
+    try {
+        FastDDSPubSubProvider provider(config);
+        ADD_FAILURE() << "the document was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("10"), std::string::npos)
+            << "refused, but not for this reason: " << e.what();
     }
 }
 
@@ -1113,79 +1245,75 @@ TEST(FastDdsConfig, AnUnusablePayloadBoundIsRefusedAsInvalidArgument) {
 // The two settings a QoS profile cannot express
 // ===========================================================================
 
-// `fletcher.loan_publish` decides which publish path runs, and the two paths differ observably:
-// with a loan, a row past the bound THROWS out of Publish; without one, the overflow happens
-// inside serialize(), which reports it to Fast DDS and drops the sample. Hard-code either path
-// and one of the two rows goes red.
-TEST(FastDdsConfig, LoanPublishComesFromTheDocument) {
+// `fletcher.loan_publish=true` selects the loaned publish path: a row past the bound THROWS out
+// of Publish. Own TEST/process: this document and the "absent" one below both define
+// "fletcher_writer" with different anchor properties, so they cannot share a process (Fast DDS
+// profile names are process-wide).
+TEST(FastDdsConfig, LoanPublishTrueUsesTheLoanedPublishPath) {
     const std::string writer = WriterProfile(
         "fletcher_writer", "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots);
-
     ProviderConfig loaned;
     loaned.domain_id = kDomainLoan;
     loaned.document = Document(writer, AnchorProperty("fletcher.loan_publish", "true"));
 
+    FastDDSPubSubProvider provider(loaned);
+    provider.CreateTopic({"loancfg", "on"}, MakeSchema());
+    try {
+        provider.Publish({"loancfg", "on"}, OversizedRow(provider.PayloadBytes()));
+        ADD_FAILURE() << "fletcher.loan_publish=true did not take: an oversized row was "
+                         "accepted, which only the serialising path does";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge);
+    }
+}
+
+// The absence of `fletcher.loan_publish` selects the serialising path: the same oversized row is
+// accepted (the overflow happens inside serialize(), reported to Fast DDS, the sample dropped).
+TEST(FastDdsConfig, LoanPublishAbsentUsesTheSerialisingPublishPath) {
+    const std::string writer = WriterProfile(
+        "fletcher_writer", "<durability><kind>TRANSIENT_LOCAL</kind></durability>", kTenSlots);
     ProviderConfig serialising;
     serialising.domain_id = kDomainLoan;
     serialising.document = Document(writer);
 
-    auto oversized = [](uint32_t bound) {
-        return [bound](WriteBuffer& buf) {
-            std::vector<uint8_t> blob(bound + 16, 0x5A);
-            buf.Append(blob.data(), blob.size());
-        };
-    };
-
-    {
-        FastDDSPubSubProvider provider(loaned);
-        provider.CreateTopic({"loancfg", "on"}, MakeSchema());
-        try {
-            provider.Publish({"loancfg", "on"}, oversized(provider.PayloadBytes()));
-            ADD_FAILURE() << "fletcher.loan_publish=true did not take: an oversized row was "
-                             "accepted, which only the serialising path does";
-        } catch (const PubSubError& e) {
-            EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge);
-        }
-    }
-    {
-        FastDDSPubSubProvider provider(serialising);
-        provider.CreateTopic({"loancfg", "off"}, MakeSchema());
-        EXPECT_NO_THROW(provider.Publish({"loancfg", "off"}, oversized(provider.PayloadBytes())))
-            << "the publish path loaned although no fletcher.loan_publish property was given";
-    }
+    FastDDSPubSubProvider provider(serialising);
+    provider.CreateTopic({"loancfg", "off"}, MakeSchema());
+    EXPECT_NO_THROW(provider.Publish({"loancfg", "off"}, OversizedRow(provider.PayloadBytes())))
+        << "the publish path loaned although no fletcher.loan_publish property was given";
 }
 
-// `fletcher.max_schema_bytes` bounds the internal schema channel. With the property set below any
-// real Arrow IPC schema the announcement is rejected on the channel; with it absent the same
-// schema is delivered. Ignore the property and the first row goes red.
-TEST(FastDdsConfig, SchemaBoundComesFromTheDocument) {
-    {
-        ProviderConfig config;
-        config.domain_id = kDomainSchemaBound;
-        config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "8"));
-        FastDDSPubSubProvider provider(config);
-        EXPECT_THROW(provider.CreateTopic({"schemabound", "toobig"}, MakeSchema()), PubSubError);
-    }
-    {
-        ProviderConfig config;
-        config.domain_id = kDomainSchemaBound;
-        config.document = std::string(kAnchorOnly);
-        FastDDSPubSubProvider pub(config);
-        FastDDSPubSubProvider sub(config);
-        pub.CreateTopic({"schemabound", "fits"}, MakeSchema());
+// `fletcher.max_schema_bytes` bounds the internal schema channel: a real Arrow IPC schema is
+// rejected on the channel when the property sets the bound below it. Own TEST/process: this
+// document and the anchor-only one below both define "fletcher_participant" with different
+// content (one carries the property, the other does not), so they cannot share a process.
+TEST(FastDdsConfig, ASchemaBoundBelowTheSchemaIsRefused) {
+    ProviderConfig config;
+    config.domain_id = kDomainSchemaBound;
+    config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "16"));
+    FastDDSPubSubProvider provider(config);
+    EXPECT_THROW(provider.CreateTopic({"schemabound", "toobig"}, MakeSchema()), PubSubError);
+}
 
-        std::atomic<int32_t> received{-1};
-        SubscriptionResult result = sub.Subscribe(
-            {"schemabound", "fits"},
-            [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-                if (len >= 5) received.store(DecodeRow(data));
-            });
-        SharedSchema schema;
-        ASSERT_EQ(result.schema.Wait(std::chrono::seconds(10), &schema), PubSubStatus::kOk)
-            << result.schema.Message();
-        pub.Publish({"schemabound", "fits"}, MakeEncoder(11));
-        EXPECT_EQ(AwaitRow(received), 11);
-    }
+// With the property absent, the same schema delivers end to end.
+TEST(FastDdsConfig, ASchemaBoundAboveTheSchemaDelivers) {
+    ProviderConfig config;
+    config.domain_id = kDomainSchemaBound;
+    config.document = std::string(kAnchorOnly);
+    FastDDSPubSubProvider pub(config);
+    FastDDSPubSubProvider sub(config);
+    pub.CreateTopic({"schemabound", "fits"}, MakeSchema());
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub.Subscribe(
+        {"schemabound", "fits"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+    SharedSchema schema;
+    ASSERT_EQ(result.schema.Wait(std::chrono::seconds(10), &schema), PubSubStatus::kOk)
+        << result.schema.Message();
+    pub.Publish({"schemabound", "fits"}, MakeEncoder(11));
+    EXPECT_EQ(AwaitRow(received), 11);
 }
 
 // A throw invites a retry, so a failed schema announcement has to leave nothing behind for that
@@ -1194,7 +1322,7 @@ TEST(FastDdsConfig, SchemaBoundComesFromTheDocument) {
 TEST(FastDdsConfig, AFailedSchemaAnnouncementCanBeRetried) {
     ProviderConfig config;
     config.domain_id = kDomainSchemaBound;
-    config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "8"));
+    config.document = Document("", AnchorProperty("fletcher.max_schema_bytes", "16"));
     FastDDSPubSubProvider provider(config);
 
     auto announce = [&provider] {
@@ -1208,4 +1336,26 @@ TEST(FastDdsConfig, AFailedSchemaAnnouncementCanBeRetried) {
 
     EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
     EXPECT_NE(announce().find("failed to announce the schema"), std::string::npos);
+}
+
+// ===========================================================================
+// The Publish contract: CreateTopic first, always
+// ===========================================================================
+
+// The DataWriter is created in CreateTopic now, not lazily on first Publish (design item 3), so a
+// topic this provider only Subscribed to -- never CreateTopic'd -- has no writer to publish
+// through. Audited against both test files: every existing Publish call is already preceded by a
+// CreateTopic call on the same provider and topic, so this is the one new TEST that pins the
+// contract rather than a fix to an existing one.
+TEST(FastDdsConfig, PublishOnASubscribedTopicWithoutCreateTopicIsRefused) {
+    FastDDSPubSubProvider provider(ProviderConfig{});
+    static_cast<void>(
+        provider.Subscribe({"subscribedonly", "topic"},
+                           [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    try {
+        provider.Publish({"subscribedonly", "topic"}, MakeEncoder(1));
+        ADD_FAILURE() << "Publish on a topic only Subscribed to, never CreateTopic'd, was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kTopicNotDeclared) << e.what();
+    }
 }

@@ -69,6 +69,16 @@ DataReaderQos MakeFletcherDefaultReaderQos() {
     return qos;
 }
 
+// The schema channel declines data-sharing on both ends. Its type is the same plain
+// FletcherSamplePubSubType the data channel uses (registered as SchemaBytesPubSubType), so this is
+// not a plainness question — it is a one-sample control channel. OFF removes a DataSharingListener
+// thread per schema reader and a shared-memory segment per schema writer, and it sidesteps a Fast
+// DDS 3.4.0 teardown hang: StatefulReader::~StatefulReader clears is_alive_ before
+// DataSharingListener::stop(), and DataSharingListener::process_new_data only advances its pool
+// cursor when process_data_msg succeeds and never checks is_running_, so a payload still pending at
+// teardown spins that thread forever and stop()'s join never returns. Reproduced by
+// ConflictingCrossProviderSchemaIsLoggedNotSwallowed.
+//
 // One retained sample for the writer's life, so the pool is pinned to one slot; the defaults
 // would reserve 100 of a bounded type per schema endpoint.
 DataWriterQos MakeSchemaChannelWriterQos() {
@@ -82,6 +92,7 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
+    qos.data_sharing().off();
     return qos;
 }
 
@@ -96,6 +107,7 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
+    qos.data_sharing().off();
     return qos;
 }
 

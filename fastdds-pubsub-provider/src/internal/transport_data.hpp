@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The sample types the provider hands to Fast DDS: RawBytes for the companion schema channel, and
-// one per direction for the data channel.
+// The sample types the provider hands to Fast DDS: one per direction for the data channel, and the
+// same PublishData/ReceivedData pair for the companion __schema channel (it rides the same plain
+// sample layout as a row with no attachments — see fletcher_sample_pub_sub_type.hpp).
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 
@@ -15,10 +16,6 @@
 
 namespace fletcher {
 namespace internal {
-
-struct RawBytes {
-    std::vector<uint8_t> data;
-};
 
 // What serialize() reads — the encoder writes row bytes directly into the DDS payload buffer via
 // FixedWriteBuffer. Both members point at the caller's: serialize() runs synchronously inside

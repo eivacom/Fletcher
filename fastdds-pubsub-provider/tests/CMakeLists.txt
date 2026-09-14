@@ -30,6 +30,13 @@ target_link_libraries(fastdds_pubsub_tests PRIVATE
     fastdds)
 
 include(GoogleTest)
+# Fast DDS's profile registry is process-wide and keeps a profile for the life of the process
+# (src/internal/profile_document.hpp), so the FastDdsConfig suite is valid only one TEST() per
+# process. `gtest_discover_tests` itself is what makes that true: it registers each discovered
+# TEST() as its own CTest test, and ctest runs each test as its own process invocation of the
+# binary (--gtest_filter=<that test>). DISCOVERY_MODE PRE_TEST only moves WHEN discovery happens
+# (test time instead of build time); it does not change that one-test-one-process property.
+# Running this binary bare collides by design.
 gtest_discover_tests(fastdds_pubsub_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------

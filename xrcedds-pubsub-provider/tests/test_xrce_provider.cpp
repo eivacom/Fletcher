@@ -173,6 +173,37 @@ TEST(XrceProviderTest, EnvelopeWireFormatLayout) {
     EXPECT_EQ(attach_count, 0);
 }
 
+// The companion __schema channel rides the same envelope as the data channel, as a row with no
+// attachments (design owner-approved 2026-09-14): [ROW_LEN:4][ipc bytes][ATTACH_COUNT:4 = 0]. This
+// pins that shape independently of xrce_dds_pubsub_provider.cpp's own construction of it, the way
+// EnvelopeWireFormatLayout above pins the data channel's.
+TEST(XrceProviderTest, SchemaEnvelopeIsARowWithNoAttachments) {
+    const std::vector<uint8_t> ipc = {0x01, 0x02, 0x03, 0x04, 0x05};
+
+    Envelope schema_env;
+    schema_env.row = ipc;
+    auto wire = SerializeEnvelope(schema_env);
+
+    ASSERT_EQ(wire.size(), 4 + ipc.size() + 4);
+
+    uint32_t row_len;
+    std::memcpy(&row_len, wire.data(), 4);
+    EXPECT_EQ(row_len, ipc.size());
+
+    EXPECT_EQ(0, std::memcmp(wire.data() + 4, ipc.data(), ipc.size()));
+
+    uint32_t attach_count;
+    std::memcpy(&attach_count, wire.data() + 4 + ipc.size(), 4);
+    EXPECT_EQ(attach_count, 0u);
+
+    // And the round trip a receiver performs: DeserializeEnvelope recovers the IPC bytes as the
+    // row, with no attachments -- the check that tells an undecodable schema from an
+    // attachment-bearing (malformed, for this channel) one.
+    Envelope restored = DeserializeEnvelope(wire.data(), wire.size());
+    EXPECT_EQ(restored.row, ipc);
+    EXPECT_TRUE(restored.attachments.empty());
+}
+
 // ---------------------------------------------------------------------------
 // QoS struct defaults
 // ---------------------------------------------------------------------------

@@ -8,11 +8,11 @@
 // This file holds the provider itself: the pimpl, the participant/publisher/subscriber lifecycle,
 // and the four PubSubProvider methods. Everything they compose lives one per header in internal/:
 //
-//   profile_document.hpp      the provider's configuration document: the reserved profile names,
-//                             the resolution ladders, the anchor and the two `fletcher.*`
-//                             properties -- everything Fast DDS's own XML API is asked for
-//   qos_defaults.hpp          Fletcher's built-in profiles, the fallback when the document names
-//                             no profile for a role (never a floor UNDER one)
+//   profile_document.hpp      the provider's configuration document: the participant anchor, the
+//                             resolution against Fast DDS's own profile registry (or Fletcher's
+//                             built-in for an empty document) and the two `fletcher.*` properties
+//   qos_defaults.hpp          Fletcher's built-in profiles, the built-ins used everywhere when
+//                             the document is empty (never a floor UNDER a resolved profile)
 //   fletcher_sample.hpp       the plain sample Fast DDS lends at both ends: its layout, and what
 //                             makes it plain for a given bound
 //   transport_data.hpp        the sample types handed to Fast DDS on the serialising paths
@@ -20,9 +20,8 @@
 //   fletcher_sample_pub_sub_type.hpp
 //                             the data-channel TopicDataType over that layout — and what it
 //                             reports about itself, which is what Fast DDS gates data-sharing and
-//                             loans on
-//   raw_bytes_pub_sub_type.hpp
-//                             the companion __schema channel's TopicDataType
+//                             loans on; the companion __schema channel's TopicDataType is the same
+//                             class, under a different registered name
 //   data_reader_listener.hpp  the two read flows, DataReaderListener / LoanableDataReaderListener,
 //                             feeding OrderedDelivery — plus the reader statuses forwarded and the
 //                             predicate that decides which flow a reader QoS admits
@@ -71,7 +70,6 @@
 #include "internal/participant_listener.hpp"
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
-#include "internal/raw_bytes_pub_sub_type.hpp"
 #include "internal/sample_writer.hpp"
 #include "internal/schema_channel.hpp"
 #include "internal/transport_data.hpp"
@@ -118,7 +116,6 @@ struct FastDDSPubSubProvider::Impl {
         // The same schema as Arrow IPC bytes, kept from the announcement so a re-declaration is a
         // byte compare rather than another encode of what was already encoded once.
         std::vector<uint8_t> schema_ipc;
-        bool is_publisher = false;
     };
 
     // Non-owning and possibly null: the application's observer for endpoint and discovery status
@@ -137,13 +134,14 @@ struct FastDDSPubSubProvider::Impl {
     // concurrently instead of serialising on this mutex. See README "Measured decisions".
     std::shared_mutex mu;
     // Unordered because Publish looks a topic up by name on every sample and a hash beats the
-    // std::map this was: log-n string comparisons per publish bought nothing. Reference stability
-    // across Publish's lock drop is unchanged — rehashing invalidates iterators, never references
-    // or pointers to elements.
+    // std::map this was: log-n string comparisons per publish bought nothing.
     std::unordered_map<std::string, TopicState> topics;
 
     // The registered type and both loaned flows are built from this one number.
     uint32_t payload_bytes = 0;
+
+    // `fletcher.max_schema_bytes` (default in FletcherProperties), kept for diagnostics only.
+    uint32_t schema_bytes = 0;
 
     // Which publish flow Publish uses, fixed at construction from the document's
     // `fletcher.loan_publish` property. Stateless, so one instance serves every topic and every
@@ -159,23 +157,10 @@ struct FastDDSPubSubProvider::Impl {
     // this member is still alive when the last callback returns.
     internal::ParticipantListener participant_listener;
 
-    // The Fast DDS XML profiles document, copied at construction. Held as text and re-parsed per
-    // endpoint by Fast DDS itself: `get_*_qos_from_xml` registers nothing process-wide, which is
-    // what lets two instances in one process carry different documents under the SAME profile
-    // names (spec §4 clause 3). Empty means "Fletcher's built-in profile everywhere".
-    std::string document;
-
-    // Resolve writer QoS for a topic: the topic-named profile, then `fletcher_writer`, then
-    // Fletcher's built-in. By VALUE, not by reference: each call parses the document afresh, and
-    // a resolved profile is the whole QoS for that endpoint rather than an overlay on a cached
-    // one (internal/profile_document.hpp).
-    DataWriterQos ResolveWriterQos(const std::string& name) const {
-        return internal::ResolveWriterQos(*publisher, document, name);
-    }
-
-    DataReaderQos ResolveReaderQos(const std::string& name) const {
-        return internal::ResolveReaderQos(*subscriber, document, name);
-    }
+    // Non-empty document: the profile registry decides QoS, resolved per endpoint against it
+    // (internal/profile_document.hpp). Empty: Fletcher's built-in everywhere -- the registry is
+    // never consulted, not even for another provider's document already loaded in this process.
+    bool registry = false;
 
     // Opens the topic's schema channel if it has none. Called with `mu` held exclusively.
     //
@@ -282,17 +267,14 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
 FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
                                              FastDDSStatusListener* status_listener)
     : impl_(std::make_unique<Impl>(status_listener)) {
-    impl_->document = config.document;
-
     // Everything the document decides about the PARTICIPANT — the payload bound, the anchor's
     // `fletcher.*` properties, the domain — is settled below, before the participant exists
-    // (rung-2, spec §5.1). It is not the whole document: the misplaced-`fletcher.*` refusal needs
-    // a Publisher and a Subscriber and so runs at the end of this constructor, and for a profile
-    // named after a topic it runs on that topic's first endpoint, out of `Publish` / `Subscribe`.
-    // So a constructed provider is a provider whose participant configuration is good, not one
-    // whose every profile has been read (review 4c F8; the same list is in the public header).
-    // Refusals are `kInvalidArgument`: reached through a factory, a `std::invalid_argument` would
-    // arrive at the caller as `kInternal`, which tells an operator nothing.
+    // (rung-2, spec §5.1). A `fletcher.*` property anywhere else in the document (a writer or
+    // reader profile) is simply not read by this provider — no refusal, no floor. Writer/reader
+    // QoS is resolved per topic, in `CreateTopic`, the first moment a topic's name is known
+    // (internal/profile_document.hpp). Refusals here are `kInvalidArgument`: reached through a
+    // factory, a `std::invalid_argument` would arrive at the caller as `kInternal`, which tells
+    // an operator nothing.
     const uint32_t bound =
         config.max_payload_bytes == 0 ? kDefaultPayloadBytes : config.max_payload_bytes;
     if (!IsPayloadBound(bound)) {
@@ -306,7 +288,9 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
 
     DomainParticipantQos pqos;
     internal::FletcherProperties properties;
-    internal::ResolveParticipantQos(impl_->document, config.domain_id, pqos, properties);
+    internal::ResolveParticipantQos(config.document, config.domain_id, pqos, properties);
+    impl_->registry = !config.document.empty();
+    impl_->schema_bytes = properties.max_schema_bytes;
 
     // What the bound costs against the caller's limits is Fast DDS's call, not checked here.
     if (properties.loan_publish) {
@@ -331,7 +315,8 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
         throw PubSubError(PubSubStatus::kTransportFailure,
                           "FastDDS: failed to register the data type");
 
-    impl_->schema_type_support.reset(new internal::RawBytesPubSubType(properties.max_schema_bytes));
+    impl_->schema_type_support.reset(
+        new internal::SchemaBytesPubSubType(properties.max_schema_bytes));
     if (impl_->schema_type_support.register_type(impl_->participant) != RETCODE_OK)
         throw PubSubError(PubSubStatus::kTransportFailure,
                           "FastDDS: failed to register the schema type");
@@ -344,14 +329,24 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     if (!impl_->subscriber)
         throw PubSubError(PubSubStatus::kTransportFailure, "FastDDS: failed to create Subscriber");
 
-    // A `fletcher.*` property in a WRITER or READER profile is read by nobody, so it is refused
-    // rather than left inert (review 4a F5). The two role profiles are checked here, as late as
-    // the Publisher and Subscriber allow and still before any endpoint exists; a profile named
-    // after a topic is checked when that topic is created, which is the first moment its name is
-    // known (internal/profile_document.hpp). `~Impl` releases what this constructor already
-    // built when this throws.
-    internal::RefuseMisplacedFletcherPropertiesInRoleProfiles(*impl_->publisher, *impl_->subscriber,
-                                                              impl_->document);
+    // With a document, the Publisher's/Subscriber's default QoS is already what Fast DDS seeded
+    // it with from the document's `is_default_profile="true"` profile, if any (else Fast DDS's
+    // own default) -- done inside create_publisher/create_subscriber above, before this provider
+    // touches either. With no document, Fletcher's built-in IS the default QoS, set here rather
+    // than left as Fast DDS's own. `~Impl` releases what this constructor already built when
+    // either call below throws.
+    if (!impl_->registry) {
+        if (impl_->publisher->set_default_datawriter_qos(
+                internal::MakeFletcherDefaultWriterQos()) != RETCODE_OK) {
+            throw PubSubError(PubSubStatus::kTransportFailure,
+                              "FastDDS: failed to set the default DataWriter QoS");
+        }
+        if (impl_->subscriber->set_default_datareader_qos(
+                internal::MakeFletcherDefaultReaderQos()) != RETCODE_OK) {
+            throw PubSubError(PubSubStatus::kTransportFailure,
+                              "FastDDS: failed to set the default DataReader QoS");
+        }
+    }
 }
 
 // Destruction precondition (issue #63): no thread may be executing or about to
@@ -404,7 +399,6 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // or because a publisher already declared it. Attach the publisher side
         // and announce the schema exactly once.
         auto& ts = impl_->topics[name];
-        ts.is_publisher = true;
 
         // The data topic may already exist (created by a prior Subscribe); reuse it.
         if (!ts.topic) {
@@ -413,6 +407,23 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             if (!ts.topic)
                 throw PubSubError(PubSubStatus::kTransportFailure,
                                   "FastDDS: failed to create topic: " + name);
+        }
+
+        // Created here rather than on first Publish, so the publish path never upgrades its lock:
+        // the profile named after this topic if the registry has one, else the Publisher's own
+        // default QoS (internal/profile_document.hpp). The cost is the writer's pool reserved up
+        // front for every declared topic, whether or not it is ever published to: at the built-in
+        // defaults (max_samples 100, 64 KiB payload bound, data_sharing AUTO) each declared topic
+        // reserves roughly 6.6 MB of data-sharing segment plus its payload pool at CreateTopic,
+        // published to or not.
+        if (!ts.writer) {
+            const DataWriterQos wqos =
+                internal::ResolveWriterQos(*impl_->publisher, name, impl_->registry);
+            ts.writer = impl_->publisher->create_datawriter(
+                ts.topic, wqos, &impl_->data_writer_listener, internal::WriterStatusMask());
+            if (!ts.writer)
+                throw PubSubError(PubSubStatus::kTransportFailure,
+                                  "FastDDS: failed to create DataWriter for: " + name);
         }
 
         // Announce the schema on the companion __schema channel so that
@@ -454,12 +465,20 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                     PubSubStatus::kTransportFailure,
                     "FastDDS: failed to create schema DataWriter for: " + schema_name);
 
-            internal::RawBytes raw;
-            raw.data = std::move(ipc);
+            // The schema rides the same envelope as a data-channel row -- a row with no
+            // attachments -- through the writer's inherited FletcherSamplePubSubType::serialize.
+            const PubSubProvider::RowEncoder encoder = [&ipc](WriteBuffer& b) {
+                b.Append(ipc.data(), ipc.size());
+            };
+            const Attachments none;
+            internal::PublishData transport;
+            transport.encoder = &encoder;
+            transport.attachments = &none;
             // The one write whose failure is invisible from the outside: subscribers learn the
             // schema only from this sample, so a dropped one leaves every subscriber of this topic
             // waiting forever on a future that never resolves.
-            if (ts.schema_writer->write(&raw) != RETCODE_OK) {
+            const ReturnCode_t rc = ts.schema_writer->write(&transport);
+            if (rc != RETCODE_OK || !transport.serialize_error.empty()) {
                 // Undo the half-announcement before throwing. The caller is being told to retry,
                 // and a retry short-circuits on a non-null schema_writer — so one left behind here
                 // turns every later CreateTopic for this topic into a silent no-op and makes the
@@ -468,13 +487,20 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                 impl_->publisher->delete_datawriter(ts.schema_writer);
                 ts.schema_writer = nullptr;
                 throw PubSubError(PubSubStatus::kTransportFailure,
-                                  "FastDDS: failed to announce the schema for: " + name);
+                                  "FastDDS: failed to announce the schema for: " + name +
+                                      (transport.serialize_error.empty()
+                                           ? ""
+                                           : " (" + transport.serialize_error + ")") +
+                                      " (schema is " + std::to_string(ipc.size()) +
+                                      " bytes; fletcher.max_schema_bytes is " +
+                                      std::to_string(impl_->schema_bytes) +
+                                      ", of which 8 frame the row)");
             }
 
             // Recorded only once the announcement is out, so a failed one leaves nothing behind for
             // a retry to match against and nothing for it to short-circuit on.
             ts.schema = OwnedSchema::DeepCopy(schema.get());
-            ts.schema_ipc = std::move(raw.data);
+            ts.schema_ipc = std::move(ipc);
         }
     });
 }
@@ -500,37 +526,18 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
         static thread_local std::string name;
         internal::JoinSegmentsInto(name, topic_segments);
 
-        // Shared, so publishes to different topics run concurrently. Held for the whole call, which
-        // is what keeps the topic and its writer alive underneath the write.
+        // Shared, so publishes to different topics run concurrently. Held for the whole call: the
+        // shared lock keeps the topic and its writer -- created by CreateTopic -- alive underneath
+        // the write.
         std::shared_lock lock(impl_->mu);
 
         auto it = impl_->topics.find(name);
-        if (it == impl_->topics.end())
-            throw PubSubError(PubSubStatus::kTopicNotDeclared, "FastDDS: unknown topic: " + name);
+        if (it == impl_->topics.end() || !it->second.writer)
+            throw PubSubError(
+                PubSubStatus::kTopicNotDeclared,
+                "FastDDS: topic not declared for publishing on this instance: " + name);
 
         auto& ts = it->second;
-
-        // Lazily create the DataWriter on first publish. QoS is resolved from per-topic override →
-        // instance default at this point. Creating it mutates the topic state, so this one step
-        // needs the lock exclusively, and another thread may have won the race in between — hence
-        // the re-check. Dropping the lock cannot invalidate `ts`: std::unordered_map guarantees
-        // references to elements survive a rehash, only erase invalidates them, and nothing erases
-        // outside the destructor.
-        if (!ts.writer) {
-            lock.unlock();
-            {
-                std::unique_lock exclusive(impl_->mu);
-                if (!ts.writer) {
-                    const DataWriterQos wqos = impl_->ResolveWriterQos(name);
-                    ts.writer = impl_->publisher->create_datawriter(
-                        ts.topic, wqos, &impl_->data_writer_listener, internal::WriterStatusMask());
-                    if (!ts.writer)
-                        throw PubSubError(PubSubStatus::kTransportFailure,
-                                          "FastDDS: failed to create DataWriter for: " + name);
-                }
-            }
-            lock.lock();
-        }
 
         // Which of the two publish flows this provider uses was decided at construction from
         // loan_publish; see internal/sample_writer.hpp. Stateless either way, so one instance
@@ -579,7 +586,8 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         SharedSchema initial;
         static_cast<void>(ts.schema_channel->arrival.Wait(std::chrono::milliseconds(0), &initial));
         const bool have_schema = initial != nullptr;
-        const DataReaderQos rqos = impl_->ResolveReaderQos(name);
+        const DataReaderQos rqos =
+            internal::ResolveReaderQos(*impl_->subscriber, name, impl_->registry);
 
         // The reader's own QoS decides the flow; the backlog bound is its history depth.
         const int32_t backlog_bound =

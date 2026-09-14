@@ -35,6 +35,8 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 
 `CreateTopic` publishes serialized schema bytes to a companion `<topic>/__schema` DDS topic. When `Subscribe` is called before `CreateTopic` (subscriber-side), it polls the `__schema` topic for up to 5 seconds to retrieve the schema.
 
+The companion sample is the same Fletcher `Envelope` the data channel uses, wrapping the Arrow IPC bytes as a row with no attachments, inside the CDR `sequence<octet>`. The provider writes `[ROW_LEN:4 LE][ipc bytes][ATTACH_COUNT:4 LE = 0]` when publishing the schema and strips those 8 bytes back off when receiving it.
+
 ## Usage
 
 ```cpp
