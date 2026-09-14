@@ -536,7 +536,7 @@ pole.
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; StructArray windowing fixture at non-zero offset |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 (56) green; `Package.GatewayClientHasNoRuntimesFolder` |
-| BIND-9 | CI/CD: RID matrix, NuGet Trusted Publishing, size budget, LGPL notice | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation check |
+| BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` (D-BIND-28; NuGet.org deferred), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run against the internal feed; packed-size check; asset-isolation check |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review |
 
 ### Item notes (what each must settle, beyond the plan's acceptance text)
@@ -947,7 +947,11 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   owner is the *relinking* half: whether a replaceable shared shim plus the
   public source at the tagged commit satisfies §4(d)(1), and what the NuGet
   README must say. *Owner assigned 2026-09-11 (Q9): the maintainer; BIND-9 hands
-  over the brief and waits for the answer on packaging only.*
+  over the brief and waits for the answer on packaging only.* **Narrowed further
+  2026-09-14 (D-BIND-28):** the first publication target is EIVA's internal feed, and
+  distribution to EIVA's own applications is not distribution to third parties, so the
+  relinking answer is needed before the first *external* publication rather than
+  before BIND-9. The licence files ship in the packages either way.
 
 - **P-2 — RID matrix.** `win-x64` and `linux-x64` are the ones the tree already
   builds. `linux-arm64` needs cross-compilation or an ARM runner; `osx-arm64` needs
@@ -961,9 +965,21 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   the C++ case it mirrors in an attribute and a script checks the mapping is
   total. *BIND-4.*
 
-- **P-4 — NuGet Trusted Publishing** needs an org-side policy and a reserved
-  `Eiva.Fletcher.*` prefix, both user actions outside a PR. Start at BIND-0 so
-  the first `cd.dotnet.yml` run is not blocked. *BIND-0 / BIND-9.*
+- **P-4 — Publishing goes to `nuget.eiva.com` first (D-BIND-28, 2026-09-14), and the
+  feed is not reachable from GitHub-hosted runners.** The host resolves to a private
+  10.x address, and every workflow in the repo runs on `ubuntu-latest` /
+  `windows-2022`. So `cd.dotnet.yml`'s publish job needs a **self-hosted runner inside
+  the EIVA network** (a new thing for this repo: registration, maintenance, secret
+  scoping) or the push happens from an EIVA machine for the alpha series. The feed is
+  BaGetter: anonymous read, API-key publish, symbol packages supported. NuGet.org
+  Trusted Publishing and the prefix reservation are deferred until the packages go
+  external, and the workflow is shaped so that is one added `push` step. **Ruled
+  2026-09-14: the publish job runs on a self-hosted runner inside the EIVA network,
+  and `cd.dotnet.yml` mirrors this repo's Conan CD workflows** (`cd.core.yml`: tag →
+  `setup-devcontainer` → `ci.*.yml` → publish job with tag verification, artifact
+  download, push, GitHub Release); build, test and pack stay on GitHub-hosted
+  runners. The runner runs only the tag-triggered publish job, never PR code.
+  *Implement in BIND-9; design in the tracker's Part 5.*
 
 - **P-5 — ADO 18786 "all tests".** Two exclusion classes now (generator; provider
   internals) instead of one. Do not close 18786 before Bucket 4 is green over

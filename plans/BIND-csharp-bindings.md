@@ -583,48 +583,95 @@ This takes `ci.pr.yml` from 19 to 24 conditional jobs; they only run on
 `c-abi/`, `dotnet/` or `protoc/` changes, and they share the one pre-built
 devcontainer image.
 
-### CD — publishing to NuGet.org
+### CD — publishing to `nuget.eiva.com` (D-BIND-28)
 
-Use **Trusted Publishing (OIDC)**, the direct analogue of the npm `--provenance`
-flow already in `cd.gateway-client.yml`. No long-lived secret:
+**Mirror the Conan CD workflows exactly** (`cd.core.yml` and its siblings): a tag push
+runs `setup-devcontainer` → `ci.dotnet.yml` (build, test, pack, upload artifacts) →
+one `publish` job that verifies the tag against the version, downloads the packed
+artifacts, pushes them, and creates the GitHub Release with the packages attached.
+Two deltas from the Conan shape, both ruled 2026-09-14: the publish target is EIVA's
+**internal feed**, and because that host resolves to a **private address** the
+`publish` job runs on a **self-hosted runner inside the EIVA network** — the only
+self-hosted job in the repository. Build, test and pack stay on GitHub-hosted runners.
 
 ```yaml
-publish:
-  needs: build-and-test
-  runs-on: ubuntu-latest
-  permissions:
-    id-token: write        # REQUIRED — without it the OIDC request fails silently
-    contents: read
-  steps:
-    - uses: actions/checkout@v6
-      with:
-        sparse-checkout: |
-          dotnet
-          .github
-    - uses: ./.github/actions/verify-tag-version-dotnet   # new composite action
-      with:
-        props-file: dotnet/Directory.Build.props
-        tag-prefix: dotnet-v
-    - uses: actions/download-artifact@v8.0.1
-      with:
-        name: dotnet-packages
-        path: artifacts
-    - uses: NuGet/login@v1
-      id: login
-      with:
-        user: ${{ vars.NUGET_USER }}
-    - run: >-
-        dotnet nuget push 'artifacts/*.nupkg'
-        --source https://api.nuget.org/v3/index.json
-        --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
-        --skip-duplicate
+name: cd.dotnet
+on:
+  push:
+    tags:
+      - 'dotnet-v[0-9]*.[0-9]*.[0-9]*'
+jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
+    secrets: inherit
+  release:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+  publish:
+    needs: release
+    runs-on: [self-hosted, eiva-network]      # label fixed when the runner is registered (BIND-9)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            dotnet
+            .github
+      - uses: ./.github/actions/verify-tag-version-dotnet   # new composite action, see below
+        with:
+          props-file: dotnet/Directory.Build.props
+          tag-prefix: dotnet-v
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-packages
+          path: artifacts
+      - name: Push packages to nuget.eiva.com
+        run: >-
+          dotnet nuget push 'artifacts/*.nupkg'
+          --source https://nuget.eiva.com/v3/index.json
+          --api-key ${{ secrets.NUGET_EIVA_API_KEY }}
+          --skip-duplicate
+      - name: Push symbol packages
+        run: >-
+          dotnet nuget push 'artifacts/*.snupkg'
+          --source https://nuget.eiva.com/v3/index.json
+          --api-key ${{ secrets.NUGET_EIVA_API_KEY }}
+          --skip-duplicate
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}"             --title "${{ github.ref_name }}"             --generate-notes             artifacts/*.nupkg artifacts/*.snupkg
 ```
 
-One-time setup (**user action** — cannot be done from a PR): configure the
-Trusted Publishing policy on NuGet.org for `eivacom/Fletcher` + workflow
-`cd.dotnet.yml`, and reserve the `Eiva.Fletcher.*` package-ID prefix. Fallback if
-Trusted Publishing is not viable for the org: a `NUGET_API_KEY` secret with the
-same `dotnet nuget push`.
+**Feed facts, checked 2026-09-14:** `nuget.eiva.com` is a **BaGetter** server (Kestrel).
+Its service index at `/v3/index.json` exposes `PackagePublish/2.0.0` at
+`/api/v2/package` and `SymbolPackagePublish/4.9.0` at `/api/v2/symbol`, so
+`dotnet nuget push` routes `.snupkg` files to the symbol endpoint by itself. Reads are
+anonymous; `PUT /api/v2/package` answers **401 without an API key**. The host resolves
+to a `10.x` address, which is why GitHub-hosted runners cannot push to it.
+
+**One-time setup (user actions, outside a PR):** register the self-hosted runner in the
+EIVA network with the label used above, with the .NET SDK (D-BIND-21) and `gh`
+installed; create an API key on `nuget.eiva.com` and store it as the
+`NUGET_EIVA_API_KEY` repository secret. The runner executes **only this job**: no
+build, no test, and never pull-request code — `cd.dotnet.yml` is tag-triggered, so
+`pull_request` events cannot reach it. Its label, what it runs and what it must have
+installed are documented in `dotnet/README.md` (BIND-10).
+
+**Consumers** add the feed to their `nuget.config`
+(`<add key="eiva" value="https://nuget.eiva.com/v3/index.json" />`). Pre-release
+versions are opt-in there exactly as on NuGet.org.
+
+**NuGet.org later.** When the packages go external, add a second push step with Trusted
+Publishing (OIDC: `id-token: write`, `NuGet/login@v1`, the analogue of the npm
+`--provenance` flow in `cd.gateway-client.yml`) and request the `Eiva.Fletcher.*`
+prefix; nothing else in the workflow changes. The LGPL relinking decision (Q9) is due
+before *that* step, not before this one (D-BIND-28).
 
 Also in `cd.dotnet.yml`:
 
@@ -634,7 +681,7 @@ Also in `cd.dotnet.yml`:
   `Resolve dist-tag` step from the npm workflow has **no counterpart** and must
   not be transliterated.
 - `ContinuousIntegrationBuild=true`, `Deterministic=true`, SourceLink, and
-  `.snupkg` symbol packages pushed to the symbol server.
+  `.snupkg` symbol packages pushed to the feed's symbol endpoint.
 - `PackageLicenseExpression=LGPL-3.0-or-later` in `Directory.Build.props`.
 
 ### `verify-tag-version-dotnet` composite action
@@ -694,7 +741,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 (56) green; `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
-| BIND-9 | CI/CD: RID matrix, NuGet Trusted Publishing, size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
+| BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
 ---
@@ -725,8 +772,9 @@ first automated run happens before any real code exists.
   against the packed-size budget.
 - Landing order with the modernization branch's pending `arrow-bridge`/`protoc`
   commits agreed (P-7).
-- NuGet.org Trusted Publishing policy and the `Eiva.Fletcher.*` prefix requested
-  (user action).
+- The self-hosted publish runner registered in the EIVA network and the
+  `NUGET_EIVA_API_KEY` secret created on `nuget.eiva.com` (user actions, D-BIND-28);
+  NuGet.org Trusted Publishing is deferred until the packages go external.
 
 ### BIND-1 — The binding ABI header, reviewed as a specification
 
@@ -1007,8 +1055,10 @@ same machinery as everything else, **so that** it cannot rot.
 **Acceptance**
 
 - Part 5 as written: `ci.c-abi.yml`, `ci.dotnet.yml`, `ci.format-check-cs.yml`,
-  the three integration lanes, `cd.dotnet.yml` with Trusted Publishing
-  (`id-token: write`), `verify-tag-version-dotnet`, no dist-tag step;
+  the three integration lanes, `cd.dotnet.yml` mirroring the Conan CD shape and
+  publishing to `nuget.eiva.com` from a **self-hosted `publish` job** with the
+  `NUGET_EIVA_API_KEY` secret (D-BIND-28), packages also attached to the GitHub
+  Release, `verify-tag-version-dotnet`, no dist-tag step;
   `ci.pr.yml` with 3 filters, 5 caller jobs, `pr_gate` `needs:` **and** `results:`;
   `ci.license-headers.yml` denylist updated.
 - **RID matrix** `win-x64` + `linux-x64` fanning in to a single `pack`
@@ -1017,9 +1067,11 @@ same machinery as everything else, **so that** it cannot rot.
   every run via the #127 deployer; pack fails if either is missing. The
   **asset-isolation check** for `GatewayClient` rides in the same step.
 - The **packed-size budget** for the shim.
-- The **LGPL relinking decision** from the maintainer (Q9) recorded, with the
-  NuGet README stating the relinking route and the NativeAOT static-linking caveat
-  (N-8).
+- The **self-hosted runner** registered, labelled, documented (what it runs, what it
+  must have installed), and used by no other job.
+- The **LGPL relinking decision** from the maintainer (Q9) is due before the first
+  *external* publication (D-BIND-28); the NuGet README states the relinking route
+  and the NativeAOT static-linking caveat (N-8) regardless.
 - `dotnet restore --locked-mode` with a committed `packages.lock.json`;
   `actions/*` pinned to the tags this repo already uses.
 
@@ -1069,10 +1121,12 @@ names the round item that closes it. The ones worth reading first:
 
 No decision is open. Three actions remain, none an engineering one:
 
-1. **LGPL relinking decision** (owner: the maintainer) before BIND-9 designs
-   packaging. BIND supplies the brief.
-2. **NuGet.org Trusted Publishing** policy and the `Eiva.Fletcher.*` prefix (user
-   action outside a PR), requested at BIND-0.
+1. **LGPL relinking decision** (owner: the maintainer) before the first *external*
+   publication (D-BIND-28: the first target is EIVA's internal feed, so it no longer
+   gates BIND-9's packaging). BIND supplies the brief.
+2. **The self-hosted publish runner** in the EIVA network and the `NUGET_EIVA_API_KEY`
+   secret on `nuget.eiva.com` (user actions outside a PR, D-BIND-28). NuGet.org Trusted
+   Publishing and the `Eiva.Fletcher.*` prefix are deferred until the packages go external.
 3. **ADO**: 18689 pointed at the committed plan; 16353's accessor wording corrected.
 
 ---

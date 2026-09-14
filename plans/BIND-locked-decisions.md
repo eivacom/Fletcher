@@ -448,3 +448,29 @@ same rules as native, in **UTF-8 bytes**, and native re-validates; the duplicati
 because a managed refusal carries a stack trace, and both sides are tested against one table
 (Q17). The C# accessor exposes generic metadata access (`Metadata(key)`) as the C++ and Rust
 accessors do, for capstone parity (Q18).
+
+- **D-BIND-28 — NuGet packages are published to EIVA's internal feed first; NuGet.org is a
+  later, separate step.** *LOCKED BY THE MAINTAINER 2026-09-14.* `cd.dotnet.yml` pushes the
+  three packages and their `.snupkg` symbol packages to `https://nuget.eiva.com/v3/index.json`.
+  Facts established 2026-09-14 and binding on BIND-9: the feed is a **BaGetter** server
+  (Kestrel; service index exposes `PackagePublish/2.0.0` at `/api/v2/package` and
+  `SymbolPackagePublish/4.9.0` at `/api/v2/symbol`); **reads are anonymous**, **publish requires
+  an API key** (`PUT /api/v2/package` answers 401 without one), carried as a GitHub Actions
+  secret and never in the tree; and the host resolves to a **private address (10.x)**, so
+  GitHub-hosted runners cannot reach it — **ruled 2026-09-14: the publish job runs on a
+  self-hosted runner inside the EIVA network, and `cd.dotnet.yml` mirrors the Conan CD
+  workflows of this repository** (`cd.core.yml` and siblings: tag push → `setup-devcontainer`
+  → the component's `ci.*.yml` → one publish job that verifies the tag version, downloads the
+  packed artifacts, pushes them and creates the GitHub Release with them attached). Build,
+  test and pack stay on GitHub-hosted runners; only the `publish` job moves, and it runs
+  nothing but that job — never pull-request code, since the workflow is tag-triggered. The
+  repo uses only GitHub-hosted runners today, so the runner's registration, label,
+  `NUGET_EIVA_API_KEY` secret and upkeep are BIND-9 deliverables (tracker Part 5). Everything else in the CD design is unchanged:
+  `verify-tag-version-dotnet`, `ContinuousIntegrationBuild`/`Deterministic`/SourceLink, no
+  dist-tag step, `PackageLicenseExpression=LGPL-3.0-or-later`. NuGet.org Trusted Publishing
+  (OIDC) and the `Eiva.Fletcher.*` prefix reservation are **deferred** to the day the packages
+  go external; the workflow is written so that adding NuGet.org is a second `push` step, not a
+  redesign. **Consequence for the LGPL review (D-BIND-13 note):** distribution through an
+  internal feed to EIVA's own applications is not distribution to third parties, so the
+  relinking question loses its urgency for this round; it must be answered *before* the first
+  external publication, and the packages carry the licence files regardless (BIND-9).
