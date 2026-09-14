@@ -5,6 +5,7 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <fletcher/core/internal/status_name.hpp>
@@ -15,6 +16,8 @@
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <functional>
+#include <future>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -113,14 +116,16 @@ class MockProvider : public PubSubProvider {
     }
 
     void UnsubscribeSchema(const std::vector<std::string>& /*segments*/) override {
+        if (on_unsubscribe_schema) on_unsubscribe_schema();
         unsubscribe_schema_count++;
     }
 
     std::vector<std::string> topics_created;
     int unsubscribe_count = 0;
     int subscribe_count = 0;
-    int subscribe_schema_count = 0;
+    std::atomic<int> subscribe_schema_count{0};
     int unsubscribe_schema_count = 0;
+    std::function<void()> on_unsubscribe_schema;  // test hook, runs inside UnsubscribeSchema
 
    private:
     std::unordered_map<std::string, DeliveryChannel> channels_;
@@ -668,4 +673,38 @@ TEST(SubscriberTest, DestructorReleasesOutstandingSchemaWatches) {
     // Released once, and only the watch: no data subscription existed to tear
     // down, and none was invented.
     EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+// The last UnsubscribeSchema enters the provider with `mu` released. A
+// SubscribeSchema racing into that gap must wait for the release to finish, or it
+// takes a count on the very watch the release is about to tear down — count one,
+// provider watch none.
+TEST(SubscriberTest, SubscribeSchemaWaitsForAnInFlightLastRelease) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+    (void)subscriber.SubscribeSchema(kTopic);
+    ASSERT_EQ(mock->subscribe_schema_count, 1);
+
+    std::promise<void> parked, release;
+    int watches_seen_by_release = -1;
+    mock->on_unsubscribe_schema = [&] {
+        parked.set_value();
+        release.get_future().wait();
+        watches_seen_by_release = mock->subscribe_schema_count;
+    };
+    std::thread releaser([&] { subscriber.UnsubscribeSchema(kTopic); });
+    parked.get_future().wait();  // the release is now inside the provider
+
+    std::thread watcher([&] { (void)subscriber.SubscribeSchema(kTopic); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    release.set_value();
+    releaser.join();
+    watcher.join();
+    mock->on_unsubscribe_schema = nullptr;  // ~Subscriber releases the watcher's watch
+
+    // The watcher reached the provider only after the release had left it, and
+    // opened a fresh watch there rather than riding the one being released.
+    EXPECT_EQ(watches_seen_by_release, 1);
+    EXPECT_EQ(mock->subscribe_schema_count, 2);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
 }

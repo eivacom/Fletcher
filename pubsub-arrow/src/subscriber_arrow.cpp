@@ -85,24 +85,19 @@ class SubscriberArrow::RecordBatchBatcher {
             try {
                 decoder_->Append(data, len);
                 atts_.push_back(att);
+            } catch (const BatchCapacityExceeded&) {
+                ++dropped_;  // the row alone exceeds the budget; nothing was appended
+            } catch (const std::invalid_argument&) {
+                ++dropped_;  // malformed after all (Skip stopped early the first time)
             } catch (...) {
-                ++dropped_;
+                DiscardPending(1);
             }
         } catch (const std::invalid_argument&) {
             // Malformed row: nothing was appended; its attachment goes with
             // it (the metadata naming the blob lived in the row).
             ++dropped_;
         } catch (...) {
-            // Internal failure (allocation): the pending window is undefined
-            // — discard it whole. The reset Finish() is itself wrapped:
-            // under the same memory pressure that just failed Append(), it
-            // can fail too, and nothing may escape AddRow.
-            dropped_ += decoder_->num_rows() + 1;
-            atts_.clear();
-            try {
-                (void)decoder_->Finish();
-            } catch (...) {
-            }
+            DiscardPending(1);
         }
         ArmTimer();
         if (ready_ && decoder_->num_rows() >= max_rows_) {
@@ -144,6 +139,20 @@ class SubscriberArrow::RecordBatchBatcher {
 
    private:
     bool HasPending() const { return (decoder_ && decoder_->num_rows() > 0) || dropped_ > 0; }
+
+    // Internal failure (allocation) inside Append() or Finish(): the pending window is undefined,
+    // so count it dropped whole (plus `extra` for a row that was being appended), drop its
+    // attachments, and reset the decoder with a Finish() whose result is discarded. That Finish()
+    // is wrapped too: under the memory pressure that just failed, it can fail as well, and nothing
+    // may escape the delivery, timer or teardown thread.
+    void DiscardPending(int64_t extra) {
+        dropped_ += decoder_->num_rows() + extra;
+        atts_.clear();
+        try {
+            (void)decoder_->Finish();
+        } catch (...) {
+        }
+    }
 
     // Arms the timeout deadline on the first event (row or drop) of a window. The deadline is
     // anchored to the previous flush, not to the event: a stream that keeps delivering then flushes
@@ -194,23 +203,14 @@ class SubscriberArrow::RecordBatchBatcher {
         // so it stays under the lock and the delivery thread never sees a
         // half-built batch.
         std::shared_ptr<arrow::RecordBatch> batch;
-        std::vector<Attachments> atts = std::move(atts_);
-        atts_.clear();
         if (decoder_) {
             try {
                 batch = decoder_->Finish();
             } catch (...) {
-                // Finish() itself failed (an internal invariant — allocation,
-                // say): the decoder's row count is now undefined. Count every
-                // pending row dropped — its attachment goes with it, since
-                // there's no batch row left to align it with — and reset the
-                // decoder with a second Finish(), discarding the result.
-                dropped_ += decoder_->num_rows();
-                atts.clear();
-                try {
-                    (void)decoder_->Finish();
-                } catch (...) {
-                }
+                // Finish() itself failed (allocation, a dictionary re-fold that
+                // does not fit its index type): no batch row is left to align an
+                // attachment with, so the window is dropped whole.
+                DiscardPending(0);
             }
             // A failed pre-size is not fatal: the next Append() just grows the
             // builders as it goes.
@@ -219,6 +219,8 @@ class SubscriberArrow::RecordBatchBatcher {
             } catch (...) {
             }
         }
+        std::vector<Attachments> atts = std::move(atts_);
+        atts_.clear();
         int64_t dropped = dropped_;
         dropped_ = 0;
 

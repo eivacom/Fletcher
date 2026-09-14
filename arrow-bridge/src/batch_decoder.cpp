@@ -175,7 +175,7 @@ void WalkElements(Node& node, detail::Reader& r, Sink& sink, int64_t count) {
         return;
     }
     for (int64_t i = 0; i < count; ++i) {
-        if (ReadNullBit(bitfield, static_cast<int>(i)))
+        if (ReadNullBit(bitfield, i))
             sink.Null(elem);
         else
             WalkValue(elem, r, sink);
@@ -219,7 +219,7 @@ void WalkValue(Node& node, detail::Reader& r, Sink& sink) {
             for (uint32_t i = 0; i < count; ++i) WalkValue(node.children[0], r, sink);
             const uint8_t* bitfield = r.ReadBytes(BitfieldBytes(count));
             for (uint32_t i = 0; i < count; ++i)
-                if (ReadNullBit(bitfield, static_cast<int>(i)))
+                if (ReadNullBit(bitfield, i))
                     sink.Null(node.children[1]);
                 else
                     WalkValue(node.children[1], r, sink);
@@ -446,7 +446,15 @@ struct AppendSink {
         }
     }
     void Run(Node& elem, const uint8_t* bytes, int64_t count) {
-        if (!AppendRun(*elem.builder, elem.id, bytes, count))
+        // AppendRun is shared with Codec and reports a builder failure as std::invalid_argument;
+        // here Skip already validated the count, so that failure is internal (allocation).
+        bool ok;
+        try {
+            ok = AppendRun(*elem.builder, elem.id, bytes, count);
+        } catch (const std::invalid_argument& e) {
+            throw std::runtime_error(e.what());
+        }
+        if (!ok)
             throw std::runtime_error("BatchDecoder: no run path for " +
                                      elem.type->ToString());  // byte_width > 0 implies one exists
     }

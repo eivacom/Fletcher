@@ -473,7 +473,7 @@ std::shared_ptr<arrow::Array> DecodeListElements(
         return detail::ValueOrThrow(builder->Finish(), "Codec: list builder Finish failed");
     }
     for (int64_t i = 0; i < count; ++i) {
-        if (ReadNullBit(bitfield, static_cast<int>(i))) {
+        if (ReadNullBit(bitfield, i)) {
             auto st = builder->AppendNull();
             if (!st.ok())
                 throw std::invalid_argument("Codec: builder AppendNull failed: " + st.ToString());
@@ -550,7 +550,7 @@ std::shared_ptr<arrow::Scalar> DecodePositionalValue(detail::Reader& r,
             auto val_builder = detail::ValueOrThrow(arrow::MakeBuilder(map_type.item_type()),
                                                     "Codec: map value MakeBuilder failed");
             for (uint32_t i = 0; i < count; ++i) {
-                if (ReadNullBit(val_bitfield, static_cast<int>(i))) {
+                if (ReadNullBit(val_bitfield, i)) {
                     auto st = val_builder->AppendNull();
                     if (!st.ok())
                         throw std::invalid_argument("Codec: value AppendNull failed: " +

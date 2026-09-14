@@ -141,7 +141,8 @@ struct Subscriber::Impl {
         // topic observes the same one.
         SchemaArrival schema_watch_arrival;
         // Set while THIS topic's first SubscribeSchema is inside
-        // provider->SubscribeSchema, with `mu` released. Same flag+cv protocol
+        // provider->SubscribeSchema, or its last UnsubscribeSchema inside
+        // provider->UnsubscribeSchema, with `mu` released. Same flag+cv protocol
         // as provider_subscribe_in_progress, and it is the count alone that
         // cannot replace it: the first caller increments BEFORE it unlocks, so a
         // second caller testing only `schema_watches > 0` would return the
@@ -793,6 +794,13 @@ void Subscriber::UnsubscribeSchema(const std::vector<std::string>& segments) {
     // side exists to prevent: this tier has no door of its own to raise first.
     if (--ts.schema_watches > 0) return;
 
+    // The last watch goes to the provider with `mu` released, and that gap must
+    // be invisible to a concurrent SubscribeSchema: it would read the zero
+    // count, ask the (idempotent) provider for a watch it already holds, and
+    // then have THIS release tear that watch down under it — count one, watch
+    // none. Raising `schema_watch_in_progress` parks it on the wait it already
+    // has, so it enters the provider only once the release has finished.
+    ts.schema_watch_in_progress = true;
     std::vector<std::string> segments_to_release = ts.segments;
     lock.unlock();
 
@@ -807,8 +815,14 @@ void Subscriber::UnsubscribeSchema(const std::vector<std::string>& segments) {
         // becoming a resource neither tier believes it holds.
         lock.lock();
         ++ts.schema_watches;
+        ts.schema_watch_in_progress = false;
+        impl_->provider_cv.notify_all();
         throw;
     }
+
+    lock.lock();
+    ts.schema_watch_in_progress = false;
+    impl_->provider_cv.notify_all();
 }
 
 }  // namespace fletcher

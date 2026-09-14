@@ -46,8 +46,9 @@ struct Reader {
     }
 };
 
-// bit i of `bitfield` (LSB-first within each byte).
-inline bool ReadNullBit(const uint8_t* bitfield, int index) {
+// bit i of `bitfield` (LSB-first within each byte). 64-bit index: a wire count is uint32_t, and an
+// `int` wrapped negative for the upper half of that range.
+inline bool ReadNullBit(const uint8_t* bitfield, int64_t index) {
     return (bitfield[index / 8] >> (index % 8)) & 1u;
 }
 
