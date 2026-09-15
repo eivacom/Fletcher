@@ -118,11 +118,11 @@ void FastDDSLoggingStatusListener::OnSampleLost(Endpoint endpoint, uint32_t tota
 void FastDDSLoggingStatusListener::OnSampleRejected(Endpoint endpoint, int32_t reason,
                                                     uint32_t total_count) noexcept {
     if (endpoint.is_schema_channel) {
-        EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
-                           "a schema sample was rejected (reason "
-                               << reason << ", " << total_count
-                               << " total); if it was too large for the channel, raise "
-                                  "max_schema_bytes on this endpoint");
+        EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA, "a schema sample was rejected (reason "
+                                                << reason << ", " << total_count
+                                                << " total); resource limits are too tight -- a "
+                                                   "schema too large for the fixed bound is "
+                                                   "refused earlier, at CreateTopic");
     } else {
         EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
                              "reader on '" << endpoint.topic << "' rejected a sample (reason "

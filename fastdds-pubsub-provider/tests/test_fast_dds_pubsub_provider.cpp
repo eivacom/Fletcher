@@ -33,6 +33,7 @@
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
+#include "internal/sample_writer.hpp"
 #include "internal/transport_data.hpp"
 
 using namespace fletcher;
@@ -292,8 +293,9 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 
 // The sample type is bounded and plain, so every endpoint reserves the whole payload bound per
 // history slot — which is what the resource limits here keep in check. The default memory policy
-// preallocates, so a reader built from these reads through loans; LoanPublishConfig() makes the
-// publish side loan too.
+// preallocates, so a reader built from these reads through loans; the publish side never loans any
+// more (owner decision 2026-09-15) -- see ALoanableSampleWriterWritesThroughARealWriter below for
+// LoanableSampleWriter's own direct coverage.
 //
 // PDA-DEC-6 — these used to be typed `FastDDSProviderOptions` fields; they are now lines in the
 // provider's own Fast DDS XML profiles document. Note the durability / reliability /
@@ -329,8 +331,7 @@ struct DocumentParts {
     std::string writer_topic = kTenSlots;
     // Children of <data_reader> that are not <qos>/<topic> — <historyMemoryPolicy>, say.
     std::string reader_tail;
-    // Goes inside the mandatory <participant profile_name="fletcher_participant"> anchor: the
-    // two `fletcher.*` vendor properties live there.
+    // Goes inside the mandatory <participant profile_name="fletcher_participant"> anchor.
     std::string anchor_body;
 };
 
@@ -370,33 +371,12 @@ std::string BoundedDocument(const DocumentParts& parts = {}) {
 </dds>)";
 }
 
-// One `fletcher.*` vendor property inside the anchor's <rtps><propertiesPolicy>. The two settings
-// a DDS QoS profile cannot express — which publish path, and the internal schema channel's bound
-// — ride here, because they are Fletcher's rather than DDS's (PDA-DEC-6 §3).
-std::string AnchorProperty(const std::string& name, const std::string& value) {
-    return R"(
-      <rtps>
-        <propertiesPolicy>
-          <properties>
-            <property><name>)" +
-           name + R"(</name><value>)" + value + R"(</value></property>
-          </properties>
-        </propertiesPolicy>
-      </rtps>)";
-}
-
 }  // namespace
 
 static ProviderConfig BoundedConfig(const DocumentParts& parts = {}) {
     ProviderConfig config;
     config.document = BoundedDocument(parts);
     return config;
-}
-
-static ProviderConfig LoanPublishConfig() {
-    DocumentParts parts;
-    parts.anchor_body = AnchorProperty("fletcher.loan_publish", "true");
-    return BoundedConfig(parts);
 }
 
 // The bound is part of the typed core (spec §4.1) and is taken as given — PayloadBytes() is what
@@ -476,33 +456,6 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
     return received.load();
 }
 
-// loan_publish: the writer encodes straight into a loaned payload, no serialize() pair. The
-// SUBSCRIBE side reads through CopyingDataReaderListener either way (owner decision 2026-09-14,
-// item C: Subscribe no longer selects LoanedDataReaderListener even though this profile's reader
-// would admit it) -- ALoanedDataReaderListenerDrainsARealReaderDirectly below is what still
-// exercises that flow, directly.
-TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
-    // Both providers share LoanPublishConfig()'s document (Fast DDS profile names are
-    // process-wide): fletcher.loan_publish only steers the publishing side, so sub_provider's
-    // reader resolves identically to BoundedConfig()'s default.
-    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
-
-    pub_provider.CreateTopic({"loaned", "x"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"loaned", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
-
-    pub_provider.Publish({"loaned", "x"}, MakeEncoder(42));
-
-    EXPECT_EQ(AwaitRow(received), 42);
-}
-
 // A non-preallocating reader reads through copies -- true of every reader since item C
 // (CopyingDataReaderListener is the default flow), but this one could not have taken the loaned
 // path anyway: CanLoanSamplesFollowsTheMemoryPolicy above is the predicate
@@ -528,8 +481,7 @@ TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
         ASSERT_NE(probe, nullptr);
         Subscriber* subscriber = probe->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
         ASSERT_NE(subscriber, nullptr);
-        const DataReaderQos resolved =
-            internal::ResolveReaderQos(*subscriber, "any/topic", /*registry=*/true);
+        const DataReaderQos resolved = internal::ResolveDataReaderQos(*subscriber, "any/topic");
         EXPECT_EQ(resolved.endpoint().history_memory_policy,
                   eprosima::fastdds::rtps::DYNAMIC_RESERVE_MEMORY_MODE)
             << "the document's <historyMemoryPolicy> did not reach the reader QoS";
@@ -674,36 +626,6 @@ TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
     EXPECT_EQ(AwaitRow(received), 23);
 }
 
-// A row that overruns the bound throws out of Publish, which only the loaned
-// path does (the serialising path swallows the overflow inside serialize()) —
-// so this is where the writer proves it loaned. Repeating it past the size of
-// the loan pool also proves the failed attempt returned its loan: once loans
-// leak, loan_sample starts failing and Publish stops throwing.
-TEST(FastDDSPubSubProviderTest, LoanedOversizedRowThrowsWithoutLeakingLoans) {
-    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    pub_provider.CreateTopic({"loaned", "oversized"}, MakeSchema());
-
-    auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
-        std::vector<uint8_t> blob(bound + 16, 0x5A);
-        buf.Append(blob.data(), blob.size());
-    };
-    // Re-anchored to the seam's taxonomy (spec §5.1): the failure is the SAME
-    // failure, but it now crosses as the one error type carrying a stable number
-    // a binding can map, instead of as a bare std::overflow_error only C++ can
-    // read. The number matters here — kPayloadTooLarge tells a caller to raise
-    // the bound or split the row; kInternal would tell it nothing.
-    for (int i = 0; i < 15; ++i) {
-        try {
-            pub_provider.Publish({"loaned", "oversized"}, oversized);
-            ADD_FAILURE() << "attempt " << i << ": an oversized row was accepted";
-        } catch (const PubSubError& e) {
-            EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge) << "attempt " << i;
-        }
-    }
-
-    EXPECT_NO_THROW(pub_provider.Publish({"loaned", "oversized"}, MakeEncoder(3)));
-}
-
 // T6: a row large enough that Fast DDS must FRAGMENT it at the RTPS level still crosses intact.
 // `bound` is the payload bound both endpoints resolve to here (65536, BoundedConfig()'s default —
 // see FastDdsConfig.AnUnsetPayloadBoundResolvesToSixtyFourKiB in test_profile_document.cpp).
@@ -755,87 +677,6 @@ TEST(FastDDSPubSubProviderTest, AFragmentingRowCrossesIntact) {
     EXPECT_EQ(received_row, expected);
 }
 
-// The loaned-publish variant of the same row: the writer encodes straight into the loaned payload
-// (no serialize()/deserialize() pair on the publish side), so this also proves a loan can span a
-// fragmenting sample. LoanPublishConfig() is this file's existing fletcher.loan_publish=true
-// profile document (see LoanedRoundTrip above) — no new profile is invented for this variant.
-TEST(FastDDSPubSubProviderTest, ALoanPublishedFragmentingRowCrossesIntact) {
-    // Both providers share the document (see LoanedRoundTrip's comment).
-    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
-    pub_provider.CreateTopic({"fragmenting", "loaned"}, MakeSchema());
-
-    const size_t row_size = static_cast<size_t>(pub_provider.PayloadBytes()) - 8 - 16;
-    std::vector<uint8_t> expected(row_size);
-    for (size_t i = 0; i < row_size; ++i) expected[i] = static_cast<uint8_t>((i * 7) & 0xFF);
-
-    std::mutex mtx;
-    std::vector<uint8_t> received_row;
-    bool received = false;
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"fragmenting", "loaned"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            std::lock_guard<std::mutex> lock(mtx);
-            received_row.assign(data, data + len);
-            received = true;
-        });
-    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
-
-    pub_provider.Publish({"fragmenting", "loaned"},
-                         [&](WriteBuffer& buf) { buf.Append(expected.data(), expected.size()); });
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (std::chrono::steady_clock::now() < deadline) {
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            if (received) break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    std::lock_guard<std::mutex> lock(mtx);
-    ASSERT_TRUE(received) << "the loan-published fragmenting row never arrived";
-    EXPECT_EQ(received_row, expected);
-}
-
-// A throwing callback runs wherever Fast DDS calls on_data_available (DataReaderListenerBase,
-// data_reader_listener.hpp) -- intraprocess, that is the PUBLISHING thread, inside this test's own
-// Publish call below -- where an escaping exception terminates the process; the listener's own
-// try/catch is what absorbs it here (the read side is CopyingDataReaderListener, the listener
-// Subscribe installs; the loan-leak half of this test's old name belongs to
-// ALoanedDataReaderListenerDrainsARealReaderDirectly, which exercises LoanedDataReaderListener
-// directly).
-//
-// Publish pauses briefly between rows: harmless pacing kept from the round this test predates, not
-// load-bearing now that delivery runs synchronously inside Publish rather than behind a separate
-// reader thread's own scheduling slice.
-TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoans) {
-    // Both providers share the document (see LoanedRoundTrip's comment).
-    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
-
-    pub_provider.CreateTopic({"loaned", "throwing"}, MakeSchema());
-
-    std::atomic<int> deliveries{0};
-    std::atomic<int32_t> received{-1};
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"loaned", "throwing"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            // More throws than the loan pool holds, so a leak cannot be masked by spare slots.
-            if (deliveries.fetch_add(1) < 15) throw std::runtime_error("callback failure");
-            if (len >= 5) received.store(DecodeRow(data));
-        });
-    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
-
-    for (int32_t i = 0; i < 40; ++i) {
-        pub_provider.Publish({"loaned", "throwing"}, MakeEncoder(i));
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
-    }
-
-    EXPECT_NE(AwaitRow(received), -1) << "delivery stopped after the throwing callbacks";
-    EXPECT_GT(deliveries.load(), 15);
-}
-
 // Same guarantee with a publisher that does not loan.
 TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
     FastDDSPubSubProvider pub_provider(BoundedConfig());
@@ -861,19 +702,21 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
     EXPECT_GT(deliveries.load(), 5);
 }
 
-// Attachments ride the same envelope regardless of which flow reads them (loan-published here;
-// read through CopyingDataReaderListener -- see LoanedRoundTrip's comment).
-TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
-    // Both providers share the document (see LoanedRoundTrip's comment).
-    FastDDSPubSubProvider pub_provider(LoanPublishConfig());
-    FastDDSPubSubProvider sub_provider(LoanPublishConfig());
-
-    pub_provider.CreateTopic({"loaned", "attachments"}, MakeSchema());
+// LoanableSampleWriter stays in the tree, unit-tested, even though `Publish` always writes
+// through the regular `SampleWriter` now (owner decision 2026-09-15). Driven directly against a
+// real, hand-built DataWriter on the SAME topic a normal provider subscribes to: the simplest way
+// left to prove it still loans, fills the sample -- attachments included -- and that a row too
+// large for the loan throws without leaking it back, repeated past the writer's own resource
+// limits (Fletcher's baked-in 100) so a leak cannot hide behind spare slots.
+TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    pub_provider.CreateTopic({"loanablewriter", "direct"}, MakeSchema());
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
     std::atomic<int32_t> received{-1};
     std::vector<uint8_t> blob_seen;
     SubscriptionResult result = sub_provider.Subscribe(
-        {"loaned", "attachments"},
+        {"loanablewriter", "direct"},
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
             const Blob* sidecar = att.Find("sidecar");
             if (sidecar != nullptr) {
@@ -883,20 +726,62 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
         });
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
+    // A hand-built writer on the same topic, NOT the provider's own -- Publish never loans any
+    // more, so this is the only way left to drive LoanableSampleWriter against a real DataWriter.
+    // Same process as `pub_provider`/`sub_provider`, so intraprocess matching with the already
+    // enabled data reader above completes synchronously, inside create_datawriter below.
+    DomainParticipant* participant =
+        DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
+    ASSERT_NE(participant, nullptr);
+    TypeSupport data_type_support;
+    data_type_support.reset(new internal::FletcherSamplePubSubType(pub_provider.PayloadBytes()));
+    ASSERT_EQ(data_type_support.register_type(participant), RETCODE_OK);
+    Publisher* publisher = participant->create_publisher(PUBLISHER_QOS_DEFAULT);
+    ASSERT_NE(publisher, nullptr);
+    Topic* topic = participant->create_topic("loanablewriter/direct",
+                                             data_type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+    ASSERT_NE(topic, nullptr);
+    // The registry already carries Fletcher's baked-in document (`pub_provider` above loaded it),
+    // so this Publisher's own default writer QoS is already seeded from it -- the same profile
+    // `pub_provider`'s own (unused here) writer would have gotten.
+    DataWriter* writer =
+        publisher->create_datawriter(topic, publisher->get_default_datawriter_qos());
+    ASSERT_NE(writer, nullptr);
+
+    internal::LoanableSampleWriter loanable(pub_provider.PayloadBytes());
+
     Attachments att;
     att.Set("sidecar", Blob{std::vector<uint8_t>{1, 2, 3}});
-    pub_provider.Publish({"loaned", "attachments"}, MakeEncoder(7), att);
+    loanable.Write(writer, MakeEncoder(7), att);
 
     EXPECT_EQ(AwaitRow(received), 7);
     EXPECT_EQ(blob_seen, (std::vector<uint8_t>{1, 2, 3}));
+
+    // A row past the bound throws (only the loaned path does -- the serialising path swallows the
+    // overflow inside serialize()), and repeating it past the writer's pool proves the failed
+    // attempts returned their loans: once a loan leaks, loan_sample itself starts failing.
+    const auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
+        std::vector<uint8_t> blob(bound + 16, 0x5A);
+        buf.Append(blob.data(), blob.size());
+    };
+    for (int i = 0; i < 105; ++i) {
+        EXPECT_THROW(loanable.Write(writer, oversized, Attachments{}), std::overflow_error)
+            << "attempt " << i;
+    }
+    EXPECT_NO_THROW(loanable.Write(writer, MakeEncoder(3), Attachments{}));
+
+    publisher->delete_datawriter(writer);
+    participant->delete_topic(topic);
+    participant->delete_publisher(publisher);
+    DomainParticipantFactory::get_instance()->delete_participant(participant);
 }
 
 // LoanedDataReaderListener stays in the tree, unit-tested, even though Subscribe does not install
-// it any more (owner ruling, this round -- see LoanedRoundTrip's comment). This drives it directly
-// against a real, hand-built reader on the SAME topic a normal provider publishes to: the simplest
-// way left to prove it still takes a loan, decodes it, and delivers. Fletcher's built-in reader
-// profile preallocates by default (CanLoanSamplesFollowsTheMemoryPolicy above), so no document is
-// needed to admit the loaned path here.
+// it any more (owner ruling 2026-09-14). This drives it directly against a real, hand-built reader
+// on the SAME topic a normal provider publishes to: the simplest way left to prove it still takes
+// a loan, decodes it, and delivers. Fletcher's baked-in reader profile preallocates by default
+// (CanLoanSamplesFollowsTheMemoryPolicy above), so no extra document is needed to admit the loaned
+// path here -- `pub_provider`'s own construction already loaded it into the registry.
 TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirectly) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{});
     pub_provider.CreateTopic({"loaned", "direct"}, MakeSchema());
@@ -904,16 +789,16 @@ TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirect
     DomainParticipant* participant =
         DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
     ASSERT_NE(participant, nullptr);
-    TypeSupport type_support;
-    type_support.reset(new internal::FletcherSamplePubSubType(pub_provider.PayloadBytes()));
-    ASSERT_EQ(type_support.register_type(participant), RETCODE_OK);
+    TypeSupport data_type_support;
+    data_type_support.reset(new internal::FletcherSamplePubSubType(pub_provider.PayloadBytes()));
+    ASSERT_EQ(data_type_support.register_type(participant), RETCODE_OK);
     Subscriber* subscriber = participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
     ASSERT_NE(subscriber, nullptr);
-    Topic* topic =
-        participant->create_topic("loaned/direct", type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+    Topic* topic = participant->create_topic("loaned/direct", data_type_support.get_type_name(),
+                                             TOPIC_QOS_DEFAULT);
     ASSERT_NE(topic, nullptr);
 
-    const DataReaderQos rqos = internal::MakeFletcherDefaultReaderQos();
+    const DataReaderQos rqos = internal::ResolveDataReaderQos(*subscriber, "loaned/direct");
     ASSERT_TRUE(internal::CanLoanSamples(rqos));
     DataReader* reader = subscriber->create_datareader(topic, rqos);
     ASSERT_NE(reader, nullptr);
@@ -1340,16 +1225,14 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
     EXPECT_EQ(AwaitRow(received), 7);
 }
 
-// The schema channel's bound was `FastDDSProviderOptions::max_schema_bytes`, and PDA-DEC-6 moved
-// it into the document as the `fletcher.max_schema_bytes` vendor property. Both tests that pinned
-// it moved with it, to `test_profile_document.cpp`, where they configure the bound the only way
-// there now is:
+// The schema channel's bound was `FastDDSProviderOptions::max_schema_bytes`, then PDA-DEC-6 moved
+// it into the document as the `fletcher.max_schema_bytes` vendor property; owner decision
+// 2026-09-15 fixed it at `kSchemaPayloadBytes` (pubsub/payload_bound.hpp) -- no document property
+// any more. The tests for it live in `test_profile_document.cpp`:
 //
-//   ASchemaTooLargeForItsChannelIsReported -> FastDdsConfig.SchemaBoundComesFromTheDocument
-//                                            (which also asserts the negative: with the property
-//                                            absent the same schema is delivered, so a provider
-//                                            that ignored the property goes red)
-//   AFailedSchemaAnnouncementCanBeRetried  -> FastDdsConfig.AFailedSchemaAnnouncementCanBeRetried
+//   ASchemaLargerThanTheSchemaBoundIsRefused ->
+//   FastDdsConfig.ASchemaLargerThanTheSchemaBoundIsRefused AFailedSchemaAnnouncementCanBeRetried ->
+//   FastDdsConfig.AFailedSchemaAnnouncementCanBeRetried
 
 // ---------------------------------------------------------------------------
 // Tests — FastDDSStatusListener

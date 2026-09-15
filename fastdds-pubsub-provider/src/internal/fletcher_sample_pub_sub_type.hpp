@@ -235,11 +235,11 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
     uint32_t payload_bytes_;
 };
 
-/// The companion `__schema` channel's type: the same plain sample, bounded by
-/// `fletcher.max_schema_bytes` and registered as `SchemaBytes` (payload_bound.hpp) so every
-/// provider names it identically. The schema rides as a row with no attachments. The usable
-/// schema size is `max_schema_bytes` minus 8: the row length and the attachment count come out
-/// of the same bound.
+/// The companion `__schema` channel's type: the same plain sample, bounded by the fixed
+/// `kSchemaPayloadBytes` (payload_bound.hpp; owner decision 2026-09-15 -- no document property any
+/// more) and registered as `SchemaBytes` so every provider names it identically. The schema rides
+/// as a row with no attachments. The usable schema size is `kSchemaPayloadBytes` minus 8: the row
+/// length and the attachment count come out of the same bound.
 class SchemaBytesPubSubType : public FletcherSamplePubSubType {
    public:
     explicit SchemaBytesPubSubType(uint32_t max_schema_bytes)

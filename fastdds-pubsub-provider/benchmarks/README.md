@@ -6,7 +6,7 @@ Three programs over the same row. Only the last creates DDS entities:
 |---|---|
 | `bench_pub_sub_type` | Google Benchmark. Measures `internal::FletcherSamplePubSubType` against the type it replaced, at nanosecond resolution. |
 | `example_arrow_roundtrip` | A narrated walkthrough. Prints one Arrow batch all the way to DDS bytes and back, naming every intermediate type and dumping every buffer. Start here to see the flow. |
-| `exp_zero_copy` | Ping-pong latency across the two axes that make a sample zero-copy — loaning and data-sharing — through real participants, writers and readers. The only one here that goes near DDS. |
+| `exp_zero_copy` | Ping-pong latency across data-sharing — the axis that still makes a sample zero-copy through the regular publish path (`Publish` always writes through `SampleWriter` now; `LoanableSampleWriter` stays unit-tested, not benchmarked here) — through real participants, writers and readers. The only one here that goes near DDS. |
 
 `transform_batch.hpp` holds the row all three use — NaviSuite's `TransformWithVelocity`, its Arrow schema,
 and the batch helpers — so the thing measured and the thing narrated are the same thing.
@@ -61,19 +61,16 @@ re-run with `--build=missing`.
 
 ### exp_zero_copy
 
-Takes `<loan 0|1> <sharing 0|1> <slots>` and runs ONE combo. Fast DDS's profile registry is
-process-wide (`src/internal/profile_document.hpp`): two different (loan, sharing, slots) triples
-are two different documents under the same profile names, which collide if loaded in one process —
-so each combo is its own process. Run with no arguments to print the valid combos, then loop over
-them:
+Takes `<sharing 0|1> <slots>` and runs ONE combo. Fast DDS's profile registry is process-wide
+(`src/internal/profile_document.hpp`): two different (sharing, slots) pairs are two different
+documents under the same profile names, which collide if loaded in one process — so each combo is
+its own process. Run with no arguments to print the valid combos, then loop over them:
 
 ```powershell
-build\Release\exp_zero_copy.exe   # prints the valid <loan> <sharing> <slots> combos
-foreach ($loan in 0, 1) {
-    foreach ($sharing in 0, 1) {
-        foreach ($slots in 16, 32) {
-            & build\Release\exp_zero_copy.exe $loan $sharing $slots
-        }
+build\Release\exp_zero_copy.exe   # prints the valid <sharing> <slots> combos
+foreach ($sharing in 0, 1) {
+    foreach ($slots in 16, 32) {
+        & build\Release\exp_zero_copy.exe $sharing $slots
     }
 }
 ```

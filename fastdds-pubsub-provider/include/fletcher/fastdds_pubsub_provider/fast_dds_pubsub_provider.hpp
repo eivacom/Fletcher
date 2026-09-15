@@ -166,16 +166,20 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 ///    2026-09-02: the setting holds the XML itself, never a filename; the
 ///    gateway's `--provider-config FILE` is where reading a file lives). Fast
 ///    DDS parses it; Fletcher gains no parser (locked decision 8). **Empty** —
-///    Fletcher's built-in everywhere; the registry is never consulted, not even
-///    for another provider's document already loaded in this process.
-///    **Non-empty** — loaded ONCE into Fast DDS's own process-wide profile
-///    registry, which then decides every endpoint's QoS.
+///    replaced by the provider's own default document (the README's "The
+///    published starting point"), so there is exactly one path: the document
+///    — supplied or default — is loaded ONCE into Fast DDS's own process-wide
+///    profile registry, which then decides every endpoint's QoS. Every
+///    provider in one process must therefore carry the same bytes; an empty
+///    document and a different non-empty document collide, and the second is
+///    refused, the same as any two different documents.
 ///
 /// ── What the document may say ───────────────────────────────────────────────
 ///
-///  - **participant** — `fletcher_participant`, which a non-empty document
-///    MUST define; otherwise (an empty document) Fast DDS's default, named
-///    `FletcherParticipant`.
+///  - **participant** — `fletcher_participant`, which the document MUST
+///    define — mandatory even for the provider's own default document, so a
+///    document that would otherwise silently register nothing is refused
+///    instead of running on Fast DDS's own defaults unnoticed.
 ///  - **the default writer / reader QoS** — the document's
 ///    `<data_writer is_default_profile="true">` / `<data_reader
 ///    is_default_profile="true">` profile, if it has one; otherwise Fast DDS's
@@ -184,9 +188,8 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 ///  - **a per-topic override on topic `T`** — the profile named `T` (the
 ///    `/`-joined topic), ahead of the default above.
 ///  - **the internal `__schema` channel** — no profile name is ever consulted
-///    for it; it keeps its own fixed QoS.
-///  - **an empty document** — Fletcher's built-in everywhere (writer and
-///    reader); the registry above is not consulted at all.
+///    for it; it keeps its own fixed QoS, bounded at the fixed
+///    `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`).
 ///
 /// **A supplied profile is that endpoint's WHOLE quality-of-service.** Anything
 /// it leaves out takes *Fast DDS's* default, not Fletcher's: there is no merge
@@ -195,30 +198,27 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// rest on a fact the substrate does not expose. The README publishes Fletcher's
 /// own profile as the copy-paste starting point.
 ///
-/// The two settings a QoS profile cannot express live as vendor properties in
-/// the anchor's `<rtps><propertiesPolicy>`: `fletcher.loan_publish` (`true` /
-/// `false`) and `fletcher.max_schema_bytes` (obeys the same rule as
-/// `max_payload_bytes`: a multiple of 4 in range). Both are
-/// consumed and stripped before the participant is created; every other property
-/// reaches Fast DDS untouched, which is what security plugins need. A
-/// `fletcher.*` property anywhere else in the document (a writer or reader
-/// profile) is simply not read by this provider.
+/// The document carries no vendor properties: `Publish` always goes through the
+/// regular (non-loaned) path. `LoanableSampleWriter` stays in the tree, compiled
+/// and unit-tested, but is not selectable by a document or any other
+/// configuration (owner decision 2026-09-15).
 ///
 /// ── Refused, all `kInvalidArgument` ─────────────────────────────────────────
 /// In the constructor, before the participant exists: a non-empty document that
 /// Fast DDS cannot parse, or that does not define `fletcher_participant`; a
 /// second, different document loaded by another provider in this process
-/// (Fast DDS profile names are process-wide; byte-identical copies are fine);
-/// an unknown or unparseable `fletcher.*` property in the anchor; a non-zero
+/// (Fast DDS profile names are process-wide; byte-identical copies are fine —
+/// an empty document collides the same way, since it is replaced by the
+/// provider's own default document before this rule applies); a non-zero
 /// `<domainId>` in the anchor disagreeing with `config.domain_id`; an unusable
-/// `max_payload_bytes`; an unusable `fletcher.max_schema_bytes` (same rule as
-/// `max_payload_bytes`). `Publish` on a topic this provider never `CreateTopic`d
+/// `max_payload_bytes`. `Publish` on a topic this provider never `CreateTopic`d
 /// — including one it only `Subscribe`d to — is `kTopicNotDeclared`.
 ///
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
-/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and `data_sharing` OFF at both ends, and
-/// is not configurable — a Fletcher-internal implementation detail, so no
-/// profile name is consulted for it.
+/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and `data_sharing` OFF at both ends,
+/// bounded at the fixed `kSchemaPayloadBytes`, and is not configurable — a
+/// Fletcher-internal implementation detail, so no profile name is consulted
+/// for it.
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(const ProviderConfig& config = {});

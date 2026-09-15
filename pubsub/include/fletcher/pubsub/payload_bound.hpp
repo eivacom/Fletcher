@@ -67,6 +67,13 @@ inline std::string FletcherTypeName(uint32_t payload_bytes) {
 /// The registered DDS type name of the companion `__schema` channel, which is bound-independent.
 inline constexpr const char* kSchemaTypeName = "SchemaBytes";
 
+/// The `__schema` channel's payload bound. Fixed, not configurable (owner decision 2026-09-15):
+/// below Fast DDS's 65500-byte default message size
+/// (`eprosima::fastdds::rtps::s_maximumMessageSize`, TransportInterface.hpp) so a schema
+/// announcement never needs RTPS fragmentation.
+inline constexpr uint32_t kSchemaPayloadBytes = 32 * 1024;
+static_assert(IsPayloadBound(kSchemaPayloadBytes));
+
 }  // namespace fletcher
 
 #endif  // FLETCHER_INCLUDE_PUBSUB_PAYLOAD_BOUND_HPP_

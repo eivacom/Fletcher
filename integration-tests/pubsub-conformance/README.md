@@ -691,8 +691,8 @@ serialising publish flow — the one an empty document selects — the overflow 
 caught inside `serialize()`, which zeroes the payload length, so the sample never
 enters history, `write()` returns non-OK and `SampleWriter` only logs it (pinned
 by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
-`kPayloadTooLarge` exists only on the **loaned** flow, which both instances would
-need a `fletcher.loan_publish=true` document to select. So the bound case asserts
+`kPayloadTooLarge` exists only on the **loaned** flow, which is kept in the tree but not
+selectable (no `fletcher.loan_publish` property exists). So the bound case asserts
 **delivery** in both directions and no throw anywhere, and it publishes a third
 row *after* the oversized one which must arrive — nothing dead can pose as a
 working instance.

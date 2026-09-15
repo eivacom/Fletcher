@@ -718,8 +718,8 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 // `SampleWriter` only logs it. That is pre-existing behaviour of the serialising
 // publish flow (the one an empty document selects), pinned by
 // `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`; a typed
-// `kPayloadTooLarge` exists only on the loaned flow, which both instances would
-// need a `fletcher.loan_publish=true` document to select. So delivery is what is
+// `kPayloadTooLarge` exists only on the loaned flow, which is kept in the tree but not
+// selectable (no `fletcher.loan_publish` property exists). So delivery is what is
 // asserted here, in both directions, and no new timing number is introduced: the
 // third row goes AFTER the oversized one and must arrive, so nothing dead can
 // pose as a working instance.

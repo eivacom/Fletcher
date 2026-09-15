@@ -605,27 +605,20 @@ one byte-identical document, or an empty one; a different one is refused
 `kInvalidArgument` at construction, by the provider itself before the bytes reach
 Fast DDS (which would accept a partially colliding document) — the one place §4 clause 3's "multiple
 instances with different configs" is bounded by the vendor, stated here rather
-than hidden. The only reserved profile name is `fletcher_participant` (**mandatory** in
-a non-empty document, because a document with no `<profiles>` element parses fine
+than hidden. The only reserved profile name is `fletcher_participant` (**mandatory**,
+because a document with no `<profiles>` element parses fine
 and silently registers nothing — the anchor turns that silent no-op into a
 construction-time refusal); `fletcher_writer` and `fletcher_reader` are ordinary
 names now. The default writer/reader QoS is the document's `is_default_profile="true"`
 `<data_writer>` / `<data_reader>` profile — Fast DDS's own mechanism — and a
 per-topic override is a profile named after the `/`-joined topic, resolved ahead of
-that default. An empty document is Fletcher's built-in QoS everywhere and never
-consults the registry at all. **A supplied profile is that
+that default. An empty document is replaced by the provider's own default
+document, so it obeys the same one-document-per-process rule. **A supplied profile is that
 endpoint's whole quality-of-service** — no merge, no floor — because the XML API
-cannot report which policies a document mentioned. The two settings a QoS profile
-cannot express (`fletcher.loan_publish`, `fletcher.max_schema_bytes`) ride as
-vendor properties inside the anchor's `<rtps><propertiesPolicy>`, which is native
-Fast DDS XML, so there is still exactly one reader and one format. `domain_id`
+cannot report which policies a document mentioned. `domain_id`
 always wins over an anchor's `<domainId>`, and a non-zero disagreement is refused
 rather than silently resolved. **Every document refusal is a construction-time
-refusal.** The misplaced-`fletcher.*`-property refusal that used to fire on a
-topic's first `Publish` / `Subscribe` is gone along with the two role profiles it
-guarded — a `fletcher.*` property outside the anchor is simply not read, not
-refused — so a constructed provider is now one whose whole document has been
-read, not merely one whose *participant* configuration is good. The convenience
+refusal.** The convenience
 of reading a document out of a file lives in the
 **gateway** (`--provider-config FILE`), never in Fletcher.
 

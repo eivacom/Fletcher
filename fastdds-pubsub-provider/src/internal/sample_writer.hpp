@@ -12,9 +12,9 @@
 //                         layout into the transport's payload, truncated after the bytes in use.
 //
 // Both derive from SampleWriterBase, and both leave the same fields in the same layout, so a reader
-// cannot tell which one produced a sample. Unlike the read flows, this is a genuine preference
-// rather than a precondition — see the `fletcher.loan_publish` document property for what it
-// costs.
+// cannot tell which one produced a sample. `Publish` always builds a `SampleWriter` now (owner
+// decision 2026-09-15) — see the comment on `LoanableSampleWriter` below for why it stays in the
+// tree unselected.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SAMPLE_WRITER_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SAMPLE_WRITER_HPP_
 
@@ -93,6 +93,10 @@ class SampleWriter : public SampleWriterBase {
     }
 };
 
+// Not selected: `Publish` always writes through `SampleWriter` now (owner decision 2026-09-15).
+// The regular path already writes straight into the DDS payload buffer, from inside serialize();
+// a loaned write ships the full bound on the wire regardless of the row's real size.
+//
 // Only fits a writer whose registered type carries the same bound.
 class LoanableSampleWriter : public SampleWriterBase {
    public:
@@ -105,7 +109,7 @@ class LoanableSampleWriter : public SampleWriterBase {
             sample,
             eprosima::fastdds::dds::DataWriter::LoanInitializationKind::NO_LOAN_INITIALIZATION);
         if (loan != eprosima::fastdds::dds::RETCODE_OK) {
-            // A failed loan drops the sample: loan_publish asked for zero copy.
+            // A failed loan drops the sample: a caller of this class asked for zero copy.
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
                                "writer on '" << writer->get_topic()->get_name()
                                              << "' dropped a sample: loan_sample returned "
