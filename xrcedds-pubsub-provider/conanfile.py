@@ -15,8 +15,19 @@ class FletcherPubsubConan(ConanFile):
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    # fPIC, and why a static library in this tree needs it stated.
+    #
+    # Round BIND adds `c-abi/`, the first component packaged as a SHARED library:
+    # it links this archive into `libfletcher-c-abi.so`. Without the option Conan
+    # never sets CMAKE_POSITION_INDEPENDENT_CODE, and the link fails with
+    # "relocation R_X86_64_TPOFF32 against `__tls_guard' can not be used when
+    # making a shared object" — found by the first Linux lane run of PR #129, on a
+    # tree where every local Windows build was green.
+    #
+    # Deleted on Windows in config_options(): the flag has no meaning for MSVC, and
+    # keeping the option there would change package IDs for no reason.
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -39,6 +50,10 @@ class FletcherPubsubConan(ConanFile):
 
     def package_id(self):
         del self.info.options.run_tests
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.fPIC
 
     def layout(self):
         cmake_layout(self)

@@ -1013,6 +1013,16 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
 - **P-6 — First lane run beats local green (§12.4).** Windows is the primary dev
   platform; three of PR #126's seven CI-found defects were Linux-only. BIND-0's
   empty-ABI lanes exist to make the Linux signal standing from day one.
+  **Vindicated on the first run (PR #129, 2026-09-15).** Every local Windows build
+  was green; Linux failed at the link:
+  `relocation R_X86_64_TPOFF32 against '__tls_guard' can not be used when making a
+  shared object; recompile with -fPIC`. No `fletcher-*` recipe declared an `fPIC`
+  option, because until `c-abi/` nothing in the tree packaged a SHARED library to
+  link those archives into. Fixed by adding the option (default True, deleted on
+  Windows) to `pubsub`, `fastdds-pubsub-provider` and `xrcedds-pubsub-provider`;
+  header-only `core` needs none. The same run also caught two unformatted spots
+  that `ci.format-check-cpp` had never checked — its globs omitted `*.c`, and
+  `c-abi/` is the tree's first C component.
 
 - **P-7 — `protoc/` and `arrow-bridge/` are contended.**
   `feature/fastdds_modernization/19645` carries four commits not on `main`
