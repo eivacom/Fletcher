@@ -20,15 +20,19 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "fletcher/conformance/suite.hpp"
@@ -54,18 +58,122 @@ std::shared_ptr<PubSubProvider> MakeFastDds(uint32_t domain_id) {
     return std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = domain_id});
 }
 
+// ── Readiness: wait for the data reader to match a writer ──────────
+//
+// The built-in data profiles are VOLATILE (retention kDropsPreSubscribe,
+// fixtures.cpp): a row published before BOTH ends have matched is gone.
+// MatchTracker records OnMatched for the DATA (non-schema) READER endpoint,
+// the subscriber side, which is always this process. The writer side is
+// fenced where the writer lives: in the same participant for the local
+// subject, in the peer process for the cross-process one (peer.hpp
+// `await_matched`) -- measured 2026-09-15: the reader here matches at
+// enable() against an already-discovered writer, the peer's writer one
+// discovery hop later. OnMatched runs under FastDDSStatusListener's threading
+// contract: no provider call, no blocking, no throw.
+class MatchTracker : public FastDDSStatusListener {
+   public:
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t /*change*/) noexcept override {
+        if (endpoint.is_schema_channel || endpoint.is_writer) return;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            counts_[std::string(endpoint.topic)] = current_count;
+        }
+        cv_.notify_all();
+    }
+
+    // Bounded wait_for, predicate-guarded so an already-matched topic returns
+    // immediately rather than waiting out the budget. Never sleeps.
+    void AwaitMatched(const std::string& topic_name, std::chrono::milliseconds budget) {
+        std::unique_lock<std::mutex> lock(mu_);
+        cv_.wait_for(lock, budget, [&] {
+            auto it = counts_.find(topic_name);
+            return it != counts_.end() && it->second >= 1;
+        });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::unordered_map<std::string, int32_t> counts_;
+};
+
+// Adds AwaitDataMatched over a generic local/peer subject by constructing the
+// Fast DDS provider it wraps with a MatchTracker attached. `listener_` is
+// declared BEFORE `inner_` on purpose: members are destroyed in reverse
+// declaration order, so the provider `inner_` owns is torn down first and the
+// listener that must outlive it (fast_dds_pubsub_provider.hpp) is destroyed
+// last.
+class FastDDSSubject : public ProviderSubject {
+   public:
+    explicit FastDDSSubject(
+        std::function<std::unique_ptr<ProviderSubject>(FastDDSStatusListener*)> make_inner)
+        : inner_(make_inner(&listener_)) {}
+
+    const ProviderTraits& Traits() const override { return inner_->Traits(); }
+    Reply DeclareTopic(const Topic& topic, SchemaId schema) override {
+        return inner_->DeclareTopic(topic, schema);
+    }
+    Reply PublishRow(const Topic& topic, uint32_t seq) override {
+        return inner_->PublishRow(topic, seq);
+    }
+    SubscriptionResult Subscribe(const Topic& topic, SubscribeCallback callback) override {
+        return inner_->Subscribe(topic, std::move(callback));
+    }
+    void Unsubscribe(const Topic& topic) override { inner_->Unsubscribe(topic); }
+    SchemaArrival SubscribeSchema(const Topic& topic) override {
+        return inner_->SubscribeSchema(topic);
+    }
+    void UnsubscribeSchema(const Topic& topic) override { inner_->UnsubscribeSchema(topic); }
+
+    // Reader half here, writer half where the writer lives (no-op for the
+    // local subject, the `await_matched` verb for the peer subject).
+    void AwaitDataMatched(const Topic& topic, std::chrono::milliseconds budget) override {
+        listener_.AwaitMatched(internal::JoinSegments(topic), budget);
+        inner_->AwaitDataMatched(topic, budget);
+    }
+
+   private:
+    MatchTracker listener_;
+    std::unique_ptr<ProviderSubject> inner_;
+};
+
+SubjectFactory MakeFastDDSLocalSubjectFactory(uint32_t domain_id) {
+    return SubjectFactory{
+        "FastDdsLocal", [domain_id]() -> std::unique_ptr<ProviderSubject> {
+            return std::make_unique<FastDDSSubject>([domain_id](FastDDSStatusListener* listener) {
+                return MakeLocalSubjectFactory(
+                    "FastDdsLocal", "fastdds", SchemaMode::kCarried, [domain_id, listener] {
+                        return std::make_shared<FastDDSPubSubProvider>(
+                            ProviderConfig{.domain_id = domain_id}, listener);
+                    })();
+            });
+        }};
+}
+
+SubjectFactory MakeFastDDSPeerSubjectFactory(uint32_t domain_id) {
+    return SubjectFactory{
+        "FastDdsCrossProcess",
+        [domain_id]() -> std::unique_ptr<ProviderSubject> {
+            return std::make_unique<FastDDSSubject>([domain_id](FastDDSStatusListener* listener) {
+                return MakePeerSubjectFactory(
+                    "FastDdsCrossProcess", "fastdds", SchemaMode::kCarried,
+                    [domain_id, listener] {
+                        return std::make_shared<FastDDSPubSubProvider>(
+                            ProviderConfig{.domain_id = domain_id}, listener);
+                    },
+                    CONFORMANCE_FASTDDS_PEER, {"--domain-id", std::to_string(domain_id)})();
+            });
+        },
+        /*publishes_into_subject_instance=*/false};
+}
+
 }  // namespace
 
-INSTANTIATE_TEST_SUITE_P(
-    FastDdsLocal, ProviderConformance,
-    ::testing::Values(MakeLocalSubjectFactory("FastDdsLocal", "fastdds", SchemaMode::kCarried,
-                                              [] { return MakeFastDds(kLocalDomain); })));
+INSTANTIATE_TEST_SUITE_P(FastDdsLocal, ProviderConformance,
+                         ::testing::Values(MakeFastDDSLocalSubjectFactory(kLocalDomain)));
 
 INSTANTIATE_TEST_SUITE_P(FastDdsCrossProcess, ProviderConformance,
-                         ::testing::Values(MakePeerSubjectFactory(
-                             "FastDdsCrossProcess", "fastdds", SchemaMode::kCarried,
-                             [] { return MakeFastDds(kPeerDomain); }, CONFORMANCE_FASTDDS_PEER,
-                             {"--domain-id", std::to_string(kPeerDomain)})));
+                         ::testing::Values(MakeFastDDSPeerSubjectFactory(kPeerDomain)));
 
 // ── Fast DDS resolves as a built-in NAME (spec §4 clause 4) ─────────
 //

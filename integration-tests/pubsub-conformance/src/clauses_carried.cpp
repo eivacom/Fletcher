@@ -29,6 +29,7 @@ TEST_P(ProviderConformance, CallbackNeverSeesNullSchema) {
     ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
     }

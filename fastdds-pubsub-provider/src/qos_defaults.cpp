@@ -34,10 +34,9 @@ const char* FletcherDefaultProfilesDocument() {
     </participant>
     <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <durability><kind>VOLATILE</kind></durability>
         <reliability>
           <kind>RELIABLE</kind>
-          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
         </reliability>
       </qos>
       <topic>
@@ -58,7 +57,7 @@ const char* FletcherDefaultProfilesDocument() {
     </data_writer>
     <data_reader profile_name="default_reader" is_default_profile="true">
       <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <durability><kind>VOLATILE</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
       </qos>
       <topic>
@@ -75,18 +74,8 @@ const char* FletcherDefaultProfilesDocument() {
 </dds>)XML";
 }
 
-// The schema channel declines data-sharing on both ends. Its type is the same plain
-// FletcherSamplePubSubType the data channel uses (registered as SchemaBytesPubSubType), so this is
-// not a plainness question — it is a one-sample control channel. OFF removes a DataSharingListener
-// thread per schema reader and a shared-memory segment per schema writer, and it sidesteps a Fast
-// DDS 3.4.0 teardown hang: StatefulReader::~StatefulReader clears is_alive_ before
-// DataSharingListener::stop(), and DataSharingListener::process_new_data only advances its pool
-// cursor when process_data_msg succeeds and never checks is_running_, so a payload still pending at
-// teardown spins that thread forever and stop()'s join never returns. Reproduced by
-// ConflictingCrossProviderSchemaIsLoggedNotSwallowed.
-//
-// One retained sample for the writer's life, so the pool is pinned to one slot; the defaults
-// would reserve 100 of a bounded type per schema endpoint.
+// RELIABLE + KEEP_LAST(1) + TRANSIENT_LOCAL, one retained sample per topic; data-sharing at Fast
+// DDS's default.
 DataWriterQos MakeSchemaChannelWriterQos() {
     DataWriterQos qos = DATAWRITER_QOS_DEFAULT;
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -98,7 +87,6 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
-    qos.data_sharing().off();
     return qos;
 }
 
@@ -113,7 +101,6 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
-    qos.data_sharing().off();
     return qos;
 }
 

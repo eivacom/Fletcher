@@ -10,6 +10,7 @@
 #ifndef FLETCHER_CONFORMANCE_SUBJECT_HPP_
 #define FLETCHER_CONFORMANCE_SUBJECT_HPP_
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <fletcher/pubsub/provider.hpp>
@@ -147,6 +148,26 @@ class ProviderSubject {
     [[nodiscard]] virtual SchemaArrival SubscribeSchema(const Topic& topic) = 0;
 
     virtual void UnsubscribeSchema(const Topic& topic) = 0;
+
+    /// Optional readiness hook. A clause calls this after `Subscribe` (and
+    /// after whichever of `Subscribe` / `DeclareTopic` runs second, since a
+    /// reader cannot match a writer that does not exist yet) and before its
+    /// first `PublishRow`, so the row is never published into a reader that
+    /// has not matched a writer. Bounded by `budget`; never sleeps.
+    ///
+    /// The default returns immediately — matched at `Subscribe`, which is true
+    /// for every subject but the Fast DDS ones: the loopback has no discovery,
+    /// and XRCE's agent-side QoS did not change (still retains). Only the Fast
+    /// DDS local and cross-process subjects override this, over a
+    /// `FastDDSStatusListener` recording `OnMatched` for the data (non-schema)
+    /// reader endpoint.
+    ///
+    /// Not part of the seam itself: `PubSubProvider` carries no such signal
+    /// (spec §7) — an application learns of a match, if it needs to, from a
+    /// provider-specific status callback. This hook is a test-harness
+    /// convenience over that, never called by a clause that deliberately
+    /// publishes BEFORE subscribing (a late-joiner / retention clause).
+    virtual void AwaitDataMatched(const Topic& /*topic*/, std::chrono::milliseconds /*budget*/) {}
 };
 
 /// "<type>: <what>" for `e`, with the numbered status appended when `e` is a

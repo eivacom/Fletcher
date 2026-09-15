@@ -27,6 +27,22 @@ static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
     };
 }
 
+// The built-in data profile is VOLATILE: a row published before the data writer has matched the
+// subscriber's data reader is dropped, not replayed -- and schema arrival proves only that the
+// schema channel matched. FastDDSStatusListener is Fletcher's own type, so this TU still compiles
+// with no Fast DDS headers.
+struct DataWriterMatch : FastDDSStatusListener {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool matched = false;
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t) noexcept override {
+        if (!endpoint.is_writer || endpoint.is_schema_channel || current_count < 1) return;
+        std::lock_guard<std::mutex> lock(mutex);
+        matched = true;
+        cv.notify_all();
+    }
+};
+
 int main() {
     // ProviderConfig and nothing else — and this TU is the machine check for that: the package
     // recipe drops `transitive_headers`, so it compiles with no Fast DDS include directories at
@@ -38,7 +54,8 @@ int main() {
     // <fletcher/pubsub/payload_bound.hpp>, which the public header must include for an out-of-tree
     // caller to compile (review 4a F7).
     const ProviderConfig config{.max_payload_bytes = kPayloadBytes<64 * 1024>};
-    FastDDSPubSubProvider pub_provider(config);
+    DataWriterMatch match;  // declared first: it must outlive the provider it observes
+    FastDDSPubSubProvider pub_provider(config, &match);
     FastDDSPubSubProvider sub_provider(config);
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
@@ -63,6 +80,14 @@ int main() {
     if (result.schema.Wait(std::chrono::seconds(5), &schema) != PubSubStatus::kOk || !schema) {
         std::fputs("FAIL: schema not received from publisher\n", stderr);
         return 1;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(match.mutex);
+        if (!match.cv.wait_for(lock, std::chrono::seconds(5), [&] { return match.matched; })) {
+            std::fputs("FAIL: data writer never matched the subscriber's data reader\n", stderr);
+            return 1;
+        }
     }
 
     pub_provider.Publish({"example", "topic"}, MakeEncoder(42));

@@ -215,10 +215,9 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// — including one it only `Subscribe`d to — is `kTopicNotDeclared`.
 ///
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
-/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL and `data_sharing` OFF at both ends,
-/// bounded at the fixed `kSchemaPayloadBytes`, and is not configurable — a
-/// Fletcher-internal implementation detail, so no profile name is consulted
-/// for it.
+/// KEEP_LAST(depth=1) + TRANSIENT_LOCAL, bounded at the fixed
+/// `kSchemaPayloadBytes`, and is not configurable — a Fletcher-internal
+/// implementation detail, so no profile name is consulted for it.
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(const ProviderConfig& config = {});

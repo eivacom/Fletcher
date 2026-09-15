@@ -67,6 +67,9 @@ TEST_P(ProviderConformance, SchemaBeforeDataAcrossHandoff) {
     ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    // No-op except on Fast DDS: waits for the reader to match the writer just
+    // declared before the immediate publish below (subject.hpp).
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
     }
@@ -91,6 +94,7 @@ TEST_P(ProviderConformance, SchemaModeIsUniformNeverMixed) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -118,6 +122,7 @@ TEST_P(ProviderConformance, PerWriterOrderIsMonotonic) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -137,6 +142,7 @@ TEST_P(ProviderConformance, BacklogNeverInterleavesWithLiveSamples) {
     ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
     }
@@ -219,6 +225,7 @@ TEST_P(ProviderConformance, IdenticalRedeclarationIsIdempotent) {
 
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForCount(1, Deadline()))
         << "the topic stopped delivering after an identical re-declaration";
@@ -266,6 +273,7 @@ TEST_P(ProviderConformance, OneCallbackPerTopicPerInstance) {
         // Refusing the second registration is one legal way to hold the
         // cardinality; replacing the first is the other.
     }
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForCount(1, Deadline())) << "the row reached no callback at all";
@@ -288,6 +296,7 @@ TEST_P(ProviderConformance, SubscribeNeverBlocksSchemaArrivesLater) {
         << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms";
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForSeq(1, Deadline())) << "the row never arrived";
 
@@ -316,6 +325,7 @@ TEST_P(ProviderConformance, NoDeliveryAfterUnsubscribeReturns) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -354,6 +364,7 @@ TEST_P(ProviderConformance, DeliveryIsSerializedPerSubscription) {
     // it concurrently with this write.
     collector.SetHoldWindow(std::chrono::microseconds(500));
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     Reply reply_a;
     Reply reply_b;
@@ -503,6 +514,7 @@ TEST_P(ProviderConformance, HostileCallbackNeitherEscapesNorIsChargedElsewhere) 
                                // was just handed to.
                                throw std::overflow_error("a hostile handler");
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     const Reply published = Subject().PublishRow(topic, 1);
     EXPECT_TRUE(published.ok()) << "a subscriber's handler failure was charged to the publisher: "
@@ -539,6 +551,7 @@ TEST_P(ProviderConformance, ReentrantCallIsRefusedWithoutAnyThrow) {
                                recorded.store(RecordReentrantUnsubscribe(Subject(), topic));
                                handled.Set();
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
@@ -570,6 +583,7 @@ TEST_P(ProviderConformance, ThrowingCallbackIsAbsorbedWithoutReentering) {
                                threw.Set();
                                throw std::overflow_error("a failing handler");
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     const uint64_t before = DeliveryChannel::AbsorbedTotal();
     const Reply published = Subject().PublishRow(topic, 1);
@@ -619,6 +633,7 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
                                in_delivery.Set();
                                (void)may_return.WaitUntil(SettleDeadline());
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     std::thread publisher([&] { (void)Subject().PublishRow(topic, 1); });
     // However this clause exits — including through the ASSERT below — the parked
@@ -744,6 +759,7 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
             }
             handled.Set();
         });
+    Subject().AwaitDataMatched(driver, RemainingBudget());
 
     CONF_MUST_PUBLISH(driver, 1);
     ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
@@ -793,6 +809,7 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     Collector after;
     ScopedSubscription after_sub(Subject(), derived, after.Callback());
     CONF_MUST_DECLARE(derived, DataSchema());
+    Subject().AwaitDataMatched(derived, RemainingBudget());
     CONF_MUST_PUBLISH(derived, 78);
     EXPECT_TRUE(after.WaitForSeq(78, Deadline()))
         << "the provider stopped serving after refusing a re-entrant call";

@@ -33,8 +33,8 @@ re-deriving the rules.
   |---|---|---|---|---|
   | `InProcessLocal` | in-process loopback | this process | absent | drops |
   | `InProcessCarrying` | in-process loopback, `document = "schema_carriage=carried"` | this process | carried | drops |
-  | `FastDdsLocal` | Fast DDS (domain 151) | this process | carried | retains |
-  | `FastDdsCrossProcess` | Fast DDS (domain 152) | **a child process** | carried | retains |
+  | `FastDdsLocal` | Fast DDS (domain 151) | this process | carried | drops |
+  | `FastDdsCrossProcess` | Fast DDS (domain 152) | **a child process** | carried | drops |
   | `XrceLocal` | XRCE-DDS (domain 153, Agent :2019) | this process | carried | retains |
   | `XrceCrossProcess` | XRCE-DDS (domain 153, Agent :2019) | **a child process** | carried | retains |
 
@@ -49,6 +49,14 @@ re-deriving the rules.
   loopback now is — `InProcessLocal` and `InProcessCarrying` are one provider in
   its two modes, chosen (PDA-DEC-5) by the `schema_carriage` document key
   rather than a construction-time argument — there is no second constructor.
+- **Readiness, for a transport that drops.** `fastdds`'s built-in data profiles
+  are VOLATILE, so a row published before both ends have matched is gone.
+  `FastDdsLocal` and `FastDdsCrossProcess` override
+  `ProviderSubject::AwaitDataMatched` (`subjects/fastdds_main.cpp`): the
+  subscriber's data reader match is recorded through a `FastDDSStatusListener`,
+  and the cross-process peer fences its own writer's match (`await_matched`,
+  `peer.hpp`). Clauses that subscribe then publish call it before the first
+  publish; late-joiner clauses never do.
 - **One binary per schema mode.** The two loopback subjects live in separate
   binaries (`subjects/inprocess_main.cpp`, `subjects/inprocess_carrying_main.cpp`)
   because clause 2's gate is the link line and `INSTANTIATE_TEST_SUITE_P`

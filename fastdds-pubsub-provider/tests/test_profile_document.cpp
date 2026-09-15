@@ -1043,18 +1043,6 @@ TEST(FastDdsConfig, AnchorPropertiesReachTheParticipant) {
     EXPECT_EQ(value, "kept");
 }
 
-// Pins the fix for the Fast DDS 3.4.0 teardown hang: `~StatefulReader` clears `is_alive_` before
-// `DataSharingListener::stop()`, and `DataSharingListener::process_new_data` spins on a refused
-// payload without checking `is_running_`. Reproduced by
-// `ConflictingCrossProviderSchemaIsLoggedNotSwallowed` at roughly 1 in 2 isolated runs before the
-// fix. No DDS entities needed: the QoS is data, not discovery.
-TEST(FastDdsConfig, TheSchemaChannelDeclinesDataSharing) {
-    EXPECT_EQ(internal::MakeSchemaChannelWriterQos().data_sharing().kind(),
-              eprosima::fastdds::dds::OFF);
-    EXPECT_EQ(internal::MakeSchemaChannelReaderQos().data_sharing().kind(),
-              eprosima::fastdds::dds::OFF);
-}
-
 namespace {
 
 std::string EndpointProperty(const std::string& name, const std::string& value) {
