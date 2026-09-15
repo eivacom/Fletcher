@@ -68,8 +68,9 @@ extern "C" {
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
 #define FL_BINDING_ABI_VERSION_MINOR 1
-#define FL_BINDING_ABI_VERSION \
-    ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
+#define FL_BINDING_ABI_VERSION                                   \
+    ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
+                (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
 
 /* The ABI version of the loaded shim, packed as (major << 16) | minor.
  *

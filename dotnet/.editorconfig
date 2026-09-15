@@ -23,8 +23,10 @@ indent_size = 2
 
 [*.cs]
 indent_size = 4
-# 120 matches .clang-format's ColumnLimit, so the two languages in this
-# repository wrap at the same place.
+# Wider than .clang-format's ColumnLimit of 100, because C# spends a line's
+# budget differently: explicit accessibility on every member, generic type
+# arguments spelled out, and namespace-qualified Arrow types in signatures.
+# Advisory either way — `dotnet format` does not reflow code to it.
 max_line_length = 120
 
 # ── using directives ────────────────────────────────────────────────────────

@@ -19,10 +19,9 @@
 // measures, and it puts the static-link-into-a-shared-library question (PIC on
 // Linux; one MSVC runtime on Windows) in front of CI on day one rather than at
 // BIND-4 (risk P-6).
-#include "fletcher/pubsub/provider_registry.hpp"
-
 #include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 #include "fletcher/pubsub/in_process_provider.hpp"
+#include "fletcher/pubsub/provider_registry.hpp"
 #include "fletcher/xrcedds_pubsub_provider/xrce_dds_pubsub_provider.hpp"
 
 namespace fletcher::abi::internal {
