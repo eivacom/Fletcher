@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+cmake_minimum_required(VERSION 3.15)
+project(fletcher-c-abi LANGUAGES C CXX)
+
+find_package(fletcher-pubsub CONFIG REQUIRED)
+find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
+find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
+
+# SHARED, unlike every other Fletcher component: this is the artifact
+# `Eiva.Fletcher.Interop` ships per RID in runtimes/<rid>/native/, and P/Invoke
+# needs a loadable module, not an archive.
+add_library(fletcher-c-abi SHARED
+    src/binding_version.c
+    src/builtins.cpp)
+
+# The public header is C99; the implementation behind it is C++20 because the
+# seam is. Both are stated: the C standard is what BIND-1's
+# CompilesAsC99AndIsSelfContained test holds the header to.
+target_compile_features(fletcher-c-abi PRIVATE c_std_99 cxx_std_20)
+
+# Hide everything that is not explicitly exported, so "the shim exports only
+# fl_binding_abi_version" is enforced by the build rather than asserted. On
+# Windows nothing leaves without __declspec(dllexport) anyway; the two settings
+# below are what make gcc/clang behave the same way, and they also stop the
+# statically linked Fast DDS / Micro XRCE-DDS symbols from becoming part of the
+# shim's interface (they would otherwise be interposable, and a host process
+# that also links eProsima would get one of the two at random).
+set_target_properties(fletcher-c-abi PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_BUILDING)
+
+# ...and the half of the same rule that visibility settings cannot reach on
+# gcc/clang: CXX_VISIBILITY_PRESET governs only THIS target's own translation
+# units, while symbols arriving from a static archive keep the visibility they
+# were compiled with — and the eProsima chain is linked in statically.
+# `--exclude-libs ALL` localises every symbol that came out of an archive, which
+# is exactly the set at issue. It matters beyond tidiness: a host process that
+# also links its own Fast DDS would otherwise have two definitions of every
+# eProsima symbol visible at once, and the dynamic linker picks one per symbol,
+# silently.
+#
+# WINDOWS IS NOT SOLVED, and cannot be from here (BIND-0 finding, measured):
+# ConanCenter's `fast-dds` static build is compiled with EPROSIMA_USER_DLL_EXPORT,
+# so `libfastdds-3.4.lib` carries 303003 /EXPORT directives in its objects'
+# .drectve sections. A linker honours those when it pulls the objects into a DLL,
+# and a module-definition file does NOT suppress them — MSVC merges /DEF exports
+# with __declspec(dllexport) ones (tried, measured: 3531 exported names either
+# way). Consequences are bounded — Windows resolves imports per-module, so there
+# is no ELF-style interposition, and P/Invoke finds `fl_binding_abi_version` by
+# name regardless — but the export table is bloat the packed-size budget pays
+# for, and the "exports only what binding.h declares" property holds on Linux
+# only. Fixing it means getting the upstream recipe to stop defining the macro
+# for static builds. Revisit at BIND-9 with the size budget in hand.
+if(NOT MSVC)
+    target_link_options(fletcher-c-abi PRIVATE
+        "LINKER:--exclude-libs,ALL")
+endif()
+
+target_include_directories(fletcher-c-abi
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>)
+
+# PRIVATE, all three: no Fletcher C++ type appears in binding.h, so no consumer
+# of the shim ever needs a Fletcher header, an Arrow header or an eProsima
+# header. That is the property the test_package checks by compiling a C program
+# against the package with nothing else on its include path.
+target_link_libraries(fletcher-c-abi PRIVATE
+    fletcher-pubsub::fletcher-pubsub
+    fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+    fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
+
+option(FLETCHER_BUILD_TESTS "Build unit tests" OFF)
+if(FLETCHER_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

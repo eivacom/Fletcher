@@ -1,0 +1,165 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.c-abi
+
+concurrency:
+  group: ci.c-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers.
+        required: true
+        type: string
+
+# The shim is the one SHARED library in the tree and it statically links the
+# whole eProsima and Micro XRCE-DDS chain, so this lane's real job — from BIND-0
+# on, with an ABI that exports one function — is to keep that link honest on both
+# platforms. Seam §12.4: PR #126's first lane run found seven defects local green
+# could not, three of them Linux-only, and Windows is the primary dev platform.
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            c-abi
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            .github
+            .conan-profiles
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # No Conan remote hosts the fletcher-* packages, so every dependency
+      # recipe must be in the local cache before `conan create` on c-abi can
+      # resolve it. Order: core → pubsub → the two providers (both need pubsub).
+      - name: Build fletcher-core, fletcher-pubsub and the two providers (dependencies)
+        shell: bash
+        working-directory: c-abi
+        run: |
+          PROFILE=../.conan-profiles/Windows-msvc194-x86_64-Release
+          conan create ../core --build=missing -pr:a=$PROFILE
+          conan create ../pubsub --build=missing -pr:a=$PROFILE
+          conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
+          conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
+
+      - name: Build and test
+        shell: bash
+        working-directory: c-abi
+        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
+
+      # The per-RID size of the shim is a release-facing number (the NuGet
+      # package carries one of these per RID), so it is measured on every run
+      # rather than once at BIND-0. No budget is ENFORCED yet: BIND-9 sets the
+      # threshold with the packaging work, and a number in the log from day one
+      # is what makes the threshold defensible instead of invented.
+      - name: Measure the packaged shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
+          if [ -z "$SHIM" ]; then
+            echo "::error::fletcher-c-abi.dll not found in the Conan cache"
+            find ~/.conan2/p -name 'fletcher-c-abi*' -type f
+            exit 1
+          fi
+          BYTES=$(wc -c < "$SHIM")
+          echo "win-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB) — $SHIM"
+          echo "### win-x64 shim: $((BYTES / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            c-abi
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            .github
+            .conan-profiles
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # One docker run for build, test AND measurement: `docker run --rm` gives
+      # each invocation a fresh container, and the Conan cache lives in the
+      # container's home directory rather than in the mounted workspace, so a
+      # second container would find nothing to measure.
+      - name: Build dependencies, build, test, and measure
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/c-abi \
+            fletcher-build \
+            bash -c '
+              set -e
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              conan create ../core --build=missing -pr:a=$PROFILE
+              conan create ../pubsub --build=missing -pr:a=$PROFILE
+              conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
+              conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
+              conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
+
+              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
+              if [ -z "$SHIM" ]; then
+                echo "::error::libfletcher-c-abi.so not found in the Conan cache"
+                find ~/.conan2/p -name "libfletcher-c-abi*" -type f
+                exit 1
+              fi
+
+              # The per-RID size is a release-facing number (the NuGet package
+              # carries one shim per RID), so it is measured on every run rather
+              # than once at BIND-0. No budget is ENFORCED yet: BIND-9 sets the
+              # threshold with the packaging work, and a number in the log from
+              # day one is what makes that threshold defensible rather than
+              # invented.
+              BYTES=$(wc -c < "$SHIM")
+              echo "linux-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB)"
+              echo "### linux-x64 shim: $((BYTES / 1024)) KiB" >> /workspace/shim-summary.md
+
+              # The export table IS the interface, and on Linux it is enforced:
+              # CXX_VISIBILITY_PRESET hides this component own symbols and
+              # --exclude-libs ALL localises everything that arrived from a static
+              # archive. A symbol outside the fl_ prefix therefore means a
+              # statically linked dependency (the whole eProsima chain is in
+              # here) has become part of the shim interface — which is how a host
+              # process that links its own Fast DDS ends up binding one of two
+              # definitions at random. The allowlist is the linker own set.
+              echo "--- exported symbols ---"
+              nm -D --defined-only "$SHIM" | awk "{print \$3}" | sort | tee /workspace/shim-exports.txt
+              UNEXPECTED=$(grep -v -E "^(fl_[A-Za-z0-9_]*|_init|_fini|_edata|_end|__bss_start)$" /workspace/shim-exports.txt || true)
+              if [ -n "$UNEXPECTED" ]; then
+                echo "::error::the shim exports symbols that binding.h does not declare:"
+                echo "$UNEXPECTED"
+                exit 1
+              fi
+              grep -q "^fl_binding_abi_version$" /workspace/shim-exports.txt
+            '
+
+      - name: Publish the measurement
+        if: always()
+        shell: bash
+        run: |
+          if [ -f shim-summary.md ]; then
+            cat shim-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi

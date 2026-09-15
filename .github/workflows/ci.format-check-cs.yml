@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.format-check-cs
+
+concurrency:
+  group: ci.format-check-cs-${{ github.ref }}
+  cancel-in-progress: true
+
+# Standalone and self-triggering, exactly like ci.format-check-ts.yml and
+# ci.format-check-cpp.yml: it is NOT part of ci.pr.yml's pr_gate aggregation.
+# Configure it as a separate required status check on the branch protection rule
+# if it should block.
+on:
+  pull_request:
+    paths:
+      - "dotnet/**"
+      - ".github/workflows/ci.format-check-cs.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The same pin the devcontainer installs and ci.dotnet.yml builds with, so
+      # editor, CI and a developer's host agree on what "formatted" means — the
+      # reason ci.format-check-ts.yml pins prettier and Node together.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      # --severity warn, not the default: the naming and style rules in
+      # dotnet/.editorconfig are declared at `error`, and the analyzer severities
+      # that matter at the P/Invoke boundary are too. A check that only looked at
+      # whitespace would pass a file that violates every one of them.
+      - name: Run dotnet format --verify-no-changes
+        working-directory: dotnet
+        run: |
+          dotnet restore Fletcher.slnx --locked-mode
+          dotnet format Fletcher.slnx --verify-no-changes --severity warn --no-restore

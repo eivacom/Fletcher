@@ -461,9 +461,13 @@ export class SensorFeed_StreamSubscriber {
 
 Counts are `grep -c "^TEST\(_F\|_P\)\?("` per file at `6c541e9`, so they are cases,
 not parameterised instances, and reproducible from the tree (command in the
-development plan §5). 18786 requires "C# versions of all tests as CI tests". Because
-there is **one** codec, the ported tests are **conformance tests of the binding**,
-not parity tests between two implementations.
+development plan §5). **Re-derived at BIND-0 (2026-09-14, branch base `0a56829`)
+by that command**: every bucket total below is unchanged; the one correction is
+the conformance suite's `CallerTier`, which is **21** cases and not 20.
+
+18786 requires "C# versions of all tests as CI tests". Because there is **one**
+codec, the ported tests are **conformance tests of the binding**, not parity
+tests between two implementations.
 
 | Bucket | Files (cases) | Total | Treatment (ruled 2026-09-11, Q10) |
 |---|---|---|---|
@@ -473,7 +477,7 @@ not parity tests between two implementations.
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23; XRCE: `test_xrce_provider` 6, `test_xrce_document` 9 — **port as driver-selection tests (78)**; `test_fletcher_sample_pub_sub_type` 24 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **102** | 78 port; 24 excluded, documented. |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
-| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 80 cases; `CallerTier` 20 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
+| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 80 cases; `CallerTier` 21 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
 **275 of 300 non-generator cases port to C#**; the 24 provider-internal cases and
 `test_owned_schema` are the two documented exclusions; the 98 generator cases stay in
@@ -540,6 +544,21 @@ toolchain-install step from every .NET job.
 | `ci.integration-test.gateway-fastdds-dotnet.yml` | `workflow_call` | Bucket-4 over `fastdds` and `xrce` by selector. Linux-only initially, matching the other FastDDS integration tests. |
 | `cd.dotnet.yml` | `push` tag `dotnet-v[0-9]*.[0-9]*.[0-9]*` | `setup-devcontainer` → `ci.dotnet.yml` → `publish` → `create-release`, structurally identical to `cd.gateway-client.yml`. |
 
+**Landed at BIND-0** (2026-09-14): `ci.c-abi.yml`, `ci.dotnet.yml`,
+`ci.format-check-cs.yml` and the `ci.pr.yml` wiring for the first two. The four
+integration-test workflows land with the items that give them something to run
+(`protoc-dotnet` with BIND-6/7, the two gateway ones with BIND-8, the FastDDS one
+with BIND-4), and `cd.dotnet.yml` with BIND-9: a `uses:` pointing at a workflow
+file that does not exist yet fails the whole PR run, so they cannot be wired
+ahead of themselves.
+
+Two measurements ride in `ci.c-abi.yml` from the kickoff rather than waiting for
+BIND-9, because both are properties of the artifact and not of the packaging: the
+**per-RID size** of the shim (reported into the job summary on both platforms; no
+threshold is enforced until BIND-9 sets one against real numbers) and, on Linux,
+the **export table**, which is asserted to contain nothing outside the `fl_`
+prefix. See the open item in Part 8 for why that assertion is Linux-only.
+
 ### Licence files in the package (after #127)
 
 The native shim statically links the same permissively licensed stack the gateway
@@ -558,7 +577,9 @@ check rides in the same step.
 
 ### `ci.pr.yml` wiring
 
-Three mechanical edits, all following the established pattern:
+Three mechanical edits, all following the established pattern. **BIND-0 did the
+first two lanes** (`c-abi`, `dotnet`); `integration-dotnet` and its callers follow
+with the items that own them:
 
 1. Three new `detect-changes` outputs + `dorny/paths-filter` blocks —
    **positive patterns only** (the file's own comment explains why `!` negations
@@ -581,7 +602,8 @@ Three mechanical edits, all following the established pattern:
 
 This takes `ci.pr.yml` from 19 to 24 conditional jobs; they only run on
 `c-abi/`, `dotnet/` or `protoc/` changes, and they share the one pre-built
-devcontainer image.
+devcontainer image. At BIND-0 it stands at 21 (the two new lanes wired, gated and
+listed in `pr_gate`'s `results:`).
 
 ### CD — publishing to `nuget.eiva.com` (D-BIND-28)
 
@@ -731,7 +753,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 
 | ID | Item | Track | Kind | Depends on | Forcing test | Status |
 |---|---|---|---|---|---|---|
-| BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | ⚪ |
+| BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🔴 |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | ⚪ |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | ⚪ |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage`; per-row publish benchmark recorded | ⚪ |
@@ -775,6 +797,26 @@ first automated run happens before any real code exists.
 - The self-hosted publish runner registered in the EIVA network and the
   `NUGET_EIVA_API_KEY` secret created on `nuget.eiva.com` (user actions, D-BIND-28);
   NuGet.org Trusted Publishing is deferred until the packages go external.
+
+**State — 2026-09-14 (implementation started)**
+
+| Acceptance bullet | State |
+|---|---|
+| Rulings recorded (D-BIND-1 … D-BIND-28); ADO 18689 / 16353 updated | 🟢 done 2026-09-11 / 14 |
+| `.devcontainer/Dockerfile` gains .NET 10 LTS via `DOTNET_SDK_VERSION`; `dotnet/global.json` pins the same band | 🟢 `10.0.400`, `rollForward: latestFeature`; image builds locally |
+| `c-abi/` builds a shim exporting `fl_binding_abi_version()` | 🟢 Windows: `conan create` green, 3 ctest rows pass (`VersionMatchesHeader`, `VersionIsPackedMajorMinor`, `CompilesAsC99AndIsSelfContained`), `test_package` links a **C** program against the package |
+| `dotnet/` builds three empty packages | 🟢 `Eiva.Fletcher{,.Interop,.GatewayClient}` 0.5.0-alpha pack on `net8.0;net10.0`; `dotnet format --verify-no-changes` clean |
+| `ci.c-abi.yml` + `ci.dotnet.yml` green on **both** platforms | 🔴 the Linux leg has never run — Docker was unavailable on the dev box, so the first Linux signal comes from the draft PR. This is the item's whole point (seam §12.4) and it is why the row is not 🟢 |
+| Part 4 matrix re-derived and committed | 🟢 all bucket totals unchanged; `CallerTier` corrected 20 → 21 |
+| `Apache.Arrow` pinned and its C Data Interface verified for every mapping type, nested included (N-9) | 🟢 **23.0.0**, pinned exactly (`[23.0.0]`). 17 types round-trip — 9 scalars, timestamp with and without timezone, duration, `struct`, `list<int32>`, `list<struct>`, `map<utf8,int32>` — plus schema and field metadata; 18 cases on both TFMs |
+| Per-RID shim size measured against the budget | 🟢 `win-x64` **7.61 MiB** with all three built-ins; `linux-x64` from the first lane run. Reported by the lane on every run; no threshold until BIND-9 |
+| Landing order with `feature/fastdds_modernization/19645` agreed (P-7) | ⚪ **open — needs the maintainer.** BIND-0 touches neither `protoc/` nor `arrow-bridge/`, so nothing is blocked yet; BIND-2 and BIND-6 are where it bites |
+| Self-hosted publish runner + `NUGET_EIVA_API_KEY` (D-BIND-28) | ⚪ maintainer actions, due before BIND-9 |
+
+One finding came out of the kickoff that the plan had not anticipated: the shim's
+Windows export table (Part 8, Open items).
+
+---
 
 ### BIND-1 — The binding ABI header, reviewed as a specification
 
@@ -1102,22 +1144,38 @@ same machinery as everything else, **so that** it cannot rot.
 
 ## Part 8 — Risks, and what is still open
 
-The full register (31 items, five groups) is the development plan §6 and each item
-names the round item that closes it. The ones worth reading first:
+The full register (32 items after BIND-0 added N-10, five groups) is the
+development plan §6, and each item names the round item that closes it. The ones
+worth reading first:
 
 | Risk | Mitigation |
 |---|---|
 | **B-1 — there is no codec to wrap.** BIND-2 builds the nanoarrow codec; roughly the size of the 530-line Arrow C++ one | Byte identity against `arrow-bridge` across the corpus is the forcing test; prior art in commit `0050365`. |
 | **B-2 — per-row publish pays for a one-row Arrow array**, and the copy oracle cannot see allocations | The bind step makes batching structural; BIND-3 benchmarks per-row against the C++ generated publisher; if unacceptable, the only faster route is a D-BIND-1 STOP-AND-ASK. |
-| **B-3/Q3 — the shim's size and Fast DDS's shared-memory directories** on the consumer's machine | Measured at BIND-0 against the packed-size budget; the gateway is the static-linking precedent; stated in the README. |
+| **B-3/Q3 — the shim's size and Fast DDS's shared-memory directories** on the consumer's machine | **Measured at BIND-0: `win-x64` 7.61 MiB** (Release, all three built-ins statically linked), reported into the job summary on every run; `linux-x64` from the first lane run. No threshold enforced until BIND-9 sets one against these numbers. The gateway is the static-linking precedent; stated in the README. |
 | **N-5 — two `release` protocols** (C Data Interface vs owner-handle retain/release) | Received schemas deep-copied natively before import; `BoundRows.Dispose` unbinds before releasing; tested with a schema received twice. |
 | **S-2 — the re-entrant `Unsubscribe` carve-out** and sibling handlers | The in-flight counter (D-BIND-18); a test mirroring `CallerTier.CancellingASiblingRunningOnAnotherThreadKeepsItPublished`. |
 | **N-3 — `async` handlers** whose continuation outlives the borrowed arguments | Span/ref-struct delegate signature so an `async` lambda cannot compile; documented. |
 | **P-1 — LGPL relinking** | Owner: the maintainer (Q9); the notice half is mechanised by #127; packaging waits for the decision, development does not. |
-| **P-7 — `protoc/` and `arrow-bridge/` contended** with the modernization branch's pending commits, written against the pre-GIR generator | Landing order agreed at BIND-0; the no-drift test, `TsVisitor.DescriptorByteIdentical` and the codec byte-identity oracle prove neither party moved wire bytes. |
+| **P-7 — `protoc/` and `arrow-bridge/` contended** with the modernization branch's pending commits, written against the pre-GIR generator | Landing order agreed at BIND-0 — **still open, and the one BIND-0 item that is not an engineering task**; BIND-0 itself touches neither directory. The no-drift test, `TsVisitor.DescriptorByteIdentical` and the codec byte-identity oracle prove neither party moved wire bytes. |
 | **N-7 — runtime `DllNotFoundException`** on a missing RID or an older glibc | `SetDllImportResolver` naming the RID; the ABI version handshake; the glibc floor stated. |
 
 ### Open items
+
+**Found at BIND-0, carried to BIND-9 — the shim's Windows export table.** Symbol
+visibility is hidden and, on Linux, `--exclude-libs ALL` localises everything that
+arrived from a static archive, so there the shim exports exactly what `binding.h`
+declares and `ci.c-abi.yml` asserts it. **Windows exports 3531 names**: ConanCenter's
+`fast-dds` static build is compiled with `EPROSIMA_USER_DLL_EXPORT`, so
+`libfastdds-3.4.lib` carries 303003 `/EXPORT` directives that the linker honours when
+it pulls those objects into a DLL — and a module-definition file does **not** suppress
+them (MSVC merges `/DEF` exports with `__declspec(dllexport)` ones; measured both
+ways). Nothing resolves incorrectly because of it — Windows binds imports per module,
+so there is no ELF-style interposition, and P/Invoke finds `fl_binding_abi_version` by
+name — but the export table is bloat the packed-size budget pays for, and the "exports
+only what the header declares" property is currently Linux-only. Fixing it means
+changing how the dependency is built, which is a BIND-9 question with the size budget
+in hand, not a BIND-0 one.
 
 No decision is open. Three actions remain, none an engineering one:
 

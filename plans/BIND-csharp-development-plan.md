@@ -755,7 +755,10 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   executable and ships it as a release archive, with the licence notice #127
   added; the archive's size on the latest `gateway-v*` release is a usable proxy
   for the shim's per-RID native asset before BIND-0 builds one. *Decide in BIND-0
-  (§7 Q3).*
+  (§7 Q3).* **BIND-0 built one and measured it rather than leaning on the proxy:
+  `win-x64` 7.61 MiB, Release, with `inprocess`, `fastdds` and `xrce` all linked
+  in.** `ci.c-abi.yml` reports the number on both platforms on every run; the
+  threshold is BIND-9's to set against real numbers.
 
 - **B-4 — A second copy of Fletcher is silent.** `inline thread_local` per binary
   (P1). The detectable case is two shims; the undetectable case is a C++ host that
@@ -894,6 +897,28 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   empirical question (D-BIND-10); dictionary arrays are deferred anyway. Pin the
   version and write a probe test per type at BIND-3, before generated code depends
   on it. *BIND-3 / BIND-7.*
+  **Answered at BIND-0 (2026-09-14), earlier than this note planned because the
+  tracker's acceptance asks for it there:** `Apache.Arrow` **23.0.0**, pinned
+  exactly. `dotnet/tests/Fletcher.Tests/ArrowCDataInterfaceTests.cs` round-trips one
+  array per mapped Arrow type through `Apache.Arrow.C` — 9 scalars, `timestamp(ns)`
+  with and without a timezone, `duration(ns)`, `struct`, `list<int32>`,
+  `list<struct>`, `map<utf8,int32>` — plus a whole `RecordBatch` and schema/field
+  metadata, comparing the imported arrays buffer for buffer. All green on both
+  TFMs. No gap found, so no type has to be avoided; `StructArray.Fields` windowing
+  (D-BIND-10) is a separate question and stays with BIND-7.
+
+- **N-10 — the shim's Windows export table is not ours (found at BIND-0).**
+  ConanCenter's `fast-dds` static build is compiled with
+  `EPROSIMA_USER_DLL_EXPORT`, so `libfastdds-3.4.lib` carries 303003 `/EXPORT`
+  directives that the linker honours when it pulls those objects into a DLL: the
+  shim exports 3531 names instead of the one `binding.h` declares. A
+  module-definition file does not suppress them — MSVC merges `/DEF` exports with
+  `__declspec(dllexport)` ones (measured both ways). Linux is clean
+  (`CXX_VISIBILITY_PRESET hidden` plus `--exclude-libs ALL`) and `ci.c-abi.yml`
+  asserts it there. Nothing mis-resolves on Windows — imports bind per module, with
+  no ELF-style interposition — so this is a size and honesty problem rather than a
+  correctness one. Fixing it means changing how the dependency is built.
+  *BIND-9, with the packed-size budget.*
 
 ### Generator
 

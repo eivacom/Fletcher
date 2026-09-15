@@ -32,6 +32,8 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      c-abi: ${{ steps.filter.outputs.c-abi }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
       fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
       gateway: ${{ steps.filter.outputs.gateway }}
       gateway-client: ${{ steps.filter.outputs.gateway-client }}
@@ -88,6 +90,28 @@ jobs:
               - '.github/actions/install-cmake/**'
               - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
+            c-abi:
+              - 'c-abi/**'
+              - 'core/**'
+              - 'pubsub/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.c-abi.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            dotnet:
+              - 'dotnet/**'
+              - 'c-abi/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.dotnet.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.devcontainer/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
@@ -323,6 +347,26 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The binding ABI shim: the one SHARED library in the tree, statically linking
+  # the whole eProsima chain. It runs from BIND-0 on an ABI that exports a single
+  # function, so the Linux signal on that link is standing before there is any
+  # real code to break it (seam §12.4).
+  c-abi:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.c-abi == 'true' }}
+    uses: ./.github/workflows/ci.c-abi.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  dotnet:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' }}
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   pubsub:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
@@ -493,6 +537,8 @@ jobs:
       - setup-devcontainer
       - core
       - arrow-bridge
+      - c-abi
+      - dotnet
       - pubsub
       - pubsub-arrow
       - protoc
@@ -526,6 +572,8 @@ jobs:
             ${{ needs.setup-devcontainer.result }},
             ${{ needs.core.result }},
             ${{ needs.arrow-bridge.result }},
+            ${{ needs.c-abi.result }},
+            ${{ needs.dotnet.result }},
             ${{ needs.pubsub.result }},
             ${{ needs.pubsub-arrow.result }},
             ${{ needs.protoc.result }},

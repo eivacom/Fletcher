@@ -1,0 +1,34 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- A test assembly publishes no API, so the missing-XML-comment rule the
+         libraries are held to (CS1591, an error there) would only add ceremony
+         here. The prose that matters in this project lives in comments that say
+         WHY a case exists, not in doc tags on [Fact] methods. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.Tests</RootNamespace>
+    <!-- The C Data Interface surface of Apache.Arrow is pointer-based: exporting
+         an array means handing it a CArrowArray* to fill in. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Both library TFMs are exercised, and the net8.0 leg runs on whatever
+         runtime the SDK ships: the devcontainer and the CI runners carry the
+         .NET 10 runtime only, and rolling forward is how the net8.0-compiled
+         assemblies get executed rather than merely compiled. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+</Project>
