@@ -24,10 +24,12 @@
 // AUTOMATIC. No argument (or any other argument) runs Fletcher's built-in as-is.
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -115,19 +117,23 @@ int main(int argc, char** argv) {
     auto b = std::make_unique<FastDDSPubSubProvider>(config);
     constexpr int kCycles = 100;
     for (int cycle = 0; cycle < kCycles; ++cycle) {
+        std::mutex mu;
+        std::condition_variable cv;
         std::atomic<int> received{0};
         SubscriptionResult result =
             b->Subscribe({"probe", "teardown"},
                          [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
                              received.fetch_add(1, std::memory_order_relaxed);
+                             std::lock_guard<std::mutex> lock(mu);
+                             cv.notify_all();
                          });
         SharedSchema schema;
         result.schema.Wait(std::chrono::seconds(2), &schema);
 
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (received.load(std::memory_order_relaxed) < 50 &&
-               std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        {
+            std::unique_lock<std::mutex> lock(mu);
+            cv.wait_for(lock, std::chrono::seconds(2),
+                        [&] { return received.load(std::memory_order_relaxed) >= 50; });
         }
 
         b->Unsubscribe({"probe", "teardown"});

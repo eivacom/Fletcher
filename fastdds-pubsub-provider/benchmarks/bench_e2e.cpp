@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +45,7 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -167,17 +169,21 @@ ProviderConfig Config(const std::string& document) {
 // no loop-internal deadline can catch because the loop never returns to check one.
 void RunGuarded(const char* arm, size_t bytes, int target, std::atomic<int>& progress,
                 const std::function<void()>& body) {
-    std::atomic<bool> done{false};
-    std::thread worker([&body, &done] {
+    std::mutex done_mutex;
+    std::condition_variable done_cv;
+    bool done = false;
+    std::thread worker([&body, &done_mutex, &done_cv, &done] {
         body();
-        done.store(true, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(done_mutex);
+            done = true;
+        }
+        done_cv.notify_all();
     });
     worker.detach();
-    const auto deadline = Clock::now() + std::chrono::seconds(30);
-    while (!done.load(std::memory_order_acquire) && Clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    if (done.load(std::memory_order_acquire)) return;
+    std::unique_lock<std::mutex> lock(done_mutex);
+    if (done_cv.wait_for(lock, std::chrono::seconds(30), [&] { return done; })) return;
+    lock.unlock();
     std::printf("STALL arm=%s bytes=%zu arrived=%d/%d\n", arm, bytes,
                 progress.load(std::memory_order_acquire), target);
     std::fflush(stdout);

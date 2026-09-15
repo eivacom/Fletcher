@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <thread>
+#include <mutex>
 
 using namespace fletcher;
 
@@ -43,14 +43,18 @@ int main() {
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 
-    std::atomic<int32_t> received{-1};
+    std::mutex mutex;
+    std::condition_variable cv;
+    int32_t received = -1;
     SubscriptionResult result = sub_provider.Subscribe(
         {"example", "topic"},
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));
-                received.store(v);
+                std::lock_guard<std::mutex> lock(mutex);
+                received = v;
+                cv.notify_all();
             }
         });
 
@@ -63,13 +67,13 @@ int main() {
 
     pub_provider.Publish({"example", "topic"}, MakeEncoder(42));
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return received != -1; });
     }
 
-    if (received.load() != 42) {
-        std::fprintf(stderr, "FAIL: expected 42, got %d\n", received.load());
+    if (received != 42) {
+        std::fprintf(stderr, "FAIL: expected 42, got %d\n", received);
         return 1;
     }
 

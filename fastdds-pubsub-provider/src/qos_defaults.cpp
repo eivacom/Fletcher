@@ -46,6 +46,7 @@ const char* FletcherDefaultProfilesDocument() {
           <max_samples>100</max_samples>
           <max_instances>1</max_instances>
           <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
         </resourceLimitsQos>
       </topic>
       <times>
@@ -66,6 +67,7 @@ const char* FletcherDefaultProfilesDocument() {
           <max_samples>100</max_samples>
           <max_instances>1</max_instances>
           <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
         </resourceLimitsQos>
       </topic>
     </data_reader>

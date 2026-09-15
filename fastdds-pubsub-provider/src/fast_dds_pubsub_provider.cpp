@@ -301,8 +301,10 @@ struct FastDDSPubSubProvider::Impl {
     // wake in the same pass.
     void RunSchemaWake(TopicState& ts) {
         try {
-            DispatchReaderStatuses(ts.schema_reader);
-            HandleSchema(ts);
+            bool has_data = DispatchReaderStatuses(ts.schema_reader);
+            if (has_data) {
+                HandleSchema(ts);
+            }
         } catch (const std::exception& ex) {
             EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA, "reading a schema sample threw: " << ex.what());
         } catch (...) {
@@ -327,14 +329,11 @@ struct FastDDSPubSubProvider::Impl {
             // short-circuits through the RETCODE_OK path exactly as before.
             const ReturnCode_t wait_rc = schema_wait_set.wait(active, c_TimeInfinite);
             if (schema_thread_stop.get_trigger_value()) return;
-            std::lock_guard<std::mutex> lock(schema_mu);
-            if (wait_rc == RETCODE_TIMEOUT) {
-                for (auto& ts : schema_registry | std::views::values) RunSchemaWake(*ts);
-                continue;
-            }
+
             // Tolerant wait (ddsbus WaitsetDataReader::listen): a non-OK return means `active`
             // cannot be trusted, not that this thread should stop -- go back and wait again.
             if (wait_rc != RETCODE_OK) continue;
+            std::lock_guard<std::mutex> lock(schema_mu);
             for (Condition* c : active) {
                 // Lookup by pointer value only -- never dereferenced before this. A miss is a
                 // topic torn down between the wake and this loop (Unsubscribe/UnsubscribeSchema
