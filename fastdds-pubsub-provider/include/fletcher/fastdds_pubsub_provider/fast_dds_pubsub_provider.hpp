@@ -44,18 +44,30 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// `FastDDSLoggingStatusListener` below is the ready-made subclass that logs them all.
 ///
 /// ── Threading contract ──────────────────────────────────────────────────────
-/// A callback runs on a Fast DDS thread, or on an application thread that is
-/// inside `CreateTopic` / `Publish` / `Subscribe` of **any** provider in this
-/// process, with that provider's mutex held: intraprocess discovery and matching
-/// run synchronously inside `create_datareader` / `create_datawriter`, including
-/// between two participants in one process. One `DataWriterListener` and one
+/// A callback runs on a Fast DDS thread (data and writer statuses alike, and
+/// discovery), on an application thread that is inside `CreateTopic` /
+/// `Publish` / `Subscribe` of **any** provider in this process, with that
+/// provider's mutex held, or on the schema thread. The schema thread is where
+/// every `__schema` reader status (`OnMatched`, `OnDeadlineMissed`,
+/// `OnLivelinessChanged`, `OnIncompatibleQos`, `OnSampleLost`,
+/// `OnSampleRejected`, on that endpoint only) is dispatched on every wake — it
+/// reads `get_status_changes()` and the matching `get_*_status()` getter for
+/// each changed bit, the same pattern as eiva-ddsbus's `WaitsetDataReader` —
+/// and it is also where that thread enables a data reader on schema arrival:
+/// intraprocess discovery and matching run synchronously inside
+/// `create_datareader` / `create_datawriter` / `DataReader::enable()`,
+/// including between two participants in one process. DATA reader statuses,
+/// by contrast, arrive through Fast DDS's own listener dispatch, the same as
+/// writer statuses and discovery. One `DataWriterListener` and one
 /// `ParticipantListener` instance is shared by every endpoint a provider owns, so two of these
 /// calls can be in flight on two different threads at once — nothing here serialises callbacks
-/// against each other, only each one against the provider mutex it happens to be running under.
+/// against each other, only each one against the provider mutex, or the schema
+/// thread's own lock, it happens to be running under.
 /// So an override
 ///
 ///  - **must not call into any provider.** The provider mutex is a
-///    non-recursive `std::shared_mutex`; re-entering deadlocks.
+///    non-recursive `std::shared_mutex`; re-entering deadlocks. So is the
+///    lock a status dispatched from the schema thread runs under.
 ///  - **must not block**, and must not wait on the thread destroying a
 ///    provider: `~FastDDSPubSubProvider` waits for in-flight callbacks.
 ///  - **must not throw.** Every method is `noexcept`, so an override has to be

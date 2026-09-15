@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Publish-side statuses, forwarded to the application's FastDDSStatusListener. One instance per
-// provider, shared by every DataWriter it creates — none of these callbacks carries per-topic
-// state, and the topic name is on the writer.
+// The writer side's statuses, forwarded to the application's FastDDSStatusListener, plus the
+// status mask for the writer end. One instance per provider, shared by every DataWriter it
+// creates -- it carries no per-topic state, and the topic name is on the endpoint itself.
 //
-// The reader's half of this lives on DataReaderListenerBase, which needs per-topic state anyway.
+// The reader side splits in two, this round (owner decision 2026-09-15, "hybrid" -- see the
+// file-header table in fast_dds_pubsub_provider.cpp): a data reader has a real Fast DDS listener
+// again (DataReaderListenerBase, internal/data_reader_listener.hpp), forwarding its own statuses
+// from inside on_subscription_matched et al. A schema reader still has none -- `listener =
+// nullptr, StatusMask::all()` (ddsbus's WaitsetDataReader pattern), StatusCondition left at its
+// default enabled mask -- and this provider's one schema thread wakes on that condition, reads
+// `get_status_changes()` itself and forwards each one there (Impl::DispatchReaderStatuses,
+// fast_dds_pubsub_provider.cpp). Writers have no thread of their own either way, so
+// DataWriterListener below is unchanged.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_WRITER_LISTENER_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_WRITER_LISTENER_HPP_
 
@@ -20,32 +28,15 @@
 namespace fletcher {
 namespace internal {
 
-// Endpoints are created with the statuses their listener actually implements, rather than the
-// default StatusMask::all(): Fast DDS then only dispatches those, and the mask says in one place
-// which callbacks below are live. `<<` is how StatusMask composes — plain `|` decays to the
+// The writer endpoint is created with the statuses this listener actually implements, rather than
+// the default StatusMask::all(): Fast DDS then only dispatches those, and the mask says in one
+// place which callbacks below are live. `<<` is how StatusMask composes — plain `|` decays to the
 // std::bitset it derives from.
 inline eprosima::fastdds::dds::StatusMask WriterStatusMask() {
     return eprosima::fastdds::dds::StatusMask::publication_matched()
            << eprosima::fastdds::dds::StatusMask::offered_deadline_missed()
            << eprosima::fastdds::dds::StatusMask::offered_incompatible_qos()
            << eprosima::fastdds::dds::StatusMask::liveliness_lost();
-}
-
-inline eprosima::fastdds::dds::StatusMask ReaderStatusMask() {
-    return eprosima::fastdds::dds::StatusMask::data_available()
-           << eprosima::fastdds::dds::StatusMask::subscription_matched()
-           << eprosima::fastdds::dds::StatusMask::requested_deadline_missed()
-           << eprosima::fastdds::dds::StatusMask::liveliness_changed()
-           << eprosima::fastdds::dds::StatusMask::requested_incompatible_qos()
-           << eprosima::fastdds::dds::StatusMask::sample_lost()
-           << eprosima::fastdds::dds::StatusMask::sample_rejected();
-}
-
-// sample_rejected matters: the pool is PREALLOCATED and cannot grow for an oversized schema.
-inline eprosima::fastdds::dds::StatusMask SchemaReaderStatusMask() {
-    return eprosima::fastdds::dds::StatusMask::data_available()
-           << eprosima::fastdds::dds::StatusMask::sample_rejected()
-           << eprosima::fastdds::dds::StatusMask::sample_lost();
 }
 
 // Every callback DataWriterListener declares is overridden, in the order it declares them, so that
@@ -76,10 +67,10 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
             status_listener_->OnDeadlineMissed(WriterEndpoint(writer), status.total_count);
     }
 
-    // The mirror of DataReaderListenerBase::on_requested_incompatible_qos, and the reason both
-    // exist: a QoS mismatch means the endpoints never match, which otherwise shows up only as a
-    // subscriber that never receives anything. Publish keeps succeeding — there is simply nobody to
-    // deliver to.
+    // The mirror of the reader side's requested_incompatible_qos (DataReaderListenerBase,
+    // internal/data_reader_listener.hpp), and the reason both exist: a QoS mismatch means the
+    // endpoints never match, which otherwise shows up only as a subscriber that never receives
+    // anything. Publish keeps succeeding — there is simply nobody to deliver to.
     void on_offered_incompatible_qos(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::OfferedIncompatibleQosStatus& status) override {

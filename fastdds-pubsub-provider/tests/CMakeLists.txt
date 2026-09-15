@@ -8,11 +8,11 @@ add_executable(fastdds_pubsub_tests
     test_fletcher_sample_pub_sub_type.cpp
     test_profile_document.cpp)
 
-# The OrderedDelivery white-box test, the DDS-type test and the profile-document test include
-# the provider's internal headers directly (they are header-only). The profile-document test
-# needs `internal/profile_document.hpp` and `internal/qos_defaults.hpp` in particular: the
-# resolution ladders and Fletcher's built-in profiles are asserted whole and in-process, because
-# `history` and `resource_limits` are not observable in DDS discovery data.
+# The DDS-type test and the profile-document test include the provider's internal headers
+# directly (they are header-only). The profile-document test needs `internal/profile_document.hpp`
+# and `internal/qos_defaults.hpp` in particular: the resolution ladders and Fletcher's built-in
+# profiles are asserted whole and in-process, because `history` and `resource_limits` are not
+# observable in DDS discovery data.
 target_include_directories(fastdds_pubsub_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 

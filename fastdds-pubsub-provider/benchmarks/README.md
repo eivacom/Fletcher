@@ -24,7 +24,7 @@ Not part of the Conan package: this directory is outside the recipe's `exports_s
 | `BM_PublishFlow`, `BM_ReadFlow` | what the loaned flow removes from each side — the zero-copy budget |
 | `BM_PublishFlow_LoanedStruct` | the same loaned write through the struct the sample used to be, when its bound was a template argument. The baseline arm for dropping that struct; see the provider README's measured decisions |
 | `BM_ProviderPublishOverhead` | what `Publish` spends per sample before the type is reached. Superseded by the Monorepo's `tools/fletcher_bench/bench_publish`, which drives the real `Publish` against a raw DDS control |
-| `BM_Deliver_*` | the subscribe-side delivery layer: `OrderedDelivery` on both read flows, and `ParseEnvelopeBody` *with* attachments, which `BM_ReadFlow` never parses. Read each as its own time minus `BM_Deliver_CallbackOnly` **from the same run** |
+| `BM_Deliver_*` | the floor beneath a delivery: the callback alone, called directly (`BM_Deliver_CallbackOnly`), and `ParseEnvelopeBody` *with* attachments, which `BM_ReadFlow` never parses (`BM_Deliver_ParseAttachments`). Read each as its own time minus `BM_Deliver_CallbackOnly` **from the same run** |
 | `BM_AttachmentsConstruct`, `BM_PublishFieldsConstruct` | why the sample struct is split by direction: an empty `Attachments` against what `PublishData` costs. The allocation this arm was added to expose is gone — PDA-DEC-AG2 retired the `unordered_map` alias — so read it now as the floor rather than as the cost |
 | `BM_Memcpy` | the floor: the row bytes moved once |
 | `BM_BatchRoundTrip` | a nanoarrow batch out and back, per type and per publish flow, row count swept |
@@ -82,5 +82,32 @@ Report medians with their standard deviations — several arms are a few nanosec
 says nothing. `BM_ReadFlow_Loaned` reads a buffer that never changes and returns a pointer into it,
 so it calls `benchmark::ClobberMemory()` per iteration; without that the compiler hoists the parse
 out of the loop and the arm measures 0.
+
+### bench_e2e
+
+BEFORE/AFTER numbers for the reader-side redesign: end-to-end publish-to-callback latency and
+throughput, intraprocess, through two real `FastDDSPubSubProvider` instances (domain 43). With no
+flags this is Fletcher's built-in QoS throughout. For row sizes 198 B and 60 000 B it reports
+p50/p99/max latency in microseconds (publishes paced ~100 us apart with a busy-wait so each sample
+finds the receiver idle, one sample in flight, 20 000 samples after 2 000 warm-up) and flat-out
+throughput (200 000 samples, no pacing) in samples/s and MB/s. Pin it to one P-core at High priority
+before trusting a number off it, the same as `exp_zero_copy` above.
+
+`build\Release\bench_e2e.exe` prints one `arm=...` line per measurement and takes:
+
+- `--arm latency|throughput|all` (default `all`), `--bytes 198|60000|all` (default `all`) -- run a
+  single measurement instead of the full sweep.
+- `--reader-datasharing auto|off` (default `auto`), `--writer-blocking infinite|100ms` (default
+  `infinite`) -- isolate the two round-G3 QoS changes (reader `data_sharing` AUTOMATIC, writer
+  `max_blocking_time` infinite) that turn a full reader history under a flat-out publisher into a
+  stall instead of a drop. The default combination (`auto` + `infinite`) is byte-for-byte
+  Fletcher's built-in QoS, the same as passing no document at all; any other combination loads a
+  document built from the "published starting point" block above with only the flagged policy
+  changed. Fast DDS's profile registry is process-wide, so this is one combination per process --
+  run each corner of the matrix as its own invocation.
+
+Every measurement runs under a 30 s watchdog: a thread that has not finished in time -- most likely
+`pub.Publish()` itself blocked in `write()` -- prints `STALL arm=... bytes=... arrived=x/y` and
+exits non-zero instead of hanging.
 
 Results and the reasoning: the Monorepo's `modules/io/docs/serialization-benchmark.md`.

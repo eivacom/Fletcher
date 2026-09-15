@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
+#include <fastdds/dds/domain/DomainParticipantListener.hpp>
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/publisher/DataWriter.hpp>
 #include <fastdds/dds/publisher/Publisher.hpp>
@@ -20,6 +21,7 @@
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/delivery_channel.hpp>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,7 +31,6 @@
 
 #include "internal/data_reader_listener.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
-#include "internal/ordered_delivery.hpp"
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
 #include "internal/transport_data.hpp"
@@ -475,8 +476,11 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
     return received.load();
 }
 
-// loan_publish: the writer encodes into a loaned payload and the reader reads the row out of the
-// loan it takes, with no serialise/deserialise pair in between.
+// loan_publish: the writer encodes straight into a loaned payload, no serialize() pair. The
+// SUBSCRIBE side reads through CopyingDataReaderListener either way (owner decision 2026-09-14,
+// item C: Subscribe no longer selects LoanedDataReaderListener even though this profile's reader
+// would admit it) -- ALoanedDataReaderListenerDrainsARealReaderDirectly below is what still
+// exercises that flow, directly.
 TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
     // Both providers share LoanPublishConfig()'s document (Fast DDS profile names are
     // process-wide): fletcher.loan_publish only steers the publishing side, so sub_provider's
@@ -499,12 +503,13 @@ TEST(FastDDSPubSubProviderTest, LoanedRoundTrip) {
     EXPECT_EQ(AwaitRow(received), 42);
 }
 
-// A non-preallocating reader gets nodes sized to what arrived, so it reads through copies.
-//
-// The memory policy is what gates the loaned read path, so the document line that sets it is
-// asserted directly rather than inferred from "a row arrived": a `<historyMemoryPolicy>` value
-// Fast DDS did not understand would leave the reader PREALLOCATED and this test would pass while
-// exercising the very path it exists to avoid.
+// A non-preallocating reader reads through copies -- true of every reader since item C
+// (CopyingDataReaderListener is the default flow), but this one could not have taken the loaned
+// path anyway: CanLoanSamplesFollowsTheMemoryPolicy above is the predicate
+// LoanedDataReaderListener's own direct test relies on, and DYNAMIC fails it. The document line
+// that sets the memory policy is asserted directly rather than inferred from "a row arrived": a
+// `<historyMemoryPolicy>` value Fast DDS did not understand would leave the reader PREALLOCATED and
+// this test would pass while silently no longer exercising DYNAMIC at all.
 TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
     DocumentParts dynamic_reader;
     dynamic_reader.reader_tail = R"(
@@ -793,9 +798,17 @@ TEST(FastDDSPubSubProviderTest, ALoanPublishedFragmentingRowCrossesIntact) {
     EXPECT_EQ(received_row, expected);
 }
 
-// A throwing callback runs on a Fast DDS listener thread, where an escaping exception terminates
-// the process. On the loaned path it must also not take the loan with it: the reader has only
-// max_samples + extra_samples loans, so a handful of leaks starves delivery for good.
+// A throwing callback runs wherever Fast DDS calls on_data_available (DataReaderListenerBase,
+// data_reader_listener.hpp) -- intraprocess, that is the PUBLISHING thread, inside this test's own
+// Publish call below -- where an escaping exception terminates the process; the listener's own
+// try/catch is what absorbs it here (the read side is CopyingDataReaderListener, the listener
+// Subscribe installs; the loan-leak half of this test's old name belongs to
+// ALoanedDataReaderListenerDrainsARealReaderDirectly, which exercises LoanedDataReaderListener
+// directly).
+//
+// Publish pauses briefly between rows: harmless pacing kept from the round this test predates, not
+// load-bearing now that delivery runs synchronously inside Publish rather than behind a separate
+// reader thread's own scheduling slice.
 TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoans) {
     // Both providers share the document (see LoanedRoundTrip's comment).
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
@@ -816,6 +829,7 @@ TEST(FastDDSPubSubProviderTest, LoanedThrowingCallbackNeitherEscapesNorLeaksLoan
 
     for (int32_t i = 0; i < 40; ++i) {
         pub_provider.Publish({"loaned", "throwing"}, MakeEncoder(i));
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
 
     EXPECT_NE(AwaitRow(received), -1) << "delivery stopped after the throwing callbacks";
@@ -847,7 +861,8 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
     EXPECT_GT(deliveries.load(), 5);
 }
 
-// Attachments ride the same envelope on the loaned path.
+// Attachments ride the same envelope regardless of which flow reads them (loan-published here;
+// read through CopyingDataReaderListener -- see LoanedRoundTrip's comment).
 TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
     // Both providers share the document (see LoanedRoundTrip's comment).
     FastDDSPubSubProvider pub_provider(LoanPublishConfig());
@@ -876,6 +891,63 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
     EXPECT_EQ(blob_seen, (std::vector<uint8_t>{1, 2, 3}));
 }
 
+// LoanedDataReaderListener stays in the tree, unit-tested, even though Subscribe does not install
+// it any more (owner ruling, this round -- see LoanedRoundTrip's comment). This drives it directly
+// against a real, hand-built reader on the SAME topic a normal provider publishes to: the simplest
+// way left to prove it still takes a loan, decodes it, and delivers. Fletcher's built-in reader
+// profile preallocates by default (CanLoanSamplesFollowsTheMemoryPolicy above), so no document is
+// needed to admit the loaned path here.
+TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirectly) {
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    pub_provider.CreateTopic({"loaned", "direct"}, MakeSchema());
+
+    DomainParticipant* participant =
+        DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
+    ASSERT_NE(participant, nullptr);
+    TypeSupport type_support;
+    type_support.reset(new internal::FletcherSamplePubSubType(pub_provider.PayloadBytes()));
+    ASSERT_EQ(type_support.register_type(participant), RETCODE_OK);
+    Subscriber* subscriber = participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
+    ASSERT_NE(subscriber, nullptr);
+    Topic* topic =
+        participant->create_topic("loaned/direct", type_support.get_type_name(), TOPIC_QOS_DEFAULT);
+    ASSERT_NE(topic, nullptr);
+
+    const DataReaderQos rqos = internal::MakeFletcherDefaultReaderQos();
+    ASSERT_TRUE(internal::CanLoanSamples(rqos));
+    DataReader* reader = subscriber->create_datareader(topic, rqos);
+    ASSERT_NE(reader, nullptr);
+
+    std::atomic<int32_t> received{-1};
+    // Through the base class pointer: Drain is a private override in LoanedDataReaderListener (it
+    // overrides DataReaderListenerBase's public virtual under a `private:` section, matching how
+    // on_data_available calls it), and access is checked against the static type used to call it.
+    // Not installed on `reader` -- driven by calling Drain directly, in a polling loop, same as
+    // this test always has.
+    const std::unique_ptr<internal::DataReaderListenerBase> listener =
+        std::make_unique<internal::LoanedDataReaderListener>(
+            /*status_listener=*/nullptr, pub_provider.PayloadBytes(),
+            TestChannel(
+                [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                    if (len >= 5) received.store(DecodeRow(data));
+                }));
+    listener->SetSchema(MakeSharedSchema(MakeSchema()));
+
+    pub_provider.Publish({"loaned", "direct"}, MakeEncoder(99));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
+        listener->Drain(reader);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_EQ(received.load(), 99);
+
+    subscriber->delete_datareader(reader);
+    participant->delete_topic(topic);
+    participant->delete_subscriber(subscriber);
+    DomainParticipantFactory::get_instance()->delete_participant(participant);
+}
+
 // Loans are never negotiated: each side's own type gates its own, so all pairings interoperate.
 
 // ---------------------------------------------------------------------------
@@ -899,10 +971,11 @@ TEST(FastDDSPubSubProviderTest, LoanedDeliversAttachments) {
 //                                             (whole-struct, so it covers the history and
 //                                             resource_limits that discovery cannot carry)
 // ---------------------------------------------------------------------------
-// Subscriber-first: Subscribe before any publisher/topic exists must not block
-// or throw, and once a publisher appears the schema future resolves and the
-// first callback fires with a non-null schema (data is held until the schema
-// arrives — the callback is never invoked with a null schema).
+// Subscriber-first: Subscribe before any publisher/topic exists must not block or throw. The
+// data reader it creates stays DISABLED until the topic's schema is known, so nothing reaches
+// the callback before then; once a publisher appears and announces, the schema thread hands the
+// schema to the listener and enables the reader, and the first callback fires with a non-null
+// schema (never invoked with a null one).
 // ---------------------------------------------------------------------------
 TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
     FastDDSPubSubProvider sub_provider(ProviderConfig{});
@@ -956,14 +1029,21 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
 }
 
 // ---------------------------------------------------------------------------
-// Subscribe-first burst: a real round-trip where the subscriber joins before
-// the publisher, so the first samples are buffered until the schema arrives
-// and then flushed. Functional smoke test that the whole burst is delivered,
-// in order. (A deterministic proof of the handoff-ordering invariant — that a
-// live sample arriving mid-flush cannot overtake the backlog — is the
-// OrderedDelivery unit test below; that race is timing-dependent over real
-// DDS, so it is verified directly on the mechanism instead.)
-// ---------------------------------------------------------------------------
+// Subscribe-first burst: a real round-trip where the subscriber joins before the publisher. The
+// data reader stays disabled until the schema arrives -- the publisher's TRANSIENT_LOCAL __schema
+// sample replays to it once created, and only then does enable() run -- so no row can reach the
+// callback before that; the whole burst that follows is then delivered, in order. Functional
+// smoke test.
+//
+// Publish pauses briefly between rows: kept from an earlier reader-side design where a separate
+// per-topic thread drained samples off a WaitSet wake, and a flat-out publish loop with no pacing
+// could outrun that thread's first scheduling slice badly enough to fill the built-in 100-sample
+// KEEP_ALL pool before it ever ran. Not load-bearing now (this round -- see the file-header
+// comment in fast_dds_pubsub_provider.cpp): data delivery is a Fast DDS listener again, its
+// on_data_available running synchronously inside the accept path a publish drives, so the pool
+// can no longer fill out from under this single-threaded producer/consumer pair regardless of
+// pacing. Left in place as harmless insurance rather than pulled, to keep this change scoped to
+// the reader-dispatch mechanism.
 TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     constexpr int32_t kCount = 1000;
 
@@ -986,6 +1066,7 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
     for (int32_t i = 0; i < kCount; ++i) {
         pub_provider.Publish({"ordering", "burst"}, MakeEncoder(i));
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
 
     {
@@ -1004,326 +1085,202 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
 }
 
 // ---------------------------------------------------------------------------
-// OrderedDelivery — deterministic proof of the schema-handoff invariant.
-//
-// The bug: the buggy listener had two delivery paths — a live sample (data
-// thread) was delivered directly, bypassing the backlog being flushed by the
-// schema thread — so the two ran concurrently and a live sample could
-// overtake the backlog. OrderedDelivery removes the second path: every sample
-// goes through one FIFO drained by a single drainer.
-//
-// The single-drainer guard is what serialises delivery. Its observable,
-// thread-free signature: a sample offered *while a drain is in progress* must
-// NOT be delivered inline (nested inside the current callback) — on the real
-// two-thread path an inline/concurrent delivery is exactly the overtaking
-// race. We trigger it deterministically by re-entering Offer() from inside the
-// callback. With the guard the re-offered sample is queued and delivered after
-// the current callback returns (no nesting); remove the guard and Offer drains
-// reentrantly, invoking a callback nested inside another — which this test
-// catches. Order is asserted too: the late sample lands strictly last.
+// A data reader is created DISABLED and stays that way until its topic's schema is known: no
+// RTPS reader exists for it at all (Entity::enable()), so Fast DDS announces nothing about it on
+// the network in the meantime. The schema reader gets no such treatment -- it is enabled
+// immediately (EnsureSchemaChannel) -- so a bystander sees the schema side of a subscriber-first
+// Subscribe appear right away and the data side only once a publisher's CreateTopic has supplied
+// the schema. Modeled on DiscoveryObserver (test_profile_document.cpp), which is file-local there.
 // ---------------------------------------------------------------------------
-TEST(OrderedDeliveryTest, MidFlushOfferIsNotDeliveredInline) {
-    std::vector<int32_t> order;
-    int active = 0;       // callbacks currently on the stack
-    bool nested = false;  // a callback was entered while another was active
-    fletcher::internal::OrderedDelivery* self = nullptr;
-    bool injected = false;
-
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            if (active > 0) {
-                nested = true;
-            }
-            ++active;
-            order.push_back(DecodeRow(data));
-            // While the backlog [0,1,2] is draining, a fresh live sample
-            // arrives. Re-entering Offer here is the deterministic stand-in for
-            // the data-reader thread delivering during the flush.
-            if (!injected) {
-                injected = true;
-                std::vector<uint8_t> row(5);
-                row[0] = 0x00;
-                int32_t v = 99;
-                std::memcpy(row.data() + 1, &v, sizeof(v));
-                self->Offer(std::move(row), {});
-            }
-            --active;
-        }));
-    self = &delivery;
-
-    auto row_bytes = [](int32_t v) {
-        std::vector<uint8_t> row(5);
-        row[0] = 0x00;
-        std::memcpy(row.data() + 1, &v, sizeof(v));
-        return row;
-    };
-
-    // Three samples arrive before the schema is known — buffered, not delivered.
-    delivery.Offer(row_bytes(0), {});
-    delivery.Offer(row_bytes(1), {});
-    delivery.Offer(row_bytes(2), {});
-    EXPECT_TRUE(order.empty()) << "samples must be held until the schema is set";
-
-    // Schema resolves: the backlog drains. The sample offered mid-flush must be
-    // delivered after the current callback returns (not nested), and land last.
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-
-    EXPECT_FALSE(nested)
-        << "a sample offered mid-flush was delivered inline — on the real two-thread "
-           "path that is the live-sample-overtakes-backlog race";
-    EXPECT_EQ(order, (std::vector<int32_t>{0, 1, 2, 99}));
-}
-
-// A sample offered before the schema is known must not reach the callback
-// until SetSchema arrives (no null-schema delivery).
-TEST(OrderedDeliveryTest, HoldsSamplesUntilSchemaIsSet) {
-    std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(TestChannel(
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            EXPECT_TRUE(schema) << "callback invoked with a null schema";
-            order.push_back(DecodeRow(data));
-        }));
-
-    std::vector<uint8_t> row(5);
-    row[0] = 0x00;
-    int32_t v = 7;
-    std::memcpy(row.data() + 1, &v, sizeof(v));
-    delivery.Offer(row, {});
-    EXPECT_TRUE(order.empty());
-
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-    ASSERT_EQ(order.size(), 1u);
-    EXPECT_EQ(order[0], 7);
-}
-
-// A null schema must never release buffered samples — that would drain them
-// with a null schema and break schema-before-data. Buffering continues until a
-// real schema arrives.
-TEST(OrderedDeliveryTest, NullSchemaDoesNotReleaseBufferedSamples) {
-    std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(TestChannel(
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            EXPECT_TRUE(schema) << "callback invoked with a null schema";
-            order.push_back(DecodeRow(data));
-        }));
-
-    std::vector<uint8_t> row(5);
-    row[0] = 0x00;
-    int32_t v = 7;
-    std::memcpy(row.data() + 1, &v, sizeof(v));
-    delivery.Offer(row, {});
-
-    delivery.SetSchema(nullptr);  // must not flip schema_ready_ or drain
-    EXPECT_TRUE(order.empty());
-
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-    ASSERT_EQ(order.size(), 1u);
-    EXPECT_EQ(order[0], 7);
-}
-
-// OfferView only borrows its bytes. A view buffered before the schema arrives
-// must therefore be copied, not remembered — the loan it points into is
-// returned as soon as OfferView comes back.
-TEST(OrderedDeliveryTest, OfferViewCopiesWhatItCannotDeliverYet) {
-    std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            order.push_back(DecodeRow(data));
-        }));
-
-    std::vector<uint8_t> row(5);
-    row[0] = 0x00;
-    int32_t v = 7;
-    std::memcpy(row.data() + 1, &v, sizeof(v));
-
-    delivery.OfferView(row.data(), row.size(), {});
-    EXPECT_TRUE(order.empty());
-
-    row.assign(row.size(), 0xAA);  // the "loan" is gone
-
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-    ASSERT_EQ(order.size(), 1u);
-    EXPECT_EQ(order[0], 7);
-}
-
-// With the schema in hand and nothing queued, OfferView hands the view straight
-// to the callback.
-TEST(OrderedDeliveryTest, OfferViewDeliversInlineOnceSchemaIsKnown) {
-    const uint8_t* seen = nullptr;
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
-            seen = data;
-        }),
-        MakeSharedSchema(MakeSchema()));
-
-    std::vector<uint8_t> row(5);
-    delivery.OfferView(row.data(), row.size(), {});
-    EXPECT_EQ(seen, row.data()) << "the view was copied instead of delivered in place";
-}
-
-// A subscriber that starts before its publisher buffers everything until the schema arrives. If no
-// publisher ever appears that is unbounded growth on a reachable path, so the backlog is capped and
-// the oldest go — which is what KEEP_LAST would have done to the same samples.
-TEST(OrderedDeliveryTest, BacklogIsCappedAndDropsOldest) {
-    std::vector<int32_t> order;
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            ASSERT_GE(len, 5u);
-            order.push_back(DecodeRow(data));
-        }),
-        nullptr, /*max_queued=*/3);
-
-    for (int32_t i = 0; i < 10; ++i) {
-        std::vector<uint8_t> row(5);
-        row[0] = 0x00;
-        std::memcpy(row.data() + 1, &i, sizeof(i));
-        delivery.Offer(row, {});
-    }
-    EXPECT_TRUE(order.empty()) << "nothing may be delivered before the schema is known";
-
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-    ASSERT_EQ(order.size(), 3u);
-    EXPECT_EQ(order, (std::vector<int32_t>{7, 8, 9})) << "the newest samples should survive";
-}
-
-// ---------------------------------------------------------------------------
-// The latched (steady) path
-//
-// Once the schema is known and the backlog is gone, OrderedDelivery has nothing left to order: the
-// schema listener has fired for the last time, and Fast DDS serialises every on_data_available for
-// one reader under that reader's own mutex. It latches into a path that skips the mutex, the queue
-// and the schema copy. These tests pin the contract that must survive that: every sample, in order,
-// never with a null schema, loaned bytes still lent, and re-entry still queued rather than nested.
-// ---------------------------------------------------------------------------
-
 namespace {
 
-std::vector<uint8_t> DeliveryRow(int32_t value) {
-    std::vector<uint8_t> row(5);
-    row[0] = 0x00;
-    std::memcpy(row.data() + 1, &value, sizeof(value));
-    return row;
-}
+class ReaderDiscoveryObserver : public DomainParticipantListener {
+   public:
+    explicit ReaderDiscoveryObserver(uint32_t domain) {
+        DomainParticipantQos qos;
+        qos.name("FletcherReaderDiscoveryObserver");
+        participant_ = DomainParticipantFactory::get_instance()->create_participant(
+            domain, qos, this, StatusMask::none());
+    }
+
+    ~ReaderDiscoveryObserver() override {
+        if (participant_)
+            DomainParticipantFactory::get_instance()->delete_participant(participant_);
+    }
+
+    ReaderDiscoveryObserver(const ReaderDiscoveryObserver&) = delete;
+    ReaderDiscoveryObserver& operator=(const ReaderDiscoveryObserver&) = delete;
+
+    void on_data_reader_discovery(DomainParticipant*,
+                                  eprosima::fastdds::rtps::ReaderDiscoveryStatus reason,
+                                  const eprosima::fastdds::rtps::SubscriptionBuiltinTopicData& info,
+                                  bool& should_be_ignored) override {
+        should_be_ignored = false;
+        if (reason != eprosima::fastdds::rtps::ReaderDiscoveryStatus::DISCOVERED_READER) return;
+        std::lock_guard<std::mutex> lock(mu_);
+        seen_.insert(info.topic_name.to_string());
+        cv_.notify_all();
+    }
+
+    bool Sees(const std::string& topic) {
+        std::lock_guard<std::mutex> lock(mu_);
+        return seen_.count(topic) != 0;
+    }
+
+    bool AwaitReader(const std::string& topic, std::chrono::milliseconds budget) {
+        std::unique_lock<std::mutex> lock(mu_);
+        return cv_.wait_for(lock, budget, [&] { return seen_.count(topic) != 0; });
+    }
+
+   private:
+    DomainParticipant* participant_ = nullptr;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::set<std::string> seen_;
+};
+
 }  // namespace
 
-TEST(OrderedDeliveryTest, SteadyStateDeliversEverySampleInOrderWithASchema) {
-    std::vector<int32_t> order;
-    size_t with_schema = 0;
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel(
-            [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
-                ASSERT_GE(len, 5u);
-                if (schema) ++with_schema;
-                order.push_back(DecodeRow(data));
-            }),
-        nullptr, /*max_queued=*/16);
+TEST(FastDDSPubSubProviderTest, ADataReaderIsNotEnabledBeforeTheSchemaArrives) {
+    ReaderDiscoveryObserver observer(0);
 
-    // Reach the steady state by draining a backlog rather than starting in it.
-    for (int32_t i = 0; i < 3; ++i) delivery.Offer(DeliveryRow(i), {});
-    EXPECT_TRUE(order.empty());
-    delivery.SetSchema(MakeSharedSchema(MakeSchema()));
-    ASSERT_EQ(order.size(), 3u);
+    FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
-    // Everything from here takes the latched path, alternating both entry points.
-    for (int32_t i = 3; i < 13; ++i) {
-        if (i % 2 == 0) {
-            delivery.Offer(DeliveryRow(i), {});
-        } else {
-            const std::vector<uint8_t> row = DeliveryRow(i);
-            delivery.OfferView(row.data(), row.size(), {});
-        }
-    }
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"notenabled", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
 
-    ASSERT_EQ(order.size(), 13u);
-    EXPECT_EQ(with_schema, 13u) << "the callback must never see a null schema";
-    for (int32_t i = 0; i < 13; ++i) {
-        EXPECT_EQ(order[static_cast<size_t>(i)], i) << "out of order at index " << i;
-    }
+    ASSERT_TRUE(observer.AwaitReader("notenabled/x/__schema", std::chrono::seconds(5)))
+        << "the schema reader, which is enabled immediately, was never discovered";
+    // Grace for a data reader discovery that must not come -- the schema reader's own discovery
+    // above proves the observer is caught up, so this is a settle rather than a hope.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_FALSE(observer.Sees("notenabled/x"))
+        << "the data reader was discovered before its topic's schema arrived";
+
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    pub_provider.CreateTopic({"notenabled", "x"}, MakeSchema());
+
+    ASSERT_TRUE(observer.AwaitReader("notenabled/x", std::chrono::seconds(5)))
+        << "the data reader never appeared once its schema was known";
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    pub_provider.Publish({"notenabled", "x"}, MakeEncoder(11));
+    EXPECT_EQ(AwaitRow(received), 11);
+
+    sub_provider.Unsubscribe({"notenabled", "x"});
 }
 
-TEST(OrderedDeliveryTest, SteadyStateOfferViewStillLendsTheBytes) {
-    const uint8_t* seen = nullptr;
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
-            seen = data;
-        }),
-        MakeSharedSchema(MakeSchema()));
+// ---------------------------------------------------------------------------
+// CreateTopic then Subscribe, on the SAME provider: EnsureSchemaChannel resolves the schema on
+// the spot from `ts.schema` and opens no `__schema` reader at all for this topic, so a bystander
+// never discovers one from this provider here. (Subscribe's enable()-failure unwind used to
+// dereference a null `ts.schema_reader` on exactly this path -- fixed to guard it the way its
+// sibling unwinds do. Forcing that enable() failure cheaply is not practical here, so this pins
+// the happy path: delivery still works, and no schema reader was created.)
+// ---------------------------------------------------------------------------
+TEST(FastDDSPubSubProviderTest, CreateTopicThenSubscribeOnOneProviderDeliversWithoutASchemaReader) {
+    ReaderDiscoveryObserver observer(0);
 
-    const std::vector<uint8_t> first(5);
-    delivery.OfferView(first.data(), first.size(), {});
-    ASSERT_EQ(seen, first.data());
+    FastDDSPubSubProvider provider(ProviderConfig{});
+    provider.CreateTopic({"selfschema", "x"}, MakeSchema());
 
-    // The first delivery latches; this one takes the lock-free path.
-    const std::vector<uint8_t> second(5);
-    delivery.OfferView(second.data(), second.size(), {});
-    EXPECT_EQ(seen, second.data()) << "the latched path copied the view instead of lending it";
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = provider.Subscribe(
+        {"selfschema", "x"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+        });
+
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+    ASSERT_TRUE(observer.AwaitReader("selfschema/x", std::chrono::seconds(5)))
+        << "the data reader never appeared";
+
+    provider.Publish({"selfschema", "x"}, MakeEncoder(7));
+    EXPECT_EQ(AwaitRow(received), 7);
+
+    EXPECT_FALSE(observer.Sees("selfschema/x/__schema"))
+        << "a schema reader was created even though this provider already knew the schema locally";
+
+    provider.Unsubscribe({"selfschema", "x"});
 }
 
-// The no-nesting guarantee of MidFlushOfferIsNotDeliveredInline, restated for the latched path: a
-// sample offered from inside the callback lands after it, not on top of it. Nesting here would also
-// let a re-offering callback recurse until the stack runs out.
-TEST(OrderedDeliveryTest, SteadyStateReentrantOfferIsQueuedNotNested) {
-    std::vector<int32_t> order;
-    int active = 0;
-    bool nested = false;
-    fletcher::internal::OrderedDelivery* self = nullptr;
-    bool injected = false;
-
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
-            if (active > 0) nested = true;
-            ++active;
-            order.push_back(DecodeRow(data));
-            if (!injected) {
-                injected = true;
-                self->Offer(DeliveryRow(99), {});
-            }
-            --active;
-        }),
-        MakeSharedSchema(MakeSchema()));
-    self = &delivery;
-
-    delivery.Offer(DeliveryRow(1), {});  // latches the steady state
-    delivery.Offer(DeliveryRow(2), {});  // re-enters from inside the callback
-
-    EXPECT_FALSE(nested) << "the latched path delivered a re-offered sample inline";
-    EXPECT_EQ(order, (std::vector<int32_t>{1, 99, 2}));
-}
-
-// A throwing callback must not leave the latched path wedged: the next sample still gets through.
+// EachTopicHasItsOwnDeliveryThread's premise died with this round's reader-side redesign (see the
+// file-header table, fast_dds_pubsub_provider.cpp): data delivery is a Fast DDS listener again, so
+// a live sample's on_data_available runs wherever Fast DDS calls it -- intraprocess, that is the
+// PUBLISHING thread (DataReaderListenerBase, internal/data_reader_listener.hpp) -- not on a thread
+// this provider owns. "Neither the subscribing nor the publishing thread" is therefore no longer
+// true of a data callback and would be pinning the wrong thing.
 //
-// RE-ANCHORED by PDA-DEC-AG1. It used to assert `EXPECT_THROW(delivery.Offer(...))`
-// -- the exception reached the CALLER, which on the real path is a Fast DDS
-// listener thread holding the RTPS reader mutex, and on the loopback was an
-// unrelated publisher being told kPayloadTooLarge for a subscriber's bug. Owner
-// ruling 2026-09-05: the failure is contained and reported where it happened.
-// Nothing escapes Offer now; what this pins instead is that the throw was
-// ABSORBED -- counted by the channel -- rather than merely unobserved, and that
-// delivery is not wedged afterwards.
-TEST(OrderedDeliveryTest, SteadyStateAbsorbsAThrowingCallbackAndKeepsDelivering) {
-    std::vector<int32_t> order;
-    bool thrown = false;
-    const uint64_t before = fletcher::DeliveryChannel::AbsorbedTotal();
-    fletcher::internal::OrderedDelivery delivery(
-        TestChannel([&](const uint8_t* data, size_t, const SharedSchema&, const Attachments&) {
-            order.push_back(DecodeRow(data));
-            if (!thrown) {
-                thrown = true;
-                throw std::runtime_error("callback");
-            }
-        }),
-        MakeSharedSchema(MakeSchema()));
+// What IS still true, and worth pinning instead: schema-before-data ordering
+// (ADataReaderIsNotEnabledBeforeTheSchemaArrives, above) still holds, and schema RESOLUTION still
+// runs on a thread this provider owns -- its one schema thread (Impl::SchemaLoop) -- never inline
+// on whichever thread called Subscribe or CreateTopic. Observed the same way
+// OnMatchedFiresForASchemaReadersOwnCondition (below) observes that thread exists at all: a status
+// callback for the schema reader's own subscription_matched, forwarded from inside HandleSchema
+// (DispatchReaderStatuses, fast_dds_pubsub_provider.cpp) on the schema thread.
+TEST(FastDDSPubSubProviderTest,
+     DataCallbacksRunOnAFastDdsThreadAndSchemaResolvesOnTheProviderThread) {
+    struct SchemaThreadListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        bool got_schema_match = false;
+        std::thread::id schema_thread_id;
 
-    EXPECT_NO_THROW(delivery.Offer(DeliveryRow(1), {}))
-        << "a handler's failure escaped the dispatch site";
-    delivery.Offer(DeliveryRow(2), {});
-    EXPECT_EQ(fletcher::DeliveryChannel::AbsorbedTotal(), before + 1)
-        << "the throw was swallowed without being counted";
-    EXPECT_EQ(order, (std::vector<int32_t>{1, 2})) << "delivery wedged after the callback threw";
+        void OnMatched(Endpoint endpoint, int32_t /*current_count*/,
+                       int32_t change) noexcept override {
+            if (change <= 0 || endpoint.is_writer || !endpoint.is_schema_channel) return;
+            std::lock_guard<std::mutex> lk(m);
+            schema_thread_id = std::this_thread::get_id();
+            got_schema_match = true;
+            cv.notify_all();
+        }
+    };
+
+    SchemaThreadListener listener;
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
+
+    std::mutex data_m;
+    std::condition_variable data_cv;
+    std::thread::id data_thread_id;
+    bool got_data = false;
+
+    pub_provider.CreateTopic({"schemathread", "x"}, MakeSchema());
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"schemathread", "x"},
+        [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            std::lock_guard<std::mutex> lk(data_m);
+            data_thread_id = std::this_thread::get_id();
+            got_data = true;
+            data_cv.notify_all();
+        });
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    std::unique_lock<std::mutex> lk(listener.m);
+    ASSERT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+        return listener.got_schema_match;
+    })) << "the schema reader's own subscription_matched never reached OnMatched";
+    // This test's own thread both Subscribed and (through pub_provider) declared the schema, so
+    // checking against it covers both "not the subscribing thread" and "not the publishing
+    // thread" at once -- the schema thread is neither.
+    EXPECT_NE(listener.schema_thread_id, std::this_thread::get_id());
+    lk.unlock();
+
+    pub_provider.Publish({"schemathread", "x"}, MakeEncoder(1));
+    {
+        std::unique_lock<std::mutex> data_lk(data_m);
+        ASSERT_TRUE(data_cv.wait_for(data_lk, std::chrono::seconds(5), [&] { return got_data; }))
+            << "the data callback never fired";
+    }
+    // The data callback runs wherever Fast DDS calls on_data_available -- intraprocess, the
+    // PUBLISHING thread -- never on this provider's own schema thread.
+    EXPECT_NE(data_thread_id, listener.schema_thread_id);
+
+    sub_provider.Unsubscribe({"schemathread", "x"});
 }
 
 // ---------------------------------------------------------------------------
@@ -1419,10 +1376,12 @@ TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
         std::vector<Match> matches;
 
         void OnMatched(Endpoint endpoint, int32_t current_count, int32_t change) noexcept override {
-            // Only the gained half is asserted on below. (The companion channel cannot report
-            // here: its reader mask has no subscription_matched bit and its writer has no
-            // listener.)
-            if (change <= 0) return;
+            // Only the gained half is asserted on below. The companion __schema reader now reports
+            // matches too (item A: every reader's StatusCondition is left at its default enabled
+            // mask, so subscription_matched is no longer schema-reader-exempt) -- excluded here by
+            // `is_schema_channel` so this stays a pin on the DATA channel specifically, not on
+            // whichever of the two happens to match first.
+            if (change <= 0 || endpoint.is_schema_channel) return;
             std::lock_guard<std::mutex> lk(m);
             matches.push_back({std::string(endpoint.topic), endpoint.is_writer, current_count});
             cv.notify_all();
@@ -1461,7 +1420,8 @@ TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
 // A subscriber whose payload bound differs from its publisher's never matches — the bound is part
 // of the registered type name, so endpoint matching refuses the pair — but discovery still sees the
 // remote writer, and `type_name` is where the other bound is legible. That gap is the diagnostic
-// this listener exists for: `OnMatched` and `OnIncompatibleQos` both stay silent.
+// this listener exists for: for the DATA channel specifically, `OnMatched` and `OnIncompatibleQos`
+// both stay silent (the companion __schema channel matches regardless -- see below).
 TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
     struct DiscoveryListener : FastDDSStatusListener {
         struct Seen {
@@ -1484,7 +1444,11 @@ TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
         }
 
         void OnMatched(Endpoint endpoint, int32_t, int32_t) noexcept override {
-            if (endpoint.topic != "bound/x") return;
+            // The companion __schema reader DOES match (its type carries no payload bound -- see
+            // the comment below, above AwaitSchema): excluded here so this stays a pin on the DATA
+            // channel specifically (item A: every reader's StatusCondition, the schema reader's
+            // included, now reports subscription_matched, not only the data reader's).
+            if (endpoint.topic != "bound/x" || endpoint.is_schema_channel) return;
             std::lock_guard<std::mutex> lk(m);
             matched = true;
         }
@@ -1550,17 +1514,15 @@ TEST(FastDDSPubSubProviderTest, DiscoverySeesAWriterOnAnotherBound) {
 // the real DDS conditions that drive them) is NOT attempted here — deferred to a later cycle,
 // per the brief, and listed as untested in this cycle's report. P22 below exercises every one of
 // FastDDSLoggingStatusListener's eight bodies directly instead, which needs no DDS condition to be
-// forced at all; the four FastDDSStatusListener subclass tests that follow it drive the ones that
-// ARE reachable through a real provider pair (OnIncompatibleQos, OnReaderDiscovered,
-// OnParticipantDiscovered). A fourth item the brief asked for — is_schema_channel == true reaching
-// OnMatched for a __schema reader — is NOT reachable at all on the current provider:
-// internal::SchemaReaderStatusMask() (data_writer_listener.hpp) carries no subscription_matched
-// bit, SchemaListener (schema_channel.hpp) overrides no on_subscription_matched, and the __schema
-// DataWriter is created with no listener whatsoever (fast_dds_pubsub_provider.cpp, the
-// create_datawriter call for ts.schema_writer) — matching StatusListenerReportsMatchingBothWays'
-// existing comment that "the companion channel cannot report here". Making this reachable is a
-// production change (adding the status bit and the override), which this test-only cycle may not
-// make; escalated and confirmed blocked rather than worked around.
+// forced at all; the FastDDSStatusListener subclass tests that follow it drive the ones that ARE
+// reachable through a real provider pair (OnIncompatibleQos, OnReaderDiscovered,
+// OnParticipantDiscovered, and -- since item A (2026-09-14) -- OnMatched for a __schema reader
+// itself: is_schema_channel == true reaching OnMatched used to be unreachable, because the schema
+// reader's own status mask (the now-deleted internal::SchemaReaderStatusMask()) carried no
+// subscription_matched bit; the schema reader's StatusCondition is left at its default enabled
+// mask now, and this provider's one schema thread forwards whatever changed on it
+// (DispatchReaderStatuses, fast_dds_pubsub_provider.cpp) -- see
+// OnMatchedFiresForASchemaReadersOwnCondition below.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -1788,6 +1750,40 @@ TEST(FastDDSStatusListenerTest, OnParticipantDiscoveredFiresForARemoteParticipan
     DomainParticipantFactory::get_instance()->delete_participant(other);
 }
 
+// item A (2026-09-14): the schema reader's own subscription_matched now reaches OnMatched with
+// is_schema_channel == true -- previously unreachable (see the section comment above). Subscribe
+// alone is enough to create and enable the schema reader (EnsureSchemaChannel); no data need flow.
+TEST(FastDDSStatusListenerTest, OnMatchedFiresForASchemaReadersOwnCondition) {
+    struct SchemaMatchListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        bool schema_reader_matched = false;
+
+        void OnMatched(Endpoint endpoint, int32_t /*current_count*/,
+                       int32_t change) noexcept override {
+            if (change <= 0 || endpoint.is_writer || !endpoint.is_schema_channel) return;
+            std::lock_guard<std::mutex> lk(m);
+            schema_reader_matched = true;
+            cv.notify_all();
+        }
+    };
+
+    SchemaMatchListener listener;
+    FastDDSPubSubProvider pub_provider(ProviderConfig{});
+    FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
+
+    pub_provider.CreateTopic({"schemamatch", "x"}, MakeSchema());
+    SubscriptionResult result = sub_provider.Subscribe(
+        {"schemamatch", "x"},
+        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    std::unique_lock<std::mutex> lk(listener.m);
+    EXPECT_TRUE(listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+        return listener.schema_reader_matched;
+    })) << "the schema reader's own subscription_matched never reached OnMatched";
+}
+
 // ---------------------------------------------------------------------------
 // Tests — SubscribeSchema / UnsubscribeSchema: the schema without the data.
 //
@@ -1807,10 +1803,10 @@ static SharedSchema AwaitWatch(const SchemaArrival& arrival, std::chrono::millis
 
 // The proof the feature exists for: a watch pairs with the publisher's `__schema` writer and never
 // with its data writer. The positive half is the schema arriving at all — nothing else can deliver
-// it — and the negative half is the publisher's own OnMatched staying silent for the data topic,
-// which is the only endpoint on that side with a listener and a subscription_matched bit (the
-// companion channel's reader mask has none and its writer has no listener, so it cannot report
-// here either way).
+// it — and the negative half is the publisher's own OnMatched staying silent for the data topic:
+// `WriterMatchListener` below filters both `is_writer` and `is_schema_channel` itself, since (item
+// A) every reader's StatusCondition -- the schema reader's included -- now reports every status it
+// has, not only the ones an old, narrower mask allowed through.
 TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
     struct WriterMatchListener : FastDDSStatusListener {
         std::mutex m;

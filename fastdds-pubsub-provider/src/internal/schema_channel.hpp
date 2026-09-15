@@ -1,54 +1,35 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The companion __schema channel: a per-subscription promise, and the listener that resolves it.
+// The companion __schema channel's per-subscription handoff: a promise, resolved when the topic's
+// schema is known.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SCHEMA_CHANNEL_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_SCHEMA_CHANNEL_HPP_
 
-#include <atomic>
 #include <chrono>
-#include <cstdint>
-#include <fastdds/dds/log/Log.hpp>
-#include <fastdds/dds/subscriber/DataReader.hpp>
-#include <fastdds/dds/subscriber/DataReaderListener.hpp>
-#include <fastdds/dds/subscriber/SampleInfo.hpp>
 #include <fletcher/core/status.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
-#include <fletcher/pubsub/schema_ipc.hpp>
-#include <functional>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
-
-#include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
-#include "status_endpoint.hpp"
-#include "transport_data.hpp"
 
 namespace fletcher {
 namespace internal {
 
-// Per-subscription schema handoff. The arrival is resolved by the SchemaListener
-// (on a FastDDS thread) when the companion __schema sample arrives; the caller
-// gets the SchemaArrival. Guarded by its OWN mutex — NEVER the provider mutex —
-// so this FastDDS-thread callback can never contend with the provider lock the
-// application thread holds while inside a FastDDS API (which would invert with
-// FastDDS' internal subscriber mutex and deadlock).
+// Per-subscription schema handoff. Resolved either on the spot, by an application thread, when
+// this provider already holds the topic's schema (EnsureSchemaChannel,
+// fast_dds_pubsub_provider.cpp), or by this provider's one schema thread (HandleSchema, same file)
+// when the companion __schema sample arrives.
 //
-// The resolver is single-use by construction, so "resolved twice" is
-// unrepresentable rather than guarded by a `resolved` flag; this mutex now only
-// serialises the two threads that might reach for the one token.
+// Guarded by its OWN mutex, `m` -- never `impl_->mu` or `schema_mu`. `m` is always the innermost
+// lock on every path that reaches it (an application thread holds `impl_->mu`, or nothing at all;
+// the schema thread holds `schema_mu`), so it adds no cycle to the documented impl_->mu ->
+// schema_mu order: nothing here ever calls back into either.
 //
-// The channel also carries a one-shot continuation, installed by Subscribe when the schema is
-// still pending, that hands the schema to the data listener. SubscribeSchema opens a channel with
-// no continuation; a Subscribe that follows adds one, tagged with the data listener it points at,
-// and an Unsubscribe (or a failed Subscribe) that keeps the channel Withdraws it by that same
-// owner before the listener dies (see Withdraw below). The channel itself never leaves its topic
-// slot once a watch is keeping it — Subscribe and Unsubscribe both read and write it under the
-// provider's OWN lock — which is what stops a racing call from ever finding the slot empty.
+// The resolver is single-use by construction, so "resolved twice" is unrepresentable rather than
+// guarded by a `resolved` flag.
 struct SchemaChannel {
     SchemaChannel() {
         auto pair = SchemaArrival::Create();
@@ -56,46 +37,22 @@ struct SchemaChannel {
         resolver.emplace(std::move(pair.second));
     }
 
-    // Lock order is run_m THEN m, always, never both at once — see Withdraw below for why.
-    std::mutex run_m;
     std::mutex m;
     SchemaArrival arrival;
     std::optional<SchemaResolver> resolver;
-    // At most one: the data listener's SetSchema, when a Subscribe found the schema still pending.
-    std::function<void(SharedSchema)> on_resolved;
-    // Identifies whose continuation `on_resolved` is — the data listener OnResolved's caller
-    // installed it for. Withdraw only clears a continuation it recognises as its own.
-    const void* on_resolved_owner = nullptr;
 
     void Resolve(SharedSchema schema) {
-        std::function<void(SharedSchema)> fn;
-        {
-            std::lock_guard<std::mutex> lk(m);
-            if (!resolver.has_value()) return;
-            std::optional<SchemaResolver> token = std::move(resolver);
-            resolver.reset();
-            fn = std::move(on_resolved);
-            on_resolved = nullptr;
-            on_resolved_owner = nullptr;
-            // Settled UNDER `m`, unlike the continuation below: OnResolved decides "already
-            // resolved?" by polling `arrival`, so a transition that landed after this lock was
-            // released would let it install a continuation onto a channel whose only chance to
-            // run one has just gone by. Nothing caller-written runs in here — SchemaResolver
-            // only wakes waiters — so this holds the lock across a notify, not across user code.
-            std::move(*token).Resolve(schema);
-        }
-        // Outside `m`, under `run_m` — see Withdraw for why the two are never held together.
-        if (fn) {
-            std::lock_guard<std::mutex> rl(run_m);
-            fn(std::move(schema));
-        }
+        std::lock_guard<std::mutex> lk(m);
+        if (!resolver.has_value()) return;
+        std::optional<SchemaResolver> token = std::move(resolver);
+        resolver.reset();
+        std::move(*token).Resolve(std::move(schema));
     }
 
-    // Unsubscribed before the schema arrived. Dropping the token unresolved IS
-    // the outcome — kSubscriptionEnded — which is what the broken promise used
-    // to say by throwing out of get(), only now it is a value a binding can read
-    // and cannot confuse with "this transport carries no schemas". Under `m` for the reason
-    // Resolve gives.
+    // Unsubscribed before the schema arrived. Dropping the token unresolved IS the outcome --
+    // kSubscriptionEnded -- which is what the broken promise used to say by throwing out of get(),
+    // only now it is a value a binding can read and cannot confuse with "this transport carries no
+    // schemas".
     void Break() {
         std::lock_guard<std::mutex> lk(m);
         resolver.reset();
@@ -110,167 +67,6 @@ struct SchemaChannel {
         resolver.reset();
         std::move(*token).Fail(status, std::move(message));
     }
-
-    // Runs `fn` with the schema exactly once: inline if it has already arrived, otherwise from
-    // Resolve. A channel that has already ended drops `fn` rather than running it with null —
-    // unreachable in practice, since Break only follows a channel being moved out of its topic
-    // state, where no Subscribe can find it any more. `owner` is what a later Withdraw must match
-    // to cancel this continuation rather than someone else's.
-    void OnResolved(std::function<void(SharedSchema)> fn, const void* owner) {
-        SharedSchema schema;
-        {
-            std::lock_guard<std::mutex> lk(m);
-            // The existing arrival IS the record of what Resolve delivered; a second
-            // `SharedSchema` member here would be a second copy of that fact to keep in step.
-            if (arrival.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kPending) {
-                on_resolved = std::move(fn);
-                on_resolved_owner = owner;
-                return;
-            }
-        }
-        if (schema) fn(std::move(schema));
-    }
-
-    // Drops a continuation belonging to `owner`, and blocks until any continuation ALREADY in
-    // flight has returned. The two are the same guarantee: run_m is what a running continuation
-    // holds (see Resolve), so taking it here first is what makes this call wait rather than race a
-    // Resolve that is already past `m` and running `fn` on another thread — which matters because
-    // the caller is about to destroy the very listener that continuation points at.
-    //
-    // `std::scoped_lock lk(run_m, m)` would be WRONG here for a different reason than blocking:
-    // its deadlock-avoidance is free to try `m` before `run_m`, reversing the order this channel
-    // documents everywhere else, rather than failing to wait out an in-flight continuation.
-    void Withdraw(const void* owner) {
-        std::lock_guard<std::mutex> rl(run_m);
-        std::lock_guard<std::mutex> lk(m);
-        if (on_resolved_owner == owner) {
-            on_resolved = nullptr;
-            on_resolved_owner = nullptr;
-        }
-    }
-};
-
-// DataReaderListener for the companion __schema topic. Fires once when the
-// retained schema sample arrives and resolves the topic's SchemaChannel with the
-// deserialised schema; the channel then runs the continuation a Subscribe
-// installed, which flushes the buffered data samples.
-class SchemaListener : public eprosima::fastdds::dds::DataReaderListener {
-   public:
-    // Holds the channel directly rather than a `std::function` wrapping a call into it: what the
-    // schema is handed on to is the channel's own continuation, installed by Subscribe, so this
-    // listener outlives any one data subscription without pointing at it, and holding the channel
-    // is also what lets a decode failure reach `Fail` below.
-    SchemaListener(std::shared_ptr<SchemaChannel> chan, FastDDSStatusListener* status_listener)
-        : chan_(std::move(chan)), status_listener_(status_listener) {}
-
-    void on_data_available(eprosima::fastdds::dds::DataReader* reader) override {
-        ReceivedData sample;
-        eprosima::fastdds::dds::SampleInfo info;
-        while (reader->take_next_sample(&sample, &info) == eprosima::fastdds::dds::RETCODE_OK) {
-            if (!info.valid_data) continue;
-
-            // The schema rides as a row with no attachments (design owner-approved 2026-09-14); any
-            // that arrived is a malformed sample, on the same footing as one that will not decode.
-            if (!sample.decoded_attachments.empty()) {
-                EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
-                                   "ignoring a schema sample that carries attachments: the schema "
-                                   "channel only ever sends a row");
-                // Terminal, not merely delayed: a later valid sample cannot retract this one.
-                chan_->Fail(PubSubStatus::kInternal,
-                            "FastDDS: a schema sample carried attachments; the schema channel "
-                            "carries a bare row");
-                return;
-            }
-
-            if (fired_.load()) {
-                // Later samples are only compared: a resend of the same schema (fan-in) is silent;
-                // a genuine conflict is diagnostic-only here — CreateTopic already owns refusal.
-                bool differs;
-                {
-                    std::lock_guard<std::mutex> lk(fired_bytes_m_);
-                    differs = sample.decoded_row != fired_bytes_;
-                }
-                if (differs) {
-                    EPROSIMA_LOG_ERROR(
-                        FLETCHER_SCHEMA,
-                        "a second publisher announced a different schema for this topic; the "
-                        "first announcement stands and this one is ignored");
-                }
-                continue;
-            }
-            // Deserialize before claiming `fired_`: a malformed sample must not throw out of this
-            // Fast DDS listener thread, nor mark the listener fired with no schema to show for it.
-            OwnedSchema owned;
-            try {
-                owned = DeserializeSchemaIpc(sample.decoded_row.data(), sample.decoded_row.size());
-            } catch (const std::exception& e) {
-                EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
-                                   "ignoring a schema sample that will not decode ("
-                                       << sample.decoded_row.size() << " bytes): " << e.what());
-                // Terminal, not merely delayed: a later valid sample cannot retract this one.
-                chan_->Fail(PubSubStatus::kInternal,
-                            std::string("FastDDS: schema sample would not decode: ") + e.what());
-                return;
-            } catch (...) {
-                EPROSIMA_LOG_ERROR(
-                    FLETCHER_SCHEMA,
-                    "ignoring a schema sample that will not decode: non-std exception");
-                chan_->Fail(PubSubStatus::kInternal,
-                            "FastDDS: schema sample would not decode: non-std exception");
-                return;
-            }
-            bool expected = false;
-            if (fired_.compare_exchange_strong(expected, true)) {
-                // Remembered so a later, differing announcement can be told apart from a re-send of
-                // the same one (above).
-                {
-                    std::lock_guard<std::mutex> lk(fired_bytes_m_);
-                    fired_bytes_ = sample.decoded_row;
-                }
-                // Resolving the schema flushes the buffered backlog through the user callback, so
-                // user code throws on this thread too. Same reason as the catch above.
-                try {
-                    chan_->Resolve(MakeSharedSchema(std::move(owned)));
-                } catch (const std::exception& e) {
-                    EPROSIMA_LOG_ERROR(
-                        FLETCHER_SCHEMA,
-                        "subscribe callback threw during schema handoff: " << e.what());
-                } catch (...) {
-                    EPROSIMA_LOG_ERROR(
-                        FLETCHER_SCHEMA,
-                        "subscribe callback threw a non-std exception during schema handoff");
-                }
-            }
-        }
-    }
-
-    // Unobserved, either leaves subscribers waiting on a schema arrival that never resolves. The
-    // Endpoint these forward carries `is_schema_channel == true`, which is how a listener tells
-    // this from a rejected or lost row.
-    void on_sample_rejected(eprosima::fastdds::dds::DataReader* reader,
-                            const eprosima::fastdds::dds::SampleRejectedStatus& status) override {
-        if (status_listener_)
-            status_listener_->OnSampleRejected(ReaderEndpoint(reader),
-                                               static_cast<int32_t>(status.last_reason),
-                                               status.total_count);
-    }
-
-    void on_sample_lost(eprosima::fastdds::dds::DataReader* reader,
-                        const eprosima::fastdds::dds::SampleLostStatus& status) override {
-        if (status_listener_)
-            status_listener_->OnSampleLost(ReaderEndpoint(reader),
-                                           static_cast<uint32_t>(status.total_count));
-    }
-
-   private:
-    std::shared_ptr<SchemaChannel> chan_;
-    FastDDSStatusListener* status_listener_;
-    std::atomic<bool> fired_{false};
-    // The raw.data of the sample that fired, kept only to compare a later announcement against.
-    std::vector<uint8_t> fired_bytes_;
-    // Guards fired_bytes_: `fired_` only proves ONE writer won the CAS, not that a concurrent
-    // reader on another matching thread can't observe it mid-assignment — a torn vector read.
-    std::mutex fired_bytes_m_;
 };
 
 }  // namespace internal

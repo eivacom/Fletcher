@@ -15,11 +15,11 @@
 //   4. a whole document that will not parse  -> refused, never defaulted  (Malformed...)
 //   5. the POLICIES a supplied profile omits -> Fast DDS's default, NOT Fletcher's
 //                                               (MinimalProfileTakesFastDdsDefaultsNotFletchers)
-//   6. a document that says nothing about the READER
-//                                            -> MakeFletcherDefaultReaderQos(), whose
-//                                               data_sharing().off() holds back the measured
-//                                               receive-side row-loss defect
-//                                               (WriterOnlyDocumentLeavesTheReaderOn...)
+//   6. an EMPTY document                     -> MakeFletcherDefaultReaderQos() on the reader too
+//                                               (AnEmptyDocumentIsFletchersBuiltInEverywhere); a
+//                                               non-empty one with no reader profile falls to Fast
+//                                               DDS's own default instead, not Fletcher's
+//                                               (WriterOnlyDocumentLeavesTheReaderOnFastDdsDefault)
 //
 // ── Two shapes of assertion, and why both are needed ───────────────────────────────────────
 // Where the claim is that a QoS reached a live ENDPOINT, the value is read out of DDS discovery
@@ -582,6 +582,12 @@ TEST(FastDdsConfig, ReaderProfileConfiguresTheReader) {
     config.document = document;
     FastDDSPubSubProvider provider(config);
 
+    // A data reader is created disabled and enabled only once its topic's schema is known
+    // (reader-side redesign): declaring the topic locally first resolves that synchronously, on
+    // this thread, inside Subscribe below -- which is what makes the reader observable on
+    // discovery at all.
+    provider.CreateTopic({"readercfg", "topic"}, MakeSchema());
+
     SubscriptionResult result =
         provider.Subscribe({"readercfg", "topic"},
                            [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
@@ -595,10 +601,10 @@ TEST(FastDdsConfig, ReaderProfileConfiguresTheReader) {
 // C2-2's RENAME — the built-in floor under a non-empty document is gone (design rule 2, owner
 // ruling 2026-09-14): `fletcher_writer` / `fletcher_reader` are not special names any more, so a
 // document that configures only the default WRITER profile leaves the reader on FAST DDS's OWN
-// default now, not Fletcher's. The receive-side data-sharing protection C2-2 used to pin
-// (`MakeFletcherDefaultReaderQos()`'s `data_sharing().off()`) only still applies to an EMPTY
-// document (AnEmptyDocumentIsFletchersBuiltInEverywhere) — an operator who supplies a document
-// must say what the reader gets, same as the writer.
+// default now, not Fletcher's — an operator who supplies a document must say what the reader gets,
+// same as the writer. (C2-2's original note about `data_sharing().off()` protecting the receive
+// side no longer applies at all, empty document or not: item D, owner decision 2026-09-14, made
+// Fletcher's own default AUTOMATIC too, same as Fast DDS's own — see qos_defaults.cpp.)
 TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFastDdsDefault) {
     const std::string document = Document(
         WriterProfile("default_writer", "<durability><kind>VOLATILE</kind></durability>", kTenSlots,
@@ -611,6 +617,10 @@ TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFastDdsDefault) {
     config.domain_id = kDomainReaderSilence;
     config.document = document;
     FastDDSPubSubProvider provider(config);
+
+    // See ReaderProfileConfiguresTheReader above: a data reader stays disabled -- and off
+    // discovery -- until its topic's schema is known, so declare it locally first.
+    provider.CreateTopic({"readersilence", "topic"}, MakeSchema());
 
     SubscriptionResult result =
         provider.Subscribe({"readersilence", "topic"},
@@ -938,11 +948,14 @@ TEST(FastDdsConfig, AWriterProfileSilentOnDurabilityGetsFastDdsTransientLocal) {
            "it and must move with it";
 }
 
-// The same rule on the reader, and here it is the data-sharing line that moves: Fletcher's
-// built-in turns receive-side data-sharing OFF, Fast DDS's default is AUTO. A supplied reader
-// profile owns that decision (handled residue H2 — a Fletcher floor would mean the document does
-// not really configure QoS, and the PDA-ABI-7 defect hunt needs it on). Own TEST/process: a
-// distinct document from the two writer-side TESTs above.
+// The same rule on the reader. Was the data-sharing line (Fletcher's built-in OFF, Fast DDS's
+// default AUTO); since item D (owner decision 2026-09-14) both are AUTOMATIC, so that line no
+// longer tells "inherited Fletcher's default" apart from "fell to Fast DDS's own" -- reliability
+// does the same job now (Fletcher's built-in RELIABLE, Fast DDS's own default BEST_EFFORT,
+// QosPolicies.hpp), alongside history (KEEP_ALL vs KEEP_LAST), which this test already pinned. A
+// supplied reader profile owns the decision either way (handled residue H2 — a Fletcher floor
+// would mean the document does not really configure QoS, and the PDA-ABI-7 defect hunt needs it
+// on). Own TEST/process: a distinct document from the two writer-side TESTs above.
 TEST(FastDdsConfig, AMinimalReaderProfileTakesFastDdsDefaultsNotFletchers) {
     XmlProbe probe(kDomainProbe);
     ASSERT_TRUE(probe.ok());
@@ -955,12 +968,12 @@ TEST(FastDdsConfig, AMinimalReaderProfileTakesFastDdsDefaultsNotFletchers) {
     }
     const DataReaderQos reader_resolved =
         internal::ResolveReaderQos(probe.subscriber(), "fletcher_reader", /*registry=*/true);
-    ASSERT_EQ(internal::MakeFletcherDefaultReaderQos().data_sharing().kind(),
-              eprosima::fastdds::dds::OFF);
+    ASSERT_EQ(internal::MakeFletcherDefaultReaderQos().reliability().kind,
+              RELIABLE_RELIABILITY_QOS);
     EXPECT_EQ(reader_resolved.history().kind, KEEP_LAST_HISTORY_QOS);
-    EXPECT_EQ(reader_resolved.data_sharing().kind(), DataReaderQos().data_sharing().kind())
-        << "a supplied reader profile is not the whole QoS: Fletcher's data_sharing().off() "
-           "leaked underneath it";
+    EXPECT_EQ(reader_resolved.reliability().kind, DataReaderQos().reliability().kind)
+        << "a supplied reader profile is not the whole QoS: Fletcher's RELIABLE default leaked "
+           "underneath it";
 }
 
 // C2-5 — the strip is exact. The two `fletcher.*` properties this provider consumes never reach
@@ -1312,8 +1325,19 @@ TEST(FastDdsConfig, ASchemaBoundAboveTheSchemaDelivers) {
     SharedSchema schema;
     ASSERT_EQ(result.schema.Wait(std::chrono::seconds(10), &schema), PubSubStatus::kOk)
         << result.schema.Message();
-    pub.Publish({"schemabound", "fits"}, MakeEncoder(11));
-    EXPECT_EQ(AwaitRow(received), 11);
+
+    // The schema resolving says only that the SCHEMA is known, not that `sub`'s data reader has
+    // finished matching `pub`'s writer yet -- the two are separate participants, so matching runs
+    // through ordinary asynchronous discovery, not the synchronous intraprocess fast-path.
+    // `kAnchorOnly` defines no endpoint profiles, so both sides sit on Fast DDS's own defaults,
+    // which are asymmetric (QosPolicies.hpp): the writer's is TRANSIENT_LOCAL, but the reader's is
+    // VOLATILE -- and a VOLATILE reader that finishes matching AFTER a row was sent never sees it
+    // retroactively. Retry the publish rather than assume one call wins that race.
+    for (int attempt = 0; attempt < 20 && received.load() < 0; ++attempt) {
+        pub.Publish({"schemabound", "fits"}, MakeEncoder(11));
+        AwaitRow(received, std::chrono::milliseconds(250));
+    }
+    EXPECT_EQ(received.load(), 11);
 }
 
 // A throw invites a retry, so a failed schema announcement has to leave nothing behind for that

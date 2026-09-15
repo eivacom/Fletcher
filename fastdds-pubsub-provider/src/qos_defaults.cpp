@@ -29,6 +29,23 @@ DataWriterQos MakeFletcherDefaultWriterQos() {
     qos.resource_limits().max_samples = 100;
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 100;
+
+    // Measured this round (after-e2e.txt, affinity 0xC): a flat-out publisher against an
+    // asynchronous reader fills KEEP_ALL history (100), the writer blocks in write(), and a
+    // blocked writer sends no heartbeats but the periodic one (3 s default) -- recovery then
+    // exceeds max_blocking_time (100 ms), so write() times out and the sample is dropped
+    // ("[FLETCHER_PUBLICATION Error] ... return code 10"). 20 ms makes a matched, un-acked reader
+    // re-synced well inside 100 ms. Idle cost: one heartbeat per matched reader per 20 ms.
+    qos.reliable_writer_qos().times.heartbeat_period =
+        eprosima::fastdds::dds::Duration_t(0, 20'000'000);
+
+    // cdb-reproduced this round (item I): the 100 ms timeout above still drops a sample under a
+    // sustained stall, and that drop leaves a sequence-number gap a RELIABLE reader then refuses
+    // to see past (ReaderHistory::can_change_be_added_nts) -- every later write times out too, for
+    // the rest of the run. Infinite: a KEEP_ALL RELIABLE writer blocks until the reader frees space
+    // instead (this is what the README already promises); a dead peer is bounded by the
+    // participant's 20 s lease, not by this.
+    qos.reliability().max_blocking_time = eprosima::fastdds::dds::c_TimeInfinite;
     return qos;
 }
 
@@ -42,30 +59,11 @@ DataReaderQos MakeFletcherDefaultReaderQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 100;
 
-    // Data-sharing is declined on the READ side only; the writer above keeps it, so loan_publish
-    // and the zero-copy publish path are unaffected. This costs zero-copy *receive* by default.
-    //
-    // Why: with data-sharing on both ends, a reader that joins AFTER the rows were published
-    // intermittently receives only a subset of the TRANSIENT_LOCAL backlog — often just the newest
-    // — with no error anywhere. Measured on integration-tests/gateway-fastdds-ts (Windows,
-    // Fast DDS 3.4.0), where the C++ peer publishes three rows before any reader exists:
-    //
-    //     writer ON  / reader ON   -> 4/4 pass, then 2/4, then 2/4   (1 of 3 rows, or none)
-    //     writer ON  / reader OFF  -> 4/4 pass x3                     (this setting)
-    //     writer OFF / reader OFF  -> 4/4 pass x3
-    //     writer ON  / reader ON, max_samples 8 instead of 100 -> 4/4 pass x3
-    //
-    // It is not Fletcher dropping them: OrderedDelivery's pre-schema trim logs when it discards,
-    // and never fired. The size sensitivity (a 0.5 MB pool is reliable where a 6.6 MB one is not)
-    // points below the provider. Note the provider's own suite cannot see any of this — it is
-    // single-process, so Fast DDS serves those tests over intra-process delivery, which bypasses
-    // data-sharing entirely; the only cross-process coverage is that integration test.
-    //
-    // Revert this line to re-enable zero-copy receive once the underlying behaviour is understood
-    // (it wants an eProsima-level answer, and is the natural home of a future zero-copy-receive
-    // round). A caller who wants it today can set data_sharing().automatic() on their own reader
-    // QoS — the type stays bounded and plain, so nothing here forecloses it.
-    qos.data_sharing().off();
+    // AUTOMATIC on both ends (Fast DDS's own default), owner decision 2026-09-14: the earlier
+    // measured late-joiner backlog loss (see the README's history for the OFF-era numbers) is
+    // re-verified cross-process by integration-tests/gateway-fastdds-ts, 3x, as part of this round.
+    // The __schema channel keeps data-sharing OFF regardless (MakeSchemaChannel*Qos below): its own
+    // 3.4.0 teardown hang is unrelated to this setting.
     return qos;
 }
 
