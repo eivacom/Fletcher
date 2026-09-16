@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// BIND-2's forcing test: the nanoarrow codec writes the bytes `arrow-bridge`'s
-// codec writes. Not similar bytes — the same bytes.
+// BIND-2's forcing tests. Two properties, one file:
+//
+//   ENCODE (BIND-2a) — the nanoarrow codec writes the bytes `arrow-bridge`'s
+//   codec writes. Not similar bytes — the same bytes.
+//
+//   DECODE (BIND-2b) — decode is encode's inverse, in both directions: the
+//   values come back as the values that went in (Arrow equality), and the bytes
+//   come back as the bytes that went in (re-encode identity). Neither alone is
+//   enough. Arrow equality alone would pass a decoder that produced the right
+//   values through a wrong-but-compensating framing; re-encode identity alone
+//   would pass a decoder that swapped two same-typed columns, because swapping
+//   them back on the way out restores the bytes exactly.
 //
 // ── Why this is the whole safety argument ───────────────────────────────────
 // This round puts a SECOND encoder of the positional wire format into the tree.
@@ -29,9 +39,11 @@
 
 #include <cstdint>
 #include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -220,7 +232,36 @@ Fixture Composites() {
             arrow::RecordBatch::Make(schema, 3, {Finish(readings), Finish(points), Finish(tags)})};
 }
 
-std::vector<Fixture> Corpus() { return {Scalars(), Temporal(), Nested(), Composites()}; }
+/// The fixed-size list: the one composite whose element count lives in the
+/// SCHEMA rather than on the wire, so its framing has no COUNT prefix at all.
+///
+/// It earns its own fixture because that asymmetry is the easy thing to get
+/// wrong in both directions at once - an encoder that writes the count and a
+/// decoder that reads it agree with each other and disagree with the format,
+/// and only the oracle notices. Rows: populated, one with a null ELEMENT, and a
+/// null list.
+Fixture FixedSize() {
+    arrow::FixedSizeListBuilder corner(Pool(), std::make_shared<arrow::Int32Builder>(), 3);
+    auto* value = static_cast<arrow::Int32Builder*>(corner.value_builder());
+
+    EXPECT_TRUE(corner.Append().ok());
+    EXPECT_TRUE(value->AppendValues({1, 2, 3}).ok());
+
+    EXPECT_TRUE(corner.Append().ok());
+    EXPECT_TRUE(value->Append(4).ok());
+    EXPECT_TRUE(value->AppendNull().ok());
+    EXPECT_TRUE(value->Append(6).ok());
+
+    EXPECT_TRUE(corner.AppendNull().ok());
+
+    auto schema =
+        arrow::schema({arrow::field("corner", arrow::fixed_size_list(arrow::int32(), 3))});
+    return {"fixed_size", arrow::RecordBatch::Make(schema, 3, {Finish(corner)})};
+}
+
+std::vector<Fixture> Corpus() {
+    return {Scalars(), Temporal(), Nested(), Composites(), FixedSize()};
+}
 
 /// The oracle: `arrow-bridge`'s codec, over the same row.
 std::vector<uint8_t> OracleEncode(const arrow::RecordBatch& batch, int64_t row) {
@@ -304,8 +345,8 @@ TEST(NanoarrowCodec, ByteIdenticalToArrowBridge) {
     }
 
     // The corpus is the coverage claim, so its size is stated rather than
-    // implied: four fixtures of three rows each.
-    EXPECT_EQ(compared, 12) << "the corpus changed size; update this count deliberately";
+    // implied: five fixtures of three rows each.
+    EXPECT_EQ(compared, 15) << "the corpus changed size; update this count deliberately";
 }
 
 /// The borrow rule, as its own row rather than as a side effect of the one above.
@@ -367,6 +408,267 @@ TEST(NanoarrowCodec, RefusesAnUnsupportedTypeNamingTheField) {
     }
 
     c_array.release(&c_array);
+    c_schema.release(&c_schema);
+}
+
+// ---------------------------------------------------------------------------
+// BIND-2b — decode
+// ---------------------------------------------------------------------------
+
+/// Every row of a batch, encoded back to back into one buffer.
+///
+/// This is the shape `fl_decode_rows` is handed: N rows, no framing between
+/// them. The format is self-delimiting, so "where does row 2 begin" has exactly
+/// one answer and the decoder has to find it the same way the encoder placed it.
+std::vector<uint8_t> EncodeAllRows(const arrow::RecordBatch& batch) {
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    const arrow::Status exported = arrow::ExportRecordBatch(batch, &c_array, &c_schema);
+    EXPECT_TRUE(exported.ok()) << exported.ToString();
+
+    std::vector<uint8_t> bytes;
+    {
+        NanoarrowCodec codec(c_schema);
+        BoundRows rows(codec, c_array);
+        fletcher::VectorWriteBuffer buffer;
+        for (int64_t row = 0; row < batch.num_rows(); ++row) {
+            codec.EncodeRow(rows, row, buffer);
+        }
+        bytes = buffer.Finish();
+    }
+
+    if (c_array.release != nullptr) c_array.release(&c_array);
+    if (c_schema.release != nullptr) c_schema.release(&c_schema);
+    return bytes;
+}
+
+/// Decode is the inverse of encode, proven twice over per fixture.
+///
+/// The round trip runs through the C Data Interface at both ends, because that
+/// is the only way a binding ever touches this codec: the batch is exported,
+/// encoded, decoded into a FRESH array the test owns, re-encoded from that
+/// array, and imported back into Arrow C++ for a value comparison.
+TEST(NanoarrowCodec, DecodeIsTheInverseOfEncode) {
+    const std::vector<Fixture> corpus = Corpus();
+    ASSERT_FALSE(corpus.empty()) << "the corpus is empty, so this row proves nothing";
+
+    int compared = 0;
+    for (const Fixture& fixture : corpus) {
+        ASSERT_GT(fixture.batch->num_rows(), 0) << "fixture '" << fixture.name << "' built no rows";
+
+        const std::vector<uint8_t> encoded = EncodeAllRows(*fixture.batch);
+        ASSERT_FALSE(encoded.empty())
+            << "fixture '" << fixture.name
+            << "' encoded to nothing, so decoding it back would prove nothing";
+
+        ArrowSchema c_schema = {};
+        ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+
+        NanoarrowCodec codec(c_schema);
+
+        ArrowArray decoded = {};
+        codec.DecodeRows(encoded.data(), encoded.size(), fixture.batch->num_rows(), &decoded);
+        ASSERT_NE(decoded.release, nullptr)
+            << "fixture '" << fixture.name << "': decode produced no array to own";
+        ASSERT_EQ(decoded.length, fixture.batch->num_rows())
+            << "fixture '" << fixture.name << "': decode produced the wrong number of rows";
+
+        // (1) The BYTES come back. Re-encoding what decode produced must
+        // reproduce the buffer decode was given, byte for byte.
+        std::vector<uint8_t> reencoded;
+        {
+            BoundRows rows(codec, decoded);
+            fletcher::VectorWriteBuffer buffer;
+            for (int64_t row = 0; row < decoded.length; ++row) {
+                codec.EncodeRow(rows, row, buffer);
+            }
+            reencoded = buffer.Finish();
+        }
+        EXPECT_EQ(Hex(encoded), Hex(reencoded))
+            << "fixture '" << fixture.name
+            << "': re-encoding the decoded rows did not reproduce the wire bytes, so decode and "
+               "encode disagree about the format";
+
+        // (2) The VALUES come back. `ImportRecordBatch` consumes both structures,
+        // which is also the ownership claim being tested: the array decode handed
+        // over is a complete, self-owning export and Arrow can take it.
+        auto imported = arrow::ImportRecordBatch(&decoded, &c_schema);
+        ASSERT_TRUE(imported.ok())
+            << "fixture '" << fixture.name
+            << "': the decoded array was not importable: " << imported.status().ToString();
+        const std::shared_ptr<arrow::RecordBatch> actual = imported.ValueOrDie();
+        EXPECT_TRUE(actual->Equals(*fixture.batch))
+            << "fixture '" << fixture.name << "': the values did not survive the round trip.\n"
+            << "expected:\n"
+            << fixture.batch->ToString() << "\nactual:\n"
+            << actual->ToString();
+        ++compared;
+    }
+
+    EXPECT_EQ(compared, 5) << "the corpus changed size; update this count deliberately";
+}
+
+/// Decode refuses malformed bytes THROUGH `PositionalReader`, never around it.
+///
+/// This is the whole of BIND-2's "malformed-input parity with HARD-1..7"
+/// acceptance, and it is stated as a property rather than as a list. The HARD
+/// rounds hardened one reader; the binding inherits that hardening only for as
+/// long as nothing in the decoder reads a length, a count or a bitfield by hand.
+/// So: mutate the buffer everywhere, and require every refusal to carry the
+/// READER's prefix. A decoder that grew its own bounds check would announce
+/// itself here as a message that does not start with "PositionalReader:".
+///
+/// The sweep is a four-byte 0xFF window walked across a valid encoding, which is
+/// the cheapest way to hit every count, every length prefix and every bitfield in
+/// the corpus's most structural fixture without naming a single byte offset.
+TEST(NanoarrowCodec, DecodeRefusalsComeFromTheReader) {
+    const Fixture fixture = Composites();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+    ASSERT_GT(valid.size(), 4U) << "the fixture encoded to too little to mutate meaningfully";
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    int refused = 0;
+    for (size_t i = 0; i + 4 <= valid.size(); ++i) {
+        std::vector<uint8_t> corrupt = valid;
+        for (size_t b = 0; b < 4; ++b) corrupt[i + b] = 0xFF;
+
+        ArrowArray decoded = {};
+        try {
+            codec.DecodeRows(corrupt.data(), corrupt.size(), fixture.batch->num_rows(), &decoded);
+            // A mutation the format happens to accept is fine - the bytes are
+            // still a well-formed encoding of different values. Release and move
+            // on; the guard below insists the sweep found SOME refusals.
+            if (decoded.release != nullptr) decoded.release(&decoded);
+        } catch (const std::invalid_argument& e) {
+            ++refused;
+            EXPECT_EQ(std::string(e.what()).rfind("PositionalReader:", 0), 0U)
+                << "a refusal at mutation offset " << i
+                << " did not come from the reader, so the decoder is checking bounds of its own "
+                   "and the HARD-1..7 hardening no longer covers the binding: "
+                << e.what();
+            EXPECT_EQ(decoded.release, nullptr)
+                << "a failed decode left something in the caller's ArrowArray";
+        } catch (const fletcher::PubSubError& e) {
+            ADD_FAILURE() << "malformed input at offset " << i
+                          << " produced a codec-level refusal rather than a reader one. Malformed "
+                             "BYTES are the reader's to refuse; a PubSubError here means the "
+                             "decoder decided something the reader should have: "
+                          << e.what();
+        }
+    }
+
+    // Vacuity guard. A sweep that refused nothing would pass every assertion
+    // above while proving nothing at all.
+    EXPECT_GT(refused, 0)
+        << "no mutation was refused, so this row asserted nothing about malformed input";
+
+    c_schema.release(&c_schema);
+}
+
+/// A truncated buffer is refused at every truncation point, and a buffer with
+/// anything left over is refused too.
+///
+/// The prefix sweep is deterministic rather than probabilistic: the null
+/// bitfield sits at the front and is untouched, so every field the full row read
+/// a shorter one must also read, and it must run out. The trailing-byte half is
+/// the batch-level `VerifyFullyConsumed` - a count and a buffer that disagree,
+/// which is exactly how a framing bug reaches production silently.
+TEST(NanoarrowCodec, DecodeRefusesTruncatedAndOverlongBuffers) {
+    const Fixture fixture = Nested();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+    ASSERT_FALSE(valid.empty());
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    for (size_t prefix = 0; prefix < valid.size(); ++prefix) {
+        ArrowArray decoded = {};
+        EXPECT_THROW(codec.DecodeRows(valid.data(), prefix, fixture.batch->num_rows(), &decoded),
+                     std::invalid_argument)
+            << "a " << prefix << "-byte prefix of a " << valid.size()
+            << "-byte encoding was accepted";
+        EXPECT_EQ(decoded.release, nullptr) << "a failed decode handed back a partial array";
+    }
+
+    {
+        std::vector<uint8_t> overlong = valid;
+        overlong.push_back(0x00);
+        ArrowArray decoded = {};
+        EXPECT_THROW(
+            codec.DecodeRows(overlong.data(), overlong.size(), fixture.batch->num_rows(), &decoded),
+            std::invalid_argument)
+            << "a trailing byte was ignored; the count and the buffer are allowed to disagree";
+        EXPECT_EQ(decoded.release, nullptr);
+    }
+
+    // The control: the unmutated buffer decodes. Without it, every row above
+    // would still pass if DecodeRows simply always threw.
+    {
+        ArrowArray decoded = {};
+        ASSERT_NO_THROW(
+            codec.DecodeRows(valid.data(), valid.size(), fixture.batch->num_rows(), &decoded));
+        ASSERT_NE(decoded.release, nullptr);
+        decoded.release(&decoded);
+    }
+
+    c_schema.release(&c_schema);
+}
+
+/// A map with a composite key is refused at OPEN, not half-decoded at row 1.
+///
+/// The encoder would happily write one; the decoder cannot read one back in a
+/// single pass, because a map's keys all arrive before its values and holding a
+/// half-built struct aside until its value shows up is a second decoder. The
+/// proto mapping never produces such a key, so the two halves are kept honest by
+/// refusing it where the refusal is cheap and nameable.
+TEST(NanoarrowCodec, RefusesAMapWithACompositeKeyNamingTheField) {
+    auto key_type = arrow::struct_({arrow::field("part", arrow::int32())});
+    auto map_type = arrow::map(key_type, arrow::int32());
+    auto schema = arrow::schema({arrow::field("lookup", map_type)});
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    try {
+        NanoarrowCodec codec(c_schema);
+        ADD_FAILURE() << "a composite map key was accepted; decode cannot read one back";
+    } catch (const fletcher::PubSubError& e) {
+        EXPECT_EQ(e.status(), fletcher::PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("lookup"), std::string::npos)
+            << "the refusal did not name the offending field: " << e.what();
+    }
+
+    c_schema.release(&c_schema);
+}
+
+/// Decode's argument checks, which are the binding's and not the reader's: a
+/// null destination, a negative count, and a null pointer that claims a length.
+TEST(NanoarrowCodec, DecodeRejectsImpossibleArguments) {
+    const Fixture fixture = Nested();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    ArrowArray decoded = {};
+    EXPECT_THROW(codec.DecodeRows(valid.data(), valid.size(), 1, nullptr), std::invalid_argument);
+    EXPECT_THROW(codec.DecodeRows(valid.data(), valid.size(), -1, &decoded), std::invalid_argument);
+    EXPECT_THROW(codec.DecodeRows(nullptr, valid.size(), 1, &decoded), std::invalid_argument);
+    EXPECT_EQ(decoded.release, nullptr);
+
+    // Zero rows out of zero bytes is not an error: it is the empty batch, and a
+    // subscriber that receives one should get an empty array rather than a throw.
+    ArrowArray empty = {};
+    ASSERT_NO_THROW(codec.DecodeRows(nullptr, 0, 0, &empty));
+    ASSERT_NE(empty.release, nullptr);
+    EXPECT_EQ(empty.length, 0);
+    empty.release(&empty);
+
     c_schema.release(&c_schema);
 }
 

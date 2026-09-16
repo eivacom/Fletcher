@@ -38,10 +38,30 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
+#include <vector>
 
 namespace fletcher::abi {
 
 class NanoarrowCodec;
+
+/// The wire-relevant shape of one schema node, resolved once at open.
+///
+/// Encode does not need this: an `ArrowArrayView` already carries the type tree,
+/// so `EncodeValue` switches on `view.storage_type`. **Decode has no array to
+/// read the tree from** - it is building one - so it walks the plan instead, and
+/// the plan exists so that decoding a million rows parses zero format strings.
+///
+/// `type` is the SCHEMA view's type rather than the storage type, because the two
+/// differ exactly where the wire cares: a timestamp's storage is int64, and the
+/// decoder wants to know it is a timestamp so it can refuse what the mapping does
+/// not carry without consulting the schema again.
+struct FieldPlan {
+    ArrowType type = NANOARROW_TYPE_UNINITIALIZED;
+    /// Elements per value, for `FIXED_SIZE_LIST` only - the one type whose count
+    /// lives in the schema instead of on the wire.
+    int64_t fixed_size = 0;
+    std::vector<FieldPlan> children;
+};
 
 /// One `ArrowArray` bound to a codec: validated once, borrowed throughout.
 ///
@@ -103,12 +123,33 @@ class NanoarrowCodec {
     /// carry (a string longer than 4 GiB, a list longer than UINT32_MAX).
     void EncodeRow(const BoundRows& rows, int64_t index, WriteBuffer& out) const;
 
+    /// Decode `count` consecutive rows from `[bytes, bytes + len)` into a fresh
+    /// struct array at `out`.
+    ///
+    /// **The caller imports and owns the result**: `out->release` frees the
+    /// buffers, and nothing here retains a pointer into `bytes`, so the row
+    /// buffer may be reused the moment this returns. That is what makes decode
+    /// callable from INSIDE a delivery callback, where the bytes belong to the
+    /// transport and die when the callback does.
+    ///
+    /// Rows are back to back with no framing between them: the format is
+    /// self-delimiting, so each row's own reader says where the next begins, and
+    /// a buffer whose rows do not exactly fill it is refused rather than
+    /// truncated. `out` is left untouched on failure - a half-built array is
+    /// released here rather than handed over.
+    ///
+    /// Throws `std::invalid_argument` (from `PositionalReader`, verbatim) on
+    /// malformed bytes, and `PubSubError` on a schema the plan cannot build.
+    void DecodeRows(const uint8_t* bytes, size_t len, int64_t count, ArrowArray* out) const;
+
     [[nodiscard]] const ArrowSchema& schema() const noexcept { return *schema_.get(); }
 
    private:
     friend class BoundRows;
 
     OwnedSchema schema_;
+    /// The row struct itself: `root_.children` is one plan per field.
+    FieldPlan root_;
 };
 
 }  // namespace fletcher::abi
