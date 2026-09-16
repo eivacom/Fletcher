@@ -8,6 +8,33 @@ find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
 
+# The implementation behind the ABI, as an OBJECT library.
+#
+# It exists because of a tension the shim's own shape creates: everything inside
+# the shim is deliberately HIDDEN (the export table is exactly what binding.h
+# declares, and CI asserts it on Linux), but the codec's tests have to reach the
+# codec. Compiling the sources into the test executable as well would work and
+# would also mean the tests exercise a second compilation of the code that ships.
+# One object library, linked into both, keeps it one compilation.
+#
+# PIC explicitly: these objects go into a SHARED library, and unlike the
+# component's own targets an object library does not inherit that requirement
+# from what links it.
+add_library(fletcher-c-abi-impl OBJECT
+    src/nanoarrow_codec.cpp)
+
+target_compile_features(fletcher-c-abi-impl PUBLIC cxx_std_20)
+
+set_target_properties(fletcher-c-abi-impl PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+# PUBLIC, unlike the shim's own PRIVATE links: whatever links these objects needs
+# their headers too, and the test executable is one of those.
+target_link_libraries(fletcher-c-abi-impl PUBLIC
+    fletcher-pubsub::fletcher-pubsub)
+
 # SHARED, unlike every other Fletcher component: this is the artifact
 # `Eiva.Fletcher.Interop` ships per RID in runtimes/<rid>/native/, and P/Invoke
 # needs a loadable module, not an archive.
@@ -71,6 +98,7 @@ target_include_directories(fletcher-c-abi
 # header. That is the property the test_package checks by compiling a C program
 # against the package with nothing else on its include path.
 target_link_libraries(fletcher-c-abi PRIVATE
+    fletcher-c-abi-impl
     fletcher-pubsub::fletcher-pubsub
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
     fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)

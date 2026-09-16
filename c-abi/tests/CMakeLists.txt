@@ -3,12 +3,33 @@
 #
 find_package(GTest REQUIRED)
 
+# The ORACLE's dependencies, and test-only on purpose.
+#
+# `fletcher-c-abi` must never link `arrow-bridge`: that would pull Arrow C++ into
+# the per-RID native asset the NuGet package ships, which is most of the reason
+# the codec was written on nanoarrow at all. The byte-identity test links it
+# because the oracle has to be the real encoder rather than a transcription of
+# it. CI's packed-size check measures the packaged shim, not this binary, so the
+# two facts do not fight.
+find_package(fletcher-arrow-bridge CONFIG REQUIRED)
+find_package(Arrow CONFIG REQUIRED)
+
+# The codec itself is reached through `fletcher-c-abi-impl`, the object library
+# the shim is built from. The alternative - linking the shim and hoping its
+# symbols are reachable - cannot work: everything inside it is hidden by design,
+# and the export table is exactly what binding.h declares. Testing behind a
+# boundary means linking behind it.
+
 add_executable(c_abi_tests
-    test_binding_abi.cpp)
+    test_binding_abi.cpp
+    test_nanoarrow_codec.cpp)
 
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main
-    fletcher-c-abi)
+    fletcher-c-abi
+    fletcher-c-abi-impl
+    fletcher-arrow-bridge::fletcher-arrow-bridge
+    arrow::arrow)
 
 # ---------------------------------------------------------------------------
 # The shim is a SHARED library — the only one in the tree — so the loader has to

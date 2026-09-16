@@ -60,6 +60,17 @@ class FletcherCAbiConan(ConanFile):
         self.requires("fletcher-xrcedds-pubsub-provider/0.5.1-alpha")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
+            # The byte-identity oracle, and TEST-ONLY. The shipped shim must not
+            # link arrow-bridge or Arrow C++ - that is what keeps the per-RID
+            # native asset to nanoarrow - but the oracle has to be the real
+            # encoder rather than a transcription of it, so the test binary links
+            # both. `run_tests` is deleted from package_id, so the shipped
+            # package is unaffected by their presence here.
+            self.requires("fletcher-arrow-bridge/0.5.0-alpha")
+            self.requires("arrow/23.0.1")
+            # The same zlib conflict arrow-bridge and pubsub-arrow resolve:
+            # arrow pins 1.2.13, openssl pulls 1.3.1.
+            self.requires("zlib/1.3.1", override=True)
 
     def package_id(self):
         del self.info.options.run_tests
