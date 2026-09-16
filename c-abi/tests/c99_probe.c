@@ -4,9 +4,11 @@
  * The self-containment probe for `fletcher/abi/binding.h`.
  *
  * This translation unit includes the binding header FIRST and includes nothing
- * else, then uses every declaration it publishes. It is compiled as strict C
- * with warnings promoted to errors, which is what makes two claims testable
- * rather than asserted:
+ * else. Inclusion alone is the test: a C compiler parses EVERY declaration in
+ * the header, so a C++-only construct anywhere in it is a compile error here
+ * whether or not this file goes on to call the thing. Compiled as strict C with
+ * warnings promoted to errors, which is what makes two claims testable rather
+ * than asserted:
  *
  *   * the header is pure C — no C++ keyword, no `//` -only construct that a C99
  *     compiler rejects, no `bool`/`nullptr` smuggled in from a C++ header;
@@ -20,8 +22,10 @@
  */
 #include "fletcher/abi/binding.h"
 
-/* No link step: the probe is compiled as an object library only, so a
- * declaration is all that is exercised here. The RUNTIME value is checked by
+/* No link step: the probe is compiled as an object library only, so nothing here
+ * needs a definition to exist - which is what lets it cover a header whose
+ * entry points land item by item (BIND-1 specifies them; BIND-2 to BIND-4
+ * implement them). The RUNTIME value is checked by
  * BindingAbi.VersionMatchesHeader, which links the real shim. */
 uint32_t fletcher_c99_probe_version_constant(void);
 

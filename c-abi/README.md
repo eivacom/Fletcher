@@ -62,16 +62,21 @@ in the local cache first; `ci.c-abi.yml` does exactly the above.
 
 ## Status — round BIND
 
-At **BIND-0** the exported surface is `fl_binding_abi_version()` and nothing
-else. That is the item's point: the two new lanes run on both platforms before
-there is any real code to run them on (seam §12.4 — the first lane run of
-PR #126 found seven defects local green could not, three of them Linux-only).
-The built-in providers are nonetheless linked from the kickoff, so the
+**BIND-0** brought the component up: the two lanes run on both platforms, and
+the built-in providers are linked from the kickoff so the
 static-link-into-a-shared-library question and the per-RID size budget are
 answered by a real artifact rather than by a proxy.
 
-**BIND-1** specifies the rest of the header — status codes, the caller-owned
-`fl_error`, the registry, publisher and subscriber handles, `SchemaArrival`,
-blobs, attachments, the write window and writer, the delivery callback, the
-three-step codec surface and the single-copy marker — and is reviewed as a
-specification. **BIND-2** implements the nanoarrow codec behind it.
+**BIND-1 has now specified the whole header** — the status taxonomy (the seam's
+own numbers), the caller-owned `fl_error` with its `origin`, the provider
+registry, publisher and subscriber handles, the schema arrival and its five
+outcomes, blobs and schemas as owner handles, attachments in published order,
+the write window and its one-call writer, the delivery callback, the three-step
+codec surface, and the single-copy marker. It is reviewed **as a specification**:
+what is expensive to get wrong here is the ownership wording, not the syntax.
+
+**Only `fl_binding_abi_version()` is implemented.** Every other declaration is
+what the following items build: BIND-2 the codec, BIND-3 the interop tier,
+BIND-4 pub/sub. Calling one before its item lands is a link error rather than a
+run-time surprise, because the symbol is not exported until then — which is also
+why the lane's export check still sees exactly one name.
