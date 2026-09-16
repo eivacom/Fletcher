@@ -178,6 +178,20 @@ entry:
   provider can answer; the gateway is where an empty configuration file is refused.
 - **A `session_key` colliding with another client on one Agent.** Uniqueness is a property of
   that Agent's client population, which is not observable from here. Pre-existing.
+- **SIGPIPE, on POSIX, and only for `transport=tcp`.** A write to a TCP socket whose peer has
+  hung up raises SIGPIPE, and its default disposition terminates the process — there is no
+  return code for this provider to turn into a `kTransportFailure`. Micro XRCE-DDS means to
+  prevent that and cannot: its `signal(SIGPIPE, …)` sits behind `#ifdef UCLIENT_PLATFORM_LINUX`,
+  a macro the client's `config.h.in` never emits, so the protection is dead code in every
+  standard build. **Opening a TCP transport therefore sets SIGPIPE to `SIG_IGN`**, once per
+  process, and *only if the disposition is still `SIG_DFL`* — a host that made its own choice
+  keeps it, including one that wants SIGPIPE to terminate. (Reading the disposition and
+  installing over it are two calls, and POSIX offers no way to make them one, so a host that
+  installs its handler on another thread *during* the first TCP construction can still lose it.
+  Set your disposition before opening a transport and the question does not arise.) Writes then fail with `EPIPE`, which
+  arrives as `kTransportFailure` like any other transport error. A UDP deployment (the default)
+  never touches signal disposition, and Windows has no SIGPIPE at all.
+  `XrceConfig.TcpConstructionLeavesSigpipeIgnored` is the guard.
 
 ### PubSubProvider interface
 

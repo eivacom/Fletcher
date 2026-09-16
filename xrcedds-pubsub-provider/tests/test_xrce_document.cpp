@@ -47,6 +47,8 @@
 #include <poll.h>  // the accept loop waits with a deadline; see TcpListener
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <csignal>  // the SIGPIPE disposition row below
 #ifdef __linux__
 #include <dirent.h>  // /proc/self/fd, for the leak row below
 #endif
@@ -946,3 +948,92 @@ TEST(XrceConfig, FailingConstructionDoesNotLeakTheTransport) {
                "this is what that looks like";
     }
 }
+// The companion to the row above, and the reason it stopped being flaky.
+//
+// That row constructs against a listener which accepts and immediately closes, so the client
+// writes to a peer-closed socket - which raises SIGPIPE, whose default disposition terminates
+// the process. Micro XRCE-DDS intends to prevent exactly this and fails to: its
+// `signal(SIGPIPE, sigpipe_handler)` sits behind `#ifdef UCLIENT_PLATFORM_LINUX`, a macro the
+// client's `config.h.in` never emits, so the protection is dead code in every standard build.
+// Whether a process survived came down to a race, and on CI (PR #129) it lost one.
+//
+// So the provider ignores SIGPIPE itself, once, on the TCP path only, and only when the
+// disposition is still SIG_DFL. This row is what makes that falsifiable rather than asserted:
+// delete the call in `xrce_dds_pubsub_provider.cpp` and this goes red in a way that names the
+// cause, instead of the neighbouring row dying by signal and naming nothing.
+//
+// POSIX only: Windows has no SIGPIPE, and a write to a closed socket there is an error return.
+#ifndef _WIN32
+namespace {
+
+// A handler whose ADDRESS is the observable, for the preservation row below. A named
+// function rather than a lambda so there is a stable pointer to compare against.
+void HostSigpipeHandler(int /*signal*/) {}
+
+}  // namespace
+
+TEST(XrceConfig, TcpConstructionLeavesSigpipeIgnored) {
+    // ESTABLISH the starting disposition; do not ask what it happens to be.
+    //
+    // Reading it and tolerating either SIG_DFL or SIG_IGN would make this row vacuous in a
+    // process that inherited SIG_IGN: the final expectation would pass with the provider's call
+    // deleted, which is the one thing this row exists to catch. Setting SIG_DFL here means the
+    // row proves the TRANSITION and stays red-first whatever the harness hands us.
+    struct sigaction reset = {};
+    reset.sa_handler = SIG_DFL;
+    sigemptyset(&reset.sa_mask);
+    ASSERT_EQ(sigaction(SIGPIPE, &reset, nullptr), 0)
+        << "could not establish SIG_DFL to start from";
+
+    TcpListener listener(/*hold_clients=*/false);
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    const Refusal refusal = Catch([&] {
+        XrceDDSPubSubProvider provider(
+            ConfigWith("transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+                       "\nconnect_timeout_ms=0"));
+    });
+    ASSERT_TRUE(refusal.threw) << "this construction SUCCEEDED against a listener that speaks no "
+                                  "XRCE, so the TCP path was never taken";
+
+    struct sigaction after = {};
+    ASSERT_EQ(sigaction(SIGPIPE, nullptr, &after), 0) << "could not read the SIGPIPE disposition";
+    EXPECT_EQ(after.sa_handler, SIG_IGN)
+        << "opening a TCP transport left SIGPIPE at its default disposition, so the next write to "
+           "a peer that has hung up terminates the process - no exception, no status, nothing "
+           "this provider can turn into kTransportFailure";
+}
+
+// The restraint, which the row above cannot see: the provider installs SIG_IGN only over
+// SIG_DFL, so a host that made its own choice keeps it - including a host that deliberately
+// wants SIGPIPE to terminate. Documented in the README, and until this row, only documented.
+//
+// This works because `gtest_discover_tests` gives every row its own process: the provider's
+// `std::call_once` is fresh here, so this row's handler is in place before the first TCP
+// transport of THIS process is opened. Run the suite in one process and this row would be
+// testing whichever row ran first instead.
+TEST(XrceConfig, TcpConstructionLeavesAHostsOwnHandlerAlone) {
+    struct sigaction host = {};
+    host.sa_handler = &HostSigpipeHandler;
+    sigemptyset(&host.sa_mask);
+    ASSERT_EQ(sigaction(SIGPIPE, &host, nullptr), 0) << "could not install the host's handler";
+
+    TcpListener listener(/*hold_clients=*/false);
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    const Refusal refusal = Catch([&] {
+        XrceDDSPubSubProvider provider(
+            ConfigWith("transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+                       "\nconnect_timeout_ms=0"));
+    });
+    ASSERT_TRUE(refusal.threw) << "this construction SUCCEEDED against a listener that speaks no "
+                                  "XRCE, so the TCP path was never taken";
+
+    struct sigaction after = {};
+    ASSERT_EQ(sigaction(SIGPIPE, nullptr, &after), 0) << "could not read the SIGPIPE disposition";
+    EXPECT_EQ(after.sa_handler, &HostSigpipeHandler)
+        << "opening a TCP transport replaced a handler this process had already installed; the "
+           "provider may only install SIG_IGN over SIG_DFL, because the disposition belongs to "
+           "the host and not to this library";
+}
+#endif
