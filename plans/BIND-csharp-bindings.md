@@ -768,7 +768,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 |---|---|---|---|---|---|---|
 | BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🔴 |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🔴 |
-| BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | ⚪ |
+| BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🔴 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage`; per-row publish benchmark recorded | ⚪ |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier` | ⚪ |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
@@ -819,7 +819,7 @@ first automated run happens before any real code exists.
 | `.devcontainer/Dockerfile` gains .NET 10 LTS via `DOTNET_SDK_VERSION`; `dotnet/global.json` pins the same band | 🟢 `10.0.400`, `rollForward: latestFeature`; image builds locally |
 | `c-abi/` builds a shim exporting `fl_binding_abi_version()` | 🟢 Windows: `conan create` green, 3 ctest rows pass (`VersionMatchesHeader`, `VersionIsPackedMajorMinor`, `CompilesAsC99AndIsSelfContained`), `test_package` links a **C** program against the package |
 | `dotnet/` builds three empty packages | 🟢 `Eiva.Fletcher{,.Interop,.GatewayClient}` 0.5.0-alpha pack on `net8.0;net10.0`; `dotnet format --verify-no-changes` clean |
-| `ci.c-abi.yml` + `ci.dotnet.yml` green on **both** platforms | 🔴 in progress on draft PR #129. **The first Linux run earned the item its keep immediately** (seam §12.4, risk P-6): `c-abi / build-linux` failed at the link with `relocation R_X86_64_TPOFF32 against '__tls_guard' can not be used when making a shared object`, because no `fletcher-*` recipe declared an `fPIC` option — nothing in the tree had ever linked those archives into a shared object before. Fixed by adding the option to `pubsub`, `fastdds-pubsub-provider` and `xrcedds-pubsub-provider` (not header-only `core`); `ci.format-check-cpp` also failed on two unformatted spots and now covers `*.c` too. Windows was green throughout, which is precisely the asymmetry the lane exists to close |
+| `ci.c-abi.yml` + `ci.dotnet.yml` green on **both** platforms | 🟢 **green on both platforms at `7820e82`, 51/51 on draft PR #129** (2026-09-16). The item stays 🔴 in the tracker only because 🟢 there means green **and reviewed**, and no item of this round has been reviewed yet. How it got there: **the first Linux run earned the item its keep immediately** (seam §12.4, risk P-6): `c-abi / build-linux` failed at the link with `relocation R_X86_64_TPOFF32 against '__tls_guard' can not be used when making a shared object`, because no `fletcher-*` recipe declared an `fPIC` option — nothing in the tree had ever linked those archives into a shared object before. Fixed by adding the option to `pubsub`, `fastdds-pubsub-provider` and `xrcedds-pubsub-provider` (not header-only `core`); `ci.format-check-cpp` also failed on two unformatted spots and now covers `*.c` too. Windows was green throughout, which is precisely the asymmetry the lane exists to close |
 | Part 4 matrix re-derived and committed | 🟢 all bucket totals unchanged; `CallerTier` corrected 20 → 21 |
 | `Apache.Arrow` pinned and its C Data Interface verified for every mapping type, nested included (N-9) | 🟢 **23.0.0**, pinned exactly (`[23.0.0]`). 17 types round-trip — 9 scalars, timestamp with and without timezone, duration, `struct`, `list<int32>`, `list<struct>`, `map<utf8,int32>` — plus schema and field metadata; 18 cases on both TFMs |
 | Per-RID shim size measured against the budget | 🟢 `win-x64` **7.61 MiB** with all three built-ins; `linux-x64` from the first lane run. Reported by the lane on every run; no threshold until BIND-9 |
@@ -862,6 +862,17 @@ Windows export table (Part 8, Open items).
 - Reviewed as a spec, like PDA-ABI-1: the ownership wording is the expensive thing
   to get wrong.
 
+**State — 2026-09-16**
+
+| Acceptance bullet | State |
+|---|---|
+| `binding.h` is pure C99, self-contained, versioned, append-only; exemption + deprecation policy stated in the header | 🟢 committed `696a42f`; `BindingAbi.CompilesAsC99AndIsSelfContained` green on both platforms (MSVC holds it to C11, gcc to C99 — see `c-abi/tests/CMakeLists.txt`) |
+| Contents: status codes, `fl_error` + dispose, registry create, handles, `schema_arrival_wait`, blob retain/release, attachments, write window + writer, delivery callback, the codec surface, the single-copy marker | 🟢 all present in `696a42f` |
+| Every type derived from the seam spec, never shared with PDA-ABI's header (D-BIND-2′) | 🟢 |
+| Nothing crossing is a `std::shared_future` (D-BIND-22) | 🟢 |
+| No generated output's bytes change; no emitter behaviour changes | 🟢 the header touches no emitter |
+| **Reviewed as a specification** | ⚪ **open, and the item's remaining work.** The expensive wording to check: `fl_schema`'s never-call-Arrow's-release warning, the write window's disclosed residue, and attachments' never-sort rule |
+
 ### BIND-2 — The nanoarrow codec, the publish fusion, and the oracle's producer
 
 **As** a .NET developer, **I want** encode/decode over the ABI, **so that** there
@@ -900,6 +911,55 @@ the transport window.
 - Prior art read first: commit `0050365` on `feature/fastdds_modernization/19645`
   (`EncodeRow(values, WriteBuffer&)`, `batch_decoder.hpp`), a design reference over
   Arrow C++, not something to link.
+
+**The item is built in four slices**, because it is the round's long pole and a
+single commit of it would be unreviewable. The slice boundaries are where a
+property becomes provable, not where the code happens to divide:
+
+| Slice | Content | Commit | State |
+|---|---|---|---|
+| **2a** | `NanoarrowCodec(schema)`, `BoundRows`, `EncodeRow` — the encode half | `28cdcd4` (+ `7820e82`, which builds `arrow-bridge` in the c-abi lane because it is the oracle) | 🟢 green, ⚪ unreviewed |
+| **2b** | `DecodeRows(bytes, len, count, ArrowArray*)` — the decode half, and the malformed-input parity property | `bec139e` | 🟢 green, ⚪ unreviewed |
+| **2c** | The ABI entry points, the publish fusion, the write-window and writer adapters, `Translate` containment | — | ⚪ next |
+| **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | — | ⚪ |
+
+**State — 2026-09-16**
+
+| Acceptance bullet | State |
+|---|---|
+| `nanoarrow_codec.{hpp,cpp}`: deep copy + field plan, `Bind`, `EncodeRow`, `DecodeRows`; one `switch` per mapping row, recursive; links core/pubsub/providers and **never** `arrow-bridge` | 🟢 2a + 2b. The field plan was materialised in 2b as a `FieldPlan` tree (`PlanNode`): encode reads the type tree off the `ArrowArrayView`, decode has no array to read it from |
+| The publish fusion: `fl_publisher_publish_row(s)` with a `RowEncoder` lambda | ⚪ 2c |
+| `fl_encode_row` through a `fl_write_window` → `WriteBuffer` adapter; the C writer adapter for `PublishRaw` | ⚪ 2c |
+| **Byte identity** against `arrow-bridge` | 🟢 2a, **but over a different corpus than this bullet names** — see the deviations below |
+| The borrow rule is tested | 🟢 2a — `BindBorrowsTheArrayAndNeverConsumesIt` |
+| Malformed-input parity with HARD-1..7 **through `fl_decode_rows`**; bounds checks not `#if DEBUG`-gated; every message preserved | 🔴 2b discharged it **at the codec level**: `DecodeRefusalsComeFromTheReader` walks a four-byte `0xFF` window across a valid encoding and requires every refusal to carry the reader's `"PositionalReader:"` prefix, so the HARD-1..7 hardening covers the binding by construction rather than by a second taxonomy. `fl_decode_rows` does not exist until 2c, where it is a pass-through and the property carries unchanged |
+| `CopyAccounting.BindingProducerWritesInPlace` in `pubsub-conformance` | ⚪ 2d |
+| The single-copy check (D-BIND-17) | ⚪ 2d |
+| A packed-size budget for the shim in CI | ⚪ 2d |
+| Prior art read first | 🟢 |
+
+**Two deviations from the acceptance above, both open and neither ruled:**
+
+1. **The byte-identity corpus is not the one the bullet names.** The acceptance
+   (and Part 4, and D-BIND-11) says *"across the whole `emit_vectors` scenario
+   corpus"*. 2a instead built **four hand-written Arrow fixtures of three rows
+   each** — the mapping's scalars at their extremes, timestamp and duration, a
+   nested struct in its three distinct states, and the three composites each with a
+   populated / empty / null row — to which 2b added a fifth, a fixed-size list,
+   because that arm of both switches was otherwise untested. The count is
+   asserted deliberately: 15 comparisons for byte identity, 5 fixtures for the
+   round trip. Whether to widen the test to `emit_vectors` — which lives in
+   `integration-tests/protoc-gateway-client-ts/src/` and is a *scenario* corpus
+   rather than an Arrow-array one — is an open question for the BIND-2 review.
+2. **2b narrowed what the codec accepts.** A map's key must now be a scalar,
+   refused at open by field name. The wire is `[COUNT][keys][value bitfield]
+   [values]`, and nanoarrow finishes a struct element only when every child is
+   exactly one longer, so an entry's key and value must be appended together and
+   the keys have to be staged; a composite key cannot be staged without a second
+   decoder. The proto mapping produces none (proto restricts map keys to integral,
+   bool and string). **This tightens what 2a's encoder accepted and is therefore a
+   deviation under the round's STOP-AND-ASK rule** — it wants a decision number,
+   not a paragraph in a commit message.
 
 ### BIND-3 — `Eiva.Fletcher.Interop` and the codec/Arrow tier
 
@@ -1190,7 +1250,12 @@ only what the header declares" property is currently Linux-only. Fixing it means
 changing how the dependency is built, which is a BIND-9 question with the size budget
 in hand, not a BIND-0 one.
 
-No decision is open. Three actions remain, none an engineering one:
+**Two decisions are open, both raised by BIND-2b** (detail in BIND-2's state table):
+the **composite map-key refusal**, which narrows what BIND-2a's encoder accepted; and
+whether **byte identity widens to the `emit_vectors` corpus** the acceptance names.
+Neither blocks 2c.
+
+Three actions remain besides, none an engineering one:
 
 1. **LGPL relinking decision** (owner: the maintainer) before the first *external*
    publication (D-BIND-28: the first target is EIVA's internal feed, so it no longer
