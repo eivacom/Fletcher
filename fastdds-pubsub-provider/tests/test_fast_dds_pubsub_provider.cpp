@@ -816,8 +816,10 @@ TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
 
     // A hand-built writer on the same topic, NOT the provider's own -- Publish never loans any
     // more, so this is the only way left to drive LoanableSampleWriter against a real DataWriter.
-    // Same process as `pub_provider`/`sub_provider`, so intraprocess matching with the already
-    // enabled data reader above completes synchronously, inside create_datawriter below.
+    // Same process as `pub_provider`/`sub_provider`, but `participant` below is a brand new
+    // participant the subscriber's participant has not discovered yet: PDP still runs over the
+    // transport even in one process, so the match with the already enabled data reader above is
+    // NOT guaranteed to complete inside create_datawriter -- the write loop below covers the gap.
     DomainParticipant* participant =
         DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
     ASSERT_NE(participant, nullptr);
@@ -840,9 +842,17 @@ TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
 
     Attachments att;
     att.Set("sidecar", Blob{std::vector<uint8_t>{1, 2, 3}});
-    loanable.Write(writer, MakeEncoder(7), att);
 
-    EXPECT_EQ(AwaitRow(received), 7);
+    // The hand-built writer lives on a participant the subscriber's participant has yet to
+    // discover: PDP runs over the transport even in one process, so the first write can leave
+    // before the match and a VOLATILE row sent then is gone. Republish the same row until it
+    // lands, bounded — the sibling loaned-reader test does the same.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
+        loanable.Write(writer, MakeEncoder(7), att);
+        WaitUntil([&] { return received.load() != -1; }, std::chrono::milliseconds(200));
+    }
+    EXPECT_EQ(received.load(), 7);
     EXPECT_EQ(blob_seen, (std::vector<uint8_t>{1, 2, 3}));
 
     // A row past the bound throws (only the loaned path does -- the serialising path swallows the

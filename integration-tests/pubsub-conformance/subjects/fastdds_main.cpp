@@ -602,6 +602,18 @@ bool WaitForCount(const Journal& journal, size_t n, std::chrono::milliseconds bu
     return true;
 }
 
+// Wait until `journal` holds `marker`, or the budget passes.
+bool WaitForMarker(const Journal& journal, const std::string& marker,
+                   std::chrono::milliseconds budget) {
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    for (;;) {
+        const std::vector<std::string> markers = Markers(journal.Snapshot());
+        if (std::find(markers.begin(), markers.end(), marker) != markers.end()) return true;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
 }  // namespace
 
 // The forcing case. Two instances through one registry, one process, DIFFERENT
@@ -682,38 +694,36 @@ TEST(Registry, TwoInstancesOneDomainDoInterfere) {
     ASSERT_EQ(a.AwaitSubscriptionsLive(), PubSubStatus::kOk) << a.SchemaWaitMessage();
     ASSERT_EQ(b.AwaitSubscriptionsLive(), PubSubStatus::kOk) << b.SchemaWaitMessage();
 
-    b.PublishShared(0);
     a.PublishShared(0);
 
-    // Two rows on the shared name: A's own and B's. Waited out to the full
-    // clause budget rather than to `kSettle`, and the elapsed time then measured
-    // against `kSettle` separately — because the two reds need opposite
-    // responses. "No crossing at all inside the budget" voids the isolation case
-    // and is an ASSERT; "a real crossing, but slower than the window the
-    // isolation case pays" is tuning and is an EXPECT. Waiting only to `kSettle`
-    // conflated them, and reported the first when the truth was the second.
-    const auto started = std::chrono::steady_clock::now();
-    const bool crossed = WaitForCount(a.SharedJournal(), 2, kClauseBudget);
+    // Registry-built providers expose no match status, and discovery between the two
+    // participants runs over the transport even in one process, so B's single row could leave
+    // before A's reader has matched it and a VOLATILE row sent then is gone. B republishes the
+    // SAME marker until A's journal holds it, bounded by the clause budget; `find` below
+    // tolerates the repeats. `elapsed` is the delivery time of the attempt that landed, which is
+    // the quantity kSettle is about — not the discovery lag in front of it.
+    const auto budget_end = std::chrono::steady_clock::now() + kClauseBudget;
+    auto started = std::chrono::steady_clock::now();
+    bool crossed = false;
+    while (!crossed && std::chrono::steady_clock::now() < budget_end) {
+        started = std::chrono::steady_clock::now();
+        b.PublishShared(0);
+        crossed = WaitForMarker(a.SharedJournal(), b.Mark(0), std::chrono::milliseconds(100));
+    }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
-    // One observation, both claims derived from it: `crossed` and a separately
-    // taken snapshot are two different moments, and a marginal crossing landing
-    // between them made the case print "measured NO crossing" while the markers
-    // it printed visibly contained the foreign row.
     const std::vector<std::string> markers = Markers(a.SharedJournal().Snapshot());
     const bool crossed_by_evidence =
         std::find(markers.begin(), markers.end(), b.Mark(0)) != markers.end();
 
-    // The margin lives in the suite's own output, not in a plan document:
-    // erosion of it toward `kSettle` is invisible unless every run reports the
-    // number. Measured here it is **0 ms** — the two participants have already
-    // matched by the time the publishes happen (both instances are constructed
-    // and both schema waits have returned first), and Fast DDS then serves
-    // same-process endpoints inline over intra-process delivery, so the foreign
-    // row is in A's journal before `WaitForCount` looks. A recorded 0 is
-    // therefore the healthy reading, not a missing measurement; the ~270 ms in
-    // this item's plan and log is the whole CASE's runtime, construction and
-    // teardown included, which is not the same quantity.
+    // The margin lives in the suite's own output, not in a plan document. Discovery is no
+    // longer assumed synchronous, so `crossing_ms` is not a discovery-lag measurement — it is
+    // the delivery time of the ONE publish-to-landing attempt that succeeded (`started` is
+    // reset on every trip through the loop above): once the two participants have matched,
+    // Fast DDS serves same-process endpoints inline over intra-process delivery, so that
+    // attempt's own elapsed time stays small even when earlier attempts in the loop were
+    // dropped waiting on the match. The ~270 ms in this item's plan and log is the whole CASE's
+    // runtime, construction and teardown included, which is not the same quantity.
     RecordProperty("crossing_ms", static_cast<int>(elapsed.count()));
 
     ASSERT_TRUE(crossed || crossed_by_evidence)

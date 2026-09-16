@@ -54,9 +54,10 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// reads `get_status_changes()` and the matching `get_*_status()` getter for
 /// each changed bit, the same pattern as eiva-ddsbus's `WaitsetDataReader` —
 /// and it is also where that thread enables a data reader on schema arrival:
-/// intraprocess discovery and matching run synchronously inside
-/// `create_datareader` / `create_datawriter` / `DataReader::enable()`,
-/// including between two participants in one process. DATA reader statuses,
+/// endpoint matching between participants that have already discovered each other runs
+/// synchronously inside `create_datareader` / `create_datawriter` / `DataReader::enable()`,
+/// including between two participants in one process; participant discovery itself still runs
+/// over the transport. DATA reader statuses,
 /// by contrast, arrive through Fast DDS's own listener dispatch, the same as
 /// writer statuses and discovery. One `DataWriterListener` and one
 /// `ParticipantListener` instance is shared by every endpoint a provider owns, so two of these
