@@ -35,6 +35,7 @@ jobs:
             c-abi
             core
             pubsub
+            arrow-bridge
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             .github
@@ -43,16 +44,24 @@ jobs:
       - name: Install Conan
         uses: ./.github/actions/conan-install
 
-      # No Conan remote hosts the fletcher-* packages, so every dependency
-      # recipe must be in the local cache before `conan create` on c-abi can
-      # resolve it. Order: core → pubsub → the two providers (both need pubsub).
-      - name: Build fletcher-core, fletcher-pubsub and the two providers (dependencies)
+      # No Conan remote hosts the fletcher-* packages, so every dependency recipe
+      # must be in the local cache before `conan create` on c-abi can resolve it.
+      # Order: core → pubsub → arrow-bridge and the two providers (all need one of
+      # the first two).
+      #
+      # arrow-bridge is here for the TESTS and only for them: it is the oracle
+      # `NanoarrowCodec.ByteIdenticalToArrowBridge` compares against, declared
+      # under `run_tests` in c-abi's recipe and never linked into the shipped
+      # shim. A developer whose cache already holds it will not notice it missing
+      # here; CI has no cache and does.
+      - name: Build fletcher-core, fletcher-pubsub, arrow-bridge and the two providers (dependencies)
         shell: bash
         working-directory: c-abi
         run: |
           PROFILE=../.conan-profiles/Windows-msvc194-x86_64-Release
           conan create ../core --build=missing -pr:a=$PROFILE
           conan create ../pubsub --build=missing -pr:a=$PROFILE
+          conan create ../arrow-bridge --build=missing -pr:a=$PROFILE
           conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
           conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
 
@@ -89,6 +98,7 @@ jobs:
             c-abi
             core
             pubsub
+            arrow-bridge
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             .github
@@ -116,6 +126,7 @@ jobs:
               PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               conan create ../core --build=missing -pr:a=$PROFILE
               conan create ../pubsub --build=missing -pr:a=$PROFILE
+              conan create ../arrow-bridge --build=missing -pr:a=$PROFILE
               conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
               conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
               conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True"

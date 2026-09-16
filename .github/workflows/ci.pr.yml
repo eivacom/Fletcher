@@ -95,6 +95,7 @@ jobs:
               - 'c-abi/**'
               - 'core/**'
               - 'pubsub/**'
+              - 'arrow-bridge/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/ci.pr.yml'
