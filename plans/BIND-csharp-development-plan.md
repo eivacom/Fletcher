@@ -1024,16 +1024,37 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   that `ci.format-check-cpp` had never checked — its globs omitted `*.c`, and
   `c-abi/` is the tree's first C component.
 
-- **P-7 — `protoc/` and `arrow-bridge/` are contended.**
-  `feature/fastdds_modernization/19645` carries four commits not on `main`
-  (2–3 September) that rewrite 19 files in `arrow-bridge` and change `protoc/` by
-  +2334/−4460 against the IR-based generator GIR landed; BIND-6/7 add a third
-  backend to that same `protoc/` directory and BIND-2's oracle targets
-  `arrow-bridge`'s `Codec`. Whoever lands second pays the rebase, and the branch's
-  protoc part cannot rebase at all without being re-done on the IR.
+- **P-7 — `protoc/` and `arrow-bridge/` are contended.** The branch is now **PR #128**
+  ("FastDDS Modernization"), and the paragraph this bullet used to carry was written
+  against a state that no longer exists. Re-derived 2026-09-15: seven commits, 79
+  files, **+10629/−639**, merge base `6c541e9`. `arrow-bridge` is the big one (18
+  files, +6275/−212: `BatchDecoder`, `EncodeRow` on `PositionalWriter`, benchmarks,
+  +2675 lines of tests, and `src/codec.cpp` +404/−139); `pubsub` grows a schema-only
+  subscribe (+557/−21).
+
+  **What changed since the plan said it.** The `protoc` collision has largely
+  evaporated — commit `b95026c` rebased that work onto the IR, so it is **+416/−56**
+  across seven files, and BIND-6/7 meet it only in `generator.cpp`. `SubscribeSchema`
+  no longer takes a `std::shared_future`: it returns a `SchemaArrival`, and both
+  schema-only methods are defaulted virtuals, so the seam grows append-only and the
+  D-BIND-22 conflict is already resolved on the branch. And a collision this bullet
+  never anticipated is live: #128 bumps `pubsub`, `arrow-bridge`, `protoc` and the
+  Fast DDS provider to **0.5.1-alpha**, while `c-abi/conanfile.py` pins three of them
+  exactly — so the `c-abi` lane reddens on the merge commit unless someone moves three
+  lines.
+
+  **Ruled 2026-09-15 (Q20 / D-BIND-29): BIND does not wait.** #128 is a draft, red on
+  Linux, with no human review decision; blocking a round that has just started on it
+  would put another branch's unknown schedule on this one's critical path. #129 lands
+  first (it carries `fPIC`, the XRCE SIGPIPE fix and `*.c` format coverage, all of
+  which #128 wants anyway); BIND-1 specifies the schema-watch pair into `binding.h`
+  declared-but-`kNotSupported`, so a header reviewed as a specification is not reopened
+  at BIND-4; the order is re-examined at the **BIND-1 → BIND-2 boundary**, which is
+  where the genuine dependency on the rewritten `Codec` sits.
   `TsVisitor.DescriptorByteIdentical`, the no-drift test and BIND-2's byte-identity
-  oracle are what prove neither party moved wire bytes. *Agree the landing order at
-  BIND-0.*
+  oracle are what prove neither party moved wire bytes — and if BIND-2 goes first, that
+  oracle becomes a standing guard on #128's rewrite. *Ruled at BIND-0; re-examined at
+  BIND-2.*
 
 ---
 
@@ -1057,6 +1078,7 @@ the numbering is shared so a ruling can cite one number.
 | Q10 | 18786 exclusion classes: generator tests and provider-internal tests stay in C++ (P-5) | ✅ **LOCKED 2026-09-11**: both classes, documented | closing 18786 |
 | Q11 | Are any Flight (20061) consumers C++ processes hosting .NET, or hosting two bindings? (B-4) | ✅ **Answered 2026-09-11: no** — consumers are .NET processes with this binding only. D-BIND-17's check covers the detectable case; a future C++ host is a STOP-AND-ASK under P1 | BIND-2 design |
 | Q12 | Is BIND-Rust in this round? (plan open decision 5) | ✅ **Ruled 2026-09-11: next round** | scope |
+| Q20 | Landing order against PR #128 (P-7): does BIND wait for the FastDDS modernization branch to land? | ✅ **RULED 2026-09-15: no** (D-BIND-29). #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha` | BIND-1, BIND-2 |
 | Q19 | Confirm the reading of 16353's "make C# emit Rust-native accessor classes" as *C# accessor classes equivalent to the Rust-native ones* (plan open decision 4; the literal phrasing would mean C# emitting Rust and looks like a copy-paste from the RBA feature) | ✅ **CONFIRMED 2026-09-11**: equivalence reading; ADO 16353 text to be corrected | BIND-7 |
 
 ---

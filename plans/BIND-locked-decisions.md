@@ -474,3 +474,54 @@ accessors do, for capstone parity (Q18).
   internal feed to EIVA's own applications is not distribution to third parties, so the
   relinking question loses its urgency for this round; it must be answered *before* the first
   external publication, and the packages carry the licence files regardless (BIND-9).
+
+- **D-BIND-29 — BIND does not wait for PR #128; the two branches interleave by item, not by
+  round.** *LOCKED BY THE MAINTAINER 2026-09-15.* This is P-7's landing order, and it is ruled
+  against the branch as it actually stands rather than as the 2026-08-31 plan described it.
+
+  **What was checked on 2026-09-15** (re-derive before relying on any of it): PR #128 "FastDDS
+  Modernization" is a **draft**, 79 files, **+10629/−639**, seven commits, opened 2026-09-14 and
+  not pushed to since; CI 42 pass with `fastdds-pubsub-provider / build-linux` **red** on
+  `FastDDSPubSubProviderTest.SubscribeFirstBurstDeliveredInOrder`; two automated reviews and no
+  human review decision. Its merge base is `6c541e9`, one merge behind `main`.
+
+  **Three of the plan's P-7 premises had expired.** (a) The `protoc` collision is no longer a
+  re-do: commit `b95026c` rebased that work onto the IR, leaving **+416/−56** across seven files,
+  of which BIND-6/7 touch only `generator.cpp`. (b) `SubscribeSchema` no longer carries a
+  `std::shared_future` — it returns a `SchemaArrival`, so the D-BIND-22 conflict the plan feared
+  is already resolved on the branch, and both schema-only methods are `virtual` **with default
+  bodies**, i.e. an append-only extension. (c) A collision the plan never mentioned is live: #128
+  bumps `pubsub`, `arrow-bridge`, `protoc` and the Fast DDS provider to **0.5.1-alpha**, and
+  `c-abi/conanfile.py` pins three of those **exactly**.
+
+  **The ruling, in four parts.**
+  1. **#129 (BIND-0) lands first.** It is green and comparatively small, and three of its changes
+     are foundational for both branches: `fPIC` on the static libraries (without which nothing
+     links a shared object — #128 needs it the moment `c-abi/` is on `main`), the XRCE SIGPIPE
+     fix in shipping code, and `*.c` under `ci.format-check-cpp`. #128's only textual overlap with
+     it is a two-line comment in `xrce_dds_pubsub_provider.cpp`.
+  2. **BIND-1 proceeds now and specifies the schema-watch pair into `binding.h`** — the C
+     spellings of `SubscribeSchema`/`UnsubscribeSchema`, **declared and answering `kNotSupported`**
+     until the seam provides them. That is the pattern already locked for path selectors until
+     PDA-ABI (D-BIND-24), and it is what stops a header *reviewed as a specification* from being
+     reopened at BIND-4. The cost of being wrong is bounded by the header's own pre-1.0 exemption.
+  3. **BIND-2 is where the real dependency sits** — it proves the nanoarrow codec byte-identical
+     to `arrow-bridge`'s `Codec`, which #128 rewrites (+404/−139, plus `BatchDecoder`). The order
+     is re-examined **at the BIND-1 → BIND-2 boundary**, by which time BIND-1's spec-and-review has
+     bought days for free: if #128 has landed, BIND-2 writes its oracle once against the final
+     codec; if it has not, BIND-2 proceeds anyway and its byte-identity oracle becomes a standing
+     guard that #128's rewrite moved no wire byte — a benefit to that branch, not a cost to this
+     round.
+  4. **Whoever lands second updates the pins.** Three `requires` lines in `c-abi/conanfile.py` go
+     to `0.5.1-alpha`. Cheap, but it reddens the `c-abi` lane on the merge commit if unexpected,
+     so #128 is told in advance.
+
+  **Re-ruling triggers.** If #128's `SubscribeSchema` stops returning a `SchemaArrival` (or the
+  pair stops being defaulted virtuals), part 2 is void and BIND-1 is a STOP-AND-ASK under
+  D-BIND-22. If #128 is still unmerged when BIND-2 is ready to start, that is not a re-ruling —
+  part 3 already says what happens.
+
+  **What this ruling explicitly refuses:** making a freshly started round's critical path wait on
+  a draft pull request of ten thousand lines that is red on Linux and has no human review
+  decision. Waiting converts another branch's unknown schedule into this round's, and BIND-2 —
+  the round's long pole — is the item that would idle.

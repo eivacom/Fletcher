@@ -53,7 +53,7 @@ surface it will consume.
 
 ## Decision status at a glance
 
-All thirteen ruled. ✅ = settled.
+All fourteen ruled. ✅ = settled.
 
 | # | Decision | Status | Needs |
 |---|---|---|---|
@@ -70,6 +70,7 @@ All thirteen ruled. ✅ = settled.
 | 11 | **RID matrix** for `Eiva.Fletcher.Interop` | ✅ **agreed 2026-09-11** (Q8): `win-x64`, `linux-x64` at first release; `linux-arm64` first addition; macOS on demand | — |
 | 12 | **LGPL relinking review** for shipping prebuilt native binaries | ✅ **owner assigned 2026-09-11** (Q9): the maintainer; decision due before BIND-9. The notice half is mechanised by #127's deployer | maintainer |
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
+| 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
 
 Nothing gates kickoff. The one open non-engineering item is the LGPL relinking
 decision (#12), which gates BIND-9's packaging design only.
@@ -810,7 +811,7 @@ first automated run happens before any real code exists.
 | Part 4 matrix re-derived and committed | 🟢 all bucket totals unchanged; `CallerTier` corrected 20 → 21 |
 | `Apache.Arrow` pinned and its C Data Interface verified for every mapping type, nested included (N-9) | 🟢 **23.0.0**, pinned exactly (`[23.0.0]`). 17 types round-trip — 9 scalars, timestamp with and without timezone, duration, `struct`, `list<int32>`, `list<struct>`, `map<utf8,int32>` — plus schema and field metadata; 18 cases on both TFMs |
 | Per-RID shim size measured against the budget | 🟢 `win-x64` **7.61 MiB** with all three built-ins; `linux-x64` from the first lane run. Reported by the lane on every run; no threshold until BIND-9 |
-| Landing order with `feature/fastdds_modernization/19645` agreed (P-7) | ⚪ **open — needs the maintainer.** BIND-0 touches neither `protoc/` nor `arrow-bridge/`, so nothing is blocked yet; BIND-2 and BIND-6 are where it bites |
+| Landing order with `feature/fastdds_modernization/19645` agreed (P-7) | 🟢 **ruled 2026-09-15 (D-BIND-29)**: BIND does not wait for PR #128. #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha` |
 | Self-hosted publish runner + `NUGET_EIVA_API_KEY` (D-BIND-28) | ⚪ maintainer actions, due before BIND-9 |
 
 One finding came out of the kickoff that the plan had not anticipated: the shim's
@@ -1157,7 +1158,7 @@ worth reading first:
 | **S-2 — the re-entrant `Unsubscribe` carve-out** and sibling handlers | The in-flight counter (D-BIND-18); a test mirroring `CallerTier.CancellingASiblingRunningOnAnotherThreadKeepsItPublished`. |
 | **N-3 — `async` handlers** whose continuation outlives the borrowed arguments | Span/ref-struct delegate signature so an `async` lambda cannot compile; documented. |
 | **P-1 — LGPL relinking** | Owner: the maintainer (Q9); the notice half is mechanised by #127; packaging waits for the decision, development does not. |
-| **P-7 — `protoc/` and `arrow-bridge/` contended** with the modernization branch's pending commits, written against the pre-GIR generator | Landing order agreed at BIND-0 — **still open, and the one BIND-0 item that is not an engineering task**; BIND-0 itself touches neither directory. The no-drift test, `TsVisitor.DescriptorByteIdentical` and the codec byte-identity oracle prove neither party moved wire bytes. |
+| **P-7 — `protoc/` and `arrow-bridge/` contended** with PR #128 (FastDDS modernization) | **Ruled 2026-09-15 (D-BIND-29): BIND does not wait.** Re-derived against the branch as it stands: the `protoc` collision has shrunk to +416/−56 (its work was rebased onto the IR), `SubscribeSchema` now returns a `SchemaArrival` rather than a `shared_future`, and the live collision is instead #128's version bump to `0.5.1-alpha` against `c-abi`'s exact pins. #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary. The no-drift test, `TsVisitor.DescriptorByteIdentical` and BIND-2's byte-identity oracle prove neither party moved wire bytes. |
 | **N-7 — runtime `DllNotFoundException`** on a missing RID or an older glibc | `SetDllImportResolver` naming the RID; the ABI version handshake; the glibc floor stated. |
 
 ### Open items
