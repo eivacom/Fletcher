@@ -26,6 +26,9 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
+#if !defined(_WIN32)
+#include <csignal>
+#endif
 #include <exception>
 #include <fletcher/core/envelope.hpp>
 #include <fletcher/core/internal/delivery_frame.hpp>
@@ -404,6 +407,51 @@ constexpr uint32_t kMaxDomainId = 65535;
 constexpr uint16_t kStreamHistory = 4;
 constexpr std::chrono::milliseconds kRunLoopQuantum{10};
 
+// Keep a peer that hangs up from killing the whole process.
+//
+// A `send()` on a TCP socket whose peer has closed raises SIGPIPE, whose default disposition
+// TERMINATES the process - no exception, no return code, nothing for this provider to turn into
+// a `kTransportFailure`. Micro XRCE-DDS means to prevent that: `tcp_transport_posix.c` installs
+// a no-op handler. It never runs. The guard around it is `#ifdef UCLIENT_PLATFORM_LINUX`, and
+// that macro is a CMake VARIABLE only - the client's `config.h.in` emits
+// `UCLIENT_PLATFORM_POSIX`, `..._WINDOWS`, `..._ZEPHYR` and friends but never `..._LINUX`, and
+// nothing adds it with `target_compile_definitions`. So upstream's protection is dead code in
+// every standard build, and only the RACE between our write and the peer's close decides
+// whether a process survives. `XrceConfig.FailingConstructionDoesNotLeakTheTransport` lost that
+// race on CI (PR #129) after winning it for months.
+//
+// Ignoring the signal is the conventional answer for a networking library: the `send()` then
+// returns EPIPE, which the client already reports as a failed write and this provider already
+// turns into `kTransportFailure`.
+//
+// Two restraints, because process-wide signal disposition is not this library's property:
+//   * installed only if the disposition is still SIG_DFL, so a host that made its own choice
+//     keeps it - including a host that deliberately wants SIGPIPE to terminate;
+//   * installed only on the TCP path, and once per process, so a UDP-only deployment (the
+//     document's default transport) has its signal handling left untouched.
+//
+// Windows has no SIGPIPE; a closed socket there is an error return already.
+#if defined(_WIN32)
+void IgnoreSigpipeForTcpOnce() {}
+#else
+void IgnoreSigpipeForTcpOnce() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        struct sigaction current = {};
+        if (sigaction(SIGPIPE, nullptr, &current) != 0) {
+            return;  // cannot read the disposition; leave it alone
+        }
+        if (current.sa_handler != SIG_DFL) {
+            return;  // the host already decided; its choice wins
+        }
+        struct sigaction ignore = {};
+        ignore.sa_handler = SIG_IGN;
+        sigemptyset(&ignore.sa_mask);
+        sigaction(SIGPIPE, &ignore, nullptr);
+    });
+}
+#endif
+
 }  // namespace
 
 XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
@@ -472,6 +520,10 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
             break;
 
         case internal::XrceTransportKind::kTcp:
+            // Before the socket exists, because the first write that can raise SIGPIPE happens
+            // inside the session handshake a few lines further on.
+            IgnoreSigpipeForTcpOnce();
+
             // TCP connects HERE, inside init (verified against Micro XRCE-DDS Client v3.0.1:
             // `uxr_init_tcp_platform` performs a blocking `connect()` on both the Windows and
             // the POSIX platform and returns false when every address fails). That is what lets

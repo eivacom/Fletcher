@@ -47,6 +47,8 @@
 #include <poll.h>  // the accept loop waits with a deadline; see TcpListener
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <csignal>  // the SIGPIPE disposition row below
 #ifdef __linux__
 #include <dirent.h>  // /proc/self/fd, for the leak row below
 #endif
@@ -946,3 +948,49 @@ TEST(XrceConfig, FailingConstructionDoesNotLeakTheTransport) {
                "this is what that looks like";
     }
 }
+// The companion to the row above, and the reason it stopped being flaky.
+//
+// That row constructs against a listener which accepts and immediately closes, so the client
+// writes to a peer-closed socket - which raises SIGPIPE, whose default disposition terminates
+// the process. Micro XRCE-DDS intends to prevent exactly this and fails to: its
+// `signal(SIGPIPE, sigpipe_handler)` sits behind `#ifdef UCLIENT_PLATFORM_LINUX`, a macro the
+// client's `config.h.in` never emits, so the protection is dead code in every standard build.
+// Whether a process survived came down to a race, and on CI (PR #129) it lost one.
+//
+// So the provider ignores SIGPIPE itself, once, on the TCP path only, and only when the
+// disposition is still SIG_DFL. This row is what makes that falsifiable rather than asserted:
+// delete the call in `xrce_dds_pubsub_provider.cpp` and this goes red in a way that names the
+// cause, instead of the neighbouring row dying by signal and naming nothing.
+//
+// POSIX only: Windows has no SIGPIPE, and a write to a closed socket there is an error return.
+#ifndef _WIN32
+TEST(XrceConfig, TcpConstructionLeavesSigpipeIgnored) {
+    struct sigaction before = {};
+    ASSERT_EQ(sigaction(SIGPIPE, nullptr, &before), 0) << "could not read the SIGPIPE disposition";
+    if (before.sa_handler != SIG_DFL && before.sa_handler != SIG_IGN) {
+        // The provider deliberately leaves a host's own choice alone, so there would be nothing
+        // to observe here. gtest_discover_tests gives each row its own process, so in this suite
+        // the disposition is SIG_DFL at entry and this skip does not normally fire.
+        GTEST_SKIP() << "this process already installed a SIGPIPE handler; the provider leaves "
+                        "such a choice untouched, by design";
+    }
+
+    TcpListener listener(/*hold_clients=*/false);
+    ASSERT_TRUE(listener.ok()) << "could not open a loopback TCP listener for the test";
+
+    const Refusal refusal = Catch([&] {
+        XrceDDSPubSubProvider provider(
+            ConfigWith("transport=tcp\nagent=127.0.0.1:" + std::to_string(listener.port()) +
+                       "\nconnect_timeout_ms=0"));
+    });
+    ASSERT_TRUE(refusal.threw) << "this construction SUCCEEDED against a listener that speaks no "
+                                  "XRCE, so the TCP path was never taken";
+
+    struct sigaction after = {};
+    ASSERT_EQ(sigaction(SIGPIPE, nullptr, &after), 0) << "could not read the SIGPIPE disposition";
+    EXPECT_EQ(after.sa_handler, SIG_IGN)
+        << "opening a TCP transport left SIGPIPE at its default disposition, so the next write to "
+           "a peer that has hung up terminates the process - no exception, no status, nothing "
+           "this provider can turn into kTransportFailure";
+}
+#endif
