@@ -525,3 +525,32 @@ accessors do, for capstone parity (Q18).
   a draft pull request of ten thousand lines that is red on Linux and has no human review
   decision. Waiting converts another branch's unknown schedule into this round's, and BIND-2 —
   the round's long pole — is the item that would idle.
+
+- **D-BIND-30 — round BIND lands as ONE pull request; a fix that is not about the bindings
+  goes to `main` on its own.** *LOCKED BY THE MAINTAINER 2026-09-16.* This reverses the plan's
+  Branch strategy bullet ("several PRs, one per stage boundary"), which was written without
+  checking what this repository actually does.
+
+  **The evidence that settled it.** Every round here has landed as a single PR, squash-merged,
+  leaving `main` with one commit per round: **#125** (GIR) +25105/−2633 across 143 files in
+  **28** commits, open four days; **#126** (PDA-DEC) +60146/−2372 across 255 files in **100**
+  commits, open five days. Small standalone fixes get their own PR instead — **#127**, +357/−13,
+  opened and merged the same day. The BIND plan was the only document proposing per-stage PRs.
+
+  **Why it is also right on the merits, not just by precedent:** BIND's intermediate states have
+  no value on the trunk. What BIND-0 produces is an empty `c-abi/` component, three empty NuGet
+  packages and two lanes that test almost nothing — scaffolding. Under one PR per round, `main`
+  goes from "no C# bindings" to "C# bindings" once, and never carries a half-built one. Review
+  granularity is untouched: in this project it lives per item in the tracker and `plans/reviews/`,
+  which is where every round's review record already is.
+
+  **The carve-out, and its test.** A defect the round *finds* in shipping code is not part of the
+  round. It goes to `main` on its own small PR, #127-shaped, rather than waiting weeks for BIND-10.
+  The test is whether the fix would still be wanted if the bindings were cancelled. BIND-0 set the
+  precedent both ways: the **XRCE SIGPIPE fix** became **#130** (a live hazard for any
+  `transport=tcp` consumer — wanted regardless), while `fPIC` and the `*.c` format-check glob
+  stayed in the round (neither matters until `c-abi/` exists).
+
+  **Consequences.** #129 is retitled to the round and stays a draft until BIND-10 closes, rebased
+  onto `main` at item boundaries. #130 rides in #129 until it merges, then drops out on the next
+  rebase (identical patch). The plan's Branch strategy section is corrected in the same commit.

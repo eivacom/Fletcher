@@ -53,7 +53,7 @@ surface it will consume.
 
 ## Decision status at a glance
 
-All fourteen ruled. ✅ = settled.
+All fifteen ruled. ✅ = settled.
 
 | # | Decision | Status | Needs |
 |---|---|---|---|
@@ -71,6 +71,7 @@ All fourteen ruled. ✅ = settled.
 | 12 | **LGPL relinking review** for shipping prebuilt native binaries | ✅ **owner assigned 2026-09-11** (Q9): the maintainer; decision due before BIND-9. The notice half is mechanised by #127's deployer | maintainer |
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
+| 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did | — |
 
 Nothing gates kickoff. The one open non-engineering item is the LGPL relinking
 decision (#12), which gates BIND-9's packaging design only.
@@ -203,9 +204,20 @@ BIND, by section:
 - Branch: **`feature/csharp-bindings`**, created 2026-09-11 from `main` at
   `0a56829`. Per repo convention, PR branches are **rebased** onto `main`, not
   merged.
-- Lands as **several PRs**, one per stage boundary. Each must be independently
-  green.
-- No PR until its stage is green and reviewed; PR/merge is the **user's** step.
+- Lands as **ONE pull request for the whole round** — #129 — as #125 (GIR) and
+  #126 (PDA-DEC) each landed theirs. *Corrected 2026-09-16 (D-BIND-30); this
+  bullet previously said "several PRs, one per stage boundary", which no round in
+  this repository has ever done.* `main` gets one commit per round, and never a
+  half-built binding: an empty `c-abi/` and three empty NuGet packages are
+  scaffolding, not something the trunk benefits from carrying. Review granularity
+  is unaffected — in this project it lives per item in this tracker and
+  `plans/reviews/`, not in PR boundaries.
+- **The exception is a fix that is not about the bindings at all.** A defect this
+  round happens to find in shipping code goes to `main` on its own small PR, as
+  #127 did — it should not wait weeks for a round to close. Precedent set at
+  BIND-0: #130, the XRCE SIGPIPE fix.
+- Each item must still be independently green *on the branch* before the next
+  starts; PR/merge is the **user's** step.
 - The first commit on the branch is the plan set (the eight `plans/BIND-*` files);
   `plans/pubsub-api-changes.md` stays out (deferred with the interface update).
 - Completed rounds are archived to `docs/archive/<ROUND>/` (the convention HARD
