@@ -426,7 +426,12 @@ constexpr std::chrono::milliseconds kRunLoopQuantum{10};
 //
 // Two restraints, because process-wide signal disposition is not this library's property:
 //   * installed only if the disposition is still SIG_DFL, so a host that made its own choice
-//     keeps it - including a host that deliberately wants SIGPIPE to terminate;
+//     keeps it - including a host that deliberately wants SIGPIPE to terminate. The read and the
+//     write are two calls and POSIX offers no way to make them one, so a host that installs its
+//     handler on another thread DURING this window can still lose it. That window is the first
+//     TCP transport this process opens and nothing else, and the alternative - never installing,
+//     and leaving every TCP consumer one peer hang-up from death - is worse than a race a host
+//     avoids by setting its disposition before it opens a transport;
 //   * installed only on the TCP path, and once per process, so a UDP-only deployment (the
 //     document's default transport) has its signal handling left untouched.
 //
@@ -447,7 +452,12 @@ void IgnoreSigpipeForTcpOnce() {
         struct sigaction ignore = {};
         ignore.sa_handler = SIG_IGN;
         sigemptyset(&ignore.sa_mask);
-        sigaction(SIGPIPE, &ignore, nullptr);
+        // Result deliberately discarded, and there is nothing to do with it: sigaction can only
+        // fail here with EINVAL, which requires an invalid signal number or one of SIGKILL /
+        // SIGSTOP - none of which SIGPIPE with SIG_IGN and an empty mask can produce. Turning an
+        // unreachable failure into a refused construction would trade a real capability for an
+        // imaginary one, and there is no third behaviour available to fall back to.
+        static_cast<void>(sigaction(SIGPIPE, &ignore, nullptr));
     });
 }
 #endif
