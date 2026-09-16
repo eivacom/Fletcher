@@ -27,11 +27,17 @@ on:
 # (`conan install --deployer=runtime_deploy`, which flattens the exe and any
 # runtime shared libs into one folder). In the default static build that is a
 # single self-contained executable; the shared variant (-pr:a=shared) adds the
-# runtime libraries beside it. The folder is archived per platform
-# (gateway-linux.tar.gz / gateway-windows.zip) and uploaded as a workflow
-# artifact; cd.gateway.yml's upload job consumes those artifacts to create the
-# GitHub Release. End-to-end coverage of the gateway against gateway-client-ts
-# lives in the gateway-end-to-end integration-test workflow.
+# runtime libraries beside it. Alongside the binary the folder carries the two
+# licence files a binary distribution has to reproduce: the repository's own
+# LICENSE (the gateway is LGPL-3.0-or-later) and THIRD-PARTY-LICENSES.txt,
+# generated from the resolved Conan graph by
+# gateway/deployers/third_party_licenses.py so the permissive licences of the
+# libraries linked into the exe travel with it as those licences require. The
+# folder is archived per platform (gateway-linux.tar.gz / gateway-windows.zip)
+# and uploaded as a workflow artifact; cd.gateway.yml's upload job consumes
+# those artifacts to create the GitHub Release. End-to-end coverage of the
+# gateway against gateway-client-ts lives in the gateway-end-to-end
+# integration-test workflow.
 
 jobs:
   build-windows:
@@ -80,11 +86,43 @@ jobs:
         run: |
           conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
 
+      # The third-party libraries linked into the exe (boost, the Fast DDS
+      # chain, zlib, bzip2, nlohmann_json, …) are all permissively licensed, and
+      # every one of those licences requires its copyright notice and licence
+      # text to be reproduced in a binary distribution. The deployer reads them
+      # off the resolved graph into dist/THIRD-PARTY-LICENSES.txt, and refuses
+      # to write a notice it cannot complete, so a dependency that ships no
+      # licence text fails the build.
+      #
+      # NOT gated on the tag, unlike the bundling below: running it on every
+      # pull request is what keeps a dependency change that the deployer cannot
+      # describe from being discovered at release time. On a PR run it is the
+      # only thing that writes to dist/ and nothing archives the result.
+      #
+      # tools.graph:skip_binaries=False is required, not incidental: a static
+      # application needs none of its dependencies at run time, so Conan marks
+      # their binaries "Skip" and leaves them with no package folder — which is
+      # where the licence texts live. It is set on this invocation alone so it
+      # cannot influence what runtime_deploy bundles.
+      #
+      # The repository's own LICENSE joins it: the gateway is LGPL-3.0-or-later,
+      # and that licence wants its text distributed with the binary just as the
+      # third-party ones do. The root LICENSE is present despite the
+      # sparse-checkout because cone mode always keeps top-level files.
+      - name: Stage LICENSE + THIRD-PARTY-LICENSES.txt into dist/
+        shell: bash
+        working-directory: gateway
+        run: |
+          conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
+          cp ../LICENSE dist/LICENSE
+
       # Self-contained bundle: gateway.exe + the runtime DLLs beside it (the
       # Windows loader searches the exe's own directory first), so it runs with
       # no PATH / conanrun setup. The gateway is an `application` Conan package,
       # so runtime_deploy flattens the exe AND every runtime DLL it links into
-      # dist/ — entirely with Conan, no cmake --install. The bundle is zipped.
+      # dist/ — entirely with Conan, no cmake --install. dist/ already holds the
+      # two licence files from the step above, so zipping the folder ships the
+      # exe and its attribution texts as one archive.
       - name: Bundle gateway + runtime libraries
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -93,6 +131,19 @@ jobs:
           conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=runtime_deploy --deployer-folder=dist -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
           rm -f dist/conaninfo.txt dist/conanmanifest.txt   # Conan deploy metadata, not release content
           ( cd dist && 7z a -tzip "${GITHUB_WORKSPACE}/gateway-windows.zip" . >/dev/null )
+          # Guard the archive, not dist/: the archive is what users receive, so
+          # an archiving change that dropped a licence file must fail here. The
+          # check unpacks rather than reads a listing, so it rests on no
+          # assumption about how 7z spells the stored paths — and proves the
+          # archive extracts. Unpacked under the working directory, so the paths
+          # `test` sees stay relative and POSIX.
+          rm -rf zipcheck
+          7z x -y -ozipcheck "${GITHUB_WORKSPACE}/gateway-windows.zip" >/dev/null
+          for required in gateway.exe LICENSE THIRD-PARTY-LICENSES.txt; do
+            test -f "zipcheck/${required}" \
+              || { echo "::error::gateway-windows.zip does not contain ${required}"; exit 1; }
+          done
+          rm -rf zipcheck
 
       - name: Upload Windows bundle
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -144,17 +195,56 @@ jobs:
               # the gateway application (package() installs the exe with its
               # $ORIGIN rpath).
               conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              # The third-party libraries linked into the exe (boost, the Fast
+              # DDS chain, zlib, bzip2, nlohmann_json, …) are all permissively
+              # licensed, and every one of those licences requires its copyright
+              # notice and licence text to be reproduced in a binary
+              # distribution. The deployer reads them off the resolved graph into
+              # dist/THIRD-PARTY-LICENSES.txt, and refuses to write a notice it
+              # cannot complete, so a dependency that ships no licence text fails
+              # the build.
+              #
+              # Outside the ARTIFACT_NAME guard below, unlike the bundling:
+              # running it on every pull request is what keeps a dependency
+              # change the deployer cannot describe from being discovered at
+              # release time. On a PR run it is the only thing that writes to
+              # dist/ and nothing archives the result.
+              #
+              # tools.graph:skip_binaries=False is required, not incidental: a
+              # static application needs none of its dependencies at run time, so
+              # Conan marks their binaries "Skip" and leaves them with no package
+              # folder — which is where the licence texts live. It is set on this
+              # invocation alone so it cannot influence what runtime_deploy
+              # bundles.
+              #
+              # The repository LICENSE joins it: the gateway is
+              # LGPL-3.0-or-later, and that licence wants its text distributed
+              # with the binary just as the third-party ones do. The root LICENSE
+              # is present despite the sparse-checkout because cone mode always
+              # keeps top-level files.
+              conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a="$PROFILE"
+              cp /workspace/LICENSE dist/LICENSE
               # Self-contained bundle: because the gateway is an `application`
               # package, runtime_deploy flattens the exe (with its $ORIGIN rpath)
               # AND every runtime shared library it links into dist/, so the
               # released artifact runs with no LD_LIBRARY_PATH / conanrun — all
-              # with Conan, no cmake --install. Tarred inside docker so the
-              # archive is readable by the runner user.
+              # with Conan, no cmake --install. dist/ already holds the two
+              # licence files, so the tar ships the exe and its attribution texts
+              # as one archive. Tarred inside docker so the archive is readable
+              # by the runner user, then the tar is unpacked and checked rather
+              # than dist/, because the tar is what users receive — and unpacking
+              # proves it extracts.
               if [[ -n "$ARTIFACT_NAME" ]]; then
-                PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
                 conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=runtime_deploy --deployer-folder=dist -pr:a="$PROFILE"
                 rm -f dist/conaninfo.txt dist/conanmanifest.txt   # Conan deploy metadata, not release content
                 tar -czf "/workspace/$ARTIFACT_NAME" -C dist .
+                rm -rf /tmp/tarcheck && mkdir -p /tmp/tarcheck
+                tar -xzf "/workspace/$ARTIFACT_NAME" -C /tmp/tarcheck
+                for required in gateway LICENSE THIRD-PARTY-LICENSES.txt; do
+                  test -f "/tmp/tarcheck/$required" \
+                    || { echo "::error::$ARTIFACT_NAME does not contain $required"; exit 1; }
+                done
               fi
             '
 
