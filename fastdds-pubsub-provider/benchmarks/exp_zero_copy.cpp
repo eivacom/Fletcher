@@ -2,7 +2,7 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 // Ping-pong latency across data-sharing, the axis that still makes a sample zero-copy through the
-// regular publish path -- Publish always writes through SampleWriter now (owner decision
+// regular publish path -- Publish always writes through WriteSample now (owner decision
 // 2026-09-15); LoanableSampleWriter stays unit-tested, not benchmarked here any more.
 #include <algorithm>
 #include <atomic>

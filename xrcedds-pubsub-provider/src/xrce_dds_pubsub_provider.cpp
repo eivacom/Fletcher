@@ -112,7 +112,8 @@ struct XrceDDSPubSubProvider::Impl {
         // separate resolved-flag beside these: the optional IS the flag —
         // engaged means "this subscription is still waiting", and whichever path
         // consumes the token is the one that settled the question. Fast DDS's
-        // SchemaChannel dropped its equivalent flag for the same reason; two sources
+        // `TopicState::schema_resolver` (fast_dds_pubsub_provider.cpp, checked via `.valid()` in
+        // `Impl::HandleSchema`) drops its equivalent flag for the same reason; two sources
         // of truth for one fact is one too many.
         SchemaArrival schema_arrival;
         std::optional<SchemaResolver> schema_resolver;

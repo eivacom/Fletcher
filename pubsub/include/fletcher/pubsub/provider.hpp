@@ -240,9 +240,11 @@ class PubSubProvider {
     /// all — `CreateTopic` itself refuses it, `PubSubError(kSchemaConflict)`
     /// (spec §7 clause 3). A conflict from another PROCESS, arriving after this
     /// arrival has already resolved, has nothing left to refuse; the reference
-    /// Fast DDS provider logs it and drops it (`SchemaListener::on_data_available`,
-    /// `fastdds-pubsub-provider/src/internal/schema_channel.hpp`) — there is no
-    /// second `SchemaArrival` to carry the disagreement to a caller.
+    /// Fast DDS provider logs it and drops it — the Fast DDS provider keeps a
+    /// `SchemaArrival`/`SchemaResolver` pair per topic in
+    /// `fast_dds_pubsub_provider.cpp` and resolves it from `Impl::HandleSchema`
+    /// — there is no second `SchemaArrival` to carry the disagreement to a
+    /// caller.
     ///
     /// **Refused from inside a delivery, as every seam method is** (§6 clause 6)
     /// — `PubSubError(kReentrantCall)` before any lock. An invalid segment list

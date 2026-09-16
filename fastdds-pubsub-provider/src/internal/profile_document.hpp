@@ -2,16 +2,15 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 // The provider's configuration document: a Fast DDS XML profiles document, as text. Never empty
-// by the time it reaches here (owner decision 2026-09-15): an empty ProviderConfig::document
-// resolves to Fletcher's baked-in one (qos_defaults.cpp) first, so there is one path, always --
-// load ONCE per process into Fast DDS's OWN profile registry
-// (DomainParticipantFactory::load_XML_profiles_string), the way eProsima's docs and rmw_fastrtps
-// use it; the registry then decides every endpoint, by profile name, silent on miss.
-// `XMLProfileManager`'s maps are unsynchronised statics, so every registry call below holds
-// `profile_registry_mutex`. Profile names are process-wide, so every provider in a process shares
-// one byte-identical document -- an empty one and a non-empty one now COLLIDE on that rule too.
-// The `fletcher_participant` anchor stays mandatory: `loadXMLString` accepts a `<dds>` with no
-// `<profiles>` as a silent no-op.
+// by the time it reaches here: an empty ProviderConfig::document resolves to Fletcher's baked-in
+// one (qos_defaults.cpp) first, so there is one path, always -- load ONCE per process into Fast
+// DDS's OWN profile registry (DomainParticipantFactory::load_XML_profiles_string), the way
+// eProsima's docs and rmw_fastrtps use it; the registry then decides every endpoint, by profile
+// name, silent on miss. `XMLProfileManager`'s maps are unsynchronised statics, so every registry
+// call below holds `profile_registry_mutex`. Profile names are process-wide, so every provider in
+// a process shares one byte-identical document -- an empty one and a non-empty one collide on that
+// rule too. The `fletcher_participant` anchor stays mandatory: `loadXMLString` accepts a `<dds>`
+// with no `<profiles>` as a silent no-op.
 
 #ifndef FLETCHER_FAST_DDS_SRC_INTERNAL_PROFILE_DOCUMENT_HPP_
 #define FLETCHER_FAST_DDS_SRC_INTERNAL_PROFILE_DOCUMENT_HPP_
@@ -31,12 +30,6 @@
 namespace fletcher {
 namespace internal {
 
-/// The one profile a document MUST define. A miss on the registry lookup is silent
-/// (`RETCODE_BAD_PARAMETER`, no log line either way), so without one mandatory anchor a document
-/// that registered nothing at all -- or one that failed to parse -- would resolve to "no such
-/// profile" and run happily on Fast DDS's own defaults.
-inline constexpr const char* kParticipantProfile = "fletcher_participant";
-
 /// `XMLProfileManager`'s maps are unsynchronised statics; every call below into Fast DDS's
 /// registry -- loading a document, or looking a profile up -- holds this.
 inline std::mutex profile_registry_mutex;
@@ -49,8 +42,8 @@ inline std::mutex profile_registry_mutex;
 /// later refused by Fletcher's own checks (bad anchor, domain) already IS it. Fletcher's own
 /// baked-in document (qos_defaults.cpp) is a document like any other here: two providers in one
 /// process must carry the same bytes, so an empty `ProviderConfig::document` and a non-empty one
-/// now COLLIDE, and whichever loads second is refused -- an accepted consequence of there being
-/// exactly one path (owner decision 2026-09-15).
+/// COLLIDE, and whichever loads second is refused -- an accepted consequence of there being
+/// exactly one path.
 inline void LoadDocumentOnce(const std::string& document) {
     // The process's document; empty until a load succeeds. Never empty on entry: the constructor
     // substitutes the built-in document for an empty one.
@@ -81,7 +74,7 @@ inline void LoadDocumentOnce(const std::string& document) {
 ///
 /// The **extended** lookup is used so `<domainId>` cannot be dropped in silence: it returns the
 /// QoS we already wanted *plus* the domain, so it replaces the plain lookup rather than adding
-/// one. The deployment's domain always wins (ruling 2026-09-02), but a disagreement is refused
+/// one. The deployment's domain always wins, but a disagreement is refused
 /// quoting both numbers rather than landing on domain 0 with no error. An explicit
 /// `<domainId>0</domainId>` cannot be told from absent — `domainId_` defaults to 0 — and is
 /// accepted as absent.
@@ -96,7 +89,7 @@ inline void ResolveParticipantQos(const std::string& document, uint32_t domain_i
     factory->load_profiles();  // idempotent; the same call create_participant makes later
     LoadDocumentOnce(document);
     DomainParticipantExtendedQos extended;
-    if (factory->get_participant_extended_qos_from_profile(kParticipantProfile, extended) !=
+    if (factory->get_participant_extended_qos_from_profile("fletcher_participant", extended) !=
         RETCODE_OK) {
         throw PubSubError(
             PubSubStatus::kInvalidArgument,
@@ -128,8 +121,8 @@ inline eprosima::fastdds::dds::DataWriterQos ResolveDataWriterQos(
     using eprosima::fastdds::dds::RETCODE_OK;
 
     std::lock_guard<std::mutex> lock(profile_registry_mutex);
-    DataWriterQos qos;  // fresh out-param -- a resolved profile is that endpoint's WHOLE QoS
-                        // (owner ruling 2026-09-02), never merged with anything
+    DataWriterQos qos;  // fresh out-param -- a resolved profile is that endpoint's WHOLE QoS,
+                        // never merged with anything
     if (publisher.get_datawriter_qos_from_profile(topic_name, qos) == RETCODE_OK) return qos;
     return publisher.get_default_datawriter_qos();
 }

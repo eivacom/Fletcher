@@ -34,7 +34,7 @@ inline FastDDSStatusListener::Endpoint MakeEndpoint(const std::string& topic_nam
     // off), not `\0`. `topic.data()` is therefore NOT NUL-terminated at `topic.size()` here — a
     // caller must go through the `string_view`, never treat `.data()` as a C string.
     if (is_schema_channel) topic.remove_suffix(kSchemaSuffix.size());
-    return {topic, is_schema_channel, is_writer};
+    return {.topic = topic, .is_schema_channel = is_schema_channel, .is_writer = is_writer};
 }
 
 inline FastDDSStatusListener::Endpoint ReaderEndpoint(eprosima::fastdds::dds::DataReader* reader) {

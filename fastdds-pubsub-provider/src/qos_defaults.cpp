@@ -14,17 +14,18 @@ using eprosima::fastdds::dds::KEEP_LAST_HISTORY_QOS;
 using eprosima::fastdds::dds::RELIABLE_RELIABILITY_QOS;
 using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 
-// Fletcher's baked-in document (owner decision 2026-09-15 — replaces the hand-built
-// MakeFletcherDefaultData{Writer,Reader}Qos() this round retired). `max_samples` is 100 rather than
-// Fast DDS's 5000: the type is bounded, so a data-sharing writer sizes its shared segment at
+// Fletcher's baked-in document. `max_samples` is 100 rather than Fast DDS's 5000: the type is
+// bounded, so a data-sharing writer sizes its shared segment at
 // (max_samples + extra_samples) * sizeof(FletcherSample) and reserves all of it up front, and 5000
-// overflows the segment's 32-bit size. `heartbeat_period` 20 ms: measured (after-e2e.txt, affinity
-// 0xC), a writer blocked on a full KEEP_ALL history sends no heartbeats but the periodic one (3 s
-// default), which exceeds a 100 ms `max_blocking_time` and drops the sample. `max_blocking_time`
-// DURATION_INFINITY: cdb-reproduced (item I), a 100 ms timeout still drops a sample under a
-// sustained stall, and that drop leaves a sequence-number gap a RELIABLE reader refuses to see
-// past — infinite blocks the writer instead, bounded only by the participant's 20 s lease for a
-// truly dead peer.
+// overflows the segment's 32-bit size. `durability` is VOLATILE at both ends: a topic that needs
+// replay declares TRANSIENT_LOCAL in a per-topic profile instead. `max_blocking_time` is left at
+// Fast DDS's own default: a lagging reader stalls the writer for at most the 100 ms default
+// `max_blocking_time`, then costs drops; infinite blocking was tried and reversed because it
+// stalled the publisher for good.
+// `heartbeat_period` is 20 ms: a blocked RELIABLE writer re-syncs with a lagging reader only on the
+// periodic heartbeat, and the unpatched 3 s default was measured as one drop per 100 ms forever.
+// The companion `__schema` channel (below) is RELIABLE + KEEP_LAST(1) + TRANSIENT_LOCAL, one
+// retained sample per topic.
 const char* FletcherDefaultProfilesDocument() {
     return R"XML(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">

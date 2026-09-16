@@ -823,7 +823,7 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 // The middle row is dropped SILENTLY on the low-bound instance and does not
 // throw: the overflow is caught inside `serialize()`, which zeroes the payload
 // length, so the sample never enters history, `write()` returns non-OK and
-// `SampleWriter` only logs it. That is pre-existing behaviour of the serialising
+// `WriteSample` only logs it. That is pre-existing behaviour of the serialising
 // publish flow (the one an empty document selects), pinned by
 // `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`; a typed
 // `kPayloadTooLarge` exists only on the loaned flow, which is kept in the tree but not

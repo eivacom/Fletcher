@@ -146,7 +146,7 @@ int main() {
     // -----------------------------------------------------------------------------------------
     Rule("4. Publish, serialising path: PublishData -> serialize() -> SerializedPayload_t");
     // -----------------------------------------------------------------------------------------
-    // internal::SampleWriter builds this and calls DataWriter::write(&publishing); Fast DDS then
+    // internal::WriteSample builds this and calls DataWriter::write(&publishing); Fast DDS then
     // calls serialize() with it.
     const fletcher::Attachments no_attachments;
     fletcher::internal::PublishData publishing;

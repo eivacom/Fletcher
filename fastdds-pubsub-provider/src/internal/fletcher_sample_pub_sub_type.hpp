@@ -18,6 +18,7 @@
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/topic/TopicDataType.hpp>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
+#include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
 #include <memory>
@@ -120,8 +121,8 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
             return false;
         } catch (const std::exception& e) {
             // The caller's encoder failed. A false return reaches Publish as a code that cannot
-            // distinguish the cause, so record the reason for it to throw with (#60 / H-INV-2).
-            // Never rethrow from here — DDS calls serialize() on its own path (H-INV-3).
+            // distinguish the cause, so record the reason for it to throw with.
+            // Never rethrow from here — DDS calls serialize() on its own path.
             payload.length = 0;
             d->RecordSerializeError(e.what());
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
@@ -136,7 +137,8 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         }
     }
 
-    // For a peer using take_next_sample; Fletcher's own reader goes through a loan.
+    // The copying listener's take_next_sample lands here (Subscribe installs it); the loaned
+    // listener reads the payload in place and never calls this.
     bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
         auto* d = static_cast<ReceivedData*>(data);
         const uint32_t header =
@@ -183,7 +185,7 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         // carries any needs an owner that outlives this call — Fast DDS may recycle `payload` as
         // soon as we return. One copy of the body, taken once, replaces the copy-per-attachment
         // that used to happen here. A sample with no attachments needs no owner and takes no copy.
-        if (PeekAttachmentCount(body, length) > 0) {
+        if (EnvelopeAttachmentCount(body, length) > 0) {
             auto owned = std::make_shared<const std::vector<uint8_t>>(body, body + length);
             if (!ParseEnvelopeBody(owned, owned->data(), length, row, row_len,
                                    d->decoded_attachments)) {
@@ -236,8 +238,8 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
 };
 
 /// The companion `__schema` channel's type: the same plain sample, bounded by the fixed
-/// `kSchemaPayloadBytes` (payload_bound.hpp; owner decision 2026-09-15 -- no document property any
-/// more) and registered as `SchemaBytes` so every provider names it identically. The schema rides
+/// `kSchemaPayloadBytes` (payload_bound.hpp) and registered as `SchemaBytes` so every provider
+/// names it identically. The schema rides
 /// as a row with no attachments. The usable schema size is `kSchemaPayloadBytes` minus 8: the row
 /// length and the attachment count come out of the same bound.
 class SchemaBytesPubSubType : public FletcherSamplePubSubType {

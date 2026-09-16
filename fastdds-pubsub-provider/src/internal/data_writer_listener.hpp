@@ -5,10 +5,9 @@
 // status mask for the writer end. One instance per provider, shared by every DataWriter it
 // creates -- it carries no per-topic state, and the topic name is on the endpoint itself.
 //
-// The reader side splits in two, this round (owner decision 2026-09-15, "hybrid" -- see the
-// file-header table in fast_dds_pubsub_provider.cpp): a data reader has a real Fast DDS listener
-// again (DataReaderListenerBase, internal/data_reader_listener.hpp), forwarding its own statuses
-// from inside on_subscription_matched et al. A schema reader still has none -- `listener =
+// The reader side splits in two: a data reader has a real Fast DDS listener
+// (DataReaderListenerBase, internal/data_reader_listener.hpp), forwarding its own statuses
+// from inside on_subscription_matched et al. A schema reader has none -- `listener =
 // nullptr, StatusMask::all()` (ddsbus's WaitsetDataReader pattern), StatusCondition left at its
 // default enabled mask -- and this provider's one schema thread wakes on that condition, reads
 // `get_status_changes()` itself and forwards each one there (Impl::DispatchReaderStatuses,
@@ -27,17 +26,6 @@
 
 namespace fletcher {
 namespace internal {
-
-// The writer endpoint is created with the statuses this listener actually implements, rather than
-// the default StatusMask::all(): Fast DDS then only dispatches those, and the mask says in one
-// place which callbacks below are live. `<<` is how StatusMask composes — plain `|` decays to the
-// std::bitset it derives from.
-inline eprosima::fastdds::dds::StatusMask WriterStatusMask() {
-    return eprosima::fastdds::dds::StatusMask::publication_matched()
-           << eprosima::fastdds::dds::StatusMask::offered_deadline_missed()
-           << eprosima::fastdds::dds::StatusMask::offered_incompatible_qos()
-           << eprosima::fastdds::dds::StatusMask::liveliness_lost();
-}
 
 // Every callback DataWriterListener declares is overridden, in the order it declares them, so that
 // nothing a DataWriter can report is left on the default no-op. Each one translates the DDS status
@@ -92,8 +80,8 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
 
     // KEEP_ALL + RELIABLE means the writer blocks rather than drops, so an unacknowledged sample
     // being removed is history overflowing under max_blocking_time — data loss, not backpressure.
-    // Not in WriterStatusMask(): this is a Fast DDS extension with no StatusMask bit, dispatched
-    // whenever a listener is set at all (DataWriterImpl.cpp).
+    // Not in the writer's status mask (CreateTopic): this is a Fast DDS extension with no
+    // StatusMask bit, dispatched whenever a listener is set at all (DataWriterImpl.cpp).
     void on_unacknowledged_sample_removed(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::InstanceHandle_t& /*instance*/) override {

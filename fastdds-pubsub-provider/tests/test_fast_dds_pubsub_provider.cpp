@@ -790,7 +790,7 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
 }
 
 // LoanableSampleWriter stays in the tree, unit-tested, even though `Publish` always writes
-// through the regular `SampleWriter` now (owner decision 2026-09-15). Driven directly against a
+// through the regular `WriteSample` now (owner decision 2026-09-15). Driven directly against a
 // real, hand-built DataWriter on the SAME topic a normal provider subscribes to: the simplest way
 // left to prove it still loans, fills the sample -- attachments included -- and that a row too
 // large for the loan throws without leaking it back, repeated past the writer's own resource
@@ -2108,6 +2108,27 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
     sub.UnsubscribeSchema({"keepwatch", "resolved"});
 }
 
+// A watch on a topic THIS provider published resolves from its own schema with no __schema reader
+// behind it. Releasing it must not touch a reader that does not exist, and a second watch must
+// resolve the same way.
+TEST(FastDDSPubSubProviderTest, SubscribeSchemaOnASelfPublishedTopicReleasesCleanly) {
+    FastDDSPubSubProvider provider(ProviderConfig{});
+    provider.CreateTopic({"selfwatch", "x"}, MakeSchema());
+
+    SchemaArrival first = provider.SubscribeSchema({"selfwatch", "x"});
+    SharedSchema schema;
+    ASSERT_EQ(first.Wait(std::chrono::milliseconds(0), &schema), PubSubStatus::kOk);
+    ASSERT_TRUE(schema);
+    EXPECT_EQ(schema->n_children, 1);
+    EXPECT_NO_THROW(provider.UnsubscribeSchema({"selfwatch", "x"}));
+
+    SchemaArrival second = provider.SubscribeSchema({"selfwatch", "x"});
+    SharedSchema again;
+    ASSERT_EQ(second.Wait(std::chrono::milliseconds(0), &again), PubSubStatus::kOk);
+    ASSERT_TRUE(again);
+    EXPECT_NO_THROW(provider.UnsubscribeSchema({"selfwatch", "x"}));
+}
+
 // The watch count: two watchers on the same topic share one channel, and releasing one of them
 // must not end the arrival the other is still holding — that is what a bool `schema_watch` flag
 // could not tell apart from a single watcher's own release.
@@ -2130,9 +2151,10 @@ TEST(FastDDSPubSubProviderTest, TwoWatchersOneRelease) {
 }
 
 // P2 — the channel never leaves its topic slot: a Subscribe racing an Unsubscribe that keeps a
-// watch must never find `schema_channel == nullptr` and open a second one, and the watch's own
-// arrival must survive every one of these cycles undisturbed. This is what RearmSchemaWatch's
-// move-out/move-back window used to get wrong.
+// watch must never find `schema_reader` and `received_schema` both null and open a second one
+// through EnsureSchemaChannel, replacing the watch's own arrival with a fresh
+// `SchemaArrival::Create()` pair -- the watch's own arrival must survive every one of these cycles
+// undisturbed.
 TEST(FastDDSPubSubProviderTest, SubscribeRacingUnsubscribeKeepsTheWatch) {
     FastDDSPubSubProvider sub(ProviderConfig{});
     const std::vector<std::string> t = {"racing", "watch"};

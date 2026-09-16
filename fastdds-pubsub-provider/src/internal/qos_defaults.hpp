@@ -3,13 +3,12 @@
 //
 // Internal: Fletcher's baked-in default Fast DDS XML profiles document, plus the companion
 // __schema channel's fixed QoS. NOT installed — it lives under src/ because nothing outside this
-// provider may name an eProsima type (PDA-DEC-6 §5).
+// provider may name an eProsima type.
 //
-// An empty `ProviderConfig::document` now loads exactly `FletcherDefaultProfilesDocument()` (owner
-// decision 2026-09-15) — there is no more registry-free built-in path, so a document supplied by
-// the operator and no document are the same one path with different bytes. The README publishes
-// this string's exact text as the operator's starting point, pinned setting-for-setting by
-// `FastDdsConfig.DefaultProfileTranscriptionIsExact`.
+// An empty `ProviderConfig::document` loads exactly `FletcherDefaultProfilesDocument()` — there is
+// exactly one path, so a document supplied by the operator and no document are the same path with
+// different bytes. The README publishes this string's exact text as the operator's starting point,
+// pinned setting-for-setting by `FastDdsConfig.DefaultProfileTranscriptionIsExact`.
 
 #ifndef FLETCHER_FAST_DDS_SRC_INTERNAL_QOS_DEFAULTS_HPP_
 #define FLETCHER_FAST_DDS_SRC_INTERNAL_QOS_DEFAULTS_HPP_

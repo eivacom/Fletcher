@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The data reader side is a Fast DDS DataReaderListener again (owner decision 2026-09-15, the
-// "hybrid" round -- see the file-header table and Impl::HandleSchema in
-// fast_dds_pubsub_provider.cpp). A listener's on_data_available runs INSIDE Fast DDS's own accept
-// path (StatefulWriter::deliver_sample_to_intraprocesses -> DataReaderImpl::process_data_msg), so
-// a same-process reader's history can never fill out from under an asynchronous consumer the way
-// it could behind a polling WaitSet thread -- that gap is what dropped samples on a two-core run
-// this week (see the file-header table). Every reader (schema and data) still starts DISABLED
-// (SubscriberQos::entity_factory) and is enabled only once its topic's schema is known -- the data
-// reader by Subscribe if the schema is already there, else by this provider's one schema thread --
-// so `Drain` below is never reached before `SetSchema` has run.
+// The data reader side is a Fast DDS DataReaderListener: on_data_available runs INSIDE Fast DDS's
+// own accept path (StatefulWriter::intraprocess_delivery -> StatefulReader::process_data_msg ->
+// the listener), so a same-process reader's history can never fill out from
+// under an asynchronous consumer the way it could behind a polling WaitSet thread. Every reader
+// (schema and data) starts DISABLED (SubscriberQos::entity_factory) and is enabled only once its
+// topic's schema is known -- the data reader by Subscribe if the schema is already there, else by
+// this provider's one schema thread -- so `Drain` below is never reached before `SetSchema` has
+// run.
 //
 // This is the read-side counterpart of internal/sample_writer.hpp.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_READER_LISTENER_HPP_
@@ -25,6 +23,7 @@
 #include <fastdds/dds/subscriber/SampleInfo.hpp>
 #include <fastdds/dds/subscriber/qos/DataReaderQos.hpp>
 #include <fastdds/dds/topic/TopicDescription.hpp>
+#include <fletcher/core/envelope.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
@@ -51,10 +50,9 @@ inline bool CanLoanSamples(const eprosima::fastdds::dds::DataReaderQos& qos) {
 // One per subscribed topic, installed on that topic's data DataReader at creation
 // (`create_datareader(ts.topic, rqos, ts.listener.get(), StatusMask::all())`,
 // fast_dds_pubsub_provider.cpp). The reader is created DISABLED, so nothing here runs before
-// `enable()` does. Forwards every status Fast DDS has for a reader -- the mapping the deleted
-// standalone DataReaderStatusListener class (and, before that, Impl::DispatchReaderStatuses) used.
-// `on_data_available` is `final` so no override can skip the try/catch that keeps a throwing
-// `Drain` off Fast DDS's own delivery thread.
+// `enable()` does. Forwards every status Fast DDS has for a reader. `on_data_available` is `final`
+// so no override can skip the try/catch that keeps a throwing `Drain` off Fast DDS's own delivery
+// thread.
 class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener {
    public:
     explicit DataReaderListenerBase(FastDDSStatusListener* status_listener)
@@ -133,8 +131,8 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
 };
 
 // Zero-copy read: samples reach the callback in the payloads Fast DDS already holds. Compiled and
-// unit-tested (see the tests file), but NOT installed by Subscribe -- owner ruling keeps
-// CopyingDataReaderListener as the listener Subscribe builds (fast_dds_pubsub_provider.cpp, the
+// unit-tested, but NOT installed by Subscribe -- CopyingDataReaderListener is the listener
+// Subscribe builds (fast_dds_pubsub_provider.cpp, the
 // `ts.listener = std::make_unique<internal::CopyingDataReaderListener>(...)` line); this stays
 // behind CanLoanSamples(rqos), which is the precondition a caller who does select it must still
 // check.
@@ -194,7 +192,7 @@ class LoanedDataReaderListener : public DataReaderListenerBase {
                 // carries any costs ONE owning copy of its body. A sample with none -- the hot
                 // path -- is untouched: no owner, no copy, the row delivered where it lies.
                 std::shared_ptr<const std::vector<uint8_t>> owned;
-                if (PeekAttachmentCount(body, length) > 0) {
+                if (EnvelopeAttachmentCount(body, length) > 0) {
                     owned = std::make_shared<const std::vector<uint8_t>>(body, body + length);
                     body = owned->data();
                 }
@@ -243,8 +241,7 @@ class LoanedDataReaderListener : public DataReaderListenerBase {
 };
 
 // Copying read: deserialize bounds itself by payload.length, so short nodes are safe. The default
-// listener Subscribe installs (owner decision 2026-09-14; see LoanedDataReaderListener's comment
-// above).
+// listener Subscribe installs.
 class CopyingDataReaderListener : public DataReaderListenerBase {
    public:
     CopyingDataReaderListener(FastDDSStatusListener* status_listener, DeliveryChannel channel)
@@ -253,6 +250,13 @@ class CopyingDataReaderListener : public DataReaderListenerBase {
    private:
     void Drain(eprosima::fastdds::dds::DataReader* reader) override {
         assert(schema_);
+        // Per call, not a member: on_data_available also fires from the discovery thread on a
+        // writer unmatch (EDP -> DataReaderImpl::writer_not_alive -> set_read_communication_status)
+        // with no reader mutex held, so two Drains can overlap and a shared buffer would race.
+        // Costs one malloc+free per delivered sample (measured +6 % throughput at 60 KB when
+        // shared); a shared buffer needs a lock across Drain, and that lock must survive a
+        // same-thread re-entry (a callback publishing through another provider delivers
+        // intraprocess on this thread).
         ReceivedData data;
         eprosima::fastdds::dds::SampleInfo info;
         eprosima::fastdds::dds::ReturnCode_t rc;

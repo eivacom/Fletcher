@@ -88,15 +88,8 @@ class ParticipantListener : public eprosima::fastdds::dds::DomainParticipantList
     // The topic name suffix alone is not enough — a foreign DDS topic may legitimately end in
     // "/__schema" on its own — so the type name is checked too: only the pair identifies Fletcher's
     // own companion channel.
-    static bool IsCompanionChannel(
-        const eprosima::fastdds::dds::SubscriptionBuiltinTopicData& info) {
-        const std::string_view name(info.topic_name.c_str(), info.topic_name.size());
-        const std::string_view type(info.type_name.c_str(), info.type_name.size());
-        return name.ends_with("/__schema") && type == kSchemaTypeName;
-    }
-
-    static bool IsCompanionChannel(
-        const eprosima::fastdds::dds::PublicationBuiltinTopicData& info) {
+    template <typename BuiltinTopicData>
+    static bool IsCompanionChannel(const BuiltinTopicData& info) {
         const std::string_view name(info.topic_name.c_str(), info.topic_name.size());
         const std::string_view type(info.type_name.c_str(), info.type_name.size());
         return name.ends_with("/__schema") && type == kSchemaTypeName;

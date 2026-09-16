@@ -697,7 +697,7 @@ the read could be *missed*, which would be a green the arrangement did not earn.
 **The between-bounds row is dropped silently, and does not throw.** On the
 serialising publish flow — the one an empty document selects — the overflow is
 caught inside `serialize()`, which zeroes the payload length, so the sample never
-enters history, `write()` returns non-OK and `SampleWriter` only logs it (pinned
+enters history, `write()` returns non-OK and `WriteSample` only logs it (pinned
 by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
 `kPayloadTooLarge` exists only on the **loaned** flow, which is kept in the tree but not
 selectable (no `fletcher.loan_publish` property exists). So the bound case asserts

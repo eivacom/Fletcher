@@ -260,7 +260,7 @@ void BM_PublishFieldsConstruct(benchmark::State& state) {
 }
 BENCHMARK(BM_PublishFieldsConstruct);
 
-// SampleWriter::Write — a PublishData per publish, which copies the RowEncoder std::function, then
+// WriteSample — a PublishData per publish, which holds a pointer to the RowEncoder, then
 // serialize() into the transport's payload.
 void BM_PublishFlow_Serialised(benchmark::State& state) {
     FletcherSamplePubSubType type(kBenchPayloadBytes);

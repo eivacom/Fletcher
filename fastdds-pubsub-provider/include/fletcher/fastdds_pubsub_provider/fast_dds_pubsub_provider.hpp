@@ -4,15 +4,15 @@
 // NOTHING eProsima may appear in this header. That is not a style rule: the CMake target links
 // fast-dds PRIVATE and the Conan recipe drops `transitive_headers`, so `test_package` compiles
 // with **no Fast DDS include directories at all** and any surviving `<fastdds/...>` here is a
-// compile error there. It is the machine check for the 2026-08-31 configuration ruling —
-// "Fletcher never learns DDS vocabulary" (PDA-DEC-6 §5).
+// compile error there. It is the machine check for the rule that Fletcher never learns DDS
+// vocabulary.
 #ifndef FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 #define FLETCHER_INCLUDE_FAST_DDS_PUBSUB_PROVIDER_HPP_
 
 #include <cstdint>
 // The bound advice below tells a caller to write `kPayloadBytes<N>`, so the header owes them the
 // declaration: nothing else here pulls it in, and an out-of-tree TU that takes the advice would
-// otherwise not compile (review 4a F7). Fletcher's own header - no eProsima, so the machine check
+// otherwise not compile. Fletcher's own header - no eProsima, so the machine check
 // above is unaffected. `test_package/src/example.cpp` writes the idiom, so this include cannot be
 // dropped again in silence.
 #include <fletcher/pubsub/payload_bound.hpp>
@@ -25,7 +25,7 @@
 
 namespace fletcher {
 
-/// Make Fast DDS selectable as `"fastdds"` (spec §4 clause 4).
+/// Make Fast DDS selectable as `"fastdds"`.
 ///
 /// Idempotence is NOT offered: a second call is refused by
 /// `ProviderRegistry::Register` (`kInvalidArgument`) — a registry means one
@@ -150,7 +150,7 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 
 /// PubSubProvider transport backed by eProsima Fast DDS.
 ///
-/// ── How it is configured (spec §4.1, owner rulings 2026-08-31 / 2026-09-02) ──
+/// ── How it is configured ──
 /// `ProviderConfig` and nothing else. There are no runtime setters: QoS is fixed
 /// at construction, which is what stops "QoS set after the DataWriter exists"
 /// bugs.
@@ -162,10 +162,10 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 ///    value `IsPayloadBound` rejects is refused with
 ///    `PubSubError(kInvalidArgument)` before the participant exists. Write it
 ///    as `kPayloadBytes<N>` to be told at compile time instead.
-///  - `document` — **a Fast DDS XML profiles document, as text** (owner ruling
-///    2026-09-02: the setting holds the XML itself, never a filename; the
-///    gateway's `--provider-config FILE` is where reading a file lives). Fast
-///    DDS parses it; Fletcher gains no parser (locked decision 8). **Empty** —
+///  - `document` — **a Fast DDS XML profiles document, as text** (the setting
+///    holds the XML itself, never a filename; the gateway's
+///    `--provider-config FILE` is where reading a file lives). Fast
+///    DDS parses it; Fletcher gains no parser. **Empty** —
 ///    replaced by the provider's own default document (the README's "The
 ///    published starting point"), so there is exactly one path: the document
 ///    — supplied or default — is loaded ONCE into Fast DDS's own process-wide
@@ -193,7 +193,7 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 ///
 /// **A supplied profile is that endpoint's WHOLE quality-of-service.** Anything
 /// it leaves out takes *Fast DDS's* default, not Fletcher's: there is no merge
-/// and no floor (owner ruling 2026-09-02). The XML API returns a filled QoS and
+/// and no floor. The XML API returns a filled QoS and
 /// cannot report which policies a document mentioned, so an overlay rule would
 /// rest on a fact the substrate does not expose. The README publishes Fletcher's
 /// own profile as the copy-paste starting point.
@@ -201,7 +201,7 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// The document carries no vendor properties: `Publish` always goes through the
 /// regular (non-loaned) path. `LoanableSampleWriter` stays in the tree, compiled
 /// and unit-tested, but is not selectable by a document or any other
-/// configuration (owner decision 2026-09-15).
+/// configuration.
 ///
 /// ── Refused, all `kInvalidArgument` ─────────────────────────────────────────
 /// In the constructor, before the participant exists: a non-empty document that
@@ -246,7 +246,7 @@ class FastDDSPubSubProvider : public PubSubProvider {
     // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and
     // the diagnostic keys off the STATIC type at the call site, so the annotation
     // must be repeated on every concrete override or it never fires where
-    // applications actually call (#56).
+    // applications actually call.
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
                                                SubscribeCallback callback) override;
 
@@ -264,7 +264,7 @@ class FastDDSPubSubProvider : public PubSubProvider {
     /// The payload bound in force — `ProviderConfig::max_payload_bytes` exactly as given, or
     /// 65536 if it was 0 (unset). An unsupported one never gets past the constructor. It is the
     /// number in the registered type name, and the size a row has to fit.
-    uint32_t PayloadBytes() const;
+    [[nodiscard]] uint32_t PayloadBytes() const noexcept;
 
    private:
     struct Impl;

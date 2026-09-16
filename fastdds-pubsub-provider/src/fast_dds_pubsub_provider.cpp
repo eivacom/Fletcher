@@ -6,51 +6,15 @@
 // release invalidates without anything noticing.
 //
 // This file holds the provider itself: the pimpl, the participant/publisher/subscriber lifecycle,
-// and the four PubSubProvider methods.
-//
-// Reader side, "hybrid" shape (owner decision 2026-09-15; see the comment on Impl::HandleSchema):
-// data delivery is a Fast DDS DataReaderListener again, one per subscribed topic, so
-// on_data_available runs inside Fast DDS's own accept path and a same-process reader's history can
-// never fill out from under an asynchronous consumer. Schema handling -- the __schema reader's
-// take loop, and enabling a topic's data reader once its schema is known -- runs on ONE thread this
-// provider owns for its whole life (Impl::schema_thread / Impl::SchemaLoop / Impl::HandleSchema),
-// serving every subscribed topic's schema reader off a single WaitSet. Everything they compose
-// lives one per header in internal/:
-//
-//   profile_document.hpp      the participant anchor and the per-endpoint resolution against Fast
-//                             DDS's own profile registry -- the one path every document (including
-//                             Fletcher's baked-in one) travels
-//   qos_defaults.hpp          Fletcher's baked-in Fast DDS XML profiles document -- what an empty
-//                             `config.document` resolves to, verbatim from the README
-//   fletcher_sample.hpp       the plain sample Fast DDS lends at both ends: its layout, and what
-//                             makes it plain for a given bound
-//   transport_data.hpp        the sample types handed to Fast DDS on the serialising paths
-//   envelope_codec.hpp        the contents of a sample's body
-//   fletcher_sample_pub_sub_type.hpp
-//                             the data-channel TopicDataType over that layout — and what it
-//                             reports about itself, which is what Fast DDS gates data-sharing and
-//                             loans on; the companion __schema channel's TopicDataType is the same
-//                             class, under a different registered name
-//   data_reader_listener.hpp  the data reader side: DataReaderListenerBase (statuses forwarded,
-//                             on_data_available -> Drain) and its two Drain bodies,
-//                             LoanedDataReaderListener / CopyingDataReaderListener. Copying is the
-//                             listener Subscribe installs (owner decision 2026-09-14); Loaned stays
-//                             compiled and unit-tested, behind the same CanLoanSamples predicate,
-//                             not wired in
-//   sample_writer.hpp         the publish flow, SampleWriter; LoanableSampleWriter also lives here,
-//                             unit-tested, not selected (owner decision 2026-09-15)
-//   data_writer_listener.hpp  the writer statuses forwarded and the writer's status mask
-//   participant_listener.hpp  discovery of remote entities, forwarded
-//   status_endpoint.hpp       what every forwarding listener shares: a Fast DDS endpoint
-//                             translated into the public FastDDSStatusListener::Endpoint
-//   schema_channel.hpp        the __schema handoff: a per-subscription promise
+// and the four PubSubProvider methods. On the reader side, data delivery runs through a Fast DDS
+// DataReaderListener, and one schema WaitSet thread enables each topic's data reader once its
+// schema arrives.
 //
 // No Arrow C++ dependency anywhere in the path: rows arrive as encoded bytes and leave as encoded
 // bytes.
 
 #include "fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp"
 
-#include <chrono>
 #include <cstdint>
 #include <fastdds/dds/core/Time_t.hpp>
 #include <fastdds/dds/core/condition/Condition.hpp>
@@ -73,14 +37,15 @@
 #include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
+#include <fletcher/pubsub/schema_arrival.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <memory>
 #include <mutex>
-#include <ranges>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -93,7 +58,6 @@
 #include "internal/profile_document.hpp"
 #include "internal/qos_defaults.hpp"
 #include "internal/sample_writer.hpp"
-#include "internal/schema_channel.hpp"
 #include "internal/transport_data.hpp"
 
 using namespace eprosima::fastdds::dds;
@@ -120,17 +84,26 @@ struct FastDDSPubSubProvider::Impl {
         DataWriter* schema_writer = nullptr;
         // Publisher-side schema (nanoarrow), set by CreateTopic when THIS provider declared it.
         OwnedSchema published_schema;
-        // The schema as Arrow IPC bytes, publisher side: set by CreateTopic (~817) when this
-        // provider publishes the topic, and what a later announcement is byte-compared against
-        // (~754). Written and read only under `impl_->mu`.
+        // The schema as Arrow IPC bytes, publisher side: set by CreateTopic when this
+        // provider publishes the topic, and what a later announcement is byte-compared against.
+        // Written and read only under `impl_->mu`.
         std::vector<uint8_t> published_schema_ipc;
 
-        // Companion schema channel (subscriber side): a persistent reader that resolves
-        // `schema_channel` when the schema arrives -- so Subscribe works subscriber-first (before
+        // Companion schema channel (subscriber side): a persistent reader that settles
+        // `schema_resolver` when the schema arrives -- so Subscribe works subscriber-first (before
         // any publisher), and SubscribeSchema works with no data reader at all. Opened by
         // EnsureSchemaChannel; one per topic, shared by a watch and the data subscription.
         DataReader* schema_reader = nullptr;
-        std::shared_ptr<internal::SchemaChannel> schema_channel;
+        // The __schema handoff for this topic's subscribers: `schema_arrival` is what Subscribe and
+        // SubscribeSchema hand out, `schema_resolver` the single-use token that settles it.
+        // `schema_resolver` is written only under `schema_mu`; `schema_arrival` is written under
+        // `schema_mu` too and READ under `mu` alone by Subscribe/SubscribeSchema, which is fine
+        // because it is only ever assigned while the channel is being opened under `mu` exclusive.
+        // Dropping an unconsumed resolver IS the "subscription ended" outcome, so a teardown moves
+        // it into a local that dies. `Resolve`/`Fail` throw on a consumed token, hence every call
+        // checks `valid()` first.
+        SchemaArrival schema_arrival;
+        SchemaResolver schema_resolver;
         // The schema as Arrow IPC bytes, subscriber side: the bytes HandleSchema decoded this
         // topic's schema from, on the schema thread -- what a later sample off `schema_reader` is
         // byte-compared against there. Kept apart from `published_schema_ipc` above, and written
@@ -153,8 +126,7 @@ struct FastDDSPubSubProvider::Impl {
         DataReader* data_reader = nullptr;
         // The Fast DDS listener this topic's data reader delivers through -- installed at
         // create_datareader time, so `on_data_available` never fires before `enable()` does.
-        // Copying is the listener Subscribe builds (owner decision 2026-09-14); see
-        // internal/data_reader_listener.hpp.
+        // Copying is the listener Subscribe builds; see internal/data_reader_listener.hpp.
         std::unique_ptr<internal::DataReaderListenerBase> data_listener;
         // The schema this topic's data reader delivers with: resolved once, from whichever side
         // got there first -- the publisher's own schema, deep-copied (EnsureSchemaChannel), or
@@ -198,11 +170,6 @@ struct FastDDSPubSubProvider::Impl {
     // The registered type is built from this one number.
     uint32_t max_payload_bytes = 0;
 
-    // Publish always writes through the regular (serialising) flow now (owner decision
-    // 2026-09-15) -- LoanableSampleWriter stays in the tree, unit-tested, but unselected.
-    // Stateless, so one instance serves every topic and every thread.
-    internal::SampleWriter data_sample_writer;
-
     // Shared by every DataWriter this provider creates; carries no per-topic state either.
     internal::DataWriterListener data_writer_listener;
 
@@ -234,17 +201,13 @@ struct FastDDSPubSubProvider::Impl {
     std::unordered_map<const eprosima::fastdds::dds::Condition*, TopicState*> schema_registry;
     std::thread schema_thread;
 
-    // Reads and forwards every status `reader` (a SCHEMA DataReader only now -- a data reader's
+    // Reads and forwards every status `reader` (a SCHEMA DataReader only -- a data reader's
     // statuses are forwarded by its own DataReaderListenerBase, internal/data_reader_listener.hpp)
-    // might have changed, via status_endpoint.hpp's ReaderEndpoint, in the fixed order below (the
-    // ddsbus WaitsetDataReader::listen pattern this predates). The return value is unused by
-    // HandleSchema below -- every call there drains regardless, whether the wake was a real one or
-    // the timeout sweep's synthetic poll -- and kept only because the mapping is otherwise
-    // byte-for-byte what it always was. Every `get_*_status` call below is read-and-clear per DDS,
-    // so each runs at most once per call, REGARDLESS of whether `status_listener` is set: skipping
-    // a changed status's getter when there is nobody to forward it to would leave it "changed"
-    // forever. Argument mapping copied from the now-deleted DataReaderStatusListener
-    // (data_writer_listener.hpp git history) -- that was the spec.
+    // might have changed, via status_endpoint.hpp's ReaderEndpoint, in the fixed order below. The
+    // return value is what `SchemaLoop` drains on (`data_available`). Every `get_*_status` call
+    // below is read-and-clear per DDS, so each runs at most once per call, REGARDLESS of whether
+    // `status_listener` is set: skipping a changed status's getter when there is nobody to forward
+    // it to would leave it "changed" forever.
     bool DispatchReaderStatuses(DataReader* reader) {
         const StatusMask changed = reader->get_status_changes();
         if (changed.is_active(StatusMask::subscription_matched())) {
@@ -293,54 +256,42 @@ struct FastDDSPubSubProvider::Impl {
         return changed.is_active(StatusMask::data_available());
     }
 
-    // Runs `ts`'s schema wake: forwards its schema reader's statuses (DispatchReaderStatuses
-    // above), then drains it (HandleSchema below), regardless of what the dispatch reported --
-    // matching the RETCODE_TIMEOUT sweep, which has no per-topic "did anything change" bit to
-    // consult and must drain every registered topic anyway. Caller holds `schema_mu`; a throw
-    // stays scoped to this one topic, so a schema-side failure on one topic never skips another's
-    // wake in the same pass.
-    void RunSchemaWake(TopicState& ts) {
-        try {
-            bool has_data = DispatchReaderStatuses(ts.schema_reader);
-            if (has_data) {
-                HandleSchema(ts);
-            }
-        } catch (const std::exception& ex) {
-            EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA, "reading a schema sample threw: " << ex.what());
-        } catch (...) {
-            EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
-                               "reading a schema sample threw a non-std exception");
-        }
-    }
-
     // This provider's one schema thread: every subscribed topic's __schema reader, off one
-    // WaitSet. Holds `schema_mu` for the whole pass, including the user code HandleSchema runs
-    // through SchemaChannel::Resolve/Fail -- which is what keeps a Subscribe/Unsubscribe on this
-    // same topic (they also take `schema_mu`, see its comment above) from observing a half-updated
+    // WaitSet. Holds `schema_mu` for the whole pass, including the settle HandleSchema runs
+    // through the resolver -- which is what keeps a Subscribe/Unsubscribe on this same topic
+    // (they also take `schema_mu`, see its comment above) from observing a half-updated
     // TopicState.
     void SchemaLoop() {
         for (;;) {
             ConditionSeq active;
-            // Bounded, not c_TimeInfinite: on two P-cores a status-condition wakeup was missed
-            // under a flat-out publisher, leaving a schema reader's own wake asleep with an
-            // already-matched data reader still disabled behind it (bench_e2e, Fast DDS 3.4.0).
-            // RETCODE_TIMEOUT below sweeps every registered topic as a fallback -- one empty
-            // take_next_sample per subscribed topic per 200 ms -- while a real wakeup still
-            // short-circuits through the RETCODE_OK path exactly as before.
+            // Waits without a timeout: a wake is a status change on a registered schema reader, or
+            // the stop guard.
             const ReturnCode_t wait_rc = schema_wait_set.wait(active, c_TimeInfinite);
             if (schema_thread_stop.get_trigger_value()) return;
 
             // Tolerant wait (ddsbus WaitsetDataReader::listen): a non-OK return means `active`
             // cannot be trusted, not that this thread should stop -- go back and wait again.
             if (wait_rc != RETCODE_OK) continue;
-            std::lock_guard<std::mutex> lock(schema_mu);
+            std::lock_guard lock(schema_mu);
             for (Condition* c : active) {
                 // Lookup by pointer value only -- never dereferenced before this. A miss is a
                 // topic torn down between the wake and this loop (Unsubscribe/UnsubscribeSchema
                 // erase the entry before detaching, see their comments), or `schema_thread_stop`'s
                 // own condition alongside a real one in the same wake -- either way, nothing to do.
                 auto it = schema_registry.find(c);
-                if (it != schema_registry.end()) RunSchemaWake(*it->second);
+                if (it == schema_registry.end()) continue;
+                TopicState& ts = *it->second;
+                // A throw stays scoped to this one topic, so a schema-side failure on one topic
+                // never skips another's wake in the same pass.
+                try {
+                    if (DispatchReaderStatuses(ts.schema_reader)) HandleSchema(ts);
+                } catch (const std::exception& ex) {
+                    EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
+                                       "reading a schema sample threw: " << ex.what());
+                } catch (...) {
+                    EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
+                                       "reading a schema sample threw a non-std exception");
+                }
             }
         }
     }
@@ -349,7 +300,7 @@ struct FastDDSPubSubProvider::Impl {
     // which is also what makes reading `ts.data_reader` here safe: every application-thread write
     // to it is made under the same lock (the comment on `schema_mu` above).
     //
-    // The first valid, attachment-free, decodable sample resolves `ts.schema_channel` and -- if a
+    // The first valid, attachment-free, decodable sample settles `ts.schema_resolver` and -- if a
     // data reader is already waiting on this topic and still disabled -- hands it the schema and
     // enables it right here: the same thing Subscribe does when the schema is already known when
     // it runs, just on this thread instead. Every later sample is only compared against the
@@ -365,17 +316,18 @@ struct FastDDSPubSubProvider::Impl {
         while ((rc = ts.schema_reader->take_next_sample(&sample, &info)) == RETCODE_OK) {
             if (!info.valid_data) continue;
 
-            // The schema rides as a row with no attachments (design owner-approved 2026-09-14);
-            // any that arrived is a malformed sample, on the same footing as one that will not
-            // decode -- terminal, since a later valid sample cannot retract this one.
+            // The schema rides as a row with no attachments; any that arrived is a malformed
+            // sample, on the same footing as one that will not decode -- terminal, since a later
+            // valid sample cannot retract this one.
             if (!sample.decoded_attachments.empty()) {
                 EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
                                    "ignoring a schema sample that carries attachments: the schema "
                                    "channel only ever sends a row");
-                ts.schema_channel->Fail(
-                    PubSubStatus::kInternal,
-                    "FastDDS: a schema sample carried attachments; the schema channel "
-                    "carries a bare row");
+                if (ts.schema_resolver.valid())
+                    std::move(ts.schema_resolver)
+                        .Fail(PubSubStatus::kInternal,
+                              "FastDDS: a schema sample carried attachments; the schema channel "
+                              "carries a bare row");
                 return;
             }
 
@@ -400,17 +352,19 @@ struct FastDDSPubSubProvider::Impl {
                 EPROSIMA_LOG_ERROR(FLETCHER_SCHEMA,
                                    "ignoring a schema sample that will not decode ("
                                        << sample.decoded_row.size() << " bytes): " << e.what());
-                ts.schema_channel->Fail(
-                    PubSubStatus::kInternal,
-                    std::string("FastDDS: schema sample would not decode: ") + e.what());
+                if (ts.schema_resolver.valid())
+                    std::move(ts.schema_resolver)
+                        .Fail(PubSubStatus::kInternal,
+                              std::string("FastDDS: schema sample would not decode: ") + e.what());
                 return;
             } catch (...) {
                 EPROSIMA_LOG_ERROR(
                     FLETCHER_SCHEMA,
                     "ignoring a schema sample that will not decode: non-std exception");
-                ts.schema_channel->Fail(
-                    PubSubStatus::kInternal,
-                    "FastDDS: schema sample would not decode: non-std exception");
+                if (ts.schema_resolver.valid())
+                    std::move(ts.schema_resolver)
+                        .Fail(PubSubStatus::kInternal,
+                              "FastDDS: schema sample would not decode: non-std exception");
                 return;
             }
 
@@ -418,25 +372,20 @@ struct FastDDSPubSubProvider::Impl {
             ts.received_schema = MakeSharedSchema(std::move(owned));
             // Settles SchemaArrival's own state and wakes any Wait() caller; it runs no user code
             // (SchemaResolver::Resolve, schema_arrival.cpp), so nothing here needs its own
-            // try/catch -- a throw from this line is caught by RunSchemaWake's, like everything
-            // else in this function.
-            ts.schema_channel->Resolve(ts.received_schema);
+            // try/catch -- a throw from this line is caught by SchemaLoop's per-topic try/catch,
+            // like everything else in this function.
+            if (ts.schema_resolver.valid())
+                std::move(ts.schema_resolver).Resolve(ts.received_schema);
 
             if (ts.data_reader && !ts.data_reader->is_enabled()) {
                 // SetSchema before enable(), same order Subscribe uses when the schema is already
                 // known there: Drain must never run before the listener has one.
                 ts.data_listener->SetSchema(ts.received_schema);
                 if (ts.data_reader->enable() != RETCODE_OK) {
-                    EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
-                                       "data reader failed to enable after its schema arrived");
-                    // A no-op once Resolve above has already consumed the resolver -- reaching for
-                    // it anyway is still correct: it is exactly what "the schema arrived but the
-                    // data reader itself could not start" would need to report, on the rare path
-                    // where Resolve has NOT already run for some other reason.
-                    ts.schema_channel->Fail(
-                        PubSubStatus::kTransportFailure,
-                        "FastDDS: the data reader failed to enable once its schema "
-                        "arrived");
+                    EPROSIMA_LOG_ERROR(
+                        FLETCHER_SUBSCRIPTION,
+                        "data reader failed to enable after its schema arrived; the arrival is "
+                        "already resolved, so only this log line reports it");
                 }
             }
         }
@@ -447,8 +396,7 @@ struct FastDDSPubSubProvider::Impl {
         }
     }
 
-    // Opens the topic's schema channel if it has none. Called with `mu` held (shared or
-    // exclusive).
+    // Opens the topic's schema channel if it has none. Caller holds `mu` exclusive.
     //
     // Resolved on the spot when this provider published the topic -- no reader needed. Otherwise
     // fed by a __schema reader this function creates disabled, registers with the schema thread and
@@ -456,15 +404,16 @@ struct FastDDSPubSubProvider::Impl {
     // attaches to the waitset only once that `enable()` has actually succeeded -- there is no real
     // Fast DDS trigger to miss before then.
     void EnsureSchemaChannel(TopicState& ts, const std::string& name) {
-        if (ts.schema_channel) return;
+        // Open already: the publisher branch below leaves `received_schema` set, the subscriber
+        // branch leaves `schema_reader` set, and every teardown nulls both together.
+        if (ts.schema_reader || ts.received_schema) return;
 
         if (ts.published_schema) {
-            // Publisher-side / cached: nothing to wait for, and no reader to create.
-            auto schema_channel = std::make_shared<internal::SchemaChannel>();
-            SharedSchema copy = MakeSharedSchema(OwnedSchema::DeepCopy(ts.published_schema.get()));
-            schema_channel->Resolve(copy);
-            ts.received_schema = std::move(copy);
-            ts.schema_channel = std::move(schema_channel);
+            // Publisher-side: nothing to wait for, and no reader to create.
+            std::lock_guard lock(schema_mu);
+            std::tie(ts.schema_arrival, ts.schema_resolver) = SchemaArrival::Create();
+            ts.received_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.published_schema.get()));
+            std::move(ts.schema_resolver).Resolve(ts.received_schema);
             return;
         }
 
@@ -488,31 +437,22 @@ struct FastDDSPubSubProvider::Impl {
                 PubSubStatus::kTransportFailure,
                 "FastDDS: failed to create schema DataReader for: " + schema_topic_name);
 
-        // `ts.schema_channel` is live from here, before `enable()` can possibly trigger a wake:
-        // nothing HandleSchema does before it finds an actual sample touches `ts.schema_channel`,
-        // but leaving it null through that window is a needless landmine for the next reader of
-        // this function.
-        ts.schema_reader = schema_reader;
-        ts.schema_channel = std::make_shared<internal::SchemaChannel>();
-
-        // Registered and enabled under the SAME `schema_mu` hold: SchemaLoop's own 200 ms TIMEOUT
-        // sweep (above) also takes `schema_mu` and walks every registered topic regardless of
-        // whether Fast DDS has triggered anything for it, so releasing the lock between the
-        // registry insert and `enable()` left a window where that sweep could reach this entry and
-        // call `take_next_sample` on a reader `enable()` had not reached yet (logged as a
-        // "return code" warning). Attached to the waitset only once `enable()` has actually
-        // succeeded -- there is no real Fast DDS trigger to miss before that.
+        // `schema_registry[cond] = &ts` and `ts.schema_reader = schema_reader` must become visible
+        // to the schema thread together: SchemaLoop dereferences `ts.schema_reader` right after a
+        // registry hit, under this same lock. Attached to the waitset only once `enable()` has
+        // actually succeeded -- there is no real Fast DDS trigger to miss before that.
         ReturnCode_t enable_rc;
         {
-            std::lock_guard<std::mutex> lock(schema_mu);
+            std::lock_guard lock(schema_mu);
+            ts.schema_reader = schema_reader;
+            std::tie(ts.schema_arrival, ts.schema_resolver) = SchemaArrival::Create();
             schema_registry[&schema_reader->get_statuscondition()] = &ts;
             enable_rc = schema_reader->enable();
             if (enable_rc != RETCODE_OK) {
                 schema_registry.erase(&schema_reader->get_statuscondition());
                 ts.schema_reader = nullptr;
-                // Nothing has observed `ts.schema_channel->arrival` yet (this function has not
-                // returned), so dropping it here needs no Break() -- there is no waiter to release.
-                ts.schema_channel.reset();
+                // dies with the scope; nobody has seen `schema_arrival` yet
+                SchemaResolver ended = std::move(ts.schema_resolver);
             }
         }
 
@@ -526,6 +466,28 @@ struct FastDDSPubSubProvider::Impl {
         }
 
         schema_wait_set.attach_condition(schema_reader->get_statuscondition());
+    }
+
+    // Closes the topic's schema side. Caller holds `mu` exclusive and has decided the side must go
+    // (no watch left, no data reader left). Everything the schema thread reads is nulled under
+    // `schema_mu`; the returned reader — null when this provider published the topic itself and
+    // never opened one — is detached and deleted by the caller after `mu` is released, so other
+    // topics stay publishable while a slow delete_datareader runs. `received_schema` goes with the
+    // reader: a later channel on this topic must start from "not yet known", or HandleSchema would
+    // treat a fresh reader's first sample as an already-resolved resend
+    // (ResubscribeAfterUnsubscribeKeepsDelivering hung on exactly that). The resolver dies here
+    // under both `mu` and `schema_mu`; that is safe because settling runs no user code
+    // (SchemaArrivalState::Settle only locks its own mutex and notifies).
+    DataReader* CloseSchemaSide(TopicState& ts) {
+        std::lock_guard lock(schema_mu);
+        DataReader* schema_reader = ts.schema_reader;
+        if (schema_reader) schema_registry.erase(&schema_reader->get_statuscondition());
+        ts.schema_reader = nullptr;
+        ts.received_schema = nullptr;
+        // Moved into a local that dies at the end of this function: ~SchemaResolver is what settles
+        // any pending waiter with kSubscriptionEnded (assigning over the field would skip it).
+        SchemaResolver ended = std::move(ts.schema_resolver);
+        return schema_reader;
     }
 
     // Teardown lives here, not in ~FastDDSPubSubProvider, so a constructor that throws part-way
@@ -571,14 +533,6 @@ void RegisterFastDDSProvider(ProviderRegistry& registry) {
     });
 }
 
-// The bound `max_payload_bytes == 0` (unset, spec §4.1) resolves to. Bit-for-bit the retired
-// options struct's default, and deliberately so: the bound is part of the registered DDS type
-// name, so a different number silently stops endpoints discovering each other (locked
-// decision 13).
-namespace {
-constexpr uint32_t kDefaultPayloadBytes = 64 * 1024;
-}  // namespace
-
 FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config)
     : FastDDSPubSubProvider(config, nullptr) {}
 
@@ -586,14 +540,15 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
                                              FastDDSStatusListener* status_listener)
     : impl_(std::make_unique<Impl>(status_listener)) {
     // Everything the document decides about the PARTICIPANT — the domain — is settled below,
-    // before the participant exists (rung-2, spec §5.1). An empty `config.document` is resolved to
-    // Fletcher's baked-in one first (qos_defaults.cpp), so there is exactly one path from here on.
+    // before the participant exists. An empty `config.document` is resolved to
+    // Fletcher's baked-in one first (qos_defaults.cpp), so there is exactly one path.
     // Writer/reader QoS is resolved per topic, in `CreateTopic`, the first moment a topic's name is
     // known (internal/profile_document.hpp). Refusals here are `kInvalidArgument`: reached through
     // a factory, a `std::invalid_argument` would arrive at the caller as `kInternal`, which tells
     // an operator nothing.
-    const uint32_t bound =
-        config.max_payload_bytes == 0 ? kDefaultPayloadBytes : config.max_payload_bytes;
+    // 64 KiB when unset. The bound is part of the registered DDS type name, so a different
+    // number silently stops endpoints discovering each other.
+    const uint32_t bound = config.max_payload_bytes == 0 ? 64 * 1024 : config.max_payload_bytes;
     if (!IsPayloadBound(bound)) {
         throw PubSubError(PubSubStatus::kInvalidArgument,
                           "FastDDS: max_payload_bytes " + std::to_string(bound) +
@@ -603,9 +558,8 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     }
     impl_->max_payload_bytes = bound;
 
-    // An empty document IS Fletcher's baked-in one from here on (owner decision 2026-09-15) --
-    // there is no more registry-free built-in path, so `document` always ends up loaded into Fast
-    // DDS's process-wide profile registry (internal::LoadDocumentOnce, called from
+    // An empty document resolves to Fletcher's baked-in one, so `document` always ends up loaded
+    // into Fast DDS's process-wide profile registry (internal::LoadDocumentOnce, called from
     // ResolveParticipantQos below).
     const std::string document = config.document.empty()
                                      ? std::string(internal::FletcherDefaultProfilesDocument())
@@ -652,8 +606,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     // The Publisher's/Subscriber's default QoS is already what Fast DDS seeded it with from
     // `document`'s `is_default_profile="true"` profile, if any (else Fast DDS's own default) --
     // done inside create_publisher/create_subscriber above, before this provider touches either.
-    // One path always: `document` is never empty by the time it is loaded (see above), so there is
-    // no separate "no document" branch here any more.
+    // `document` is never empty by the time it is loaded (see above), so this is the only path.
 
     // This provider's one schema thread, started once the Subscriber it depends on exists:
     // `schema_thread_stop` attached first, so `schema_wait_set` always has something to wake it
@@ -662,13 +615,13 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     impl_->schema_thread = std::thread([impl = impl_.get()] { impl->SchemaLoop(); });
 }
 
-// Destruction precondition (issue #63): no thread may be executing or about to
+// Destruction precondition: no thread may be executing or about to
 // enter a public provider API on this instance, and no provider callback may
 // still be in flight if that callback can re-enter this provider. Teardown
 // invalidates all TopicState pointers; it is NOT a synchronization boundary for
 // concurrent use of the provider object.
 //
-// Teardown deliberately does NOT take impl_->mu (HARD-4 locked decision #4).
+// Teardown deliberately does NOT take impl_->mu.
 // DDS deletion calls such as delete_datareader() may block waiting for in-flight
 // listener callbacks to finish. If teardown held impl_->mu while such a deletion
 // waits, and a callback that re-enters the provider tried to take impl_->mu, the
@@ -680,7 +633,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
 // Teardown lives in ~Impl so a throwing constructor still releases what it built.
 FastDDSPubSubProvider::~FastDDSPubSubProvider() = default;
 
-uint32_t FastDDSPubSubProvider::PayloadBytes() const { return impl_->max_payload_bytes; }
+uint32_t FastDDSPubSubProvider::PayloadBytes() const noexcept { return impl_->max_payload_bytes; }
 
 // -----------------------------------------------------------------------
 // PubSubProvider interface
@@ -689,10 +642,9 @@ uint32_t FastDDSPubSubProvider::PayloadBytes() const { return impl_->max_payload
 void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
-        // The door, BEFORE any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // The door, BEFORE any lock: a Fast DDS listener callback
         // runs with the RTPS reader mutex held, and this call HANGS if it is let
         // through — probed, not assumed. Refused by name instead.
         //
@@ -732,7 +684,14 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         if (!ts.data_writer) {
             const DataWriterQos wqos = internal::ResolveDataWriterQos(*impl_->publisher, name);
             ts.data_writer = impl_->publisher->create_datawriter(
-                ts.data_topic, wqos, &impl_->data_writer_listener, internal::WriterStatusMask());
+                ts.data_topic, wqos, &impl_->data_writer_listener,
+                // Only the statuses DataWriterListener implements (`<<` is how StatusMask composes;
+                // plain `|` decays to the std::bitset it derives from).
+                // on_unacknowledged_sample_removed has no mask bit and is dispatched whenever a
+                // listener is set.
+                StatusMask::publication_matched()
+                    << StatusMask::offered_deadline_missed()
+                    << StatusMask::offered_incompatible_qos() << StatusMask::liveliness_lost());
             if (!ts.data_writer)
                 throw PubSubError(PubSubStatus::kTransportFailure,
                                   "FastDDS: failed to create DataWriter for: " + name);
@@ -813,7 +772,7 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 
             // Recorded only once the announcement is out, so a failed one leaves nothing behind for
             // a retry to match against and nothing for it to short-circuit on.
-            ts.published_schema = OwnedSchema::DeepCopy(schema.get());
+            ts.published_schema = std::move(schema);
             ts.published_schema_ipc = std::move(ipc);
         }
     });
@@ -822,10 +781,9 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
 void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
                                     const RowEncoder& encoder, const Attachments& attachments) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // The door, before any lock: a Fast DDS listener callback
         // runs with the RTPS reader mutex held, and this call HANGS if it is let
         // through — probed, not assumed. Refused by name instead.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Publish");
@@ -834,9 +792,9 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
         // fresh std::string here was a malloc and a free on every publish. Publish holds the mutex
         // shared, so a scratch buffer on the provider would be a data race; one per thread is not.
         // This one instance is shared by every `FastDDSPubSubProvider` on this thread, not scoped
-        // to `this` — safe only because nothing below reads `name` again once `Write` is called, so
-        // a nested Publish on another instance overwriting it on the way back out changes nothing
-        // this call still looks at.
+        // to `this` — safe only because nothing below reads `name` again once `WriteSample` is
+        // called, so a nested Publish on another instance overwriting it on the way back out
+        // changes nothing this call still looks at.
         static thread_local std::string name;
         internal::JoinSegmentsInto(name, topic_segments);
 
@@ -853,20 +811,16 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
         auto& ts = it->second;
 
-        // Always the regular (serialising) flow now (owner decision 2026-09-15); see
-        // internal/sample_writer.hpp. Stateless, so one instance serves every topic and every
-        // thread.
-        impl_->data_sample_writer.Write(ts.data_writer, encoder, attachments);
+        internal::WriteSample(ts.data_writer, encoder, attachments);
     });
 }
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     return TranslateSeamFailure([&]() -> SubscriptionResult {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). A Fast DDS listener callback
+        // The door, before any lock: a Fast DDS listener callback
         // runs with the RTPS reader mutex held, and this call HANGS if it is let
         // through — probed, not assumed. Refused by name instead.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
@@ -897,10 +851,9 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
 
         const DataReaderQos rqos = internal::ResolveDataReaderQos(*impl_->subscriber, name);
 
-        // Copying is the listener Subscribe installs (owner decision 2026-09-14):
-        // LoanedDataReaderListener stays compiled and unit-tested (data_reader_listener.hpp) but
-        // is not selected here -- this is the one line that would flip it, behind
-        // CanLoanSamples(rqos).
+        // Copying is the listener Subscribe installs: LoanedDataReaderListener stays compiled and
+        // unit-tested (data_reader_listener.hpp) but is not selected here -- this is the one line
+        // that would flip it, behind CanLoanSamples(rqos).
         ts.data_listener = std::make_unique<internal::CopyingDataReaderListener>(
             impl_->status_listener, DeliveryChannel(this, std::move(callback)));
 
@@ -912,32 +865,14 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
             ts.data_topic, rqos, ts.data_listener.get(), StatusMask::all());
         if (!data_reader) {
             ts.data_listener.reset();
-            // Tear down the schema side only if THIS call -- or an earlier one, now abandoned --
-            // is what opened it and no watch keeps it.
-            const bool keep_watch = ts.schema_watches > 0;
-            DataReader* schema_reader = nullptr;
-            std::shared_ptr<internal::SchemaChannel> schema_channel;
-            if (!keep_watch && ts.schema_reader) {
-                schema_reader = ts.schema_reader;
-                // `ts.schema_channel`/`schema_reader`/`ts.received_schema` are nulled (and
-                // `ts.schema_channel` moved out) under `schema_mu`, not before it: the schema
-                // thread could be mid-HandleSchema on this very schema_reader right now, reading
-                // them with no lock of its own to race against this write. `ts.received_schema`
-                // goes with it -- a later EnsureSchemaChannel on this topic must see "not yet
-                // known", not a stale value that makes HandleSchema treat a fresh schema_reader's
-                // first sample as an already-resolved resend and skip resolving the fresh channel
-                // it belongs to.
-                std::lock_guard<std::mutex> schema_lock(impl_->schema_mu);
-                impl_->schema_registry.erase(&schema_reader->get_statuscondition());
-                ts.schema_reader = nullptr;
-                ts.received_schema = nullptr;
-                schema_channel = std::move(ts.schema_channel);
-            }
+            // Schema side goes with the last user of it.
+            DataReader* schema_reader =
+                ts.schema_watches == 0 ? impl_->CloseSchemaSide(ts) : nullptr;
             lock.unlock();
-            if (schema_reader)
+            if (schema_reader) {
                 impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
-            if (schema_channel) schema_channel->Break();
-            if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
+                impl_->subscriber->delete_datareader(schema_reader);
+            }
             throw PubSubError(PubSubStatus::kTransportFailure,
                               "FastDDS: failed to create DataReader for: " + name);
         }
@@ -953,7 +888,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         // not call back into this provider's code.
         bool enable_now = false;
         {
-            std::lock_guard<std::mutex> schema_lock(impl_->schema_mu);
+            std::lock_guard schema_lock(impl_->schema_mu);
             ts.data_reader = data_reader;
             if (ts.received_schema) {
                 ts.data_listener->SetSchema(ts.received_schema);
@@ -967,102 +902,74 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
             // Otherwise the schema thread's HandleSchema does both, once the schema arrives.
             if (data_reader->enable() != RETCODE_OK) {
                 std::unique_ptr<internal::DataReaderListenerBase> listener;
-                DataReader* schema_reader = nullptr;
-                std::shared_ptr<internal::SchemaChannel> schema_channel;
-                const bool keep_watch = ts.schema_watches > 0;
                 {
-                    std::lock_guard<std::mutex> schema_lock(impl_->schema_mu);
+                    std::lock_guard schema_lock(impl_->schema_mu);
                     ts.data_reader = nullptr;
                     listener = std::move(ts.data_listener);
-                    if (!keep_watch && ts.schema_reader) {
-                        // Nothing else is left on this topic: take the schema side down too.
-                        // `enable_now` is also true when EnsureSchemaChannel resolved the schema
-                        // from this provider's own published copy and opened no schema reader at
-                        // all (CreateTopic then Subscribe on one provider) -- guarded the same way
-                        // the sibling unwinds above (~921) and in Unsubscribe (~1046) are.
-                        schema_reader = ts.schema_reader;
-                        schema_channel = std::move(ts.schema_channel);
-                        impl_->schema_registry.erase(&schema_reader->get_statuscondition());
-                        ts.schema_reader = nullptr;
-                        ts.received_schema = nullptr;
-                    }
                 }
+                // Schema side goes with it if nothing else holds it open. `enable_now` is also
+                // true when EnsureSchemaChannel resolved the schema from this provider's own
+                // published copy and opened no schema reader at all (CreateTopic then Subscribe
+                // on one provider).
+                DataReader* schema_reader =
+                    ts.schema_watches == 0 ? impl_->CloseSchemaSide(ts) : nullptr;
                 lock.unlock();
-                if (schema_reader)
-                    impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
                 impl_->subscriber->delete_datareader(data_reader);
-                if (schema_channel) schema_channel->Break();
-                if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
+                if (schema_reader) {
+                    impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
+                    impl_->subscriber->delete_datareader(schema_reader);
+                }
                 throw PubSubError(PubSubStatus::kTransportFailure,
                                   "FastDDS: failed to enable DataReader for: " + name);
             }
         }
 
-        return {ts.schema_channel->arrival};
+        return {ts.schema_arrival};
     });
 }
 
 void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05).
-        // Issued from inside a delivery on this instance, the stop+join below waits for the very
-        // delivery this thread is executing — a self-wait, and a hang under the suite's TIMEOUT.
-        // Refused by name instead -- as are the other three, at their own doors above.
+        // The door, before any lock. Issued from inside a delivery on this instance, the stop+join
+        // below waits for the very delivery this thread is executing — a self-wait, and a hang
+        // under the suite's TIMEOUT. Refused by name instead -- as are the other three, at their
+        // own doors above.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
 
         std::string name = internal::JoinSegments(topic_segments);
 
         DataReader* data_reader = nullptr;
         DataReader* schema_reader = nullptr;
-        // Taken out of the slot ONLY when no watch keeps it (see below); a kept channel is left IN
-        // the slot.
-        std::shared_ptr<internal::SchemaChannel> schema_channel;
         // The listener is taken out of the topic state here, under the lock, with the reader that
         // uses it, and destroyed at the end of this function — after both readers are gone (Fast
         // DDS's delete_datareader waits for any in-flight on_data_available on `data_reader`
         // first, so the listener it calls into must still be alive for that wait).
         std::unique_ptr<internal::DataReaderListenerBase> listener;
         {
-            std::lock_guard<std::shared_mutex> lock(impl_->mu);
+            std::lock_guard lock(impl_->mu);
             auto it = impl_->topics.find(name);
             if (it == impl_->topics.end()) return;
 
             auto& ts = it->second;
             data_reader = ts.data_reader;
-            const bool keep_watch = ts.schema_watches > 0;
-            if (!keep_watch) schema_reader = ts.schema_reader;
-
-            // `ts.data_reader`/`ts.data_listener` and, when no watch keeps the schema side either,
-            // `ts.schema_reader`/`ts.received_schema`/`ts.schema_channel` are nulled under
-            // `schema_mu`, not before it: the schema thread could be mid-HandleSchema on this very
-            // schema_reader right now, reading them with no lock of its own to race against this
-            // write. `ts.received_schema` goes with `ts.schema_reader`: a later EnsureSchemaChannel
-            // on this topic must see "not yet known", not a stale value that makes HandleSchema
-            // treat a fresh schema_reader's first sample as an already-resolved resend and skip
-            // resolving the fresh channel it belongs to (this was a real, reproducible bug --
-            // ResubscribeAfterUnsubscribeKeepsDelivering hung on exactly this).
             {
-                std::lock_guard<std::mutex> schema_lock(impl_->schema_mu);
+                std::lock_guard schema_lock(impl_->schema_mu);
                 ts.data_reader = nullptr;
                 listener = std::move(ts.data_listener);
-                if (!keep_watch && schema_reader) {
-                    impl_->schema_registry.erase(&schema_reader->get_statuscondition());
-                    ts.schema_reader = nullptr;
-                    ts.received_schema = nullptr;
-                    schema_channel = std::move(ts.schema_channel);
-                }
             }
+            // Schema side goes with the last user of it.
+            schema_reader = ts.schema_watches == 0 ? impl_->CloseSchemaSide(ts) : nullptr;
         }
 
         // Outside `impl_->mu`: a topic other than this one stays available to Publish while a
         // (possibly slow) detach or deletion runs.
-        if (schema_reader)
+        if (schema_reader) {
             impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
-        if (schema_channel) schema_channel->Break();
-        // Fast DDS waits for any in-flight listener callback on each reader before returning.
-        if (schema_reader) impl_->subscriber->delete_datareader(schema_reader);
+            impl_->subscriber->delete_datareader(schema_reader);
+        }
+        // Fast DDS waits for any in-flight listener callback on `data_reader` before returning.
         if (data_reader) impl_->subscriber->delete_datareader(data_reader);
         // `listener` dies here, at the end of scope, after both readers are gone.
     });
@@ -1071,11 +978,11 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
 SchemaArrival FastDDSPubSubProvider::SubscribeSchema(
     const std::vector<std::string>& topic_segments) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     return TranslateSeamFailure([&]() -> SchemaArrival {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05), as at the four
-        // doors above: a Fast DDS listener callback runs with the RTPS reader mutex held, and the
-        // create_datareader below HANGS if it is let through. Refused by name instead.
+        // The door, before any lock, as at the four doors above: a Fast DDS listener callback runs
+        // with the RTPS reader mutex held, and the create_datareader below HANGS if it is let
+        // through. Refused by name instead.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
                                            "SubscribeSchema");
 
@@ -1089,26 +996,25 @@ SchemaArrival FastDDSPubSubProvider::SubscribeSchema(
         auto& ts = impl_->topics[name];
         impl_->EnsureSchemaChannel(ts, name);
         ++ts.schema_watches;
-        return ts.schema_channel->arrival;
+        return ts.schema_arrival;
     });
 }
 
 void FastDDSPubSubProvider::UnsubscribeSchema(const std::vector<std::string>& topic_segments) {
     // Every seam entry point translates, so the only exception that can leave this
-    // provider is a PubSubError carrying a stable number (spec §5.1).
+    // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05). Issued from
-        // inside a delivery on this instance, the stop+join below waits for the very delivery
-        // this thread is executing — a self-wait, and a hang under the suite's TIMEOUT.
+        // The door, before any lock. Issued from inside a delivery on this instance, the stop+join
+        // below waits for the very delivery this thread is executing — a self-wait, and a hang
+        // under the suite's TIMEOUT.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
                                            "UnsubscribeSchema");
 
         std::string name = internal::JoinSegments(topic_segments);
 
         DataReader* schema_reader = nullptr;
-        std::shared_ptr<internal::SchemaChannel> schema_channel;
         {
-            std::lock_guard<std::shared_mutex> lock(impl_->mu);
+            std::lock_guard lock(impl_->mu);
             auto it = impl_->topics.find(name);
             if (it == impl_->topics.end()) return;
 
@@ -1119,26 +1025,16 @@ void FastDDSPubSubProvider::UnsubscribeSchema(const std::vector<std::string>& to
             // Decrementing the count to zero is the whole of this call then.
             if (ts.data_reader) return;
 
-            // Nothing else remains on this topic: the schema reader comes down too. `schema_mu`,
-            // not `mu`, guards the writes below for the same reason Unsubscribe's do -- the schema
-            // thread could be mid-HandleSchema on this very schema_reader right now, reading them
-            // with no lock of its own to race against this write. `ts.received_schema` goes with
-            // `ts.schema_reader`, same reason as Unsubscribe: a later watch or Subscribe on this
-            // topic must see "not yet known", not a stale value that makes a fresh schema_reader's
-            // first sample look like an already-resolved resend.
-            schema_reader = ts.schema_reader;
-            std::lock_guard<std::mutex> schema_lock(impl_->schema_mu);
-            impl_->schema_registry.erase(&schema_reader->get_statuscondition());
-            ts.schema_reader = nullptr;
-            ts.received_schema = nullptr;
-            schema_channel = std::move(ts.schema_channel);
+            // Nothing else remains on this topic: the schema side goes with the last watch.
+            schema_reader = impl_->CloseSchemaSide(ts);
         }
 
         // Outside `impl_->mu`, like Unsubscribe: a topic other than this one stays available to
         // Publish while a (possibly slow) detach or deletion runs.
-        impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
-        if (schema_channel) schema_channel->Break();
-        impl_->subscriber->delete_datareader(schema_reader);
+        if (schema_reader) {
+            impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
+            impl_->subscriber->delete_datareader(schema_reader);
+        }
     });
 }
 
