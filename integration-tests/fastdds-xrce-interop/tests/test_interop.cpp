@@ -162,6 +162,59 @@ void ExpectRowEquals(const ArrowRow& row, int32_t expected_id, double expected_t
     EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(), expected_label);
 }
 
+// The XRCE provider's data reader and writer request TRANSIENT_LOCAL
+// (xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp, both uxrQoS_t blocks). A FastDDS
+// writer offering VOLATILE — the built-in default since the data stream went volatile — can
+// never match it, so this suite gives the FastDDS side the same TRANSIENT_LOCAL document
+// gateway-fastdds-ts uses. One document for every provider in this binary: profile names are
+// process-wide.
+constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps><name>FletcherParticipant</name></rtps>
+    </participant>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times>
+        <heartbeat_period>
+          <sec>0</sec>
+          <nanosec>20000000</nanosec>
+        </heartbeat_period>
+      </times>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>)XML";
+
 // PDA-DEC-7: the typed XRCE options struct is retired. What these three tests witness is the
 // seam's TYPED CORE and the registered type name, not the document - they run their Agent on
 // the DEFAULT port with the DEFAULT (UDP) transport, and their one distinguishing setting is
@@ -983,7 +1036,8 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
 
     PublisherArrow xrce_pub(xrce);
@@ -1048,7 +1102,8 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
 
     PublisherArrow fastdds_pub(fastdds);
@@ -1114,7 +1169,8 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00003));
 
     PublisherArrow fastdds_pub(fastdds);

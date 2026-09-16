@@ -370,24 +370,30 @@ struct FastDDSPubSubProvider::Impl {
 
             ts.received_schema_ipc = sample.decoded_row;
             ts.received_schema = MakeSharedSchema(std::move(owned));
-            // Settles SchemaArrival's own state and wakes any Wait() caller; it runs no user code
-            // (SchemaResolver::Resolve, schema_arrival.cpp), so nothing here needs its own
-            // try/catch -- a throw from this line is caught by SchemaLoop's per-topic try/catch,
-            // like everything else in this function.
-            if (ts.schema_resolver.valid())
-                std::move(ts.schema_resolver).Resolve(ts.received_schema);
 
+            // Enable BEFORE resolving. A waiter woken by the arrival may publish at once, and with
+            // VOLATILE data a row sent before this reader is enabled and matched is gone; Fast DDS
+            // completes intraprocess matching inside enable(), so a resolved arrival means the
+            // reader is live for a same-process publisher. SetSchema first: Drain must never run
+            // before the listener has one.
             if (ts.data_reader && !ts.data_reader->is_enabled()) {
-                // SetSchema before enable(), same order Subscribe uses when the schema is already
-                // known there: Drain must never run before the listener has one.
                 ts.data_listener->SetSchema(ts.received_schema);
                 if (ts.data_reader->enable() != RETCODE_OK) {
-                    EPROSIMA_LOG_ERROR(
-                        FLETCHER_SUBSCRIPTION,
-                        "data reader failed to enable after its schema arrived; the arrival is "
-                        "already resolved, so only this log line reports it");
+                    EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
+                                       "data reader failed to enable after its schema arrived");
+                    if (ts.schema_resolver.valid())
+                        std::move(ts.schema_resolver)
+                            .Fail(PubSubStatus::kTransportFailure,
+                                  "FastDDS: the data reader failed to enable once its schema "
+                                  "arrived");
+                    continue;
                 }
             }
+            // Settles SchemaArrival's own state and wakes any Wait() caller; it runs no user code
+            // (SchemaResolver::Resolve, schema_arrival.cpp), so a throw from this line is caught by
+            // SchemaLoop's per-topic try/catch like everything else in this function.
+            if (ts.schema_resolver.valid())
+                std::move(ts.schema_resolver).Resolve(ts.received_schema);
         }
         if (rc != RETCODE_NO_DATA) {
             EPROSIMA_LOG_WARNING(FLETCHER_SCHEMA,
