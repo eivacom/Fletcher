@@ -154,7 +154,7 @@ jobs:
               # release budget: BIND-9 sets that with the packaging work in hand,
               # against these numbers, and BIND-0 said so. This is the check
               # D-BIND-1a RIDER ii asks for by name - the shim links nanoarrow
-              # only, never Arrow C++, because wrapping `arrow-bridge`'s codec
+              # only, never Arrow C++, because wrapping the `arrow-bridge` codec
               # would drag full Arrow C++ into `Eiva.Fletcher.Interop`. That
               # failure mode is tens of megabytes, not a few hundred kilobytes,
               # so the ceiling is set far above ordinary growth and trips only on
