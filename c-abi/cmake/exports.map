@@ -1,0 +1,51 @@
+/*
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ * Copyright (C) 2026 The Fletcher Authors
+ *
+ * The shim's ELF export table, stated rather than inferred.
+ *
+ * ── Why visibility settings are not enough ──────────────────────────────────
+ * `CXX_VISIBILITY_PRESET hidden` governs the symbols the compiler emits with
+ * DEFAULT visibility from our own translation units, and `--exclude-libs ALL`
+ * localises what arrives from a static archive. Between them they miss one set,
+ * and BIND-2c found it on the first CI run that had any: libstdc++ marks a
+ * handful of `shared_ptr` internals with EXPLICIT default visibility —
+ *
+ *     typeinfo and typeinfo-name for std::_Sp_counted_base<_S_atomic>
+ *     typeinfo and typeinfo-name for std::_Mutex_base<_S_atomic>
+ *     typeinfo-name for std::_Sp_make_shared_tag
+ *     the function-local __tag in std::_Sp_make_shared_tag::_S_ti()
+ *
+ * — because RTTI comparison and control-block type identity have to work across
+ * a shared-object boundary. An explicit attribute beats a -fvisibility default,
+ * so a single `std::make_shared` in one of our own files puts all six in the
+ * export table no matter what the target properties say. They appeared the
+ * moment `fl_codec` started sharing its field plan with `fl_rows`.
+ *
+ * ── Why localising them is safe here ────────────────────────────────────────
+ * Those symbols exist so that two shared objects can agree on a type. Nothing
+ * crosses this boundary that would need such an agreement: `binding.h` names no
+ * C++ type, no `shared_ptr` is handed out, and no exception escapes — the
+ * containment site catches every one. The shim's `shared_ptr`s are born and die
+ * inside it.
+ *
+ * ── What this file is ───────────────────────────────────────────────────────
+ * The anonymous version below exports exactly the `fl_` prefix and localises
+ * everything else, which makes "the shim exports only what binding.h declares"
+ * a property of the LINK rather than a thing CI greps for afterwards. The grep
+ * stays as the assertion that this file still works.
+ *
+ * Anonymous on purpose: a named version tag would put a version on every symbol
+ * and a consumer resolving `fl_binding_abi_version` by plain name — which is
+ * exactly what P/Invoke does — would have to know it.
+ *
+ * Windows needs none of this and gets none of it: nothing leaves a DLL without
+ * `__declspec(dllexport)`. Its export-table problem is the opposite one and is a
+ * BIND-9 question (see the CMakeLists comment).
+ */
+{
+  global:
+    fl_*;
+  local:
+    *;
+};

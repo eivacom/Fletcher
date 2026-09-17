@@ -92,9 +92,25 @@ target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_BUILDING)
 # for, and the "exports only what binding.h declares" property holds on Linux
 # only. Fixing it means getting the upstream recipe to stop defining the macro
 # for static builds. Revisit at BIND-9 with the size budget in hand.
+#
+# ...and the half that NEITHER of those reaches, found by BIND-2c's first CI run:
+# libstdc++ gives a handful of `shared_ptr` internals EXPLICIT default visibility
+# (typeinfo for the control block, the `_Sp_make_shared_tag` identity) so that
+# RTTI works across a shared object boundary. An explicit attribute beats a
+# -fvisibility default, so one `std::make_shared` in one of our own files exports
+# all six regardless of the properties above. A version script is the only thing
+# that settles it, and it makes "exports exactly what binding.h declares" a
+# property of the LINK rather than something CI notices afterwards. The reasoning,
+# and why localising them is safe, is in the map file itself.
 if(NOT MSVC)
     target_link_options(fletcher-c-abi PRIVATE
-        "LINKER:--exclude-libs,ALL")
+        "LINKER:--exclude-libs,ALL"
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/exports.map")
+
+    # So that editing the map relinks. Without it the map is invisible to the
+    # build graph and a change to it appears to do nothing.
+    set_target_properties(fletcher-c-abi PROPERTIES
+        LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/exports.map)
 endif()
 
 target_include_directories(fletcher-c-abi
