@@ -21,7 +21,8 @@ find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
 # component's own targets an object library does not inherit that requirement
 # from what links it.
 add_library(fletcher-c-abi-impl OBJECT
-    src/nanoarrow_codec.cpp)
+    src/nanoarrow_codec.cpp
+    src/single_copy.cpp)
 
 target_compile_features(fletcher-c-abi-impl PUBLIC cxx_std_20)
 
@@ -34,6 +35,15 @@ set_target_properties(fletcher-c-abi-impl PROPERTIES
 # their headers too, and the test executable is one of those.
 target_link_libraries(fletcher-c-abi-impl PUBLIC
     fletcher-pubsub::fletcher-pubsub)
+
+# The single-copy scan enumerates the process's own modules, which is the one
+# thing in this component that is not portable C++: psapi on Windows, dl on
+# everything else.
+if(WIN32)
+    target_link_libraries(fletcher-c-abi-impl PUBLIC psapi)
+else()
+    target_link_libraries(fletcher-c-abi-impl PUBLIC ${CMAKE_DL_LIBS})
+endif()
 
 # SHARED, unlike every other Fletcher component: this is the artifact
 # `Eiva.Fletcher.Interop` ships per RID in runtimes/<rid>/native/, and P/Invoke

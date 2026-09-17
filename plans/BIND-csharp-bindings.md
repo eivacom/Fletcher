@@ -53,7 +53,7 @@ surface it will consume.
 
 ## Decision status at a glance
 
-All eighteen ruled. ✅ = settled.
+All nineteen ruled. ✅ = settled.
 
 | # | Decision | Status | Needs |
 |---|---|---|---|
@@ -72,6 +72,7 @@ All eighteen ruled. ✅ = settled.
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
 | 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did |
+| 19 | **How the copy oracle measures a binding producer** | ✅ **ruled 2026-09-17** (D-BIND-34): `fl_encode_row` into the probe's own window — `fl_publisher_publish_row` cannot reach the instrumented provider, because D-BIND-24 closed the registration door it would need |
 | 18 | **BIND-0's self-hosted-runner bullet** — unmet, and due before BIND-9 | ✅ **ruled 2026-09-17** (D-BIND-33): **struck from BIND-0 as a duplicate** — BIND-9 already carries it, more completely. Nothing moves and nothing relaxes |
 | 17 | **Who frees a message a CALLBACK puts in an `fl_error`** | ✅ **ruled 2026-09-17** (D-BIND-32): the callback **borrows** it — keeps the bytes alive until it returns, the shim copies and frees nothing. Stated on `fl_error`, not on `fl_grow_fn`. Answers B1 of BIND-1's spec review |
 | 16 | **Who implements the shim's ~40 entry points** — BIND-2c, or BIND-4 as `builtins.cpp` says? | ✅ **ruled 2026-09-17** (D-BIND-31): **2c takes the codec surface + the publisher chain**; the subscriber half, attachments, blobs and schema arrival stay with BIND-4. Forced by 2d's copy-oracle acceptance, which needs a live publisher | — |
@@ -918,9 +919,13 @@ the transport window.
 - Malformed-input parity with HARD-1..7 through `fl_decode_rows`; bounds checks not
   `#if DEBUG`-gated; every message preserved.
 - `CopyAccounting.BindingProducerWritesInPlace` added to
-  `integration-tests/pubsub-conformance`: a producer through `fl_rows_bind` and
-  `fl_publisher_publish_row` scores `encode_copies == 0`, retiring the README's
-  "stand-in" caveat for the client half.
+  `integration-tests/pubsub-conformance`: a producer through `fl_codec_open`,
+  `fl_rows_bind` and **`fl_encode_row`** — writing into a span of the probe's own
+  window — scores `encode_copies == 0`, retiring the README's "stand-in" caveat
+  for the client half. **Amended 2026-09-17 (D-BIND-34)**: it named
+  `fl_publisher_publish_row`, which cannot reach the instrumented probe because
+  D-BIND-24 closed the registration door that would put the probe in the shim's
+  registry, and which owns the encoder frame the ledger samples from.
 - The **single-copy check** (D-BIND-17): the shim enumerates loaded modules for a
   second marker export and refuses to initialise, naming both.
 - A packed-size budget for the shim in CI (D-BIND-1a rider ii).
@@ -937,7 +942,7 @@ property becomes provable, not where the code happens to divide:
 | **2a** | `NanoarrowCodec(schema)`, `BoundRows`, `EncodeRow` — the encode half | `28cdcd4` (+ `7820e82`, which builds `arrow-bridge` in the c-abi lane because it is the oracle) | 🟢 green, ⚪ unreviewed |
 | **2b** | `DecodeRows(bytes, len, count, ArrowArray*)` — the decode half, and the malformed-input parity property | `bec139e` | 🟢 green, ⚪ unreviewed |
 | **2c** | `fl_error` + the one `Translate` containment site; the codec surface; the write-window and writer adapters; and the publisher chain — provider/publisher create + destroy, `create_topic`, `list_topics`, `publish_raw`, `publish_row(s)`, `fl_string_list_*` (**scope ruled 2026-09-17, D-BIND-31**) | this commit | 🟢 green, ⚪ unreviewed |
-| **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | — | ⚪ |
+| **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | this commit | 🟢 green, ⚪ unreviewed |
 
 **State — 2026-09-16**
 
@@ -949,9 +954,9 @@ property becomes provable, not where the code happens to divide:
 | **Byte identity** against `arrow-bridge` | 🟢 2a, **but over a different corpus than this bullet names** — see the deviations below |
 | The borrow rule is tested | 🟢 2a — `BindBorrowsTheArrayAndNeverConsumesIt` |
 | Malformed-input parity with HARD-1..7 **through `fl_decode_rows`**; bounds checks not `#if DEBUG`-gated; every message preserved | 🔴 2b discharged it **at the codec level**: `DecodeRefusalsComeFromTheReader` walks a four-byte `0xFF` window across a valid encoding and requires every refusal to carry the reader's `"PositionalReader:"` prefix, so the HARD-1..7 hardening covers the binding by construction rather than by a second taxonomy. `fl_decode_rows` does not exist until 2c, where it is a pass-through and the property carries unchanged |
-| `CopyAccounting.BindingProducerWritesInPlace` in `pubsub-conformance` | ⚪ 2d |
-| The single-copy check (D-BIND-17) | ⚪ 2d |
-| A packed-size budget for the shim in CI | ⚪ 2d |
+| `CopyAccounting.BindingProducerWritesInPlace` in `pubsub-conformance` | 🟢 2d, measuring `fl_encode_row` into the probe's own window (D-BIND-34), with `BindingProducerStagingIsCaught` as its live negative control — the first draft of the leg recorded the LENT SPAN and so scored zero by construction; the control is what catches that |
+| The single-copy check (D-BIND-17) | 🟢 2d. `fl_single_copy_marker` + a load-time scan; a poisoned shim refuses through the one containment site rather than aborting at load (a shared library that fails to initialise takes the host down with no diagnostic a managed runtime can surface). Tested with a real decoy module on Windows and verified in a `gcc:13` container for Linux, which found two false-positive classes Windows structurally cannot express: `dlopen(nullptr)` is the GLOBAL SCOPE not the executable (a healthy process scored 2), and `dlsym` on a library handle searches its dependency chain (now deduplicated by symbol address) |
+| A packed-size budget for the shim in CI | 🟢 2d — a **12 MiB ceiling** on both legs. This is D-BIND-1a rider ii's check (the shim links nanoarrow, never Arrow C++), NOT BIND-9's release budget: the failure mode it catches is tens of megabytes against a 7.6 MiB shim, so it is set far above ordinary growth and trips only on the mistake it is named for. BIND-9 still sets the release number |
 | Prior art read first | 🟢 |
 
 **Two deviations from the acceptance above, both open and neither ruled:**

@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "single_copy.hpp"
+
 namespace fletcher::abi {
 namespace {
 
@@ -37,6 +39,19 @@ void SetMessage(fl_error* err, const char* what) noexcept {
 }
 
 }  // namespace
+
+fl_status PoisonedRefusal(fl_error* err) noexcept {
+    // One site, again. A shim that found a second copy of itself at load has to
+    // refuse every fallible entry point, and the containment wrapper is already
+    // the one place all of them pass through - so the refusal is written once
+    // rather than forty times, and an entry point cannot forget it by being
+    // added later.
+    try {
+        throw PubSubError(PubSubStatus::kInternal, SingleCopyRefusal());
+    } catch (...) {
+        return Capture(err, FL_ORIGIN_SEAM);
+    }
+}
 
 fl_status Capture(fl_error* err, fl_origin origin) noexcept {
     fl_status status = FL_INTERNAL;

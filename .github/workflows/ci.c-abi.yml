@@ -85,9 +85,18 @@ jobs:
             find ~/.conan2/p -name 'fletcher-c-abi*' -type f
             exit 1
           fi
+          # The ceiling is D-BIND-1a rider ii's check, not BIND-9's release
+          # budget — see the Linux leg for the full reasoning. Same number on
+          # both platforms on purpose: the failure mode it catches (Arrow C++
+          # linked into the shim) is tens of megabytes on either.
           BYTES=$(wc -c < "$SHIM")
+          CEILING=$((12 * 1024 * 1024))
           echo "win-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB) — $SHIM"
           echo "### win-x64 shim: $((BYTES / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BYTES" -gt "$CEILING" ]; then
+            echo "::error::the shim is $((BYTES / 1024 / 1024)) MiB, over the $((CEILING / 1024 / 1024)) MiB ceiling. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+            exit 1
+          fi
 
   build-linux:
     runs-on: ubuntu-latest
@@ -139,14 +148,26 @@ jobs:
               fi
 
               # The per-RID size is a release-facing number (the NuGet package
-              # carries one shim per RID), so it is measured on every run rather
-              # than once at BIND-0. No budget is ENFORCED yet: BIND-9 sets the
-              # threshold with the packaging work, and a number in the log from
-              # day one is what makes that threshold defensible rather than
-              # invented.
+              # carries one shim per RID), so it is measured on every run.
+              #
+              # WHAT THE CEILING BELOW IS, AND IS NOT (BIND-2d). It is not the
+              # release budget: BIND-9 sets that with the packaging work in hand,
+              # against these numbers, and BIND-0 said so. This is the check
+              # D-BIND-1a RIDER ii asks for by name - the shim links nanoarrow
+              # only, never Arrow C++, because wrapping `arrow-bridge`'s codec
+              # would drag full Arrow C++ into `Eiva.Fletcher.Interop`. That
+              # failure mode is tens of megabytes, not a few hundred kilobytes,
+              # so the ceiling is set far above ordinary growth and trips only on
+              # the mistake it is named for. A tight budget here would fail on
+              # every honest addition and be raised until it meant nothing.
               BYTES=$(wc -c < "$SHIM")
+              CEILING=$((12 * 1024 * 1024))
               echo "linux-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB)"
               echo "### linux-x64 shim: $((BYTES / 1024)) KiB" >> /workspace/shim-summary.md
+              if [ "$BYTES" -gt "$CEILING" ]; then
+                echo "::error::the shim is $((BYTES / 1024 / 1024)) MiB, over the $((CEILING / 1024 / 1024)) MiB ceiling. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+                exit 1
+              fi
 
               # The export table IS the interface, and on Linux it is enforced:
               # CXX_VISIBILITY_PRESET hides this component own symbols and

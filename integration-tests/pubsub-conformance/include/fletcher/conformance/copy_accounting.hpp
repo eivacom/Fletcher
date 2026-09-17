@@ -268,8 +268,66 @@ enum class ProducerMode { kInPlace, kStaged };
 RoundTrip RunProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
                                ProducerMode mode);
 
+/// What a caller-supplied producer REPORTS: where the row ended up, and how long
+/// it is.
+///
+/// Self-reported on purpose, and the reason is the difference between a
+/// measurement and a tautology. The harness cannot see inside a producer it does
+/// not own, so a sampler that recorded the LENT SPAN regardless of what the
+/// producer did would score every such producer as zero-copy by construction —
+/// including one that composed the row elsewhere and copied it in. `kStaged`
+/// reports its staging vector's address for exactly this reason, and
+/// `BindingProducerStagingIsCaught` is the control that keeps this honest.
+///
+/// A producer that misreports is unmeasurable here, which is the same bound the
+/// README already states for `AppendInPlace` itself: a producer is trusted to
+/// report what it wrote.
+struct ProducedRow {
+    const uint8_t* at = nullptr;
+    size_t len = 0;
+};
+
+/// One round trip whose producer is supplied by the CALLER, instrumented by the
+/// same `AppendInPlace` sampling and scored by the same `Judge()` as the modes
+/// above.
+///
+/// It exists so that a producer THIS HARNESS DOES NOT OWN can be measured —
+/// specifically a language binding reached through a C ABI (BIND-2d,
+/// D-BIND-34). Without it the only way to score such a producer would be to link
+/// the binding into `copy_accounting.cpp`, which every suite in this harness
+/// compiles; with it the instrument stays here and the foreign code stays in the
+/// one translation unit that needs it.
+///
+/// `payload` is what the delivery is checked against, so a caller whose encoding
+/// is not `CopyPayload` passes its own expected bytes and the row-content check
+/// stays real rather than being relaxed for the new leg.
+RoundTrip RunCustomProducerRoundTrip(CopyRunner& runner, const Topic& topic,
+                                     const std::vector<uint8_t>& payload,
+                                     const std::function<ProducedRow(uint8_t*, size_t)>& produce);
+
 /// Build `kAttachmentCount` attachments of `kAttachmentBytes` each.
 Attachments MakeCopyAttachments();
+
+// -- The binding producer (BIND-2d, D-BIND-34) -----------------------
+//
+// Implemented in `binding_producer.cpp`, which is the ONLY translation unit in
+// this harness that links `fletcher-c-abi`. Declared here so the clause file can
+// call it without seeing the ABI's header.
+
+/// The value the binding leg puts in its one binary field, sized so the encoded
+/// row is exactly `row_bytes`.
+std::vector<uint8_t> BindingRowValue(size_t row_bytes);
+
+/// One round trip whose producer is the SHIPPED codec reached through the
+/// SHIPPED C ABI: `fl_codec_open`, `fl_rows_bind`, `fl_encode_row` into a span
+/// of the probe's own window. Scored by the same ledger as every other leg.
+RoundTrip RunBindingProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes);
+
+/// The binding leg's live negative control: the same ABI, composing the row in
+/// storage of its own and copying it into the lent span. Scores 1, or the leg
+/// above is measuring nothing.
+RoundTrip RunBindingStagingProducerRoundTrip(CopyRunner& runner, const Topic& topic,
+                                             size_t row_bytes);
 
 /// Leg 3 — the copy §3.2 forces on a provider holding payload bytes in memory
 /// IT owns (a stand-in for a transport-loaned sample).

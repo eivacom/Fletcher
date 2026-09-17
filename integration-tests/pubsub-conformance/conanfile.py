@@ -53,6 +53,9 @@ class PubsubConformanceIntegrationConan(ConanFile):
         self.requires("fletcher-pubsub/[*, include_prerelease]")
         self.requires("fletcher-fastdds-pubsub-provider/[*, include_prerelease]")
         self.requires("fletcher-xrcedds-pubsub-provider/[*, include_prerelease]")
+        # TEST-ONLY: the copy oracle's binding leg measures the shipped shim
+        # (BIND-2d, D-BIND-34). Nothing else in this harness links it.
+        self.requires("fletcher-c-abi/[*, include_prerelease]")
         self.requires("gtest/1.17.0")
         # NOT for our code: for the MicroXRCEAgent the CMakeLists builds from
         # source. PDA-DEC-6 dropped `transitive_headers=True` from the Fast DDS

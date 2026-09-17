@@ -4,6 +4,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(pubsub-conformance-integration CXX)
 
+# TEST-ONLY, and only for the copy oracle's binding leg: the shim is the
+# artifact `Eiva.Fletcher.Interop` ships, and measuring it is the whole point
+# of retiring the README's stand-in caveat.
+find_package(fletcher-c-abi CONFIG REQUIRED)
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(GTest REQUIRED)
@@ -164,11 +168,18 @@ target_link_libraries(conformance_inprocess_carrying PRIVATE
 #
 # Keeps gtest_main: it spawns no child and opens no pipe, so it has no SIGPIPE
 # hazard to disarm.
+# `binding_producer.cpp` is the ONLY file here that links the binding shim, and
+# it is deliberately not in `copy_accounting.cpp`: that file is compiled into the
+# seam-vocabulary suite as well, and there is no reason for that suite to carry a
+# shared library it never calls. The instrument stays in the harness; the foreign
+# producer stays in one translation unit (BIND-2d, D-BIND-34).
 add_executable(conformance_copy_accounting
     src/copy_accounting.cpp
-    src/copy_clauses.cpp)
+    src/copy_clauses.cpp
+    src/binding_producer.cpp)
 target_link_libraries(conformance_copy_accounting PRIVATE
     conformance_support
+    fletcher-c-abi::fletcher-c-abi
     GTest::gtest_main)
 
 # ── The seam-vocabulary suite ───────────────────────────────────────

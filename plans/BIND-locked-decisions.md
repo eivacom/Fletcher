@@ -592,6 +592,39 @@ accessors do, for capstone parity (Q18).
   honest reference the comment asks for. BIND-4's acceptance keeps its managed wording; the
   native subscriber entry points are named there explicitly so the gap does not reopen.
 
+- **D-BIND-34 - the copy oracle measures `fl_encode_row` writing into the provider's own
+  window, not `fl_publisher_publish_row`.** *LOCKED BY THE MAINTAINER 2026-09-17.*
+
+  **Why the acceptance as written is not constructible.** BIND-2's 2d bullet asks for *a producer
+  through `fl_rows_bind` and `fl_publisher_publish_row`* scoring `encode_copies == 0`. The copy
+  oracle samples `produced_at` from inside the `RowEncoder` frame, so it can only measure a
+  producer it hands a `WriteBuffer` to. `SeamProbeProvider` - the instrumented provider the ledger
+  is built around - is a `PubSubProvider` the conformance harness owns, and **D-BIND-24
+  deliberately closed the registration door** that would let anything outside put it in the shim's
+  builtin registry. `fl_publisher_publish_row` resolves its provider through `fl_provider_create`,
+  so it can never publish into the probe, and it owns the encoder frame itself.
+
+  **What is measured instead.** Inside the harness's `RowEncoder`, `AppendInPlace` lends a span of
+  the probe's own window; an `fl_write_window` is built over that span and `fl_encode_row` is
+  called against a real `fl_codec_open` + `fl_rows_bind`. That is the SHIPPED codec, reached
+  through the SHIPPED C ABI, composing a row inside the transport's window.
+
+  **What that retires and what it does not.** It retires the README's caveat in substance - the
+  producer is no longer a stand-in written for the harness, it is the binding's own encoder behind
+  the C boundary. It does not exercise the publisher wrapper. That step moves no bytes: `Publish`
+  hands the provider's window to the same encoder, which is structural in `binding.cpp` and
+  already covered by BIND-2c's tests. A copy claim the oracle cannot score is not improved by
+  routing a test through code that does not touch the bytes.
+
+  **Rejected:** a test-only registration seam in the shim, which would reopen D-BIND-24's door in
+  the shipped artifact, against a round that has been strict about the shim exporting only what
+  `binding.h` declares.
+
+  **Consequences.** BIND-2's 2d acceptance is amended to name `fl_encode_row`; the test keeps the
+  name `CopyAccounting.BindingProducerWritesInPlace`. `integration-tests/pubsub-conformance` gains
+  a TEST-ONLY dependency on `fletcher-c-abi`, and its CI lane gains the matching `conan create` in
+  the same commit - the lesson `fPIC` and `arrow-bridge` each cost a cycle.
+
 - **D-BIND-33 — the self-hosted runner and `NUGET_EIVA_API_KEY` belong to BIND-9 only; BIND-0's
   copy of that bullet is struck as a DUPLICATE.** *LOCKED BY THE MAINTAINER 2026-09-17.*
 

@@ -277,6 +277,7 @@ jobs:
               - 'pubsub/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
               - 'integration-tests/pubsub-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.pubsub-conformance.yml'

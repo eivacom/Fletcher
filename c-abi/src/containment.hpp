@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "fletcher/abi/binding.h"
+#include "single_copy.hpp"
 
 namespace fletcher::abi {
 
@@ -47,12 +48,20 @@ namespace fletcher::abi {
 /// `noexcept` unwind is worse.
 fl_status Capture(fl_error* err, fl_origin origin) noexcept;
 
+/// Fill `err` with the single-copy refusal and return its status. Only called
+/// when `SingleCopyRefusal()` is non-empty.
+fl_status PoisonedRefusal(fl_error* err) noexcept;
+
 /// THE containment site. `origin` is read at CATCH time, so a nested thunk can
 /// re-attribute the failure before it propagates — which is how a codec error
 /// thrown inside a fused publish arrives as FL_ORIGIN_CODEC even though the
 /// entry point is a seam one.
 template <typename Fn>
 fl_status Contain(fl_error* err, const fl_origin* origin, Fn&& fn) noexcept {
+    // D-BIND-17: a shim that found a second copy of itself at load refuses
+    // everything, before the body runs and before any state is touched. The
+    // check is one string comparison against an empty string on the happy path.
+    if (!SingleCopyRefusal().empty()) return PoisonedRefusal(err);
     try {
         std::forward<Fn>(fn)();
         return FL_OK;

@@ -20,10 +20,34 @@ find_package(Arrow CONFIG REQUIRED)
 # and the export table is exactly what binding.h declares. Testing behind a
 # boundary means linking behind it.
 
+# The decoy second shim (D-BIND-17). A module that exports the marker symbol and
+# nothing else, so `SingleCopy.ASecondMarkerExportIsFound` can put a second one
+# into a live process and prove the scan fires. Building a REAL second shim would
+# drag the whole eProsima chain in for one assertion; this is a few lines of C.
+#
+# It goes into the test executables' own directory so the test can load it by a
+# path it computes rather than by guessing at a search order.
+add_library(single_copy_decoy SHARED
+    single_copy_decoy.c)
+set_target_properties(single_copy_decoy PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>
+    LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+
 add_executable(c_abi_tests
     test_binding_abi.cpp
     test_nanoarrow_codec.cpp
-    test_binding_entry_points.cpp)
+    test_binding_entry_points.cpp
+    test_single_copy.cpp)
+add_dependencies(c_abi_tests single_copy_decoy)
+# The NAME only, never the path. A generator expression yields a NATIVE path,
+# and on Windows that is full of backslashes which become escape sequences the
+# moment the macro lands in a C string literal - a path under C:/Users starts
+# with backslash-U, an invalid universal-character-name, and the build fails on
+# a line nobody wrote. The test derives its own directory at runtime instead,
+# which is also the more honest lookup: the decoy is deployed beside the test
+# executable, so beside the test executable is where it should be found.
+target_compile_definitions(c_abi_tests PRIVATE
+    FLETCHER_DECOY_NAME="$<TARGET_FILE_NAME:single_copy_decoy>")
 
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main

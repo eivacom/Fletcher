@@ -41,6 +41,7 @@
 
 #include "containment.hpp"
 #include "handles.hpp"
+#include "single_copy.hpp"
 #include "write_window.hpp"
 
 namespace fletcher::abi::internal {
@@ -105,7 +106,32 @@ void RequireOut(const void* out, const char* what) {
 
 }  // namespace
 
+namespace {
+
+/// The load-time single-copy check (D-BIND-17).
+///
+/// A dynamic initializer, because there is no other hook a shared library gets
+/// on both platforms that runs before a caller can reach an entry point. It
+/// latches a verdict and never throws; the refusal itself is served by the
+/// containment site, so a poisoned shim answers every fallible call with the
+/// same message instead of failing to load and taking the host down with no
+/// diagnostic a managed runtime could surface.
+const bool kSingleCopyChecked = (fletcher::abi::CheckSingleCopy(), true);
+
+}  // namespace
+
 extern "C" {
+
+/* ══ The single-copy marker ════════════════════════════════════════════════ */
+
+const char* fl_single_copy_marker(void) {
+    // Touches the load-time check's flag so no linker can decide the
+    // initializer above is unreachable and drop it - the same dead-stripping
+    // problem BIND-0's builtins touch existed to solve, and MSVC's /OPT:REF in
+    // a Release link is the one that bites.
+    (void)kSingleCopyChecked;
+    return fletcher::abi::MarkerText();
+}
 
 /* ══ Owned string lists ════════════════════════════════════════════════════ */
 
