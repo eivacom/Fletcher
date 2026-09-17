@@ -105,16 +105,3 @@ fl_status Capture(fl_error* err, fl_origin origin) noexcept {
 }
 
 }  // namespace fletcher::abi
-
-extern "C" {
-
-void fl_error_dispose(fl_error* err) {
-    if (err == nullptr) return;
-    delete[] err->message;
-    err->status = static_cast<int32_t>(FL_OK);
-    err->origin = static_cast<int32_t>(FL_ORIGIN_NONE);
-    err->message = nullptr;
-    err->message_len = 0;
-}
-
-}  // extern "C"

@@ -22,9 +22,17 @@ find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
 # from what links it.
 add_library(fletcher-c-abi-impl OBJECT
     src/nanoarrow_codec.cpp
-    src/single_copy.cpp)
+    src/single_copy.cpp
+    src/containment.cpp)
 
 target_compile_features(fletcher-c-abi-impl PUBLIC cxx_std_20)
+
+# `containment.cpp` names `fl_error` and `fl_status`, so the object library needs
+# the public header - which it did not when it held only the codec. Nothing here
+# is EXPORTED: FLETCHER_C_ABI_BUILDING is defined on the shim target alone, so
+# these objects see the plain declarations and define no dllexport.
+target_include_directories(fletcher-c-abi-impl PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
 set_target_properties(fletcher-c-abi-impl PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -58,7 +66,6 @@ endif()
 add_library(fletcher-c-abi SHARED
     src/binding_version.c
     src/builtins.cpp
-    src/containment.cpp
     src/binding.cpp)
 
 # The public header is C99; the implementation behind it is C++20 because the

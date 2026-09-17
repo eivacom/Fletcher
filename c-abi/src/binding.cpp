@@ -133,6 +133,22 @@ const char* fl_single_copy_marker(void) {
     return fletcher::abi::MarkerText();
 }
 
+/* ══ Errors ════════════════════════════════════════════════════════════════ */
+
+void fl_error_dispose(fl_error* err) {
+    if (err == nullptr) return;
+    // `delete[]` pairs with the `new[]` in containment.cpp's SetMessage, and the
+    // two must keep pairing. It lives HERE rather than beside that allocation
+    // because it is an exported entry point and every exported entry point is in
+    // this file - which is also what lets the containment logic sit in the object
+    // library where the tests can reach it.
+    delete[] err->message;
+    err->status = static_cast<int32_t>(FL_OK);
+    err->origin = static_cast<int32_t>(FL_ORIGIN_NONE);
+    err->message = nullptr;
+    err->message_len = 0;
+}
+
 /* ══ Owned string lists ════════════════════════════════════════════════════ */
 
 size_t fl_string_list_size(const fl_string_list* list) {

@@ -24,11 +24,13 @@
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../src/nanoarrow_codec.hpp"
@@ -472,6 +474,128 @@ TEST(BindingEntryPoints, AWriterReportingZeroBytesFailsThePublish) {
     EXPECT_EQ(err.origin, FL_ORIGIN_CALLBACK)
         << "a writer's own failure was reported as the seam's";
     fl_error_dispose(&err);
+
+    fl_publisher_destroy(publisher);
+    fl_provider_destroy(provider);
+}
+
+// ---------------------------------------------------------------------------
+// The concurrency the header promises
+// ---------------------------------------------------------------------------
+
+/// `binding.h` states it twice — an `fl_codec` is "immutable after construction,
+/// so any number of threads may use one concurrently without a lock", and an
+/// `fl_rows` is "immutable after construction, like the codec: N threads may
+/// publish different rows of one bound batch concurrently".
+///
+/// Those are contracts a binding will lean on hard: the C# tier is expected to
+/// share one codec per schema across a whole application. They were documented
+/// and never exercised, and the failure mode is the kind that appears under load
+/// on a customer's machine rather than in CI.
+///
+/// The check is the strongest one available without a race detector: every
+/// thread's bytes must equal what the same row produces single-threaded. A codec
+/// that kept per-call state would produce a wrong or torn row under contention
+/// far more often than it would crash.
+TEST(BindingEntryPoints, ManyThreadsShareOneCodecAndOneBoundBatch) {
+    AbiFixture abi;
+
+    std::vector<std::vector<uint8_t>> expected;
+    for (int64_t row = 0; row < abi.batch().num_rows(); ++row) {
+        VectorWindow sink(64);
+        fl_error err = {};
+        ASSERT_EQ(fl_encode_row(abi.rows(), row, &sink.window, &err), FL_OK) << MessageOf(err);
+        expected.push_back(sink.Written());
+    }
+
+    constexpr int kThreads = 8;
+    constexpr int kRounds = 200;
+    std::atomic<int> failures{0};
+    std::atomic<bool> go{false};
+
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t] {
+            // Released together, so the threads actually overlap instead of
+            // running one after another and proving nothing about sharing.
+            while (!go.load(std::memory_order_acquire)) {
+            }
+            for (int round = 0; round < kRounds; ++round) {
+                const int64_t row = (t + round) % expected.size();
+                VectorWindow sink(1);  // refills too, on every thread
+                fl_error err = {};
+                if (fl_encode_row(abi.rows(), row, &sink.window, &err) != FL_OK ||
+                    sink.Written() != expected[static_cast<size_t>(row)]) {
+                    ++failures;
+                }
+                fl_error_dispose(&err);
+            }
+        });
+    }
+    go.store(true, std::memory_order_release);
+    for (std::thread& thread : threads) thread.join();
+
+    EXPECT_EQ(failures.load(), 0)
+        << "concurrent encodes through one codec and one bound batch produced " << failures.load()
+        << " wrong or failed rows out of " << (kThreads * kRounds)
+        << ". The header promises both handles are immutable after construction and usable from "
+           "any number of threads without a lock, and a binding that shares one codec per schema "
+           "across an application depends on exactly that";
+}
+
+// ---------------------------------------------------------------------------
+// publish_rows: what a failure part-way through means
+// ---------------------------------------------------------------------------
+
+/// A failure at row k is NOT unwound, and the caller has to know it.
+///
+/// Rows already handed to the transport have gone out; there is no rollback to
+/// offer and pretending otherwise would be worse than saying so. The contract is
+/// that `[first, first + k)` were published and the rest were not, which makes a
+/// failure a resend decision rather than a retry-the-batch one.
+///
+/// WHAT THIS ROW CAN AND CANNOT ASSERT. It asserts the failure, and that it is
+/// attributed to the CODEC even though the entry point is a seam one — the
+/// re-attribution the fusion does from inside the encoder lambda. It cannot
+/// assert how many rows went out, because counting deliveries needs a subscriber
+/// and the subscriber half of the ABI is BIND-4's (D-BIND-31). That half of the
+/// contract is owed a test there, and is named here so it is not lost.
+TEST(BindingEntryPoints, PublishRowsFailsAtTheBadRowAndBlamesTheCodec) {
+    fl_error err = {};
+    fl_provider* provider = nullptr;
+    const fl_provider_config config = {};
+    ASSERT_EQ(fl_provider_create(Str("inprocess"), &config, &provider, &err), FL_OK)
+        << MessageOf(err);
+
+    fl_publisher* publisher = nullptr;
+    ASSERT_EQ(fl_publisher_create(provider, &publisher, &err), FL_OK) << MessageOf(err);
+
+    AbiFixture abi;
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("partial")};
+    const fl_topic topic = {segments, 1};
+    ASSERT_EQ(fl_publisher_create_topic(publisher, topic, &schema, &err), FL_OK) << MessageOf(err);
+    schema.release(&schema);
+
+    // One row past the end of the bound batch: rows 0..n-1 encode, row n does not.
+    const int64_t past_the_end = abi.batch().num_rows() + 1;
+    EXPECT_NE(
+        fl_publisher_publish_rows(publisher, topic, abi.rows(), 0, past_the_end, nullptr, &err),
+        FL_OK)
+        << "publishing past the end of the bound batch succeeded";
+    EXPECT_EQ(err.origin, FL_ORIGIN_CODEC)
+        << "a row-index failure inside the fused publish was reported as the seam's";
+    EXPECT_NE(MessageOf(err).find("outside the bound batch"), std::string::npos)
+        << "the refusal did not say what was wrong: " << MessageOf(err);
+    fl_error_dispose(&err);
+
+    // A count of zero publishes nothing and succeeds — the empty batch is not an
+    // error, and a binding that loops over an empty collection should not have to
+    // special-case it.
+    EXPECT_EQ(fl_publisher_publish_rows(publisher, topic, abi.rows(), 0, 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
 
     fl_publisher_destroy(publisher);
     fl_provider_destroy(provider);

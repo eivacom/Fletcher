@@ -67,6 +67,19 @@ const std::string& SingleCopyRefusal();
 /// load-time initializer and by the tests.
 void CheckSingleCopy();
 
+/// TEST ONLY: latch an arbitrary refusal, or clear it with an empty string.
+///
+/// It exists because the refusal is the half of this feature that MATTERS and
+/// the half that is otherwise unreachable. Detection can be tested with a real
+/// decoy module; the refusal cannot, because reaching it for real needs two
+/// shims in one process, and building a second shim means building the entire
+/// eProsima chain again for one assertion.
+///
+/// Not exported - `binding.h` does not declare it, so it is not in the shim's
+/// export table and no binding can call it. It is reachable only by a test that
+/// links the object library, which is exactly the audience.
+void SetSingleCopyRefusalForTest(std::string refusal);
+
 }  // namespace fletcher::abi
 
 #endif  // FLETCHER_C_ABI_SRC_SINGLE_COPY_HPP_

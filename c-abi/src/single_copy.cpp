@@ -122,6 +122,8 @@ std::vector<std::string> ModulesExportingTheMarker() { return ScanModules(); }
 
 const std::string& SingleCopyRefusal() { return RefusalSlot(); }
 
+void SetSingleCopyRefusalForTest(std::string refusal) { RefusalSlot() = std::move(refusal); }
+
 void CheckSingleCopy() {
     static std::once_flag once;
     std::call_once(once, [] {

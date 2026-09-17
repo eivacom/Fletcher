@@ -37,7 +37,8 @@ add_executable(c_abi_tests
     test_binding_abi.cpp
     test_nanoarrow_codec.cpp
     test_binding_entry_points.cpp
-    test_single_copy.cpp)
+    test_single_copy.cpp
+    test_containment.cpp)
 add_dependencies(c_abi_tests single_copy_decoy)
 # The NAME only, never the path. A generator expression yields a NATIVE path,
 # and on Windows that is full of backslashes which become escape sequences the
