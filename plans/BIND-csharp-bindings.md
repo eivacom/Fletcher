@@ -53,7 +53,7 @@ surface it will consume.
 
 ## Decision status at a glance
 
-All seventeen ruled. ✅ = settled.
+All eighteen ruled. ✅ = settled.
 
 | # | Decision | Status | Needs |
 |---|---|---|---|
@@ -72,6 +72,7 @@ All seventeen ruled. ✅ = settled.
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
 | 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did |
+| 18 | **BIND-0's self-hosted-runner bullet** — unmet, and due before BIND-9 | ✅ **ruled 2026-09-17** (D-BIND-33): **struck from BIND-0 as a duplicate** — BIND-9 already carries it, more completely. Nothing moves and nothing relaxes |
 | 17 | **Who frees a message a CALLBACK puts in an `fl_error`** | ✅ **ruled 2026-09-17** (D-BIND-32): the callback **borrows** it — keeps the bytes alive until it returns, the shim copies and frees nothing. Stated on `fl_error`, not on `fl_grow_fn`. Answers B1 of BIND-1's spec review |
 | 16 | **Who implements the shim's ~40 entry points** — BIND-2c, or BIND-4 as `builtins.cpp` says? | ✅ **ruled 2026-09-17** (D-BIND-31): **2c takes the codec surface + the publisher chain**; the subscriber half, attachments, blobs and schema arrival stay with BIND-4. Forced by 2d's copy-oracle acceptance, which needs a live publisher | — |
 
@@ -768,7 +769,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 
 | ID | Item | Track | Kind | Depends on | Forcing test | Status |
 |---|---|---|---|---|---|---|
-| BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🔴 |
+| BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🟢 |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🔴 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage`; per-row publish benchmark recorded | ⚪ |
@@ -809,9 +810,10 @@ first automated run happens before any real code exists.
   against the packed-size budget.
 - Landing order with the modernization branch's pending `arrow-bridge`/`protoc`
   commits agreed (P-7).
-- The self-hosted publish runner registered in the EIVA network and the
-  `NUGET_EIVA_API_KEY` secret created on `nuget.eiva.com` (user actions, D-BIND-28);
-  NuGet.org Trusted Publishing is deferred until the packages go external.
+- ~~The self-hosted publish runner registered in the EIVA network and the
+  `NUGET_EIVA_API_KEY` secret created on `nuget.eiva.com`~~ — **struck 2026-09-17
+  (D-BIND-33) as a duplicate of BIND-9's own bullet.** NuGet.org Trusted Publishing
+  is deferred until the packages go external (D-BIND-28), also BIND-9's.
 
 **State — 2026-09-14 (implementation started)**
 
@@ -826,7 +828,18 @@ first automated run happens before any real code exists.
 | `Apache.Arrow` pinned and its C Data Interface verified for every mapping type, nested included (N-9) | 🟢 **23.0.0**, pinned exactly (`[23.0.0]`). 17 types round-trip — 9 scalars, timestamp with and without timezone, duration, `struct`, `list<int32>`, `list<struct>`, `map<utf8,int32>` — plus schema and field metadata; 18 cases on both TFMs |
 | Per-RID shim size measured against the budget | 🟢 `win-x64` **7.61 MiB** with all three built-ins; `linux-x64` from the first lane run. Reported by the lane on every run; no threshold until BIND-9 |
 | Landing order with `feature/fastdds_modernization/19645` agreed (P-7) | 🟢 **ruled 2026-09-15 (D-BIND-29)**: BIND does not wait for PR #128. #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha` |
-| Self-hosted publish runner + `NUGET_EIVA_API_KEY` (D-BIND-28) | ⚪ maintainer actions, due before BIND-9 |
+| ~~Self-hosted publish runner + `NUGET_EIVA_API_KEY` (D-BIND-28)~~ | ⛔ **STRUCK 2026-09-17 (D-BIND-33): a duplicate of BIND-9's own bullet**, which carries it more completely (registered, labelled, documented, used by no other job). It was annotated "due before BIND-9" from the start — acceptance for an item cannot hold something whose deadline is a later item. Nothing moves and nothing relaxes |
+
+**Conformance review 2026-09-17 — CONFORMS**, 9 live bullets, 9 met
+(`plans/reviews/BIND-0-conformance.md`). Three findings carried forward, none
+blocking: **F1** the Part 4 matrix is stale by two cases (`test_xrce_document` is 11,
+the matrix says 9, so bucket 4 is 80 not 78) because #130 rebased underneath the
+kickoff — and BIND-3/BIND-4 state their acceptance in terms of those totals, so the
+mechanism will bite again at the next rebase; **F2** bullet 3's "exports only
+`fl_binding_abi_version()`" was true at BIND-0 by accident of an empty ABI and is true
+now only because of `cmake/exports.map`; **F3** the 7.61 MiB shim size is a kickoff
+baseline measured against an empty ABI, not a current fact. Not checked: the ADO items,
+the Arrow round-trip test's results, `linux-x64`'s stored size.
 
 One finding came out of the kickoff that the plan had not anticipated: the shim's
 Windows export table (Part 8, Open items).

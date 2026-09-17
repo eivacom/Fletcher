@@ -592,6 +592,24 @@ accessors do, for capstone parity (Q18).
   honest reference the comment asks for. BIND-4's acceptance keeps its managed wording; the
   native subscriber entry points are named there explicitly so the gap does not reopen.
 
+- **D-BIND-33 — the self-hosted runner and `NUGET_EIVA_API_KEY` belong to BIND-9 only; BIND-0's
+  copy of that bullet is struck as a DUPLICATE.** *LOCKED BY THE MAINTAINER 2026-09-17.*
+
+  BIND-0's acceptance carried *"The self-hosted publish runner registered in the EIVA network and
+  the `NUGET_EIVA_API_KEY` secret created on `nuget.eiva.com` (user actions, D-BIND-28)"*, marked
+  ⚪ and annotated **"due before BIND-9"** — an item's acceptance holding something whose own
+  deadline is a later item, which is a defect in how the bullet was placed rather than a debt
+  BIND-0 owes.
+
+  **It is not moved, because BIND-9 already has it**, and in a more complete form: *"The
+  self-hosted runner registered, labelled, documented (what it runs, what it must have installed),
+  and used by no other job"*, with the secret named in BIND-9's first bullet alongside
+  `cd.dotnet.yml`'s publish job. So this strikes a duplicate; nothing is lost and nothing relaxes.
+
+  **Why it matters beyond tidiness.** BIND-0 is the round's kickoff and every other item depends
+  on it. Leaving it unclosable on a bullet nobody can act on before BIND-9 would have held the
+  first item of the round open for the whole round, which makes 🟢 mean less everywhere else.
+
 - **D-BIND-32 — an `fl_error` a CALLBACK fills is BORROWED to the shim: the callback keeps the
   message bytes alive until it returns, the shim copies what it needs and frees nothing.**
   *LOCKED BY THE MAINTAINER 2026-09-17,* answering BLOCKER B1 of BIND-1's spec review, and

@@ -7,6 +7,47 @@ logged, and pushed. See
 
 <!-- Entries appended below by the round runbook -->
 
+## BIND-0 — Kickoff: decisions, skeletons, lanes and the test matrix (2026-09-17)
+
+**Forcing test:** `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms → 🟢   (⚪ → 🔴 → 🟢)
+**What landed:** the round's kickoff — D-BIND-1 … D-BIND-28 recorded; `.devcontainer` on the
+.NET 10 LTS SDK with `dotnet/global.json` pinned to the same band; `c-abi/` building a shim that
+exported one function; `dotnet/` packing three empty packages on `net8.0;net10.0`;
+`ci.c-abi.yml` and `ci.dotnet.yml` green on Windows **and** Linux; Part 4's test matrix
+re-derived and committed; `Apache.Arrow` pinned exactly at `[23.0.0]`; the per-RID shim size
+measured. Commits `57f565c`, `2caf38a`, `791baba`.
+**Reviews:** conformance, `plans/reviews/BIND-0-conformance.md` — **CONFORMS**, 9 live bullets,
+9 met, 0 blocking findings. Each bullet was checked against the tree rather than against the
+state table: the decision digest enumerated, both SDK pins read, the package list taken from
+disk, all four CI jobs read from the run, the Arrow pin grepped from both `.csproj`, and **the
+Part 4 matrix re-derived by its own documented command and reconciled bucket by bucket**.
+**The tenth bullet was struck, not met** (D-BIND-33): BIND-0's acceptance carried the
+self-hosted publish runner and `NUGET_EIVA_API_KEY`, annotated "due before BIND-9" — an item's
+acceptance cannot hold something whose deadline is a later item, and BIND-9 already carries the
+same requirement more completely. A duplicate removed; nothing moved and nothing relaxed.
+**Verification:** `ci.pr` green end to end at `0811091` — `c-abi / build-linux`,
+`c-abi / build-windows`, `dotnet / linux`, `dotnet / windows` all `completed:success`.
+**Commit / push:** `feature/csharp-bindings` → `origin feature/csharp-bindings`
+**Carry-forwards:**
+- **F1 — the Part 4 matrix is stale, and the mechanism will repeat.** Bucket 1 (104) and bucket 3
+  (38) reproduce exactly, and the documented exclusions reconcile to the byte
+  (`test_fletcher_sample_pub_sub_type` is exactly the 24 provider-internal cases,
+  `test_owned_schema` exactly the 1). Bucket 4 does not: `test_xrce_document` holds 11 macros
+  where the matrix records 9, so the total is **80, not 78**. The cause is not a miscount — #130
+  (SIGPIPE, authored 2026-09-16) sits *below* the 2026-09-15 kickoff after D-BIND-30's
+  rebase-at-item-boundaries policy, so the matrix was right when derived and a rebase invalidated
+  it. **BIND-3 and BIND-4 state their acceptance as these totals** ("Bucket 1 (104) green",
+  "Bucket 4 (78)"), so this is owed to BIND-3, not to BIND-0. Cheapest durable fix: state the
+  buckets by file set and compute the count when it is needed.
+- **F2** — "exports only `fl_binding_abi_version()`" was true at BIND-0 because the ABI was
+  empty. It is true now for a different reason (`c-abi/cmake/exports.map`), and on Windows it has
+  never been true at all (~3531 names from the static Fast DDS). BIND-1's B3 records the same.
+- **F3** — the recorded **7.61 MiB** is a kickoff baseline against an empty ABI, not a current
+  measurement. The lane re-measures every run; BIND-9 should read the budget off a current number.
+- **Not checked, and stated as such:** the ADO items (needs `devops.eiva.com`), the
+  `Apache.Arrow` C Data Interface round-trip results (the lane is green; the cases were not
+  re-run), and `linux-x64`'s stored shim size.
+
 ## BIND-1 — The binding ABI header, reviewed as a specification (2026-09-17)
 
 **Forcing test:** `BindingAbi.CompilesAsC99AndIsSelfContained` → 🟢   (⚪ → 🔴 → 🟢)
