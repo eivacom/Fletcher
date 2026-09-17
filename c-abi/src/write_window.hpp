@@ -112,18 +112,12 @@ class WindowBuffer final : public WriteBuffer {
             // replaced: it is the only thing that says WHY the buffer would not
             // grow, and this frame knows nothing about that.
             //
-            // NOT disposed, deliberately, and this is an OPEN QUESTION against
-            // binding.h rather than a style choice. `fl_error`'s documentation
-            // says the message "is heap-allocated by the shim" and disposed with
-            // `fl_error_dispose` — but `fl_grow_fn` hands an `fl_error*` to a
-            // CALLER's callback, which inverts that: the bytes would be allocated
-            // by the binding and freed by the shim's `delete[]`. Those are the
-            // same heap only while both sides share a CRT, and BIND-3 intends the
-            // shim to link the MSVC CRT statically, which is exactly when they
-            // stop being. Copying and not freeing leaks at worst under the
-            // shim-allocates reading; disposing corrupts a heap under the
-            // caller-allocates one, so this takes the survivable side until
-            // BIND-1's spec review rules on it.
+            // Copied and NOT freed, per D-BIND-32: an `fl_error` a callback fills
+            // is BORROWED to the shim, exactly as `fl_str` is everywhere else in
+            // the ABI. Freeing it here would hand a binding's allocation to the
+            // shim's `delete[]`, and those are one heap only while both sides
+            // share a C runtime — which this shim, linking the MSVC CRT
+            // statically, does not.
             std::string message(reinterpret_cast<const char*>(err.message), err.message_len);
             throw PubSubError(static_cast<PubSubStatus>(status),
                               message.empty() ? "fl_write_window: grow refused" : message);

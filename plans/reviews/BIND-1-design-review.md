@@ -82,6 +82,21 @@ surface — a caller-supplied disposer, or shim-exported `fl_alloc`/`fl_free`.
 whatever is decided should be stated on `fl_error` itself rather than on `fl_grow_fn`,
 or the next callback that takes one reopens this.
 
+> **ANSWERED 2026-09-17 — D-BIND-32.** The maintainer ruled the borrow reading, and
+> ruled it for every binding rather than for C# alone: a callback that sets `message`
+> keeps those bytes alive until it returns; the shim copies what it needs and frees
+> nothing. Stated on `fl_error` as this finding asked, with a cross-reference from
+> `fl_grow_fn`. No signature, struct or enumerator changed, so no version bump.
+> `WindowBuffer::Grow` already behaved this way and its "open question" comment is now a
+> statement of the rule.
+>
+> The performance question raised against the ruling resolves in its favour: the copy is
+> on the failure path, beside a C++ exception, publishing nothing. The borrow-and-copy
+> cost that is on the *hot* path is unrelated — `ToSegments` per `fl_publisher_publish_row`
+> — and is risk B-2, which BIND-3's per-row benchmark settles with numbers.
+>
+> **B1 closed. B2 and B3 remain open, so BIND-1 is still 🔴.**
+
 ### B2 — "Status of the surface" is stale, and it is the paragraph a binding author trusts
 
 ```c
@@ -334,4 +349,5 @@ takes the survivable side and says so at the call site, and will follow whatever
 decided here.
 
 **This review does not close BIND-1.** It is cycle 1; the item goes 🟢 when the three
-BLOCKERs are answered and the header is re-read against the answers.
+BLOCKERs are answered and the header is re-read against the answers. **B1 was answered
+on 2026-09-17 (D-BIND-32) and the header updated; B2 and B3 are open.**

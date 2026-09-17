@@ -231,7 +231,25 @@ typedef enum fl_origin {
  *
  * Zero-initialise before the call (`fl_error err = {0};`). On FL_OK the callee
  * leaves it untouched. On failure the caller owns `message` and releases it with
- * fl_error_dispose, which is why every binding's throw site is a `finally`. */
+ * fl_error_dispose, which is why every binding's throw site is a `finally`.
+ *
+ * ── The other direction: an fl_error a CALLBACK fills (D-BIND-32) ───────────
+ * Everything above describes the SHIM filling an error for the caller. The
+ * reverse also happens: fl_grow_fn is handed an fl_error* and fills it when it
+ * refuses. Ownership there is the opposite way round, and rather than a second
+ * rule to remember it is the same BORROW discipline fl_str uses everywhere else
+ * in this header:
+ *
+ *   A CALLBACK THAT SETS `message` KEEPS THOSE BYTES ALIVE UNTIL IT RETURNS.
+ *   The shim copies what it needs before the callback's frame is gone and frees
+ *   NOTHING. fl_error_dispose is for errors the shim filled; a callback never
+ *   calls it on one of its own.
+ *
+ * The alternative - the shim freeing what a binding allocated - is rejected
+ * because the two are one heap only while both sides share a C runtime, and this
+ * shim links the MSVC CRT statically. Static storage, or a buffer the binding
+ * owns for the duration of the call, both satisfy the rule and neither
+ * allocates. The cost is one copy, on a path that is already failing. */
 typedef struct fl_error {
     int32_t status;     /* an fl_status value */
     int32_t origin;     /* an fl_origin value */
@@ -528,7 +546,10 @@ FL_ABI_EXPORT void fl_attachments_dispose(fl_attachments* atts);
  * `grow` asks for room for at least `min_bytes` more. It returns FL_OK having
  * updated `data`, `capacity` and preserved `pos` and the bytes below it, or a
  * failure status having changed nothing. A window with a NULL `grow` is
- * fixed-capacity. */
+ * fixed-capacity.
+ *
+ * A `grow` that fills `err` BORROWS its message to the shim, which copies it and
+ * frees nothing - see fl_error (D-BIND-32). */
 typedef struct fl_write_window fl_write_window;
 
 typedef fl_status (*fl_grow_fn)(fl_write_window* window, size_t min_bytes, fl_error* err);

@@ -53,7 +53,7 @@ surface it will consume.
 
 ## Decision status at a glance
 
-All sixteen ruled. ✅ = settled.
+All seventeen ruled. ✅ = settled.
 
 | # | Decision | Status | Needs |
 |---|---|---|---|
@@ -72,6 +72,7 @@ All sixteen ruled. ✅ = settled.
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
 | 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did |
+| 17 | **Who frees a message a CALLBACK puts in an `fl_error`** | ✅ **ruled 2026-09-17** (D-BIND-32): the callback **borrows** it — keeps the bytes alive until it returns, the shim copies and frees nothing. Stated on `fl_error`, not on `fl_grow_fn`. Answers B1 of BIND-1's spec review |
 | 16 | **Who implements the shim's ~40 entry points** — BIND-2c, or BIND-4 as `builtins.cpp` says? | ✅ **ruled 2026-09-17** (D-BIND-31): **2c takes the codec surface + the publisher chain**; the subscriber half, attachments, blobs and schema arrival stay with BIND-4. Forced by 2d's copy-oracle acceptance, which needs a live publisher | — |
 
 Nothing gates kickoff. The one open non-engineering item is the LGPL relinking
@@ -873,7 +874,7 @@ Windows export table (Part 8, Open items).
 | Nothing crossing is a `std::shared_future` (D-BIND-22) | 🟢 |
 | No generated output's bytes change; no emitter behaviour changes | 🟢 the header touches no emitter |
 | **Reviewed as a specification** | ⚪ **open, and the item's remaining work.** The expensive wording to check: `fl_schema`'s never-call-Arrow's-release warning, the write window's disclosed residue, and attachments' never-sort rule |
-| *(raised by BIND-2c, 2026-09-17)* **Who frees a message a CALLBACK put in an `fl_error`** | ⚪ **open, and settled at this review by the maintainer's instruction.** `fl_error` says the message *"is heap-allocated by the shim"* and is released with `fl_error_dispose` — but `fl_grow_fn` hands an `fl_error*` to a CALLER's callback, inverting it: allocated by the binding, freed by the shim's `delete[]`. Those are one heap only while both sides share a CRT, and BIND-3 intends the shim to link the MSVC CRT **statically**, which is exactly when they are not. 2c takes the survivable side — copy the message, never free it: that leaks at worst under the shim-allocates reading, where disposing would corrupt a heap under the caller-allocates one. **Recommendation:** say that a `grow` callback which sets `message` keeps those bytes alive until it returns and the shim copies them, matching the borrow discipline `fl_str` already uses everywhere else in the ABI. The alternatives — a caller-supplied disposer, or shim-exported `fl_alloc`/`fl_free` — both widen the surface |
+| *(raised by BIND-2c, 2026-09-17)* **Who frees a message a CALLBACK put in an `fl_error`** | 🟢 **RULED 2026-09-17 (D-BIND-32): the callback BORROWS it** — keeps the bytes alive until it returns, the shim copies and frees nothing; stated on `fl_error` so the next such callback inherits it. `binding.h` updated. The question as it stood: `fl_error` says the message *"is heap-allocated by the shim"* and is released with `fl_error_dispose` — but `fl_grow_fn` hands an `fl_error*` to a CALLER's callback, inverting it: allocated by the binding, freed by the shim's `delete[]`. Those are one heap only while both sides share a CRT, and BIND-3 intends the shim to link the MSVC CRT **statically**, which is exactly when they are not. 2c takes the survivable side — copy the message, never free it: that leaks at worst under the shim-allocates reading, where disposing would corrupt a heap under the caller-allocates one. **Recommendation:** say that a `grow` callback which sets `message` keeps those bytes alive until it returns and the shim copies them, matching the borrow discipline `fl_str` already uses everywhere else in the ABI. The alternatives — a caller-supplied disposer, or shim-exported `fl_alloc`/`fl_free` — both widen the surface |
 
 ### BIND-2 — The nanoarrow codec, the publish fusion, and the oracle's producer
 

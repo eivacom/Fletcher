@@ -591,3 +591,41 @@ accessors do, for capstone parity (Q18).
   the same commit that references `BuiltinRegistry()` from `fl_provider_create` — which is the
   honest reference the comment asks for. BIND-4's acceptance keeps its managed wording; the
   native subscriber entry points are named there explicitly so the gap does not reopen.
+
+- **D-BIND-32 — an `fl_error` a CALLBACK fills is BORROWED to the shim: the callback keeps the
+  message bytes alive until it returns, the shim copies what it needs and frees nothing.**
+  *LOCKED BY THE MAINTAINER 2026-09-17,* answering BLOCKER B1 of BIND-1's spec review, and
+  **stated on `fl_error` itself rather than on `fl_grow_fn`** so the next callback that takes an
+  `fl_error*` inherits it instead of reopening the question.
+
+  **The contradiction it closes.** `fl_error` says the message *"is heap-allocated by the shim"*
+  and is released with `fl_error_dispose`; `fl_grow_fn`, 260 lines further down the same header,
+  hands an `fl_error*` to a function the CALLER wrote. Both cannot hold. Under the first the shim
+  allocates and frees; under the second the binding allocates and the shim's `delete[]` frees —
+  and those are one heap only while both sides share a C runtime, which BIND-3 intends them not to
+  (the shim links the MSVC CRT statically). BIND-2c's first implementation called
+  `fl_error_dispose` on a callback-filled error, which is heap corruption under the configuration
+  the round means to ship.
+
+  **Why the borrow reading and not the alternatives.** It is the discipline `fl_str` already uses
+  everywhere it appears, so it adds no rule a binding author does not already know; it needs no new
+  exports, where a caller-supplied disposer or shim-exported `fl_alloc`/`fl_free` both widen the
+  surface; and it is satisfiable without allocating at all — static storage, or a buffer the
+  binding owns for the duration of the call.
+
+  **Performance, asked and answered.** The copy lands on the FAILURE path: `grow` returning
+  non-`FL_OK` means the encode is aborting and a C++ exception is about to be thrown and a publish
+  failed. One short-string construction is noise beside the throw it precedes, and nothing is
+  published. The borrow-and-copy cost that IS on the hot path is a different one — `ToSegments`
+  materialising a `std::vector<std::string>` per `fl_publisher_publish_row`, which
+  `fl_publisher_publish_rows` already hoists out of its loop. That is risk **B-2**, and BIND-3's
+  per-row publish benchmark decides it with numbers. If it must be paid down, the fix is a
+  pre-converted topic handle following this ABI's own open-once shape (`fl_codec_open` +
+  `fl_rows_bind`), which is a pure addition and therefore append-only-safe — not something to add
+  on suspicion.
+
+  **Consequences.** The rule goes in `binding.h` on `fl_error`, with a cross-reference from
+  `fl_grow_fn`; no signature, struct or enumerator changes, so no version bump and no append-only
+  question. `WindowBuffer::Grow` already behaves this way and its "open question" comment becomes a
+  statement of the rule. B1 of the spec review is answered; **B2 and B3 remain, so BIND-1 stays
+  🔴.**
