@@ -67,12 +67,27 @@
 // reached an application cannot be taken back.
 //
 // ── Status of the surface ───────────────────────────────────────────────────
-// BIND-1 SPECIFIES this header; it does not implement it. Only
-// `fl_binding_abi_version()` is defined by the shim today. Every other
-// declaration is the specification BIND-2 (the codec), BIND-3 (the interop
-// tier) and BIND-4 (pub/sub) implement, and BIND-Rust consumes next round.
-// Calling an unimplemented entry point of a BIND-1-era shim is a link error, not
-// a run-time surprise: the symbol is not exported until its item lands.
+// This header is a SPECIFICATION that the shim grows into. A declaration below
+// may or may not be implemented by the shim you are holding, and the rule that
+// makes that safe is:
+//
+//   A DECLARATION IS EXPORTED ONLY ONCE ITS ITEM LANDS. Nothing here is ever
+//   stubbed out to return FL_NOT_SUPPORTED because it has not been written yet -
+//   that status means "this build cannot do the thing", which is a different and
+//   much more confusing statement than "not linked yet".
+//
+// So an unimplemented entry point is a LINK ERROR, not a run-time surprise, and
+// `fl_binding_abi_version()` is the run-time handshake for everything else: it
+// answers for the shim actually loaded, so a binding compiled against a different
+// FL_BINDING_ABI_VERSION can refuse it rather than crash inside a struct whose
+// layout moved.
+//
+// Which items have landed is deliberately NOT listed here. That inventory has one
+// maintained home - the round's tracker, `plans/BIND-csharp-bindings.md` - and a
+// second copy in a header nobody edits at an item boundary is a copy that goes
+// stale silently. (It did: this paragraph claimed for a while that only
+// `fl_binding_abi_version()` existed, some fifteen entry points after that
+// stopped being true.)
 #ifndef FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 #define FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 
@@ -92,12 +107,36 @@
 struct ArrowSchema;
 struct ArrowArray;
 
-/* Symbol visibility. FLETCHER_C_ABI_BUILDING is defined by the shim's own
- * build only (CMake PRIVATE define), so a consumer gets the import form on
- * Windows and a plain declaration elsewhere. Everything not marked with this
- * macro is hidden: the CMake target sets visibility to hidden on gcc/clang and
- * Windows exports nothing without __declspec(dllexport), so the shim's export
- * table is exactly the functions declared below. */
+/* Symbol visibility. FLETCHER_C_ABI_BUILDING is defined by the shim's own build
+ * only (CMake PRIVATE define), so a consumer gets the import form on Windows and
+ * a plain declaration elsewhere.
+ *
+ * What that does NOT do by itself is make the export table equal to the
+ * declarations below, and the difference is worth stating because it is measured
+ * rather than assumed:
+ *
+ *   LINUX - the property holds, and it holds because `c-abi/cmake/exports.map`
+ *   says so at the link. Hidden visibility governs what our own translation units
+ *   emit BY DEFAULT and `--exclude-libs ALL` localises what arrives from a static
+ *   archive; neither reaches a symbol libstdc++ marks with EXPLICIT default
+ *   visibility, and it marks several `shared_ptr` internals that way so RTTI
+ *   works across a shared object. One `std::make_shared` inside the shim was
+ *   enough to export six of them. The version script is what settles it; CI
+ *   asserts the result on every run.
+ *
+ *   WINDOWS - the property does NOT hold, and cannot be made to from here.
+ *   Nothing leaves a DLL without __declspec(dllexport), but ConanCenter's
+ *   `fast-dds` static build is compiled with EPROSIMA_USER_DLL_EXPORT and its
+ *   objects carry /EXPORT directives the linker honours when it pulls them into
+ *   a DLL; a module-definition file does not suppress them (measured: 3531 names
+ *   either way). Nothing resolves incorrectly because of it - Windows binds
+ *   imports per module, so there is no ELF-style interposition and P/Invoke finds
+ *   a function by name regardless - but the table is larger than this header, and
+ *   a consumer inspecting it will see names that are not ours. Revisited at
+ *   BIND-9 with the packed-size budget in hand.
+ *
+ * Either way, every function a binding may call is marked below and nothing that
+ * is not marked is callable. */
 #if defined(_WIN32)
 #if defined(FLETCHER_C_ABI_BUILDING)
 #define FL_ABI_EXPORT __declspec(dllexport)

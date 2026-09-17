@@ -9,7 +9,8 @@ Rust binds next round, and its ownership wording is the part the plan calls "the
 expensive thing to get wrong". A rule that is wrong here is wrong in two languages and
 cannot be quietly corrected later.
 
-**Outcome: 3 BLOCKERs, 4 DEBT items, 3 reviewed-and-kept, 2 NITs.** None of the
+**Outcome: 3 BLOCKERs, 4 DEBT items, 3 reviewed-and-kept, 2 NITs. All three BLOCKERs
+were closed in cycle 2 (below); the DEBT and NITs are carried forward.** None of the
 BLOCKERs is a design error — all three are places where the header states something
 that is no longer true, or states a rule it does not finish. That is the failure mode a
 spec review exists to catch, and it is why this one is worth doing before BIND-3 binds
@@ -33,6 +34,10 @@ against the file.
 ---
 
 ## BLOCKERs
+
+> The C snippets in this section quote the header **as cycle 1 found it**. All three
+> passages were rewritten by the fixes recorded in cycle 2, so grepping the current
+> header for them will not find them. That is the point of a review record.
 
 ### B1 — `fl_error`'s ownership rule does not cover the direction the header itself opens
 
@@ -351,3 +356,111 @@ decided here.
 **This review does not close BIND-1.** It is cycle 1; the item goes 🟢 when the three
 BLOCKERs are answered and the header is re-read against the answers. **B1 was answered
 on 2026-09-17 (D-BIND-32) and the header updated; B2 and B3 are open.**
+
+---
+
+# Cycle 2 (final) — re-read at `f73cfb4` + the B2/B3 fixes
+
+The header is now 913 lines (was 852). Every change since cycle 1 is a comment: no
+signature, struct, enumerator or macro moved, so nothing in this cycle touches the
+append-only rule or needs a version bump.
+
+## BLOCKER 1 — the `fl_error` borrow rule: **closed**
+
+Ruled as D-BIND-32 and stated on `fl_error` itself, which is where the finding asked
+for it:
+
+```c
+ *   A CALLBACK THAT SETS `message` KEEPS THOSE BYTES ALIVE UNTIL IT RETURNS.
+ *   The shim copies what it needs before the callback's frame is gone and frees
+ *   NOTHING. fl_error_dispose is for errors the shim filled; a callback never
+ *   calls it on one of its own.
+```
+
+Checked against the finding's three asks: it is on the type rather than on
+`fl_grow_fn` ✅, so the next callback taking an `fl_error*` inherits it; `fl_grow_fn`
+carries a cross-reference rather than a second copy of the rule ✅; and the rejected
+alternatives are named with their reason ✅. `WindowBuffer::Grow` already behaved this
+way, so nothing in the shim changed.
+
+## BLOCKER 2 — "Status of the surface": **closed, and made unable to restale**
+
+The replacement keeps the property cycle 1 wanted kept and drops the inventory that
+caused the staleness:
+
+```c
+//   A DECLARATION IS EXPORTED ONLY ONCE ITS ITEM LANDS. Nothing here is ever
+//   stubbed out to return FL_NOT_SUPPORTED because it has not been written yet -
+//   that status means "this build cannot do the thing", which is a different and
+//   much more confusing statement than "not linked yet".
+```
+
+The test that matters for this one is whether a future item boundary has to remember
+to edit it. It does not: there is no longer a count, a list, or an item name that
+lands later. The paragraph now points at the tracker as the one maintained home for
+"what has landed", and says out loud that it went stale before — which is the part
+that stops someone helpfully re-adding an inventory.
+
+## BLOCKER 3 — the export-table claim: **closed, and cycle 1 understated the problem**
+
+Worth recording as a correction rather than quietly fixing, because cycle 1 got this
+half right. It said *"The conclusion is true today. The stated reason for it is not."*
+The first half was true only of **Linux**. On **Windows** the conclusion was never
+true: ConanCenter's static `fast-dds` is built with `EPROSIMA_USER_DLL_EXPORT` and its
+objects carry /EXPORT directives the linker honours, so the shim's table has ~3531
+names and always did. The header claimed the property unconditionally, so it was
+wrong on Windows from the day it was written, and BIND-2c's six libstdc++ symbols were
+a second, separate breach on the platform where it *could* hold.
+
+The replacement states both platforms separately, names the mechanism that actually
+produces the property on each, and says plainly that it does not hold on Windows:
+
+```c
+ *   LINUX - the property holds, and it holds because `c-abi/cmake/exports.map`
+ *   says so at the link. Hidden visibility governs what our own translation units
+ *   emit BY DEFAULT and `--exclude-libs ALL` localises what arrives from a static
+```
+
+```c
+ *   WINDOWS - the property does NOT hold, and cannot be made to from here.
+```
+
+It also keeps the reassurance a binding author needs on reading that — imports bind
+per module, so nothing resolves incorrectly — and ends with the claim that *is*
+unconditional and is the one a caller depends on: every callable function is marked,
+and nothing unmarked is callable.
+
+## The cycle-1 claims table, re-checked
+
+| Claim | Cycle 1 | Now |
+|---|---|---|
+| "the shim's export table is exactly the functions declared below" | ❌ B3 | ✅ stated per platform, with the real mechanism |
+| "Only `fl_binding_abi_version()` is defined by the shim today" | ❌ B2 | ✅ claim removed; the property it guarded is kept |
+| Three ownership words used precisely; unqualified pointers BORROWED | ✅ *with one exception — B1* | ✅ no exception remaining |
+| Pure C99, self-contained | ✅ | ✅ re-verified after the edits: `BindingAbi.CompilesAsC99AndIsSelfContained` green, 23/23, zero warnings |
+
+## DEBT and NITs: unchanged and still open
+
+D1–D4 and N1–N2 are untouched, deliberately. None of them blocks the item — by this
+repo's review convention DEBT does not loop the design — and each is a one-clause edit
+whoever next opens the header can take. They are listed above and stay listed.
+
+The two most worth taking early, because both cost an implementer time rather than
+just reading time: **D1** (the OUT convention says "on any failure" while two
+documented non-failures also leave OUT untouched) and **D2** (`fl_string_list_at`
+leaves out-of-range unspecified, where its twin specifies `{NULL, 0}` — BIND-2c had to
+guess).
+
+## Outcome
+
+**All three BLOCKERs closed; the header re-read against the answers.** That is BIND-1's
+last acceptance bullet, and with it the item's acceptance is met in full.
+
+| | |
+|---|---|
+| BLOCKERs opened / closed | 3 / 3 |
+| Of those needing a signature change | 0 |
+| DEBT carried forward | 4 |
+| NITs carried forward | 2 |
+| Header lines, cycle 1 → cycle 2 | 852 → 913 |
+| Behaviour changed in the shim | none — every edit is a comment |
