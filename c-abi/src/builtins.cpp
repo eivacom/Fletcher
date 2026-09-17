@@ -11,9 +11,10 @@
 // `SetPathResolver`, and managed code can neither register a provider nor
 // install a resolver (D-BIND-24).
 //
-// At BIND-0 nothing above calls this yet: `fl_registry_create` arrives with the
-// rest of the ABI in BIND-1/BIND-4. The file is here from the kickoff on
-// purpose, because it is what makes the skeleton's LINK the real one — the whole
+// BIND-2c wired `fl_provider_create` to `BuiltinRegistry()` (D-BIND-31), so the
+// registry is now reached from the export table. The file was here from the
+// kickoff on purpose, before anything called it, because it is what makes the
+// skeleton's LINK the real one — the whole
 // Fast DDS and Micro XRCE-DDS chain is pulled into the shared object exactly as
 // the shipped shim will pull it. That is what BIND-0's per-RID size measurement
 // measures, and it puts the static-link-into-a-shared-library question (PIC on
@@ -42,21 +43,13 @@ ProviderRegistry& BuiltinRegistry() {
 
 }  // namespace fletcher::abi::internal
 
-namespace {
-
-// Load-time touch, and the ONLY reason this file has a static initializer.
+// BIND-0's load-time touch is GONE, and its removal is the point.
 //
-// Without a reference from somewhere the linker keeps (MSVC's /OPT:REF in a
-// Release link is the one that bites), `BuiltinRegistry` is unreferenced at
-// BIND-0 and the three provider archives are never pulled in — the shim would
-// build and measure small, and the link question BIND-0 exists to answer would
-// go unasked. A dynamic initializer is reachable from .init_array / .CRT$XCU and
-// survives both linkers' dead-stripping.
+// Until BIND-2c there was no exported function referencing `BuiltinRegistry()`,
+// so MSVC's /OPT:REF in a Release link dropped it and the three provider
+// archives were never pulled into the shim — which would have made BIND-0
+// measure a shim that did not contain what it claimed to. A dynamic initializer
+// held the reference until an honest one existed.
 //
-// DELETE THIS when `fl_registry_create` lands (BIND-4) and references
-// `BuiltinRegistry()` from the export table, which is the honest reference.
-// Building the registry costs three `std::map` inserts and constructs no
-// provider: nothing here opens a socket, reads a document or starts a thread.
-[[maybe_unused]] const bool kBuiltinsLinked = (fletcher::abi::internal::BuiltinRegistry(), true);
-
-}  // namespace
+// `fl_provider_create` is that honest reference. The comment that stood here
+// said to delete this when it landed; it landed, and this is the deletion.

@@ -22,7 +22,8 @@ find_package(Arrow CONFIG REQUIRED)
 
 add_executable(c_abi_tests
     test_binding_abi.cpp
-    test_nanoarrow_codec.cpp)
+    test_nanoarrow_codec.cpp
+    test_binding_entry_points.cpp)
 
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main

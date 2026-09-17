@@ -38,9 +38,18 @@ target_link_libraries(fletcher-c-abi-impl PUBLIC
 # SHARED, unlike every other Fletcher component: this is the artifact
 # `Eiva.Fletcher.Interop` ships per RID in runtimes/<rid>/native/, and P/Invoke
 # needs a loadable module, not an archive.
+# The entry points live HERE and not in the object library above, for one
+# concrete reason: `FL_ABI_EXPORT` reads `FLETCHER_C_ABI_BUILDING`, which is
+# defined on this target only, so a translation unit compiled into the object
+# library would see `__declspec(dllimport)` and try to DEFINE an imported
+# function. It is also the better boundary to test across — the suite reaches
+# these through the shim's own export table, which is the surface that ships,
+# rather than through a second compilation of them.
 add_library(fletcher-c-abi SHARED
     src/binding_version.c
-    src/builtins.cpp)
+    src/builtins.cpp
+    src/containment.cpp
+    src/binding.cpp)
 
 # The public header is C99; the implementation behind it is C++20 because the
 # seam is. Both are stated: the C standard is what BIND-1's

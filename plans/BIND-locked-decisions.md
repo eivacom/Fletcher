@@ -554,3 +554,40 @@ accessors do, for capstone parity (Q18).
   **Consequences.** #129 is retitled to the round and stays a draft until BIND-10 closes, rebased
   onto `main` at item boundaries. #130 rides in #129 until it merges, then drops out on the next
   rebase (identical patch). The plan's Branch strategy section is corrected in the same commit.
+
+- **D-BIND-31 — BIND-2c implements the codec surface AND the publisher chain; the subscriber
+  half, attachments, blobs and schema arrival stay with BIND-4.** *LOCKED BY THE MAINTAINER
+  2026-09-17.* The plan did not say who implements the shim's ~40 entry points, and the two
+  readings available were three times apart in size.
+
+  **The contradiction that forced the question.** `c-abi/src/builtins.cpp`, written at BIND-0,
+  says *"DELETE THIS when `fl_registry_create` lands (**BIND-4**)"* — assigning provider creation
+  to BIND-4. But BIND-2's own acceptance requires, in slice 2d, that
+  `CopyAccounting.BindingProducerWritesInPlace` score `encode_copies == 0` for *"a producer
+  through `fl_rows_bind` and `fl_publisher_publish_row`"* — which cannot run without a provider
+  and a publisher. BIND-3's and BIND-4's acceptance is written entirely in MANAGED terms, so no
+  item owned the native work either way.
+
+  **What 2c therefore contains:** `fl_error` + `fl_error_dispose` and the one `Translate`
+  containment site per direction (D-BIND-19 rule 1); the codec surface (`fl_codec_open/close`,
+  `fl_rows_bind/unbind`, `fl_encode_row`, `fl_decode_rows`); the `fl_write_window` → `WriteBuffer`
+  adapter and the `fl_writer_fn` thunk; and the minimum publisher chain that makes the fusion
+  real — `fl_provider_create/destroy`, `fl_publisher_create/destroy`, `create_topic`,
+  `list_topics`, `publish_raw`, `publish_row`, `publish_rows`, plus `fl_string_list_*`.
+
+  **What 2c does NOT contain**, and BIND-4 gains: the whole subscriber surface, the attachments
+  builder and accessors, blob retain/release, and `fl_schema_arrival_*`. The internal
+  `fl_attachments` type is defined in 2c so `publish_row`'s signature is honoured rather than
+  faked, but nothing can construct one until BIND-4's builder lands, so the shim accepts NULL
+  (meaning none) and nothing else can reach it.
+
+  **Why this boundary and not the literal one.** The round's own slicing rule is that a slice
+  ends where a PROPERTY BECOMES PROVABLE. Under the codec-only reading, BIND-2's headline
+  property — the publish fusion writing straight into the transport's window — would be written
+  but unexercisable until BIND-4, and 2d's copy-oracle row would have to move out of BIND-2
+  entirely. A slice that ships an untestable headline is not a slice boundary.
+
+  **Consequences.** `builtins.cpp`'s "DELETE THIS … (BIND-4)" comment is corrected to BIND-2c in
+  the same commit that references `BuiltinRegistry()` from `fl_provider_create` — which is the
+  honest reference the comment asks for. BIND-4's acceptance keeps its managed wording; the
+  native subscriber entry points are named there explicitly so the gap does not reopen.
