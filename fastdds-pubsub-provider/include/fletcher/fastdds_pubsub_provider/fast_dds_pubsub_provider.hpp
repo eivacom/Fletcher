@@ -53,21 +53,21 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// `OnSampleRejected`, on that endpoint only) is dispatched on every wake — it
 /// reads `get_status_changes()` and the matching `get_*_status()` getter for
 /// each changed bit, the same pattern as eiva-ddsbus's `WaitsetDataReader` —
-/// and it is also where that thread creates and enables a topic's data reader once its schema
-/// and payload bound arrive: endpoint matching between participants that have already discovered
-/// each other runs synchronously inside `create_datareader` / `create_datawriter` /
-/// `DataReader::enable()`, including between two participants in one process; participant
-/// discovery itself still runs over the transport. Inside `Subscribe`, that same call runs under
-/// both the provider mutex and the schema thread's lock; on the schema thread it runs under that
-/// lock alone. `CreateTopic`'s data-writer creation runs under both locks too. DATA reader
-/// statuses,
-/// by contrast, arrive through Fast DDS's own listener dispatch, the same as
-/// writer statuses and discovery. One `DataWriterListener` and one
-/// `ParticipantListener` instance is shared by every endpoint a provider owns, so two of these
-/// calls can be in flight on two different threads at once — nothing here serialises callbacks
-/// against each other, only each one against the provider mutex, or the schema
-/// thread's own lock, it happens to be running under.
-/// So an override
+/// and it is also where that thread creates a topic's data reader, already
+/// enabled, once its schema and payload bound arrive: endpoint matching between
+/// participants that have already discovered each other runs synchronously
+/// inside `create_datareader` / `create_datawriter`, including between two
+/// participants in one process; participant discovery itself still runs over the
+/// transport. Inside `Subscribe`, that same call runs under both the provider
+/// mutex and the schema thread's lock; on the schema thread it runs under that
+/// lock alone. `CreateTopic`'s data-writer creation runs under both locks too.
+/// DATA reader statuses, by contrast, arrive through Fast DDS's own listener
+/// dispatch, the same as writer statuses and discovery. One
+/// `DataWriterListener` and one `ParticipantListener` instance is shared by
+/// every endpoint a provider owns, so two of these calls can be in flight on two
+/// different threads at once — nothing here serialises callbacks against each
+/// other, only each one against the provider mutex, or the schema thread's own
+/// lock, it happens to be running under. So an override
 ///
 ///  - **must not call into any provider.** The provider mutex is a
 ///    non-recursive `std::shared_mutex`; re-entering deadlocks. So is the

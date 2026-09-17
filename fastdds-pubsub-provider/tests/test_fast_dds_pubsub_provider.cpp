@@ -2259,7 +2259,7 @@ TEST(FastDDSPubSubProviderTest, TwoWatchersOneRelease) {
 }
 
 // P2 — the channel never leaves its topic slot: a Subscribe racing an Unsubscribe that keeps a
-// watch must never find `schema_reader` and `received_schema` both null and open a second one
+// watch must never find `schema_reader` and `subscribed.schema` both null and open a second one
 // through EnsureSchemaChannel, replacing the watch's own arrival with a fresh
 // `SchemaArrival::Create()` pair -- the watch's own arrival must survive every one of these cycles
 // undisturbed.
