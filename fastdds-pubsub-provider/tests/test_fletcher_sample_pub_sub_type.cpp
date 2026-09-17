@@ -277,24 +277,38 @@ TEST(SchemaBytesPubSubTypeTest, NameBoundAndPlainness) {
     EXPECT_EQ(schema_type.max_serialized_type_size, data_type.max_serialized_type_size);
 }
 
-// The schema rides as a row with no attachments, through the same envelope the data channel uses:
-// [u32 length][u32 row_len][ipc bytes][u32 attachment_count = 0]. This pins the shape the XRCE
-// side must produce on the wire.
-TEST(SchemaBytesPubSubTypeTest, AnIpcBlobRoundTripsAsARowWithNoAttachments) {
+// The schema rides as a row -- the IPC bytes -- plus one attachment, the publisher's payload
+// bound, through the same envelope the data channel uses: [u32 length][u32 row_len][ipc
+// bytes][u32 attachment_count = 1][attachment]. This pins the shape the XRCE side must produce on
+// the wire.
+TEST(SchemaBytesPubSubTypeTest, AnIpcBlobRoundTripsAsARowWithItsPayloadBound) {
     fletcher::internal::SchemaBytesPubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> blob = Row(300, 0x77);
-    Publishing publishing(blob);
+    fletcher::Attachments att;
+    att.Set(fletcher::kSchemaPayloadBoundKey, fletcher::Blob(std::vector<uint8_t>{0, 0, 1, 0}));
+    Publishing publishing(blob, att);
 
     SerializedPayload_t payload(type.max_serialized_type_size);
     ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
 
     // The body's own row-length prefix, right after the sample length.
     EXPECT_EQ(ReadU32(payload.data + kHeader + kLengthPrefix), blob.size());
+    // kHeader + kLengthPrefix frame the sample; then the body: a 4-byte row_len, the row itself, a
+    // 4-byte attachment count, and the one 29-byte `max_payload_bytes` attachment (4-byte key_len +
+    // 17-byte key + 4-byte blob_len + 4-byte blob).
+    EXPECT_EQ(payload.length, kHeader + kLengthPrefix + 4 + blob.size() + 4 + 29);
 
     ReceivedData received;
     ASSERT_TRUE(type.deserialize(payload, &received));
     EXPECT_EQ(received.decoded_row, blob);
-    EXPECT_TRUE(received.decoded_attachments.empty());
+    ASSERT_EQ(received.decoded_attachments.size(), static_cast<size_t>(1));
+    const fletcher::Blob* found =
+        received.decoded_attachments.Find(fletcher::kSchemaPayloadBoundKey);
+    ASSERT_NE(found, nullptr);
+    ASSERT_EQ(found->size(), 4u);
+    uint32_t bound = 0;
+    std::memcpy(&bound, found->data(), sizeof(bound));
+    EXPECT_EQ(bound, 65536u);
 }
 
 // The pool is sized for the one sample the channel can hold, which is why bounded is affordable.

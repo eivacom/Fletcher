@@ -51,11 +51,12 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 ///    wire, so a value **above 65535 is refused, never narrowed** — a truncated domain id is a
 ///    wrong answer with no error.
 ///  - `max_payload_bytes` — the row payload bound this client's DDS topics advertise; **0 means
-///    unset** and resolves to 65536. It is part of the registered DDS type name, so it must
-///    equal the `max_payload_bytes` of any Fast DDS peer or the two never discover each other
-///    and no diagnostic says so. A value `IsPayloadBound` rejects is refused with
-///    `PubSubError(kInvalidArgument)` before any socket. Write it as `kPayloadBytes<N>` to be
-///    told at compile time instead.
+///    unset** and resolves to 65536. It is the type name this client registers on BOTH its writer
+///    and reader, and the bound it announces on `__schema`: a Fast DDS subscriber follows that
+///    announcement and needs no agreement, but this client's own subscriber still needs it equal
+///    to its Fast DDS publisher's, or the two never discover each other and no diagnostic says
+///    so. A value `IsPayloadBound` rejects is refused with `PubSubError(kInvalidArgument)` before
+///    any socket. Write it as `kPayloadBytes<N>` to be told at compile time instead.
 ///  - `document` — **`key=value`, one setting per line**, read only by this provider (locked
 ///    decision 8: Fletcher gains no parser and no config dependency). An empty document means
 ///    every published default, which is what every caller got before this existed.

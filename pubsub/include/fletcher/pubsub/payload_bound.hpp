@@ -4,7 +4,9 @@
 // The payload bound and the DDS type name it produces.
 //
 // Lives in pubsub because every provider that puts Fletcher rows on a DDS topic has to agree on
-// both: the bound rides in the registered type name, and DDS matches endpoints by that name.
+// this: the bound rides in the registered type name. A publisher spells its own through
+// `FletcherTypeName`; a subscriber takes the bound off the `__schema` announcement and spells the
+// same name from it.
 //
 // A bound is bytes of row payload in one sample — the encoded row plus its attachments — not
 // counting the framing below.
@@ -57,9 +59,10 @@ template <uint32_t N>
     requires PayloadBound<N>
 inline constexpr uint32_t kPayloadBytes = N;
 
-/// The registered DDS type name for a bound, and the only thing keeping two bounds apart: DDS
-/// matches by type name, so endpoints on different bounds fail to discover each other rather than
-/// exchanging samples one of them cannot hold. Every provider must spell it through here.
+/// The registered DDS type name for a bound: DDS matches by type name, so endpoints on different
+/// bounds fail to discover each other rather than exchanging samples one of them cannot hold. A
+/// publisher spells its own bound through here; a subscriber takes the bound off the `__schema`
+/// announcement and spells the same name from it. Every provider must spell it through here.
 inline std::string FletcherTypeName(uint32_t payload_bytes) {
     return "fletcher_" + std::to_string(payload_bytes);
 }
@@ -67,8 +70,13 @@ inline std::string FletcherTypeName(uint32_t payload_bytes) {
 /// The registered DDS type name of the companion `__schema` channel, which is bound-independent.
 inline constexpr const char* kSchemaTypeName = "SchemaBytes";
 
-/// The `__schema` channel's payload bound. Fixed, not configurable (owner decision 2026-09-15):
-/// below Fast DDS's 65500-byte default message size
+/// The one attachment on a `__schema` announcement: the announcing publisher's payload bound, as
+/// a 4-byte little-endian uint32 blob under this key. A subscriber creates its data reader with
+/// this bound, so it needs no agreement with the publisher out of band.
+inline constexpr const char* kSchemaPayloadBoundKey = "max_payload_bytes";
+
+/// The `__schema` channel's payload bound. Fixed, not configurable: below Fast DDS's 65500-byte
+/// default message size
 /// (`eprosima::fastdds::rtps::s_maximumMessageSize`, TransportInterface.hpp) so a schema
 /// announcement never needs RTPS fragmentation.
 inline constexpr uint32_t kSchemaPayloadBytes = 32 * 1024;

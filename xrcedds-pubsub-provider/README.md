@@ -18,7 +18,7 @@ The binary payload is a serialized `Envelope`:
 
 This format is shared with the FastDDS provider, so payloads are wire-compatible between provider implementations.
 
-Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `ProviderConfig::max_payload_bytes` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB, and **0 means unset**, which resolves to exactly that (65536) - so a caller who leaves it alone gets the same type name this provider has always registered. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
+Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). Which side that constrains depends on the direction. A Fast DDS subscriber following this client takes its bound off this client's `__schema` announcement and creates its reader to match, so this client's PUBLISHER side needs no agreement with any peer. An XRCE SUBSCRIBER is the opposite: it keeps its own config-driven reader type name, so `ProviderConfig::max_payload_bytes` here still has to equal the `max_payload_bytes` of any FastDDS publisher it is meant to follow — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB, and **0 means unset**, which resolves to exactly that (65536) - so a caller who leaves it alone gets the same type name this provider has always registered. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
 
 ### Topic name
 
@@ -35,7 +35,7 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 
 `CreateTopic` publishes serialized schema bytes to a companion `<topic>/__schema` DDS topic. When `Subscribe` is called before `CreateTopic` (subscriber-side), it polls the `__schema` topic for up to 5 seconds to retrieve the schema.
 
-The companion sample is the same Fletcher `Envelope` the data channel uses, wrapping the Arrow IPC bytes as a row with no attachments, inside the CDR `sequence<octet>`. The provider writes `[ROW_LEN:4 LE][ipc bytes][ATTACH_COUNT:4 LE = 0]` when publishing the schema and strips those 8 bytes back off when receiving it.
+The companion sample is the same Fletcher `Envelope` the data channel uses: the Arrow IPC bytes as the row, plus one attachment — key `max_payload_bytes` (`fletcher::kSchemaPayloadBoundKey`), blob this client's payload bound as a 4-byte little-endian `uint32_t` — inside the CDR `sequence<octet>`. The provider writes `[ROW_LEN:4 LE][ipc bytes][ATTACH_COUNT:4 LE = 1][the bound attachment]` when publishing the schema, and requires that attachment when receiving one: a sample without it is dropped, like a malformed one.
 
 ## Usage
 
@@ -72,7 +72,7 @@ locked decision 8: Fletcher gains no parser and no configuration dependency).
 | Field | Default | Meaning |
 |---|---|---|
 | `domain_id` | `0` | The DDS domain the Agent creates this client's participant on. `uint32_t` at the seam, `uint16_t` on the XRCE wire, so **above 65535 is refused, never narrowed** - a truncated domain id is a wrong answer with no error. |
-| `max_payload_bytes` | `0` = unset -> `65536` | The row payload bound this client's DDS topics advertise; part of the registered type name (see above). Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
+| `max_payload_bytes` | `0` = unset -> `65536` | The row payload bound this client's DDS topics advertise, announced on `__schema` — a Fast DDS subscriber follows that announcement and needs no agreement, but this client's own subscriber still needs it equal to its Fast DDS publisher's (see above). Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
 | `document` | empty = all defaults | This provider's `key=value` document. |
 
 #### The document: `key=value`, one setting per line

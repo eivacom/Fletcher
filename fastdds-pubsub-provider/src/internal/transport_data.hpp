@@ -3,7 +3,8 @@
 //
 // The sample types the provider hands to Fast DDS: one per direction for the data channel, and the
 // same PublishData/ReceivedData pair for the companion __schema channel (it rides the same plain
-// sample layout as a row with no attachments — see fletcher_sample_pub_sub_type.hpp).
+// sample layout as a row -- the IPC bytes -- plus one attachment carrying the publisher's payload
+// bound — see fletcher_sample_pub_sub_type.hpp).
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 

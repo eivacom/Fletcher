@@ -336,19 +336,20 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
 // Three things carry the arrangement, and none of them may drift:
 //
 //  1. **One `kBound`, equal in both instances of every case that asserts or
-//     denies a crossing.** The registered DDS type name is `fletcher_<bound>`
-//     (`payload_bound.hpp`, locked decision 13), and DDS matches by type name —
-//     so unequal bounds are an INDEPENDENT reason two endpoints never meet, on
-//     any domain. Give the two instances different bounds here and the isolation
-//     case would pass identically with process-wide state present, because the
-//     streams could never have met in the first place. The per-instance-bound
-//     claim therefore lives in its own pair, on its own two domains
-//     (`TwoInstancesKeepTheirOwnPayloadBounds`), which MAKES NO CROSSING CLAIM
-//     in either direction. `domain_id` is the only wire-visible difference left:
-//     the schema companion type name is the bound-independent constant
-//     `SchemaBytes`, topic names are identical by construction, no partitions
-//     are set anywhere, and both instances take an EMPTY document, so
-//     participant, writer and reader QoS are byte-identical.
+//     denies a crossing.** Unequal bounds are no longer an independent reason
+//     two endpoints never meet: a subscriber's reader is created at whatever
+//     bound the publisher it follows announced, so it carries no bound of its
+//     own to disagree with. `kBound` stays one number here anyway, so that
+//     `domain_id` is the only wire-visible difference between the two
+//     isolation instances. The per-instance-bound claim lives in its own pair,
+//     on its own two domains (`TwoInstancesKeepTheirOwnPayloadBounds`), which
+//     MAKES NO CROSSING CLAIM in either direction: each instance publishes only
+//     to its own private topic, so its own subscriber follows its own announced
+//     bound and the pair never had anything to cross. The schema companion type
+//     name is the bound-independent constant `SchemaBytes`, topic names are
+//     identical by construction, no partitions are set anywhere, and both
+//     instances take an EMPTY document, so participant, writer and reader QoS
+//     are byte-identical.
 //  2. **The standing positive control.** `TwoInstancesOneDomainDoInterfere` runs
 //     the same helper, the same topic names and the same `kBound`, differing
 //     only in that both instances sit on one domain, and asserts the row DOES
@@ -400,8 +401,8 @@ constexpr uint32_t kConcurrentDomainB = 165;
 constexpr uint32_t kLowBoundDomain = 166;
 constexpr uint32_t kHighBoundDomain = 167;
 
-// ONE bound, for every case that asserts or denies a crossing. Making these two
-// instances differ here means deleting this constant — see (1) above.
+// ONE bound: the two isolation/control/concurrent instances differ in
+// `domain_id` alone — see (1) above.
 constexpr uint32_t kBound = 65536;
 
 // The bound pair's two bounds, and a row size strictly between them.
@@ -823,11 +824,11 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 
 // The second axis of "different configs": each instance honours ITS OWN payload
 // bound. Its own pair of domains, and each instance publishes only on its own
-// PRIVATE topic to its own subscription — so the unequal bounds, which are an
-// independent reason two endpoints never discover each other, confound nothing.
-// This pair MAKES NO CROSSING CLAIM in either direction — the bound is part of
-// the registered DDS type name, so it could not cross regardless. What it claims
-// is that a row over one instance's bound is dropped there and delivered on the
+// PRIVATE topic to its own subscription, so its own subscriber follows its own
+// publisher's announced bound and the two instances confound nothing. This pair
+// MAKES NO CROSSING CLAIM in either direction — each instance publishes only to
+// its own private topic, so it could not cross regardless. What it claims is
+// that a row over one instance's bound is dropped there and delivered on the
 // other.
 //
 // The middle row is dropped SILENTLY on the low-bound instance and does not

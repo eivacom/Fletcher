@@ -205,7 +205,7 @@ int32_t DecodeRow(const uint8_t* data) {
     return v;
 }
 
-// Many columns with long names: comfortably past `kSchemaPayloadBytes - 8` once IPC-serialized,
+// Many columns with long names: comfortably past `kSchemaPayloadBytes - 37` once IPC-serialized,
 // for the two tests that need a schema the fixed `__schema` bound refuses.
 OwnedSchema MakeOversizedSchema() {
     constexpr int kColumns = 2000;
@@ -1209,8 +1209,8 @@ TEST(FastDdsConfig, AnExplicitZeroDomainIdIsReadAsAbsent) {
 }
 
 // max_payload_bytes: 0 means unset and resolves to 65536 — bit-for-bit what the retired options
-// struct defaulted to, and it has to be, because the bound is part of the registered DDS type
-// name and a different number silently stops endpoints discovering each other.
+// struct defaulted to. This is the number this provider's own publishers register in the type
+// name; a subscriber follows whatever a publisher announces instead.
 TEST(FastDdsConfig, AnUnsetPayloadBoundResolvesToSixtyFourKiB) {
     FastDDSPubSubProvider provider(ProviderConfig{});
     EXPECT_EQ(provider.PayloadBytes(), 64u * 1024);
@@ -1240,7 +1240,7 @@ TEST(FastDdsConfig, AnUnusablePayloadBoundIsRefusedAsInvalidArgument) {
 // first, not assumed, so this test cannot pass on a schema that happens to still fit.
 TEST(FastDdsConfig, ASchemaLargerThanTheSchemaBoundIsRefused) {
     const std::vector<uint8_t> ipc = SerializeSchemaIpc(MakeOversizedSchema().get());
-    ASSERT_GT(ipc.size(), kSchemaPayloadBytes - 8)
+    ASSERT_GT(ipc.size(), kSchemaPayloadBytes - 37)
         << "MakeOversizedSchema() no longer exceeds the schema bound; grow it";
 
     FastDDSPubSubProvider provider(ProviderConfig{});

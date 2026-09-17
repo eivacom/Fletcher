@@ -98,9 +98,9 @@ constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF
 int main(int argc, char* argv[]) {
     const uint32_t domain_id = ParseDomainId(argc, argv);
 
-    // The document carries no payload bound: both sides still resolve the unset bound to the
-    // same 65536 (PDA-DEC-6 §1) — a mismatch would show up as zero deliveries rather than as a
-    // warning.
+    // The document carries no payload bound: the peer's announcement on `__schema` carries its
+    // own bound, and the gateway's subscriber follows it — a mismatch would show up as zero
+    // deliveries rather than as a warning.
     std::shared_ptr<fletcher::FastDDSPubSubProvider> provider =
         std::make_shared<fletcher::FastDDSPubSubProvider>(
             fletcher::ProviderConfig{.domain_id = domain_id, .document = kDurableDocument});

@@ -542,8 +542,10 @@ Normative:
    two instances with **different payload bounds** each honour their own — a row
    over one instance's bound is dropped there and delivered on the other
    (`Registry.TwoInstancesKeepTheirOwnPayloadBounds`). That second pair **makes no
-   crossing claim** in either direction — the bound is part of the registered DDS
-   type name, so it could not cross regardless, whatever the registry did.
+   crossing claim** in either direction — each instance publishes only to its own
+   private topic, so the pair could not cross regardless, whatever the registry
+   did; a subscriber follows the bound its publisher announces on `__schema`, so
+   bounds alone no longer keep endpoints apart.
    **Three exclusions, stated rather than implied:** nothing about
    isolation between machines; nothing about vendor process-wide state both
    instances would set identically; and nothing about the shared memory two
@@ -586,8 +588,11 @@ Configuration at the seam is a small typed core plus an opaque blob:
   and it is append-only; a later field never changes `Create`. Widening it
   because one protocol wants a setting typed is a stop-and-ask (owner ruling
   2026-09-02: "Fletcher keeps exactly payload size and domain"). `0` in
-  `max_payload_bytes` means *unset* — the provider's own default applies, and it
-  is safe to spell it that way because `IsPayloadBound(0)` is false everywhere.
+  `max_payload_bytes` means *unset* — the provider's own default applies. For the
+  DDS providers the field governs what the provider PUBLISHES: its writers' type
+  name and the row ceiling they enforce; a Fast DDS subscriber instead takes its
+  bound from the publisher's `__schema` announcement. It is safe to spell `0`
+  this way because `IsPayloadBound(0)` is false everywhere.
 - **The document** is everything else — bytes Fletcher transports and does not
   read. C form: a pointer and a length borrowed for the duration of the call, the
   **length authoritative** (the bytes may contain NUL); a provider that keeps it

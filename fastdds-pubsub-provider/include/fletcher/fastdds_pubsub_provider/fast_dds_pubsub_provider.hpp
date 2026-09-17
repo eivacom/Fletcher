@@ -53,11 +53,14 @@ void RegisterFastDDSProvider(ProviderRegistry& registry);
 /// `OnSampleRejected`, on that endpoint only) is dispatched on every wake — it
 /// reads `get_status_changes()` and the matching `get_*_status()` getter for
 /// each changed bit, the same pattern as eiva-ddsbus's `WaitsetDataReader` —
-/// and it is also where that thread enables a data reader on schema arrival:
-/// endpoint matching between participants that have already discovered each other runs
-/// synchronously inside `create_datareader` / `create_datawriter` / `DataReader::enable()`,
-/// including between two participants in one process; participant discovery itself still runs
-/// over the transport. DATA reader statuses,
+/// and it is also where that thread creates and enables a topic's data reader once its schema
+/// and payload bound arrive: endpoint matching between participants that have already discovered
+/// each other runs synchronously inside `create_datareader` / `create_datawriter` /
+/// `DataReader::enable()`, including between two participants in one process; participant
+/// discovery itself still runs over the transport. Inside `Subscribe`, that same call runs under
+/// both the provider mutex and the schema thread's lock; on the schema thread it runs under that
+/// lock alone. `CreateTopic`'s data-writer creation runs under both locks too. DATA reader
+/// statuses,
 /// by contrast, arrive through Fast DDS's own listener dispatch, the same as
 /// writer statuses and discovery. One `DataWriterListener` and one
 /// `ParticipantListener` instance is shared by every endpoint a provider owns, so two of these
@@ -114,11 +117,14 @@ class FastDDSStatusListener {
     // Writers only.
     virtual void OnUnacknowledgedSampleRemoved(Endpoint /*endpoint*/) noexcept {}
 
-    /// Discovery of REMOTE entities, which is a strictly wider net than matching: a peer whose
-    /// `max_payload_bytes` differs registers a different type name and is refused by endpoint
-    /// matching, so `OnMatched` never fires for it and these three are the only place the
-    /// mismatch is visible. `type_name` is what carries the bound (`fletcher_65536` against
-    /// `fletcher_8192`, say). `alive` is false once the entity is removed or dropped.
+    /// Discovery of REMOTE entities, which is a strictly wider net than matching. A remote writer
+    /// whose `type_name` carries another bound (`fletcher_65536` against `fletcher_8192`, say) is
+    /// no longer a subscriber-side mismatch: a subscriber's own reader is created at whatever
+    /// bound the publisher it follows announced, so it has none of its own to disagree with. What
+    /// a differing `type_name` shows here is either publisher-vs-publisher information (a second
+    /// publisher announcing another bound for a topic already resolved is logged and never
+    /// matches the first), or the sign that this instance already holds the topic, as a
+    /// publisher, at another bound. `alive` is false once the entity is removed or dropped.
     /// Fletcher's own companion `<topic>/__schema` endpoints are not reported.
     virtual void OnParticipantDiscovered(std::string_view /*name*/, bool /*alive*/) noexcept {}
     virtual void OnWriterDiscovered(std::string_view /*topic*/, std::string_view /*type_name*/,
@@ -157,10 +163,11 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// bugs.
 ///
 ///  - `domain_id` — the DDS domain, used exactly as given.
-///  - `max_payload_bytes` — the row payload ceiling; **0 means unset** and
-///    resolves to 65536. The bound is part of the registered DDS type name, so
-///    two endpoints on different bounds do not discover each other at all. A
-///    value `IsPayloadBound` rejects is refused with
+///  - `max_payload_bytes` — governs this provider's PUBLISHERS only: the row
+///    payload ceiling, and the type name (`fletcher_<bound>`) `CreateTopic`
+///    registers. **0 means unset** and resolves to 65536. A subscriber takes
+///    its bound from the publisher it follows, announced on `__schema`, not
+///    from this field. A value `IsPayloadBound` rejects is refused with
 ///    `PubSubError(kInvalidArgument)` before the participant exists. Write it
 ///    as `kPayloadBytes<N>` to be told at compile time instead.
 ///  - `document` — **a Fast DDS XML profiles document, as text** (the setting
@@ -190,7 +197,8 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 ///    `/`-joined topic), ahead of the default above.
 ///  - **the internal `__schema` channel** — no profile name is ever consulted
 ///    for it; it keeps its own fixed QoS, bounded at the fixed
-///    `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`).
+///    `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`),
+///    and its sample carries one attachment — the publisher's `max_payload_bytes`.
 ///
 /// **A supplied profile is that endpoint's WHOLE quality-of-service.** Anything
 /// it leaves out takes *Fast DDS's* default, not Fletcher's: there is no merge
@@ -218,7 +226,10 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL, bounded at the fixed
 /// `kSchemaPayloadBytes`, and is not configurable — a Fletcher-internal
-/// implementation detail, so no profile name is consulted for it.
+/// implementation detail, so no profile name is consulted for it. Its sample
+/// carries the schema row plus one attachment, the publisher's
+/// `max_payload_bytes`, which is how a subscriber learns the bound to open its
+/// data reader at.
 class FastDDSPubSubProvider : public PubSubProvider {
    public:
     explicit FastDDSPubSubProvider(const ProviderConfig& config = {});
@@ -264,7 +275,9 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     /// The payload bound in force — `ProviderConfig::max_payload_bytes` exactly as given, or
     /// 65536 if it was 0 (unset). An unsupported one never gets past the constructor. It is the
-    /// number in the registered type name, and the size a row has to fit.
+    /// bound this provider's PUBLISHERS register in their type name and the size a published row
+    /// has to fit; it says nothing about what this provider's subscriptions use, since a
+    /// subscriber's reader is created at the bound its publisher announces.
     [[nodiscard]] uint32_t PayloadBytes() const noexcept;
 
    private:

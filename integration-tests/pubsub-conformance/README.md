@@ -650,10 +650,11 @@ every participant through a process-wide `DomainParticipantFactory` singleton.
 > measured a real crossing.** *Separately*, two instances with **different
 > payload bounds** each honour their own: a row over one instance's bound is
 > dropped there and delivered on the other. That second pair **makes no crossing
-> claim** in either direction — the bound is part of the registered DDS type name,
-> so those two instances could not have discovered each other whatever the
-> registry did, and the control's measured window licenses only the equal-bound
-> pair.
+> claim** in either direction — each instance publishes only to its own private
+> topic, so the pair could not have crossed whatever the registry did; a
+> subscriber follows the bound its publisher announces on `__schema`, so bounds
+> alone no longer keep two endpoints apart, and the control's measured window
+> licenses only the equal-bound pair.
 >
 > **Three exclusions, stated rather than implied:** nothing about isolation
 > between machines; nothing about vendor process-wide state both instances would
@@ -671,11 +672,11 @@ every participant through a process-wide `DomainParticipantFactory` singleton.
 
 **Three things carry the arrangement**, and a reviewer should check them before
 believing anything above. (1) **One `kBound`, equal in both instances of every
-case that asserts or denies a crossing.** The registered DDS type name is
-`fletcher_<bound>` and DDS matches by type name, so unequal bounds are an
-*independent* reason two endpoints never meet, on any domain — unequal bounds
-there and the isolation case would pass identically with process-wide state
-present. `domain_id` is the only wire-visible difference left. (2) **The
+case that asserts or denies a crossing.** Unequal bounds are no longer an
+*independent* reason two endpoints never meet — a subscriber's reader is
+created at whatever bound the publisher it follows announced, not at a bound
+of its own. `kBound` is kept one number anyway, so `domain_id` stays the only
+wire-visible difference between the two isolation instances. (2) **The
 control**, which measures that a real crossing fits inside the very `kSettle` the
 isolation case pays for its absence claim — and *reports* the measurement, as a
 `crossing_ms` gtest property, so the margin is in every run's output instead of in

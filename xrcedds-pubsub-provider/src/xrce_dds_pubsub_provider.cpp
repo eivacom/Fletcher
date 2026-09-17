@@ -11,9 +11,9 @@
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // using SerializeEnvelope/DeserializeEnvelope from pubsub/envelope.hpp.
 //
-// The companion __schema channel rides the SAME envelope, as a row with no attachments: the Arrow
-// IPC bytes are ROW_DATA and ATTACH_COUNT is always 0 (design owner-approved 2026-09-14) -- the
-// same shape fastdds-pubsub-provider's SchemaBytesPubSubType produces.
+// The companion __schema channel rides the SAME envelope: the Arrow IPC bytes are ROW_DATA and
+// the one attachment is `max_payload_bytes` (4-byte LE), the publisher's payload bound -- the
+// same shape fastdds-pubsub-provider's `SchemaBytesPubSubType` produces and requires.
 //
 // On the XRCE wire, the envelope is wrapped in an OMG-CDR
 // `sequence<octet>` length prefix (uint32) before being handed to
@@ -132,6 +132,9 @@ struct XrceDDSPubSubProvider::Impl {
 
     // Must be byte-identical to what a FastDDS peer registers, or the endpoints never match.
     std::string type_name;
+
+    // The bound announced on `__schema` with every schema this client publishes.
+    uint32_t max_payload_bytes = 0;
 
     // XRCE session and transport.
     uxrSession session{};
@@ -288,15 +291,17 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             // retained TRANSIENT_LOCAL/KEEP_LAST(1) __schema sample is
             // redelivered and resolution is retried.
             try {
-                // The schema rides as a row with no attachments (design owner-approved
-                // 2026-09-14): `body`/`seq_len` is the same envelope the data path below decodes
-                // with DeserializeEnvelope — reused here rather than re-parsed, so there is one
-                // reading of the wire header, not two chances to disagree about it. A sample
-                // carrying an attachment is malformed for this channel and dropped the same as an
-                // undecodable one: return without consuming the resolver, so a later, well-formed
-                // redelivery can still resolve it.
+                // The schema rides as a row plus one attachment: the announcing publisher's payload
+                // bound. A sample without a usable one is malformed for this channel and dropped
+                // the same as an undecodable one: return without consuming the resolver, so a
+                // later, well-formed redelivery can still resolve it. The value itself is not used
+                // here -- this client's reader type name comes from its own configuration.
                 Envelope schema_env = DeserializeEnvelope(body_owner, body, seq_len);
-                if (!schema_env.attachments.empty()) return;
+                const Blob* bound_blob = schema_env.attachments.Find(kSchemaPayloadBoundKey);
+                uint32_t bound = 0;
+                if (!bound_blob || bound_blob->size() != sizeof(bound)) return;
+                std::memcpy(&bound, bound_blob->data(), sizeof(bound));
+                if (!IsPayloadBound(bound)) return;
 
                 OwnedSchema schema =
                     DeserializeSchemaIpc(schema_env.row.data(), schema_env.row.size());
@@ -400,11 +405,12 @@ void RegisterXrceProvider(ProviderRegistry& registry) {
 
 namespace {
 
-// The bound `max_payload_bytes == 0` (unset, spec 4.1) resolves to. Bit-for-bit the retired
-// options struct's `payload_bound` default (`kPayloadBytes<64 * 1024>`), and deliberately so:
-// the bound is part of the registered DDS type name, so a different number silently stops
-// endpoints discovering each other (locked decision 13). No in-tree caller ever set the old
-// field, so this reproduces every existing type name byte for byte.
+// The bound `max_payload_bytes == 0` (unset, spec 4.1) resolves to. The bound is part of the type
+// name this client registers on its writer AND its reader, and it is announced on `__schema` with
+// every schema this client publishes: a Fast DDS subscriber follows that announcement and sizes
+// its own reader from it, but an XRCE subscriber still has to be constructed with the same bound
+// as its publisher, because this provider's own reader is opened from `type_name` before any
+// schema arrives.
 constexpr uint32_t kDefaultPayloadBytes = 64 * 1024;
 
 // The largest `domain_id` the XRCE wire can carry: `uxr_buffer_create_participant_bin` takes a
@@ -456,6 +462,7 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
                 std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
     }
     impl_->type_name = FletcherTypeName(bound);
+    impl_->max_payload_bytes = bound;
 
     // Size reliable stream buffers. history must be power of 2; buffer size = MTU * history.
     // Sized before the transport exists (validate-everything-first ordering), so the two MTUs
@@ -779,13 +786,16 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             WaitForStatuses(&impl_->session, schema_reqs, schema_statuses, 2,
                             "schema publisher+writer");
 
-            // Publish the schema as a row with no attachments, through the same envelope the data
-            // channel uses (SerializeEnvelope, below in Publish): [u32 row_len][ipc bytes]
-            // [u32 attachment_count = 0]. The CDR `sequence<octet>` length prefix the Agent
-            // forwards to FastDDS peers now counts that whole envelope, not just the IPC bytes --
-            // see fletcher_sample.hpp for why the two are the same field.
+            // Publish the schema as a row plus one attachment, the payload bound, through the same
+            // envelope the data channel uses (SerializeEnvelope, below in Publish): [u32 row_len]
+            // [ipc bytes][u32 attachment_count = 1][attachment]. The CDR `sequence<octet>` length
+            // prefix the Agent forwards to FastDDS peers now counts that whole envelope, not just
+            // the IPC bytes -- see fletcher_sample.hpp for why the two are the same field.
             Envelope schema_env;
             schema_env.row = SerializeSchemaIpc(schema.get());
+            std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
+            std::memcpy(bound_bytes.data(), &impl_->max_payload_bytes, sizeof(uint32_t));
+            schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
             std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
             const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
             std::vector<uint8_t> wire;
@@ -1178,7 +1188,7 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
         });
 
     // Synthesize a schema sample exactly as the wire path presents it to OnTopic: the schema
-    // envelope [u32 row_len][ipc bytes][u32 attachment_count = 0], wrapped in the CDR
+    // envelope [u32 row_len][ipc bytes][u32 attachment_count = 1][attachment], wrapped in the CDR
     // sequence<octet> length prefix (the Agent has already stripped the CDR encapsulation header).
     OwnedSchema schema;
     ArrowSchemaInit(schema.get());
@@ -1188,6 +1198,10 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
 
     Envelope schema_env;
     schema_env.row = SerializeSchemaIpc(schema.get());
+    const uint32_t bound = 65536;
+    std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
+    std::memcpy(bound_bytes.data(), &bound, sizeof(uint32_t));
+    schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
     std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
     const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
     std::vector<uint8_t> wire;

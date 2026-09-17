@@ -5,10 +5,10 @@
 // own accept path (StatefulWriter::intraprocess_delivery -> StatefulReader::process_data_msg ->
 // the listener), so a same-process reader's history can never fill out from
 // under an asynchronous consumer the way it could behind a polling WaitSet thread. Every reader
-// (schema and data) starts DISABLED (SubscriberQos::entity_factory) and is enabled only once its
-// topic's schema is known -- the data reader by Subscribe if the schema is already there, else by
-// this provider's one schema thread -- so `Drain` below is never reached before `SetSchema` has
-// run.
+// (schema and data) is created, with its listener installed, only once its topic's schema and
+// payload bound are known (OpenDataReader) -- the data reader by Subscribe if they are already
+// there, else by this provider's one schema thread -- so `Drain` below is never reached before
+// `SetSchema` has run.
 //
 // This is the read-side counterpart of internal/sample_writer.hpp.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_READER_LISTENER_HPP_
@@ -48,11 +48,10 @@ inline bool CanLoanSamples(const eprosima::fastdds::dds::DataReaderQos& qos) {
 }
 
 // One per subscribed topic, installed on that topic's data DataReader at creation
-// (`create_datareader(ts.topic, rqos, ts.listener.get(), StatusMask::all())`,
-// fast_dds_pubsub_provider.cpp). The reader is created DISABLED, so nothing here runs before
-// `enable()` does. Forwards every status Fast DDS has for a reader. `on_data_available` is `final`
-// so no override can skip the try/catch that keeps a throwing `Drain` off Fast DDS's own delivery
-// thread.
+// (`create_datareader(ts.data_topic, rqos, ts.data_listener.get(), StatusMask::all())`,
+// Impl::OpenDataReader, fast_dds_pubsub_provider.cpp). Forwards every status Fast DDS has for a
+// reader. `on_data_available` is `final` so no override can skip the try/catch that keeps a
+// throwing `Drain` off Fast DDS's own delivery thread.
 class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener {
    public:
     explicit DataReaderListenerBase(FastDDSStatusListener* status_listener)

@@ -173,18 +173,23 @@ TEST(XrceProviderTest, EnvelopeWireFormatLayout) {
     EXPECT_EQ(attach_count, 0);
 }
 
-// The companion __schema channel rides the same envelope as the data channel, as a row with no
-// attachments (design owner-approved 2026-09-14): [ROW_LEN:4][ipc bytes][ATTACH_COUNT:4 = 0]. This
-// pins that shape independently of xrce_dds_pubsub_provider.cpp's own construction of it, the way
-// EnvelopeWireFormatLayout above pins the data channel's.
-TEST(XrceProviderTest, SchemaEnvelopeIsARowWithNoAttachments) {
+// The companion __schema channel rides the same envelope as the data channel, as a row plus one
+// attachment -- the announcing publisher's payload bound under key `kSchemaPayloadBoundKey`, a
+// 4-byte little-endian uint32: [ROW_LEN:4][ipc bytes][ATTACH_COUNT:4 = 1][KEY_LEN:4][key:17]
+// [BLOB_LEN:4][blob:4]. This pins the shape the Fast DDS side produces and requires, independently
+// of xrce_dds_pubsub_provider.cpp's own construction of it, the way EnvelopeWireFormatLayout above
+// pins the data channel's.
+TEST(XrceProviderTest, SchemaEnvelopeCarriesThePayloadBoundAttachment) {
     const std::vector<uint8_t> ipc = {0x01, 0x02, 0x03, 0x04, 0x05};
+    constexpr uint32_t kBound = 65536;  // {0, 0, 1, 0} little-endian
 
     Envelope schema_env;
     schema_env.row = ipc;
+    schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::vector<uint8_t>{0, 0, 1, 0}));
     auto wire = SerializeEnvelope(schema_env);
 
-    ASSERT_EQ(wire.size(), 4 + ipc.size() + 4);
+    // 29 = 4 (key length) + 17 (key bytes) + 4 (blob length) + 4 (blob).
+    ASSERT_EQ(wire.size(), 4 + ipc.size() + 4 + 29);
 
     uint32_t row_len;
     std::memcpy(&row_len, wire.data(), 4);
@@ -192,16 +197,43 @@ TEST(XrceProviderTest, SchemaEnvelopeIsARowWithNoAttachments) {
 
     EXPECT_EQ(0, std::memcmp(wire.data() + 4, ipc.data(), ipc.size()));
 
+    size_t pos = 4 + ipc.size();
     uint32_t attach_count;
-    std::memcpy(&attach_count, wire.data() + 4 + ipc.size(), 4);
-    EXPECT_EQ(attach_count, 0u);
+    std::memcpy(&attach_count, wire.data() + pos, 4);
+    EXPECT_EQ(attach_count, 1u);
+    pos += 4;
+
+    uint32_t key_len;
+    std::memcpy(&key_len, wire.data() + pos, 4);
+    EXPECT_EQ(key_len, 17u);
+    pos += 4;
+
+    const std::string key(reinterpret_cast<const char*>(wire.data() + pos), key_len);
+    EXPECT_EQ(key, "max_payload_bytes");
+    pos += key_len;
+
+    uint32_t blob_len;
+    std::memcpy(&blob_len, wire.data() + pos, 4);
+    EXPECT_EQ(blob_len, 4u);
+    pos += 4;
+
+    EXPECT_EQ(wire[pos], 0);
+    EXPECT_EQ(wire[pos + 1], 0);
+    EXPECT_EQ(wire[pos + 2], 1);
+    EXPECT_EQ(wire[pos + 3], 0);
 
     // And the round trip a receiver performs: DeserializeEnvelope recovers the IPC bytes as the
-    // row, with no attachments -- the check that tells an undecodable schema from an
-    // attachment-bearing (malformed, for this channel) one.
+    // row, plus the one attachment -- the check that tells an undecodable schema from a
+    // well-formed one.
     Envelope restored = DeserializeEnvelope(wire.data(), wire.size());
     EXPECT_EQ(restored.row, ipc);
-    EXPECT_TRUE(restored.attachments.empty());
+    ASSERT_EQ(restored.attachments.size(), 1u);
+    const Blob* bound_blob = restored.attachments.Find(kSchemaPayloadBoundKey);
+    ASSERT_NE(bound_blob, nullptr);
+    ASSERT_EQ(bound_blob->size(), 4u);
+    uint32_t bound = 0;
+    std::memcpy(&bound, bound_blob->data(), sizeof(bound));
+    EXPECT_EQ(bound, kBound);
 }
 
 // ---------------------------------------------------------------------------
