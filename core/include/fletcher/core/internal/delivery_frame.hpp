@@ -129,9 +129,10 @@ class DeliveryScope {
 /// `token`, and do nothing otherwise.
 ///
 /// **The refused set is EVERY seam method, on every provider** — the four
-/// data-path methods `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe` and
-/// the two schema-only ones, `SubscribeSchema` and `UnsubscribeSchema` — on the
-/// same instance and the same thread (owner ruling 2026-09-05, "Re-entry is
+/// data-path methods `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe`, the
+/// two schema-only ones, `SubscribeSchema` and `UnsubscribeSchema`, and the two
+/// options-taking ones, `CreateTopicWithOptions` and `SubscribeWithOptions` — on
+/// the same instance and the same thread (owner ruling 2026-09-05, "Re-entry is
 /// refused on every protocol", which SUPERSEDES the earlier ruling that refused
 /// only `Unsubscribe`).
 ///

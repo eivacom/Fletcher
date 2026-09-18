@@ -55,6 +55,7 @@
 #include <fastdds/dds/domain/DomainParticipant.hpp>
 #include <fastdds/dds/domain/DomainParticipantFactory.hpp>
 #include <fastdds/dds/domain/DomainParticipantListener.hpp>
+#include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/publisher/Publisher.hpp>
 #include <fastdds/dds/subscriber/Subscriber.hpp>
 #include <fletcher/core/write_buffer.hpp>
@@ -167,7 +168,7 @@ std::string ReaderProfile(const std::string& profile_name, const std::string& qo
     </data_reader>)";
 }
 
-// Ten slots of the payload bound rather than Fletcher's hundred: a bounded plain type reserves
+// Ten slots of the payload bound rather than Fletcher's twenty-five: a bounded plain type reserves
 // the whole bound per history slot per endpoint, and the loaned tests below want a pool small
 // enough to exhaust deliberately.
 constexpr const char* kTenSlots = R"(
@@ -381,6 +382,9 @@ constexpr uint32_t kDomainSchemaChannel = 95;
 constexpr uint32_t kDomainTwoInstances = 96;
 constexpr uint32_t kDomainProbe = 97;
 constexpr uint32_t kDomainAnchorProperties = 98;
+constexpr uint32_t kDomainMissingDefaultWarning = 99;
+constexpr uint32_t kDomainBuiltInNoWarning = 100;
+constexpr uint32_t kDomainSingleQuotedDefault = 101;
 
 }  // namespace
 
@@ -780,13 +784,13 @@ TEST(FastDdsConfig, ADocumentWithoutAProfilesElementIsRefused) {
 
 // The README publishes Fletcher's own profile as the operator's copy-paste starting point, and
 // this is what keeps it true setting-for-setting. WHOLE-STRUCT equality, in process: it covers
-// all six policies including `history` (KEEP_ALL — what stops a RELIABLE writer overwriting
-// unacked samples, i.e. silent row loss) and `resource_limits` (max_samples 100 — 5000 would
-// overflow the data-sharing segment's 32-bit size and drop the endpoint back to the transport),
-// neither of which is observable in discovery data. `DataWriterQos::operator==` and
-// `DataReaderQos::operator==` each compare 22 of 22 members, and `RTPSEndpointQos::operator==`
-// carries `history_memory_policy`, so a block that silently loses the zero-copy read path
-// reddens here too.
+// all six policies including `history` (depth 25 — invisible to discovery, and what bounds the
+// RELIABLE in-flight window and the reader's `OnSampleLost` threshold) and `resource_limits`
+// (max_samples 25 — 5000 would overflow the data-sharing segment's 32-bit size and drop the
+// endpoint back to the transport), neither of which is observable in discovery data.
+// `DataWriterQos::operator==` and `DataReaderQos::operator==` each compare 22 of 22 members, and
+// `RTPSEndpointQos::operator==` carries `history_memory_policy`, so a block that silently loses
+// the zero-copy read path reddens here too.
 //
 // If some policy provably cannot be transcribed into XML, this assert says so and the README
 // names it as a known non-transcribable difference — that is the honest outcome, not a weaker
@@ -850,6 +854,20 @@ TEST(FastDdsConfig, DefaultProfileTranscriptionIsExact) {
     EXPECT_TRUE(reader == expected_reader);
 }
 
+// The public header's copy of the built-in document is not a second copy: it forwards straight to
+// the one string this whole file already pins (`FletcherDefaultProfilesDocument()`,
+// `DefaultProfileTranscriptionIsExact` above).
+TEST(FastDdsConfig, DefaultProfilesDocumentIsTheBuiltInOne) {
+    const std::string from_header(FastDDSPubSubProvider::DefaultProfilesDocument());
+    EXPECT_EQ(from_header, internal::FletcherDefaultProfilesDocument());
+
+    // Both is_default_profile="true" attributes survive on the public copy -- the whole point of
+    // exposing this string is that a caller can find them in it and add named profiles alongside.
+    const size_t first = from_header.find("is_default_profile=\"true\"");
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_NE(from_header.find("is_default_profile=\"true\"", first + 1), std::string::npos);
+}
+
 // DEBT-1's RENAME (owner ruling 2026-09-14) — an anchor-only, non-empty document used to resolve
 // to Fletcher's built-in QoS; the built-in floor under a non-empty document is gone now
 // (design rule 2), so it resolves to FAST DDS's OWN default instead, because this document
@@ -911,8 +929,8 @@ TEST(FastDdsConfig, AnAnchorOnlyDocumentResolvesToFastDdsDefaults) {
 // semantics, Fletcher's defaults staying underneath — passes all of them. This is the assert
 // that does not.
 //
-// A minimal profile that mentions ONLY durability must resolve to Fast DDS's `KEEP_LAST(1)`
-// history, not Fletcher's `KEEP_ALL`, and to Fast DDS's `max_samples` (5000), not Fletcher's 100.
+// A minimal profile that mentions ONLY durability must resolve to Fast DDS's raw `history().depth`
+// (1), not Fletcher's built-in (25), and to Fast DDS's `max_samples` (5000), not Fletcher's 25.
 // It calls the production ladder, so it holds the shape rather than a re-implementation of it.
 //
 // CORRECTED (review 4b, measured): this comment used to claim that seeding
@@ -932,8 +950,9 @@ TEST(FastDdsConfig, MinimalProfileTakesFastDdsDefaultsNotFletchers) {
     const std::string document = Document(
         WriterProfile("fletcher_writer", "<durability><kind>VOLATILE</kind></durability>"));
 
-    // Sanity: Fast DDS's raw default is KEEP_LAST, not Fletcher's baked-in KEEP_ALL (README
-    // "published starting point"), so the check below is not vacuous.
+    // Sanity: Fast DDS's raw default history kind is KEEP_LAST, same as Fletcher's built-in
+    // (README "published starting point") -- depth is where they differ, 1 against 25, so the
+    // depth and max_samples checks below are what makes this test non-vacuous.
     ASSERT_EQ(DataWriterQos().history().kind, KEEP_LAST_HISTORY_QOS);
 
     {
@@ -945,9 +964,11 @@ TEST(FastDdsConfig, MinimalProfileTakesFastDdsDefaultsNotFletchers) {
 
     EXPECT_EQ(resolved.durability().kind, VOLATILE_DURABILITY_QOS) << "the profile was not applied";
     EXPECT_EQ(resolved.history().kind, KEEP_LAST_HISTORY_QOS)
-        << "a policy the profile omitted fell back to Fletcher's KEEP_ALL — that is the merge "
+        << "history kind no longer distinguishes Fletcher's built-in from Fast DDS's raw default "
+           "-- both are KEEP_LAST now; depth and max_samples below do that job";
+    EXPECT_EQ(resolved.history().depth, DataWriterQos().history().depth)
+        << "a policy the profile omitted fell back to Fletcher's depth (25) — that is the merge "
            "semantics owner ruling 2026-09-02 rejected";
-    EXPECT_EQ(resolved.history().depth, DataWriterQos().history().depth);
     EXPECT_EQ(resolved.resource_limits().max_samples, DataWriterQos().resource_limits().max_samples)
         << "resource_limits came from Fletcher's built-in rather than from Fast DDS's default";
 }
@@ -983,10 +1004,11 @@ TEST(FastDdsConfig, AWriterProfileSilentOnDurabilityGetsFastDdsTransientLocal) {
 // default AUTO); since item D (owner decision 2026-09-14) both are AUTOMATIC, so that line no
 // longer tells "inherited Fletcher's default" apart from "fell to Fast DDS's own" -- reliability
 // does the same job now (Fletcher's built-in RELIABLE, Fast DDS's own default BEST_EFFORT,
-// QosPolicies.hpp), alongside history (KEEP_ALL vs KEEP_LAST), which this test already pinned. A
-// supplied reader profile owns the decision either way (handled residue H2 — a Fletcher floor
-// would mean the document does not really configure QoS, and the PDA-ABI-7 defect hunt needs it
-// on). Own TEST/process: a distinct document from the two writer-side TESTs above.
+// QosPolicies.hpp); history no longer tells them apart either -- Fletcher's built-in reader is
+// KEEP_LAST now too (depth 25 against Fast DDS's raw depth 1), a difference this test does not
+// itself check. A supplied reader profile owns the decision either way (handled residue H2 — a
+// Fletcher floor would mean the document does not really configure QoS, and the PDA-ABI-7 defect
+// hunt needs it on). Own TEST/process: a distinct document from the two writer-side TESTs above.
 TEST(FastDdsConfig, AMinimalReaderProfileTakesFastDdsDefaultsNotFletchers) {
     XmlProbe probe(kDomainProbe);
     ASSERT_TRUE(probe.ok());
@@ -1003,6 +1025,12 @@ TEST(FastDdsConfig, AMinimalReaderProfileTakesFastDdsDefaultsNotFletchers) {
     // RELIABLE (README "published starting point"), so the check below is not vacuous.
     ASSERT_EQ(DataReaderQos().reliability().kind, BEST_EFFORT_RELIABILITY_QOS);
     EXPECT_EQ(reader_resolved.history().kind, KEEP_LAST_HISTORY_QOS);
+    EXPECT_EQ(reader_resolved.history().depth, DataReaderQos().history().depth)
+        << "a policy the profile omitted fell back to Fletcher's depth (25) instead of Fast "
+           "DDS's raw default (1) -- history kind alone no longer distinguishes Fletcher's "
+           "built-in reader from Fast DDS's own, both are KEEP_LAST now, so this test "
+           "discriminates on depth too, the same way its writer-side twin "
+           "(MinimalProfileTakesFastDdsDefaultsNotFletchers) does";
     EXPECT_EQ(reader_resolved.reliability().kind, DataReaderQos().reliability().kind)
         << "a supplied reader profile is not the whole QoS: Fletcher's RELIABLE default leaked "
            "underneath it";
@@ -1295,4 +1323,136 @@ TEST(FastDdsConfig, PublishOnASubscribedTopicWithoutCreateTopicIsRefused) {
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kTopicNotDeclared) << e.what();
     }
+}
+
+// ===========================================================================
+// The construction-time warning when the document defines no default profiles
+// ===========================================================================
+
+namespace {
+
+// This file's one poll-free wait -- same pattern as test_fast_dds_pubsub_provider.cpp's own
+// WaitUntil/NotifyWaiters (a separate translation unit, so its anonymous-namespace copy is not
+// reachable here): a producer (the log consumer below) calls NotifyWaiters() right after changing
+// whatever a WaitUntil() predicate reads, so the waiter blocks on a condition_variable instead of
+// polling.
+std::mutex g_wait_mutex;
+std::condition_variable g_wait_cv;
+
+void NotifyWaiters() {
+    std::lock_guard<std::mutex> lock(g_wait_mutex);
+    g_wait_cv.notify_all();
+}
+
+template <class Pred>
+bool WaitUntil(Pred pred, std::chrono::milliseconds budget) {
+    std::unique_lock<std::mutex> lock(g_wait_mutex);
+    return g_wait_cv.wait_for(lock, budget, std::move(pred));
+}
+
+// Counts messages containing `is_default_profile`, the substring the constructor's warning names
+// (fast_dds_pubsub_provider.cpp). Not eprosima::fastdds::dds::Log::ClearConsumers: that would drop
+// the default stdout consumer along with it -- RegisterConsumer only adds one, the same pattern as
+// SchemaConflictLogConsumer in test_fast_dds_pubsub_provider.cpp.
+class DefaultProfileWarningLogConsumer : public eprosima::fastdds::dds::LogConsumer {
+   public:
+    void Consume(const eprosima::fastdds::dds::Log::Entry& entry) override {
+        if (entry.message.find("is_default_profile") == std::string::npos) return;
+        {
+            std::lock_guard<std::mutex> lk(m);
+            ++count;
+        }
+        NotifyWaiters();
+    }
+
+    std::mutex m;
+    int count = 0;
+};
+
+}  // namespace
+
+// An anchor-only document defines neither role's default profile, so construction logs the
+// warning once. Verbosity is raised on purpose: probed the same way
+// EveryCallbackLogsIncludingBothSchemaChannelBranches (test_fast_dds_pubsub_provider.cpp) already
+// documents it -- this process's default runtime verbosity admits ERROR only, and
+// EPROSIMA_LOG_WARNING is gated at runtime by `Log::GetVerbosity() >= Log::Kind::Warning`, closed
+// by default. Every TEST() here runs in its own process (gtest_discover_tests DISCOVERY_MODE
+// PRE_TEST, see the top of this file), so raising it has nothing else to leak into.
+TEST(FastDdsConfig, AnchorOnlyDocumentWarnsAboutMissingDefaultProfiles) {
+    eprosima::fastdds::dds::Log::SetVerbosity(eprosima::fastdds::dds::Log::Kind::Warning);
+
+    auto* consumer = new DefaultProfileWarningLogConsumer();
+    eprosima::fastdds::dds::Log::RegisterConsumer(
+        std::unique_ptr<eprosima::fastdds::dds::LogConsumer>(consumer));
+
+    ProviderConfig config;
+    config.domain_id = kDomainMissingDefaultWarning;
+    config.document = kAnchorOnly;
+    FastDDSPubSubProvider provider(config);
+
+    // The constructor's EPROSIMA_LOG_WARNING call ran synchronously on this thread, so QueueLog
+    // already queued it before Flush() is reached below; Flush() blocks until the logging thread
+    // has consumed everything queued as of this call (Log::Flush(), Log.cpp), so the WaitUntil
+    // below is a safety net for Consume() dispatch, not for anything still outstanding.
+    eprosima::fastdds::dds::Log::Flush();
+    WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(consumer->m);
+            return consumer->count >= 1;
+        },
+        std::chrono::seconds(2));
+    eprosima::fastdds::dds::Log::Flush();
+
+    std::lock_guard<std::mutex> lk(consumer->m);
+    EXPECT_EQ(consumer->count, 1)
+        << "an anchor-only document (no is_default_profile data_writer/data_reader) did not log "
+           "the construction-time warning exactly once";
+}
+
+// The built-in document defines both is_default_profile profiles, so construction logs nothing: a
+// caller that never supplies a document sees no warning about its own default document.
+TEST(FastDdsConfig, BuiltInDocumentLogsNoDefaultProfileWarning) {
+    eprosima::fastdds::dds::Log::SetVerbosity(eprosima::fastdds::dds::Log::Kind::Warning);
+
+    auto* consumer = new DefaultProfileWarningLogConsumer();
+    eprosima::fastdds::dds::Log::RegisterConsumer(
+        std::unique_ptr<eprosima::fastdds::dds::LogConsumer>(consumer));
+
+    ProviderConfig config;
+    config.domain_id = kDomainBuiltInNoWarning;
+    FastDDSPubSubProvider provider(config);
+
+    eprosima::fastdds::dds::Log::Flush();
+    std::lock_guard<std::mutex> lk(consumer->m);
+    EXPECT_EQ(consumer->count, 0)
+        << "the built-in document (both is_default_profile data_writer and data_reader) logged "
+           "the missing-default-profile warning";
+}
+
+// XML admits either quote around an attribute value, and so does the parser Fast DDS reads the
+// document with, so a document that spells the attribute is_default_profile='true' DOES define its
+// defaults and must not be warned about.
+TEST(FastDdsConfig, SingleQuotedDefaultProfileAttributeLogsNoWarning) {
+    eprosima::fastdds::dds::Log::SetVerbosity(eprosima::fastdds::dds::Log::Kind::Warning);
+
+    auto* consumer = new DefaultProfileWarningLogConsumer();
+    eprosima::fastdds::dds::Log::RegisterConsumer(
+        std::unique_ptr<eprosima::fastdds::dds::LogConsumer>(consumer));
+
+    ProviderConfig config;
+    config.domain_id = kDomainSingleQuotedDefault;
+    config.document = Document(
+        R"(    <data_writer profile_name="default_writer" is_default_profile='true'>
+      <qos><reliability><kind>RELIABLE</kind></reliability></qos>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile='true'>
+      <qos><reliability><kind>RELIABLE</kind></reliability></qos>
+    </data_reader>)");
+    FastDDSPubSubProvider provider(config);
+
+    eprosima::fastdds::dds::Log::Flush();
+    std::lock_guard<std::mutex> lk(consumer->m);
+    EXPECT_EQ(consumer->count, 0)
+        << "a document whose is_default_profile attributes are single-quoted was reported as "
+           "defining no default profiles";
 }

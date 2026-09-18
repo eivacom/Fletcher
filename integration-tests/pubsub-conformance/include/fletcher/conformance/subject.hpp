@@ -149,6 +149,20 @@ class ProviderSubject {
 
     virtual void UnsubscribeSchema(const Topic& topic) = 0;
 
+    /// Options-carrying declare/subscribe. LOCAL-ONLY on every provider, for the same reason
+    /// `SubscribeSchema`/`UnsubscribeSchema` are: the class doc above already says the
+    /// subscriber side is always this process and this instance, for every subject, and this
+    /// round adds no peer-pipe protocol for either verb — each subject forwards straight to its
+    /// own provider's `CreateTopicWithOptions` / `SubscribeWithOptions`, exactly as it does for
+    /// the schema-only pair. `schema` is taken directly rather than as a `SchemaId`, unlike
+    /// `DeclareTopic`, because there is no peer wire form to build one for.
+    virtual void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                         const TopicOptions& options) = 0;
+
+    [[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(const Topic& topic,
+                                                                  SubscribeCallback callback,
+                                                                  const TopicOptions& options) = 0;
+
     /// Optional readiness hook. A clause calls this after `Subscribe` (and
     /// after whichever of `Subscribe` / `DeclareTopic` runs second, since a
     /// reader cannot match a writer that does not exist yet) and before its

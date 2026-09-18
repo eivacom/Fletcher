@@ -71,14 +71,14 @@ The reader side of this was `off()` for a time — the one place this provider o
 | `off()` / `off()` | 4/4 pass, 3 runs |
 | `AUTOMATIC` / `AUTOMATIC`, `max_samples` 8 rather than 100 | 4/4 pass, 3 runs |
 
-The provider was not the one dropping them: the pre-schema buffer in place when this was measured logged on every discard, and that log never fired. That a 0.5 MB pool is reliable where a 6.6 MB one is not points below the provider as well.
+The provider was not the one dropping them: the pre-schema buffer in place when this was measured logged on every discard, and that log never fired. That a 0.5 MB pool is reliable where a 6.6 MB one — the built-in profile's pool at the time, `max_samples` 100 — is not points below the provider as well.
 
-Both ends ship `AUTOMATIC` again as of 2026-09-14. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. The `__schema` channel is the one place data-sharing still stays `off()` at both ends, and not for this reason — see the Fast DDS 3.4.0 teardown hang in [Known limits of the document](#known-limits-of-the-document).
+Both ends ship `AUTOMATIC` again as of 2026-09-14. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. The `__schema` channel runs on the same Fast DDS default (AUTOMATIC) — see the Fast DDS 3.4.0 data-sharing reader defect in [Known limits of the document](#known-limits-of-the-document).
 
 What this costs:
 
-- **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the whole sample. The built-in document sets `resource_limits().allocated_samples` equal to `max_samples` (100) on both data endpoints, so the whole pool is reserved at endpoint creation, not grown into as samples arrive. A data-sharing writer allocates `(max_samples + extra_samples) * (bound + 8)` bytes of shared segment immediately. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry; nothing in the provider caps their product, and if it does not fit a data-sharing segment (a 32-bit size) Fast DDS declines data-sharing and uses the transport. The defaults are 64 KiB against `max_samples = 100`, so **~6.5 MB per endpoint per topic**, reserved immediately — 300x a typical 214-byte row. Lower `max_payload_bytes` for a deployment whose rows are small: `max_payload_bytes` is the publisher's knob, and a subscriber's reader pool is sized by the bound the publisher announces, so lowering it at the publisher lowers it everywhere. Dropping the default to 8 KiB was measured and reverted — it costs the subscriber-first burst its accidental headroom (see below).
-- **No pre-match headroom.** The data reader is not created until its schema and bound are known, so a subscriber that joins first buffers nothing of its own, and the built-in `VOLATILE` durability keeps nothing at the writer either: a burst published before the reader has matched is simply gone, not queued for later delivery. After the match, the WRITER's `resource_limits().max_samples` (100 by default) bounds the in-flight window between writer and reader, and a reader that lags past it for longer than `max_blocking_time` (100 ms) sees drops rather than a stalled publisher. Raise `resource_limits().max_samples` at the writer (and the reader) or pace the publisher to widen that window.
+- **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the whole sample. A data-sharing writer reserves its whole pool in one shared segment at creation — `depth + extra_samples` slots of about (bound + a small header) each. It is `<depth>` and not `max_samples`: under KEEP_LAST Fast DDS takes the pool maximum from the history depth and ignores `max_samples` (`DataWriterHistory::to_history_attributes` substitutes depth for it), which is why the built-in block keeps the two equal. The built-in document also sets `resource_limits().allocated_samples` equal to `max_samples` (25) on both data endpoints, so a pool that is not data-sharing is reserved at creation too, not grown into as samples arrive. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry; nothing in the provider caps their product, and a reservation past the segment's 32-bit size does not shrink — Fast DDS logs `Could not initialize DataSharing writer pool` and that writer has no payload slots to hand out. The defaults are 64 KiB against depth 25, so **~1.7 MB per writer per topic**, reserved immediately — every slot 300x a typical 214-byte row. Lower `max_payload_bytes` for a deployment whose rows are small: `max_payload_bytes` is the publisher's knob, and a subscriber's reader pool is sized by the bound the publisher announces, so lowering it at the publisher lowers it everywhere. Dropping the default to 8 KiB was measured and reverted — it costs the subscriber-first burst its accidental headroom (see below).
+- **No pre-match headroom.** The data reader is not created until its schema and bound are known, so a subscriber that joins first buffers nothing of its own, and the built-in `VOLATILE` durability keeps nothing at the writer either: a burst published before the reader has matched is simply gone, not queued for later delivery. After the match, the WRITER's `<depth>` (25 by default) bounds the in-flight window between writer and reader, and a reader that lags past it loses the OLDEST samples (`KEEP_LAST`) rather than stalling the publisher. Raise `<depth>` at the writer — moving `max_samples` and `max_samples_per_instance` with it, see [Per-topic options](#per-topic-options) — or pace the publisher to widen that window.
 - **Wire size on the unselected loaned path.** Fast DDS stamps a loaned payload `length = max_serialized_type_size` and nothing recomputes it, so every sample would cross the wire at the full bound whatever the row weighs, were it selected. And it buys little: measured publish-side (`bench_dds_payload`, p50 of 2x4000 samples) it saved a **fixed ~0.1-0.2 us**, not a per-byte cost — 1.05 -> 0.95 us at a 198-byte row and 2.15 -> 2.00 us at 60 KB. Both paths write the row bytes exactly once, so loaning removes no copy: it removes the encapsulation and the length field, and the `PublishData` the serialising path hands to `write()`. Those are now **14.6 ns against 29.3 ns** at a 198-byte row (`bench_pub_sub_type`), so the publish-side case for it is weaker than those DDS-level numbers, which predate that work. Not selectable; kept in the tree.
 - **Oversized rows throw** regardless of path: a row plus attachments past `max_payload_bytes` raises `std::overflow_error` out of `Publish`, or is reported inside `serialize()` on the regular path; either way the sample is dropped.
 
@@ -159,7 +159,7 @@ auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>(fletcher::Prov
 | `OnLivelinessLost` | warning | Readers have marked the writer NOT_ALIVE. Fletcher leaves `LIVELINESS` at `AUTOMATIC` with an infinite lease, where it cannot fire, so this too reports a configured policy. |
 | `OnLivelinessChanged` | warning while any writer is not alive, else info | Reader side of the same policy. |
 | `OnSampleLost` / `OnSampleRejected` | warning; error for a rejected schema sample | On a data reader, resource limits are too tight. On the schema channel (`is_schema_channel`) either one leaves subscribers waiting on an arrival that never resolves, so the schema lines say so and name `kSchemaPayloadBytes`. |
-| `OnUnacknowledgedSampleRemoved` | warning | Under `KEEP_ALL` + `RELIABLE`, history overflowed past `max_blocking_time` — loss rather than backpressure. No `StatusMask` bit; Fast DDS dispatches it whenever a listener is set at all. |
+| `OnUnacknowledgedSampleRemoved` | warning | Under `KEEP_LAST`, an unacknowledged sample was overwritten by a newer one: the reader lagged past the depth. No `StatusMask` bit; Fast DDS dispatches it whenever a listener is set at all. |
 
 **What no test forces through a real Fast DDS condition.** `test_fast_dds_pubsub_provider.cpp` exercises every `FastDDSLoggingStatusListener` body directly (a probe that needs no DDS condition at all) and, through a live provider pair, forces `OnMatched`, `OnIncompatibleQos`, `OnReaderDiscovered`/`OnWriterDiscovered` and `OnParticipantDiscovered`. It does not force `OnDeadlineMissed`, `OnLivelinessChanged`, `OnLivelinessLost`, `OnSampleLost`, `OnSampleRejected` or `OnUnacknowledgedSampleRemoved` this way — each of those is checked only by calling the listener method directly, not by driving Fast DDS into the state that would call it. If you rely on one of these firing, verify it against your own QoS and workload rather than against this suite.
 
@@ -205,12 +205,19 @@ one path regardless of what the caller passes: the document — supplied or defa
 document's `is_default_profile="true"` profile for its role, or a per-topic profile named after the
 topic — see [Reserved profile names](#reserved-profile-names).
 
+**A document you supply REPLACES the built-in one — it is not layered on top of it** — so it must
+carry its own `is_default_profile="true"` `<data_writer>`/`<data_reader>` pair, or every topic that
+declares no profile of its own drops to Fast DDS's own defaults instead of Fletcher's (the
+constructor logs a warning naming exactly this, once, the moment such a document loads). Start a
+custom document from `FastDDSPubSubProvider::DefaultProfilesDocument()` rather than from a bare
+profile.
+
 `ProviderConfig` carries exactly three things:
 
 | Field | Meaning |
 |---|---|
 | `domain_id` | The DDS domain. Used exactly as given, and it always wins over the document. |
-| `max_payload_bytes` | Governs this provider's PUBLISHERS only: the type name `CreateTopic` registers (`fletcher_<bound>`) and the row ceiling a publish has to fit. **0 means unset** and resolves to 65536. A subscriber takes its bound from the publisher it follows, announced on `__schema`, not from this field. |
+| `max_payload_bytes` | The bound for topics declared without one — see [Per-topic options](#per-topic-options). Governs this provider's PUBLISHERS only: the type name an option-less `CreateTopic` registers (`fletcher_<bound>`) and the row ceiling such a publish has to fit. **0 means unset** and resolves to 65536. A subscriber takes its bound from the publisher it follows, announced on `__schema`, not from this field. |
 | `document` | The XML profiles document, as **text**. Empty means the provider loads its own default document below (the fenced block), so every provider in the process ends up on the same document — an empty one and a different non-empty one in one process are refused like any two different documents. |
 
 The setting holds the XML itself, never a filename: Fletcher never opens a file on a provider's
@@ -252,16 +259,16 @@ With an empty document, both the data DataWriter and the data DataReader get thi
 
 | Policy | Setting | Reason |
 |---|---|---|
-| `reliability` | `RELIABLE_RELIABILITY_QOS` | The middleware retransmits unacknowledged samples until `max_blocking_time` (100 ms, Fast DDS's default) elapses; past that, a lagging reader costs a drop rather than blocking the writer forever. |
-| `history` | `KEEP_ALL_HISTORY_QOS` | All samples are retained until every matched reader has acknowledged them. With `RELIABLE`, the writer blocks (rather than dropping) when the history is full. |
+| `reliability` | `RELIABLE_RELIABILITY_QOS` | The middleware retransmits unacknowledged samples; with KEEP_LAST nothing waits on a lagging reader. |
+| `history` | `KEEP_LAST_HISTORY_QOS`, depth 25 | Latest-value semantics: once the depth is full the OLDEST sample is discarded, the writer never blocks, and a reader that fell behind sees `OnSampleLost`. |
 | `durability` | `VOLATILE_DURABILITY_QOS` | A stream's samples from before a reader matched are not worth keeping (owner, 2026-09-15); a topic that needs replay declares `TRANSIENT_LOCAL` in a per-topic profile. |
-| `resource_limits` | `max_samples` 100, `max_instances` 1, `max_samples_per_instance` 100, `allocated_samples` 100 | The sample type is bounded and plain, so every endpoint reserves the whole payload bound per history slot. At Fast DDS's default 5000 that is gigabytes, which overflows the data-sharing segment's 32-bit size and silently drops the endpoint back to the transport. `allocated_samples` matches `max_samples`: no pool growth on the first samples, the cost is paid at creation. |
+| `resource_limits` | `max_samples` 25, `max_instances` 1, `max_samples_per_instance` 25, `allocated_samples` 25 | = depth, one instance: the sample type is bounded and plain, so every history slot reserves the whole payload bound, which makes these numbers memory. `<depth>` is what sizes a KEEP_LAST writer's data-sharing segment; `max_samples` is what bounds a reader's own pool, and a writer's when its history is KEEP_ALL — Fast DDS's default 5000 there is ~328 MB at the 64 KiB bound. `allocated_samples` matches `max_samples`: no pool growth on the first samples, the cost is paid at creation. |
 | `data_sharing` | `AUTOMATIC` at both ends (Fast DDS's own default) | Zero-copy receive on one host when the type qualifies. Owner decision 2026-09-14; the 2026-09 measured late-joiner backlog loss (see below) is re-verified cross-process by `integration-tests/gateway-fastdds-ts` — re-verified, see round record. |
-| `reliable_writer_qos().times.heartbeat_period` | 20 ms (writer) | A writer waiting on a lagging reader re-syncs on the periodic heartbeat; 20 ms keeps the wait short. |
 
-RELIABLE + KEEP_ALL give lossless delivery to a MATCHED reader; a reader that lags by more than
-`max_samples` for longer than `max_blocking_time` (100 ms) costs drops, never a stalled publisher;
-nothing is replayed to a reader that matches later.
+RELIABLE repairs transport loss inside the 25-sample window and keeps per-writer order; a reader
+that falls more than 25 samples behind loses the oldest (reported by `OnSampleLost`), and the
+publisher never blocks; a topic that needs every sample declares `KEEP_ALL` in its own profile;
+nothing is replayed to a reader that matches later (VOLATILE).
 
 #### The published starting point
 
@@ -287,20 +294,17 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
         </reliability>
       </qos>
       <topic>
-        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
         <resourceLimitsQos>
-          <max_samples>100</max_samples>
+          <max_samples>25</max_samples>
           <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-          <allocated_samples>100</allocated_samples>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
         </resourceLimitsQos>
       </topic>
-      <times>
-        <heartbeat_period>
-          <sec>0</sec>
-          <nanosec>20000000</nanosec>
-        </heartbeat_period>
-      </times>
     </data_writer>
     <data_reader profile_name="default_reader" is_default_profile="true">
       <qos>
@@ -308,12 +312,15 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
         <reliability><kind>RELIABLE</kind></reliability>
       </qos>
       <topic>
-        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
         <resourceLimitsQos>
-          <max_samples>100</max_samples>
+          <max_samples>25</max_samples>
           <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-          <allocated_samples>100</allocated_samples>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
         </resourceLimitsQos>
       </topic>
     </data_reader>
@@ -361,25 +368,33 @@ as absent.
   late-joining reader with no error anywhere (see [Zero-copy: the plain
   sample](#zero-copy-the-plain-sample)); the built-in default carries it too, guarded by
   `integration-tests/gateway-fastdds-ts`.
-- **A flat-out intraprocess publisher (publisher and subscriber in ONE process, RELIABLE +
-  KEEP_ALL, no pacing) can lose a tail of samples.** Measured with `benchmarks/bench_e2e`'s 198 B
-  throughput arm, 200 000 samples, under an infinite `max_blocking_time`: reader data-sharing
-  `AUTOMATIC` — 3 of 3 one-core runs lost 13-981 samples, 0 of 3 two-core runs; `OFF` — 0 of 3
-  one-core runs, 1 of 3 two-core runs (1 392 lost). Cross-process runs
-  (`integration-tests/gateway-fastdds-ts`) never did. With the built-in's 100 ms
-  `max_blocking_time` a lagging reader costs ordinary drops first. Pace or bound the publisher for
-  a same-process loopback; the document can also set the reader's `<data_sharing><kind>OFF</kind>`
-  for a one-core same-process setup.
-- **Every reader with data-sharing on owns a Fast DDS `DataSharingListener` thread,** and Fast DDS
-  3.4.0 can hang that reader's deletion forever: `StatefulReader::~StatefulReader` clears
-  `is_alive_` before `DataSharingListener::stop()`, and `DataSharingListener::process_new_data`
-  only advances its pool cursor when `process_data_msg` succeeds and never checks `is_running_`, so
-  a payload still pending on the pool at teardown spins that thread forever and `stop()`'s join
-  never returns. This is about teardown, not the backlog-loss defect above. The built-in data
-  reader is AUTOMATIC (owner decision 2026-09-14), so it is exposed whenever data-sharing engages
-  — same host, type qualifies — and a sample is in flight while the reader is deleted; not
-  reproduced under the current design. `benchmarks/probe_teardown` is the stress for it; turning
-  data-sharing off in a `<data_reader>` profile is the escape hatch.
+- **A flat-out intraprocess publisher (publisher and subscriber in ONE process, no pacing) can
+  lose a tail of samples — measured under RELIABLE + KEEP_ALL with an infinite
+  `max_blocking_time`.** Measured with `benchmarks/bench_e2e`'s 198 B throughput arm, 200 000
+  samples: reader data-sharing `AUTOMATIC` — 3 of 3 one-core runs lost 13-981 samples, 0 of 3
+  two-core runs; `OFF` — 0 of 3 one-core runs, 1 of 3 two-core runs (1 392 lost). Cross-process
+  runs (`integration-tests/gateway-fastdds-ts`) never did. Under the built-in `KEEP_LAST`, a
+  lagging same-process reader loses the oldest samples instead of costing the publisher a stall.
+- **Fast DDS 3.4.0's data-sharing reader thread can spin forever, and a reader deleted while it
+  spins never finishes deleting.** Every reader that data-sharing engages for owns a
+  `DataSharingListener` thread (`dds.dsha.N`) that polls the publisher's shared-memory ring and
+  offers each slot to the reader (`process_data_msg`). In 3.4.0 that thread re-offers a refused
+  slot immediately and forever, never checking `is_running_`, and skips a slot whose sequence
+  number is not newer than the last delivered one without advancing its cursor
+  (`DataSharingListener::process_new_data`, `ReaderPool::get_next_unread_payload`). A refusal
+  happens when the reader is being torn down (`~StatefulReader` clears `is_alive_` before
+  `stop()`), and a stale slot when a slow subscriber is lapped by the writer's `KEEP_LAST`
+  ring. Symptom: one core pegged by `dds.dsha.N`; if it coincides with `Unsubscribe`,
+  `UnsubscribeSchema` or provider destruction, that call never returns. Scope: publisher and
+  subscriber in **different processes on the same host** only — 3.4.0 attaches a writer to that
+  thread only when it is not in the same process, and network delivery uses no ring — so
+  single-process use and the provider's own suite cannot hit it. Fixed upstream in Fast DDS PR
+  #6490 (target 3.6.3); no Conan Center release carries it yet. Not reproduced here:
+  `benchmarks/probe_teardown pub` / `probe_teardown sub` (two processes, data-sharing live) ran
+  900 Subscribe/Unsubscribe cycles under a flat-out publisher without a hang. Until the bump, the
+  per-topic escape hatch is `<data_sharing><kind>OFF</kind>` in the `<data_reader>` profile a
+  subscription selects (`TopicOptions::profile`), and same-host shutdowns should stop publishers
+  before destroying subscribing providers.
 - **A profile's `resource_limits` can oversize the data-sharing segment.** Fletcher does not know
   your memory budget, so it does not second-guess the number; see the 5000-sample note above.
 - **One document per process.** Fast DDS profile names are process-wide (see
@@ -444,8 +459,8 @@ specification's. Measured on `fast-dds/3.4.0`: a writer profile that omits `dura
 which is `VOLATILE` (owner decision 2026-09-15): a profile that leaves `durability` out gets a
 *stronger* guarantee from the XML parser than Fletcher's own default gives. Reliability likewise
 (`RELIABLE` for a writer). The policies where Fletcher and Fast DDS genuinely differ are now
-`durability`, `history` and `resource_limits`, which is why the starting-point block spells all
-three out.
+`durability`, `history` depth and `resource_limits`, which is why the starting-point block spells
+all three out.
 
 The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` +
 `TRANSIENT_LOCAL`, data-sharing at Fast DDS's default. Its sample is carried as a Fletcher sample
@@ -465,7 +480,7 @@ Both guarantees follow from when and how the data reader is created and enabled,
 
 **Schema handling.** One provider-owned thread waits on a `WaitSet` over every subscribed topic's `__schema` reader (an event-only wait: it wakes on a status change on a registered schema reader, or the stop guard); it decodes the schema and its bound, creates and enables the topic's data reader (`OpenDataReader`) — which `Subscribe` did not create while the schema was still unknown — and only then resolves the topic's `SchemaArrival`, so a resolved arrival means the reader already exists and is live (intraprocess: matched). Status callbacks for `__schema` endpoints run on that thread; a `SchemaArrival` resolves on it; a `FastDDSStatusListener` callback can run there too (intraprocess matching inside `create_datareader`), so its threading contract lists that thread as well (see [Statuses](#statuses)). One consequence: time-to-first-row for a remote late joiner grows by one discovery round — the round trip needed to notice the schema arrived.
 
-**Why the listener and not a reader thread.** Verified in Fast DDS 3.4.0 (`rtps/writer/StatefulWriter.cpp`): a change a same-process reader refuses (`process_data_msg` returns false, history full) is marked `UNACKNOWLEDGED` in `deliver_sample_to_intraprocesses` and never retransmitted — `perform_nack_response` re-queues NACKed changes for `matched_remote_readers_` only, and the intraprocess path only ever sends `UNSENT` changes. So any asynchronous consumer that lags an in-process publisher by more than the reader's `max_samples` loses data; a reader thread is exactly such a consumer. A listener has no such lag: it consumes inside `process_data_msg` itself, so the reader's history cannot fill the way a lagging polling consumer's does — though a flat-out, no-pacing publisher can still leave a tail of samples undelivered (see [Known limits of the document](#known-limits-of-the-document)). Measured with `benchmarks/bench_e2e` (`after-e2e.txt` `## H`, 3 runs at each of two affinities): the listener path runs at 2.0-2.6 µs p50 / ~276-313k samples/s at 198 B; a per-topic reader thread (this round's rejected alternative, same file) ran only ~72-88k samples/s and stalled every two-core flat-out run at ~199k/200k samples.
+**Why the listener and not a reader thread.** Verified in Fast DDS 3.4.0 (`rtps/writer/StatefulWriter.cpp`): under `KEEP_ALL` a full reader history refuses the change (`process_data_msg` returns false) and it is marked `UNACKNOWLEDGED` in `deliver_sample_to_intraprocesses`; under the built-in `KEEP_LAST` 25 the reader instead evicts its oldest sample to take it. Either way a same-process reader that lags the publisher loses data, and Fast DDS never retransmits intraprocess — `perform_nack_response` re-queues NACKed changes for `matched_remote_readers_` only, and the intraprocess path only ever sends `UNSENT` changes. So any asynchronous consumer that lags an in-process publisher by more than the reader's `max_samples` loses data; a reader thread is exactly such a consumer. A listener has no such lag: it consumes inside `process_data_msg` itself, so the reader's history is never full nor evicted out from under it the way a lagging polling consumer's is — though a flat-out, no-pacing publisher can still leave a tail of samples undelivered (see [Known limits of the document](#known-limits-of-the-document)). Measured with `benchmarks/bench_e2e` (`after-e2e.txt` `## H`, 3 runs at each of two affinities): the listener path runs at 2.0-2.6 µs p50 / ~276-313k samples/s at 198 B; a per-topic reader thread (this round's rejected alternative, same file) ran only ~72-88k samples/s and stalled every two-core flat-out run at ~199k/200k samples.
 
 ## Usage
 
@@ -654,9 +669,175 @@ policies it wants rather than inheriting them from the default profile.
 `<data_reader>` profiles work the same way on the subscriber side. A profile whose name matches no
 topic is silently inert — see [Known limits of the document](#known-limits-of-the-document).
 
+### Per-topic options
+
+The section above names a profile after the topic; `TopicOptions` (`pubsub/provider.hpp`) is the
+other way to say the same thing, per CALL rather than per document. The user-facing entry points
+are `fletcher::Publisher::CreateTopic(segments, schema, options)` and
+`fletcher::Subscriber::Subscribe(segments, cb, options)` — each takes a `TopicOptions` alongside the
+arguments the option-less call already takes, defaulting to `TopicOptions{}`, which is exactly the
+option-less call. Both forward to this provider's own seam methods,
+`FastDDSPubSubProvider::CreateTopicWithOptions` / `SubscribeWithOptions` — the shape a provider
+*implementer* overrides; an application reaches options through `Publisher` / `Subscriber`, not
+those two directly.
+
+| | `profile` | `max_payload_bytes` |
+|---|---|---|
+| `CreateTopic` (with options) | selects a `<data_writer>` profile by name, ahead of the document's per-topic-name lookup and its default; an unknown name is `kInvalidArgument`, quoting it | this topic's own publisher bound — type name, announced bound, row ceiling; `IsPayloadBound` rejects it as `kInvalidArgument`; 0 follows `PayloadBytes()` |
+| re-declaration | a different non-empty profile is `kInvalidArgument` | a different non-zero bound is `kInvalidArgument` |
+| `Subscribe` (with options) | selects a `<data_reader>` profile by name, resolved (and refused, if unknown) synchronously at `Subscribe` time | always `kInvalidArgument` — a subscription follows whatever bound its publisher announces, never one of its own |
+| empty options | exactly the option-less call | exactly the option-less call |
+
+Two matched profile pairs, alongside the mandatory anchor and the two default profiles (restated
+from [`FastDDSPubSubProvider::DefaultProfilesDocument()`](#the-published-starting-point) — every
+call below with no options at all runs on these two):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps><name>FletcherParticipant</name></rtps>
+    </participant>
+
+    <!-- "fire_and_forget" / "fire_and_forget_reader": matched pair, newest value only. -->
+    <data_writer profile_name="fire_and_forget">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>1</depth></historyQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fire_and_forget_reader">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>1</depth></historyQos>
+      </topic>
+    </data_reader>
+
+    <!-- "durable" / "durable_reader": matched pair, replayed to a late subscriber. -->
+    <data_writer profile_name="durable">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>100</depth></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="durable_reader">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_LAST</kind><depth>100</depth></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+
+    <!-- everything with no options: default_writer / default_reader. -->
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>
+```
+
+```cpp
+fletcher::Publisher pub(provider);
+fletcher::Subscriber sub(provider);
+
+// Matched BEST_EFFORT pair: newest value only, no retransmission.
+pub.CreateTopic({"nav", "attitude"}, schema, {.profile = "fire_and_forget"});
+sub.Subscribe({"nav", "attitude"}, callback, {.profile = "fire_and_forget_reader"});
+
+// Matched RELIABLE + TRANSIENT_LOCAL pair, with its own (larger) payload bound.
+pub.CreateTopic({"nav", "route"}, schema,
+                {.profile = "durable", .max_payload_bytes = 256 * 1024});
+sub.Subscribe({"nav", "route"}, callback, {.profile = "durable_reader"});
+
+// No options: runs on `default_writer` / `default_reader`.
+pub.CreateTopic({"nav", "status"}, schema);
+sub.Subscribe({"nav", "status"}, callback);
+```
+
+`profile` only picks the two endpoints' QoS independently; it is not an agreement between them.
+Fast DDS's own RxO (request-vs-offered) rules still decide whether the two match at all:
+
+- The writer must offer at least what the reader requests for reliability (RELIABLE ≥ BEST_EFFORT)
+  and durability (TRANSIENT_LOCAL ≥ VOLATILE); a mismatch delivers nothing and shows only as
+  `OnIncompatibleQos` (see [Statuses](#statuses)) on an installed status listener.
+- Depth and resource limits are not RxO.
+
+**Three numbers move together:** `<depth>` ≤ `max_samples_per_instance` ≤ `max_samples ÷
+max_instances`. Fast DDS 3.4.0's `DataWriterImpl::check_qos` only WARNS when `depth` exceeds
+`max_samples_per_instance`, and its warning line ("Effectively using max_samples_per_instance as
+depth") promises more than the code does: a KEEP_LAST history bounds itself by `<depth>`
+(`DataWriterHistory::prepare_change`), and on an unkeyed type — Fletcher's is —
+`max_samples_per_instance` is never read at all. Editing only `<depth>` in a copied block therefore
+does change the depth, and the writer's data-sharing reservation with it, with nothing but that
+warning to say the block is now inconsistent. The sibling refusal for `max_samples <
+max_instances × max_samples_per_instance` (`DataWriterImpl::check_allocation_consistency`) exists
+in Fast DDS, but never runs on this provider's writers or readers: it is gated on
+`TypeSupport::is_compute_key_provided`, and Fletcher's own sample type stays unkeyed
+(`internal/fletcher_sample_pub_sub_type.hpp`), so an inconsistent combination here is accepted
+silently rather than refused.
+
 ### Constraints
 
-- `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict. The topic's `DataWriter` is created inside `CreateTopic` itself, not on first `Publish` — first-publish latency moves to setup — so `Publish` on a topic this provider never `CreateTopic`ed, including one it only `Subscribe`d to, is refused `kTopicNotDeclared`. The writer's pool is reserved then and there: at the built-in defaults (`max_samples` 100, 64 KiB bound, `data_sharing` AUTOMATIC) that is roughly 6.6 MB of shared segment per declared topic, published to or not, so size `max_payload_bytes` and `resource_limits` for a many-topic deployment deliberately.
+- `CreateTopic` must be called before `Publish` on the publisher side. The conflict check is **per topic** (keyed by the topic name): re-declaring _the same topic_ with an identical schema is idempotent (so several publishers may share one topic), while re-declaring it with a _different_ schema throws (a conflict). Distinct topics are independent — two different topics may carry the **same** schema (identical schemas can describe different data); that is never a conflict. The topic's `DataWriter` is created inside `CreateTopic` itself, not on first `Publish` — first-publish latency moves to setup — so `Publish` on a topic this provider never `CreateTopic`ed, including one it only `Subscribe`d to, is refused `kTopicNotDeclared`. The writer's pool is reserved then and there: at the built-in defaults (depth 25, 64 KiB bound, `data_sharing` AUTOMATIC) that is roughly 1.7 MB of shared segment per declared topic, published to or not, so size `max_payload_bytes`, `<depth>` and `resource_limits` for a many-topic deployment deliberately.
 - On the subscriber side `Subscribe` can be called without a prior `CreateTopic` and is **non-blocking** — it never waits for a publisher. The schema arrives asynchronously over the `__schema` companion DDS topic; `Subscribe` returns a `SchemaArrival` whose `Wait` reports `kOk` with the schema once it is known (and `kSubscriptionEnded` if the subscription is torn down first); the data reader is not created until its schema and bound arrive, and is created (and enabled) before the arrival resolves, so nothing reaches it before it exists and the callback is never invoked with a null schema. (This is the subscriber-first contract — subscribe before any publisher exists.) Per-writer order is preserved across this handoff — see [Delivery guarantees](#delivery-guarantees).
 - Only one subscription per topic per provider instance is supported (one `DataReader` per topic). Call `Unsubscribe` before re-subscribing. Multi-callback fan-out lives in `fletcher::Subscriber` one layer up.
 - The subscription callback (`on_data_available`) runs on the thread that delivered the sample — a Fast DDS reception thread for a remote writer, the **publishing thread** for an intraprocess writer's live samples, or a Fast DDS flow-controller thread for a `TRANSIENT_LOCAL` replay — **while Fast DDS holds that reader's own RTPS mutex**: `StatefulReader::process_data_msg` takes it and still holds it through `change_received`, `NotifyChanges` and the listener call. Two consequences: shared state touched from the callback must be protected externally, and a slow or blocking callback stalls reception for that reader entirely, because nothing else can enter it. Hand work off to your own thread if it is not short.

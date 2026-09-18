@@ -283,7 +283,8 @@ SubscriberArrow::~SubscriberArrow() {
 // -----------------------------------------------------------------------
 
 SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
-    const std::vector<std::string>& segments, SubscribeCallback callback) {
+    const std::vector<std::string>& segments, SubscribeCallback callback,
+    const TopicOptions& options) {
     std::string key = internal::JoinSegments(segments);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
@@ -300,7 +301,8 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             }
             ArrowRow row = codec->DecodeRow(data, len);
             cb(std::move(row), att);
-        });
+        },
+        options);
 
     // Track sub_id -> topic_key so Unsubscribe can release the codec
     // entry when the last subscription for a topic is removed.
@@ -322,7 +324,8 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
 // -----------------------------------------------------------------------
 
 SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
-    const std::vector<std::string>& segments, RecordBatchCallback callback, BatchOptions options) {
+    const std::vector<std::string>& segments, RecordBatchCallback callback, BatchOptions options,
+    const TopicOptions& topic_options) {
     std::string key = internal::JoinSegments(segments);
 
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
@@ -333,10 +336,11 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     // topic took the process-wide `mu_` and hashed the topic key.
     auto cached_codec = std::make_shared<std::atomic<Codec*>>(nullptr);
 
-    Subscriber::SubscribeResult result =
-        subscriber_->Subscribe(segments, [this, key, batcher, schema_set, cached_codec](
-                                             uint64_t /*sub_id*/, const uint8_t* data, size_t len,
-                                             const SharedSchema& schema, const Attachments& att) {
+    Subscriber::SubscribeResult result = subscriber_->Subscribe(
+        segments,
+        [this, key, batcher, schema_set, cached_codec](uint64_t /*sub_id*/, const uint8_t* data,
+                                                       size_t len, const SharedSchema& schema,
+                                                       const Attachments& att) {
             // Lazy-init the codec from the per-message schema: in
             // subscriber-first mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before Subscribe
@@ -364,7 +368,8 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
                 batcher->SetSchema(std::move(arrow_schema));
             });
             batcher->AddRow(data, len, att);
-        });
+        },
+        topic_options);
 
     {
         std::lock_guard lock(mu_);

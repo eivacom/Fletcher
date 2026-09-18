@@ -72,9 +72,30 @@ class MockProvider : public PubSubProvider {
         callbacks_.erase(fletcher::internal::JoinSegments(segments));
     }
 
+    // Recorded rather than refused: this MockProvider supports per-topic options, so the
+    // forwarding tests below can observe what the Arrow-tier overloads pass through.
+    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
+                                const TopicOptions& options) override {
+        create_topic_with_options_count++;
+        last_create_options = options;
+        CreateTopic(segments, std::move(schema));
+    }
+
+    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        subscribe_with_options_count++;
+        last_subscribe_options = options;
+        return Subscribe(segments, std::move(callback));
+    }
+
     std::vector<std::string> topics_created;
     // Raw bytes handed to the RowEncoder on each underlying Publish() call, one entry per call.
     std::vector<std::vector<uint8_t>> published;
+    int create_topic_with_options_count = 0;
+    int subscribe_with_options_count = 0;
+    TopicOptions last_create_options;
+    TopicOptions last_subscribe_options;
 
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
@@ -155,6 +176,18 @@ TEST(PublisherArrowTest, ListTopics) {
     std::vector<std::string> topics = pub.ListTopics();
     ASSERT_EQ(topics.size(), 1);
     EXPECT_EQ(topics[0], "test/topic");
+}
+
+TEST(PublisherArrowTest, CreateTopicForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    TopicOptions options{.profile = "reliable", .max_payload_bytes = 4096};
+    pub.CreateTopic(kTopic, TestSchema(), options);
+
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+    ASSERT_EQ(mock->topics_created.size(), 1u);
+    EXPECT_EQ(mock->last_create_options, options);
 }
 
 TEST(PublisherArrowTest, PublishTypeMismatchThrowsToCaller) {
@@ -275,6 +308,34 @@ TEST(SubscriberArrowTest, SubscribeSchemaOnATransportWithoutOneThrowsNotSupporte
 
     try {
         static_cast<void>(sub.SubscribeSchema(kTopic));
+        FAIL() << "expected PubSubError(kNotSupported)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kNotSupported);
+    }
+}
+
+TEST(SubscriberArrowTest, SubscribeForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    TopicOptions options{.profile = "reliable"};
+    static_cast<void>(sub.Subscribe(kTopic, [](ArrowRow, Attachments) {}, options));
+
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->last_subscribe_options, options);
+}
+
+// Optional means optional: SchemaOnlyProvider never overrode SubscribeWithOptions, so the base
+// class's default refusal is what SubscriberArrow forwards for a non-empty options request.
+TEST(SubscriberArrowTest, SubscribeWithOptionsOnATransportWithoutOneThrowsNotSupported) {
+    auto provider = std::make_shared<SchemaOnlyProvider>();
+    SubscriberArrow sub(provider);
+
+    try {
+        static_cast<void>(
+            sub.Subscribe(kTopic, [](ArrowRow, Attachments) {}, TopicOptions{.profile = "x"}));
         FAIL() << "expected PubSubError(kNotSupported)";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kNotSupported);
@@ -419,6 +480,21 @@ ArrowRow MakeRow(int32_t x, const std::string& name) {
 }
 
 }  // namespace
+
+TEST(SubscriberArrowBatchTest, SubscribeForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    TopicOptions options{.profile = "reliable"};
+    static_cast<void>(
+        sub.Subscribe(kTopic, sink.callback(), SubscriberArrow::BatchOptions{}, options));
+
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->last_subscribe_options, options);
+}
 
 TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
     auto mock = std::make_shared<MockProvider>();

@@ -22,12 +22,21 @@
 // that is Fletcher's built-in in every other respect but forces the DATA reader's data_sharing
 // OFF, on an `is_default_profile="true"` `fletcher_reader` -- the setting item D moved to
 // AUTOMATIC. No argument (or any other argument) runs Fletcher's built-in as-is.
+//
+// The single-process shapes above never provoke the spin: Fast DDS delivers same-process
+// endpoints intraprocess, so the reader's DataSharingListener never sees a payload and
+// process_data_msg is never in the picture. `probe_teardown pub [seconds]` and `probe_teardown
+// sub [cycles]` split provider A and provider B across two processes on the same host and the
+// same domain (44) and topic, so data-sharing AUTOMATIC actually engages between them and the
+// listener thread is live for `sub`'s Subscribe/Unsubscribe cycles to tear down against.
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -86,12 +95,108 @@ const char* kDataSharingOffDocument = R"(<?xml version="1.0" encoding="UTF-8"?>
   </profiles>
 </dds>)";
 
+// Provider A only: publish the 198 B row flat out on its own thread, for `seconds` or until
+// stdin closes, whichever first, ignoring whatever Publish reports (this probe is about a
+// reader's teardown, not publish-side loss).
+int RunPub(int seconds) {
+    ProviderConfig config;
+    config.domain_id = 44;
+    auto a = std::make_unique<FastDDSPubSubProvider>(config);
+    a->CreateTopic({"probe", "teardown"}, MakeSchema());
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<bool> stop_publishing{false};
+    const std::vector<uint8_t> row(198, 0xAB);
+    const auto encoder = [&row](WriteBuffer& buf) { buf.Append(row.data(), row.size()); };
+    std::thread publisher([&] {
+        while (!stop_publishing.load(std::memory_order_relaxed)) {
+            try {
+                a->Publish({"probe", "teardown"}, encoder);
+            } catch (...) {
+                // Ignored: a drop or a transport error is not what this probe is measuring.
+            }
+        }
+    });
+
+    std::printf("pub started\n");
+
+    // Detached, not joined: if `seconds` elapses first this thread is still blocked in
+    // std::getline, and process exit tears it down. Notifies the same cv the deadline wait
+    // below blocks on, so closing stdin can end the run early without a polling sleep.
+    std::thread([&] {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+        }
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            stop_publishing.store(true, std::memory_order_relaxed);
+        }
+        cv.notify_all();
+    }).detach();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    {
+        std::unique_lock<std::mutex> lock(mu);
+        cv.wait_until(lock, deadline,
+                      [&] { return stop_publishing.load(std::memory_order_relaxed); });
+    }
+    stop_publishing.store(true, std::memory_order_relaxed);
+    publisher.join();
+
+    std::printf("pub done\n");
+    return 0;
+}
+
+// Provider B only: `cycles` of Subscribe / wait for >= 50 rows or 2 s / Unsubscribe against
+// whatever is publishing on the same domain and topic, then destroy B.
+int RunSub(int cycles) {
+    ProviderConfig config;
+    config.domain_id = 44;
+    auto b = std::make_unique<FastDDSPubSubProvider>(config);
+
+    for (int cycle = 0; cycle < cycles; ++cycle) {
+        std::mutex mu;
+        std::condition_variable cv;
+        std::atomic<int> received{0};
+        SubscriptionResult result =
+            b->Subscribe({"probe", "teardown"},
+                         [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                             received.fetch_add(1, std::memory_order_relaxed);
+                             std::lock_guard<std::mutex> lock(mu);
+                             cv.notify_all();
+                         });
+        SharedSchema schema;
+        result.schema.Wait(std::chrono::seconds(2), &schema);
+
+        {
+            std::unique_lock<std::mutex> lock(mu);
+            cv.wait_for(lock, std::chrono::seconds(2),
+                        [&] { return received.load(std::memory_order_relaxed) >= 50; });
+        }
+
+        b->Unsubscribe({"probe", "teardown"});
+
+        if ((cycle + 1) % 10 == 0) {
+            std::printf("cycle=%d rows=%d\n", cycle + 1, received.load(std::memory_order_relaxed));
+        }
+    }
+
+    b.reset();
+    std::printf("done cycles=%d\n", cycles);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     std::setbuf(stdout, nullptr);
 
-    const bool control = argc > 1 && std::string(argv[1]) == "off";
+    const std::string mode = argc > 1 ? argv[1] : "";
+    if (mode == "pub") return RunPub(argc > 2 ? std::atoi(argv[2]) : 120);
+    if (mode == "sub") return RunSub(argc > 2 ? std::atoi(argv[2]) : 300);
+
+    const bool control = mode == "off";
     std::printf("mode=%s\n", control ? "data_sharing_off_control" : "data_sharing_automatic");
 
     ProviderConfig config;

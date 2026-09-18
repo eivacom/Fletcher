@@ -127,8 +127,20 @@ class Subscriber {
     /// containment is deliberate, the count is what keeps it from being silent,
     /// and a handler that means to subscribe from inside itself should catch
     /// the refusal or defer the call past the callback's return.
+    ///
+    /// `options` is optional; a default-constructed value means the provider's defaults. The
+    /// provider-level subscription for a topic is opened once and shared by every local subscriber
+    /// (`EnsureProviderSubscription`); `options` apply to that FIRST opening — a later Subscribe on
+    /// the same topic, from this Subscriber, joins what is already there and shares its options,
+    /// checked field-wise: a later call may repeat or omit a field already stored, never change
+    /// one, and a non-empty field against an EMPTY stored one is a conflict too, since the
+    /// provider-level subscription already exists without it. A conflicting field throws
+    /// `PubSubError(kInvalidArgument)`. Always reaches the provider through
+    /// `PubSubProvider::SubscribeWithOptions` — its own default delegates to the pure `Subscribe`
+    /// when `options` is empty, so a provider that overrides only the pure form behaves exactly as
+    /// before.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                                            SubscribeCallback cb);
+                                            SubscribeCallback cb, const TopicOptions& options = {});
 
     /// Remove a subscription by ID. Calls provider->Unsubscribe if this
     /// was the last subscription on the topic.

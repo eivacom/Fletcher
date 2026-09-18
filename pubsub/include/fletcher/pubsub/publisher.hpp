@@ -38,7 +38,17 @@ class Publisher {
     /// DIFFERENT schema throws `PubSubError(kSchemaConflict)` (spec §7 clause
     /// 3). Two schemas that cannot be compared are treated as identical, not as
     /// a conflict.
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema);
+    ///
+    /// `options` is optional; a default-constructed value means the provider's defaults. They are
+    /// checked field-wise, under the same lock as the schema: a re-declaration may repeat or omit
+    /// a field already stored, but never change one — and a non-empty field against an EMPTY
+    /// stored one is a conflict too, because the endpoint already exists without it. A conflicting
+    /// field throws `PubSubError(kInvalidArgument)` before forwarding. Always reaches the provider
+    /// through `PubSubProvider::CreateTopicWithOptions` — its own default delegates to
+    /// `CreateTopic` when `options` is empty, so a provider that never heard of options still sees
+    /// its ordinary call.
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
+                     const TopicOptions& options = {});
 
     /// Publish by writing the encoded row directly into the provider's
     /// transport buffer.

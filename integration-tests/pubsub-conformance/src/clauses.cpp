@@ -704,16 +704,20 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
 // `publishes_into_subject_instance` names structurally rather than by matching on
 // a label.
 //
-// S6 added `SubscribeSchema`/`UnsubscribeSchema` beside `Subscribe`: they are
-// LOCAL-ONLY on every subject (subject.hpp), never routed over the peer pipe,
-// so their assertion is unconditional on all six subjects too — the same
-// reason `Subscribe`'s is.
+// S6 added `SubscribeSchema`/`UnsubscribeSchema` beside `Subscribe`, and this round adds
+// `DeclareTopicWithOptions`/`SubscribeWithOptions` beside those: all four are LOCAL-ONLY on
+// every subject (subject.hpp), never routed over the peer pipe, so their assertion is
+// unconditional on all six subjects too — the same reason `Subscribe`'s is. The options pair is
+// passed an EMPTY `TopicOptions{}`: the door is checked before the support check, so the
+// refusal is `kReentrantCall` regardless of whether the provider under test honours options at
+// all.
 TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     const bool reentrant_publish = GetParam().publishes_into_subject_instance;
 
     const Topic driver = Fresh("refused_driver");
     const Topic derived = Fresh("refused_derived");
     const Topic watched = Fresh("refused_watched");
+    const Topic derived_options = Fresh("refused_derived_options");
     CONF_MUST_DECLARE(driver, DataSchema());
 
     Reply declare_reply = Reply::HarnessFailure("the handler never got there");
@@ -721,6 +725,8 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     std::atomic<int32_t> subscribe_status{kNothingRecorded};
     std::atomic<int32_t> subscribe_schema_status{kNothingRecorded};
     std::atomic<int32_t> unsubscribe_schema_status{kNothingRecorded};
+    std::atomic<int32_t> declare_with_options_status{kNothingRecorded};
+    std::atomic<int32_t> subscribe_with_options_status{kNothingRecorded};
     std::atomic<int> entered{0};
     Latch handled;
 
@@ -757,6 +763,26 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
             } catch (...) {
                 unsubscribe_schema_status.store(kNonSeamException);
             }
+            try {
+                Subject().DeclareTopicWithOptions(
+                    derived_options, MakeConformanceSchema(DataSchema()), TopicOptions{});
+                declare_with_options_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                declare_with_options_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                declare_with_options_status.store(kNonSeamException);
+            }
+            try {
+                SubscriptionResult opened = Subject().SubscribeWithOptions(
+                    watched, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                    TopicOptions{});
+                (void)opened;
+                subscribe_with_options_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                subscribe_with_options_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                subscribe_with_options_status.store(kNonSeamException);
+            }
             handled.Set();
         });
     Subject().AwaitDataMatched(driver, RemainingBudget());
@@ -780,6 +806,18 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
         << "UnsubscribeSchema from inside a delivery answered with "
         << StatusText(unsubscribe_schema_status.load())
         << "; §6 clause 6 refuses the schema-only methods too";
+    EXPECT_EQ(declare_with_options_status.load(),
+              static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "DeclareTopicWithOptions from inside a delivery answered with "
+        << StatusText(declare_with_options_status.load())
+        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
+           "runs";
+    EXPECT_EQ(subscribe_with_options_status.load(),
+              static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "SubscribeWithOptions from inside a delivery answered with "
+        << StatusText(subscribe_with_options_status.load())
+        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
+           "runs";
 
     if (reentrant_publish) {
         // `refused()`, never "!ok()": Reply's third outcome exists precisely so a

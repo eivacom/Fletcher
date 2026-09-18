@@ -149,6 +149,11 @@ struct Subscriber::Impl {
         // arrival that has not been stored yet — a default-constructed one,
         // which reports kSubscriptionEnded for a schema that is on its way.
         bool schema_watch_in_progress = false;
+        // The options the call that opened the provider-level subscription carried, empty when it
+        // named none. Read only while `provider_subscribed`, and written beside it, so a teardown
+        // leaves whatever the last subscription carried: the next Subscribe overwrites it as it
+        // opens the next one.
+        TopicOptions options;
     };
 
     std::shared_ptr<PubSubProvider> provider;
@@ -274,7 +279,24 @@ struct Subscriber::Impl {
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
     SchemaArrival EnsureProviderSubscription(const std::string& key, TopicState& ts,
-                                             std::unique_lock<std::mutex>& lock) {
+                                             std::unique_lock<std::mutex>& lock,
+                                             const TopicOptions& options) {
+        // A live provider subscription's options belong to whoever opened it. Checked
+        // field-wise: a later caller may repeat or omit a field already stored, never change one
+        // — and a non-empty field against an EMPTY stored one is a conflict too, because the
+        // provider-level subscription already exists without it.
+        auto require_options_match = [&](const TopicState& t) {
+            const bool profile_conflict =
+                !options.profile.empty() && options.profile != t.options.profile;
+            const bool bound_conflict = options.max_payload_bytes != 0 &&
+                                        options.max_payload_bytes != t.options.max_payload_bytes;
+            if (profile_conflict || bound_conflict) {
+                throw PubSubError(
+                    PubSubStatus::kInvalidArgument,
+                    "Subscriber: topic already subscribed with different options: " + key);
+            }
+        };
+
         // Wait out a first-Subscribe already inside provider->Subscribe for this
         // topic. `mu` is released across that call, so without this both callers
         // read provider_subscribed == false and BOTH register: measured 400/400
@@ -300,6 +322,7 @@ struct Subscriber::Impl {
         // so it must not be made to wait for anything: that is the permitted
         // shape `ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock` pins.
         if (ts.provider_subscribed) {
+            require_options_match(ts);
             return ts.schema_arrival;
         }
 
@@ -339,6 +362,7 @@ struct Subscriber::Impl {
         // Re-read after the wait: the thread we waited out may have been the one
         // that established the provider subscription.
         if (ts.provider_subscribed) {
+            require_options_match(ts);
             return ts.schema_arrival;
         }
 
@@ -363,8 +387,10 @@ struct Subscriber::Impl {
             }
         } in_progress{ts, lock, provider_cv};
 
-        SubscriptionResult result = provider->Subscribe(
-            segments,
+        // Qualified: PubSubProvider::SubscribeCallback, not Subscriber::SubscribeCallback — the
+        // latter is visible unqualified here (Impl nests inside Subscriber) and has a different
+        // signature (a leading subscription_id), so the name must be qualified to mean this one.
+        PubSubProvider::SubscribeCallback dispatch =
             [fanout, token, absorbed_here](const uint8_t* data, size_t len,
                                            const SharedSchema& schema, const Attachments& att) {
                 EntryList entries = fanout->entries.load();
@@ -414,7 +440,11 @@ struct Subscriber::Impl {
                         absorbed_here->fetch_add(1, std::memory_order_relaxed);
                     }
                 }
-            });
+            };
+
+        // Always the options form; the base delegates.
+        SubscriptionResult result =
+            provider->SubscribeWithOptions(segments, std::move(dispatch), options);
 
         lock.lock();
 
@@ -428,6 +458,9 @@ struct Subscriber::Impl {
         current.provider_subscribed = true;
         // Cache the provider's schema arrival so fan-out subscribers share it.
         current.schema_arrival = result.schema;
+        // The options this provider-level subscription was opened with, for a later joiner's
+        // conflict check.
+        current.options = options;
         return current.schema_arrival;
     }
 };
@@ -549,7 +582,8 @@ Subscriber::~Subscriber() {
 }
 
 Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>& segments,
-                                                  SubscribeCallback cb) {
+                                                  SubscribeCallback cb,
+                                                  const TopicOptions& options) {
     std::string key = internal::JoinSegments(segments);
     std::unique_lock lock(impl_->mu);
 
@@ -566,7 +600,7 @@ Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>
 
     SchemaArrival schema;
     try {
-        schema = impl_->EnsureProviderSubscription(key, it->second, lock);
+        schema = impl_->EnsureProviderSubscription(key, it->second, lock, options);
     } catch (...) {
         // Provider subscription failed — roll back the local subscription record so callers can
         // retry without leaving dangling state behind. EnsureProviderSubscription drops the lock

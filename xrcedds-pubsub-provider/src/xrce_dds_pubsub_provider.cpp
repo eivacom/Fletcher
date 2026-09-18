@@ -86,6 +86,14 @@ struct XrceDDSPubSubProvider::Impl {
         uxrObjectId schema_subscriber_id{};
         uxrObjectId schema_reader_id{};
 
+        // The bound this topic registered and announces on `__schema` -- this topic's own, from
+        // `TopicOptions::max_payload_bytes` or the provider's own bound when declared without one.
+        // Set ONLY by CreateTopic, once, when it creates the participant and topic; still 0 means
+        // Subscribe created them first (Subscribe takes no options, so it never sets this) at
+        // `impl_->max_payload_bytes` -- the reader stays config-driven, and a later CreateTopic on
+        // the same topic can only adopt that bound, never override it (a different one is refused).
+        uint32_t max_payload_bytes = 0;
+
         OwnedSchema schema;
         SharedSchema shared_schema;  // for callback delivery
         // The declared schema as Arrow IPC bytes - the only form a conflict
@@ -663,6 +671,12 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
+    CreateTopicWithOptions(topic_segments, std::move(schema), TopicOptions{});
+}
+
+void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
+                                                   OwnedSchema schema,
+                                                   const TopicOptions& options) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
@@ -672,9 +686,30 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // refused anyway, so the seam has one answer rather than a per-protocol
         // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
         // hand and a fresh ruling.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
+                                           "CreateTopicWithOptions");
+
+        // This client's document carries no profiles at all (key=value, four fixed keys), so a
+        // profile name has nothing to resolve against.
+        if (!options.profile.empty()) {
+            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: the document has no profiles");
+        }
 
         std::string name = internal::JoinSegments(topic_segments);
+
+        // This topic's own bound: `options.max_payload_bytes` if given, else the provider's own
+        // (0 there means "unset" too, resolved at construction). Validated before any lock, the
+        // same rule the constructor applies to the provider's own bound.
+        const uint32_t bound =
+            options.max_payload_bytes ? options.max_payload_bytes : impl_->max_payload_bytes;
+        if (!IsPayloadBound(bound)) {
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "XRCE: max_payload_bytes " + std::to_string(bound) +
+                    " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 "
+                    "between " +
+                    std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+        }
 
         // Encoded before the lock, so the locked section is a byte compare rather
         // than an IPC encode every concurrent CreateTopic queues behind.
@@ -687,7 +722,8 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // Re-declaration is idempotent for an identical schema (so several
         // publishers may share one topic) and REFUSED for a conflicting one -
         // spec section 7 clause 3, tightened from "may be rejected" to "must be
-        // rejected".
+        // rejected". A different bound is refused the same way: neither can migrate
+        // the writer once created.
         //
         // This whole block used to be a throw on any existing topic state, which
         // refused BOTH: an identical re-declaration the contract calls idempotent,
@@ -701,6 +737,15 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                     PubSubStatus::kSchemaConflict,
                     "XRCE: topic already declared with a conflicting schema: " + name);
             }
+            // Only a bound the caller actually named conflicts: an empty `TopicOptions` means "the
+            // provider's defaults" and is never refused, so it re-declares a topic declared at any
+            // bound.
+            if (options.max_payload_bytes != 0 &&
+                options.max_payload_bytes != ts.max_payload_bytes) {
+                throw PubSubError(PubSubStatus::kInvalidArgument,
+                                  "XRCE: '" + name + "' is already declared at payload bound " +
+                                      std::to_string(ts.max_payload_bytes));
+            }
             return;  // identical (or non-comparable) re-declaration - no-op
         }
 
@@ -711,6 +756,9 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         if (ts.participant_id.type == UXR_INVALID_ID) {
             ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
             ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
+            // This call creates the topic, so it is what decides the type it carries.
+            ts.max_payload_bytes = bound;
+            const std::string type_name = FletcherTypeName(bound);
 
             // Create participant on the configured DDS domain.
             uint16_t req_part = uxr_buffer_create_participant_bin(
@@ -721,8 +769,31 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             // Create topic.
             uint16_t req_topic = uxr_buffer_create_topic_bin(
                 &impl_->session, impl_->reliable_out, ts.topic_id, ts.participant_id, name.c_str(),
-                impl_->type_name.c_str(), UXR_REPLACE);
+                type_name.c_str(), UXR_REPLACE);
             WaitForStatus(&impl_->session, req_topic, "topic");
+        } else if (ts.max_payload_bytes == 0) {
+            // Left behind by a subscriber-first reader (Subscribe creates the participant and
+            // topic the same way, but takes no options): the topic already carries
+            // `impl_->type_name`/`impl_->max_payload_bytes`, so that -- not this call's `bound` --
+            // is what this topic actually registered and announces. The reader stays
+            // config-driven. `max_payload_bytes == 0` is what says Subscribe created them:
+            // CreateTopic is the only writer of this field, so a non-zero value is already this
+            // topic's own and a retry after a half-finished declaration must not overwrite it.
+            //
+            // A caller that names a DIFFERENT bound for such a topic is refused before touching
+            // the Agent, not silently overridden -- the reader was already created at its own
+            // bound and cannot migrate. Checked BEFORE the adoption below, the same "named bound
+            // wins or refuses, empty bound always adopts" rule the `ts.is_publisher` branch above
+            // applies to an already-declared publisher.
+            if (options.max_payload_bytes != 0 &&
+                options.max_payload_bytes != impl_->max_payload_bytes) {
+                throw PubSubError(
+                    PubSubStatus::kInvalidArgument,
+                    "XRCE: '" + name + "' already exists on this client at payload bound " +
+                        std::to_string(impl_->max_payload_bytes) +
+                        ", created by Subscribe; a different per-topic bound cannot be applied");
+            }
+            ts.max_payload_bytes = impl_->max_payload_bytes;
         }
         ts.publisher_id = uxr_object_id(base, UXR_PUBLISHER_ID);
         ts.writer_id = uxr_object_id(base, UXR_DATAWRITER_ID);
@@ -794,7 +865,7 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             Envelope schema_env;
             schema_env.row = SerializeSchemaIpc(schema.get());
             std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
-            std::memcpy(bound_bytes.data(), &impl_->max_payload_bytes, sizeof(uint32_t));
+            std::memcpy(bound_bytes.data(), &ts.max_payload_bytes, sizeof(uint32_t));
             schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
             std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
             const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());

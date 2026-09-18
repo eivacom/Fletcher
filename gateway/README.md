@@ -37,6 +37,8 @@ The gateway builds its provider through `fletcher::ProviderRegistry`, whose `Cre
 
 `--provider-config FILE` reads `FILE` and hands its contents to the selected provider as its configuration document. **The format is the provider's, not the gateway's** — the gateway does not parse it, validate it or know what it means; it reads the bytes and passes them on. That is why one flag serves every provider, including ones a later build adds.
 
+The WebSocket protocol itself carries no per-topic options (no `TopicOptions` equivalent in a `create_topic`/`subscribe` frame): a profile reaches the gateway only as a topic-named profile in the `--provider-config` document below.
+
 - for **`fastdds`**, the document is a [Fast DDS XML QoS profiles document](../fastdds-pubsub-provider/README.md#qos-configuration). The only reserved profile name is `fletcher_participant` (mandatory); writer/reader defaults come from the document's `is_default_profile="true"` profiles, and a per-topic override is a profile named after the `/`-joined topic. Note that **a supplied profile is that endpoint's whole quality-of-service** — start from the published starting-point block rather than from a bare profile.
 - for **`inprocess`**, it is `key=value` lines; the only key is `schema_carriage`.
 

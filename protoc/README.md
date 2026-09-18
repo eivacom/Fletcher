@@ -10,6 +10,8 @@ Prefer `DecodeInto` in a subscribe callback. Constructing allocates each field's
 
 Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)`: one row per subscription, decoded into on every sample, handed to `cb` as a `const <Msg>&` borrowed for the duration of the call. `Subscribe(cb)` still constructs a fresh row per sample and passes it by value — use that one when the callback keeps the row.
 
+The generated `<Msg>Publisher` constructor and the `<Msg>Subscriber` `Subscribe` / `SubscribeInPlace` methods each take an optional `fletcher::TopicOptions` after the callback/provider argument — `<Msg>Publisher pub(provider, {.profile = "latest"});`, `sub.Subscribe(cb, {.profile = "latest_reader"})` — omitting it means the provider's defaults, and `profile` / `max_payload_bytes` carry the provider's own semantics (see the FastDDS provider README's [Per-topic options](../fastdds-pubsub-provider/README.md#per-topic-options)).
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

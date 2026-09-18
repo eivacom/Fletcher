@@ -223,6 +223,12 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// `max_payload_bytes`. `Publish` on a topic this provider never `CreateTopic`d
 /// — including one it only `Subscribe`d to — is `kTopicNotDeclared`.
 ///
+/// `CreateTopicWithOptions` and `SubscribeWithOptions` (`TopicOptions`, below) add three more, all
+/// `kInvalidArgument`: a `profile` naming no `<data_writer>` / `<data_reader>` profile the document
+/// defines, quoting the name; a re-declaration of an already-declared topic with a different
+/// non-empty profile or a different `max_payload_bytes`; and a non-zero `max_payload_bytes` on
+/// `SubscribeWithOptions`, which always follows its publisher's announced bound instead.
+///
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL, bounded at the fixed
 /// `kSchemaPayloadBytes`, and is not configurable — a Fletcher-internal
@@ -264,6 +270,37 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 
+    /// `CreateTopic` with per-topic options (`TopicOptions`, pubsub/provider.hpp).
+    /// `options.profile` selects a `<data_writer>` profile by name for THIS topic's writer, ahead
+    /// of the document's per-topic-name lookup and its default profile; a name the document does
+    /// not define is `kInvalidArgument`, quoting it. `options.max_payload_bytes` is this topic's
+    /// own publisher bound — the type name this topic's writer registers and the bound it announces
+    /// on `__schema` — in place of the provider's own bound for this topic only; `PayloadBytes()`
+    /// itself is unchanged and still answers the provider's own configured bound. Zero means "this
+    /// topic follows the provider's own bound", the same as `CreateTopic`. A bound
+    /// `IsPayloadBound` rejects is `kInvalidArgument`, quoting it, checked before any lock.
+    /// Re-declaring an already-declared topic with a different non-empty profile, or a different
+    /// non-zero bound, is `kInvalidArgument`; an identical re-declaration (or one with empty
+    /// options, which names neither field) is the same idempotent no-op `CreateTopic` is.
+    /// `CreateTopic` is a one-line delegation to this with `TopicOptions{}`, so every one of its
+    /// refusals is this method's.
+    void CreateTopicWithOptions(const std::vector<std::string>& topic_segments, OwnedSchema schema,
+                                const TopicOptions& options) override;
+
+    /// `Subscribe` with per-topic options. `options.profile` selects a `<data_reader>` profile by
+    /// name for this subscription's reader, resolved the moment `Subscribe` runs, before any lock,
+    /// so an unknown name is refused synchronously rather than surfacing later when the schema
+    /// thread opens the reader. `options.max_payload_bytes` is always `kInvalidArgument`: a
+    /// subscription follows whatever bound its publisher announces on `__schema` and never carries
+    /// one of its own. `Subscribe` is a one-line delegation to this with `TopicOptions{}`.
+    //
+    // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and the diagnostic
+    // keys off the STATIC type at the call site, so the annotation must be repeated here too (see
+    // Subscribe above) or it never fires where applications actually call.
+    [[nodiscard]] SubscriptionResult SubscribeWithOptions(
+        const std::vector<std::string>& topic_segments, SubscribeCallback callback,
+        const TopicOptions& options) override;
+
     /// Both optional seam methods are served here: the `__schema` channel this provider already
     /// runs for every subscription IS the schema-only subscription, so a watch is that channel
     /// with no data reader beside it. Read `PubSubProvider::SubscribeSchema` for the contract; the
@@ -273,12 +310,20 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void UnsubscribeSchema(const std::vector<std::string>& topic_segments) override;
 
-    /// The payload bound in force — `ProviderConfig::max_payload_bytes` exactly as given, or
-    /// 65536 if it was 0 (unset). An unsupported one never gets past the constructor. It is the
-    /// bound this provider's PUBLISHERS register in their type name and the size a published row
-    /// has to fit; it says nothing about what this provider's subscriptions use, since a
-    /// subscriber's reader is created at the bound its publisher announces.
+    /// The bound for topics declared WITHOUT a `TopicOptions::max_payload_bytes` override (see
+    /// `CreateTopicWithOptions`) — `ProviderConfig::max_payload_bytes` exactly as given, or 65536
+    /// if it was 0 (unset). An unsupported one never gets past the constructor. It is the bound
+    /// such a topic's writer registers in its type name and the size a published row has to fit;
+    /// it says nothing about what this provider's subscriptions use, since a subscriber's reader
+    /// is created at the bound its publisher announces.
     [[nodiscard]] uint32_t PayloadBytes() const noexcept;
+
+    /// The XML document the provider loads when `ProviderConfig::document` is empty: one
+    /// `<data_writer is_default_profile="true">` and one `<data_reader is_default_profile="true">`
+    /// profile (RELIABLE, VOLATILE, KEEP_LAST 25) plus the participant anchor. Start a custom
+    /// document from this text and add named profiles inside `<profiles>`; the two
+    /// `is_default_profile` profiles are what every topic without a profile of its own runs on.
+    [[nodiscard]] static const char* DefaultProfilesDocument() noexcept;
 
    private:
     struct Impl;

@@ -124,6 +124,14 @@ class FastDDSSubject : public ProviderSubject {
         return inner_->SubscribeSchema(topic);
     }
     void UnsubscribeSchema(const Topic& topic) override { inner_->UnsubscribeSchema(topic); }
+    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                 const TopicOptions& options) override {
+        inner_->DeclareTopicWithOptions(topic, std::move(schema), options);
+    }
+    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        return inner_->SubscribeWithOptions(topic, std::move(callback), options);
+    }
 
     // Reader half here, writer half where the writer lives (no-op for the
     // local subject, the `await_matched` verb for the peer subject).

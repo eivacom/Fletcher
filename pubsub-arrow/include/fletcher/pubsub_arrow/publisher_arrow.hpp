@@ -32,10 +32,13 @@ class PublisherArrow {
     PublisherArrow(const PublisherArrow&) = delete;
     PublisherArrow& operator=(const PublisherArrow&) = delete;
 
-    /// Create a topic with an Arrow C++ schema.
-    /// Passing nullptr is allowed (topic created without schema).
+    /// Create a topic with an Arrow C++ schema. Passing nullptr is allowed (topic created without
+    /// schema).
+    ///
+    /// `options` is optional; a default-constructed value means the provider's defaults, forwarded
+    /// to `Publisher::CreateTopic`, which applies the field-wise conflict rule described there.
     void CreateTopic(const std::vector<std::string>& segments,
-                     std::shared_ptr<arrow::Schema> schema);
+                     std::shared_ptr<arrow::Schema> schema, const TopicOptions& options = {});
 
     /// Publish an ArrowRow (encoded via Codec).
     void Publish(const std::vector<std::string>& segments, const ArrowRow& row,

@@ -377,7 +377,7 @@ constexpr const char* kFletcherReaderQos = R"(
         <reliability><kind>RELIABLE</kind></reliability>
         <data_sharing><kind>OFF</kind></data_sharing>)";
 
-// Ten slots rather than Fletcher's published hundred: small enough that the loaned tests below
+// Ten slots rather than Fletcher's published twenty-five: small enough that the loaned tests below
 // can exhaust the pool deliberately.
 constexpr const char* kTenSlots = R"(
         <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
@@ -1042,15 +1042,15 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
 // proves both the schema arrived and the match happened. Functional smoke test: 1000 rows,
 // delivered in order.
 //
-// Paced by real delivery progress, not a fixed delay -- MEASURED: the writer profile here is
-// KEEP_ALL with a 100-sample resourceLimitsQos.max_samples and Fast DDS's default
-// max_blocking_time (100 ms; qos_defaults.cpp no longer sets one), so an unpaced 1000-sample burst
-// that outruns the reader drops samples once it blocks past that. Keeping the gap between
-// published and received counts under the resource limit, using the same cv `received` already
-// notifies, sidesteps it without guessing at a delay.
+// Paced by real delivery progress, not a fixed delay: the writer and reader profile here is
+// KEEP_LAST with a 25-sample resourceLimitsQos.max_samples/depth, so nothing blocks any more --
+// the risk is the reader's oldest unread sample being discarded once a same-process burst outruns
+// it by more than the depth. Keeping the gap between published and received counts under the
+// reader's KEEP_LAST depth, using the same cv `received` already notifies, keeps the listener
+// ahead of the oldest sample being overwritten, without guessing at a delay.
 TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     constexpr int32_t kCount = 1000;
-    constexpr size_t kWindow = 50;  // comfortably under the 100-sample resourceLimitsQos pool
+    constexpr size_t kWindow = 12;  // comfortably under the 25-sample KEEP_LAST depth
 
     // Declared before the providers: calls arrive until the last of them is destroyed.
     DataWriterMatchListener pub_listener;
@@ -2580,4 +2580,388 @@ TEST(FastDDSPubSubProviderTest, ConflictingCrossProviderSchemaIsLoggedNotSwallow
         << "a conflicting cross-process schema announcement was not logged";
 
     c.UnsubscribeSchema(t);
+}
+
+// ---------------------------------------------------------------------------
+// Tests — TopicOptions (CreateTopicWithOptions / SubscribeWithOptions)
+// ---------------------------------------------------------------------------
+
+// The mirror of ASubscriberFollowsThePublishersPayloadBound above, declared through
+// TopicOptions::max_payload_bytes instead of ProviderConfig::max_payload_bytes: a per-topic bound
+// announces and matches exactly like the provider-wide one, and the provider's own PayloadBytes()
+// is untouched by it.
+TEST(FastDDSPubSubProviderTest, CreateTopicWithABoundAnnouncesThatBound) {
+    struct DiscoveryListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        std::vector<std::pair<std::string, std::string>> writers;
+
+        void OnWriterDiscovered(std::string_view topic, std::string_view type_name,
+                                bool alive) noexcept override {
+            if (!alive) return;
+            std::lock_guard<std::mutex> lk(m);
+            writers.emplace_back(std::string(topic), std::string(type_name));
+            cv.notify_all();
+        }
+
+        bool SawWriter(const std::string& topic, const std::string& type_name) const {
+            for (const auto& w : writers) {
+                if (w.first == topic && w.second == type_name) return true;
+            }
+            return false;
+        }
+    };
+
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+
+    DiscoveryListener sub_listener;
+    FastDDSPubSubProvider sub(ProviderConfig{}, &sub_listener);
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub.Subscribe(
+        {"options", "bound"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        });
+
+    pub.CreateTopicWithOptions({"options", "bound"}, MakeSchema(),
+                               {.max_payload_bytes = kPayloadBytes<8192>});
+
+    {
+        std::unique_lock<std::mutex> lk(sub_listener.m);
+        ASSERT_TRUE(sub_listener.cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return sub_listener.SawWriter("options/bound", FletcherTypeName(8192));
+        })) << "the writer was never discovered at its own declared bound";
+    }
+
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the data writer never matched the subscriber's data reader";
+    pub.Publish({"options", "bound"}, MakeEncoder(1));
+    EXPECT_EQ(AwaitRow(received), 1);
+
+    EXPECT_EQ(pub.PayloadBytes(), 65536u)
+        << "a per-topic bound must not change the provider's own PayloadBytes()";
+}
+
+TEST(FastDDSPubSubProviderTest, CreateTopicWithAnUnusableBoundIsRefused) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+    try {
+        p.CreateTopicWithOptions({"options", "badbound"}, MakeSchema(),
+                                 {.max_payload_bytes = 4095});
+        ADD_FAILURE() << "an unusable payload bound was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("4095"), std::string::npos) << e.what();
+    }
+}
+
+// The provider's own bound is 8192 here, deliberately: re-declaring with `{}` (no options) then
+// resolves to that SAME bound, so it is idempotent rather than a conflicting redeclaration against
+// the 8192 the first call named explicitly.
+TEST(FastDDSPubSubProviderTest, RedeclaringATopicAtAnotherBoundIsRefused) {
+    ProviderConfig config;
+    config.max_payload_bytes = kPayloadBytes<8192>;
+    FastDDSPubSubProvider p(config);
+
+    p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
+                             {.max_payload_bytes = kPayloadBytes<8192>});
+
+    try {
+        p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
+                                 {.max_payload_bytes = kPayloadBytes<16384>});
+        ADD_FAILURE() << "a redeclaration at a different bound was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+
+    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
+                                             {.max_payload_bytes = kPayloadBytes<8192>}));
+    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(), {}));
+}
+
+// A profile named after neither the topic nor `is_default_profile` -- selected only through
+// `TopicOptions::profile`. The mismatch against a default RELIABLE reader is the same forcing
+// shape as OnIncompatibleQosFiresForAReliableReaderAgainstABestEffortWriter, and the control topic
+// declared with `{}` in the same TEST proves the profile, not the document, is what caused it.
+TEST(FastDDSPubSubProviderTest, CreateTopicWithAProfilePicksThatProfile) {
+    const std::string document = R"(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant"/>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+    </data_reader>
+    <data_writer profile_name="fire_and_forget">
+      <qos>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+    </data_writer>
+  </profiles>
+</dds>)";
+
+    ProviderConfig config;
+    config.document = document;
+
+    struct IncompatibleListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        bool reader_incompatible = false;
+
+        void OnIncompatibleQos(Endpoint endpoint, uint32_t /*policy_id*/,
+                               uint32_t /*total_count*/) noexcept override {
+            if (endpoint.is_writer || endpoint.topic != "options/profile") return;
+            std::lock_guard<std::mutex> lk(m);
+            reader_incompatible = true;
+            cv.notify_all();
+        }
+    };
+
+    DataWriterMatchListener pub_listener;
+    IncompatibleListener sub_listener;
+    FastDDSPubSubProvider pub(config, &pub_listener);
+    FastDDSPubSubProvider sub(config, &sub_listener);
+
+    pub.CreateTopicWithOptions({"options", "profile"}, MakeSchema(),
+                               {.profile = "fire_and_forget"});
+    SubscriptionResult mismatched =
+        sub.Subscribe({"options", "profile"},
+                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    ASSERT_TRUE(AwaitSchema(mismatched, std::chrono::seconds(5)));
+    pub.Publish({"options", "profile"}, MakeEncoder(1));
+
+    {
+        std::unique_lock<std::mutex> lk(sub_listener.m);
+        EXPECT_TRUE(sub_listener.cv.wait_for(lk, std::chrono::seconds(5),
+                                             [&] { return sub_listener.reader_incompatible; }))
+            << "OnIncompatibleQos was never reported for the RELIABLE reader against the "
+               "fire_and_forget (BEST_EFFORT) writer";
+    }
+
+    // Control: a second topic, declared with {}, matches normally through the same pair.
+    pub.CreateTopicWithOptions({"options", "ordinary"}, MakeSchema(), {});
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult ordinary = sub.Subscribe(
+        {"options", "ordinary"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        });
+    ASSERT_TRUE(AwaitSchema(ordinary, std::chrono::seconds(5)));
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the control topic's data writer never matched its reader";
+    pub.Publish({"options", "ordinary"}, MakeEncoder(2));
+    EXPECT_EQ(AwaitRow(received), 2);
+}
+
+TEST(FastDDSPubSubProviderTest, CreateTopicWithAnUnknownProfileIsRefused) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+    try {
+        p.CreateTopicWithOptions({"options", "unknownprofile"}, MakeSchema(), {.profile = "nope"});
+        ADD_FAILURE() << "an unknown profile name was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("nope"), std::string::npos) << e.what();
+    }
+}
+
+TEST(FastDDSPubSubProviderTest, RedeclaringWithAnotherProfileIsRefused) {
+    const std::string document = R"(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant"/>
+    <data_writer profile_name="alpha">
+      <qos><reliability><kind>BEST_EFFORT</kind></reliability></qos>
+    </data_writer>
+    <data_writer profile_name="beta">
+      <qos><reliability><kind>RELIABLE</kind></reliability></qos>
+    </data_writer>
+  </profiles>
+</dds>)";
+
+    ProviderConfig config;
+    config.document = document;
+    FastDDSPubSubProvider p(config);
+
+    p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(), {.profile = "alpha"});
+
+    try {
+        p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(),
+                                 {.profile = "beta"});
+        ADD_FAILURE() << "a redeclaration with a different profile was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+
+    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(),
+                                             {.profile = "alpha"}));
+    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(), {}));
+}
+
+// The reader-side mirror of CreateTopicWithAProfilePicksThatProfile: `durable` is a `<data_reader>`
+// profile selected only through `TopicOptions::profile`, and a DURABILITY RxO mismatch against a
+// default VOLATILE writer is what proves it took hold (a durability-only forcing shape, unlike the
+// reliability one above). The control subscription in the same TEST, declared with `{}`, matches
+// normally through the same pair.
+TEST(FastDDSPubSubProviderTest, SubscribeWithAProfilePicksThatProfile) {
+    const std::string document = R"(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant"/>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+    </data_writer>
+    <data_reader profile_name="durable">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+    </data_reader>
+  </profiles>
+</dds>)";
+
+    ProviderConfig config;
+    config.document = document;
+
+    struct IncompatibleListener : FastDDSStatusListener {
+        std::mutex m;
+        std::condition_variable cv;
+        bool reader_incompatible = false;
+
+        void OnIncompatibleQos(Endpoint endpoint, uint32_t /*policy_id*/,
+                               uint32_t /*total_count*/) noexcept override {
+            if (endpoint.is_writer || endpoint.topic != "options/subprofile") return;
+            std::lock_guard<std::mutex> lk(m);
+            reader_incompatible = true;
+            cv.notify_all();
+        }
+    };
+
+    IncompatibleListener sub_listener;
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider sub(config, &sub_listener);
+    FastDDSPubSubProvider pub(config, &pub_listener);
+
+    SubscriptionResult mismatched = sub.SubscribeWithOptions(
+        {"options", "subprofile"},
+        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        {.profile = "durable"});
+    pub.CreateTopic({"options", "subprofile"}, MakeSchema());
+    ASSERT_TRUE(AwaitSchema(mismatched, std::chrono::seconds(5)));
+    pub.Publish({"options", "subprofile"}, MakeEncoder(1));
+
+    {
+        std::unique_lock<std::mutex> lk(sub_listener.m);
+        EXPECT_TRUE(sub_listener.cv.wait_for(lk, std::chrono::seconds(5),
+                                             [&] { return sub_listener.reader_incompatible; }))
+            << "OnIncompatibleQos was never reported for the durable (TRANSIENT_LOCAL) reader "
+               "against a VOLATILE writer";
+    }
+
+    // Control: {} matches normally.
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult ordinary = sub.Subscribe(
+        {"options", "subprofile-ordinary"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        });
+    pub.CreateTopic({"options", "subprofile-ordinary"}, MakeSchema());
+    ASSERT_TRUE(AwaitSchema(ordinary, std::chrono::seconds(5)));
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the control topic's data writer never matched its default reader";
+    pub.Publish({"options", "subprofile-ordinary"}, MakeEncoder(2));
+    EXPECT_EQ(AwaitRow(received), 2);
+}
+
+TEST(FastDDSPubSubProviderTest, SubscribeWithABoundIsRefused) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+    try {
+        static_cast<void>(p.SubscribeWithOptions(
+            {"options", "subbound"},
+            [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            {.max_payload_bytes = kPayloadBytes<8192>}));
+        ADD_FAILURE() << "a subscription with a payload bound was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+}
+
+TEST(FastDDSPubSubProviderTest, SubscribeWithAnUnknownProfileIsRefused) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+    try {
+        static_cast<void>(p.SubscribeWithOptions(
+            {"options", "subunknown"},
+            [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            {.profile = "nope"}));
+        ADD_FAILURE() << "an unknown reader profile name was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("nope"), std::string::npos) << e.what();
+    }
+}
+
+// The door, on the two options-taking methods: refused by name from inside a delivery on this
+// instance, exactly like the four data-path methods and the schema-only pair (see
+// SchemaWatchIsRefusedFromInsideADelivery above).
+TEST(FastDDSPubSubProviderTest, OptionsMethodsAreRefusedFromInsideADelivery) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    pub.CreateTopic({"reentrant", "options"}, MakeSchema());
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int32_t> create_refusal{-1};
+    std::atomic<int32_t> subscribe_refusal{-1};
+
+    SubscriptionResult result = sub.Subscribe(
+        {"reentrant", "options"},
+        [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            try {
+                sub.CreateTopicWithOptions({"reentrant", "options-create"}, MakeSchema(),
+                                           TopicOptions{});
+            } catch (const PubSubError& e) {
+                create_refusal.store(static_cast<int32_t>(e.status()));
+            }
+            try {
+                static_cast<void>(sub.SubscribeWithOptions(
+                    {"reentrant", "options"},
+                    [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                    TopicOptions{}));
+            } catch (const PubSubError& e) {
+                subscribe_refusal.store(static_cast<int32_t>(e.status()));
+            }
+            std::lock_guard<std::mutex> lk(mu);
+            cv.notify_all();
+        });
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the data writer never matched the subscriber's data reader";
+    pub.Publish({"reentrant", "options"}, MakeEncoder(1));
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, std::chrono::seconds(5), [&] {
+            return create_refusal.load() != -1 && subscribe_refusal.load() != -1;
+        })) << "the delivery never ran, or neither call was answered";
+    }
+    EXPECT_EQ(create_refusal.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+    EXPECT_EQ(subscribe_refusal.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+
+    sub.Unsubscribe({"reentrant", "options"});
 }

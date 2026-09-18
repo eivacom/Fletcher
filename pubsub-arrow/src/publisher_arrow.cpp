@@ -32,7 +32,8 @@ PublisherArrow::PublisherArrow(std::shared_ptr<PubSubProvider> provider)
 PublisherArrow::~PublisherArrow() = default;
 
 void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
-                                 std::shared_ptr<arrow::Schema> schema) {
+                                 std::shared_ptr<arrow::Schema> schema,
+                                 const TopicOptions& options) {
     OwnedSchema nano;
     if (schema) {
         nano = ExportToNano(*schema);
@@ -41,7 +42,7 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
     // Delegate to the underlying Publisher FIRST. If it throws (duplicate
     // topic, provider failure) we leave the local codec registry
     // untouched, so it stays in sync with the Publisher's view.
-    publisher_->CreateTopic(segments, std::move(nano));
+    publisher_->CreateTopic(segments, std::move(nano), options);
 
     if (schema) {
         std::string key = internal::JoinSegments(segments);

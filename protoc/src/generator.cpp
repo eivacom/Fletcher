@@ -950,12 +950,15 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     // Constructor
     o << "    /// Creates the publisher and registers the topic with its schema\n"
       << "    /// on the provider. After construction, subscribers can discover\n"
-      << "    /// the topic and receive the schema for decoding.\n";
+      << "    /// the topic and receive the schema for decoding.\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider,\n"
+      << "            const fletcher::TopicOptions& options = {})\n"
       << "        : publisher_(std::make_unique<fletcher::Publisher>(std::move(provider)))\n"
       << "    {\n"
-      << "        publisher_->CreateTopic(TopicSegments(), " << msg_class << "Schema());\n"
+      << "        publisher_->CreateTopic(TopicSegments(), " << msg_class << "Schema(), options);\n"
       << "    }\n\n";
 
     // Publish (without attachments)
@@ -1016,9 +1019,12 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
       << "    /// are decoded into a typed message before being delivered to the\n"
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
-      << "    /// Returns the subscription ID (used for Unsubscribe).\n";
+      << "    /// Returns the subscription ID (used for Unsubscribe).\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    uint64_t Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb)\n"
+      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb,\n"
+      << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
@@ -1026,7 +1032,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                                 const fletcher::SharedSchema& /*schema*/,\n"
       << "                                 const fletcher::Attachments& att) {\n"
       << "                cb(" << msg_class << "(data, len), att);\n"
-      << "            });\n"
+      << "            },\n"
+      << "            options);\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";
 
@@ -1038,10 +1045,14 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    ///\n"
       << "    /// The row is borrowed for the duration of the call - copy it if you keep it. That\n"
       << "    /// is safe because a provider delivers at most one callback at a time per\n"
-      << "    /// subscription, which is part of PubSubProvider's delivery contract.\n";
+      << "    /// subscription, which is part of PubSubProvider's delivery contract.\n"
+      << "    ///\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    uint64_t SubscribeInPlace(\n"
       << "        std::function<void(const " << msg_class
-      << "&, const fletcher::Attachments&)> cb)\n"
+      << "&, const fletcher::Attachments&)> cb,\n"
+      << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb), row = " << msg_class << "()](\n"
@@ -1051,7 +1062,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                const fletcher::Attachments& att) mutable {\n"
       << "                row.DecodeInto(data, len);\n"
       << "                cb(row, att);\n"
-      << "            });\n"
+      << "            },\n"
+      << "            options);\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";
 

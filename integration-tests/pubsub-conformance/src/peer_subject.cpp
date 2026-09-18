@@ -77,6 +77,20 @@ class PeerSubject : public ProviderSubject {
 
     void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
 
+    /// LOCAL-ONLY, as subject.hpp says: this round adds no peer-pipe protocol, so — unlike
+    /// `DeclareTopic` above — this reaches `provider_`, the subscriber-side instance in THIS
+    /// process, never the peer child. Nothing in this round needs the publisher-side instance
+    /// for it.
+    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                 const TopicOptions& options) override {
+        provider_->CreateTopicWithOptions(topic, std::move(schema), options);
+    }
+
+    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        return provider_->SubscribeWithOptions(topic, std::move(callback), options);
+    }
+
     /// The writer-side half of the readiness fence lives in the peer (peer.hpp
     /// `await_matched`); the subscriber-side half is the wrapping subject's.
     /// Capped below the exchange budget so the pipe never times out first.

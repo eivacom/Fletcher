@@ -31,6 +31,32 @@ data path at all, returning the same `SchemaArrival` a `Subscribe` on that topic
 with `UnsubscribeSchema`. A later `Subscribe` on the topic reuses what `SubscribeSchema` opened but
 does not take it over — the watch outlives the subscription, and watches are counted per topic.
 
+### TopicOptions
+
+`fletcher::TopicOptions` (`fletcher/pubsub/provider.hpp`) is a per-topic, OPTIONAL options struct —
+a `profile` name the provider interprets and a publisher-side `max_payload_bytes` bound — with a
+default-constructed value meaning "the provider's defaults". `PublisherArrow::CreateTopic` and both
+`SubscriberArrow::Subscribe` overloads (per-row and batched) take `options` as a defaulted trailing
+argument (`= {}`) that forwards straight to the underlying `Publisher` / `Subscriber` method of the
+same name, which is what reaches the provider's `CreateTopicWithOptions` / `SubscribeWithOptions` —
+always, on both tiers (see [pubsub/README.md](../pubsub/README.md)):
+
+```cpp
+fletcher::TopicOptions options{.profile = "reliable_large"};
+pub.CreateTopic({"orders", "v1"}, arrow_schema, options);
+sub.Subscribe({"orders", "v1"}, [](fletcher::ArrowRow, fletcher::Attachments) { ... }, options);
+```
+
+A provider with no notion of profiles or per-topic bounds refuses a non-empty `TopicOptions` with
+`kNotSupported`; an empty one is never refused. The conflict check is field-wise, not whole-struct:
+re-declaring a topic, or joining a live subscription, may repeat or omit a field already in force
+but never change one, and naming a field that was never set before is a conflict too, against the
+stored EMPTY value — a conflicting field is `kInvalidArgument`. The batched `Subscribe` overload
+takes `BatchOptions` positionally and `TopicOptions` as a defaulted fourth argument (`= {}`);
+`BatchOptions` itself still needs a separate convenience overload rather than a default value,
+because a nested aggregate's member initializers aren't usable in a default argument of the same
+class — `TopicOptions` is not nested in `SubscriberArrow`, so it defaults fine.
+
 ---
 
 ## Batched RecordBatch subscribe

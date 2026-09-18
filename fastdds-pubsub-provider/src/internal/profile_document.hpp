@@ -115,26 +115,46 @@ inline void ResolveParticipantQos(const std::string& document, uint32_t domain_i
 /// The per-topic profile if the registry has one, else the Publisher's own default QoS -- which
 /// Fast DDS itself seeded from the document's `is_default_profile="true"` `<data_writer>` profile
 /// if it had one, else Fast DDS's own default. `fletcher_writer` is not a special name.
+///
+/// `profile`, when non-empty, is a `TopicOptions::profile` naming a `<data_writer>` profile
+/// directly -- `topic_name` plays no part then, and a name the document does not define throws
+/// `PubSubError(kInvalidArgument)` naming it, rather than falling back the way a topic-name miss
+/// does. Empty (the default) is today's lookup: `topic_name`'s own profile if the registry has
+/// one, else the Publisher's default.
 inline eprosima::fastdds::dds::DataWriterQos ResolveDataWriterQos(
-    const eprosima::fastdds::dds::Publisher& publisher, const std::string& topic_name) {
+    const eprosima::fastdds::dds::Publisher& publisher, const std::string& topic_name,
+    const std::string& profile = "") {
     using eprosima::fastdds::dds::DataWriterQos;
     using eprosima::fastdds::dds::RETCODE_OK;
 
     std::lock_guard<std::mutex> lock(profile_registry_mutex);
     DataWriterQos qos;  // fresh out-param -- a resolved profile is that endpoint's WHOLE QoS,
                         // never merged with anything
+    if (!profile.empty()) {
+        if (publisher.get_datawriter_qos_from_profile(profile, qos) == RETCODE_OK) return qos;
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            "FastDDS: the document defines no <data_writer> profile named '" + profile + "'");
+    }
     if (publisher.get_datawriter_qos_from_profile(topic_name, qos) == RETCODE_OK) return qos;
     return publisher.get_default_datawriter_qos();
 }
 
-/// The reader mirror of `ResolveDataWriterQos`.
+/// The reader mirror of `ResolveDataWriterQos`, `profile` included.
 inline eprosima::fastdds::dds::DataReaderQos ResolveDataReaderQos(
-    const eprosima::fastdds::dds::Subscriber& subscriber, const std::string& topic_name) {
+    const eprosima::fastdds::dds::Subscriber& subscriber, const std::string& topic_name,
+    const std::string& profile = "") {
     using eprosima::fastdds::dds::DataReaderQos;
     using eprosima::fastdds::dds::RETCODE_OK;
 
     std::lock_guard<std::mutex> lock(profile_registry_mutex);
     DataReaderQos qos;
+    if (!profile.empty()) {
+        if (subscriber.get_datareader_qos_from_profile(profile, qos) == RETCODE_OK) return qos;
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            "FastDDS: the document defines no <data_reader> profile named '" + profile + "'");
+    }
     if (subscriber.get_datareader_qos_from_profile(topic_name, qos) == RETCODE_OK) return qos;
     return subscriber.get_default_datareader_qos();
 }

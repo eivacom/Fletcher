@@ -142,6 +142,47 @@ The watch is idempotent per topic, a later `Subscribe` reuses what it opened, an
 it is released **only** by `UnsubscribeSchema`: a data `Unsubscribe` leaves a
 pending watch in place, because the two were asked for separately.
 
+**Addendum, 2026-09-17 — asked and answered again: two OPTIONAL methods carrying
+per-topic options.**
+
+```cpp
+virtual void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
+                                    const TopicOptions& options);
+[[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(
+    const std::vector<std::string>& segments, SubscribeCallback callback,
+    const TopicOptions& options);
+
+struct TopicOptions {
+    std::string profile;
+    uint32_t max_payload_bytes = 0;
+    bool empty() const noexcept;
+    friend bool operator==(const TopicOptions&, const TopicOptions&) = default;
+};
+```
+
+Neither is pure: the base class delegates to `CreateTopic` / `Subscribe` when
+`options` is empty and throws `PubSubError(kNotSupported)` otherwise, so a
+provider with no notion of a profile or a per-topic bound stays conforming
+without writing a line. They are therefore **not among the conformance suite's
+four data-path methods** (§7.1): nothing in the suite requires them, and a
+provider is not measured on them. They are seam entry points all the same, so
+§5.1's translation rule and §6 clause 6's re-entrancy refusal bind them exactly
+as they bind the other six, and a C form is owed to PDA-ABI like every other
+method here.
+
+The semantics: `profile` is opaque text the provider resolves the way it
+resolves `document` (§4.1) — for Fast DDS, a `<data_writer>` / `<data_reader>`
+profile name in the loaded document, and a name the document does not define is
+`kInvalidArgument`. `max_payload_bytes` is the typed core's number (§4.1), here
+for one topic's PUBLISHER only; `0` means the provider's own. Subscribers never
+carry a bound — they follow what the publisher announces on the `__schema`
+attachment (§4.1, §7 clause 1) — so a non-zero bound on a subscription is
+`kInvalidArgument`. An empty `TopicOptions` is never refused and means the
+provider's defaults. A provider with no notion of one of these fields refuses a
+non-empty value `kNotSupported`. A re-declaration or re-subscription of a topic
+already declared or subscribed, carrying different non-empty options, is
+`kInvalidArgument`.
+
 **`Publish` is inverted, and stays inverted.** The provider supplies the buffer
 and Fletcher encodes into it. That inversion is the entire zero-copy encode path
 and the reason `FixedWriteBuffer` exists; a change that has the provider hand
@@ -585,7 +626,9 @@ Configuration at the seam is a small typed core plus an opaque blob:
 - **The typed core** is what Fletcher itself must reason about. Both shipping
   providers already have exactly `{max_payload_bytes, domain_id}`, so the core is
   derived from evidence rather than invented. It is **exactly those two fields**
-  and it is append-only; a later field never changes `Create`. Widening it
+  and it is append-only; a later field never changes `Create`. Per-topic options
+  do not widen it — they travel on the two optional methods added by §2's
+  2026-09-17 addendum and carry no protocol vocabulary of their own. Widening it
   because one protocol wants a setting typed is a stop-and-ask (owner ruling
   2026-09-02: "Fletcher keeps exactly payload size and domain"). `0` in
   `max_payload_bytes` means *unset* — the provider's own default applies. For the
@@ -758,7 +801,7 @@ without drifting, which is the drift this round exists to stop.
   non-failure number.
 - **Every seam entry point translates.** Each provider wraps every seam method it
   implements — the four data-path ones and, where it has them, the two
-  schema-only ones — so
+  schema-only ones and the two options-taking ones (§2's addenda) — so
   the only exception that leaves is a `PubSubError`; anything else — including
   `std::bad_alloc` or a transport SDK's own type — becomes `kInternal` carrying
   the original `what()`. A taxonomy that lets an untyped exception through is not
@@ -877,9 +920,10 @@ depend on these being written down:
    method** (owner ruling 2026-09-05, *"refuse everywhere; hand the capability to
    PDA-ABI"*).
 
-   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, and the
-   two schema-only methods `SubscribeSchema` and `UnsubscribeSchema` — every
-   seam method `PubSubProvider` declares — throw `PubSubError(kReentrantCall)`,
+   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, the
+   two schema-only methods `SubscribeSchema` and `UnsubscribeSchema`, and the two
+   options-taking methods `CreateTopicWithOptions` and `SubscribeWithOptions` —
+   every seam method `PubSubProvider` declares — throw `PubSubError(kReentrantCall)`,
    **before taking any lock**, when issued from inside a delivery callback on the
    *same provider instance* and the *same thread*. There is no per-protocol
    exception and no method carved out. A handler that needs to act on the seam

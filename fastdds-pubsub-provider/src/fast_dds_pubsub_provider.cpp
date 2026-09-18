@@ -85,13 +85,23 @@ struct FastDDSPubSubProvider::Impl {
         Topic* schema_topic = nullptr;
 
         // The publishing side: two writers, set by CreateTopic. Under `mu`; the schema thread
-        // reads `data_writer` under `schema_mu`, which CreateTopic holds while writing it.
+        // reads `data_writer` and `payload_bytes` under `schema_mu`, which CreateTopic holds while
+        // writing both.
         struct Publication {
             DataWriter* data_writer = nullptr;
             DataWriter* schema_writer = nullptr;
             // The bytes the announcement sent: the conflict key for a re-declaration and the
             // schema a subscription on this same instance starts from.
             std::vector<uint8_t> schema_ipc;
+            // The bound this topic's writer registered and announces on `__schema` -- this
+            // topic's own, from `TopicOptions::max_payload_bytes` or the provider's own bound when
+            // that was zero. Set once, when `data_writer` is created, and never changed after: a
+            // re-declaration at a different bound is refused rather than migrating the writer.
+            uint32_t payload_bytes = 0;
+            // The `<data_writer>` profile this topic's writer was resolved from
+            // (`TopicOptions::profile`), empty when none was given. The conflict key for a
+            // re-declaration alongside `payload_bytes`, above.
+            std::string profile;
         } published;
 
         // The subscribing side: two readers. Every field the schema thread touches is written
@@ -112,6 +122,11 @@ struct FastDDSPubSubProvider::Impl {
             uint32_t watches = 0;
             DataReader* data_reader = nullptr;
             std::unique_ptr<internal::DataReaderListenerBase> data_listener;
+            // The `<data_reader>` profile this subscription was opened with
+            // (`TopicOptions::profile`), empty when none was given. Written under `schema_mu`
+            // alongside `data_listener` (Subscribe) and cleared there too (Unsubscribe);
+            // `OpenDataReader` reads it on the schema thread, under the same lock.
+            std::string profile;
         } subscribed;
     };
 
@@ -307,11 +322,11 @@ struct FastDDSPubSubProvider::Impl {
                 // This provider publishes the topic at its own bound, and a DDS topic has one type
                 // per participant: its own bound wins, and the remote publisher that announced
                 // another one will not match this reader.
-                EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
-                                   "'" << name
-                                       << "' is published by this instance at payload bound "
-                                       << max_payload_bytes << "; a remote publisher announced "
-                                       << bound << " and will not match this reader");
+                EPROSIMA_LOG_ERROR(
+                    FLETCHER_SUBSCRIPTION,
+                    "'" << name << "' is published by this instance at payload bound "
+                        << ts.published.payload_bytes << "; a remote publisher announced " << bound
+                        << " and will not match this reader");
             } else {
                 // Left behind by an earlier subscription that followed a publisher on another
                 // bound (the publisher restarted with a new one). Its reader is gone, so the
@@ -330,7 +345,7 @@ struct FastDDSPubSubProvider::Impl {
                 throw PubSubError(PubSubStatus::kTransportFailure,
                                   "FastDDS: failed to create topic: " + name);
         }
-        const DataReaderQos rqos = internal::ResolveDataReaderQos(*subscriber, name);
+        const DataReaderQos rqos = internal::ResolveDataReaderQos(*subscriber, name, sub.profile);
         // SetSchema before the reader can deliver: Drain asserts it.
         sub.data_listener->SetSchema(sub.schema);
         DataReader* data_reader = subscriber->create_datareader(
@@ -508,7 +523,11 @@ struct FastDDSPubSubProvider::Impl {
             std::lock_guard lock(schema_mu);
             std::tie(ts.subscribed.arrival, ts.subscribed.resolver) = SchemaArrival::Create();
             ts.subscribed.schema = std::move(schema);
-            ts.subscribed.payload_bytes = max_payload_bytes;
+            // The bound this topic announced, which is this TOPIC's own and not necessarily the
+            // provider's: a subscription on this same instance follows the announcement exactly as
+            // a remote one does, or OpenDataReader would look for a type the data topic does not
+            // carry. Non-empty `schema_ipc` means CreateTopic ran, so `payload_bytes` is set.
+            ts.subscribed.payload_bytes = ts.published.payload_bytes;
             std::move(ts.subscribed.resolver).Resolve(ts.subscribed.schema);
             return;
         }
@@ -652,6 +671,40 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     DomainParticipantQos pqos;
     internal::ResolveParticipantQos(document, config.domain_id, pqos);
 
+    // Fast DDS's own get_default_datawriter_qos_from_xml / get_default_datareader_qos_from_xml
+    // (Publisher.hpp / Subscriber.hpp) would answer "does this document have a default profile"
+    // directly, but both re-parse the WHOLE document from scratch on every call
+    // (XMLProfileManager::fill_attributes_from_xml -> XMLParser::loadXML -> parseXML), which
+    // replays a <log> element's Log::ClearConsumers()/RegisterConsumer() side effect on every
+    // construction and logs its own unconditional EPROSIMA_LOG_ERROR(XMLPARSER, "... profile not
+    // found") on a miss -- a second, uncontrolled error line this warning must not manufacture. So
+    // this looks at the document text instead: does any <data_writer>/<data_reader> START TAG carry
+    // the attribute is_default_profile="true", in either quote (XML admits both, and so does the
+    // tinyxml2 parser Fast DDS reads the document with)? Text is not a parser, and the residue is
+    // published rather than papered over: a spelling with spaces around the `=`, or a
+    // <data_writer> inside an XML comment, is read wrong in one direction or the other. This
+    // decides a warning, not the QoS.
+    const auto has_default_profile = [&document](const char* element) {
+        for (auto pos = document.find(element); pos != std::string::npos;
+             pos = document.find(element, pos + 1)) {
+            const auto tag_end = document.find('>', pos);
+            if (tag_end == std::string::npos) return false;
+            if (document.find("is_default_profile=\"true\"", pos) < tag_end ||
+                document.find("is_default_profile='true'", pos) < tag_end)
+                return true;
+        }
+        return false;
+    };
+    if (!has_default_profile("<data_writer") || !has_default_profile("<data_reader")) {
+        EPROSIMA_LOG_WARNING(FLETCHER_PUBLICATION,
+                             "the profile document defines no is_default_profile data_writer/"
+                             "data_reader: every topic without a named profile runs on Fast "
+                             "DDS's own defaults - a writer history of KEEP_LAST depth 1, so a "
+                             "reader one sample behind loses data, and a BEST_EFFORT reader, "
+                             "which asks for no retransmission at all; start the document from "
+                             "FastDDSPubSubProvider::DefaultProfilesDocument()");
+    }
+
     // StatusMask::none() is load-bearing, not tidiness: a participant listener that holds the
     // `data_on_readers` bit is handed every reader's data INSTEAD of the reader's own listener, so
     // the default all() here would silently take over the data path
@@ -708,12 +761,22 @@ FastDDSPubSubProvider::~FastDDSPubSubProvider() = default;
 
 uint32_t FastDDSPubSubProvider::PayloadBytes() const noexcept { return impl_->max_payload_bytes; }
 
+const char* FastDDSPubSubProvider::DefaultProfilesDocument() noexcept {
+    return internal::FletcherDefaultProfilesDocument();
+}
+
 // -----------------------------------------------------------------------
 // PubSubProvider interface
 // -----------------------------------------------------------------------
 
 void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
+    CreateTopicWithOptions(topic_segments, std::move(schema), TopicOptions{});
+}
+
+void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
+                                                   OwnedSchema schema,
+                                                   const TopicOptions& options) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
@@ -725,9 +788,24 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // after `impl_->mu`, the refusal never runs and the call hangs on the
         // mutex exactly as it did with no door at all. That is a measured
         // mistake, not a hypothetical one.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
+                                           "CreateTopicWithOptions");
 
         std::string name = internal::JoinSegments(topic_segments);
+
+        // This topic's own bound: `options.max_payload_bytes` if given, else the provider's own
+        // (0 there means "unset" too, resolved at construction). Validated before any lock, the
+        // same rule the constructor applies to the provider's own bound.
+        const uint32_t bound =
+            options.max_payload_bytes ? options.max_payload_bytes : impl_->max_payload_bytes;
+        if (!IsPayloadBound(bound)) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "FastDDS: max_payload_bytes " + std::to_string(bound) +
+                                  " cannot bound a payload; it must be a multiple of 4 between " +
+                                  std::to_string(kMinPayloadBytes) + " and " +
+                                  std::to_string(kMaxPayloadBytes));
+        }
+
         std::lock_guard lock(impl_->mu);
 
         // Idempotent, mirroring the in-process reference provider
@@ -740,53 +818,79 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         auto& ts = entry.second;
 
         // The data topic may already exist (created by a prior Subscribe, at whatever bound its
-        // reader follows): reuse it if it carries this instance's own bound, replace it if a
+        // reader follows): reuse it if it carries this topic's own bound, replace it if a
         // finished subscription left it at another, refuse while a live subscription holds it at
         // another.
         {
             std::lock_guard schema_lock(impl_->schema_mu);
-            const std::string own_type = FletcherTypeName(impl_->max_payload_bytes);
-            if (ts.data_topic && ts.data_topic->get_type_name() != own_type) {
-                if (ts.subscribed.data_listener) {
-                    // A DDS topic has one type per participant, and a live subscription on this
-                    // instance holds this one at the bound its publisher announced. The bound is
-                    // quoted off the topic rather than off `subscribed.payload_bytes`, which an
-                    // Unsubscribe zeroes while leaving the topic itself behind.
-                    throw PubSubError(
-                        PubSubStatus::kInvalidArgument,
-                        "FastDDS: '" + name + "' already carries type " +
-                            ts.data_topic->get_type_name() +
-                            " on this instance, from a subscription that followed a "
-                            "publisher's announced bound; this instance publishes at " +
-                            std::to_string(impl_->max_payload_bytes));
-                }
-                // Left behind by a subscription that followed a publisher on another bound and has
-                // since been unsubscribed: nothing references it, so it is replaced by one of this
-                // instance's own type.
-                if (impl_->participant->delete_topic(ts.data_topic) != RETCODE_OK)
-                    throw PubSubError(PubSubStatus::kTransportFailure,
-                                      "FastDDS: failed to replace the data topic of '" + name +
-                                          "' for payload bound " +
-                                          std::to_string(impl_->max_payload_bytes));
-                ts.data_topic = nullptr;
-            }
-            if (!ts.data_topic) {
-                ts.data_topic = impl_->participant->create_topic(
-                    name, impl_->DataTypeNameFor(impl_->max_payload_bytes), TOPIC_QOS_DEFAULT);
-                if (!ts.data_topic)
-                    throw PubSubError(PubSubStatus::kTransportFailure,
-                                      "FastDDS: failed to create topic: " + name);
-            }
 
-            // Created here rather than on first Publish, so the publish path never upgrades its
-            // lock: the profile named after this topic if the registry has one, else the
-            // Publisher's own default QoS (internal/profile_document.hpp). The cost is the
-            // writer's pool reserved up front for every declared topic, whether or not it is ever
-            // published to: at the built-in defaults (max_samples 100, 64 KiB payload bound,
-            // data_sharing AUTO) each declared topic reserves roughly 6.6 MB of data-sharing
-            // segment plus its payload pool at CreateTopic, published to or not.
-            if (!ts.published.data_writer) {
-                const DataWriterQos wqos = internal::ResolveDataWriterQos(*impl_->publisher, name);
+            if (ts.published.data_writer) {
+                // Already declared BY THIS INSTANCE: the data topic is already at this topic's own
+                // type and nothing about it needs revisiting. Idempotent for the same (or no) bound
+                // and the same (or no) profile, refused for a genuine conflict -- neither field can
+                // migrate the writer once created, a caller that wants another bound or profile
+                // unsubscribes and declares a fresh topic instead. Only a field the caller actually
+                // named conflicts: an empty `TopicOptions` means "the provider's defaults" and is
+                // never refused, so it re-declares a topic declared at any bound. This check must
+                // run BEFORE the topic-type handling below ever looks at `bound`: that logic exists
+                // for the topic this instance does NOT yet publish, and running it here with a
+                // conflicting `bound` would delete the very topic this writer is attached to.
+                if ((options.max_payload_bytes != 0 &&
+                     options.max_payload_bytes != ts.published.payload_bytes) ||
+                    (!options.profile.empty() && options.profile != ts.published.profile)) {
+                    throw PubSubError(PubSubStatus::kInvalidArgument,
+                                      "FastDDS: '" + name +
+                                          "' is already declared at payload bound " +
+                                          std::to_string(ts.published.payload_bytes) +
+                                          " with profile '" + ts.published.profile + "'");
+                }
+            } else {
+                // The data topic may already exist (created by a prior Subscribe, at whatever
+                // bound its reader follows): reuse it if it carries this topic's own bound, replace
+                // it if a finished subscription left it at another, refuse while a live
+                // subscription holds it at another.
+                const std::string own_type = FletcherTypeName(bound);
+                if (ts.data_topic && ts.data_topic->get_type_name() != own_type) {
+                    if (ts.subscribed.data_listener) {
+                        // A DDS topic has one type per participant, and a live subscription on
+                        // this instance holds this one at the bound its publisher announced. The
+                        // bound is quoted off the topic rather than off `subscribed.payload_bytes`,
+                        // which an Unsubscribe zeroes while leaving the topic itself behind.
+                        throw PubSubError(
+                            PubSubStatus::kInvalidArgument,
+                            "FastDDS: '" + name + "' already carries type " +
+                                ts.data_topic->get_type_name() +
+                                " on this instance, from a subscription that followed a "
+                                "publisher's announced bound; this instance publishes at " +
+                                std::to_string(bound));
+                    }
+                    // Left behind by a subscription that followed a publisher on another bound and
+                    // has since been unsubscribed: nothing references it, so it is replaced by one
+                    // of this topic's own type.
+                    if (impl_->participant->delete_topic(ts.data_topic) != RETCODE_OK)
+                        throw PubSubError(PubSubStatus::kTransportFailure,
+                                          "FastDDS: failed to replace the data topic of '" + name +
+                                              "' for payload bound " + std::to_string(bound));
+                    ts.data_topic = nullptr;
+                }
+                if (!ts.data_topic) {
+                    ts.data_topic = impl_->participant->create_topic(
+                        name, impl_->DataTypeNameFor(bound), TOPIC_QOS_DEFAULT);
+                    if (!ts.data_topic)
+                        throw PubSubError(PubSubStatus::kTransportFailure,
+                                          "FastDDS: failed to create topic: " + name);
+                }
+
+                // Created here rather than on first Publish, so the publish path never upgrades
+                // its lock: the profile named after this topic if the registry has one, else the
+                // Publisher's own default QoS (internal/profile_document.hpp) -- or, with
+                // `options.profile` set, that profile by name. The cost is the writer's pool
+                // reserved up front for every declared topic, whether or not it is ever published
+                // to: at the built-in defaults (max_samples 25, 64 KiB payload bound, data_sharing
+                // AUTO) each declared topic reserves roughly 1.6 MB of data-sharing segment plus
+                // its payload pool at CreateTopic, published to or not.
+                const DataWriterQos wqos =
+                    internal::ResolveDataWriterQos(*impl_->publisher, name, options.profile);
                 ts.published.data_writer = impl_->publisher->create_datawriter(
                     ts.data_topic, wqos, &impl_->data_writer_listener,
                     // Only the statuses DataWriterListener implements (`<<` is how StatusMask
@@ -799,6 +903,8 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                 if (!ts.published.data_writer)
                     throw PubSubError(PubSubStatus::kTransportFailure,
                                       "FastDDS: failed to create DataWriter for: " + name);
+                ts.published.payload_bytes = bound;
+                ts.published.profile = options.profile;
             }
         }
 
@@ -848,10 +954,10 @@ void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             const PubSubProvider::RowEncoder encoder = [&ipc](WriteBuffer& b) {
                 b.Append(ipc.data(), ipc.size());
             };
-            // The announcement carries this publisher's bound, so a subscriber can size its
-            // reader from it.
+            // The announcement carries THIS TOPIC's bound (`ts.published.payload_bytes`, not the
+            // provider's own `max_payload_bytes`), so a subscriber can size its reader from it.
             std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
-            std::memcpy(bound_bytes.data(), &impl_->max_payload_bytes, sizeof(uint32_t));
+            std::memcpy(bound_bytes.data(), &ts.published.payload_bytes, sizeof(uint32_t));
             Attachments announced;
             announced.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
             internal::PublishData transport;
@@ -929,15 +1035,39 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
                                                     SubscribeCallback callback) {
+    return SubscribeWithOptions(topic_segments, std::move(callback), TopicOptions{});
+}
+
+SubscriptionResult FastDDSPubSubProvider::SubscribeWithOptions(
+    const std::vector<std::string>& topic_segments, SubscribeCallback callback,
+    const TopicOptions& options) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number.
     return TranslateSeamFailure([&]() -> SubscriptionResult {
         // The door, before any lock: a Fast DDS listener callback
         // runs with the RTPS reader mutex held, and this call HANGS if it is let
         // through — probed, not assumed. Refused by name instead.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
+                                           "SubscribeWithOptions");
+
+        // A subscription follows whatever bound its publisher announces on `__schema`; it never
+        // carries one of its own.
+        if (options.max_payload_bytes != 0) {
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "FastDDS: a subscription follows the bound its publisher announces on __schema; "
+                "max_payload_bytes may not be set on Subscribe");
+        }
 
         std::string name = internal::JoinSegments(topic_segments);
+
+        // Resolved (and discarded) here, before any lock, so an unknown profile name is refused
+        // synchronously rather than surfacing later when the schema thread opens the reader.
+        if (!options.profile.empty()) {
+            static_cast<void>(
+                internal::ResolveDataReaderQos(*impl_->subscriber, name, options.profile));
+        }
+
         std::unique_lock lock(impl_->mu);
 
         auto& entry = *impl_->topics.try_emplace(name).first;
@@ -969,6 +1099,7 @@ SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::strin
         {
             std::lock_guard schema_lock(impl_->schema_mu);
             ts.subscribed.data_listener = std::move(listener);
+            ts.subscribed.profile = options.profile;
             if (ts.subscribed.schema) {
                 // Broad on purpose, as on the schema thread: the announced bound sizes the
                 // reader's pool, so a huge one can fail allocation inside create_datareader. The
@@ -1041,6 +1172,7 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
                 data_reader = ts.subscribed.data_reader;
                 ts.subscribed.data_reader = nullptr;
                 listener = std::move(ts.subscribed.data_listener);
+                ts.subscribed.profile.clear();
             }
             // Schema side goes with the last user of it.
             schema_reader = ts.subscribed.watches == 0 ? impl_->CloseSchemaSide(ts) : nullptr;

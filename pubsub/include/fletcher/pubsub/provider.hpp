@@ -45,6 +45,23 @@ struct SubscriptionResult {
     SchemaArrival schema;
 };
 
+/// Per-topic options a caller MAY pass to `CreateTopicWithOptions` / `SubscribeWithOptions`. A
+/// default-constructed value means "the provider's defaults" and is what the two-argument forms
+/// use. Both fields are provider-agnostic: `profile` is opaque text the provider resolves the
+/// way it resolves `ProviderConfig::document` (for Fast DDS, a `<data_writer>` / `<data_reader>`
+/// profile name in the loaded document; a name the document does not define is
+/// `kInvalidArgument`), and `max_payload_bytes` is the same number `ProviderConfig` carries,
+/// here for one topic's PUBLISHER only — 0 means the provider's own. Subscribers never carry a
+/// bound (they follow what the publisher announces), so a non-zero one on a subscription is
+/// `kInvalidArgument`. A provider with no notion of one of these refuses a non-empty value
+/// `kNotSupported`; an empty `TopicOptions` is never refused.
+struct TopicOptions {
+    std::string profile;
+    uint32_t max_payload_bytes = 0;
+    [[nodiscard]] bool empty() const noexcept { return profile.empty() && max_payload_bytes == 0; }
+    friend bool operator==(const TopicOptions&, const TopicOptions&) = default;
+};
+
 /// Abstract transport provider for pub/sub.
 ///
 /// The provider deals with raw byte buffers and nanoarrow schemas —
@@ -94,12 +111,15 @@ struct SubscriptionResult {
 /// created, through `ProviderConfig` — a typed core of exactly
 /// `{max_payload_bytes, domain_id}` plus an opaque document in the provider's
 /// own format, which Fletcher transports and never reads (§4.1, §4.2, see
-/// provider_registry.hpp). There is no per-call config parameter and no
-/// protocol-typed Options struct at this seam. All three providers are
-/// configured this way, as landed: the in-process loopback (PDA-DEC-5), Fast DDS
-/// by its own native XML QoS profiles document (PDA-DEC-6), and XRCE by a
-/// `key=value` document (PDA-DEC-7). No eProsima type and no XRCE type is
-/// nameable from here, or from any provider's installed header.
+/// provider_registry.hpp). All three providers are configured this way, as
+/// landed: the in-process loopback (PDA-DEC-5), Fast DDS by its own native XML
+/// QoS profiles document (PDA-DEC-6), and XRCE by a `key=value` document
+/// (PDA-DEC-7). No eProsima type and no XRCE type is nameable from here, or
+/// from any provider's installed header. There IS one per-call options
+/// struct — `TopicOptions`, below — and it is protocol-agnostic: a profile
+/// name the provider interprets the way it interprets the document, and the
+/// same payload bound the typed core carries, for one topic's publisher. No
+/// protocol QoS vocabulary crosses the seam through it.
 class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;
@@ -169,10 +189,12 @@ class PubSubProvider {
     ///    frames is a type property rather than a comment.
     ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6, owner
     ///    ruling 2026-09-05). The four data-path methods `CreateTopic`,
-    ///    `Publish`, `Subscribe` and `Unsubscribe` and the two schema-only ones
-    ///    below, issued from inside a delivery on this same instance and this
-    ///    same thread, each throw `PubSubError(kReentrantCall)` before taking
-    ///    any lock. Copy what you need and act after the callback returns.
+    ///    `Publish`, `Subscribe` and `Unsubscribe`, the two schema-only ones
+    ///    below, and the two options-taking ones (`CreateTopicWithOptions`,
+    ///    `SubscribeWithOptions`), issued from inside a delivery on this same
+    ///    instance and this same thread, each throw `PubSubError(kReentrantCall)`
+    ///    before taking any lock. Copy what you need and act after the callback
+    ///    returns.
     ///    Re-permitting this once a loaned-sample receive path exists is a
     ///    registered obligation on PDA-ABI (AG1-DEBT-19); it is not
     ///    pre-authorised, and needs a fresh owner ruling.
@@ -284,6 +306,41 @@ class PubSubProvider {
     virtual void UnsubscribeSchema(const std::vector<std::string>& topic_segments) {
         internal::RefuseIfInsideDeliveryOn(this, "UnsubscribeSchema");
         internal::RequireSegments(topic_segments);
+    }
+
+    /// `CreateTopic` with per-topic options. Optional, like the schema-only pair above: this
+    /// default delegates to `CreateTopic` when `options` is empty and refuses `kNotSupported`
+    /// otherwise, so a provider that knows no profiles or per-topic bounds stays conforming.
+    /// Idempotent per topic the way `CreateTopic` is; a re-declaration carrying different
+    /// non-empty options for a topic already declared is `kInvalidArgument`.
+    /// **Refused from inside a delivery, as every seam method is** (§6 clause 6); segments are
+    /// validated before the support check, so a caller learns about a bad name first.
+    virtual void CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
+                                        OwnedSchema schema, const TopicOptions& options) {
+        internal::RefuseIfInsideDeliveryOn(this, "CreateTopicWithOptions");
+        internal::RequireSegments(topic_segments);
+        if (options.empty()) return CreateTopic(topic_segments, std::move(schema));
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          "PubSubProvider: this transport takes no per-topic options");
+    }
+
+    /// `Subscribe` with per-topic options (`profile` and `max_payload_bytes` — see
+    /// `TopicOptions`). A subscription carries no payload bound of its own (it follows what the
+    /// publisher announces), so a non-zero `max_payload_bytes` is refused `kInvalidArgument`
+    /// before the support decision below ever runs. Otherwise the same default behaviour as
+    /// `CreateTopicWithOptions`: empty delegates, a non-empty `profile` is `kNotSupported`.
+    [[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(
+        const std::vector<std::string>& topic_segments, SubscribeCallback callback,
+        const TopicOptions& options) {
+        internal::RefuseIfInsideDeliveryOn(this, "SubscribeWithOptions");
+        internal::RequireSegments(topic_segments);
+        if (options.max_payload_bytes != 0)
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "PubSubProvider: a subscription carries no payload bound; it "
+                              "follows what the publisher announces");
+        if (options.empty()) return Subscribe(topic_segments, std::move(callback));
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          "PubSubProvider: this transport takes no per-topic options");
     }
 };
 

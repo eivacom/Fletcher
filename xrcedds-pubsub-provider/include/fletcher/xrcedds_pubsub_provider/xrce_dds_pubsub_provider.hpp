@@ -50,13 +50,16 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 ///    any DDS peer's, or the two never meet. `uint32_t` at the seam and `uint16_t` on the XRCE
 ///    wire, so a value **above 65535 is refused, never narrowed** — a truncated domain id is a
 ///    wrong answer with no error.
-///  - `max_payload_bytes` — the row payload bound this client's DDS topics advertise; **0 means
-///    unset** and resolves to 65536. It is the type name this client registers on BOTH its writer
-///    and reader, and the bound it announces on `__schema`: a Fast DDS subscriber follows that
-///    announcement and needs no agreement, but this client's own subscriber still needs it equal
-///    to its Fast DDS publisher's, or the two never discover each other and no diagnostic says
-///    so. A value `IsPayloadBound` rejects is refused with `PubSubError(kInvalidArgument)` before
-///    any socket. Write it as `kPayloadBytes<N>` to be told at compile time instead.
+///  - `max_payload_bytes` — the bound for a topic `CreateTopic` declares WITHOUT
+///    `TopicOptions::max_payload_bytes` (see `CreateTopicWithOptions` below for the per-topic
+///    override); **0 means unset** and resolves to 65536. It is also the type name a topic this
+///    client only SUBSCRIBES to is created at (`Subscribe` takes no options), and the bound it
+///    announces on `__schema`: a Fast
+///    DDS subscriber follows that announcement and needs no agreement, but this client's own
+///    subscriber still needs it equal to its Fast DDS publisher's, or the two never discover each
+///    other and no diagnostic says so. A value `IsPayloadBound` rejects is refused with
+///    `PubSubError(kInvalidArgument)` before any socket. Write it as `kPayloadBytes<N>` to be told
+///    at compile time instead.
 ///  - `document` — **`key=value`, one setting per line**, read only by this provider (locked
 ///    decision 8: Fletcher gains no parser and no config dependency). An empty document means
 ///    every published default, which is what every caller got before this existed.
@@ -106,6 +109,13 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 /// within `connect_timeout_ms` — including an unresolvable hostname, which the client's resolver
 /// decides, not Fletcher.
 ///
+/// `CreateTopicWithOptions` (`TopicOptions`, pubsub/provider.hpp) adds two refusals of its own, at
+/// `CreateTopic` time rather than construction: `TopicOptions::profile` non-empty is
+/// `kNotSupported` — this client's document has no profiles to select among; an unusable or
+/// conflicting `TopicOptions::max_payload_bytes` is `kInvalidArgument`, the same as an unusable
+/// one in `ProviderConfig`. `Subscribe` takes no options at all — a subscription's reader is
+/// entirely config-driven, from `ProviderConfig::max_payload_bytes`.
+///
 /// ── Not settable at all any more (disclosed narrowing) ──────────────────────────────────────
 /// The XRCE reliable-stream history depth and the run-loop pump quantum were typed fields and
 /// are now fixed at their previous values. Nothing in the tree set either and no test could
@@ -125,6 +135,24 @@ class XrceDDSPubSubProvider : public PubSubProvider {
     XrceDDSPubSubProvider& operator=(const XrceDDSPubSubProvider&) = delete;
 
     void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
+
+    /// `CreateTopic` with per-topic options (`TopicOptions`, pubsub/provider.hpp).
+    /// `options.profile` is always `kNotSupported`: this client's document is `key=value`, four
+    /// fixed keys, with no notion of a named profile to select. `options.max_payload_bytes` is this
+    /// topic's own bound — the registered type this call creates the topic at, and the bound it
+    /// announces on `__schema` — in place of `ProviderConfig::max_payload_bytes` for this topic
+    /// only; zero means "this topic follows the provider's own bound", same as `CreateTopic`. A
+    /// bound `IsPayloadBound` rejects, or a re-declaration at a different non-zero bound, is
+    /// `kInvalidArgument`; an identical re-declaration, or one with empty options, is the same
+    /// idempotent no-op `CreateTopic` is.
+    /// A topic a `Subscribe` on this instance created FIRST keeps that reader's bound regardless of
+    /// what this call asks for — `Subscribe` takes no options, so a topic it creates stays
+    /// config-driven, at `ProviderConfig::max_payload_bytes`. A `TopicOptions::max_payload_bytes`
+    /// that names a DIFFERENT bound for such a topic is refused `kInvalidArgument` before any XRCE
+    /// call, not silently adopted — the reader was already created at its own bound and cannot
+    /// migrate. `CreateTopic` is a one-line delegation to this with `TopicOptions{}`.
+    void CreateTopicWithOptions(const std::vector<std::string>& topic_segments, OwnedSchema schema,
+                                const TopicOptions& options) override;
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;

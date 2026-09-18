@@ -64,6 +64,7 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
     // and the test stays green purely on the non-virtual discards around it. Do not
     // read a passing Linux run as proof that this line is guarded.
     provider.Subscribe({"probe"}, {});
+    provider.SubscribeWithOptions({"probe"}, {}, fletcher::TopicOptions{});
     provider.SubscribeSchema({"probe"});
     fletcher::OwnedSchema::DeepCopy(schema);
 }
@@ -78,9 +79,10 @@ void DiscardArrowWrappers(fletcher::PublisherArrow& publisher,
                           fletcher::SubscriberArrow& subscriber) {
     publisher.ListTopics();
     // All three SubscriberArrow::Subscribe overloads.
-    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{});
+    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{},
+                         fletcher::TopicOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{},
-                         fletcher::SubscriberArrow::BatchOptions{});
+                         fletcher::SubscriberArrow::BatchOptions{}, fletcher::TopicOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{});
     subscriber.SubscribeSchema({"probe"});
 }

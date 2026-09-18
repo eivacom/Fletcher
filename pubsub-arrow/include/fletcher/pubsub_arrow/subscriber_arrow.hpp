@@ -59,8 +59,15 @@ class SubscriberArrow {
 
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, const Attachments& attachments)>;
+
+    /// `options` is optional; a default-constructed value means the provider's defaults, forwarded
+    /// verbatim to `Subscriber::Subscribe`'s options form — the options apply to the first
+    /// provider-level subscription of the topic, checked field-wise there: a later call may repeat
+    /// or omit a field already stored, never change one, and a non-empty field against an EMPTY
+    /// stored one is a conflict too, thrown as `PubSubError(kInvalidArgument)`.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                                            SubscribeCallback callback);
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options = {});
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
@@ -116,12 +123,19 @@ class SubscriberArrow {
     using RecordBatchCallback =
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;
+
+    /// `topic_options` is optional; a default-constructed value means the provider's defaults,
+    /// forwarded to `Subscriber::Subscribe`'s options form — checked field-wise there: a later
+    /// call may repeat or omit a field already stored, never change one, and a non-empty field
+    /// against an EMPTY stored one is a conflict too, thrown as `PubSubError(kInvalidArgument)`.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                                            RecordBatchCallback callback, BatchOptions options);
+                                            RecordBatchCallback callback, BatchOptions options,
+                                            const TopicOptions& topic_options = {});
 
     /// Convenience overload using the default BatchOptions (8000 rows, 1 min).
-    /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's
-    /// member initializers aren't usable in a default arg of the same class.)
+    /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's member
+    /// initializers aren't usable in a default arg of the same class. `TopicOptions` carries no
+    /// such restriction — it is not nested in this class — which is why it defaults above.)
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
                                             RecordBatchCallback callback) {
         return Subscribe(segments, std::move(callback), BatchOptions{});
