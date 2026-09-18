@@ -169,8 +169,10 @@ rebase cannot falsify. One thing F1 did not reach went to the maintainer and is 
 bucket 4 was carrying `test_xrce_document` at 9 where the file has 11. Both readings of the
 scope converge on **278 ported** (303−24−1 and 302−24 alike), so only the denominator was
 open. Corrected in all four places it appeared, and the round-exit bullet that carried it now
-names the FILE SETS instead. **ADO 18786 is closed against this reading and its comment still
-needs the same correction.**
+names the FILE SETS instead. **ADO 18786's scope comment (22604) carried the old figure and is
+corrected there by comment 23048.** The story is **Active** — it is the one that must *not* be
+closed before the native-provider bucket is green over `fastdds` and `xrce`, which is what the
+plan sentence says and which an earlier draft of this entry misread as "closed".
 
 **Carried forward:** D1's missing test (the guard is in, the silently-refusing `grow` thunk was
 never added); **D2** — a callback's `grow` status reaches `err->status` unvalidated, which

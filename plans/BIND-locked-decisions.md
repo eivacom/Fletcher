@@ -300,8 +300,10 @@ commit.
   denominator needed a ruling: counting bucket 6 in gives 303 − 24 − 1 = 278, counting it
   out gives 302 − 24 = 278. Ruled **302**, buckets 1–4, with the 24 provider-internal cases
   as the only subtraction from it. The round-exit bullet that carried this number now names
-  the FILE SETS instead (`dd8b034`'s rule), so it cannot rot again; ADO **18786** is closed
-  against this reading and its comment needs the same correction.
+  the FILE SETS instead (`dd8b034`'s rule), so it cannot rot again. **ADO 18786** carried the old
+  figure in its scope comment (id 22604) and is corrected there by comment **23048**; the
+  story is **Active**, not closed — it is the one that *must not* be closed before the
+  native-provider bucket is green over `fastdds` and `xrce`.
 
 - **D-BIND-13 — Native assets are isolated to ONE package.**
   `Eiva.Fletcher.Interop` is the only package carrying `runtimes/{rid}/native/`;
