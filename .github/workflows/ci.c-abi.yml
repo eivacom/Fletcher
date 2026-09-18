@@ -86,15 +86,18 @@ jobs:
             exit 1
           fi
           # The ceiling is D-BIND-1a rider ii's check, not BIND-9's release
-          # budget — see the Linux leg for the full reasoning. Same number on
-          # both platforms on purpose: the failure mode it catches (Arrow C++
-          # linked into the shim) is tens of megabytes on either.
+          # budget — see the Linux leg for the full reasoning. The two ceilings
+          # DIFFER because the two baselines do: win-x64 measured 7.61 MiB where
+          # linux-x64 measured 13.79 MiB. One number for both is what BIND-2d
+          # tried first, from this platform's figure, and the Linux leg rejected
+          # it — so each is now set from its own measurement.
           BYTES=$(wc -c < "$SHIM")
+          BASELINE=$((7977984))
           CEILING=$((12 * 1024 * 1024))
-          echo "win-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB) — $SHIM"
-          echo "### win-x64 shim: $((BYTES / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+          echo "win-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB); baseline $((BASELINE / 1024)) KiB, ceiling $((CEILING / 1024)) KiB, headroom $(((CEILING - BYTES) / 1024)) KiB — $SHIM"
+          echo "### win-x64 shim: $((BYTES / 1024)) KiB (ceiling $((CEILING / 1024)) KiB)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$BYTES" -gt "$CEILING" ]; then
-            echo "::error::the shim is $((BYTES / 1024 / 1024)) MiB, over the $((CEILING / 1024 / 1024)) MiB ceiling. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+            echo "::error::the shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
             exit 1
           fi
 
@@ -156,16 +159,28 @@ jobs:
               # D-BIND-1a RIDER ii asks for by name - the shim links nanoarrow
               # only, never Arrow C++, because wrapping the `arrow-bridge` codec
               # would drag full Arrow C++ into `Eiva.Fletcher.Interop`. That
-              # failure mode is tens of megabytes, not a few hundred kilobytes,
-              # so the ceiling is set far above ordinary growth and trips only on
-              # the mistake it is named for. A tight budget here would fail on
-              # every honest addition and be raised until it meant nothing.
+              # failure mode is TENS of megabytes, so the ceiling sits far above
+              # ordinary growth and trips only on the mistake it is named for. A
+              # tight budget here would fail on every honest addition and be
+              # raised until it meant nothing.
+              #
+              # THE CEILINGS ARE PER PLATFORM, AND EACH IS SET FROM ITS OWN
+              # MEASURED BASELINE. They differ by a lot and that is not a defect:
+              # measured at 0811091, win-x64 was 7.61 MiB and linux-x64 13.79 MiB
+              # (gcc emits more unwind and RTTI material than MSVC, and
+              # --exclude-libs ALL localises symbols without stripping them).
+              # BIND-2d first set ONE ceiling for both from the Windows number
+              # and this lane rejected it on the next run - the Linux figure had
+              # been in the job log since BIND-0 and was simply not read. If a
+              # future change needs more room, read the number this step prints
+              # rather than guessing from the other platform.
               BYTES=$(wc -c < "$SHIM")
-              CEILING=$((12 * 1024 * 1024))
-              echo "linux-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB)"
-              echo "### linux-x64 shim: $((BYTES / 1024)) KiB" >> /workspace/shim-summary.md
+              BASELINE=$((14454696))
+              CEILING=$((20 * 1024 * 1024))
+              echo "linux-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB); baseline $((BASELINE / 1024)) KiB, ceiling $((CEILING / 1024)) KiB, headroom $(((CEILING - BYTES) / 1024)) KiB"
+              echo "### linux-x64 shim: $((BYTES / 1024)) KiB (ceiling $((CEILING / 1024)) KiB)" >> /workspace/shim-summary.md
               if [ "$BYTES" -gt "$CEILING" ]; then
-                echo "::error::the shim is $((BYTES / 1024 / 1024)) MiB, over the $((CEILING / 1024 / 1024)) MiB ceiling. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+                echo "::error::the shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
                 exit 1
               fi
 
