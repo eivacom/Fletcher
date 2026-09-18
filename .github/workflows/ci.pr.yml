@@ -425,13 +425,17 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # format-check-cpp, format-check-ts, license-headers, and action-lint
-  # are standalone workflows that trigger directly on `pull_request` with
-  # their own path filters (.github/workflows/{format-check-cpp,
-  # format-check-ts,license-headers,action-lint}.yml). They are not
-  # invoked from ci.pr.yml and therefore aren't part of the pr_gate
-  # aggregation — configure them as separate required status checks on
-  # the branch protection rule if needed.
+  # format-check-cpp, format-check-ts, format-check-cs, license-headers, and
+  # action-lint are standalone workflows that trigger directly on
+  # `pull_request` with their own path filters
+  # (.github/workflows/ci.{format-check-cpp,format-check-ts,format-check-cs,
+  # license-headers,action-lint}.yml). They are not invoked from ci.pr.yml and
+  # therefore aren't part of the pr_gate aggregation — configure them as
+  # separate required status checks on the branch protection rule if needed.
+  #
+  # format-check-cs joined that list at BIND-0 and this inventory did not say so
+  # until Copilot's review of #129 pointed at the gap from the other end. EVERY
+  # format lane is standalone; the C# one is not an omission from the gate.
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
   #

@@ -78,6 +78,16 @@ public sealed class ArrowCDataInterfaceTests
             columns.Add(column);
         }
 
+        // ONE NON-NULLABLE FIELD, and the nullability check below is decoration
+        // without it. Every fixture above carries a null deliberately, so every
+        // field above has to be declared nullable — and a schema whose fields are
+        // uniformly nullable cannot tell a flag that CROSSED from a flag that was
+        // hardcoded on at the far end. This column is also the shape production
+        // publishes: the generator emits `flags &= ~ARROW_FLAG_NULLABLE` for
+        // exactly this case, a proto scalar, all over the datamodel's schemas.
+        columns.Add(new Int32Array.Builder().Append(7).Append(8).Append(9).Build());
+        fields.Add(new Field("int32_required", Int32Type.Default, nullable: false));
+
         var batch = new RecordBatch(new Schema(fields, metadata: null), columns, columns[0].Length);
 
         RecordBatch imported = RoundTrip(batch);
@@ -88,8 +98,22 @@ public sealed class ArrowCDataInterfaceTests
         {
             Assert.Equal(batch.Schema.FieldsList[i].Name, imported.Schema.FieldsList[i].Name);
             AssertSameType(batch.Schema.FieldsList[i].DataType, imported.Schema.FieldsList[i].DataType);
+
+            // Nullability is part of the schema, not decoration: the gateway
+            // serialises it into the JSON schema TypeScript clients read
+            // (`gateway/src/schema_codec.cpp`), and the schema C# hands the shim is
+            // the schema the transport publishes. A dropped ARROW_FLAG_NULLABLE
+            // would make a C#-published topic disagree with the C++-published
+            // equivalent, silently and only for consumers.
+            Assert.Equal(batch.Schema.FieldsList[i].IsNullable, imported.Schema.FieldsList[i].IsNullable);
+
             AssertSameValues(batch.Column(i), imported.Column(i));
         }
+
+        // The vacuity guard for the assertion above. If every field were nullable,
+        // that check would pass against an implementation that never read the flag
+        // at all.
+        Assert.Contains(imported.Schema.FieldsList, field => !field.IsNullable);
     }
 
     /// <summary>
@@ -319,6 +343,7 @@ public sealed class ArrowCDataInterfaceTests
                 for (int i = 0; i < structType.Fields.Count; i++)
                 {
                     Assert.Equal(structType.Fields[i].Name, actualStruct.Fields[i].Name);
+                    Assert.Equal(structType.Fields[i].IsNullable, actualStruct.Fields[i].IsNullable);
                     AssertSameType(structType.Fields[i].DataType, actualStruct.Fields[i].DataType);
                 }
 
@@ -327,12 +352,21 @@ public sealed class ArrowCDataInterfaceTests
             case MapType mapType:
                 var actualMap = Assert.IsType<MapType>(actual);
                 Assert.Equal(mapType.KeySorted, actualMap.KeySorted);
+
+                // A map's KEY is non-nullable by the Arrow specification, so this
+                // pair is the one place in the fixture where a false crosses
+                // without anyone having to arrange it.
+                Assert.Equal(mapType.KeyField.IsNullable, actualMap.KeyField.IsNullable);
+                Assert.Equal(mapType.ValueField.IsNullable, actualMap.ValueField.IsNullable);
+
                 AssertSameType(mapType.KeyField.DataType, actualMap.KeyField.DataType);
                 AssertSameType(mapType.ValueField.DataType, actualMap.ValueField.DataType);
                 break;
 
             case ListType listType:
-                AssertSameType(listType.ValueDataType, Assert.IsType<ListType>(actual).ValueDataType);
+                var actualList = Assert.IsType<ListType>(actual);
+                Assert.Equal(listType.ValueField.IsNullable, actualList.ValueField.IsNullable);
+                AssertSameType(listType.ValueDataType, actualList.ValueDataType);
                 break;
 
             default:
@@ -387,11 +421,98 @@ public sealed class ArrowCDataInterfaceTests
                 $"buffer {i} differs after the crossing");
         }
 
+        // The buffer comparison above cannot see a SHORT buffer, and that is not a
+        // hypothetical: the C Data Interface does not transmit buffer sizes at all
+        // — the importer computes them from the length, the type width and, for
+        // the variable-width types, the last offset. A derivation bug there yields
+        // a buffer whose prefix is right and whose tail is missing, and the loop
+        // above compares `min(expected, actual)` bytes because padding makes the
+        // two sides legitimately different lengths. So `["fletcher",
+        // "blåbærgrød", null]` with an 8-byte data buffer would agree on length,
+        // null count, offset and every compared byte, and lose the second string.
+        //
+        // Reading the values back through the library's own accessors closes it,
+        // and padding stops being something this has to reason about. Measured
+        // against a deliberately shortened buffer: the accessor does NOT throw —
+        // Apache.Arrow does not bounds-check that read and returns whatever
+        // follows in memory — so the mismatch is what catches it. Which is also
+        // the argument for this check existing: a real importer bug of that shape
+        // is silent corruption, not a crash.
+        //
+        // Leaves only — composites are reached by the recursion below, which
+        // lands on their leaf children.
+        AssertSameLogicalValues(expected, actual);
+
         for (int i = 0; i < expectedChildren; i++)
         {
             AssertSameValues(
                 ArrowArrayFactory.BuildArray(expectedData.Children![i]),
                 ArrowArrayFactory.BuildArray(actualData.Children![i]));
+        }
+    }
+
+    /// <summary>Compare a leaf array value by value, through the typed accessors.</summary>
+    /// <remarks>
+    /// The switch arms are ordered MOST DERIVED FIRST and must stay that way:
+    /// <see cref="StringArray"/> derives from <see cref="BinaryArray"/>, so a
+    /// binary arm above it would compare strings as bytes and never say so.
+    /// A composite falls through to no arm at all, on purpose.
+    /// </remarks>
+    private static void AssertSameLogicalValues(IArrowArray expected, IArrowArray actual)
+    {
+        for (int i = 0; i < expected.Length; i++)
+        {
+            Assert.Equal(expected.IsNull(i), actual.IsNull(i));
+            if (expected.IsNull(i))
+            {
+                continue;
+            }
+
+            switch (expected)
+            {
+                case BooleanArray e:
+                    Assert.Equal(e.GetValue(i), ((BooleanArray)actual).GetValue(i));
+                    break;
+                case TimestampArray e:
+                    Assert.Equal(e.GetTimestamp(i), ((TimestampArray)actual).GetTimestamp(i));
+                    break;
+                case DurationArray e:
+                    Assert.Equal(e.GetValue(i), ((DurationArray)actual).GetValue(i));
+                    break;
+                case Int32Array e:
+                    Assert.Equal(e.GetValue(i), ((Int32Array)actual).GetValue(i));
+                    break;
+                case Int64Array e:
+                    Assert.Equal(e.GetValue(i), ((Int64Array)actual).GetValue(i));
+                    break;
+                case UInt32Array e:
+                    Assert.Equal(e.GetValue(i), ((UInt32Array)actual).GetValue(i));
+                    break;
+                case UInt64Array e:
+                    Assert.Equal(e.GetValue(i), ((UInt64Array)actual).GetValue(i));
+                    break;
+                case FloatArray e:
+                    Assert.Equal(e.GetValue(i), ((FloatArray)actual).GetValue(i));
+                    break;
+                case DoubleArray e:
+                    Assert.Equal(e.GetValue(i), ((DoubleArray)actual).GetValue(i));
+                    break;
+
+                // Before BinaryArray, which it derives from.
+                case StringArray e:
+                    Assert.Equal(e.GetString(i), ((StringArray)actual).GetString(i));
+                    break;
+                case BinaryArray e:
+                    Assert.True(
+                        e.GetBytes(i).SequenceEqual(((BinaryArray)actual).GetBytes(i)),
+                        $"binary value {i} differs after the crossing");
+                    break;
+
+                default:
+                    // A composite. Its values live in its children, and the caller
+                    // recurses into those.
+                    break;
+            }
         }
     }
 }
