@@ -5,15 +5,19 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <functional>
+#include <future>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -65,21 +69,27 @@ class MockProvider : public PubSubProvider {
         encoder(wb);
         const std::vector<uint8_t> buf = wb.Finish();
 
-        auto it = callbacks_.find(key);
-        if (it != callbacks_.end()) {
+        auto it = channels_.find(key);
+        if (it != channels_.end()) {
             SharedSchema sp;
             auto sit = schemas_.find(key);
             if (sit != schemas_.end()) {
                 sp = MakeSharedSchema(OwnedSchema::DeepCopy(sit->second.get()));
             }
-            it->second(buf.data(), buf.size(), sp, attachments);
+            it->second.Deliver(buf.data(), buf.size(), sp, attachments);
         }
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
                                  SubscribeCallback callback) override {
+        subscribe_count++;
         std::string key = fletcher::internal::JoinSegments(segments);
-        callbacks_[key] = std::move(callback);
+        // A real provider dispatches to a Subscriber's registered callback from inside its OWN
+        // delivery frame, keyed by the provider instance (DeliveryChannel's contract — see
+        // delivery_channel.hpp). Without this, MockProvider could never exercise a seam door: it
+        // would deliver with no delivery frame at all, and `RefuseIfInsideDeliveryOn(this, ...)`
+        // on every provider method would never find anything on the stack.
+        channels_[key] = DeliveryChannel(this, std::move(callback));
         auto it = schemas_.find(key);
         SharedSchema schema;
         if (it != schemas_.end()) {
@@ -89,16 +99,81 @@ class MockProvider : public PubSubProvider {
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
-        callbacks_.erase(fletcher::internal::JoinSegments(segments));
+        channels_.erase(fletcher::internal::JoinSegments(segments));
         unsubscribe_count++;
+    }
+
+    // The schema-only side: no callback is registered, so a watch is invisible
+    // to Publish — which is the property the tests below assert.
+    SchemaArrival SubscribeSchema(const std::vector<std::string>& segments) override {
+        subscribe_schema_count++;
+        auto it = schemas_.find(fletcher::internal::JoinSegments(segments));
+        SharedSchema schema;
+        if (it != schemas_.end()) {
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
+        }
+        return SchemaArrival::Ready(std::move(schema));
+    }
+
+    void UnsubscribeSchema(const std::vector<std::string>& /*segments*/) override {
+        if (on_unsubscribe_schema) on_unsubscribe_schema();
+        unsubscribe_schema_count++;
+    }
+
+    // Recorded rather than refused: this MockProvider DOES support per-topic options, so tests
+    // that need `kNotSupported` use DataOnlyProvider instead (it never overrides either method).
+    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
+                                const TopicOptions& options) override {
+        create_topic_with_options_count++;
+        last_create_options = options;
+        CreateTopic(segments, std::move(schema));
+    }
+
+    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        subscribe_with_options_count++;
+        last_subscribe_options = options;
+        return Subscribe(segments, std::move(callback));
     }
 
     std::vector<std::string> topics_created;
     int unsubscribe_count = 0;
+    int subscribe_count = 0;
+    std::atomic<int> subscribe_schema_count{0};
+    int unsubscribe_schema_count = 0;
+    int create_topic_with_options_count = 0;
+    int subscribe_with_options_count = 0;
+    TopicOptions last_create_options;
+    TopicOptions last_subscribe_options;
+    std::function<void()> on_unsubscribe_schema;  // test hook, runs inside UnsubscribeSchema
 
    private:
-    std::unordered_map<std::string, SubscribeCallback> callbacks_;
+    std::unordered_map<std::string, DeliveryChannel> channels_;
     std::unordered_map<std::string, OwnedSchema> schemas_;
+};
+
+// A transport with no out-of-band schema channel: it implements the four
+// data-path methods and leaves the two schema-only ones at their PubSubProvider
+// defaults, which is what "optional" has to mean for a provider author who never
+// reads about them.
+class DataOnlyProvider : public PubSubProvider {
+   public:
+    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {
+        ++create_topic_count;
+    }
+    void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
+    SubscriptionResult Subscribe(const std::vector<std::string>&, SubscribeCallback) override {
+        ++subscribe_count;
+        return {SchemaArrival::Ready(nullptr)};
+    }
+    void Unsubscribe(const std::vector<std::string>&) override {}
+
+    // Counted, not overridden: CreateTopicWithOptions/SubscribeWithOptions are left at their
+    // PubSubProvider defaults, and these counters are how the delegate-when-empty tests observe
+    // that the default reached CreateTopic/Subscribe rather than refusing.
+    int create_topic_count = 0;
+    int subscribe_count = 0;
 };
 
 /// Build a nanoarrow schema: struct{ x: int32 }.
@@ -463,4 +538,471 @@ TEST(SubscriberTest, UnsubscribeFromInsideCallbackTakesEffectImmediately) {
     EXPECT_EQ(second_calls, 0);
 
     subscriber.Unsubscribe(first_id);
+}
+
+// ---------------------------------------------------------------------------
+// SubscribeSchema / UnsubscribeSchema — the schema without the data.
+// ---------------------------------------------------------------------------
+
+TEST(SubscriberTest, SubscribeSchemaDoesNotCreateAProviderSubscription) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival arrival = subscriber.SubscribeSchema(kTopic);
+
+    SharedSchema sch;
+    ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+    ASSERT_TRUE(sch);
+    ASSERT_EQ(sch->n_children, 1);
+    EXPECT_EQ(std::string(sch->children[0]->name), "x");
+    EXPECT_EQ(mock->subscribe_schema_count, 1);
+    // The whole point: the data side was never touched, so no callback exists
+    // anywhere and a publish reaches nobody.
+    EXPECT_EQ(mock->subscribe_count, 0);
+    EXPECT_NO_THROW(publisher.Publish(kTopic, MakeTestEncoder(1)));
+    EXPECT_EQ(mock->subscribe_count, 0);
+}
+
+TEST(SubscriberTest, SchemaWatchesAreCountedPerTopic) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival first = subscriber.SubscribeSchema(kTopic);
+    SchemaArrival second = subscriber.SubscribeSchema(kTopic);
+
+    // Idempotent per topic: the second caller is answered from the cached
+    // arrival and never reaches the provider — and it is answered, not handed a
+    // default-constructed handle that would report kSubscriptionEnded.
+    EXPECT_EQ(mock->subscribe_schema_count, 1);
+    SharedSchema sch;
+    EXPECT_EQ(second.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+    EXPECT_TRUE(sch);
+
+    // Two watches, so the first release is not the last: the provider keeps its
+    // own until the second.
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+
+    // Nothing left to release, and none of this touched the data side.
+    subscriber.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+    EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+TEST(SubscriberTest, UnsubscribeSchemaWithoutAWatchDoesNotForward) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+
+    EXPECT_NO_THROW(subscriber.UnsubscribeSchema(kTopic));
+
+    EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+// Optional means optional: a provider that never heard of the schema-only side
+// refuses by name rather than returning an arrival nothing will ever resolve.
+TEST(SubscriberTest, DefaultProviderRefusesSchemaOnlyWithNotSupported) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+    Subscriber subscriber(plain);
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kNotSupported,
+                            [&] { (void)subscriber.SubscribeSchema(kTopic); }));
+
+    // The refusal rolled the count back, so releasing is still a no-op and
+    // teardown may call it unconditionally.
+    EXPECT_NO_THROW(subscriber.UnsubscribeSchema(kTopic));
+}
+
+// The default bodies validate segments before deciding whether the schema-only side is supported
+// at all — called directly on the provider (not through Subscriber), which is what lets an EMPTY
+// segment list reach the check that fires first.
+TEST(SubscriberTest, DefaultSubscribeSchemaValidatesSegmentsBeforeRefusingSupport) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)plain->SubscribeSchema({});
+    })) << "an empty segment list must be refused by the segment rule, not by kNotSupported";
+}
+
+// The door, on the default bodies, exactly as on every provider's own seam methods: a call from
+// inside a delivery on the SAME instance is refused before either default body runs its own logic.
+TEST(SubscriberTest, DefaultSchemaMethodsAreRefusedFromInsideADelivery) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    PubSubStatus subscribe_status = PubSubStatus::kOk;
+    PubSubStatus unsubscribe_status = PubSubStatus::kOk;
+    bool subscribe_threw = false;
+    bool unsubscribe_threw = false;
+
+    DeliveryChannel channel(plain.get(),
+                            [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                                try {
+                                    (void)plain->SubscribeSchema(kTopic);
+                                } catch (const PubSubError& e) {
+                                    subscribe_threw = true;
+                                    subscribe_status = e.status();
+                                }
+                                try {
+                                    plain->UnsubscribeSchema(kTopic);
+                                } catch (const PubSubError& e) {
+                                    unsubscribe_threw = true;
+                                    unsubscribe_status = e.status();
+                                }
+                            });
+    channel.Deliver(nullptr, 0, SharedSchema(), Attachments());
+
+    EXPECT_TRUE(subscribe_threw);
+    EXPECT_EQ(subscribe_status, PubSubStatus::kReentrantCall);
+    EXPECT_TRUE(unsubscribe_threw);
+    EXPECT_EQ(unsubscribe_status, PubSubStatus::kReentrantCall);
+}
+
+// ---------------------------------------------------------------------------
+// CreateTopicWithOptions / SubscribeWithOptions — the base class's defaults.
+// ---------------------------------------------------------------------------
+
+// Empty options are never refused: the default forwards to the pure form, so a provider that has
+// never heard of options stays conforming for every option-less caller.
+TEST(SubscriberTest, DefaultCreateTopicWithOptionsDelegatesWhenEmpty) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    plain->CreateTopicWithOptions(kTopic, TestSchema(), TopicOptions{});
+
+    EXPECT_EQ(plain->create_topic_count, 1);
+}
+
+TEST(SubscriberTest, DefaultCreateTopicWithOptionsRefusesNonEmptyWithNotSupported) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kNotSupported, [&] {
+        plain->CreateTopicWithOptions(kTopic, TestSchema(), TopicOptions{.profile = "x"});
+    }));
+    EXPECT_EQ(plain->create_topic_count, 0);
+}
+
+TEST(SubscriberTest, DefaultSubscribeWithOptionsDelegatesWhenEmpty) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    (void)plain->SubscribeWithOptions(
+        kTopic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{});
+
+    EXPECT_EQ(plain->subscribe_count, 1);
+}
+
+TEST(SubscriberTest, DefaultSubscribeWithOptionsRefusesNonEmptyWithNotSupported) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kNotSupported, [&] {
+        (void)plain->SubscribeWithOptions(
+            kTopic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            TopicOptions{.profile = "x"});
+    }));
+    EXPECT_EQ(plain->subscribe_count, 0);
+}
+
+// A subscription carries no payload bound of its own (it follows what the publisher announces),
+// so a non-zero max_payload_bytes is refused kInvalidArgument — a different, more specific cause
+// than the kNotSupported a bare unrecognised profile gets above.
+TEST(SubscriberTest, DefaultSubscribeWithOptionsRefusesABoundAsInvalidArgument) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)plain->SubscribeWithOptions(
+            kTopic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            TopicOptions{.max_payload_bytes = 8192});
+    }));
+    EXPECT_EQ(plain->subscribe_count, 0);
+}
+
+// Mirrors DefaultSubscribeSchemaValidatesSegmentsBeforeRefusingSupport: segments are validated
+// before the support check runs, so a bad name is reported even with non-empty options.
+TEST(SubscriberTest, DefaultOptionsMethodsValidateSegmentsBeforeRefusingSupport) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        plain->CreateTopicWithOptions({}, TestSchema(), TopicOptions{.profile = "x"});
+    })) << "an empty segment list must be refused by the segment rule, not by kNotSupported";
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)plain->SubscribeWithOptions(
+            {}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            TopicOptions{.profile = "x"});
+    })) << "an empty segment list must be refused by the segment rule, not by kNotSupported";
+}
+
+// Mirrors DefaultSchemaMethodsAreRefusedFromInsideADelivery: the door on the two options-taking
+// defaults, exactly as on every provider's own seam methods.
+TEST(SubscriberTest, DefaultOptionsMethodsAreRefusedFromInsideADelivery) {
+    auto plain = std::make_shared<DataOnlyProvider>();
+
+    PubSubStatus create_status = PubSubStatus::kOk;
+    PubSubStatus subscribe_status = PubSubStatus::kOk;
+    bool create_threw = false;
+    bool subscribe_threw = false;
+
+    DeliveryChannel channel(
+        plain.get(), [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            try {
+                plain->CreateTopicWithOptions(kTopic, TestSchema(), TopicOptions{});
+            } catch (const PubSubError& e) {
+                create_threw = true;
+                create_status = e.status();
+            }
+            try {
+                (void)plain->SubscribeWithOptions(
+                    kTopic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                    TopicOptions{});
+            } catch (const PubSubError& e) {
+                subscribe_threw = true;
+                subscribe_status = e.status();
+            }
+        });
+    channel.Deliver(nullptr, 0, SharedSchema(), Attachments());
+
+    EXPECT_TRUE(create_threw);
+    EXPECT_EQ(create_status, PubSubStatus::kReentrantCall);
+    EXPECT_TRUE(subscribe_threw);
+    EXPECT_EQ(subscribe_status, PubSubStatus::kReentrantCall);
+}
+
+// ---------------------------------------------------------------------------
+// TopicOptions forwarding through Publisher and Subscriber.
+// ---------------------------------------------------------------------------
+
+TEST(PublisherTest, PublisherForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    TopicOptions options{.profile = "reliable", .max_payload_bytes = 4096};
+    publisher.CreateTopic(kTopic, TestSchema(), options);
+
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+    ASSERT_EQ(mock->topics_created.size(), 1u);
+    EXPECT_EQ(mock->last_create_options, options);
+}
+
+TEST(PublisherTest, PublisherRefusesARedeclarationWithDifferentOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{.profile = "a"});
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{.profile = "b"});
+    }));
+    // The conflict is caught at this tier, before the provider is reached a second time.
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+}
+
+TEST(PublisherTest, PublisherAcceptsARedeclarationWithEmptyOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{.profile = "a"});
+    EXPECT_NO_THROW(publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{}));
+    // Empty options never conflict — still a no-op, so the provider is not called again.
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+}
+
+// The conflict check is field-wise, not whole-struct: a re-declaration may omit a field it
+// already declared without that counting as a change.
+TEST(PublisherTest, PublisherAcceptsARedeclarationNamingASubsetOfTheOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema(),
+                          TopicOptions{.profile = "A", .max_payload_bytes = 4096});
+    EXPECT_NO_THROW(publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{.profile = "A"}));
+    // Repeating one field and dropping the other to empty is not a conflict — still a no-op.
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+}
+
+// The reverse shape: a field that was never set before is a conflict against the stored EMPTY
+// one, because the topic already exists without it — a later call may never ADD a field either.
+TEST(PublisherTest, PublisherRefusesANewFieldOnARedeclaration) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+
+    publisher.CreateTopic(kTopic, TestSchema(), TopicOptions{.profile = "A"});
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        publisher.CreateTopic(kTopic, TestSchema(),
+                              TopicOptions{.profile = "A", .max_payload_bytes = 4096});
+    }));
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+}
+
+TEST(SubscriberTest, SubscriberForwardsTopicOptionsOnTheFirstSubscription) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    TopicOptions options{.profile = "reliable"};
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        options);
+
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->last_subscribe_options, options);
+}
+
+TEST(SubscriberTest, SubscriberRefusesDifferentOptionsOnALiveTopic) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{.profile = "a"});
+
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)subscriber.Subscribe(
+            kTopic,
+            [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            TopicOptions{.profile = "b"});
+    }));
+    // Only the first subscription reached the provider; the conflict was caught before a second.
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+}
+
+TEST(SubscriberTest, SubscriberSecondSubscriptionWithEmptyOptionsSharesTheFirst) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{.profile = "a"});
+    EXPECT_NO_THROW(static_cast<void>(subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{})));
+
+    // Empty options never conflict, and joining an already-subscribed topic never re-enters the
+    // provider: exactly one SubscribeWithOptions (the first), and no second provider subscription.
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->subscribe_count, 1);
+}
+
+// The conflict check is field-wise, not whole-struct: a later Subscribe may omit a field the
+// first one already named without that counting as a change.
+TEST(SubscriberTest, SubscriberAcceptsASecondSubscriptionNamingASubsetOfTheOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{.profile = "A", .max_payload_bytes = 4096});
+    EXPECT_NO_THROW(static_cast<void>(subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{.profile = "A"})));
+
+    // Repeating one field and dropping the other to empty is not a conflict — the second call
+    // joins the same provider-level subscription rather than re-entering the provider.
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+}
+
+// The reverse shape: a field that was never named before is a conflict against the stored EMPTY
+// one, because the provider-level subscription already exists without it.
+TEST(SubscriberTest, SubscriberRefusesANewFieldOnASecondSubscription) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    Subscriber subscriber(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    (void)subscriber.Subscribe(
+        kTopic, [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+        TopicOptions{.profile = "A"});
+    EXPECT_TRUE(RefusedWith(PubSubStatus::kInvalidArgument, [&] {
+        (void)subscriber.Subscribe(
+            kTopic,
+            [](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            TopicOptions{.profile = "A", .max_payload_bytes = 4096});
+    }));
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+}
+
+// S8: Subscriber::SubscribeSchema's door is unconditional — unlike Subscribe's
+// EnsureProviderSubscription, which has an already-subscribed fast path that never enters the
+// provider at all, subscriber.cpp documents SubscribeSchema's refusal as running "this call has
+// nothing to serve from the cache before a first watch exists, so it must be able to enter the
+// provider... Refused at THIS tier" — i.e. ALWAYS, with no fast path to skip it. Driven through
+// MockProvider (not DataOnlyProvider + a raw DeliveryChannel, as
+// DefaultSchemaMethodsAreRefusedFromInsideADelivery above does for the PROVIDER's own default
+// door) so this is the SUBSCRIBER's own door, reached through an ordinary Subscribe/Publish pair.
+TEST(SubscriberTest, SubscribeSchemaFromInsideADeliveryThroughTheMockProviderIsRefused) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+
+    static_cast<void>(subscriber.Subscribe(
+        kTopic, [&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            EXPECT_TRUE(RefusedWith(PubSubStatus::kReentrantCall,
+                                    [&] { (void)subscriber.SubscribeSchema(kTopic); }));
+        }));
+
+    mock->Publish(kTopic, MakeTestEncoder(1), Attachments());
+}
+
+// A watch outlives the call that opened it and has no id to cancel, so the
+// destructor is the backstop — the data path's residue rule applied to it.
+TEST(SubscriberTest, DestructorReleasesOutstandingSchemaWatches) {
+    auto mock = std::make_shared<MockProvider>();
+    Publisher publisher(mock);
+    publisher.CreateTopic(kTopic, TestSchema());
+
+    {
+        Subscriber subscriber(mock);
+        SchemaArrival arrival = subscriber.SubscribeSchema(kTopic);
+        SharedSchema sch;
+        ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &sch), PubSubStatus::kOk);
+        EXPECT_EQ(mock->unsubscribe_schema_count, 0);
+    }
+
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
+    // Released once, and only the watch: no data subscription existed to tear
+    // down, and none was invented.
+    EXPECT_EQ(mock->unsubscribe_count, 0);
+}
+
+// The last UnsubscribeSchema enters the provider with `mu` released. A
+// SubscribeSchema racing into that gap must wait for the release to finish, or it
+// takes a count on the very watch the release is about to tear down — count one,
+// provider watch none.
+TEST(SubscriberTest, SubscribeSchemaWaitsForAnInFlightLastRelease) {
+    auto mock = std::make_shared<MockProvider>();
+    Subscriber subscriber(mock);
+    (void)subscriber.SubscribeSchema(kTopic);
+    ASSERT_EQ(mock->subscribe_schema_count, 1);
+
+    std::promise<void> parked, release;
+    int watches_seen_by_release = -1;
+    mock->on_unsubscribe_schema = [&] {
+        parked.set_value();
+        release.get_future().wait();
+        watches_seen_by_release = mock->subscribe_schema_count;
+    };
+    std::thread releaser([&] { subscriber.UnsubscribeSchema(kTopic); });
+    parked.get_future().wait();  // the release is now inside the provider
+
+    std::thread watcher([&] { (void)subscriber.SubscribeSchema(kTopic); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    release.set_value();
+    releaser.join();
+    watcher.join();
+    mock->on_unsubscribe_schema = nullptr;  // ~Subscriber releases the watcher's watch
+
+    // The watcher reached the provider only after the release had left it, and
+    // opened a fresh watch there rather than riding the one being released.
+    EXPECT_EQ(watches_seen_by_release, 1);
+    EXPECT_EQ(mock->subscribe_schema_count, 2);
+    EXPECT_EQ(mock->unsubscribe_schema_count, 1);
 }

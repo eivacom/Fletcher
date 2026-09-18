@@ -25,8 +25,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { FletcherClient, buildSubscribe } from '@eiva/fletcher-gateway-client';
 import {
@@ -43,6 +44,62 @@ const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 // Isolated, high DDS domain so this test does not cross-talk with
 // pubsub-arrow-fastdds (137) on a shared --network host CI runner.
 const DOMAIN_ID = process.env.DDS_DOMAIN_ID ?? '142';
+
+// Fletcher's built-in data profile is VOLATILE now (qos_defaults.cpp, owner decision
+// 2026-09-15): a late-joining reader does not see rows published before it. The first case below
+// is a deliberate durable-topic proof (the C++ peer publishes before the TS client subscribes),
+// so both the gateway and the peer are configured with this explicit document instead — the
+// built-in text (see fastdds-pubsub-provider/README.md "The published starting point") with both
+// <durability> lines changed to TRANSIENT_LOCAL. `fastdds_peer.cpp` carries the identical text
+// (`kDurableDocument`); this copy is written to a file and handed to the gateway via
+// --provider-config, the only route into its FastDDS provider's document (see
+// gateway-end-to-end's "provider configuration" suite).
+const DURABLE_DOCUMENT = `<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps><name>FletcherParticipant</name></rtps>
+    </participant>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times>
+        <heartbeat_period>
+          <sec>0</sec>
+          <nanosec>20000000</nanosec>
+        </heartbeat_period>
+      </times>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>`;
 
 // The rows the C++ peer publishes on CppToTs at startup (see fastdds_peer.cpp).
 const EXPECTED_CPP_ROWS: ISensorReading[] = [
@@ -142,8 +199,15 @@ let gateway: ChildProcess | undefined;
 let peer: ChildProcess | undefined;
 // RECV lines collected from the C++ peer's stdout (TS -> C++ deliveries).
 const recvLines: string[] = [];
+let providerConfigDir: string | undefined;
 
 beforeAll(async () => {
+  // DURABLE_DOCUMENT (TRANSIENT_LOCAL on both endpoints) reaches the gateway's FastDDS provider
+  // only through --provider-config, a file path — there is no inline-document CLI flag.
+  providerConfigDir = mkdtempSync(join(tmpdir(), 'gateway-fastdds-ts-'));
+  const providerConfigPath = join(providerConfigDir, 'durable.xml');
+  writeFileSync(providerConfigPath, DURABLE_DOCUMENT);
+
   gateway = await spawnUntilReady(
     findBinary('GATEWAY_BIN', 'gateway', 'gateway_build'),
     [
@@ -155,6 +219,8 @@ beforeAll(async () => {
       String(TEST_PORT),
       '--bind-address',
       '127.0.0.1',
+      '--provider-config',
+      providerConfigPath,
     ],
     'gateway',
   );
@@ -177,6 +243,9 @@ afterAll(async () => {
   if (gateway) {
     await stopChild(gateway);
   }
+  if (providerConfigDir) {
+    rmSync(providerConfigDir, { recursive: true, force: true });
+  }
 });
 
 describe('gateway FastDDS provider — bidirectional', () => {
@@ -189,9 +258,9 @@ describe('gateway FastDDS provider — bidirectional', () => {
       received.push(row);
     });
 
-    // TRANSIENT_LOCAL + KEEP_ALL replays the peer's startup rows to the
-    // gateway's late-joining DataReader, so order of subscribe vs publish
-    // does not matter; allow headroom for cross-process DDS discovery.
+    // DURABLE_DOCUMENT's TRANSIENT_LOCAL + KEEP_ALL (the default is VOLATILE now, qos_defaults.cpp)
+    // replays the peer's startup rows to the gateway's late-joining DataReader, so order of
+    // subscribe vs publish does not matter; allow headroom for cross-process DDS discovery.
     await waitFor(() => received.length >= EXPECTED_CPP_ROWS.length, 15_000);
 
     expect(received).toHaveLength(EXPECTED_CPP_ROWS.length);

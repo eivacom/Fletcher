@@ -19,7 +19,15 @@ add_executable(example_arrow_roundtrip example_arrow_roundtrip.cpp)
 
 add_executable(exp_zero_copy exp_zero_copy.cpp)
 
-foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy)
+# BEFORE/AFTER numbers for the reader-side redesign: e2e latency and throughput, intraprocess.
+add_executable(bench_e2e bench_e2e.cpp)
+
+# Repeated Subscribe/Unsubscribe cycles against a flat-out publisher, own process per run: probes
+# whether data_sharing AUTOMATIC on the data reader (item D) reproduces the Fast DDS 3.4.0
+# DataSharingListener teardown spin the __schema channel is already known to hit (qos_defaults.cpp).
+add_executable(probe_teardown probe_teardown.cpp)
+
+foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy bench_e2e probe_teardown)
     target_compile_features(${_target} PRIVATE cxx_std_20)
 
     # src/internal is on the include path so that the type exercised is the shipped one rather than a

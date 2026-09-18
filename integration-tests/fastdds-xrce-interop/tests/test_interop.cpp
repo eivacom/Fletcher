@@ -18,9 +18,9 @@
 //
 // Each test uses its own XRCE session_key - a key is unique per client on
 // one Agent - so the cases can run against the same Agent without their
-// sessions colliding. Five cases live here: the three interop directions
-// and the fixture's own two guards, `AForeignAgentDoesNotSatisfyTheHarness`
-// and `AFailedOwnershipQueryDoesNotSatisfyTheHarness`.
+// sessions colliding. Nine cases live here: the seven interop cases and the
+// fixture's own two guards, `AForeignAgentDoesNotSatisfyTheHarness` and
+// `AFailedOwnershipQueryDoesNotSatisfyTheHarness`.
 //
 // PDA-DEC-1H: the fixture proves, AT BRING-UP, that it OWNS the Agent answering the port - a
 // one-shot snapshot in SetUp and not a running invariant, so an Agent that turns up after it
@@ -47,6 +47,7 @@
 #include <cstring>
 #include <fletcher/core/internal/status_name.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
@@ -161,6 +162,59 @@ void ExpectRowEquals(const ArrowRow& row, int32_t expected_id, double expected_t
     EXPECT_DOUBLE_EQ(std::static_pointer_cast<arrow::DoubleScalar>(row[1])->value, expected_temp);
     EXPECT_EQ(std::static_pointer_cast<arrow::StringScalar>(row[2])->ToString(), expected_label);
 }
+
+// The XRCE provider's data reader and writer request TRANSIENT_LOCAL
+// (xrcedds-pubsub-provider/src/xrce_dds_pubsub_provider.cpp, both uxrQoS_t blocks). A FastDDS
+// writer offering VOLATILE — the built-in default since the data stream went volatile — can
+// never match it, so this suite gives the FastDDS side the same TRANSIENT_LOCAL document
+// gateway-fastdds-ts uses. One document for every provider in this binary: profile names are
+// process-wide.
+constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps><name>FletcherParticipant</name></rtps>
+    </participant>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times>
+        <heartbeat_period>
+          <sec>0</sec>
+          <nanosec>20000000</nanosec>
+        </heartbeat_period>
+      </times>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>)XML";
 
 // PDA-DEC-7: the typed XRCE options struct is retired. What these three tests witness is the
 // seam's TYPED CORE and the registered type name, not the document - they run their Agent on
@@ -983,7 +1037,8 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00001));
 
     PublisherArrow xrce_pub(xrce);
@@ -1038,6 +1093,75 @@ TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// XRCE publishes at a non-default payload bound → FastDDS subscribes. The Fast DDS subscriber
+// follows the bound the XRCE publisher announces on `/__schema`, so the two need no agreement on
+// `max_payload_bytes`; the reverse direction (an XRCE subscriber) still does.
+// ─────────────────────────────────────────────────────────────────────
+TEST(FastDdsXrceInteropTest, XrcePublishAtAnotherBoundReachesAFastDDSSubscriber) {
+    // Capture state must outlive the providers so a late DDS callback
+    // during teardown cannot touch destroyed locals.
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<ArrowRow> rx_rows;
+
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
+    ProviderConfig xrce_cfg = XrceConfigFor(0xF0F00004);
+    xrce_cfg.max_payload_bytes = kPayloadBytes<8192>;
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(xrce_cfg);
+
+    PublisherArrow xrce_pub(xrce);
+    SubscriberArrow fastdds_sub(fastdds);
+
+    const auto schema = SensorSchema();
+    const std::vector<std::string> topic{"interop", "sensor-8k"};
+
+    xrce_pub.CreateTopic(topic, schema);
+
+    auto result = fastdds_sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
+        std::lock_guard<std::mutex> lk(mu);
+        rx_rows.push_back(std::move(row));
+        cv.notify_all();
+    });
+
+    // /__schema must round-trip the full schema including Arrow
+    // KeyValueMetadata — anything weaker would let a CDR length-prefix
+    // off-by-N or schema-IPC bug slip past the test.
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
+    ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
+
+    // Three back-to-back publishes with distinct values across all
+    // three field types. Reliable QoS + KEEP_ALL guarantees in-order
+    // delivery from a single writer, so order can be asserted.
+    const std::vector<std::tuple<int32_t, double, std::string>> samples = {
+        {1, 23.5, "from-xrce-8k-1"},
+        {42, -7.125, "from-xrce-8k-2"},
+        {999, 100.0, "from-xrce-8k-3"},
+    };
+    for (const auto& [id, temp, label] : samples) {
+        xrce_pub.Publish(topic, SensorRow(id, temp, label));
+    }
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
+            << "XRCE → Agent → FastDDS delivery must complete within 10 s "
+               "(received "
+            << rx_rows.size() << "/" << samples.size() << ")";
+    }
+    fastdds_sub.Unsubscribe(result.subscription_id);
+
+    ASSERT_EQ(rx_rows.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& [id, temp, label] = samples[i];
+        SCOPED_TRACE("sample " + std::to_string(i));
+        ExpectRowEquals(rx_rows[i], id, temp, label);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Reverse: FastDDS publishes → XRCE subscribes. The vessel→MCU path.
 // Exercises a different subscribe implementation in
 // XrceDDSPubSubProvider (global on_topic callback demultiplexed by
@@ -1048,7 +1172,8 @@ TEST(FastDdsXrceInteropTest, FastDDSPublishReachesXrceSubscriber) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00002));
 
     PublisherArrow fastdds_pub(fastdds);
@@ -1114,7 +1239,8 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
     std::condition_variable cv;
     std::vector<ArrowRow> rx_rows;
 
-    auto fastdds = std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kDdsDomain});
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00003));
 
     PublisherArrow fastdds_pub(fastdds);
@@ -1168,4 +1294,121 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
         SCOPED_TRACE("sample " + std::to_string(i));
         ExpectRowEquals(rx_rows[i], id, temp, label);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// XRCE publishes at a PER-TOPIC bound (`TopicOptions::max_payload_bytes`) → FastDDS subscribes.
+// The mirror of XrcePublishAtAnotherBoundReachesAFastDDSSubscriber above, through
+// `CreateTopicWithOptions` instead of `ProviderConfig::max_payload_bytes`: the XRCE provider
+// itself stays at its own default bound (65536), and only this one topic announces 8192.
+// ─────────────────────────────────────────────────────────────────────
+TEST(FastDdsXrceInteropTest, XrcePublishAtAPerTopicBoundReachesAFastDDSSubscriber) {
+    // Capture state must outlive the providers so a late DDS callback
+    // during teardown cannot touch destroyed locals.
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<ArrowRow> rx_rows;
+
+    auto fastdds = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kDdsDomain, .document = kDurableDocument});
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00005));
+
+    PublisherArrow xrce_pub(xrce);
+    SubscriberArrow fastdds_sub(fastdds);
+
+    const auto schema = SensorSchema();
+    const std::vector<std::string> topic{"interop", "sensor-8k-options"};
+
+    xrce_pub.CreateTopic(topic, schema, {.max_payload_bytes = kPayloadBytes<8192>});
+
+    auto result = fastdds_sub.Subscribe(topic, [&](ArrowRow row, Attachments) {
+        std::lock_guard<std::mutex> lk(mu);
+        rx_rows.push_back(std::move(row));
+        cv.notify_all();
+    });
+
+    // /__schema must round-trip the full schema including Arrow
+    // KeyValueMetadata — anything weaker would let a CDR length-prefix
+    // off-by-N or schema-IPC bug slip past the test.
+    std::shared_ptr<arrow::Schema> sub_schema =
+        AwaitArrowSchema(result.schema, std::chrono::seconds(15));
+    ASSERT_NE(sub_schema, nullptr) << "schema must propagate via /__schema across the Agent bridge";
+    EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/true));
+
+    // Three back-to-back publishes with distinct values across all
+    // three field types. Reliable QoS + KEEP_ALL guarantees in-order
+    // delivery from a single writer, so order can be asserted.
+    const std::vector<std::tuple<int32_t, double, std::string>> samples = {
+        {1, 23.5, "from-xrce-8k-options-1"},
+        {42, -7.125, "from-xrce-8k-options-2"},
+        {999, 100.0, "from-xrce-8k-options-3"},
+    };
+    for (const auto& [id, temp, label] : samples) {
+        xrce_pub.Publish(topic, SensorRow(id, temp, label));
+    }
+
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return rx_rows.size() >= samples.size(); }))
+            << "XRCE → Agent → FastDDS delivery must complete within 10 s "
+               "(received "
+            << rx_rows.size() << "/" << samples.size() << ")";
+    }
+    fastdds_sub.Unsubscribe(result.subscription_id);
+
+    ASSERT_EQ(rx_rows.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& [id, temp, label] = samples[i];
+        SCOPED_TRACE("sample " + std::to_string(i));
+        ExpectRowEquals(rx_rows[i], id, temp, label);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// The XRCE provider's document is `key=value`, four fixed keys, with no notion of a named
+// profile: `TopicOptions::profile` is always `kNotSupported` there, whatever it names.
+// ─────────────────────────────────────────────────────────────────────
+TEST(FastDdsXrceInteropTest, XrceRefusesAProfile) {
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00006));
+    PublisherArrow xrce_pub(xrce);
+
+    try {
+        xrce_pub.CreateTopic({"interop", "refused-profile"}, SensorSchema(), {.profile = "x"});
+        ADD_FAILURE() << "a profile name was accepted by the XRCE provider";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kNotSupported) << e.what();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// A topic a `Subscribe` on this XRCE client created FIRST is registered at this client's own
+// (default) bound, because `Subscribe` takes no options. A later `CreateTopicWithOptions` naming a
+// DIFFERENT per-topic bound for it must be refused, not silently adopted — the reader was already
+// created at its own bound and cannot migrate. The identical call with no options adopts that
+// bound and succeeds.
+// ─────────────────────────────────────────────────────────────────────
+TEST(FastDdsXrceInteropTest, XrceRefusesAPerTopicBoundOnASubscribeCreatedTopic) {
+    auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00007));
+    SubscriberArrow xrce_sub(xrce);
+    PublisherArrow xrce_pub(xrce);
+
+    const std::vector<std::string> topic{"interop", "subscribe-first-bound-refused"};
+
+    // Subscriber-first: no publisher exists yet, so this creates the participant and topic at
+    // this client's own default bound.
+    auto result = xrce_sub.Subscribe(topic, [](ArrowRow, Attachments) {});
+
+    try {
+        xrce_pub.CreateTopic(topic, SensorSchema(), {.max_payload_bytes = kPayloadBytes<8192>});
+        ADD_FAILURE()
+            << "a per-topic bound different from the Subscribe-created reader's own bound "
+               "was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+
+    // Empty options adopt the reader's own bound rather than naming a conflicting one.
+    xrce_pub.CreateTopic(topic, SensorSchema(), {});
+
+    xrce_sub.Unsubscribe(result.subscription_id);
 }

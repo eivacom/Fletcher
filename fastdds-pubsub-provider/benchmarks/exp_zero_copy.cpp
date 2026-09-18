@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Ping-pong latency across the two axes that make a sample zero-copy: loaning, and data-sharing.
+// Ping-pong latency across data-sharing, the axis that still makes a sample zero-copy through the
+// regular publish path -- Publish always writes through WriteSample now (owner decision
+// 2026-09-15); LoanableSampleWriter stays unit-tested, not benchmarked here any more.
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <fastdds/LibrarySettings.hpp>
@@ -35,15 +38,17 @@ OwnedSchema MakeSchema() {
 
 // PDA-DEC-6 moved every knob below out of the retired `FastDDSProviderOptions` and into the
 // provider's own Fast DDS XML profiles document. This function is the item's own proof that the
-// document expresses what the struct did — resource limits, data-sharing, and the publish path —
-// and it is the only in-tree caller of `fletcher.loan_publish`.
+// document expresses what the struct did — resource limits and data-sharing.
 //
 // The durability / reliability / history lines are restated in full because **a supplied profile
-// is that endpoint's WHOLE quality-of-service** (owner ruling 2026-09-02): Fletcher's built-in
+// is that endpoint's WHOLE quality-of-service** (owner ruling 2026-09-02): Fletcher's baked-in
 // profile is not underneath it, so a profile that mentioned only `resourceLimitsQos` would take
 // Fast DDS's defaults for everything else — including a BEST_EFFORT reader, which would measure
-// something other than what this benchmark is about.
-std::string Document(bool loan, bool sharing, int32_t slots) {
+// something other than what this benchmark is about. Both endpoint profiles carry
+// `is_default_profile="true"`: `fletcher_writer` / `fletcher_reader` are not special names any
+// more, and no topic below is literally named that, so without the marking neither profile would
+// ever apply.
+std::string Document(bool sharing, int32_t slots) {
     const std::string limits = R"(
         <historyQos><kind>KEEP_LAST</kind><depth>)" +
                                std::to_string(slots) + R"(</depth></historyQos>
@@ -63,21 +68,8 @@ std::string Document(bool loan, bool sharing, int32_t slots) {
     return R"(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
-    <participant profile_name="fletcher_participant">
-      <rtps>
-        <propertiesPolicy>
-          <properties>
-            <property>
-              <name>fletcher.loan_publish</name>
-              <value>)" +
-           std::string(loan ? "true" : "false") +
-           R"(</value>
-            </property>
-          </properties>
-        </propertiesPolicy>
-      </rtps>
-    </participant>
-    <data_writer profile_name="fletcher_writer">
+    <participant profile_name="fletcher_participant"/>
+    <data_writer profile_name="fletcher_writer" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>)" +
@@ -87,7 +79,7 @@ std::string Document(bool loan, bool sharing, int32_t slots) {
            limits + R"(
       </topic>
     </data_writer>
-    <data_reader profile_name="fletcher_reader">
+    <data_reader profile_name="fletcher_reader" is_default_profile="true">
       <qos>
         <durability><kind>TRANSIENT_LOCAL</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>)" +
@@ -101,11 +93,11 @@ std::string Document(bool loan, bool sharing, int32_t slots) {
 </dds>)";
 }
 
-ProviderConfig Options(bool loan, bool sharing, uint32_t bound, int32_t slots) {
+ProviderConfig Options(bool sharing, uint32_t bound, int32_t slots) {
     ProviderConfig config;
     config.domain_id = 43;
     config.max_payload_bytes = bound;
-    config.document = Document(loan, sharing, slots);
+    config.document = Document(sharing, slots);
     return config;
 }
 
@@ -115,9 +107,8 @@ double Percentile(std::vector<double>& v, double p) {
 }
 
 // Publish cost with no reader matched: the writer path alone.
-void PublishOnly(const char* label, bool loan, bool sharing, size_t row_bytes, uint32_t bound,
-                 int32_t slots) {
-    FastDDSPubSubProvider pub(Options(loan, sharing, bound, slots));
+void PublishOnly(const char* label, bool sharing, size_t row_bytes, uint32_t bound, int32_t slots) {
+    FastDDSPubSubProvider pub(Options(sharing, bound, slots));
     const std::vector<std::string> topic{"solo", label};
     pub.CreateTopic(topic, MakeSchema());
     const std::vector<uint8_t> row(row_bytes, 0xAB);
@@ -137,10 +128,9 @@ void PublishOnly(const char* label, bool loan, bool sharing, size_t row_bytes, u
 }
 
 // One sample in flight at a time, so this is latency and not throughput.
-void PingPong(const char* label, bool loan, bool sharing, size_t row_bytes, uint32_t bound,
-              int32_t slots) {
-    FastDDSPubSubProvider pub(Options(loan, sharing, bound, slots));
-    FastDDSPubSubProvider sub(Options(loan, sharing, bound, slots));
+void PingPong(const char* label, bool sharing, size_t row_bytes, uint32_t bound, int32_t slots) {
+    FastDDSPubSubProvider pub(Options(sharing, bound, slots));
+    FastDDSPubSubProvider sub(Options(sharing, bound, slots));
     const std::vector<std::string> topic{"pp", label};
     pub.CreateTopic(topic, MakeSchema());
 
@@ -192,15 +182,61 @@ void PingPong(const char* label, bool loan, bool sharing, size_t row_bytes, uint
                 Percentile(samples, 0.99));
 }
 
-struct Combo {
-    const char* name;
-    bool loan;
-    bool sharing;
+struct Case {
+    const char* what;
+    size_t row;
+    uint32_t bound;
+    int32_t slots;
 };
+
+// A big bound times a big history is gigabytes of preallocation, so slots shrink as the bound
+// grows. 16 slots of 512 KiB is 8 MB per endpoint.
+constexpr Case kCases[] = {
+    {"row 512 KiB - 64, bound 512 KiB", 512u * 1024 - 64, 512u * 1024, 16},
+    {"row 214 B,   bound 512 KiB", 214, 512u * 1024, 16},
+    {"row 128 KiB - 64, bound 128 KiB", 128u * 1024 - 64, 128u * 1024, 32},
+};
+
+const char* Label(bool sharing) { return sharing ? "sharing=on " : "sharing=off"; }
+
+void PrintUsage(const char* prog) {
+    std::printf("usage: %s <sharing 0|1> <slots>\n", prog);
+    // Fast DDS's profile registry is process-wide (src/internal/profile_document.hpp): two
+    // different `sharing` values are two different documents under the SAME profile names, which
+    // collide if loaded in one process. One combo per process, hence per invocation.
+    std::printf("  one combo per process -- Fast DDS's profile registry is process-wide, so two\n");
+    std::printf("  different documents in one process collide\n");
+    std::printf("  valid combos (each <slots> runs every kCases row that uses it):\n");
+    constexpr size_t kCaseCount = sizeof(kCases) / sizeof(kCases[0]);
+    for (int sharing = 0; sharing <= 1; ++sharing) {
+        for (size_t i = 0; i < kCaseCount; ++i) {
+            bool seen_before = false;
+            for (size_t j = 0; j < i; ++j)
+                seen_before = seen_before || kCases[j].slots == kCases[i].slots;
+            if (!seen_before) std::printf("    %s %d %d\n", prog, sharing, kCases[i].slots);
+        }
+    }
+}
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        PrintUsage(argv[0]);
+        return 2;
+    }
+    const std::string sharing_arg = argv[1];
+    char* end = nullptr;
+    const long slots_long = std::strtol(argv[2], &end, 10);
+    const bool args_ok = (sharing_arg == "0" || sharing_arg == "1") && end != argv[2] &&
+                         *end == '\0' && slots_long > 0;
+    if (!args_ok) {
+        PrintUsage(argv[0]);
+        return 2;
+    }
+    const bool sharing = sharing_arg == "1";
+    const int32_t slots = static_cast<int32_t>(slots_long);
+
     std::setbuf(stdout, nullptr);
     // Intra-process delivery defaults to INTRAPROCESS_FULL, which short-circuits writer to reader
     // inside one process and bypasses both data-sharing and the transport. Off, so the paths under
@@ -212,30 +248,20 @@ int main() {
         std::printf("could not disable intra-process delivery\n");
         return 1;
     }
-    struct Case {
-        const char* what;
-        size_t row;
-        uint32_t bound;
-        int32_t slots;
-    };
 
-    // A big bound times a big history is gigabytes of preallocation, so slots shrink as the bound
-    // grows. 16 slots of 512 KiB is 8 MB per endpoint.
-    const Case cases[] = {
-        {"row 512 KiB - 64, bound 512 KiB", 512u * 1024 - 64, 512u * 1024, 16},
-        {"row 214 B,   bound 512 KiB", 214, 512u * 1024, 16},
-        {"row 128 KiB - 64, bound 128 KiB", 128u * 1024 - 64, 128u * 1024, 32},
-    };
-
-    for (const Case& k : cases) {
+    const char* label = Label(sharing);
+    bool ran_one = false;
+    for (const Case& k : kCases) {
+        if (k.slots != slots) continue;
+        ran_one = true;
         std::printf("%s== %s ==%s", "\n", k.what, "\n");
-        for (const Combo& c :
-             {Combo{"loan=on  sharing=on ", true, true}, Combo{"loan=off sharing=on ", false, true},
-              Combo{"loan=on  sharing=off", true, false},
-              Combo{"loan=off sharing=off", false, false}}) {
-            PublishOnly(c.name, c.loan, c.sharing, k.row, k.bound, k.slots);
-            PingPong(c.name, c.loan, c.sharing, k.row, k.bound, k.slots);
-        }
+        PublishOnly(label, sharing, k.row, k.bound, k.slots);
+        PingPong(label, sharing, k.row, k.bound, k.slots);
+    }
+    if (!ran_one) {
+        std::printf("no row in kCases uses slots=%d\n", slots);
+        PrintUsage(argv[0]);
+        return 2;
     }
     return 0;
 }

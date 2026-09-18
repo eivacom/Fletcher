@@ -10,6 +10,8 @@ Prefer `DecodeInto` in a subscribe callback. Constructing allocates each field's
 
 Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)`: one row per subscription, decoded into on every sample, handed to `cb` as a `const <Msg>&` borrowed for the duration of the call. `Subscribe(cb)` still constructs a fresh row per sample and passes it by value — use that one when the callback keeps the row.
 
+The generated `<Msg>Publisher` constructor and the `<Msg>Subscriber` `Subscribe` / `SubscribeInPlace` methods each take an optional `fletcher::TopicOptions` after the callback/provider argument — `<Msg>Publisher pub(provider, {.profile = "latest"});`, `sub.Subscribe(cb, {.profile = "latest_reader"})` — omitting it means the provider's defaults, and `profile` / `max_payload_bytes` carry the provider's own semantics (see the FastDDS provider README's [Per-topic options](../fastdds-pubsub-provider/README.md#per-topic-options)).
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
@@ -245,3 +247,5 @@ The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths al
 | `repeated T` | `list(T)` | |
 | `map<K,V>` | `map(K, V)` | |
 | nested `message` | `struct<...>` | |
+
+Each message also gets a free function `ToArrowRow()` and an `AppendTo(arrow::StructBuilder&, const Msg&)`, emitted into `<stem>.fletcher.arrow.pb.h` in that order. `AppendTo` appends one message as one element of a struct builder made for `arrow::struct_(detail::ImportSchema(<Msg>Schema())->fields())`, writing straight into that struct’s typed child builders with no `arrow::Scalar` per value; it is usable on its own to fill a struct column (e.g. building a `RecordBatch` from many messages) without going through `ArrowRow` at all. `ToArrowRow()` routes every composite field whose elements are messages — repeated struct, nested list of struct, map with a message value — through `AppendTo` rather than one `arrow::StructScalar` per element. `<Class>View` stays the scalar-based, one-row read view over an `ArrowRow` / `RecordBatch` row / `Table` row — for column-oriented access over a whole batch, use the generated accessor (`--fletcher_opt=accessor`) instead.

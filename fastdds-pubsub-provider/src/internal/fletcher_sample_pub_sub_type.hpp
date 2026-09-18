@@ -18,6 +18,7 @@
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/topic/TopicDataType.hpp>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
+#include <fletcher/core/envelope.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
 #include <memory>
@@ -72,8 +73,12 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         constexpr uint32_t kHeader =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
 
-        // Truncated after the bytes in use, so a small row stays small on the wire.
-        if (payload.max_size < kHeader + kSampleLengthPrefix) {
+        // Truncated after the bytes in use, so a small row stays small on the wire. The extra 4 is
+        // the row's OWN length prefix inside the body (EncodeEnvelopeBody's ROW_LEN): even an EMPTY
+        // row needs it, so a buffer too small to hold it is refused here, quietly, rather than
+        // reaching the encoder and failing there with the "oversized row" diagnostic below — which
+        // is the wrong story for a buffer that could never have held anything.
+        if (payload.max_size < kHeader + kSampleLengthPrefix + 4) {
             payload.length = 0;
             return false;
         }
@@ -116,8 +121,8 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
             return false;
         } catch (const std::exception& e) {
             // The caller's encoder failed. A false return reaches Publish as a code that cannot
-            // distinguish the cause, so record the reason for it to throw with (#60 / H-INV-2).
-            // Never rethrow from here — DDS calls serialize() on its own path (H-INV-3).
+            // distinguish the cause, so record the reason for it to throw with.
+            // Never rethrow from here — DDS calls serialize() on its own path.
             payload.length = 0;
             d->RecordSerializeError(e.what());
             EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION,
@@ -132,12 +137,20 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         }
     }
 
-    // For a peer using take_next_sample; Fletcher's own reader goes through a loan.
+    // The copying listener's take_next_sample lands here (Subscribe installs it); the loaned
+    // listener reads the payload in place and never calls this.
     bool deserialize(eprosima::fastdds::rtps::SerializedPayload_t& payload, void* data) override {
         auto* d = static_cast<ReceivedData*>(data);
         const uint32_t header =
             eprosima::fastdds::rtps::SerializedPayload_t::representation_header_size;
-        if (payload.length < header + kSampleLengthPrefix) return false;
+        if (payload.length < header + kSampleLengthPrefix) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
+                                 "deserialize dropped a sample for "
+                                     << get_name() << ": length " << payload.length
+                                     << " is shorter than the " << (header + kSampleLengthPrefix)
+                                     << "-byte header and length prefix");
+            return false;
+        }
 
         // Host-order lengths, so a big-endian or parameter-list payload has to be refused.
         const uint8_t representation_id = payload.data[1];
@@ -145,13 +158,24 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
                 RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR) &&
             representation_id !=
                 RepresentationId(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR2)) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION, "deserialize dropped a sample for "
+                                                            << get_name()
+                                                            << ": unknown representation id "
+                                                            << static_cast<int>(representation_id));
             return false;
         }
         payload.encapsulation = CDR_LE;
 
         // Bounded by what arrived, since a serialised sample stops after the bytes in use.
         const uint32_t length = ReadSampleLength(payload.data + header);
-        if (length > payload.length - header - kSampleLengthPrefix) return false;
+        if (length > payload.length - header - kSampleLengthPrefix) {
+            EPROSIMA_LOG_WARNING(FLETCHER_SUBSCRIPTION,
+                                 "deserialize dropped a sample for "
+                                     << get_name() << ": length " << length << " exceeds the "
+                                     << (payload.length - header - kSampleLengthPrefix)
+                                     << " bytes available");
+            return false;
+        }
 
         const uint8_t* body = SampleBody(payload.data + header);
         const uint8_t* row = nullptr;
@@ -161,7 +185,7 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
         // carries any needs an owner that outlives this call — Fast DDS may recycle `payload` as
         // soon as we return. One copy of the body, taken once, replaces the copy-per-attachment
         // that used to happen here. A sample with no attachments needs no owner and takes no copy.
-        if (PeekAttachmentCount(body, length) > 0) {
+        if (EnvelopeAttachmentCount(body, length) > 0) {
             auto owned = std::make_shared<const std::vector<uint8_t>>(body, body + length);
             if (!ParseEnvelopeBody(owned, owned->data(), length, row, row_len,
                                    d->decoded_attachments)) {
@@ -211,6 +235,20 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
 
    private:
     uint32_t payload_bytes_;
+};
+
+/// The companion `__schema` channel's type: the same plain sample, bounded by the fixed
+/// `kSchemaPayloadBytes` (payload_bound.hpp) and registered as `SchemaBytes` so every provider
+/// names it identically. The schema rides as a row -- the IPC bytes -- plus one attachment
+/// carrying the publisher's payload bound. The usable schema size is `kSchemaPayloadBytes` minus
+/// 37: the row length prefix, the attachment count, and the 29-byte `max_payload_bytes`
+/// attachment.
+class SchemaBytesPubSubType : public FletcherSamplePubSubType {
+   public:
+    explicit SchemaBytesPubSubType(uint32_t max_schema_bytes)
+        : FletcherSamplePubSubType(max_schema_bytes) {
+        set_name(kSchemaTypeName);
+    }
 };
 
 }  // namespace internal

@@ -11,6 +11,10 @@
 //   [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]
 // using SerializeEnvelope/DeserializeEnvelope from pubsub/envelope.hpp.
 //
+// The companion __schema channel rides the SAME envelope: the Arrow IPC bytes are ROW_DATA and
+// the one attachment is `max_payload_bytes` (4-byte LE), the publisher's payload bound -- the
+// same shape fastdds-pubsub-provider's `SchemaBytesPubSubType` produces and requires.
+//
 // On the XRCE wire, the envelope is wrapped in an OMG-CDR
 // `sequence<octet>` length prefix (uint32) before being handed to
 // `uxr_buffer_topic`. MicroXRCEAgent's TopicPubSubType then prepends
@@ -85,6 +89,14 @@ struct XrceDDSPubSubProvider::Impl {
         uxrObjectId schema_subscriber_id{};
         uxrObjectId schema_reader_id{};
 
+        // The bound this topic registered and announces on `__schema` -- this topic's own, from
+        // `TopicOptions::max_payload_bytes` or the provider's own bound when declared without one.
+        // Set ONLY by CreateTopic, once, when it creates the participant and topic; still 0 means
+        // Subscribe created them first (Subscribe takes no options, so it never sets this) at
+        // `impl_->max_payload_bytes` -- the reader stays config-driven, and a later CreateTopic on
+        // the same topic can only adopt that bound, never override it (a different one is refused).
+        uint32_t max_payload_bytes = 0;
+
         OwnedSchema schema;
         SharedSchema shared_schema;  // for callback delivery
         // The declared schema as Arrow IPC bytes - the only form a conflict
@@ -111,7 +123,8 @@ struct XrceDDSPubSubProvider::Impl {
         // separate resolved-flag beside these: the optional IS the flag —
         // engaged means "this subscription is still waiting", and whichever path
         // consumes the token is the one that settled the question. Fast DDS's
-        // SchemaChannel dropped its equivalent flag for the same reason; two sources
+        // `TopicState::schema_resolver` (fast_dds_pubsub_provider.cpp, checked via `.valid()` in
+        // `Impl::HandleSchema`) drops its equivalent flag for the same reason; two sources
         // of truth for one fact is one too many.
         SchemaArrival schema_arrival;
         std::optional<SchemaResolver> schema_resolver;
@@ -130,6 +143,9 @@ struct XrceDDSPubSubProvider::Impl {
 
     // Must be byte-identical to what a FastDDS peer registers, or the endpoints never match.
     std::string type_name;
+
+    // The bound announced on `__schema` with every schema this client publishes.
+    uint32_t max_payload_bytes = 0;
 
     // XRCE session and transport.
     uxrSession session{};
@@ -276,7 +292,8 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             //
             // The guard covers the WHOLE sequence, not just the parse, because
             // every step can throw:
-            //   * DeserializeSchemaIpc — malformed/truncated __schema sample;
+            //   * DeserializeEnvelope — malformed/truncated envelope;
+            //   * DeserializeSchemaIpc — malformed/truncated IPC bytes;
             //   * OwnedSchema::DeepCopy — throws on a failed deep copy (#54);
             //   * MakeSharedSchema — allocates;
             //   * resolving the arrival — allocation, and a refusal if the
@@ -285,7 +302,20 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
             // retained TRANSIENT_LOCAL/KEEP_LAST(1) __schema sample is
             // redelivered and resolution is retried.
             try {
-                OwnedSchema schema = DeserializeSchemaIpc(body, seq_len);
+                // The schema rides as a row plus one attachment: the announcing publisher's payload
+                // bound. A sample without a usable one is malformed for this channel and dropped
+                // the same as an undecodable one: return without consuming the resolver, so a
+                // later, well-formed redelivery can still resolve it. The value itself is not used
+                // here -- this client's reader type name comes from its own configuration.
+                Envelope schema_env = DeserializeEnvelope(body_owner, body, seq_len);
+                const Blob* bound_blob = schema_env.attachments.Find(kSchemaPayloadBoundKey);
+                uint32_t bound = 0;
+                if (!bound_blob || bound_blob->size() != sizeof(bound)) return;
+                std::memcpy(&bound, bound_blob->data(), sizeof(bound));
+                if (!IsPayloadBound(bound)) return;
+
+                OwnedSchema schema =
+                    DeserializeSchemaIpc(schema_env.row.data(), schema_env.row.size());
                 if (!schema) return;
                 ts.schema = OwnedSchema::DeepCopy(schema.get());
                 ts.shared_schema = MakeSharedSchema(std::move(schema));
@@ -386,11 +416,12 @@ void RegisterXrceProvider(ProviderRegistry& registry) {
 
 namespace {
 
-// The bound `max_payload_bytes == 0` (unset, spec 4.1) resolves to. Bit-for-bit the retired
-// options struct's `payload_bound` default (`kPayloadBytes<64 * 1024>`), and deliberately so:
-// the bound is part of the registered DDS type name, so a different number silently stops
-// endpoints discovering each other (locked decision 13). No in-tree caller ever set the old
-// field, so this reproduces every existing type name byte for byte.
+// The bound `max_payload_bytes == 0` (unset, spec 4.1) resolves to. The bound is part of the type
+// name this client registers on its writer AND its reader, and it is announced on `__schema` with
+// every schema this client publishes: a Fast DDS subscriber follows that announcement and sizes
+// its own reader from it, but an XRCE subscriber still has to be constructed with the same bound
+// as its publisher, because this provider's own reader is opened from `type_name` before any
+// schema arrives.
 constexpr uint32_t kDefaultPayloadBytes = 64 * 1024;
 
 // The largest `domain_id` the XRCE wire can carry: `uxr_buffer_create_participant_bin` takes a
@@ -497,6 +528,7 @@ XrceDDSPubSubProvider::XrceDDSPubSubProvider(const ProviderConfig& config)
                 std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
     }
     impl_->type_name = FletcherTypeName(bound);
+    impl_->max_payload_bytes = bound;
 
     // Size reliable stream buffers. history must be power of 2; buffer size = MTU * history.
     // Sized before the transport exists (validate-everything-first ordering), so the two MTUs
@@ -701,6 +733,12 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
                                         OwnedSchema schema) {
+    CreateTopicWithOptions(topic_segments, std::move(schema), TopicOptions{});
+}
+
+void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
+                                                   OwnedSchema schema,
+                                                   const TopicOptions& options) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
@@ -710,9 +748,30 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // refused anyway, so the seam has one answer rather than a per-protocol
         // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
         // hand and a fresh ruling.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
+                                           "CreateTopicWithOptions");
+
+        // This client's document carries no profiles at all (key=value, four fixed keys), so a
+        // profile name has nothing to resolve against.
+        if (!options.profile.empty()) {
+            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: the document has no profiles");
+        }
 
         std::string name = internal::JoinSegments(topic_segments);
+
+        // This topic's own bound: `options.max_payload_bytes` if given, else the provider's own
+        // (0 there means "unset" too, resolved at construction). Validated before any lock, the
+        // same rule the constructor applies to the provider's own bound.
+        const uint32_t bound =
+            options.max_payload_bytes ? options.max_payload_bytes : impl_->max_payload_bytes;
+        if (!IsPayloadBound(bound)) {
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "XRCE: max_payload_bytes " + std::to_string(bound) +
+                    " is not a bound a Fletcher DDS type can carry; it must be a multiple of 4 "
+                    "between " +
+                    std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
+        }
 
         // Encoded before the lock, so the locked section is a byte compare rather
         // than an IPC encode every concurrent CreateTopic queues behind.
@@ -725,7 +784,8 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         // Re-declaration is idempotent for an identical schema (so several
         // publishers may share one topic) and REFUSED for a conflicting one -
         // spec section 7 clause 3, tightened from "may be rejected" to "must be
-        // rejected".
+        // rejected". A different bound is refused the same way: neither can migrate
+        // the writer once created.
         //
         // This whole block used to be a throw on any existing topic state, which
         // refused BOTH: an identical re-declaration the contract calls idempotent,
@@ -739,6 +799,15 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
                     PubSubStatus::kSchemaConflict,
                     "XRCE: topic already declared with a conflicting schema: " + name);
             }
+            // Only a bound the caller actually named conflicts: an empty `TopicOptions` means "the
+            // provider's defaults" and is never refused, so it re-declares a topic declared at any
+            // bound.
+            if (options.max_payload_bytes != 0 &&
+                options.max_payload_bytes != ts.max_payload_bytes) {
+                throw PubSubError(PubSubStatus::kInvalidArgument,
+                                  "XRCE: '" + name + "' is already declared at payload bound " +
+                                      std::to_string(ts.max_payload_bytes));
+            }
             return;  // identical (or non-comparable) re-declaration - no-op
         }
 
@@ -749,6 +818,9 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
         if (ts.participant_id.type == UXR_INVALID_ID) {
             ts.participant_id = uxr_object_id(base, UXR_PARTICIPANT_ID);
             ts.topic_id = uxr_object_id(base, UXR_TOPIC_ID);
+            // This call creates the topic, so it is what decides the type it carries.
+            ts.max_payload_bytes = bound;
+            const std::string type_name = FletcherTypeName(bound);
 
             // Create participant on the configured DDS domain.
             uint16_t req_part = uxr_buffer_create_participant_bin(
@@ -759,8 +831,31 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             // Create topic.
             uint16_t req_topic = uxr_buffer_create_topic_bin(
                 &impl_->session, impl_->reliable_out, ts.topic_id, ts.participant_id, name.c_str(),
-                impl_->type_name.c_str(), UXR_REPLACE);
+                type_name.c_str(), UXR_REPLACE);
             WaitForStatus(&impl_->session, req_topic, "topic");
+        } else if (ts.max_payload_bytes == 0) {
+            // Left behind by a subscriber-first reader (Subscribe creates the participant and
+            // topic the same way, but takes no options): the topic already carries
+            // `impl_->type_name`/`impl_->max_payload_bytes`, so that -- not this call's `bound` --
+            // is what this topic actually registered and announces. The reader stays
+            // config-driven. `max_payload_bytes == 0` is what says Subscribe created them:
+            // CreateTopic is the only writer of this field, so a non-zero value is already this
+            // topic's own and a retry after a half-finished declaration must not overwrite it.
+            //
+            // A caller that names a DIFFERENT bound for such a topic is refused before touching
+            // the Agent, not silently overridden -- the reader was already created at its own
+            // bound and cannot migrate. Checked BEFORE the adoption below, the same "named bound
+            // wins or refuses, empty bound always adopts" rule the `ts.is_publisher` branch above
+            // applies to an already-declared publisher.
+            if (options.max_payload_bytes != 0 &&
+                options.max_payload_bytes != impl_->max_payload_bytes) {
+                throw PubSubError(
+                    PubSubStatus::kInvalidArgument,
+                    "XRCE: '" + name + "' already exists on this client at payload bound " +
+                        std::to_string(impl_->max_payload_bytes) +
+                        ", created by Subscribe; a different per-topic bound cannot be applied");
+            }
+            ts.max_payload_bytes = impl_->max_payload_bytes;
         }
         ts.publisher_id = uxr_object_id(base, UXR_PUBLISHER_ID);
         ts.writer_id = uxr_object_id(base, UXR_DATAWRITER_ID);
@@ -824,15 +919,23 @@ void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_se
             WaitForStatuses(&impl_->session, schema_reqs, schema_statuses, 2,
                             "schema publisher+writer");
 
-            // Publish schema bytes, wrapped in the CDR `sequence<octet>`
-            // length prefix the Agent will forward to FastDDS peers.
-            auto ipc_bytes = SerializeSchemaIpc(schema.get());
-            const uint32_t ipc_len = static_cast<uint32_t>(ipc_bytes.size());
+            // Publish the schema as a row plus one attachment, the payload bound, through the same
+            // envelope the data channel uses (SerializeEnvelope, below in Publish): [u32 row_len]
+            // [ipc bytes][u32 attachment_count = 1][attachment]. The CDR `sequence<octet>` length
+            // prefix the Agent forwards to FastDDS peers now counts that whole envelope, not just
+            // the IPC bytes -- see fletcher_sample.hpp for why the two are the same field.
+            Envelope schema_env;
+            schema_env.row = SerializeSchemaIpc(schema.get());
+            std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
+            std::memcpy(bound_bytes.data(), &ts.max_payload_bytes, sizeof(uint32_t));
+            schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
+            std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
+            const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
             std::vector<uint8_t> wire;
-            wire.reserve(sizeof(ipc_len) + ipc_bytes.size());
-            wire.resize(sizeof(ipc_len));
-            std::memcpy(wire.data(), &ipc_len, sizeof(ipc_len));
-            wire.insert(wire.end(), ipc_bytes.begin(), ipc_bytes.end());
+            wire.reserve(sizeof(body_len) + schema_envelope.size());
+            wire.resize(sizeof(body_len));
+            std::memcpy(wire.data(), &body_len, sizeof(body_len));
+            wire.insert(wire.end(), schema_envelope.begin(), schema_envelope.end());
 
             uxr_buffer_topic(&impl_->session, impl_->reliable_out, ts.schema_writer_id, wire.data(),
                              static_cast<uint32_t>(wire.size()));
@@ -1065,7 +1168,8 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         // This provider used to SERVE a re-entrant cancel — its recursive `mu`
         // let the call straight through, and the in-place reset below then ran
         // under the very delivery it was cancelling. That is the divergence this
-        // item ends: all three providers now refuse all four methods by name.
+        // item ends: all three providers now refuse every seam method by name —
+        // the four data-path methods and the two schema-only ones.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
 
         std::string name = internal::JoinSegments(topic_segments);
@@ -1216,21 +1320,28 @@ XrceDDSPubSubProvider::Impl::RunReentrantUnsubscribeScenario() {
             }
         });
 
-    // Synthesize a schema sample exactly as the wire path presents it to
-    // OnTopic: IPC schema bytes wrapped in the CDR sequence<octet> length prefix
-    // (the Agent has already stripped the CDR encapsulation header).
+    // Synthesize a schema sample exactly as the wire path presents it to OnTopic: the schema
+    // envelope [u32 row_len][ipc bytes][u32 attachment_count = 1][attachment], wrapped in the CDR
+    // sequence<octet> length prefix (the Agent has already stripped the CDR encapsulation header).
     OwnedSchema schema;
     ArrowSchemaInit(schema.get());
     ArrowSchemaSetTypeStruct(schema.get(), 1);
     ArrowSchemaSetName(schema->children[0], "x");
     ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32);
 
-    std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
-    const uint32_t ipc_len = static_cast<uint32_t>(ipc.size());
+    Envelope schema_env;
+    schema_env.row = SerializeSchemaIpc(schema.get());
+    const uint32_t bound = 65536;
+    std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
+    std::memcpy(bound_bytes.data(), &bound, sizeof(uint32_t));
+    schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
+    std::vector<uint8_t> schema_envelope = SerializeEnvelope(schema_env);
+    const uint32_t body_len = static_cast<uint32_t>(schema_envelope.size());
     std::vector<uint8_t> wire;
-    wire.resize(sizeof(ipc_len));
-    std::memcpy(wire.data(), &ipc_len, sizeof(ipc_len));
-    wire.insert(wire.end(), ipc.begin(), ipc.end());
+    wire.reserve(sizeof(body_len) + schema_envelope.size());
+    wire.resize(sizeof(body_len));
+    std::memcpy(wire.data(), &body_len, sizeof(body_len));
+    wire.insert(wire.end(), schema_envelope.begin(), schema_envelope.end());
 
     ucdrBuffer ub;
     ucdr_init_buffer(&ub, wire.data(), wire.size());

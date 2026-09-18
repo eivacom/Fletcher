@@ -4,6 +4,8 @@
 syntax = "proto3";
 package integration;
 
+import "fletcher/options.proto";
+
 // Covers repeated scalar fields (→ list) and repeated message fields (→ list<struct>).
 
 message Player {
@@ -16,4 +18,43 @@ message Team {
     repeated string members = 2;   // list(utf8)
     repeated double scores  = 3;   // list(float64)
     repeated Player roster  = 4;   // list(struct<name,level>)
+}
+
+// 2026-09-11 type-space audit (T13): ToArrowRowTest.EncodesTheSameBytesAsEncodeTo and
+// AppendToFillsAStructColumn never exercised a repeated enum, a message-valued map, or a
+// depth-3 nested list. Card/CardRow/CardRowList/Suit/Roster below cover exactly those three
+// shapes, plus a struct field, in one message so EmitStruct/EmitMap/EmitNestedList all run at
+// runtime (not just get emitted).
+
+enum Suit {
+    SUIT_UNSPECIFIED = 0;
+    SUIT_HEARTS      = 1;
+    SUIT_SPADES      = 2;
+    SUIT_CLUBS       = 3;
+}
+
+message Card {
+    string label = 1;
+    int32  rank  = 2;
+}
+
+// Depth-3 nested list via chained flatten wrappers — the same recipe as
+// accessor_composite.proto's InnerRingList/RegionList: CardRow wraps a single repeated Card
+// field, CardRowList wraps a single repeated CardRow field, so a `repeated CardRowList` field
+// is list<list<list<Card>>> (depth 3).
+message CardRow {
+    option (fletcher.flatten) = true;
+    repeated Card cards = 1;
+}
+
+message CardRowList {
+    option (fletcher.flatten) = true;
+    repeated CardRow rows = 1;
+}
+
+message Roster {
+    Player               captain = 1;  // struct<name,level>
+    repeated Suit         suits   = 2;  // list(int32) — repeated enum
+    map<string, Card>     by_name = 3;  // map(utf8, struct<label,rank>) — MAP message value
+    repeated CardRowList  spreads = 4;  // list(list(list(struct<label,rank>))) — depth 3
 }

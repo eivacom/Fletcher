@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <fletcher/core/write_buffer.hpp>
@@ -51,7 +53,8 @@ SchemaId ParseSchemaId(const std::string& token) {
 
 }  // namespace
 
-int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider) {
+int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider,
+                const PeerAwaitWriterMatched& await_writer_matched) {
     std::shared_ptr<PubSubProvider> provider;
     try {
         provider = make_provider(argc, argv);
@@ -119,6 +122,14 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider)
                 in >> joined >> seq;
                 provider->Publish(SplitTopic(joined),
                                   [seq](WriteBuffer& buf) { EncodeRow(buf, seq); });
+                WriteReply(prefix + "ok");
+            } else if (verb == "await_matched") {
+                std::string joined;
+                int64_t budget_ms = 0;
+                in >> joined >> budget_ms;
+                if (await_writer_matched) {
+                    await_writer_matched(SplitTopic(joined), std::chrono::milliseconds(budget_ms));
+                }
                 WriteReply(prefix + "ok");
             } else {
                 WriteReply(prefix + "err peer: unknown verb: " + verb);

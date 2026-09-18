@@ -63,6 +63,14 @@ class MockPubSubProvider : public PubSubProvider {
         created_topics.push_back({segments, std::move(schema)});
     }
 
+    // Recorded rather than refused: this mock DOES support per-topic options, delegating to the
+    // existing recording above so the option-less tests keep passing unchanged.
+    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
+                                const TopicOptions& options) override {
+        last_create_options = options;
+        CreateTopic(segments, std::move(schema));
+    }
+
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
         VectorWriteBuffer wb;
@@ -94,9 +102,19 @@ class MockPubSubProvider : public PubSubProvider {
         return {fletcher::SchemaArrival::Ready(nullptr)};
     }
 
+    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        last_subscribe_options = options;
+        return Subscribe(segments, std::move(callback));
+    }
+
     void Unsubscribe(const std::vector<std::string>& segments) override {
         subscribers.erase(segments);
     }
+
+    TopicOptions last_create_options;
+    TopicOptions last_subscribe_options;
 };
 
 }  // namespace
@@ -112,6 +130,24 @@ TEST(PubSubProtoTest, PublisherConstructionCreatesTopicWithCorrectSchema) {
               (std::vector<std::string>{"integration.pubsub", "TelemetryFeed", "TelemetryStream"}));
     auto schema = ImportNano(OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
     EXPECT_EQ(schema->num_fields(), 4);
+}
+
+TEST(PubSubProtoTest, PublisherConstructionWithoutOptionsReachesProviderWithEmptyOptions) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+
+    // The wrapper always calls the options form; the option-less constructor still reaches
+    // CreateTopicWithOptions, just with a default-constructed (empty) TopicOptions.
+    EXPECT_TRUE(mock->last_create_options.empty());
+}
+
+TEST(PubSubProtoTest, PublisherConstructionWithOptionsReachesProvider) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher::TopicOptions options{.profile = "latest", .max_payload_bytes = 4096};
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock, options);
+
+    EXPECT_EQ(mock->last_create_options.profile, "latest");
+    EXPECT_EQ(mock->last_create_options.max_payload_bytes, 4096u);
 }
 
 TEST(PubSubProtoTest, PublishEncodesAndDeliversToProvider) {
@@ -173,6 +209,29 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     EXPECT_DOUBLE_EQ(received.value(), 3.14);
     EXPECT_EQ(received.timestamp(), 1000LL);
     EXPECT_EQ(received.metric_name(), "cpu");
+}
+
+TEST(PubSubProtoTest, SubscribeWithOptionsReachesProvider) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    sub.Subscribe([](fletcher_gen::integration::pubsub::Telemetry, Attachments) {},
+                  fletcher::TopicOptions{.profile = "latest_reader"});
+
+    EXPECT_EQ(mock->last_subscribe_options.profile, "latest_reader");
+}
+
+TEST(PubSubProtoTest, SubscribeInPlaceWithOptionsReachesProvider) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    sub.SubscribeInPlace(
+        [](const fletcher_gen::integration::pubsub::Telemetry&, const Attachments&) {},
+        fletcher::TopicOptions{.profile = "x"});
+
+    EXPECT_EQ(mock->last_subscribe_options.profile, "x");
 }
 
 TEST(PubSubProtoTest, SubscribeInPlaceReusesOneRowWithoutCarryingValuesOver) {

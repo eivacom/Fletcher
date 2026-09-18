@@ -61,5 +61,9 @@ int main() {
     publisher.CreateTopic({"hello", "world"}, std::move(schema));
     assert(publisher.ListTopics().size() == 1);
 
+    // TopicOptions: an empty options struct is never refused — the base class's default
+    // delegates straight to CreateTopic, so StubProvider stays conforming with no change.
+    provider->CreateTopicWithOptions({"another", "topic"}, MakeSchema(), TopicOptions{});
+
     return 0;
 }

@@ -49,4 +49,14 @@ void EmitToArrowRowFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
                                const std::string& getter_expr, std::size_t field_index,
                                const google::protobuf::FileDescriptor* context_file);
 
+// Emit the AppendTo() field body for a single top-level field, driven by the
+// recursive IR. AppendTo() appends one message as ONE element of a pre-built
+// arrow::StructBuilder `b`, driving `b`'s already-typed child builders directly
+// (no per-element arrow::Scalar), so `field_index` is load-bearing here: it is
+// the `b.field_builder(<i>)` slot this field writes. `getter_expr` is the public
+// getter expression the value is read from (e.g. "msg.field()").
+void EmitAppendToFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
+                             const std::string& getter_expr, std::size_t field_index,
+                             const google::protobuf::FileDescriptor* context_file);
+
 }  // namespace fletcher::cpp_backend

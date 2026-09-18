@@ -6,7 +6,8 @@ find_package(GTest REQUIRED)
 add_executable(arrow_bridge_tests
     test_codec.cpp
     test_codec_edge.cpp
-    test_codec_property_fuzz.cpp)
+    test_codec_property_fuzz.cpp
+    test_batch_decoder.cpp)
 
 target_link_libraries(arrow_bridge_tests PRIVATE
     GTest::gtest_main

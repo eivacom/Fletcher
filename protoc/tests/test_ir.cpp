@@ -791,6 +791,16 @@ TEST(ViewDepthBoundTest, Depth4EmitsAStaticAssertInsteadOfSilentlyWrongOutput) {
     EXPECT_EQ(view4.str().find("ArrowNestedScalarList<"), std::string::npos)
         << "depth-4 must not receive the depth-2 accessor template";
 
+    // (b2) AppendTo: the same cap, for the same reason — a depth-4 field would
+    // otherwise emit a block that opens no list level for the missing depth and
+    // append its leaves into the wrong builder.
+    std::ostringstream app4;
+    cpp_backend::EmitAppendToFieldFromIr(app4, d4, "msg.d4()", 0, file);
+    EXPECT_NE(app4.str().find("static_assert(false"), std::string::npos) << app4.str();
+    EXPECT_NE(app4.str().find("that AppendTo can render"), std::string::npos) << app4.str();
+    EXPECT_EQ(app4.str().find("field_builder"), std::string::npos)
+        << "a depth-4 field must not silently emit a partial AppendTo body";
+
     // (c) Depth 3 is unaffected — the guard's edge, so an over-broad guard fails here.
     std::ostringstream row3;
     cpp_backend::EmitToArrowRowFieldFromIr(row3, d3, "msg.d3()", 1, file);
@@ -801,6 +811,14 @@ TEST(ViewDepthBoundTest, Depth4EmitsAStaticAssertInsteadOfSilentlyWrongOutput) {
     cpp_backend::EmitViewGetterFromIr(view3, d3, "d3", 1, file);
     EXPECT_EQ(view3.str().find("static_assert"), std::string::npos) << view3.str();
     EXPECT_NE(view3.str().find("ArrowNestedScalarList2<"), std::string::npos) << view3.str();
+
+    std::ostringstream app3;
+    cpp_backend::EmitAppendToFieldFromIr(app3, d3, "msg.d3()", 1, file);
+    EXPECT_EQ(app3.str().find("static_assert"), std::string::npos) << app3.str();
+    // One ListBuilder per level (lb0..lb2) plus the leaf's typed value builder:
+    // the depth-3 shape this emitter CAN render, so an over-broad cap fails here.
+    EXPECT_NE(app3.str().find("*b.field_builder(1)"), std::string::npos) << app3.str();
+    EXPECT_NE(app3.str().find("*lb2.value_builder()"), std::string::npos) << app3.str();
 }
 
 // Finding 3: a self-referential flatten wrapper. HasMessageFlatten was tested

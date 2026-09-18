@@ -8,15 +8,25 @@
 #ifndef FLETCHER_CONFORMANCE_PEER_HPP_
 #define FLETCHER_CONFORMANCE_PEER_HPP_
 
+#include <chrono>
 #include <fletcher/pubsub/provider.hpp>
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace fletcher {
 namespace conformance {
 
 /// Builds the provider this peer publishes through, from its own argv.
 using PeerProviderFactory = std::function<std::shared_ptr<PubSubProvider>(int argc, char** argv)>;
+
+/// Blocks until this peer's data writer for `topic` has matched at least one
+/// reader, or `budget` elapses -- the writer-side half of the readiness fence
+/// (subject.hpp `AwaitDataMatched`). Optional: a peer whose provider retains
+/// rows for a late-matching reader passes none and the verb is a no-op.
+using PeerAwaitWriterMatched =
+    std::function<void(const std::vector<std::string>& topic, std::chrono::milliseconds budget)>;
 
 /// Constructs the provider, prints `READY` (the fastdds_peer convention), then
 /// serves one line per request on stdin until EOF or `quit`. Every request
@@ -26,6 +36,7 @@ using PeerProviderFactory = std::function<std::shared_ptr<PubSubProvider>(int ar
 ///
 ///     <tag> create <joined/topic> <A|B|none>  -> <tag> ok | err <...> | harness <...>
 ///     <tag> publish <joined/topic> <seq>      -> <tag> ok | err <...>
+///     <tag> await_matched <joined/topic> <ms> -> <tag> ok
 ///     <tag> quit                              -> <tag> ok
 ///
 /// Three reply forms, not two. `err` means the PROVIDER refused; `harness` means
@@ -33,10 +44,18 @@ using PeerProviderFactory = std::function<std::shared_ptr<PubSubProvider>(int ar
 /// schema). The distinction is load-bearing: a clause asserting a refusal must
 /// not be satisfiable by our own code breaking.
 ///
+/// `await_matched` exists because a VOLATILE writer delivers only to readers it
+/// has ALREADY matched, and the subscriber's own match fires one discovery hop
+/// before the writer's: a row published in that gap is gone. The harness asks
+/// the peer to wait out that hop before the first publish; the peer answers
+/// `ok` either way (matched, or budget spent -- the clause's own deadline then
+/// reports the miss).
+///
 /// There is deliberately no `subscribe` verb: the peer publishes and cannot
 /// observe. Process exit code 0 on a clean EOF, 1 if the provider could not be
 /// constructed (the parent sees no READY and fails the clause naming it).
-int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider);
+int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider,
+                const PeerAwaitWriterMatched& await_writer_matched = {});
 
 }  // namespace conformance
 }  // namespace fletcher

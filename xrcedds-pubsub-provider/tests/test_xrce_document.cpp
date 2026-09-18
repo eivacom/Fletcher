@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <fletcher/core/status.hpp>
@@ -870,6 +871,12 @@ TEST(XrceConfig, AgentUnreachableIsATransportFailure) {
 // one close site, in the destructor, reached by unwinding, and it keys off `open_transport`,
 // which is set before the session exists. See the fix report.
 TEST(XrceConfig, FailingConstructionDoesNotLeakTheTransport) {
+#ifndef _WIN32
+    // The forcing socket is closed under the client mid-handshake on purpose; on POSIX a send()
+    // into it raises SIGPIPE, which would kill the process instead of surfacing as the
+    // transport failure this test counts.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     if (CountOpenHandles() < 0) {
         // A counted, documented skip - the platform cannot answer the question, and asserting
         // anyway would be a red with nothing wrong. Windows and Linux both answer, which is

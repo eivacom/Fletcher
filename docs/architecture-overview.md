@@ -286,6 +286,11 @@ config.document = xml_qos_profiles;           // opaque to Fletcher; only Fast D
 // "fastdds" is a name; "/opt/mqtt_driver.so" would be a path, through this same call
 const std::string selection = "fastdds";  // from config, a flag, or an environment variable
 auto provider = registry.Create(fletcher::ProviderSelector::Parse(selection), config);
+
+// Per-topic options ride two optional seam methods and never widen the typed core above:
+fletcher::Publisher pub(provider);  // or PublisherArrow — the same extra overload
+pub.CreateTopic({"nav", "imu"}, std::move(schema),
+                {.profile = "latest", .max_payload_bytes = 4096});
 ```
 
 ---

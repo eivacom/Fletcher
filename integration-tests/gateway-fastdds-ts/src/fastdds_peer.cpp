@@ -41,18 +41,69 @@ uint32_t ParseDomainId(int argc, char* argv[]) {
     return domain_id;
 }
 
+// Fletcher's built-in data profile is VOLATILE now (qos_defaults.cpp, owner decision
+// 2026-09-15): a late-joining reader would not see the rows this peer publishes below before the
+// gateway's TS client subscribes. This suite's first case is a deliberate durable-topic proof, so
+// this peer loads the built-in text with both <durability> lines changed to TRANSIENT_LOCAL — the
+// gateway loads the SAME text via --provider-config (see gateway-fastdds.test.ts).
+constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="fletcher_participant">
+      <rtps><name>FletcherParticipant</name></rtps>
+    </participant>
+    <data_writer profile_name="default_writer" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times>
+        <heartbeat_period>
+          <sec>0</sec>
+          <nanosec>20000000</nanosec>
+        </heartbeat_period>
+      </times>
+    </data_writer>
+    <data_reader profile_name="default_reader" is_default_profile="true">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>100</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>100</max_samples_per_instance>
+          <allocated_samples>100</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+  </profiles>
+</dds>)XML";
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
     const uint32_t domain_id = ParseDomainId(argc, argv);
 
-    // An EMPTY document, deliberately: this peer has to agree with the gateway on the
-    // registered DDS type name, and that name carries the payload bound. Both sides therefore
-    // resolve the unset bound to the same 65536 (PDA-DEC-6 §1) — a mismatch would show up as
-    // zero deliveries rather than as a warning.
+    // The document carries no payload bound: the peer's announcement on `__schema` carries its
+    // own bound, and the gateway's subscriber follows it — a mismatch would show up as zero
+    // deliveries rather than as a warning.
     std::shared_ptr<fletcher::FastDDSPubSubProvider> provider =
         std::make_shared<fletcher::FastDDSPubSubProvider>(
-            fletcher::ProviderConfig{.domain_id = domain_id});
+            fletcher::ProviderConfig{.domain_id = domain_id, .document = kDurableDocument});
 
     // C++ -> TS : the generated publisher's constructor calls CreateTopic,
     // which announces the CppToTs schema on the DDS __schema channel so the

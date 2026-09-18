@@ -18,7 +18,7 @@ The binary payload is a serialized `Envelope`:
 
 This format is shared with the FastDDS provider, so payloads are wire-compatible between provider implementations.
 
-Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). `ProviderConfig::max_payload_bytes` therefore has to equal the `max_payload_bytes` of any FastDDS peer this client is meant to reach — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB, and **0 means unset**, which resolves to exactly that (65536) - so a caller who leaves it alone gets the same type name this provider has always registered. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
+Wire compatibility is necessary but not sufficient: DDS matches endpoints by **type name**, and the Fletcher row type's name carries the payload bound (`fletcher::FletcherTypeName`, e.g. `fletcher_65536`). Which side that constrains depends on the direction. A Fast DDS subscriber following this client takes its bound off this client's `__schema` announcement and creates its reader to match, so this client's PUBLISHER side needs no agreement with any peer. An XRCE SUBSCRIBER is the opposite: it keeps its own config-driven reader type name, so `ProviderConfig::max_payload_bytes` here still has to equal the `max_payload_bytes` of any FastDDS publisher it is meant to follow — otherwise the two never discover each other and no diagnostic says so. Both default to 64 KiB, and **0 means unset**, which resolves to exactly that (65536) - so a caller who leaves it alone gets the same type name this provider has always registered. The bound is a naming token on this side only: this provider writes variable-length envelopes and does not enforce it, so a row larger than the peer's bound reaches that peer and is refused by *its* preallocated payload pool — the peer reports `on_sample_rejected` / `on_sample_lost`, and the row never reaches Fletcher's own length check.
 
 ### Topic name
 
@@ -34,6 +34,8 @@ Topic segments are joined with `/`. Segments `{"integration", "TelemetryFeed", "
 ### Schema discovery
 
 `CreateTopic` publishes serialized schema bytes to a companion `<topic>/__schema` DDS topic. When `Subscribe` is called before `CreateTopic` (subscriber-side), it polls the `__schema` topic for up to 5 seconds to retrieve the schema.
+
+The companion sample is the same Fletcher `Envelope` the data channel uses: the Arrow IPC bytes as the row, plus one attachment — key `max_payload_bytes` (`fletcher::kSchemaPayloadBoundKey`), blob this client's payload bound as a 4-byte little-endian `uint32_t` — inside the CDR `sequence<octet>`. The provider writes `[ROW_LEN:4 LE][ipc bytes][ATTACH_COUNT:4 LE = 1][the bound attachment]` when publishing the schema, and requires that attachment when receiving one: a sample without it is dropped, like a malformed one.
 
 ## Usage
 
@@ -70,7 +72,7 @@ locked decision 8: Fletcher gains no parser and no configuration dependency).
 | Field | Default | Meaning |
 |---|---|---|
 | `domain_id` | `0` | The DDS domain the Agent creates this client's participant on. `uint32_t` at the seam, `uint16_t` on the XRCE wire, so **above 65535 is refused, never narrowed** - a truncated domain id is a wrong answer with no error. |
-| `max_payload_bytes` | `0` = unset -> `65536` | The row payload bound this client's DDS topics advertise; part of the registered type name (see above). Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
+| `max_payload_bytes` | `0` = unset -> `65536` | The bound for a topic `CreateTopic` declares WITHOUT `TopicOptions::max_payload_bytes` (see [Per-topic options](#per-topic-options) below), announced on `__schema` — a Fast DDS subscriber follows that announcement and needs no agreement, but this client's own subscriber still needs it equal to its Fast DDS publisher's (see above), because `Subscribe` takes no options, so a topic it is the first to create carries this field's bound. Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
 | `document` | empty = all defaults | This provider's `key=value` document. |
 
 #### The document: `key=value`, one setting per line
@@ -203,6 +205,30 @@ auto result = provider.Subscribe({"my", "topic"}, [](const uint8_t* data, size_t
 provider.Unsubscribe({"my", "topic"});
 ```
 
+### Per-topic options
+
+`CreateTopic` has an overload taking `fletcher::TopicOptions` (`pubsub/provider.hpp`):
+
+```cpp
+provider.CreateTopicWithOptions({"nav", "imu"}, schema,
+                                {.max_payload_bytes = fletcher::kPayloadBytes<8192>});
+```
+
+`max_payload_bytes` is this topic's own bound, in place of `ProviderConfig::max_payload_bytes` for
+this topic only; zero (the default, same as plain `CreateTopic`) means "follow the provider's own
+bound". A bound `IsPayloadBound` rejects, or a re-declaration at a different non-zero bound, is
+`kInvalidArgument`; an identical re-declaration, or one with empty options, is the same idempotent
+no-op plain `CreateTopic` is. `profile` is always `kNotSupported` — this provider's document is
+`key=value`, four fixed keys, with no notion of a named profile. `Subscribe` has no options-taking
+overload at all: a topic it is the first to create is created at
+`ProviderConfig::max_payload_bytes`, because it has to agree with whatever a Fast DDS publisher it
+follows announced (see [How it works](#how-it-works) above) — there is nothing for a
+per-subscription bound to override. A topic a `CreateTopic` on this instance already created at a
+per-topic bound keeps that bound, and a `Subscribe` on it reads that topic. The reverse order is
+refused rather than silently overridden: a topic a `Subscribe` created FIRST keeps that reader's
+own bound (`ProviderConfig::max_payload_bytes`), and a `CreateTopicWithOptions` naming a different
+bound for it is `kInvalidArgument` — the reader cannot migrate once created.
+
 ### Constraints
 
 - `CreateTopic` must be called before `Publish`. Calling it twice on the same topic throws.
@@ -210,7 +236,7 @@ provider.Unsubscribe({"my", "topic"});
 - Only one subscription per topic per provider instance. Call `Unsubscribe` before re-subscribing.
 - The subscription callback is invoked from the background run-loop thread. Shared state accessed from the callback must be protected externally.
 - **A callback must not throw, and if one does the exception goes nowhere** (spec §5.3, owner ruling 2026-09-05). It is absorbed at the dispatch site, inside `DeliveryChannel::Deliver`, which is `noexcept`. That matters more here than anywhere else: `OnTopic` runs inside `uxr_run_session_time()`, so an unwind would cross the XRCE client's C frames — undefined behaviour on MSVC and process termination in practice. It is now a property of the dispatch type rather than a rule each site has to remember. The count of absorbed failures is readable through `DeliveryChannel::AbsorbedCount()`.
-- **From inside a delivery, all four methods on this same instance and this same thread are refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). **This is a deliberate behaviour change, and this provider pays for it.** It used to serve every one of them — the recursive `mu` let a re-entrant `Unsubscribe` straight through, so the in-place topic-state reset ran underneath the very delivery being cancelled, and `CreateTopic`/`Publish`/`Subscribe` genuinely worked from a handler. XRCE is the ONE protocol of three where they did: the loopback deadlocked on its own mutex and Fast DDS hung on the RTPS reader mutex. A capability on one transport is not a seam contract, so the owner chose the uniform rule and routed re-permitting to PDA-ABI (ruling 2026-09-05), where the loaned-sample receive path makes deferral affordable. The recursive `mu` is no longer load-bearing for re-entrant service and is kept only because narrowing it is a separate change with its own risk.
+- **From inside a delivery, every seam method — the four data-path methods and the two schema-only ones — on this same instance and this same thread is refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). **This is a deliberate behaviour change, and this provider pays for it.** It used to serve every one of them — the recursive `mu` let a re-entrant `Unsubscribe` straight through, so the in-place topic-state reset ran underneath the very delivery being cancelled, and `CreateTopic`/`Publish`/`Subscribe` genuinely worked from a handler. XRCE is the ONE protocol of three where they did: the loopback deadlocked on its own mutex and Fast DDS hung on the RTPS reader mutex. A capability on one transport is not a seam contract, so the owner chose the uniform rule and routed re-permitting to PDA-ABI (ruling 2026-09-05), where the loaned-sample receive path makes deferral affordable. The recursive `mu` is no longer load-bearing for re-entrant service and is kept only because narrowing it is a separate change with its own risk.
 - `XrceDDSPubSubProvider` is non-copyable and non-movable.
 - `transport=serial` is refused with `PubSubError(kNotSupported)` - not implemented, and said distinctly from a typo.
 

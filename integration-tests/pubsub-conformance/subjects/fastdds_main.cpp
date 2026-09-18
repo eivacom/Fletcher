@@ -20,15 +20,19 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "fletcher/conformance/suite.hpp"
@@ -54,18 +58,130 @@ std::shared_ptr<PubSubProvider> MakeFastDds(uint32_t domain_id) {
     return std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = domain_id});
 }
 
+// ── Readiness: wait for the data reader to match a writer ──────────
+//
+// The built-in data profiles are VOLATILE (retention kDropsPreSubscribe,
+// fixtures.cpp): a row published before BOTH ends have matched is gone.
+// MatchTracker records OnMatched for the DATA (non-schema) READER endpoint,
+// the subscriber side, which is always this process. The writer side is
+// fenced where the writer lives: in the same participant for the local
+// subject, in the peer process for the cross-process one (peer.hpp
+// `await_matched`) -- measured 2026-09-15: the reader here matches at
+// enable() against an already-discovered writer, the peer's writer one
+// discovery hop later. OnMatched runs under FastDDSStatusListener's threading
+// contract: no provider call, no blocking, no throw.
+class MatchTracker : public FastDDSStatusListener {
+   public:
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t /*change*/) noexcept override {
+        if (endpoint.is_schema_channel || endpoint.is_writer) return;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            counts_[std::string(endpoint.topic)] = current_count;
+        }
+        cv_.notify_all();
+    }
+
+    // Bounded wait_for, predicate-guarded so an already-matched topic returns
+    // immediately rather than waiting out the budget. Never sleeps.
+    void AwaitMatched(const std::string& topic_name, std::chrono::milliseconds budget) {
+        std::unique_lock<std::mutex> lock(mu_);
+        cv_.wait_for(lock, budget, [&] {
+            auto it = counts_.find(topic_name);
+            return it != counts_.end() && it->second >= 1;
+        });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::unordered_map<std::string, int32_t> counts_;
+};
+
+// Adds AwaitDataMatched over a generic local/peer subject by constructing the
+// Fast DDS provider it wraps with a MatchTracker attached. `listener_` is
+// declared BEFORE `inner_` on purpose: members are destroyed in reverse
+// declaration order, so the provider `inner_` owns is torn down first and the
+// listener that must outlive it (fast_dds_pubsub_provider.hpp) is destroyed
+// last.
+class FastDDSSubject : public ProviderSubject {
+   public:
+    explicit FastDDSSubject(
+        std::function<std::unique_ptr<ProviderSubject>(FastDDSStatusListener*)> make_inner)
+        : inner_(make_inner(&listener_)) {}
+
+    const ProviderTraits& Traits() const override { return inner_->Traits(); }
+    Reply DeclareTopic(const Topic& topic, SchemaId schema) override {
+        return inner_->DeclareTopic(topic, schema);
+    }
+    Reply PublishRow(const Topic& topic, uint32_t seq) override {
+        return inner_->PublishRow(topic, seq);
+    }
+    SubscriptionResult Subscribe(const Topic& topic, SubscribeCallback callback) override {
+        return inner_->Subscribe(topic, std::move(callback));
+    }
+    void Unsubscribe(const Topic& topic) override { inner_->Unsubscribe(topic); }
+    SchemaArrival SubscribeSchema(const Topic& topic) override {
+        return inner_->SubscribeSchema(topic);
+    }
+    void UnsubscribeSchema(const Topic& topic) override { inner_->UnsubscribeSchema(topic); }
+    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                 const TopicOptions& options) override {
+        inner_->DeclareTopicWithOptions(topic, std::move(schema), options);
+    }
+    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        return inner_->SubscribeWithOptions(topic, std::move(callback), options);
+    }
+
+    // Reader half here, writer half where the writer lives (no-op for the
+    // local subject, the `await_matched` verb for the peer subject).
+    void AwaitDataMatched(const Topic& topic, std::chrono::milliseconds budget) override {
+        listener_.AwaitMatched(internal::JoinSegments(topic), budget);
+        inner_->AwaitDataMatched(topic, budget);
+    }
+
+   private:
+    MatchTracker listener_;
+    std::unique_ptr<ProviderSubject> inner_;
+};
+
+SubjectFactory MakeFastDDSLocalSubjectFactory(uint32_t domain_id) {
+    return SubjectFactory{
+        "FastDdsLocal", [domain_id]() -> std::unique_ptr<ProviderSubject> {
+            return std::make_unique<FastDDSSubject>([domain_id](FastDDSStatusListener* listener) {
+                return MakeLocalSubjectFactory(
+                    "FastDdsLocal", "fastdds", SchemaMode::kCarried, [domain_id, listener] {
+                        return std::make_shared<FastDDSPubSubProvider>(
+                            ProviderConfig{.domain_id = domain_id}, listener);
+                    })();
+            });
+        }};
+}
+
+SubjectFactory MakeFastDDSPeerSubjectFactory(uint32_t domain_id) {
+    return SubjectFactory{
+        "FastDdsCrossProcess",
+        [domain_id]() -> std::unique_ptr<ProviderSubject> {
+            return std::make_unique<FastDDSSubject>([domain_id](FastDDSStatusListener* listener) {
+                return MakePeerSubjectFactory(
+                    "FastDdsCrossProcess", "fastdds", SchemaMode::kCarried,
+                    [domain_id, listener] {
+                        return std::make_shared<FastDDSPubSubProvider>(
+                            ProviderConfig{.domain_id = domain_id}, listener);
+                    },
+                    CONFORMANCE_FASTDDS_PEER, {"--domain-id", std::to_string(domain_id)})();
+            });
+        },
+        /*publishes_into_subject_instance=*/false};
+}
+
 }  // namespace
 
-INSTANTIATE_TEST_SUITE_P(
-    FastDdsLocal, ProviderConformance,
-    ::testing::Values(MakeLocalSubjectFactory("FastDdsLocal", "fastdds", SchemaMode::kCarried,
-                                              [] { return MakeFastDds(kLocalDomain); })));
+INSTANTIATE_TEST_SUITE_P(FastDdsLocal, ProviderConformance,
+                         ::testing::Values(MakeFastDDSLocalSubjectFactory(kLocalDomain)));
 
 INSTANTIATE_TEST_SUITE_P(FastDdsCrossProcess, ProviderConformance,
-                         ::testing::Values(MakePeerSubjectFactory(
-                             "FastDdsCrossProcess", "fastdds", SchemaMode::kCarried,
-                             [] { return MakeFastDds(kPeerDomain); }, CONFORMANCE_FASTDDS_PEER,
-                             {"--domain-id", std::to_string(kPeerDomain)})));
+                         ::testing::Values(MakeFastDDSPeerSubjectFactory(kPeerDomain)));
 
 // ── Fast DDS resolves as a built-in NAME (spec §4 clause 4) ─────────
 //
@@ -228,19 +344,20 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
 // Three things carry the arrangement, and none of them may drift:
 //
 //  1. **One `kBound`, equal in both instances of every case that asserts or
-//     denies a crossing.** The registered DDS type name is `fletcher_<bound>`
-//     (`payload_bound.hpp`, locked decision 13), and DDS matches by type name —
-//     so unequal bounds are an INDEPENDENT reason two endpoints never meet, on
-//     any domain. Give the two instances different bounds here and the isolation
-//     case would pass identically with process-wide state present, because the
-//     streams could never have met in the first place. The per-instance-bound
-//     claim therefore lives in its own pair, on its own two domains
-//     (`TwoInstancesKeepTheirOwnPayloadBounds`), which MAKES NO CROSSING CLAIM
-//     in either direction. `domain_id` is the only wire-visible difference left:
-//     the schema companion type name is the bound-independent constant
-//     `SchemaBytes`, topic names are identical by construction, no partitions
-//     are set anywhere, and both instances take an EMPTY document, so
-//     participant, writer and reader QoS are byte-identical.
+//     denies a crossing.** Unequal bounds are no longer an independent reason
+//     two endpoints never meet: a subscriber's reader is created at whatever
+//     bound the publisher it follows announced, so it carries no bound of its
+//     own to disagree with. `kBound` stays one number here anyway, so that
+//     `domain_id` is the only wire-visible difference between the two
+//     isolation instances. The per-instance-bound claim lives in its own pair,
+//     on its own two domains (`TwoInstancesKeepTheirOwnPayloadBounds`), which
+//     MAKES NO CROSSING CLAIM in either direction: each instance publishes only
+//     to its own private topic, so its own subscriber follows its own announced
+//     bound and the pair never had anything to cross. The schema companion type
+//     name is the bound-independent constant `SchemaBytes`, topic names are
+//     identical by construction, no partitions are set anywhere, and both
+//     instances take an EMPTY document, so participant, writer and reader QoS
+//     are byte-identical.
 //  2. **The standing positive control.** `TwoInstancesOneDomainDoInterfere` runs
 //     the same helper, the same topic names and the same `kBound`, differing
 //     only in that both instances sit on one domain, and asserts the row DOES
@@ -292,8 +409,8 @@ constexpr uint32_t kConcurrentDomainB = 165;
 constexpr uint32_t kLowBoundDomain = 166;
 constexpr uint32_t kHighBoundDomain = 167;
 
-// ONE bound, for every case that asserts or denies a crossing. Making these two
-// instances differ here means deleting this constant — see (1) above.
+// ONE bound: the two isolation/control/concurrent instances differ in
+// `domain_id` alone — see (1) above.
 constexpr uint32_t kBound = 65536;
 
 // The bound pair's two bounds, and a row size strictly between them.
@@ -494,6 +611,18 @@ bool WaitForCount(const Journal& journal, size_t n, std::chrono::milliseconds bu
     return true;
 }
 
+// Wait until `journal` holds `marker`, or the budget passes.
+bool WaitForMarker(const Journal& journal, const std::string& marker,
+                   std::chrono::milliseconds budget) {
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    for (;;) {
+        const std::vector<std::string> markers = Markers(journal.Snapshot());
+        if (std::find(markers.begin(), markers.end(), marker) != markers.end()) return true;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
 }  // namespace
 
 // The forcing case. Two instances through one registry, one process, DIFFERENT
@@ -574,38 +703,36 @@ TEST(Registry, TwoInstancesOneDomainDoInterfere) {
     ASSERT_EQ(a.AwaitSubscriptionsLive(), PubSubStatus::kOk) << a.SchemaWaitMessage();
     ASSERT_EQ(b.AwaitSubscriptionsLive(), PubSubStatus::kOk) << b.SchemaWaitMessage();
 
-    b.PublishShared(0);
     a.PublishShared(0);
 
-    // Two rows on the shared name: A's own and B's. Waited out to the full
-    // clause budget rather than to `kSettle`, and the elapsed time then measured
-    // against `kSettle` separately — because the two reds need opposite
-    // responses. "No crossing at all inside the budget" voids the isolation case
-    // and is an ASSERT; "a real crossing, but slower than the window the
-    // isolation case pays" is tuning and is an EXPECT. Waiting only to `kSettle`
-    // conflated them, and reported the first when the truth was the second.
-    const auto started = std::chrono::steady_clock::now();
-    const bool crossed = WaitForCount(a.SharedJournal(), 2, kClauseBudget);
+    // Registry-built providers expose no match status, and discovery between the two
+    // participants runs over the transport even in one process, so B's single row could leave
+    // before A's reader has matched it and a VOLATILE row sent then is gone. B republishes the
+    // SAME marker until A's journal holds it, bounded by the clause budget; `find` below
+    // tolerates the repeats. `elapsed` is the delivery time of the attempt that landed, which is
+    // the quantity kSettle is about — not the discovery lag in front of it.
+    const auto budget_end = std::chrono::steady_clock::now() + kClauseBudget;
+    auto started = std::chrono::steady_clock::now();
+    bool crossed = false;
+    while (!crossed && std::chrono::steady_clock::now() < budget_end) {
+        started = std::chrono::steady_clock::now();
+        b.PublishShared(0);
+        crossed = WaitForMarker(a.SharedJournal(), b.Mark(0), std::chrono::milliseconds(100));
+    }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
-    // One observation, both claims derived from it: `crossed` and a separately
-    // taken snapshot are two different moments, and a marginal crossing landing
-    // between them made the case print "measured NO crossing" while the markers
-    // it printed visibly contained the foreign row.
     const std::vector<std::string> markers = Markers(a.SharedJournal().Snapshot());
     const bool crossed_by_evidence =
         std::find(markers.begin(), markers.end(), b.Mark(0)) != markers.end();
 
-    // The margin lives in the suite's own output, not in a plan document:
-    // erosion of it toward `kSettle` is invisible unless every run reports the
-    // number. Measured here it is **0 ms** — the two participants have already
-    // matched by the time the publishes happen (both instances are constructed
-    // and both schema waits have returned first), and Fast DDS then serves
-    // same-process endpoints inline over intra-process delivery, so the foreign
-    // row is in A's journal before `WaitForCount` looks. A recorded 0 is
-    // therefore the healthy reading, not a missing measurement; the ~270 ms in
-    // this item's plan and log is the whole CASE's runtime, construction and
-    // teardown included, which is not the same quantity.
+    // The margin lives in the suite's own output, not in a plan document. Discovery is no
+    // longer assumed synchronous, so `crossing_ms` is not a discovery-lag measurement — it is
+    // the delivery time of the ONE publish-to-landing attempt that succeeded (`started` is
+    // reset on every trip through the loop above): once the two participants have matched,
+    // Fast DDS serves same-process endpoints inline over intra-process delivery, so that
+    // attempt's own elapsed time stays small even when earlier attempts in the loop were
+    // dropped waiting on the match. The ~270 ms in this item's plan and log is the whole CASE's
+    // runtime, construction and teardown included, which is not the same quantity.
     RecordProperty("crossing_ms", static_cast<int>(elapsed.count()));
 
     ASSERT_TRUE(crossed || crossed_by_evidence)
@@ -705,21 +832,21 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 
 // The second axis of "different configs": each instance honours ITS OWN payload
 // bound. Its own pair of domains, and each instance publishes only on its own
-// PRIVATE topic to its own subscription — so the unequal bounds, which are an
-// independent reason two endpoints never discover each other, confound nothing.
-// This pair MAKES NO CROSSING CLAIM in either direction — the bound is part of
-// the registered DDS type name, so it could not cross regardless. What it claims
-// is that a row over one instance's bound is dropped there and delivered on the
+// PRIVATE topic to its own subscription, so its own subscriber follows its own
+// publisher's announced bound and the two instances confound nothing. This pair
+// MAKES NO CROSSING CLAIM in either direction — each instance publishes only to
+// its own private topic, so it could not cross regardless. What it claims is
+// that a row over one instance's bound is dropped there and delivered on the
 // other.
 //
 // The middle row is dropped SILENTLY on the low-bound instance and does not
 // throw: the overflow is caught inside `serialize()`, which zeroes the payload
 // length, so the sample never enters history, `write()` returns non-OK and
-// `SampleWriter` only logs it. That is pre-existing behaviour of the serialising
+// `WriteSample` only logs it. That is pre-existing behaviour of the serialising
 // publish flow (the one an empty document selects), pinned by
 // `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`; a typed
-// `kPayloadTooLarge` exists only on the loaned flow, which both instances would
-// need a `fletcher.loan_publish=true` document to select. So delivery is what is
+// `kPayloadTooLarge` exists only on the loaned flow, which is kept in the tree but not
+// selectable (no `fletcher.loan_publish` property exists). So delivery is what is
 // asserted here, in both directions, and no new timing number is introduced: the
 // third row goes AFTER the oversized one and must arrive, so nothing dead can
 // pose as a working instance.
