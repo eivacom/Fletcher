@@ -277,8 +277,8 @@ commit.
   reading of "all tests" must be confirmed with the Feature owner**, not assumed.
   Bucket 3/4 cannot be reported green before Stage D, so **18786 must not be closed
   early**. Silently dropping any Bucket 1–4 case → STOP-AND-ASK.
-  ✅ **Amended 2026-09-11 (Q10).** Matrix re-baselined at `6c541e9`: **300** non-generator
-  cases (Bucket 1: 104 · 2: 56 · 3: 38 · 4: 102) and **98** generator cases, counted by
+  ✅ **Amended 2026-09-11 (Q10).** Matrix re-baselined at `6c541e9`: **302** non-generator
+  cases (Bucket 1: 104 · 2: 56 · 3: 38 · 4: **104**) and **98** generator cases, counted by
   `grep -c '^TEST\(_F\|_P\)\?('` per file (development plan §5). **Two exclusion classes,
   confirmed by the maintainer, both documented and neither silent:** (a) the 98 generator
   cases stay in C++ and are *extended* with `test_csharp_visitor` / `test_csharp_type_table`;
@@ -286,6 +286,22 @@ commit.
   `TypeSupport`) — test a C++ type no managed code touches and are not ported;
   `test_owned_schema` (1) stays excluded as before. Everything else ports. **18786 is not
   closed before Bucket 4 is green over `fastdds` and `xrce`.**
+
+  ✅ **Arithmetic corrected 2026-09-18, denominator RULED BY THE MAINTAINER: 302, so 278
+  port.** Two independent errors had made the derived figure *"275 of 300"*, low by three,
+  and it had stood for seven weeks in four places including the round's own exit criteria.
+  **(i)** The subtraction was wrong: the total is **buckets 1–4**, and `test_owned_schema`
+  is **bucket 6**, so *"300 less the 24 provider-internal cases and `test_owned_schema`"*
+  removed a case the total never held. **(ii)** Bucket 4 was carrying `test_xrce_document`
+  at 9 where the file has 11 — BIND-0's review finding F1, propagating. The bucket figure
+  above is corrected to 104 for the same reason.
+
+  **Both readings of "non-generator" converge on 278 ported**, which is why only the
+  denominator needed a ruling: counting bucket 6 in gives 303 − 24 − 1 = 278, counting it
+  out gives 302 − 24 = 278. Ruled **302**, buckets 1–4, with the 24 provider-internal cases
+  as the only subtraction from it. The round-exit bullet that carried this number now names
+  the FILE SETS instead (`dd8b034`'s rule), so it cannot rot again; ADO **18786** is closed
+  against this reading and its comment needs the same correction.
 
 - **D-BIND-13 — Native assets are isolated to ONE package.**
   `Eiva.Fletcher.Interop` is the only package carrying `runtimes/{rid}/native/`;

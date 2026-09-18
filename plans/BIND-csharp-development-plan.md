@@ -722,10 +722,18 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
 | Conformance (new since plan) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
 
-Non-generator total is **300** (was 178). The two exclusion classes were **ruled on
-2026-09-11 (Q10)**: 275 of 300 non-generator cases port (300 less the 24
-provider-internal cases and `test_owned_schema`); the 98 generator cases stay in C++ and
-are extended. The tracker's "177 of 178" sentence is rewritten at the fold.
+Non-generator total is **302** (was 178). The two exclusion classes were **ruled on
+2026-09-11 (Q10)**: **278 of 302** non-generator cases port — 302 less the 24
+provider-internal cases, and nothing else. The 98 generator cases stay in C++ and are
+extended.
+
+**Corrected 2026-09-18, denominator ruled by the maintainer.** This read *"275 of 300
+(300 less the 24 provider-internal cases **and `test_owned_schema`**)"*, which is wrong
+twice over: the 300 is buckets 1–4 and `test_owned_schema` is bucket 6, so the −1
+removed a case the total never held; and bucket 4 was carrying `test_xrce_document` at 9
+where the file has 11. Both readings of the scope converge on **278 ported** — counting
+bucket 6 in gives 303 − 24 − 1 = 278 as well — so only the denominator was open, and it
+is ruled **302**. The tracker's "177 of 178" sentence is rewritten at the fold.
 
 ---
 

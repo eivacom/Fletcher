@@ -162,10 +162,15 @@ three numbers had moved (`test_xrce_document` 9→11 so bucket 4 is 104 and its 
 `pubsub-conformance` 80→82, `CallerTier` 20→21, the last of which the tracker already carried
 while the development plan did not) — and **BIND-3's, BIND-4's and BIND-8's acceptance bullets
 now name FILE SETS rather than counts**, which is F1's recommendation and the only form a
-rebase cannot falsify. One thing F1 did not reach is left for the maintainer: buckets 1+2+3+4
-sum to exactly 300, so `test_owned_schema` is not inside that total, yet Q10 reads "275 of 300
-(300 less the 24 provider-internal cases and `test_owned_schema`)" — a pre-existing off-by-one
-in a ruled figure, which bucket 4's move to 104 compounds (300→302, 275→277). **Unruled.**
+rebase cannot falsify. One thing F1 did not reach went to the maintainer and is now
+**ruled (2026-09-18): the denominator is 302, so 278 port.** Q10's derived figure had been
+*"275 of 300"*, low by three for two independent reasons: the total is buckets 1–4 while
+`test_owned_schema` is bucket 6, so subtracting it removed a case the total never held; and
+bucket 4 was carrying `test_xrce_document` at 9 where the file has 11. Both readings of the
+scope converge on **278 ported** (303−24−1 and 302−24 alike), so only the denominator was
+open. Corrected in all four places it appeared, and the round-exit bullet that carried it now
+names the FILE SETS instead. **ADO 18786 is closed against this reading and its comment still
+needs the same correction.**
 
 **Carried forward:** D1's missing test (the guard is in, the silently-refusing `grow` thunk was
 never added); **D2** — a callback's `grow` status reaches `err->status` unvalidated, which

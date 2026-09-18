@@ -64,7 +64,7 @@ All nineteen ruled. ✅ = settled.
 | 5 | **`Apache.Arrow` as a base C# dependency**; collapse `Core` + `Arrow` into one package | ✅ **agreed 2026-09-11** (rider on #4); collapse agreed with Q2: three packages | — |
 | 6 | **Native artifact links nanoarrow only**, not Arrow C++ (package size) | ✅ **agreed 2026-09-11** (rider on #4) | — |
 | 7 | **Accessor nesting depth**: match RBA's 2/3 cap | ✅ **agreed 2026-09-11** (Q6): match the cap; the asymmetry is RIR's to remove | — |
-| 8 | Does **"all tests" (18786)** include the 98 protoc generator tests? | ✅ **agreed 2026-09-11** (Q10): no — generator tests stay C++ and are extended; provider-internal cases (24) also excluded, documented; 275 of 300 non-generator cases port | — |
+| 8 | Does **"all tests" (18786)** include the 98 protoc generator tests? | ✅ **agreed 2026-09-11** (Q10): no — generator tests stay C++ and are extended; provider-internal cases (24) also excluded, documented; **278 of 302** non-generator cases port — *corrected 2026-09-18: the figure was 275 of 300, low by three. `test_owned_schema` was subtracted from a total that never contained it (the 300 is buckets 1–4; it is bucket 6), and bucket 4 was carrying a stale `test_xrce_document` count. Denominator ruled 302 by the maintainer* | — |
 | 9 | **"Make C# emit Rust-native accessor classes" (16353)** — confirm the reading | ✅ **agreed 2026-09-11** (Q19): read as *C# accessor classes equivalent to the Rust-native ones*; BIND-7 scope; ADO 16353 wording to be corrected | — |
 | 10 | Is **BIND-Rust** in this round or the next? | ✅ **agreed 2026-09-11** (Q12): **next round** | — |
 | 11 | **RID matrix** for `Eiva.Fletcher.Interop` | ✅ **agreed 2026-09-11** (Q8): `win-x64`, `linux-x64` at first release; `linux-arm64` first addition; macOS on demand | — |
@@ -498,9 +498,12 @@ tests between two implementations.
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
-**275 of 300 non-generator cases port to C#**; the 24 provider-internal cases and
-`test_owned_schema` are the two documented exclusions; the 98 generator cases stay in
-C++ and grow. **18786 is not closed before Bucket 4 is green over `fastdds` and
+**278 of 302 non-generator cases port to C#** — the 302 is buckets 1–4, and the sole
+subtraction from it is the 24 provider-internal cases. `test_owned_schema` is bucket 6
+and was never inside the total, which is where the old **275 of 300** came from: it
+subtracted a case the total did not hold, and bucket 4 was carrying a stale
+`test_xrce_document` count besides. Both exclusion classes stay documented; the 98
+generator cases stay in C++ and grow. **18786 is not closed before Bucket 4 is green over `fastdds` and
 `xrce`.**
 
 ### What replaces the byte-parity harness
@@ -1356,8 +1359,12 @@ Three actions remain besides, none an engineering one:
 - Every seam-inherited obligation (constraints 1–8, the two mapping details) has a
   named test in the C# suite, and the C# `CallerTier` arm maps totally onto the C++
   one.
-- **275 of 300** non-generator cases green in C#; the two exclusion classes
-  documented; 18786 not closed before Bucket 4.
+- **Buckets 1–4 green in C#** — the FILE SETS named in Part 4's matrix, not a count,
+  for the reason BIND-3's, BIND-4's and BIND-8's bullets give: a number here is
+  invalidated by any rebase that adds a case upstream (BIND-0 review, F1), and this
+  bullet carried a wrong one for seven weeks. As re-derived 2026-09-18 that is **278
+  of 302**, the 302 being buckets 1–4 and the 24 provider-internal cases the only
+  subtraction. Both exclusion classes documented; 18786 not closed before Bucket 4.
 - Generator: every plugin output has a C# counterpart (row, Arrow view, accessor);
   TS gains `Publisher`/`Subscriber`; `TsVisitor.DescriptorByteIdentical` still
   green; the no-drift test proves no existing output byte changed.
