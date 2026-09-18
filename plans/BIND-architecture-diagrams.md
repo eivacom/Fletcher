@@ -249,10 +249,10 @@ classDiagram
         pub/sub verbs
         role 3 driver management
     }
-    note for binding_abi_h "Fletcher is the CALLEE here. No driver data-plane function is reachable."
+    note for binding_abi_h "Fletcher is the CALLEE here. No driver data-plane function is reachable. The window and blob shapes resemble the driver ABI because both are derived from the SEAM SPEC, not because either includes the other - D-BIND-2′ forbids sharing a declaration."
 
-    binding_abi_h ..> fletcher_write_buffer : REUSES verbatim
-    binding_abi_h ..> fletcher_blob : REUSES verbatim
+    binding_abi_h ..> fletcher_write_buffer : same seam vocabulary, declared separately
+    binding_abi_h ..> fletcher_blob : same seam vocabulary, declared separately
     binding_abi_h --> Publisher_cpp : calls
     binding_abi_h --> Subscriber_cpp : calls
 
@@ -390,15 +390,15 @@ sequenceDiagram
     Note over TS,Cli: today the app passes Topic + Schema by hand.<br/>BIND-T generates Publisher/Subscriber classes<br/>that bind both in.
 ```
 
-## 6. Sequence — C# publish (planned; one hop provisional)
+## 6. Sequence — C# publish (planned)
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant App as C# app
     participant Gen as Generated<br/>SensorReading (C#)
-    participant CsPub as Fletcher.PubSub<br/>Publisher(T)
-    participant Int as Fletcher.Interop<br/>(P/Invoke)
+    participant CsPub as Eiva.Fletcher<br/>Publisher(T)
+    participant Int as Eiva.Fletcher.Interop<br/>(P/Invoke)
     participant ABI as binding ABI (C)
     participant Cpp as fletcher::Publisher
     participant Drv as DriverProvider → driver
@@ -406,14 +406,17 @@ sequenceDiagram
 
     App->>Gen: row.Temperature = 23.5 …
     App->>CsPub: Publish(row)
-    CsPub->>Gen: build ArrowArray + ArrowSchema
-    Note over CsPub,Gen: ⚠️ PROVISIONAL — open decision 1.<br/>Arrow C Data Interface is the recommendation:<br/>arbitrary nesting free, batch-capable, zero-copy export.
-    CsPub->>Int: encode(schemaHandle, arrowArray, writeBuffer)
+    CsPub->>Gen: ToArrow → ArrowArray + ArrowSchema
+    Note over CsPub,Gen: LOCKED — Q1, D-BIND-1a and D-BIND-23.<br/>Values cross as Arrow C Data Interface, never as per-field arguments:<br/>arbitrary nesting free, batch-capable, zero-copy export.<br/>Verified for every mapped type by ArrowCDataInterfaceTests, built at BIND-2.
+    CsPub->>Int: fl_codec_open(schema) — ONCE per topic
+    CsPub->>Int: fl_rows_bind(codec, array) — ONCE per batch
+    Note over Int: the array is BORROWED and never consumed,<br/>so one export serves N publishes
+    CsPub->>Int: fl_publisher_publish_row(pub, topic, rows, i, atts)
     Int->>ABI: P/Invoke (blittable, no marshalling)
-    ABI->>Cpp: Publish(segments, encoder, attachments)
+    ABI->>Cpp: Publish(segments, RowEncoder, attachments)
     Cpp->>Drv: Publish(…)
     Drv->>ABI: expose write-buffer window {data, capacity, pos}
-    ABI->>ABI: descriptor-driven codec writes positional bytes
+    ABI->>ABI: nanoarrow codec writes positional bytes INTO that window
     Note over ABI: ONE boundary crossing per window refill,<br/>not one per field. Strings transcode UTF-16→UTF-8<br/>(the one place a copy is unavoidable).
     Drv->>Net: send
 ```
@@ -427,16 +430,19 @@ sequenceDiagram
     participant Drv as driver → DriverProvider
     participant Cpp as fletcher::Subscriber
     participant ABI as binding ABI (C)
-    participant Int as Fletcher.Interop
-    participant CsSub as Fletcher.PubSub<br/>Subscriber(T)
+    participant Int as Eiva.Fletcher.Interop
+    participant CsSub as Eiva.Fletcher<br/>Subscriber(T)
+    participant Gen as Generated<br/>SensorReading (C#)
     participant App as C# app
 
     App->>CsSub: Subscribe(cb)
-    CsSub->>Int: subscribe(topic, callbackPtr, ctxHandle)
+    CsSub->>Int: fl_subscriber_subscribe(topic, callbackPtr, ctxHandle, out id, out arrival)
     Note over Int: [UnmanagedCallersOnly] static fn ptr<br/>+ GCHandle context token
     Int->>ABI: subscribe(…)
     ABI->>Cpp: Subscribe(segments, …)
     Cpp->>Drv: Subscribe(…)
+    CsSub->>Int: fl_schema_arrival_wait → fl_schema
+    CsSub->>Int: fl_codec_open(schema.schema) — ONCE per topic
 
     Net->>Drv: sample (native thread)
     Drv->>Cpp: deliver
@@ -444,7 +450,10 @@ sequenceDiagram
     ABI->>Int: invoke managed fn ptr
     Int->>CsSub: ReadOnlySpan(byte) + schema + attachments
     Note over Int,CsSub: ALL THREE are borrowed for the call.<br/>No async. Nothing may escape.<br/>Copy what you keep.
-    CsSub->>CsSub: decode → typed row (generated ReadFrom)
+    CsSub->>ABI: fl_decode_rows(codec, bytes, len, count, out)
+    Note over ABI: ONE codec (D-BIND-1): generated C# reads and writes NO wire bytes.<br/>Decode touches no provider and takes no lock the delivery path holds,<br/>so it is callable from INSIDE this callback — which is where a subscriber wants it.
+    ABI-->>CsSub: ArrowArray the caller imports and OWNS
+    CsSub->>Gen: FromArrow(batch, row) → typed row
     CsSub->>App: cb(SensorReading, attachments)
     Note over App: no thread affinity: the delivering thread<br/>may differ between samples
 ```
@@ -467,10 +476,8 @@ flowchart LR
         S3["Fast DDS driver"]
     end
     subgraph dotnet[".NET consumer (planned)"]
-        D1["Eiva.Fletcher.Core"]
+        D1["Eiva.Fletcher<br/>codec + Arrow tier + pub/sub"]
         D2["Eiva.Fletcher.Interop<br/>native assets per RID"]
-        D3["Eiva.Fletcher.Arrow"]
-        D4["Eiva.Fletcher.PubSub"]
     end
     subgraph browser["Browser / WASM"]
         B1["@eiva/fletcher-gateway-client"]
@@ -480,14 +487,12 @@ flowchart LR
     E4 -->|DDS| S3
     S3 --> D2
     D1 --> D2
-    D3 --> D1
-    D4 --> D1
     B1 -.->|WebSocket| GW["gateway exe"]
     B2 -.->|WebSocket| GW
     GW --> S3
 
     classDef planned stroke-dasharray: 5 5
-    class dotnet,D1,D2,D3,D4,B2 planned
+    class dotnet,D1,D2,B2 planned
 ```
 
 **Why `GatewayClient` carries no native assets:** WASM cannot load them. Browser
@@ -499,16 +504,33 @@ isolates native assets to `Interop` alone and CI asserts `GatewayClient` has no
 
 ## Known gaps in these diagrams
 
-1. **The binding ABI's function set is not designed yet.** Diagrams 2, 6 and 7 show
-   the *shape* agreed so far, not a reviewed header. The value-transfer hop in
-   diagram 6 is explicitly marked provisional (open decision 1).
-2. **PDA is design-only.** No driver ABI code exists; `DriverProvider`,
-   `fletcher_write_buffer` and the three drivers are from the spec, and the spec is
-   still moving (it changed on 2026-08-31).
-3. **`InProcessProvider` is not a component yet** — it lives inside
-   `gateway/src/main.cpp`. PDA-L9 promotes it.
+*Swept 2026-09-18 against the tree. Three of the five have closed since these
+diagrams were drawn on 2026-08-31; they are marked rather than deleted, because a
+gap that closed is worth distinguishing from a gap nobody re-checked.*
+
+1. ~~**The binding ABI's function set is not designed yet.**~~ ✅ **CLOSED
+   2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines,
+   pure C99, reviewed as a *specification* over two cycles
+   (`plans/reviews/BIND-1-design-review.md`), with every declaration derived from
+   the seam spec and its § named. The value-transfer hop that was provisional here
+   is ruled: Arrow C Data Interface, three layers (D-BIND-1a, D-BIND-23), built and
+   reviewed at BIND-2. Diagrams 2, 6 and 7 now show a shape that exists.
+2. **PDA is design-only.** Still true: there is no driver ABI code in the tree and
+   no `driver.h`, so `DriverProvider`, `fletcher_write_buffer` and the three
+   *drivers* are from the spec rather than from anything built. The seam spec
+   itself last moved on **2026-09-08** with PDA-DEC (#126), not 2026-08-31 as this
+   said. Note the distinction the diagram keeps: `InProcess_driver` is a PDA driver
+   and does not exist; `InProcessProvider` is a seam provider and does — see 3.
+3. ~~**`InProcessProvider` is not a component yet.**~~ ✅ **CLOSED.** It is a real
+   component of the `pubsub` package (`pubsub/src/in_process_provider.cpp`,
+   `pubsub/include/fletcher/pubsub/in_process_provider.hpp`), reached through
+   `RegisterInProcessProvider`, and the shim links and registers it as one of its
+   three built-ins. It no longer lives in `gateway/src/main.cpp`, which now only
+   *calls* the registration.
 4. **Rust is absent from the pub/sub diagrams** because it has no pub/sub path
    *yet*. It is **planned** (BIND-Rust, one round after BIND-C#), not excluded by
-   design — see the support table above.
-5. **`FastDDSProviderOptions` still exists.** Diagram 2 shows Fast DDS configured by
-   XML profile, which is the PDA-L9 target state, **not** today's code.
+   design — see the support table above. Still true.
+5. ~~**`FastDDSProviderOptions` still exists.**~~ ✅ **CLOSED.** PDA-DEC-6 retired the
+   struct — it has no definition anywhere in the tree, and its knobs are lines in
+   the provider's configuration document. So diagram 2's XML-profile depiction is
+   **today's code**, not a target state.
