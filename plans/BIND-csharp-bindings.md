@@ -493,10 +493,10 @@ tests between two implementations.
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 35, `test_codec_edge` 23, `test_codec_property_fuzz` 2 | **104** | Port as binding conformance over the ABI (BIND-3). `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". |
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 18, `test_segments` 5, `test_pubsub_arrow` 15 | **38** | Port over `inprocess` (BIND-4/5). |
-| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23; XRCE: `test_xrce_provider` 6, `test_xrce_document` 9 — **port as driver-selection tests (78)**; `test_fletcher_sample_pub_sub_type` 24 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **102** | 78 port; 24 excluded, documented. |
+| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23; XRCE: `test_xrce_provider` 6, `test_xrce_document` 11 — **port as driver-selection tests (80)**; `test_fletcher_sample_pub_sub_type` 24 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **104** | 80 port; 24 excluded, documented. |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
-| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 80 cases; `CallerTier` 21 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
+| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
 **275 of 300 non-generator cases port to C#**; the 24 provider-internal cases and
 `test_owned_schema` are the two documented exclusions; the 98 generator cases stay in
@@ -1038,7 +1038,11 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
   that ahead of DICT (D-BIND-8).
 - The UTF-16↔UTF-8 boundary stated in the XML docs and the oracle's scope note
   (D-BIND-1b).
-- **Bucket 1 (104) green** as binding conformance tests;
+- **Bucket 1 green** as binding conformance tests — the FILE SET named in Part 4's
+  matrix, not a count. A number here is invalidated by any rebase that adds a case
+  upstream (BIND-0 review, F1), and an acceptance bullet that a routine rebase can
+  falsify is one that will be argued about at the moment it is meant to settle
+  something. Re-run Part 4's command to get today's figure;
   `integration-tests/binding-abi-conformance` round-trips every corpus scenario.
 - **Per-row publish benchmark** against the C++ generated publisher over
   `inprocess`, allocations per row in the table (B-2). If the per-row cost is
@@ -1086,7 +1090,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   at a time with no thread affinity, all three arguments borrowed for the call.
 - Bounded-payload overflow surfaces as `FletcherException(PayloadTooLarge)`.
 - Fast DDS **and** XRCE reachable by selector with **no per-transport C# code**.
-- **Bucket 3 (38) over `inprocess`; Bucket 4 (78) over `fastdds` and `xrce`**;
+- **Bucket 3 over `inprocess`; Bucket 4 over `fastdds` and `xrce`** — again the FILE
+  SETS from Part 4 rather than counts, for the reason BIND-3's bullet gives. Bucket
+  4's own total moved 102 → 104 between the matrix being derived and BIND-2 closing,
+  which is the mechanism, observed;
   the **C# arm of `CallerTier`** with a total mapping onto the C++ cases; at least
   one case added to the C++ suite (seam §12.1).
 - The two mapping traps tested: a key above U+E000 and a supplementary-plane key

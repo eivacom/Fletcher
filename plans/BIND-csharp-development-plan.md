@@ -45,7 +45,7 @@ them change the plan's shape.
 | 2 | "PDA-L5: share the buffer struct, blob retain/release and error conventions **verbatim** with the driver ABI; bindings use driver-ABI **role 3**" | Seam §1: **no shared C header between the two ABIs**; PDA-ABI decision 2 says the same from its side. The driver ABI has **two** roles, not three, and selection is seam surface. Owner ruling 2026-09-05 (ruling 46): **both sides of the driver ABI are C++**. | D-BIND-2 is stale in wording. BIND derives its C types from the **seam spec**, not from PDA. The binding ABI stays pure C for a different reason: .NET P/Invoke cannot consume a C++ ABI. See D-BIND-2′. |
 | 3 | The delivery callback contract "changed three times in three days" | **Frozen** (§12.1). Re-entrancy is refused on all four methods (`kReentrantCall = 10`), callbacks are contained and counted, `Unsubscribe` blocks with one carve-out, `Subscriber` destruction from a handler terminates by design. | The contract stopped moving, which was the real gate. The constraints file lists what that contract obliges a binding to do; §2 and §6 here turn each into a mechanism. |
 | 4 | `AppendInPlace` did not exist; a binding cost one whole-row copy | PDA-DEC-A1 added `WriteBuffer::AppendInPlace`; the C form is `size_t (*writer)(void* ctx, uint8_t* dst, size_t room)`; **no production caller yet** | Under D-BIND-1 the **native codec** writes into the window with ordinary appends, so the common C# publish path never needs `AppendInPlace`. It is needed only for a raw-bytes publish entry point. See §3.3. |
-| 5 | Test matrix: 177/178 non-generator cases | Counts moved substantially (Fast DDS 20 → 87 cases across three files; new `pubsub-conformance` with 80 cases incl. `CallerTier`) | Re-baselined in §5. The 18786 reading still needs the Feature owner. |
+| 5 | Test matrix: 177/178 non-generator cases | Counts moved substantially (Fast DDS 20 → 87 cases across three files; new `pubsub-conformance` with 82 cases incl. `CallerTier`) | Re-baselined in §5. The 18786 reading still needs the Feature owner. |
 | 6 | Version series `0.5.x` "confirm at kickoff" | All components at `0.5.0-alpha`; `xrcedds-pubsub-provider` at `0.5.1-alpha` | Confirmed: .NET packages join **0.5.x**. |
 | 7 | *(added 2026-09-10)* Release archives carried only the executable; the LGPL notice for the NuGet was an open "how" under P-1 | **#127** (`0a56829`): the gateway archives now ship `LICENSE` + `THIRD-PARTY-LICENSES.txt`, the latter **derived from the resolved Conan graph** by `gateway/deployers/third_party_licenses.py`, staged on every CI run and verified inside the finished archive | Touches no header, seam, codec or generator: no premise or decision moves. **BIND-9 reuses the deployer** for the native shim, whose graph is the same stack (Fast DDS, Fast CDR, foonathan_memory, tinyxml2, Micro XRCE-DDS, microcdr, nanoarrow), so the "notice" half of P-1 has a mechanism. The gateway is also an in-tree precedent for **statically linking Fast DDS and shipping it** (B-3, Q3). |
 
@@ -697,7 +697,16 @@ gateway's owner's call, not BIND's; do it before BIND-9 or import by path.
 ## §5 — Test matrix, re-baselined at `6c541e9`
 
 Counts are `grep -c "^TEST\(_F\|_P\)\?("` per file, so they are **cases, not
-parameterised instances**, and they are reproducible from the tree:
+parameterised instances**, and they are reproducible from the tree.
+
+**Re-derived 2026-09-18 at `a1b247f`.** Every number below reproduces except three,
+now corrected: `test_xrce_document` 9 → **11** (so bucket 4 is 104, and its port
+target 80), `pubsub-conformance` 80 → **82** (BIND-2d added the two binding legs),
+and `CallerTier` 20 → **21** (the tracker already carried this correction and this
+table did not). **These counts rot** — #129 is rebased onto `main` at item
+boundaries, so a case added upstream changes them silently. That is why the
+acceptance bullets in Part 7 name FILE SETS rather than numbers; re-run the
+command rather than trusting a figure whose date you do not know:
 
 ```bash
 for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arrow/tests/*.cpp fastdds-pubsub-provider/tests/*.cpp xrcedds-pubsub-provider/tests/*.cpp gateway/tests/*.cpp protoc/tests/*.cpp; do echo "$(grep -c '^TEST\(_F\|_P\)\?(' "$f") $f"; done
@@ -708,10 +717,10 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 35, `test_codec_edge` 23, `test_codec_property_fuzz` 2 | **104** | Port as binding conformance over the ABI (BIND-3). `test_status_taxonomy` ports naturally: the C# enum is compared to `core/README.md`'s table. |
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 18, `test_segments` 5, `test_pubsub_arrow` 15 | **38** | Port over `inprocess` (BIND-4/5). |
-| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23, `test_fletcher_sample_pub_sub_type` 24; XRCE: `test_xrce_provider` 6, `test_xrce_document` 9 | **102** | Port as driver-selection tests where the assertion is seam-visible (78); **propose excluding** `test_fletcher_sample_pub_sub_type` (24) as internal to the provider. Needs the Feature owner. |
+| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23, `test_fletcher_sample_pub_sub_type` 24; XRCE: `test_xrce_provider` 6, `test_xrce_document` 11 | **104** | Port as driver-selection tests where the assertion is seam-visible (80); **propose excluding** `test_fletcher_sample_pub_sub_type` (24) as internal to the provider. Needs the Feature owner. |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
-| Conformance (new since plan) | `integration-tests/pubsub-conformance` 80 cases; `CallerTier` 20 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
+| Conformance (new since plan) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
 
 Non-generator total is **300** (was 178). The two exclusion classes were **ruled on
 2026-09-11 (Q10)**: 275 of 300 non-generator cases port (300 less the 24

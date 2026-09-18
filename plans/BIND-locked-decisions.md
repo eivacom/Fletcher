@@ -76,22 +76,50 @@ resolve once PDA merges, so they are deliberately not links yet). A proposed dev
   be conflated: the C Data Interface's own `release` semantics, and PDA's blob
   `retain`/`release`.
 
-- **D-BIND-2 — Two ABIs, opposite directions; share vocabulary, never functions.**
-  Per PDA-L5: the **driver ABI** (`fletcher/abi/driver.h`, Fletcher is caller,
-  driver implements) and the **binding ABI** (`fletcher/abi/binding.h`, Fletcher is
-  callee, app calls) are directional opposites. **No driver data-plane function is
-  callable by a binding.** Bindings use **role 3** (driver management) only. BIND
-  **reuses verbatim**: the buffer struct, the blob `retain`/`release` protocol,
-  `ArrowSchema` (C Data Interface), and the error/version conventions. Designing a
-  second buffer or blob representation → STOP-AND-ASK.
-  **Shape as of 2026-08-31** (PDA branch reshaped it — re-verify at Stage A): the
-  buffer is a **window plus refill hooks**,
-  `{ctx, data, capacity, pos, grow, grow_zeros}`, **not** per-append function
-  pointers. So a publish crosses the boundary **once per window refill, not once
-  per append**. Patching happens inside the window (a driver may not move bytes
-  below `pos` except inside `grow`, which must preserve them verbatim), and bounds
-  are computed by **subtraction, never addition**. `grow_zeros` (null-bitfield
-  placeholders) is part of the vocabulary.
+- **D-BIND-2 — ⛔ SUPERSEDED 2026-09-05 by D-BIND-2′, and re-verified against the
+  shipped header 2026-09-18.** The development plan recorded the supersession in
+  its §1 table from the start (*"D-BIND-2 is stale in wording … see D-BIND-2′"*);
+  **this digest did not**, and since this is the file later stages are pointed at,
+  a reader who consulted only the entry below got the REJECTED design as a locked
+  requirement — complete with a STOP-AND-ASK threat for doing the right thing.
+  Found by Copilot's review of #129. BIND-1 built the header correctly anyway, but
+  an implementer knowing better than the digest is not a control, and BIND-Rust
+  binds the same ABI next round off this file.
+
+  **What the rule actually is — D-BIND-2′:** the binding ABI is derived from the
+  **seam spec and from nothing else**. The C spellings of `Blob`, `Attachments`,
+  `SharedSchema`, `SchemaArrival`, the write-buffer window and writer, topic
+  segments, selector and document, and the status enum are each **constructed from
+  the C++ value** on BIND's side, per §3.2's *"conceptual, never a memory image"*.
+  **No header is shared with PDA-ABI**, and PDA-ABI's `fletcher_status` is never
+  seen by C#. The binding ABI is pure C because P/Invoke requires it, not because
+  the driver ABI is. Verified at BIND-1's spec review: no include, no shared struct
+  tag, no layout claim.
+
+  **What survives the supersession**, each re-checked against
+  `c-abi/include/fletcher/abi/binding.h` rather than carried forward on trust:
+  the two ABIs are **directional opposites**; **no driver data-plane function is
+  callable by a binding** (reinforced by D-BIND-24, which also closes the registry
+  door); the buffer is a **window plus a refill hook** rather than per-append
+  function pointers, so a publish crosses **once per window refill, not once per
+  append**; bytes below `pos` may not move except inside a refill, which preserves
+  them verbatim; and bounds are computed by **subtraction, never addition**.
+
+  **What did NOT survive, beyond the shared-header rule:** the old entry said the
+  driver ABI has **three roles** and that bindings use role 3 — it has **two**, and
+  selection is seam surface. It named `fletcher/abi/driver.h` as though it existed;
+  there is no such header in the tree. And it listed the window as
+  `{ctx, data, capacity, pos, grow, grow_zeros}` with *"`grow_zeros` is part of the
+  vocabulary"* — the shipped `fl_write_window` has **one** hook, `grow`. That entry
+  asked to be *"re-verified at Stage A"*; this is that re-verification, and the
+  answer is that two of its three concrete claims had moved.
+
+  > ~~Original text, 2026-08-31, kept for history: *Per PDA-L5 … Bindings use role
+  > 3 (driver management) only. BIND reuses verbatim: the buffer struct, the blob
+  > `retain`/`release` protocol, `ArrowSchema` (C Data Interface), and the
+  > error/version conventions. Designing a second buffer or blob representation →
+  > STOP-AND-ASK.*~~ Nothing in the tree cited this entry except its own heading,
+  > so replacing it broke no cross-reference — checked before rewriting.
 
 - **D-BIND-2a — Everything the delivery callback receives is BORROWED.** As of
   2026-08-31 the C++ contract passes `data`, `schema` **and** `attachments` as
