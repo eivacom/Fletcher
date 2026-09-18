@@ -72,6 +72,8 @@ All nineteen ruled. ✅ = settled.
 | 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary | — |
 | 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did |
+| 21 | **The composite map-key refusal** — 2b narrowed what 2a's encoder accepted | ✅ **ruled 2026-09-18** (D-BIND-36): **map keys are scalar only**, refused at `fl_codec_open` by field name. A statement about the wire format's reach, not one codec's convenience — BIND-Rust inherits it. No code change; the refusal and its test already exist | — |
+| 20 | **Does byte identity widen to the `emit_vectors` corpus the acceptance names?** | ✅ **ruled 2026-09-18** (D-BIND-35): **no — the acceptance is amended.** That corpus is proto-row shaped (it encodes through the generated row class) and is 3 scenarios over one flat message, so it is both the wrong shape for an Arrow-array codec and narrower than the five fixtures built. D-BIND-11's own `emit_vectors` reference is untouched | — |
 | 19 | **How the copy oracle measures a binding producer** | ✅ **ruled 2026-09-17** (D-BIND-34): `fl_encode_row` into the probe's own window — `fl_publisher_publish_row` cannot reach the instrumented provider, because D-BIND-24 closed the registration door it would need |
 | 18 | **BIND-0's self-hosted-runner bullet** — unmet, and due before BIND-9 | ✅ **ruled 2026-09-17** (D-BIND-33): **struck from BIND-0 as a duplicate** — BIND-9 already carries it, more completely. Nothing moves and nothing relaxes |
 | 17 | **Who frees a message a CALLBACK puts in an `fl_error`** | ✅ **ruled 2026-09-17** (D-BIND-32): the callback **borrows** it — keeps the bytes alive until it returns, the shim copies and frees nothing. Stated on `fl_error`, not on `fl_grow_fn`. Answers B1 of BIND-1's spec review |
@@ -508,7 +510,7 @@ With one codec there is no second implementation to drift, so the harness is
 
 | Test | Proves |
 |---|---|
-| `c-abi/tests` — `NanoarrowCodec.ByteIdenticalToArrowBridge` | The nanoarrow codec produces the bytes `arrow-bridge`'s `Codec` produces across the whole `emit_vectors` scenario corpus: **one wire format**. |
+| `c-abi/tests` — `NanoarrowCodec.ByteIdenticalToArrowBridge` | The nanoarrow codec produces the bytes `arrow-bridge`'s `Codec` produces across the codec's own Arrow fixture corpus — every arm of both switches, counts asserted (D-BIND-35): **one wire format**. |
 | `integration-tests/binding-abi-conformance` | The C# wrapper round-trips **every** scenario through the ABI with the values C++ produces, reusing the existing corpus rather than a C#-only fixture. |
 | **Copy-accounting oracle**, extended | `CopyAccounting.BindingProducerWritesInPlace` (BIND-2, a producer through the ABI from C) and the same run with the **C# producer** (BIND-5): zero-copy for rows and attachments is falsifiable, not asserted. The oracle's scope note states the UTF-16→UTF-8 transcoding boundary (D-BIND-1b). |
 | C# arm of `accessor-capstone` | C# joins as the third language against the same proto, fixture and committed oracle. Fully load-bearing: the accessor is **generated C#**, an independent implementation. |
@@ -911,9 +913,18 @@ the transport window.
 - `fl_encode_row` through a `fl_write_window` → `WriteBuffer` adapter; the C writer
   adapter for `PublishRaw` closes over `ctx` and throws `PubSubError(kInternal, …)`
   when the managed thunk reports a captured exception (D-BIND-19 rule 3).
-- **Byte identity**: `NanoarrowCodec.ByteIdenticalToArrowBridge` across the whole
-  `emit_vectors` scenario corpus (D-BIND-11), against whichever `arrow-bridge`
-  `Codec` `main` carries when it first runs.
+- **Byte identity**: `NanoarrowCodec.ByteIdenticalToArrowBridge` across the
+  codec's own **Arrow fixture corpus** — five fixtures of three rows each,
+  covering every arm of both switches, with the comparison counts asserted
+  deliberately (15 for identity, 5 for the round trip) so the corpus cannot
+  shrink silently. **Amended 2026-09-18 (D-BIND-35)**: this bullet named the
+  `emit_vectors` scenario corpus, which is proto-row shaped (it encodes through
+  the generated row class) and is three scenarios over one flat message — the
+  wrong shape for an Arrow-array codec, and narrower than what was built.
+  D-BIND-11's `emit_vectors` reference stands where it was written, on the
+  cross-language generated-artifact property. The oracle is `arrow-bridge`'s
+  `Codec` at the version this component pins; the versioning rule moves that pin
+  in lockstep with any wire-format change.
 - **The borrow rule is tested**: an array's `release` count stays zero across N
   publishes and is one after `fl_rows_unbind` plus the caller's release.
 - Malformed-input parity with HARD-1..7 through `fl_decode_rows`; bounds checks not
@@ -939,12 +950,16 @@ property becomes provable, not where the code happens to divide:
 
 | Slice | Content | Commit | State |
 |---|---|---|---|
-| **2a** | `NanoarrowCodec(schema)`, `BoundRows`, `EncodeRow` — the encode half | `28cdcd4` (+ `7820e82`, which builds `arrow-bridge` in the c-abi lane because it is the oracle) | 🟢 green, ⚪ unreviewed |
-| **2b** | `DecodeRows(bytes, len, count, ArrowArray*)` — the decode half, and the malformed-input parity property | `bec139e` | 🟢 green, ⚪ unreviewed |
-| **2c** | `fl_error` + the one `Translate` containment site; the codec surface; the write-window and writer adapters; and the publisher chain — provider/publisher create + destroy, `create_topic`, `list_topics`, `publish_raw`, `publish_row(s)`, `fl_string_list_*` (**scope ruled 2026-09-17, D-BIND-31**) | this commit | 🟢 green, ⚪ unreviewed |
-| **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | this commit | 🟢 green, ⚪ unreviewed |
+| **2a** | `NanoarrowCodec(schema)`, `BoundRows`, `EncodeRow` — the encode half | `28cdcd4` (+ `7820e82`, which builds `arrow-bridge` in the c-abi lane because it is the oracle) | 🟢 green, 🔍 reviewed 2026-09-18 |
+| **2b** | `DecodeRows(bytes, len, count, ArrowArray*)` — the decode half, and the malformed-input parity property | `bec139e` | 🟢 green, 🔍 reviewed 2026-09-18 |
+| **2c** | `fl_error` + the one `Translate` containment site; the codec surface; the write-window and writer adapters; and the publisher chain — provider/publisher create + destroy, `create_topic`, `list_topics`, `publish_raw`, `publish_row(s)`, `fl_string_list_*` (**scope ruled 2026-09-17, D-BIND-31**) | `3b13cb5` (+ `0811091`, the ELF export table) | 🟢 green, 🔍 reviewed 2026-09-18 |
+| **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | `b95affc` (+ `b6b89b3`, `f9d3ece`, `5762239`) | 🟢 green, 🔍 reviewed 2026-09-18 |
 
-**State — 2026-09-16**
+**State — 2026-09-18.** Reviewed at `5762239`: `plans/reviews/BIND-2-codereview.md` and
+`plans/reviews/BIND-2-conformance.md`. **CONFORMS on 9 of 10 bullets** (bullet 4 amended by
+D-BIND-35), and **one BLOCKER is open** — B1, a cross-module `new[]`/`delete[]` in
+`test_containment.cpp` that is invisible today and fires when BIND-3 links the MSVC CRT
+statically.
 
 | Acceptance bullet | State |
 |---|---|
@@ -953,34 +968,43 @@ property becomes provable, not where the code happens to divide:
 | `fl_encode_row` through a `fl_write_window` → `WriteBuffer` adapter; the C writer adapter for `PublishRaw` | ⚪ 2c |
 | **Byte identity** against `arrow-bridge` | 🟢 2a, **but over a different corpus than this bullet names** — see the deviations below |
 | The borrow rule is tested | 🟢 2a — `BindBorrowsTheArrayAndNeverConsumesIt` |
-| Malformed-input parity with HARD-1..7 **through `fl_decode_rows`**; bounds checks not `#if DEBUG`-gated; every message preserved | 🔴 2b discharged it **at the codec level**: `DecodeRefusalsComeFromTheReader` walks a four-byte `0xFF` window across a valid encoding and requires every refusal to carry the reader's `"PositionalReader:"` prefix, so the HARD-1..7 hardening covers the binding by construction rather than by a second taxonomy. `fl_decode_rows` does not exist until 2c, where it is a pass-through and the property carries unchanged |
+| Malformed-input parity with HARD-1..7 **through `fl_decode_rows`**; bounds checks not `#if DEBUG`-gated; every message preserved | 🟢 2b + 2c. 2b discharged it **at the codec level**: `DecodeRefusalsComeFromTheReader` walks a four-byte `0xFF` window across a valid encoding and requires every refusal to carry the reader's `"PositionalReader:"` prefix, so the HARD-1..7 hardening covers the binding by construction rather than by a second taxonomy. **2c landed `fl_decode_rows` as the pass-through that row predicted, and the property carries unchanged**: `MalformedBytesCarryTheReadersMessageAndTheCodecOrigin` exercises it through the export table — the reader's message forwarded verbatim, `FL_ORIGIN_CODEC`, and `out` untouched on failure — with an untruncated control. The no-`#if DEBUG` clause is mechanical: every bound in `positional_io.hpp` is an unconditional `if (…) throw` |
 | `CopyAccounting.BindingProducerWritesInPlace` in `pubsub-conformance` | 🟢 2d, measuring `fl_encode_row` into the probe's own window (D-BIND-34), with `BindingProducerStagingIsCaught` as its live negative control — the first draft of the leg recorded the LENT SPAN and so scored zero by construction; the control is what catches that |
 | The single-copy check (D-BIND-17) | 🟢 2d. `fl_single_copy_marker` + a load-time scan; a poisoned shim refuses through the one containment site rather than aborting at load (a shared library that fails to initialise takes the host down with no diagnostic a managed runtime can surface). Tested with a real decoy module on Windows and verified in a `gcc:13` container for Linux, which found two false-positive classes Windows structurally cannot express: `dlopen(nullptr)` is the GLOBAL SCOPE not the executable (a healthy process scored 2), and `dlsym` on a library handle searches its dependency chain (now deduplicated by symbol address) |
-| A packed-size budget for the shim in CI | 🟢 2d — a **12 MiB ceiling** on both legs. This is D-BIND-1a rider ii's check (the shim links nanoarrow, never Arrow C++), NOT BIND-9's release budget: the failure mode it catches is tens of megabytes against a 7.6 MiB shim, so it is set far above ordinary growth and trips only on the mistake it is named for. BIND-9 still sets the release number |
+| A packed-size budget for the shim in CI | 🟢 2d — **a ceiling per platform, each set from that platform's own measured baseline**: win-x64 12 MiB over 7.61 MiB measured, linux-x64 20 MiB over 13.79 MiB measured, each leg printing baseline + headroom so growth shows as a number before it shows as a red build. 2d first set ONE ceiling for both from the Windows figure and the Linux leg rejected it on the next run — that figure had been in the job log since BIND-0 and was simply not read (`5762239`). This is D-BIND-1a rider ii's check (the shim links nanoarrow, never Arrow C++), NOT BIND-9's release budget: the failure mode it catches is tens of megabytes, so each ceiling sits far above ordinary growth and trips only on the mistake it is named for. BIND-9 still sets the release number |
 | Prior art read first | 🟢 |
 
-**Two deviations from the acceptance above, both open and neither ruled:**
+**Both deviations from the acceptance above are RULED, 2026-09-18, at BIND-2's
+conformance review:**
 
-1. **The byte-identity corpus is not the one the bullet names.** The acceptance
-   (and Part 4, and D-BIND-11) says *"across the whole `emit_vectors` scenario
-   corpus"*. 2a instead built **four hand-written Arrow fixtures of three rows
-   each** — the mapping's scalars at their extremes, timestamp and duration, a
-   nested struct in its three distinct states, and the three composites each with a
-   populated / empty / null row — to which 2b added a fifth, a fixed-size list,
-   because that arm of both switches was otherwise untested. The count is
-   asserted deliberately: 15 comparisons for byte identity, 5 fixtures for the
-   round trip. Whether to widen the test to `emit_vectors` — which lives in
-   `integration-tests/protoc-gateway-client-ts/src/` and is a *scenario* corpus
-   rather than an Arrow-array one — is an open question for the BIND-2 review.
-2. **2b narrowed what the codec accepts.** A map's key must now be a scalar,
-   refused at open by field name. The wire is `[COUNT][keys][value bitfield]
-   [values]`, and nanoarrow finishes a struct element only when every child is
-   exactly one longer, so an entry's key and value must be appended together and
-   the keys have to be staged; a composite key cannot be staged without a second
-   decoder. The proto mapping produces none (proto restricts map keys to integral,
-   bool and string). **This tightens what 2a's encoder accepted and is therefore a
-   deviation under the round's STOP-AND-ASK rule** — it wants a decision number,
-   not a paragraph in a commit message.
+1. **The byte-identity corpus is not the one the bullet names** — ✅ **ruled
+   (D-BIND-35): the acceptance is amended, the test stands.** 2a built **four
+   hand-written Arrow fixtures of three rows each** — the mapping's scalars at
+   their extremes, timestamp and duration, a nested struct in its three distinct
+   states, and the three composites each with a populated / empty / null row — to
+   which 2b added a fifth, a fixed-size list, because that arm of both switches
+   was otherwise untested; 15 comparisons for byte identity, 5 fixtures for the
+   round trip, both counts asserted. The review read `emit_vectors.cpp` and found
+   the bullet's corpus to be the **wrong shape** (it encodes through the
+   protoc-generated row class, so it is proto rows rather than Arrow arrays) and
+   **narrower** (three scenarios over one flat message: int32, double, string,
+   bool, repeated int32 — no struct, map, fixed-size list, timestamp, duration or
+   null composite). Substituting it would have reduced coverage on every axis.
+   D-BIND-11's own `emit_vectors` reference is untouched: it sits on the
+   cross-language generated-artifact property, which is what that corpus is for.
+   The chain worth building — those three scenarios as a sixth fixture, joining
+   nanoarrow ≡ `arrow-bridge` ≡ generated C++ ≡ TS over the same bytes — needs the
+   generated row class in the c-abi test binary and belongs to **BIND-5/7**.
+2. **2b narrowed what the codec accepts** — ✅ **ruled (D-BIND-36): map keys are
+   scalar only.** A map's key must be a scalar, refused at open by field name. The
+   wire is `[COUNT][keys][value bitfield][values]`, and nanoarrow finishes a
+   struct element only when every child is exactly one longer, so an entry's key
+   and value must be appended together and the keys have to be staged; a composite
+   key cannot be staged without a second decoder. The proto mapping produces none
+   (proto restricts map keys to integral, bool and string). Locked as a decision
+   rather than a note because it is a statement about the **wire format's reach**
+   and BIND-Rust binds the same codec next round. No code change: the refusal and
+   `RefusesAMapWithACompositeKeyNamingTheField` already exist.
 
 ### BIND-3 — `Eiva.Fletcher.Interop` and the codec/Arrow tier
 
@@ -1277,13 +1301,23 @@ only what the header declares" property is currently Linux-only. Fixing it means
 changing how the dependency is built, which is a BIND-9 question with the size budget
 in hand, not a BIND-0 one.
 
-**Three decisions are open.** Two were raised by BIND-2b (detail in BIND-2's state
-table): the **composite map-key refusal**, which narrows what BIND-2a's encoder
-accepted, and whether **byte identity widens to the `emit_vectors` corpus** the
-acceptance names. The third was raised by BIND-2c and is a question about the
-HEADER rather than about any implementation — **who frees a message a callback put
-in an `fl_error`** — so it is settled at BIND-1's spec review, where it is recorded
-in full. None of the three blocks BIND-2d.
+**All three of BIND-2's decisions are now closed.** Two were raised by BIND-2b and
+ruled at BIND-2's conformance review on 2026-09-18 (detail in BIND-2's state
+table): the **composite map-key refusal** is locked as D-BIND-36 (map keys are
+scalar only — a statement about the wire format's reach, which BIND-Rust
+inherits), and **byte identity does not widen to the `emit_vectors` corpus** —
+D-BIND-35 amends the acceptance instead, because that corpus is proto-row shaped
+and narrower than the fixtures built. The third was raised by BIND-2c and is a
+question about the HEADER rather than about any implementation — **who frees a
+message a callback put in an `fl_error`** — settled at BIND-1's spec review as
+D-BIND-32, where it is recorded in full.
+
+**What BIND-2's reviews leave open** is one BLOCKER, and it is in test code:
+`test_containment.cpp` fills an `fl_error` through the object library's copy of
+the containment site (`new[]` in the test binary) and releases it with the shim's
+exported `fl_error_dispose` (`delete[]` in the shim). One heap today, two the
+moment BIND-3 links the MSVC CRT statically — which is D-BIND-32's own argument,
+mirrored. Two lines to fix, and it belongs to BIND-2 rather than to BIND-3.
 
 Three actions remain besides, none an engineering one:
 

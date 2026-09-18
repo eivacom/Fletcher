@@ -351,9 +351,13 @@ copy). Consume the `ArrowArray` per call (one export per row; most of B-2). Take
 individual C arguments (the row-builder ABI D-BIND-1a rejected). Re-run
 `ArrowArrayViewSetArray` per row (it walks every buffer of every child).
 
-**Forcing test.** Byte identity with `arrow-bridge`'s `Codec` across the whole
-`emit_vectors` scenario corpus (`NanoarrowCodec.ByteIdenticalToArrowBridge`), the old
-two-way parity harness repurposed exactly as D-BIND-11 says. The same three changes
+**Forcing test.** Byte identity with `arrow-bridge`'s `Codec` across the codec's own
+Arrow fixture corpus (`NanoarrowCodec.ByteIdenticalToArrowBridge`) — five fixtures of
+three rows each, every arm of both switches, counts asserted. **Amended 2026-09-18
+(D-BIND-35)**: this read *"across the whole `emit_vectors` scenario corpus"*, which is
+proto-row shaped (it encodes through the generated row class) and narrower than what was
+built. D-BIND-11's repurposing of the two-way parity harness stands where it was written,
+on the cross-language generated-artifact property. The same three changes
 would improve the server-tier `arrow-bridge` codec, and the modernization branch has
 already taken the first (`EncodeRow(values, WriteBuffer&)`); that file is that branch's
 to change (P-7), not BIND's.
@@ -603,7 +607,7 @@ job, and the plan documents.
 | `c-abi/src/codec_abi.cpp` | the C entry points above plus `Translate(err, fn)`, the `PubSubError` → status-and-message adapter |
 | `c-abi/src/publisher_abi.cpp` | the publish fusion shown in §3.2 |
 | `c-abi/src/write_window_adapter.hpp` | `fl_write_window` → `WriteBuffer` adapter for `fl_encode_row` (grow hook = one crossing per refill) |
-| `c-abi/tests/test_nanoarrow_codec.cpp` | `NanoarrowCodec.ByteIdenticalToArrowBridge` over the `emit_vectors` corpus; malformed-input parity with HARD-1..7; the borrow rule (the array's `release` count stays zero across N publishes) |
+| `c-abi/tests/test_nanoarrow_codec.cpp` | `NanoarrowCodec.ByteIdenticalToArrowBridge` over the codec's own Arrow fixture corpus (D-BIND-35); malformed-input parity with HARD-1..7; the borrow rule (the array is never consumed across N encodes, and the caller's release is the only one) |
 | `c-abi/tests/binding_abi_c99.c` | `BindingAbi.CompilesAsC99AndIsSelfContained` |
 | `dotnet/src/Fletcher.Interop/NativeMethods.Codec.cs` | P/Invoke declarations for the eight functions |
 | `dotnet/src/Fletcher/FletcherCodec.cs` | `FletcherCodec(Schema)`, `Bind(RecordBatch) -> BoundRows`, `Decode`, `DecodeBatch`, `Dispose` |

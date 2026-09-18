@@ -680,3 +680,67 @@ accessors do, for capstone parity (Q18).
   question. `WindowBuffer::Grow` already behaves this way and its "open question" comment becomes a
   statement of the rule. B1 of the spec review is answered; **B2 and B3 remain, so BIND-1 stays
   🔴.**
+
+- **D-BIND-35 — BIND-2's byte-identity oracle runs over the codec's OWN Arrow fixture corpus;
+  the acceptance's `emit_vectors` reference is struck as a wrong-shape corpus.**
+  *LOCKED BY THE MAINTAINER 2026-09-18,* ruling deviation 1 of BIND-2's conformance review — the
+  question BIND-2's state table parked *"for the BIND-2 review"* since 2a.
+
+  **What the bullet asked for and why it cannot carry the property.** It asked for byte identity
+  *"across the whole `emit_vectors` scenario corpus"*. Reading that corpus settles it two ways.
+  **Shape:** `emit_vectors.cpp` encodes through the **protoc-generated row class**
+  (`telemetry.fletcher.pb.h`, `row.Encode()`) and emits base64 for the TypeScript side to decode
+  and re-encode. It is a *proto-row* corpus serving a cross-language check; BIND-2's codec takes an
+  **Arrow array**, so running the bullet over it means hand-translating each scenario into an Arrow
+  array first — after which the comparison is still nanoarrow against `arrow-bridge`, because that
+  is the only other Arrow-array encoder in the tree. The generated C++ encoder never enters it.
+  **Size:** three scenarios (`basic`, `zero`, `negative`) over ONE flat message — an int32, a
+  double, a string, a bool and a repeated int32. No struct, no map, no fixed-size list, no
+  timestamp, no duration, no null composite. Substituting it would REDUCE coverage on every axis
+  the wire format has.
+
+  **What runs instead, and why it is the stronger test.** Five hand-written Arrow fixtures of three
+  rows each: the mapping's scalars at their extremes, timestamp and duration, a nested struct in
+  its three distinct states, the three composites each populated / empty / null, and a fixed-size
+  list (added by 2b because that arm of both switches was otherwise untested). Every arm of both
+  switches is covered. The counts are asserted deliberately — 15 comparisons for byte identity, 5
+  fixtures for the round trip — so the corpus cannot shrink silently.
+
+  **What is NOT struck.** D-BIND-11's `emit_vectors` reference stands exactly where it was written:
+  on the **cross-language generated-artifact property**, where a proto-row corpus is the right
+  shape and the three arms are genuinely independent implementations. This ruling narrows one
+  acceptance bullet, not D-BIND-11.
+
+  **The gain deliberately not taken here.** Adding the three telemetry scenarios as a SIXTH fixture
+  would chain nanoarrow ≡ `arrow-bridge` ≡ generated C++ ≡ TS over the same bytes, which no single
+  test does today. It needs the generated C++ row class inside the c-abi test binary, so it belongs
+  with **BIND-5/7**, where the generated tiers are the subject — not to BIND-2.
+
+  **Consequences.** Acceptance bullet 4, Part 4's test-matrix row and development plan §3.2's
+  forcing test are restated against the fixture corpus; no code and no test changes.
+
+- **D-BIND-36 — the wire format's map keys are SCALAR ONLY, refused at `fl_codec_open` by field
+  name.** *LOCKED BY THE MAINTAINER 2026-09-18,* ruling deviation 2 of BIND-2's conformance review
+  — the narrowing BIND-2b introduced over what BIND-2a's encoder accepted, raised under the round's
+  STOP-AND-ASK rule.
+
+  **Why the decoder cannot take a composite key.** The wire is `[COUNT][keys][value bitfield]
+  [values]`: a map's keys ALL arrive before its values. nanoarrow finishes a struct element only
+  when every child is exactly one longer than the struct, so an entry's key and value must be
+  appended together and the keys have to be staged until their values show up. A scalar stages as a
+  pointer into the row buffer (`ScalarValue`); a composite key would have to stage a half-built
+  array, which is a second decoder.
+
+  **Why refusing costs nothing.** Proto restricts map keys to integral, bool and string, so the
+  mapping this ABI exists to serve produces none. The refusal is at OPEN rather than at row 4711,
+  and it names the field.
+
+  **Why a decision and not a note.** It is a statement about the wire format's REACH, not about one
+  codec's convenience: BIND-Rust binds the same codec next round and inherits the same constraint,
+  and an encoder that can write what no decoder can read is the kind of asymmetry that gets
+  "fixed" by someone who does not know why it is there. Pinned by
+  `NanoarrowCodec.RefusesAMapWithACompositeKeyNamingTheField`.
+
+  **Consequences.** None in code — the refusal and its test already exist. BIND-2's deviation 2
+  closes; `docs/wire-format-specification.md` is NOT amended by this ruling (the option was
+  offered and not taken), so the constraint lives in this digest and in the refusal's own message.
