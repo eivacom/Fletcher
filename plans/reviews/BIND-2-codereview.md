@@ -74,6 +74,11 @@ file whose subject is the containment taxonomy.
 correct as they stand. A comment saying why that file, and only that file, does
 not use `fl_error_dispose` is the part worth more than the code.
 
+> **FIXED 2026-09-18.** `DisposeLocal` added in the file's anonymous namespace
+> with that reasoning at the definition, and all six call sites moved to it. No
+> other file changed: the two that release through the ABI are releasing what the
+> shim allocated, which is what `fl_error_dispose` is for.
+
 ---
 
 ## DEBT
@@ -98,6 +103,11 @@ what a UBSan build flags. Both toolchains currently accept it.
 `AGrowThatRefusesKeepsItsStatusMessageAndOrigin` always sets a message, so the
 path is unexercised in either direction. **Fix:** guard on `err.message !=
 nullptr`, and give the existing test a second grow thunk that refuses silently.
+
+> **HALF FIXED 2026-09-18.** The guard is in, with the reason at the site. **The
+> test is not**: the silently-refusing grow thunk was not added, so the guarded
+> path is correct and still unexercised. Carried forward to whoever next touches
+> that file.
 
 ### D2 — a caller's `grow` can put an arbitrary int32 into `err->status`
 
@@ -138,6 +148,12 @@ the export table and would go red if the shim had latched. That is the real
 assertion and it should be the only one. **Fix:** delete the first `EXPECT_TRUE`,
 or re-point it at what it claims to read — which it cannot, which is the point.
 
+> **FIXED 2026-09-18.** The assertion and its now-unused `using` declaration are
+> gone; the row's doc comment states why it asserts through the ABI and nowhere
+> else, so the deleted check is not reinstated by someone reading it as an
+> omission. The paragraph below it — the evidence bound — is unchanged and
+> remains true.
+
 Worth stating alongside it, because it is the honest bound on D-BIND-17's
 evidence: **the shim's own wiring of the check is proven only in the negative.**
 The algorithm is tested thoroughly, in the test binary's copy, with a real decoy
@@ -169,6 +185,14 @@ three sentences live on elsewhere:
 Each is one line. They are grouped as one finding because the pattern is the
 finding: a claim gets fixed where the reviewer was looking and survives in the
 three places nobody re-grepped.
+
+> **FIXED 2026-09-18**, all three. The CI comment now says a ceiling is enforced
+> and what it is *not*; the CMake comment states the property as being about the
+> exported SET and notes when it stopped being about the one function; the test
+> comment cites D-BIND-32 and explains that static storage is the shape the rule
+> was written to permit. `actionlint` 1.7.12 clean after the workflow edit —
+> a YAML parse would not have been enough, and the comment added there contains
+> apostrophes.
 
 ### D5 — the export check asserts the `fl_` prefix while its message claims the declarations
 
@@ -283,10 +307,15 @@ suite already says this for `publish_rows`' partial-failure count
 |---|---|
 | Slices reviewed | 4 (2a, 2b, 2c, 2d) |
 | Source read | ~2 000 lines of `c-abi/src`, ~1 700 of `c-abi/tests`, the conformance leg, the lane |
-| BLOCKER | 1 (B1, test-only, fires at BIND-3) |
-| DEBT | 5 (D1 null message, D2 unvalidated status, D3 vacuous assertion + D-BIND-17's evidence bound, D4 three stale claims, D5 export check) |
-| NIT | 4 |
+| BLOCKER | 1 (B1, test-only, fires at BIND-3) — **fixed 2026-09-18** |
+| DEBT | 5 (D1 null message, D2 unvalidated status, D3 vacuous assertion + D-BIND-17's evidence bound, D4 three stale claims, D5 export check) — **D1 half fixed, D3 and D4 fixed**; D2 and D5 carried |
+| NIT | 4 — all carried |
 | Defects in the wire format, the taxonomy, or handle lifetimes | 0 |
+
+**Fixed in the follow-up to this review (2026-09-18):** B1, D3, D4 in full, and
+D1's guard without its test. **Still open:** D1's untested path, D2 (a callback's
+status reaching `err->status` unvalidated), D5 (the export check's prefix grep),
+and all four NITs. Each is annotated in place above.
 
 The code is in better shape than the finding count suggests. Three of the four
 NITs and two of the five DEBT items are one line each, and the BLOCKER is two.

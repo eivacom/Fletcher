@@ -73,8 +73,10 @@ add_library(fletcher-c-abi SHARED
 # CompilesAsC99AndIsSelfContained test holds the header to.
 target_compile_features(fletcher-c-abi PRIVATE c_std_99 cxx_std_20)
 
-# Hide everything that is not explicitly exported, so "the shim exports only
-# fl_binding_abi_version" is enforced by the build rather than asserted. On
+# Hide everything that is not explicitly exported, so "the shim exports exactly
+# what binding.h declares" is enforced by the build rather than asserted. (That
+# sentence named fl_binding_abi_version alone until BIND-2c; twenty entry points
+# are exported now, and the property is about the SET, not the one.) On
 # Windows nothing leaves without __declspec(dllexport) anyway; the two settings
 # below are what make gcc/clang behave the same way, and they also stop the
 # statically linked Fast DDS / Micro XRCE-DDS symbols from becoming part of the

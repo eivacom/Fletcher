@@ -44,6 +44,28 @@ std::string MessageOf(const fl_error& err) {
     return {reinterpret_cast<const char*>(err.message), err.message_len};
 }
 
+/// Release an error THIS FILE produced - and the one place in the suite that
+/// must not release it through the ABI.
+///
+/// Every other test releases with `fl_error_dispose`, which is correct there: the
+/// shim allocated the message inside itself and frees it inside itself. Here the
+/// call went straight to `Contain`, so the message was allocated by the OBJECT
+/// LIBRARY's copy of `SetMessage`, which is linked into this test binary
+/// (`tests/CMakeLists.txt` links both the shim and the objects it is built from).
+/// Disposing through the ABI would hand that allocation to the SHIM's `delete[]`.
+///
+/// Those are one heap only while both modules share a C runtime. They do today,
+/// which is why either spelling passes now - and BIND-3 links the shim's MSVC CRT
+/// STATICALLY, which is exactly when they stop being one. That is D-BIND-32's own
+/// argument pointed the other way: the rule there says the shim must not free what
+/// a caller allocated, and this is a caller not asking it to. Getting it wrong
+/// would surface as heap corruption in whichever row ran first after the CRT flag
+/// flipped, in a file about the containment taxonomy.
+void DisposeLocal(fl_error& err) {
+    delete[] err.message;
+    err = fl_error{};
+}
+
 /// Restores the refusal slot however the test ends, so one red row cannot
 /// poison every row after it in the same binary.
 class PoisonedForThisTest {
@@ -82,7 +104,7 @@ TEST(Containment, APoisonedShimRefusesWithoutRunningTheCall) {
            "it: "
         << MessageOf(err);
     EXPECT_NE(MessageOf(err).find("/b/two.so"), std::string::npos) << MessageOf(err);
-    fl_error_dispose(&err);
+    DisposeLocal(err);
 }
 
 /// Clearing the refusal restores ordinary service — so the branch is a condition
@@ -92,7 +114,7 @@ TEST(Containment, ClearingTheRefusalRestoresService) {
         const PoisonedForThisTest poisoned("poisoned");
         fl_error err = {};
         ASSERT_EQ(Contain(&err, FL_ORIGIN_SEAM, [] {}), FL_INTERNAL);
-        fl_error_dispose(&err);
+        DisposeLocal(err);
     }
     ASSERT_TRUE(SingleCopyRefusal().empty());
 
@@ -122,7 +144,7 @@ TEST(Containment, AnUnknownExceptionTypeIsContainedAsInternal) {
     EXPECT_FALSE(MessageOf(err).empty())
         << "an unknown exception produced no message at all, so the caller learns nothing beyond "
            "a number";
-    fl_error_dispose(&err);
+    DisposeLocal(err);
 }
 
 /// The normative mapping, at the site that performs it: `std::overflow_error`
@@ -133,7 +155,7 @@ TEST(Containment, OverflowIsPayloadTooLargeAtEitherOrigin) {
         EXPECT_EQ(Contain(&err, origin, [] { throw std::overflow_error("too big"); }),
                   FL_PAYLOAD_TOO_LARGE);
         EXPECT_EQ(err.origin, origin);
-        fl_error_dispose(&err);
+        DisposeLocal(err);
     }
 }
 
@@ -145,14 +167,14 @@ TEST(Containment, TheReadersRefusalTypesDependOnTheOrigin) {
     fl_error codec = {};
     EXPECT_EQ(Contain(&codec, FL_ORIGIN_CODEC, [] { throw std::invalid_argument("bad bytes"); }),
               FL_INVALID_ARGUMENT);
-    fl_error_dispose(&codec);
+    DisposeLocal(codec);
 
     fl_error seam = {};
     EXPECT_EQ(Contain(&seam, FL_ORIGIN_SEAM, [] { throw std::invalid_argument("bad bytes"); }),
               FL_INTERNAL)
         << "a seam site reported a finer number than the seam's normative mapping allows; that "
            "mapping is total and everything unlisted is kInternal";
-    fl_error_dispose(&seam);
+    DisposeLocal(seam);
 }
 
 /// A null `fl_error*` is tolerated: the caller still gets the number.

@@ -217,11 +217,12 @@ TEST(BindingEntryPoints, AGrowThatRefusesKeepsItsStatusMessageAndOrigin) {
         static fl_status Grow(fl_write_window*, size_t, fl_error* err) {
             // What a binding's own grow thunk does: fill the error it was given.
             //
-            // The bytes are STATIC on purpose. Who frees a message a CALLBACK put
-            // in an `fl_error` is an open question against binding.h (see
-            // write_window.hpp), so this test does not take a position on it by
-            // allocating: storage that outlives the call is correct under every
-            // reading of the rule.
+            // The bytes are STATIC on purpose, and now by rule rather than by
+            // caution: D-BIND-32 says an `fl_error` a CALLBACK fills is BORROWED
+            // to the shim - the callback keeps the bytes alive until it returns,
+            // the shim copies what it needs and frees nothing. Static storage
+            // satisfies that without allocating, which is exactly the shape the
+            // rule was written to permit.
             static const char kWhy[] = "the managed buffer would not grow";
             err->status = FL_TRANSPORT_FAILURE;
             err->origin = FL_ORIGIN_CALLBACK;

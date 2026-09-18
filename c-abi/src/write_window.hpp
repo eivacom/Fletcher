@@ -118,7 +118,13 @@ class WindowBuffer final : public WriteBuffer {
             // shim's `delete[]`, and those are one heap only while both sides
             // share a C runtime — which this shim, linking the MSVC CRT
             // statically, does not.
-            std::string message(reinterpret_cast<const char*>(err.message), err.message_len);
+            // The NULL check is not decoration: nothing requires a refusing
+            // `grow` to set a message, and `std::string(nullptr, 0)` is undefined
+            // by the letter of the standard even though both toolchains accept it.
+            const std::string message =
+                err.message == nullptr
+                    ? std::string()
+                    : std::string(reinterpret_cast<const char*>(err.message), err.message_len);
             throw PubSubError(static_cast<PubSubStatus>(status),
                               message.empty() ? "fl_write_window: grow refused" : message);
         }

@@ -56,7 +56,6 @@ std::string DecoyPath() {
 
 using fletcher::abi::MarkerText;
 using fletcher::abi::ModulesExportingTheMarker;
-using fletcher::abi::SingleCopyRefusal;
 
 /// A module loaded for the duration of one test, unloaded however the test ends.
 class LoadedModule {
@@ -161,11 +160,16 @@ TEST(SingleCopy, TheAnswerFollowsTheProcess) {
 /// The other side of the refusal: a latched verdict that fired on a single-copy
 /// process would take every call down with it, which is a far worse failure than
 /// the one the check exists to prevent.
+///
+/// It asserts through the ABI and NOWHERE ELSE, deliberately. An earlier version
+/// also checked `SingleCopyRefusal().empty()` and said, on failure, that "the
+/// shim latched a single-copy conflict" — but that reads the OBJECT LIBRARY's
+/// copy of the slot, linked into this test binary, while the shim's own copy is
+/// local (the version script on Linux, no dllexport on Windows). Nothing but
+/// `SetSingleCopyRefusalForTest` ever writes the copy it read, so it could not
+/// fail, and its message named something it had not looked at. The call below is
+/// the only thing here that can observe the shim's verdict.
 TEST(SingleCopy, AHealthyProcessIsNotPoisoned) {
-    EXPECT_TRUE(SingleCopyRefusal().empty())
-        << "the shim latched a single-copy conflict in a process that has one copy: "
-        << SingleCopyRefusal();
-
     // Reached through the ABI, because that is where the refusal would surface.
     fl_error err = {};
     fl_provider* provider = nullptr;

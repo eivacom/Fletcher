@@ -72,9 +72,10 @@ jobs:
 
       # The per-RID size of the shim is a release-facing number (the NuGet
       # package carries one of these per RID), so it is measured on every run
-      # rather than once at BIND-0. No budget is ENFORCED yet: BIND-9 sets the
-      # threshold with the packaging work, and a number in the log from day one
-      # is what makes the threshold defensible instead of invented.
+      # rather than once at BIND-0. A ceiling IS enforced below - see the Linux
+      # leg for the full reasoning - but it is D-BIND-1a rider ii's check, not
+      # BIND-9's release budget: BIND-9 still sets the threshold with the
+      # packaging work, against the numbers these two legs print every run.
       - name: Measure the packaged shim
         shell: bash
         run: |
