@@ -105,3 +105,82 @@ current file, cycle 1's deliberately quoting the text it found.
   `ToSegments` materialising a `std::vector<std::string>` per `fl_publisher_publish_row`
   (`fl_publisher_publish_rows` already hoists it). BIND-3's per-row publish benchmark settles it;
   the fix if needed is a pre-converted topic handle following this ABI's own open-once shape.
+
+## BIND-2 — The nanoarrow codec, the publish fusion, and the oracle's producer (2026-09-18)
+
+**Forcing tests:** `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` → 🟢   (⚪ → 🔴 → 🟢)
+**What landed:** the round's long pole, in four slices, because one commit of it would have
+been unreviewable. **2a** (`28cdcd4`) `NanoarrowCodec(schema)`, `BoundRows`, `EncodeRow` — the
+encode half, on nanoarrow and `positional_io`, **never** `arrow-bridge`, because wrapping the
+Arrow C++ codec would drag full Arrow C++ into the per-RID native asset. **2b** (`bec139e`)
+`DecodeRows` and the malformed-input parity property. **2c** (`3b13cb5`, `0811091`) the one
+containment site, the codec surface, both write-window adapters and the publisher chain — 20 of
+the header's 40 entry points, the other 20 being exactly BIND-4's (D-BIND-31). **2d** (`b95affc`,
+`b6b89b3`, `f9d3ece`, `5762239`) the copy oracle's binding producer, the single-copy check and
+the per-platform size ceilings.
+
+**Reviews:** code review (`plans/reviews/BIND-2-codereview.md`) and conformance review
+(`plans/reviews/BIND-2-conformance.md`). **CONFORMS on 9 of 10 acceptance bullets; 1 BLOCKER,
+5 DEBT, 4 NITs; zero defects in the wire format, the containment taxonomy or the handle
+lifetimes** — the three places a defect would have been expensive.
+
+- **The BLOCKER passed every run, which is why it is worth recording.** `c_abi_tests` links
+  BOTH the shim and the object library it is built from, so `test_containment.cpp` filled an
+  `fl_error` through the object library's `SetMessage` (`new[]` in the test binary) and released
+  it with the shim's exported `fl_error_dispose` (`delete[]` in the shim). One heap while both
+  link the MSVC CRT dynamically — **two the moment BIND-3 links it statically**, which is
+  D-BIND-32's own argument pointed the other way. Fixed with a file-local `DisposeLocal`.
+  **Watch for the shape again at BIND-3:** anything pairing an allocation in one module with a
+  free in another.
+- **Bullet 4 was met in substance and not in letter, and the letter was wrong** → **D-BIND-35**.
+  The acceptance named the `emit_vectors` scenario corpus; reading it showed it encodes through
+  the protoc-generated row class (proto rows, not Arrow arrays) and is three scenarios over one
+  flat message — the wrong SHAPE for an Arrow-array codec and NARROWER than the five fixtures
+  built. The acceptance was amended and the test stands; D-BIND-11's own `emit_vectors`
+  reference, which sits on the cross-language property, is untouched.
+- **2b's composite map-key refusal** → **D-BIND-36**: map keys are scalar only, refused at open
+  by field name. Locked as a decision rather than a note because it states the wire format's
+  REACH and BIND-Rust binds the same codec next round.
+- **The state table was stale in two rows and both were corrected:** the size row recorded the
+  MISTAKE (one 12 MiB ceiling for both legs) rather than the fix `5762239` landed (per-platform
+  ceilings from per-platform baselines), and the malformed-input row was still 🔴 over a gap 2c
+  had closed.
+
+**Two properties the record presented as proven and are not, now stated as such:**
+
+- **The shim's own single-copy wiring is unobservable.** Drop the dynamic initializer in
+  `binding.cpp` and every test still passes, because "never checked" and "checked, found one"
+  are the same observable. The algorithm is tested thoroughly against a real decoy module — in
+  the TEST BINARY's copy of it. Proving it for the shim needs two real shims in one process,
+  which 2d priced and declined.
+- **Nothing observes what the fused publish puts on the wire.** `inprocess` delivers to nobody
+  and the subscriber half is BIND-4's, so the fusion has two unverified properties: the copy
+  claim (recorded, D-BIND-34) and the byte claim. **Both owed to BIND-4.**
+
+**BIND-0's F1 is discharged** (2026-09-18): the Part 4 matrix was re-derived against the tree —
+three numbers had moved (`test_xrce_document` 9→11 so bucket 4 is 104 and its port target 80,
+`pubsub-conformance` 80→82, `CallerTier` 20→21, the last of which the tracker already carried
+while the development plan did not) — and **BIND-3's, BIND-4's and BIND-8's acceptance bullets
+now name FILE SETS rather than counts**, which is F1's recommendation and the only form a
+rebase cannot falsify. One thing F1 did not reach is left for the maintainer: buckets 1+2+3+4
+sum to exactly 300, so `test_owned_schema` is not inside that total, yet Q10 reads "275 of 300
+(300 less the 24 provider-internal cases and `test_owned_schema`)" — a pre-existing off-by-one
+in a ruled figure, which bucket 4's move to 104 compounds (300→302, 275→277). **Unruled.**
+
+**Carried forward:** D1's missing test (the guard is in, the silently-refusing `grow` thunk was
+never added); **D2** — a callback's `grow` status reaches `err->status` unvalidated, which
+**BIND-3 meets directly** because its managed error handling switches on `Status`; D5 — the CI
+export check greps the `fl_` prefix while its message claims the declarations; and four NITs,
+including N2, itself a one-liner (`ArrowArrayViewReset` missing on one of `BoundRows`' two
+constructor failure paths).
+
+**Found by building rather than by reasoning, and worth not rediscovering:** the copy oracle's
+first binding leg was a **tautology that passed 142/142** — it recorded the span it had just
+lent, so any producer scored zero by construction; the fix was making the producer self-report,
+with `BindingProducerStagingIsCaught` as the live negative control. A `gcc:13` container found
+two false-positive classes in the module scan that Windows structurally cannot express
+(`dlopen(nullptr)` is the global symbol scope, not the executable; `dlsym` on a library handle
+searches its dependency chain). And libstdc++ gives a handful of `shared_ptr` internals explicit
+default visibility, so one `std::make_shared` exported six symbols regardless of
+`CXX_VISIBILITY_PRESET` — settled by an anonymous version script, which makes the export table a
+property of the LINK rather than something CI notices afterwards.

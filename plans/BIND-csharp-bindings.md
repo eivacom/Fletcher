@@ -774,14 +774,14 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 |---|---|---|---|---|---|---|
 | BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🟢 |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
-| BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🔴 |
+| BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage`; per-row publish benchmark recorded | ⚪ |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier` | ⚪ |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 (56) green; `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -1216,7 +1216,9 @@ client, **so that** I need no native assets at all.
   managed C#. `Envelope` and its (de)serialisation live here and nowhere else (Q15).
 - **Carries no native assets, and CI asserts it**: the packed `.nupkg` contains no
   `runtimes/` entry (D-BIND-13).
-- **Bucket 2 (56) ported**: all 36 TypeScript cases plus the 20 gateway C++ cases.
+- **Bucket 2 ported** — the FILE SET named in Part 4's matrix, not a count, for the
+  reason BIND-3's and BIND-4's bullets give: all the TypeScript cases plus the
+  gateway C++ ones (`test_schema_codec`, `test_publish_frame`).
 - Arrow IPC schema parse of the gateway's base64 `schemaIpc` payload via
   `Apache.Arrow.Ipc`, schema metadata preserved.
 

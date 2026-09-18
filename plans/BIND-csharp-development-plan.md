@@ -539,7 +539,7 @@ pole.
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; StructArray windowing fixture at non-zero offset |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 (56) green; `Package.GatewayClientHasNoRuntimesFolder` |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` (D-BIND-28; NuGet.org deferred), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run against the internal feed; packed-size check; asset-isolation check |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review |
 
