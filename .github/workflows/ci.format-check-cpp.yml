@@ -13,6 +13,7 @@ on:
       - "**/*.cpp"
       - "**/*.hpp"
       - "**/*.h"
+      - "**/*.c"
       - "**/*.cc"
       - ".clang-format"
       - ".github/workflows/ci.format-check-cpp.yml"
@@ -29,6 +30,11 @@ jobs:
           sudo apt-get install -y clang-format-18
           clang-format-18 --version
 
+      # `*.c` is in the list from round BIND on: `c-abi/` is the first component
+      # with C translation units (the shim's one exported function, the C99
+      # self-containment probe and the test_package example are all C, on
+      # purpose — they are what proves the binding ABI is consumable as C).
+      #
       # Build the file list at runtime so the workflow stays in sync with
       # `.prettierignore`-style exclusions without manual maintenance. We
       # skip vendored third-party code (pubsub/third_party/,
@@ -37,7 +43,7 @@ jobs:
       # locally.
       - name: Run clang-format --dry-run --Werror
         run: |
-          files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' \
+          files=$(git ls-files '*.cpp' '*.hpp' '*.h' '*.c' '*.cc' \
             | grep -v -E '^(pubsub|protoc)/third_party/' \
             | grep -v -E '\.fletcher\.(arrow\.)?pb\.h$' \
             | grep -v -E '/build/' \

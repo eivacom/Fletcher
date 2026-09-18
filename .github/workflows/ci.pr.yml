@@ -32,6 +32,8 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      c-abi: ${{ steps.filter.outputs.c-abi }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
       fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
       gateway: ${{ steps.filter.outputs.gateway }}
       gateway-client: ${{ steps.filter.outputs.gateway-client }}
@@ -88,6 +90,29 @@ jobs:
               - '.github/actions/install-cmake/**'
               - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
+            c-abi:
+              - 'c-abi/**'
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.c-abi.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            dotnet:
+              - 'dotnet/**'
+              - 'c-abi/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.dotnet.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.devcontainer/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
@@ -252,6 +277,7 @@ jobs:
               - 'pubsub/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
               - 'integration-tests/pubsub-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.pubsub-conformance.yml'
@@ -323,6 +349,26 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The binding ABI shim: the one SHARED library in the tree, statically linking
+  # the whole eProsima chain. It runs from BIND-0 on an ABI that exports a single
+  # function, so the Linux signal on that link is standing before there is any
+  # real code to break it (seam §12.4).
+  c-abi:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.c-abi == 'true' }}
+    uses: ./.github/workflows/ci.c-abi.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  dotnet:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' }}
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   pubsub:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
@@ -379,13 +425,17 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # format-check-cpp, format-check-ts, license-headers, and action-lint
-  # are standalone workflows that trigger directly on `pull_request` with
-  # their own path filters (.github/workflows/{format-check-cpp,
-  # format-check-ts,license-headers,action-lint}.yml). They are not
-  # invoked from ci.pr.yml and therefore aren't part of the pr_gate
-  # aggregation — configure them as separate required status checks on
-  # the branch protection rule if needed.
+  # format-check-cpp, format-check-ts, format-check-cs, license-headers, and
+  # action-lint are standalone workflows that trigger directly on
+  # `pull_request` with their own path filters
+  # (.github/workflows/ci.{format-check-cpp,format-check-ts,format-check-cs,
+  # license-headers,action-lint}.yml). They are not invoked from ci.pr.yml and
+  # therefore aren't part of the pr_gate aggregation — configure them as
+  # separate required status checks on the branch protection rule if needed.
+  #
+  # format-check-cs joined that list at BIND-0 and this inventory did not say so
+  # until Copilot's review of #129 pointed at the gap from the other end. EVERY
+  # format lane is standalone; the C# one is not an omission from the gate.
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
   #
@@ -493,6 +543,8 @@ jobs:
       - setup-devcontainer
       - core
       - arrow-bridge
+      - c-abi
+      - dotnet
       - pubsub
       - pubsub-arrow
       - protoc
@@ -526,6 +578,8 @@ jobs:
             ${{ needs.setup-devcontainer.result }},
             ${{ needs.core.result }},
             ${{ needs.arrow-bridge.result }},
+            ${{ needs.c-abi.result }},
+            ${{ needs.dotnet.result }},
             ${{ needs.pubsub.result }},
             ${{ needs.pubsub-arrow.result }},
             ${{ needs.protoc.result }},

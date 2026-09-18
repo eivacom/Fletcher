@@ -50,6 +50,7 @@ jobs:
             pubsub
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
+            c-abi
             integration-tests/pubsub-conformance
             .conan-profiles
             .github
@@ -84,7 +85,7 @@ jobs:
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider; do \
+                     for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
@@ -116,6 +117,7 @@ jobs:
             pubsub
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
+            c-abi
             integration-tests/pubsub-conformance
             .conan-profiles
             .github
@@ -164,7 +166,11 @@ jobs:
         run: |
           set -e
           PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
-          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider; do
+          # `c-abi` is LAST because it requires the two providers, and it is here at
+          # all because the copy oracle's binding leg links the shim (BIND-2d,
+          # D-BIND-34). A dependency added to a recipe and not to its lane is the
+          # mistake `fPIC` and `arrow-bridge` each cost this round a CI cycle.
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
             echo "::group::conan create $COMPONENT"
             (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
             echo "::endgroup::"

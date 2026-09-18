@@ -1,0 +1,675 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-2's forcing tests. Two properties, one file:
+//
+//   ENCODE (BIND-2a) — the nanoarrow codec writes the bytes `arrow-bridge`'s
+//   codec writes. Not similar bytes — the same bytes.
+//
+//   DECODE (BIND-2b) — decode is encode's inverse, in both directions: the
+//   values come back as the values that went in (Arrow equality), and the bytes
+//   come back as the bytes that went in (re-encode identity). Neither alone is
+//   enough. Arrow equality alone would pass a decoder that produced the right
+//   values through a wrong-but-compensating framing; re-encode identity alone
+//   would pass a decoder that swapped two same-typed columns, because swapping
+//   them back on the way out restores the bytes exactly.
+//
+// ── Why this is the whole safety argument ───────────────────────────────────
+// This round puts a SECOND encoder of the positional wire format into the tree.
+// One is unavoidable: the Arrow C++ one cannot sit behind a C ABI (it returns
+// the row, which is the copy, and takes a vector of shared_ptr<Scalar>, which
+// cannot cross P/Invoke). Two encoders is a standing invitation to drift, and
+// drift here is not a crash — it is a subscriber decoding a publisher's bytes
+// into the wrong fields, silently, on a production bus.
+//
+// So the two are compared byte for byte over a corpus of schemas, on every CI
+// run. A single differing byte fails, and the failure names the fixture and the
+// row.
+//
+// ── Why this test links arrow-bridge and the component does not ─────────────
+// `fletcher-c-abi` must never link `arrow-bridge`: that dependency would pull
+// Arrow C++ into the shipped per-RID native asset, which is most of the reason
+// the codec was written on nanoarrow in the first place. The TEST links it,
+// because the oracle has to be the real thing rather than a transcription of it.
+// A test-only dependency is not a shipped one, and CI's packed-size check
+// measures the packaged shim rather than this binary.
+#include <arrow/api.h>
+#include <arrow/c/bridge.h>
+#include <gtest/gtest.h>
+
+#include <cstdint>
+#include <fletcher/arrow_bridge/codec.hpp>
+#include <fletcher/core/status.hpp>
+#include <fletcher/core/write_buffer.hpp>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "../src/nanoarrow_codec.hpp"
+
+namespace {
+
+using fletcher::abi::BoundRows;
+using fletcher::abi::NanoarrowCodec;
+
+arrow::MemoryPool* Pool() { return arrow::default_memory_pool(); }
+
+/// Finish a builder or fail loudly. A fixture that cannot be built is a broken
+/// test rather than a failed comparison, and the two should not look alike.
+std::shared_ptr<arrow::Array> Finish(arrow::ArrayBuilder& builder) {
+    std::shared_ptr<arrow::Array> array;
+    const arrow::Status status = builder.Finish(&array);
+    EXPECT_TRUE(status.ok()) << "fixture builder failed: " << status.ToString();
+    return array;
+}
+
+/// A fixture: a name and the rows to encode, with their schema.
+struct Fixture {
+    std::string name;
+    std::shared_ptr<arrow::RecordBatch> batch;
+};
+
+/// The mapping's scalars, each in three rows: a plain value, the extreme where a
+/// wrong cast or a wrong width would show, and a null.
+///
+/// Nulls are half the point of the corpus. A null takes a different path through
+/// both encoders — a bit in a bitfield, and no payload at all — so a corpus of
+/// all-set rows would compare the two encoders on half their code.
+Fixture Scalars() {
+    arrow::BooleanBuilder flag;
+    // One at a time: AppendValues on a BooleanBuilder is ambiguous for a braced
+    // list, which reads as a compiler complaint but is really the vector<bool>
+    // specialisation showing through.
+    EXPECT_TRUE(flag.Append(true).ok());
+    EXPECT_TRUE(flag.Append(false).ok());
+    EXPECT_TRUE(flag.AppendNull().ok());
+
+    arrow::Int32Builder i32;
+    EXPECT_TRUE(i32.AppendValues({1, std::numeric_limits<int32_t>::min()}).ok());
+    EXPECT_TRUE(i32.AppendNull().ok());
+
+    arrow::Int64Builder i64;
+    EXPECT_TRUE(i64.AppendValues({1, std::numeric_limits<int64_t>::min()}).ok());
+    EXPECT_TRUE(i64.AppendNull().ok());
+
+    arrow::UInt32Builder u32;
+    EXPECT_TRUE(u32.AppendValues({1, std::numeric_limits<uint32_t>::max()}).ok());
+    EXPECT_TRUE(u32.AppendNull().ok());
+
+    arrow::UInt64Builder u64;
+    EXPECT_TRUE(u64.AppendValues({1, std::numeric_limits<uint64_t>::max()}).ok());
+    EXPECT_TRUE(u64.AppendNull().ok());
+
+    arrow::FloatBuilder f32;
+    EXPECT_TRUE(f32.AppendValues({1.5F, std::numeric_limits<float>::max()}).ok());
+    EXPECT_TRUE(f32.AppendNull().ok());
+
+    arrow::DoubleBuilder f64;
+    EXPECT_TRUE(f64.AppendValues({1.5, std::numeric_limits<double>::max()}).ok());
+    EXPECT_TRUE(f64.AppendNull().ok());
+
+    // Non-ASCII on purpose: a boundary that counted characters rather than bytes
+    // reads identically to one that counted bytes until a fixture like this.
+    arrow::StringBuilder text;
+    EXPECT_TRUE(text.Append("bl\xc3\xa5\x62\xc3\xa6r").ok());
+    EXPECT_TRUE(text.Append("").ok());  // the classic off-by-one
+    EXPECT_TRUE(text.AppendNull().ok());
+
+    arrow::BinaryBuilder blob;
+    const uint8_t bytes[] = {0x00, 0xFF, 0x7F};
+    EXPECT_TRUE(blob.Append(bytes, 3).ok());
+    EXPECT_TRUE(blob.Append(bytes, 0).ok());
+    EXPECT_TRUE(blob.AppendNull().ok());
+
+    auto schema = arrow::schema({
+        arrow::field("flag", arrow::boolean()),
+        arrow::field("i32", arrow::int32()),
+        arrow::field("i64", arrow::int64()),
+        arrow::field("u32", arrow::uint32()),
+        arrow::field("u64", arrow::uint64()),
+        arrow::field("f32", arrow::float32()),
+        arrow::field("f64", arrow::float64()),
+        arrow::field("text", arrow::utf8()),
+        arrow::field("blob", arrow::binary()),
+    });
+    return {"scalars", arrow::RecordBatch::Make(
+                           schema, 3,
+                           {Finish(flag), Finish(i32), Finish(i64), Finish(u32), Finish(u64),
+                            Finish(f32), Finish(f64), Finish(text), Finish(blob)})};
+}
+
+/// The flattened well-known types: google.protobuf.Timestamp and .Duration both
+/// map to a nanosecond int64 with a temporal type on top.
+Fixture Temporal() {
+    auto ts_type = arrow::timestamp(arrow::TimeUnit::NANO);
+    auto dur_type = arrow::duration(arrow::TimeUnit::NANO);
+
+    arrow::TimestampBuilder at(ts_type, Pool());
+    EXPECT_TRUE(at.AppendValues({0, 1789000000000000000LL}).ok());
+    EXPECT_TRUE(at.AppendNull().ok());
+
+    arrow::DurationBuilder took(dur_type, Pool());
+    EXPECT_TRUE(took.AppendValues({0, -1}).ok());
+    EXPECT_TRUE(took.AppendNull().ok());
+
+    auto schema = arrow::schema({arrow::field("at", ts_type), arrow::field("took", dur_type)});
+    return {"temporal", arrow::RecordBatch::Make(schema, 3, {Finish(at), Finish(took)})};
+}
+
+/// A nested message: set, present-but-all-null, and null. The middle row is the
+/// one that separates "the struct is absent" from "the struct is here and its
+/// fields are absent" — two different byte sequences and two different meanings.
+Fixture Nested() {
+    auto inner =
+        arrow::struct_({arrow::field("id", arrow::int32()), arrow::field("label", arrow::utf8())});
+
+    arrow::StructBuilder who(
+        inner, Pool(),
+        {std::make_shared<arrow::Int32Builder>(), std::make_shared<arrow::StringBuilder>()});
+    auto* id = static_cast<arrow::Int32Builder*>(who.field_builder(0));
+    auto* label = static_cast<arrow::StringBuilder*>(who.field_builder(1));
+
+    EXPECT_TRUE(who.Append().ok());
+    EXPECT_TRUE(id->Append(7).ok());
+    EXPECT_TRUE(label->Append("a").ok());
+
+    EXPECT_TRUE(who.Append().ok());
+    EXPECT_TRUE(id->AppendNull().ok());
+    EXPECT_TRUE(label->AppendNull().ok());
+
+    EXPECT_TRUE(who.AppendNull().ok());
+
+    auto schema = arrow::schema({arrow::field("who", inner)});
+    return {"nested", arrow::RecordBatch::Make(schema, 3, {Finish(who)})};
+}
+
+/// The three composite constructs the mapping produces: repeated scalar,
+/// repeated message, and a map. Each carries a populated row, an EMPTY row and a
+/// null row, because empty and null are different bytes and a count prefix is
+/// exactly where that goes wrong.
+Fixture Composites() {
+    arrow::ListBuilder readings(Pool(), std::make_shared<arrow::Int32Builder>());
+    auto* reading = static_cast<arrow::Int32Builder*>(readings.value_builder());
+    EXPECT_TRUE(readings.Append().ok());
+    EXPECT_TRUE(reading->AppendValues({1, 2, 3}).ok());
+    EXPECT_TRUE(readings.Append().ok());
+    EXPECT_TRUE(readings.AppendNull().ok());
+
+    auto point_type = arrow::struct_({arrow::field("x", arrow::int32())});
+    auto point_builder = std::make_shared<arrow::StructBuilder>(
+        point_type, Pool(),
+        std::vector<std::shared_ptr<arrow::ArrayBuilder>>{std::make_shared<arrow::Int32Builder>()});
+    arrow::ListBuilder points(Pool(), point_builder);
+    auto* point = static_cast<arrow::StructBuilder*>(points.value_builder());
+    auto* x = static_cast<arrow::Int32Builder*>(point->field_builder(0));
+    EXPECT_TRUE(points.Append().ok());
+    EXPECT_TRUE(point->Append().ok());
+    EXPECT_TRUE(x->Append(1).ok());
+    EXPECT_TRUE(point->AppendNull().ok());  // a null ELEMENT inside a list
+    EXPECT_TRUE(points.Append().ok());
+    EXPECT_TRUE(points.AppendNull().ok());
+
+    arrow::MapBuilder tags(Pool(), std::make_shared<arrow::StringBuilder>(),
+                           std::make_shared<arrow::Int32Builder>());
+    auto* key = static_cast<arrow::StringBuilder*>(tags.key_builder());
+    auto* value = static_cast<arrow::Int32Builder*>(tags.item_builder());
+    EXPECT_TRUE(tags.Append().ok());
+    EXPECT_TRUE(key->Append("a").ok());
+    EXPECT_TRUE(value->Append(1).ok());
+    EXPECT_TRUE(key->Append("b").ok());
+    EXPECT_TRUE(value->AppendNull().ok());  // a null VALUE, which has its own bitfield
+    EXPECT_TRUE(tags.Append().ok());
+    EXPECT_TRUE(tags.AppendNull().ok());
+
+    auto schema = arrow::schema({
+        arrow::field("readings", arrow::list(arrow::int32())),
+        arrow::field("points", arrow::list(point_type)),
+        arrow::field("tags", arrow::map(arrow::utf8(), arrow::int32())),
+    });
+    return {"composites",
+            arrow::RecordBatch::Make(schema, 3, {Finish(readings), Finish(points), Finish(tags)})};
+}
+
+/// The fixed-size list: the one composite whose element count lives in the
+/// SCHEMA rather than on the wire, so its framing has no COUNT prefix at all.
+///
+/// It earns its own fixture because that asymmetry is the easy thing to get
+/// wrong in both directions at once - an encoder that writes the count and a
+/// decoder that reads it agree with each other and disagree with the format,
+/// and only the oracle notices. Rows: populated, one with a null ELEMENT, and a
+/// null list.
+Fixture FixedSize() {
+    arrow::FixedSizeListBuilder corner(Pool(), std::make_shared<arrow::Int32Builder>(), 3);
+    auto* value = static_cast<arrow::Int32Builder*>(corner.value_builder());
+
+    EXPECT_TRUE(corner.Append().ok());
+    EXPECT_TRUE(value->AppendValues({1, 2, 3}).ok());
+
+    EXPECT_TRUE(corner.Append().ok());
+    EXPECT_TRUE(value->Append(4).ok());
+    EXPECT_TRUE(value->AppendNull().ok());
+    EXPECT_TRUE(value->Append(6).ok());
+
+    EXPECT_TRUE(corner.AppendNull().ok());
+
+    auto schema =
+        arrow::schema({arrow::field("corner", arrow::fixed_size_list(arrow::int32(), 3))});
+    return {"fixed_size", arrow::RecordBatch::Make(schema, 3, {Finish(corner)})};
+}
+
+std::vector<Fixture> Corpus() {
+    return {Scalars(), Temporal(), Nested(), Composites(), FixedSize()};
+}
+
+/// The oracle: `arrow-bridge`'s codec, over the same row.
+std::vector<uint8_t> OracleEncode(const arrow::RecordBatch& batch, int64_t row) {
+    fletcher::Codec codec(batch.schema());
+    fletcher::ArrowRow values;
+    values.reserve(static_cast<size_t>(batch.num_columns()));
+    for (int c = 0; c < batch.num_columns(); ++c) {
+        auto scalar = batch.column(c)->GetScalar(row);
+        EXPECT_TRUE(scalar.ok()) << scalar.status().ToString();
+        values.push_back(scalar.ValueOrDie());
+    }
+    return codec.EncodeRow(values);
+}
+
+/// The subject: the nanoarrow codec, over the batch exported across the C Data
+/// Interface — which is exactly how a binding hands it over.
+std::vector<uint8_t> SubjectEncode(const arrow::RecordBatch& batch, int64_t row) {
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    const arrow::Status exported = arrow::ExportRecordBatch(batch, &c_array, &c_schema);
+    EXPECT_TRUE(exported.ok()) << exported.ToString();
+
+    std::vector<uint8_t> bytes;
+    {
+        NanoarrowCodec codec(c_schema);
+        BoundRows rows(codec, c_array);
+        fletcher::VectorWriteBuffer buffer;
+        codec.EncodeRow(rows, row, buffer);
+        bytes = buffer.Finish();
+    }
+
+    // The borrow rule, standing guard: the codec never consumed the export, so
+    // both structures are still ours to release. Had BoundRows called the
+    // array's release callback, this would be a double free.
+    if (c_array.release != nullptr) c_array.release(&c_array);
+    if (c_schema.release != nullptr) c_schema.release(&c_schema);
+    return bytes;
+}
+
+std::string Hex(const std::vector<uint8_t>& bytes) {
+    static const char* kDigits = "0123456789abcdef";
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (uint8_t b : bytes) {
+        out.push_back(kDigits[b >> 4]);
+        out.push_back(kDigits[b & 0x0F]);
+    }
+    return out;
+}
+
+TEST(NanoarrowCodec, ByteIdenticalToArrowBridge) {
+    const std::vector<Fixture> corpus = Corpus();
+    ASSERT_FALSE(corpus.empty()) << "the corpus is empty, so this row proves nothing";
+
+    int compared = 0;
+    for (const Fixture& fixture : corpus) {
+        // A fixture whose builders failed would have zero rows, and the loop
+        // below would then compare nothing and pass. The vacuity is the thing to
+        // guard: a green row that ran no comparison looks exactly like a green
+        // row that ran every one.
+        ASSERT_GT(fixture.batch->num_rows(), 0) << "fixture '" << fixture.name << "' built no rows";
+
+        for (int64_t row = 0; row < fixture.batch->num_rows(); ++row) {
+            const std::vector<uint8_t> expected = OracleEncode(*fixture.batch, row);
+            const std::vector<uint8_t> actual = SubjectEncode(*fixture.batch, row);
+
+            ASSERT_FALSE(expected.empty())
+                << "fixture '" << fixture.name << "', row " << row
+                << ": the ORACLE produced no bytes, so equality here would mean nothing";
+            ++compared;
+
+            // Compared as hex so a failure prints the bytes rather than a
+            // container's address, and the first differing nibble is findable.
+            ASSERT_EQ(Hex(expected), Hex(actual))
+                << "fixture '" << fixture.name << "', row " << row
+                << ": the nanoarrow codec and arrow-bridge's codec disagree about the wire "
+                   "format. One wire format means these two are never allowed to differ by a "
+                   "byte - a difference here is a subscriber decoding a publisher's bytes into "
+                   "the wrong fields, silently.";
+        }
+    }
+
+    // The corpus is the coverage claim, so its size is stated rather than
+    // implied: five fixtures of three rows each.
+    EXPECT_EQ(compared, 15) << "the corpus changed size; update this count deliberately";
+}
+
+/// The borrow rule, as its own row rather than as a side effect of the one above.
+///
+/// `fl_rows_bind` promises the array is borrowed and never consumed: that is what
+/// lets ONE export serve N publishes. If the codec ever called the release
+/// callback, the pointer would be nulled and this row says so directly.
+TEST(NanoarrowCodec, BindBorrowsTheArrayAndNeverConsumesIt) {
+    const Fixture fixture = Scalars();
+
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    const arrow::Status exported = arrow::ExportRecordBatch(*fixture.batch, &c_array, &c_schema);
+    ASSERT_TRUE(exported.ok()) << exported.ToString();
+
+    {
+        NanoarrowCodec codec(c_schema);
+        BoundRows rows(codec, c_array);
+        fletcher::VectorWriteBuffer buffer;
+        for (int64_t row = 0; row < fixture.batch->num_rows(); ++row) {
+            codec.EncodeRow(rows, row, buffer);
+        }
+        EXPECT_NE(c_array.release, nullptr)
+            << "the array was released while still bound - one export must serve N publishes";
+    }
+
+    EXPECT_NE(c_array.release, nullptr)
+        << "unbinding released the caller's array; the ABI promises the caller releases it";
+    EXPECT_NE(c_schema.release, nullptr) << "the schema export was consumed; it is deep-copied";
+
+    c_array.release(&c_array);
+    c_schema.release(&c_schema);
+}
+
+/// Refusals name the field. A schema the wire format cannot carry is refused at
+/// OPEN — before a single row is bound — and the message says which field, because
+/// "dictionary fields are not supported" without a field name costs its reader an
+/// afternoon on a wide schema.
+TEST(NanoarrowCodec, RefusesAnUnsupportedTypeNamingTheField) {
+    auto schema =
+        arrow::schema({arrow::field("id", arrow::int32()),
+                       arrow::field("category", arrow::dictionary(arrow::int32(), arrow::utf8()))});
+    auto batch = arrow::RecordBatch::Make(
+        schema, 0,
+        {arrow::MakeArrayOfNull(arrow::int32(), 0).ValueOrDie(),
+         arrow::MakeArrayOfNull(arrow::dictionary(arrow::int32(), arrow::utf8()), 0).ValueOrDie()});
+
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    ASSERT_TRUE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    try {
+        NanoarrowCodec codec(c_schema);
+        ADD_FAILURE() << "a dictionary column was accepted; the wire format does not carry one";
+    } catch (const fletcher::PubSubError& e) {
+        EXPECT_EQ(e.status(), fletcher::PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("category"), std::string::npos)
+            << "the refusal did not name the offending field: " << e.what();
+    }
+
+    c_array.release(&c_array);
+    c_schema.release(&c_schema);
+}
+
+// ---------------------------------------------------------------------------
+// BIND-2b — decode
+// ---------------------------------------------------------------------------
+
+/// Every row of a batch, encoded back to back into one buffer.
+///
+/// This is the shape `fl_decode_rows` is handed: N rows, no framing between
+/// them. The format is self-delimiting, so "where does row 2 begin" has exactly
+/// one answer and the decoder has to find it the same way the encoder placed it.
+std::vector<uint8_t> EncodeAllRows(const arrow::RecordBatch& batch) {
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    const arrow::Status exported = arrow::ExportRecordBatch(batch, &c_array, &c_schema);
+    EXPECT_TRUE(exported.ok()) << exported.ToString();
+
+    std::vector<uint8_t> bytes;
+    {
+        NanoarrowCodec codec(c_schema);
+        BoundRows rows(codec, c_array);
+        fletcher::VectorWriteBuffer buffer;
+        for (int64_t row = 0; row < batch.num_rows(); ++row) {
+            codec.EncodeRow(rows, row, buffer);
+        }
+        bytes = buffer.Finish();
+    }
+
+    if (c_array.release != nullptr) c_array.release(&c_array);
+    if (c_schema.release != nullptr) c_schema.release(&c_schema);
+    return bytes;
+}
+
+/// Decode is the inverse of encode, proven twice over per fixture.
+///
+/// The round trip runs through the C Data Interface at both ends, because that
+/// is the only way a binding ever touches this codec: the batch is exported,
+/// encoded, decoded into a FRESH array the test owns, re-encoded from that
+/// array, and imported back into Arrow C++ for a value comparison.
+TEST(NanoarrowCodec, DecodeIsTheInverseOfEncode) {
+    const std::vector<Fixture> corpus = Corpus();
+    ASSERT_FALSE(corpus.empty()) << "the corpus is empty, so this row proves nothing";
+
+    int compared = 0;
+    for (const Fixture& fixture : corpus) {
+        ASSERT_GT(fixture.batch->num_rows(), 0) << "fixture '" << fixture.name << "' built no rows";
+
+        const std::vector<uint8_t> encoded = EncodeAllRows(*fixture.batch);
+        ASSERT_FALSE(encoded.empty())
+            << "fixture '" << fixture.name
+            << "' encoded to nothing, so decoding it back would prove nothing";
+
+        ArrowSchema c_schema = {};
+        ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+
+        NanoarrowCodec codec(c_schema);
+
+        ArrowArray decoded = {};
+        codec.DecodeRows(encoded.data(), encoded.size(), fixture.batch->num_rows(), &decoded);
+        ASSERT_NE(decoded.release, nullptr)
+            << "fixture '" << fixture.name << "': decode produced no array to own";
+        ASSERT_EQ(decoded.length, fixture.batch->num_rows())
+            << "fixture '" << fixture.name << "': decode produced the wrong number of rows";
+
+        // (1) The BYTES come back. Re-encoding what decode produced must
+        // reproduce the buffer decode was given, byte for byte.
+        std::vector<uint8_t> reencoded;
+        {
+            BoundRows rows(codec, decoded);
+            fletcher::VectorWriteBuffer buffer;
+            for (int64_t row = 0; row < decoded.length; ++row) {
+                codec.EncodeRow(rows, row, buffer);
+            }
+            reencoded = buffer.Finish();
+        }
+        EXPECT_EQ(Hex(encoded), Hex(reencoded))
+            << "fixture '" << fixture.name
+            << "': re-encoding the decoded rows did not reproduce the wire bytes, so decode and "
+               "encode disagree about the format";
+
+        // (2) The VALUES come back. `ImportRecordBatch` consumes both structures,
+        // which is also the ownership claim being tested: the array decode handed
+        // over is a complete, self-owning export and Arrow can take it.
+        auto imported = arrow::ImportRecordBatch(&decoded, &c_schema);
+        ASSERT_TRUE(imported.ok())
+            << "fixture '" << fixture.name
+            << "': the decoded array was not importable: " << imported.status().ToString();
+        const std::shared_ptr<arrow::RecordBatch> actual = imported.ValueOrDie();
+        EXPECT_TRUE(actual->Equals(*fixture.batch))
+            << "fixture '" << fixture.name << "': the values did not survive the round trip.\n"
+            << "expected:\n"
+            << fixture.batch->ToString() << "\nactual:\n"
+            << actual->ToString();
+        ++compared;
+    }
+
+    EXPECT_EQ(compared, 5) << "the corpus changed size; update this count deliberately";
+}
+
+/// Decode refuses malformed bytes THROUGH `PositionalReader`, never around it.
+///
+/// This is the whole of BIND-2's "malformed-input parity with HARD-1..7"
+/// acceptance, and it is stated as a property rather than as a list. The HARD
+/// rounds hardened one reader; the binding inherits that hardening only for as
+/// long as nothing in the decoder reads a length, a count or a bitfield by hand.
+/// So: mutate the buffer everywhere, and require every refusal to carry the
+/// READER's prefix. A decoder that grew its own bounds check would announce
+/// itself here as a message that does not start with "PositionalReader:".
+///
+/// The sweep is a four-byte 0xFF window walked across a valid encoding, which is
+/// the cheapest way to hit every count, every length prefix and every bitfield in
+/// the corpus's most structural fixture without naming a single byte offset.
+TEST(NanoarrowCodec, DecodeRefusalsComeFromTheReader) {
+    const Fixture fixture = Composites();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+    ASSERT_GT(valid.size(), 4U) << "the fixture encoded to too little to mutate meaningfully";
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    int refused = 0;
+    for (size_t i = 0; i + 4 <= valid.size(); ++i) {
+        std::vector<uint8_t> corrupt = valid;
+        for (size_t b = 0; b < 4; ++b) corrupt[i + b] = 0xFF;
+
+        ArrowArray decoded = {};
+        try {
+            codec.DecodeRows(corrupt.data(), corrupt.size(), fixture.batch->num_rows(), &decoded);
+            // A mutation the format happens to accept is fine - the bytes are
+            // still a well-formed encoding of different values. Release and move
+            // on; the guard below insists the sweep found SOME refusals.
+            if (decoded.release != nullptr) decoded.release(&decoded);
+        } catch (const std::invalid_argument& e) {
+            ++refused;
+            EXPECT_EQ(std::string(e.what()).rfind("PositionalReader:", 0), 0U)
+                << "a refusal at mutation offset " << i
+                << " did not come from the reader, so the decoder is checking bounds of its own "
+                   "and the HARD-1..7 hardening no longer covers the binding: "
+                << e.what();
+            EXPECT_EQ(decoded.release, nullptr)
+                << "a failed decode left something in the caller's ArrowArray";
+        } catch (const fletcher::PubSubError& e) {
+            ADD_FAILURE() << "malformed input at offset " << i
+                          << " produced a codec-level refusal rather than a reader one. Malformed "
+                             "BYTES are the reader's to refuse; a PubSubError here means the "
+                             "decoder decided something the reader should have: "
+                          << e.what();
+        }
+    }
+
+    // Vacuity guard. A sweep that refused nothing would pass every assertion
+    // above while proving nothing at all.
+    EXPECT_GT(refused, 0)
+        << "no mutation was refused, so this row asserted nothing about malformed input";
+
+    c_schema.release(&c_schema);
+}
+
+/// A truncated buffer is refused at every truncation point, and a buffer with
+/// anything left over is refused too.
+///
+/// The prefix sweep is deterministic rather than probabilistic: the null
+/// bitfield sits at the front and is untouched, so every field the full row read
+/// a shorter one must also read, and it must run out. The trailing-byte half is
+/// the batch-level `VerifyFullyConsumed` - a count and a buffer that disagree,
+/// which is exactly how a framing bug reaches production silently.
+TEST(NanoarrowCodec, DecodeRefusesTruncatedAndOverlongBuffers) {
+    const Fixture fixture = Nested();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+    ASSERT_FALSE(valid.empty());
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    for (size_t prefix = 0; prefix < valid.size(); ++prefix) {
+        ArrowArray decoded = {};
+        EXPECT_THROW(codec.DecodeRows(valid.data(), prefix, fixture.batch->num_rows(), &decoded),
+                     std::invalid_argument)
+            << "a " << prefix << "-byte prefix of a " << valid.size()
+            << "-byte encoding was accepted";
+        EXPECT_EQ(decoded.release, nullptr) << "a failed decode handed back a partial array";
+    }
+
+    {
+        std::vector<uint8_t> overlong = valid;
+        overlong.push_back(0x00);
+        ArrowArray decoded = {};
+        EXPECT_THROW(
+            codec.DecodeRows(overlong.data(), overlong.size(), fixture.batch->num_rows(), &decoded),
+            std::invalid_argument)
+            << "a trailing byte was ignored; the count and the buffer are allowed to disagree";
+        EXPECT_EQ(decoded.release, nullptr);
+    }
+
+    // The control: the unmutated buffer decodes. Without it, every row above
+    // would still pass if DecodeRows simply always threw.
+    {
+        ArrowArray decoded = {};
+        ASSERT_NO_THROW(
+            codec.DecodeRows(valid.data(), valid.size(), fixture.batch->num_rows(), &decoded));
+        ASSERT_NE(decoded.release, nullptr);
+        decoded.release(&decoded);
+    }
+
+    c_schema.release(&c_schema);
+}
+
+/// A map with a composite key is refused at OPEN, not half-decoded at row 1.
+///
+/// The encoder would happily write one; the decoder cannot read one back in a
+/// single pass, because a map's keys all arrive before its values and holding a
+/// half-built struct aside until its value shows up is a second decoder. The
+/// proto mapping never produces such a key, so the two halves are kept honest by
+/// refusing it where the refusal is cheap and nameable.
+TEST(NanoarrowCodec, RefusesAMapWithACompositeKeyNamingTheField) {
+    auto key_type = arrow::struct_({arrow::field("part", arrow::int32())});
+    auto map_type = arrow::map(key_type, arrow::int32());
+    auto schema = arrow::schema({arrow::field("lookup", map_type)});
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*schema, &c_schema).ok());
+
+    try {
+        NanoarrowCodec codec(c_schema);
+        ADD_FAILURE() << "a composite map key was accepted; decode cannot read one back";
+    } catch (const fletcher::PubSubError& e) {
+        EXPECT_EQ(e.status(), fletcher::PubSubStatus::kInvalidArgument);
+        EXPECT_NE(std::string(e.what()).find("lookup"), std::string::npos)
+            << "the refusal did not name the offending field: " << e.what();
+    }
+
+    c_schema.release(&c_schema);
+}
+
+/// Decode's argument checks, which are the binding's and not the reader's: a
+/// null destination, a negative count, and a null pointer that claims a length.
+TEST(NanoarrowCodec, DecodeRejectsImpossibleArguments) {
+    const Fixture fixture = Nested();
+    const std::vector<uint8_t> valid = EncodeAllRows(*fixture.batch);
+
+    ArrowSchema c_schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*fixture.batch->schema(), &c_schema).ok());
+    NanoarrowCodec codec(c_schema);
+
+    ArrowArray decoded = {};
+    EXPECT_THROW(codec.DecodeRows(valid.data(), valid.size(), 1, nullptr), std::invalid_argument);
+    EXPECT_THROW(codec.DecodeRows(valid.data(), valid.size(), -1, &decoded), std::invalid_argument);
+    EXPECT_THROW(codec.DecodeRows(nullptr, valid.size(), 1, &decoded), std::invalid_argument);
+    EXPECT_EQ(decoded.release, nullptr);
+
+    // Zero rows out of zero bytes is not an error: it is the empty batch, and a
+    // subscriber that receives one should get an empty array rather than a throw.
+    ArrowArray empty = {};
+    ASSERT_NO_THROW(codec.DecodeRows(nullptr, 0, 0, &empty));
+    ASSERT_NE(empty.release, nullptr);
+    EXPECT_EQ(empty.length, 0);
+    empty.release(&empty);
+
+    c_schema.release(&c_schema);
+}
+
+}  // namespace

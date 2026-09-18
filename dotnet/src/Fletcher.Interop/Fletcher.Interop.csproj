@@ -1,0 +1,24 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The P/Invoke surface over the binding ABI, and the ONLY package in the
+       round that carries native assets: one shim per RID under
+       runtimes/<rid>/native/. Keeping them in one package is what isolates the
+       RID matrix, the packed-size budget and the LGPL relinking question to a
+       single artifact (D-BIND-13). -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher.Interop</PackageId>
+    <RootNamespace>Eiva.Fletcher.Interop</RootNamespace>
+    <Description>P/Invoke surface and native shim for Fletcher. Referenced by Eiva.Fletcher; not intended to be used directly.</Description>
+    <PackageTags>fletcher;arrow;interop;native</PackageTags>
+  </PropertyGroup>
+
+  <!-- BIND-0: the package is empty on purpose. The declarations arrive with the
+       header they mirror (BIND-1 specifies it, BIND-3 binds it), and the native
+       assets arrive with the packaging work in BIND-9. What exists today is the
+       lane: `ci.dotnet.yml` restores, builds, tests and packs this project on
+       both platforms before there is anything in it to get wrong. -->
+
+</Project>

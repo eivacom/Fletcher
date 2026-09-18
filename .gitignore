@@ -29,3 +29,16 @@
 # Log files
 *.log
 debug.log
+
+# .NET build output (dotnet/). Scoped to that directory rather than a bare
+# **/bin/: protoc/npm/bin/protoc-gen-fletcher.js is a tracked launcher script,
+# and a blanket rule would quietly stop tracking it.
+#
+# packages.lock.json is deliberately NOT ignored — unlike package-lock.json
+# above, it is what makes CI's locked-mode restore a guard rather than a
+# formality, so it belongs in the tree.
+dotnet/**/bin/
+dotnet/**/obj/
+dotnet/**/*.user
+dotnet/**/TestResults/
+dotnet/artifacts/

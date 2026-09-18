@@ -1,0 +1,16 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+
+     The XML solution format, not the legacy .sln: a .sln cannot carry a comment,
+     and every tracked file in this repository carries a licence header.
+-->
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Fletcher.Interop/Fletcher.Interop.csproj" />
+    <Project Path="src/Fletcher/Fletcher.csproj" />
+    <Project Path="src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Fletcher.Tests/Fletcher.Tests.csproj" />
+  </Folder>
+</Solution>
