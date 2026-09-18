@@ -286,6 +286,155 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
     <participant profile_name="fletcher_participant">
       <rtps><name>FletcherParticipant</name></rtps>
     </participant>
+    <!-- newest value only, no retransmission: high-rate sensor streams where a lost sample is
+         replaced by the next one -->
+    <data_writer profile_name="fire_and_forget">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fire_and_forget">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- the last value, replayed to a late subscriber: state, configuration, status -->
+    <data_writer profile_name="store_latest">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="store_latest">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- the last 25 values, replayed to a late subscriber: track tails, recent events -->
+    <data_writer profile_name="store_history">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="store_history">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- every sample, in order: commands, events, logs. A reader that stops taking samples stalls
+         the publisher; a crashed peer frees it when its participant lease expires (20 s by
+         default); the slowest reader can hold the publisher back once 25 samples are in flight -->
+    <data_writer profile_name="lossless">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times><heartbeat_period><sec>0</sec><nanosec>20000000</nanosec></heartbeat_period></times>
+    </data_writer>
+    <data_reader profile_name="lossless">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
     <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
         <durability><kind>VOLATILE</kind></durability>
@@ -327,6 +476,28 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
   </profiles>
 </dds>
 ```
+
+#### Built-in profiles
+
+Four named pairs sit beside `default_writer`/`default_reader`, one `<data_writer>` and one
+`<data_reader>` profile sharing each name, so the same name selects a matched pair by construction
+on both `CreateTopic` and `Subscribe` — the writer and reader name maps in Fast DDS's registry are
+separate, so nothing stops the same name existing as both. Pool per endpoint is `depth` (KEEP_LAST)
+or `max_samples` (KEEP_ALL) slots of about (bound + a small header) each, at the 64 KiB default
+bound:
+
+| Profile | Writer / reader QoS | For | Pool per endpoint | Cost |
+|---|---|---|---|---|
+| `fire_and_forget` | BEST_EFFORT, VOLATILE, KEEP_LAST 1 | high-rate streams where a lost sample is replaced by the next one | 2 slots, ~130 KiB | loses samples silently — no retransmission, nothing replayed |
+| `store_latest` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1 | state, configuration, status: the last value, replayed to a late subscriber | 2 slots, ~130 KiB | holds shared memory for replay |
+| `store_history` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25 | track tails, recent events: the last 25 values, replayed to a late subscriber | 26 slots, ~1.7 MB | holds shared memory for replay |
+| `lossless` | RELIABLE, VOLATILE, KEEP_ALL, infinite `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks every future `Publish` until it (or its participant's 20 s lease) goes away |
+| `default_writer` / `default_reader` | RELIABLE, VOLATILE, KEEP_LAST 25 | the built-in "stream" semantics, what a topic with no profile runs on | 26 slots, ~1.7 MB | a reader that falls more than 25 samples behind loses the oldest |
+
+`profile` only picks each endpoint's own QoS; it is not an agreement between the two. Mixing pairs
+is legal but subject to Fast DDS's RxO rules (see [Per-topic
+options](#per-topic-options)) — a BEST_EFFORT reader matches a RELIABLE writer (e.g. `lossless`
+writer with `fire_and_forget` reader), but a RELIABLE reader never matches a BEST_EFFORT writer.
 
 #### Refused at construction
 
@@ -688,130 +859,32 @@ those two directly.
 | `Subscribe` (with options) | selects a `<data_reader>` profile by name, resolved (and refused, if unknown) synchronously at `Subscribe` time | always `kInvalidArgument` — a subscription follows whatever bound its publisher announces, never one of its own |
 | empty options | exactly the option-less call | exactly the option-less call |
 
-Two matched profile pairs, alongside the mandatory anchor and the two default profiles (restated
-from [`FastDDSPubSubProvider::DefaultProfilesDocument()`](#the-published-starting-point) — every
-call below with no options at all runs on these two):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-  <profiles>
-    <participant profile_name="fletcher_participant">
-      <rtps><name>FletcherParticipant</name></rtps>
-    </participant>
-
-    <!-- "fire_and_forget" / "fire_and_forget_reader": matched pair, newest value only. -->
-    <data_writer profile_name="fire_and_forget">
-      <qos>
-        <durability><kind>VOLATILE</kind></durability>
-        <reliability><kind>BEST_EFFORT</kind></reliability>
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_LAST</kind><depth>1</depth></historyQos>
-      </topic>
-    </data_writer>
-    <data_reader profile_name="fire_and_forget_reader">
-      <qos>
-        <durability><kind>VOLATILE</kind></durability>
-        <reliability><kind>BEST_EFFORT</kind></reliability>
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_LAST</kind><depth>1</depth></historyQos>
-      </topic>
-    </data_reader>
-
-    <!-- "durable" / "durable_reader": matched pair, replayed to a late subscriber. -->
-    <data_writer profile_name="durable">
-      <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
-        <reliability><kind>RELIABLE</kind></reliability>
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_LAST</kind><depth>100</depth></historyQos>
-        <resourceLimitsQos>
-          <max_samples>100</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-          <allocated_samples>100</allocated_samples>
-        </resourceLimitsQos>
-      </topic>
-    </data_writer>
-    <data_reader profile_name="durable_reader">
-      <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
-        <reliability><kind>RELIABLE</kind></reliability>
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_LAST</kind><depth>100</depth></historyQos>
-        <resourceLimitsQos>
-          <max_samples>100</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-          <allocated_samples>100</allocated_samples>
-        </resourceLimitsQos>
-      </topic>
-    </data_reader>
-
-    <!-- everything with no options: default_writer / default_reader. -->
-    <data_writer profile_name="default_writer" is_default_profile="true">
-      <qos>
-        <durability><kind>VOLATILE</kind></durability>
-        <reliability>
-          <kind>RELIABLE</kind>
-        </reliability>
-      </qos>
-      <topic>
-        <historyQos>
-          <kind>KEEP_LAST</kind>
-          <depth>25</depth>
-        </historyQos>
-        <resourceLimitsQos>
-          <max_samples>25</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>25</max_samples_per_instance>
-          <allocated_samples>25</allocated_samples>
-        </resourceLimitsQos>
-      </topic>
-    </data_writer>
-    <data_reader profile_name="default_reader" is_default_profile="true">
-      <qos>
-        <durability><kind>VOLATILE</kind></durability>
-        <reliability><kind>RELIABLE</kind></reliability>
-      </qos>
-      <topic>
-        <historyQos>
-          <kind>KEEP_LAST</kind>
-          <depth>25</depth>
-        </historyQos>
-        <resourceLimitsQos>
-          <max_samples>25</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>25</max_samples_per_instance>
-          <allocated_samples>25</allocated_samples>
-        </resourceLimitsQos>
-      </topic>
-    </data_reader>
-  </profiles>
-</dds>
-```
+Every one of the built-in profiles (see [Built-in profiles](#built-in-profiles)) is reached this
+way, from `ProviderConfig{}` alone — no document of your own:
 
 ```cpp
+auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>(fletcher::ProviderConfig{});
 fletcher::Publisher pub(provider);
 fletcher::Subscriber sub(provider);
 
 // Matched BEST_EFFORT pair: newest value only, no retransmission.
 pub.CreateTopic({"nav", "attitude"}, schema, {.profile = "fire_and_forget"});
-sub.Subscribe({"nav", "attitude"}, callback, {.profile = "fire_and_forget_reader"});
+sub.Subscribe({"nav", "attitude"}, callback, {.profile = "fire_and_forget"});
 
-// Matched RELIABLE + TRANSIENT_LOCAL pair, with its own (larger) payload bound.
+// Matched RELIABLE + TRANSIENT_LOCAL pair, replayed to a late subscriber, with its own (larger)
+// payload bound.
 pub.CreateTopic({"nav", "route"}, schema,
-                {.profile = "durable", .max_payload_bytes = 256 * 1024});
-sub.Subscribe({"nav", "route"}, callback, {.profile = "durable_reader"});
+                {.profile = "store_history", .max_payload_bytes = 256 * 1024});
+sub.Subscribe({"nav", "route"}, callback, {.profile = "store_history"});
 
 // No options: runs on `default_writer` / `default_reader`.
 pub.CreateTopic({"nav", "status"}, schema);
 sub.Subscribe({"nav", "status"}, callback);
 ```
+
+To add your own names beside these, start from `FastDDSPubSubProvider::DefaultProfilesDocument()`
+and keep the pairs you use — a custom document replaces the built-in one entirely (see [A supplied
+profile is that endpoint's WHOLE quality-of-service](#a-supplied-profile-is-that-endpoints-whole-quality-of-service)).
 
 `profile` only picks the two endpoints' QoS independently; it is not an agreement between them.
 Fast DDS's own RxO (request-vs-offered) rules still decide whether the two match at all:

@@ -868,6 +868,81 @@ TEST(FastDdsConfig, DefaultProfilesDocumentIsTheBuiltInOne) {
     EXPECT_NE(from_header.find("is_default_profile=\"true\"", first + 1), std::string::npos);
 }
 
+// K.1's four named pairs resolve by name on BOTH sides, read straight out of the document text
+// (`get_data{writer,reader}_qos_from_xml(document, qos, name)`) the same way
+// DefaultProfileTranscriptionIsExact reads the default pair, rather than through the registry or a
+// provider: this is a claim about what the document SAYS, independent of resolution order.
+TEST(FastDdsConfig, BuiltInNamedProfilesResolveOnBothSides) {
+    XmlProbe probe(kDomainProbe);
+    ASSERT_TRUE(probe.ok());
+
+    const std::string document(internal::FletcherDefaultProfilesDocument());
+
+    struct Row {
+        const char* name;
+        ReliabilityQosPolicyKind reliability;
+        DurabilityQosPolicyKind durability;
+        HistoryQosPolicyKind history_kind;
+        int32_t depth;  // only meaningful for KEEP_LAST
+        int32_t max_samples;
+        int32_t max_instances;
+        int32_t max_samples_per_instance;
+        int32_t allocated_samples;
+    };
+
+    const std::vector<Row> rows = {
+        {"fire_and_forget", BEST_EFFORT_RELIABILITY_QOS, VOLATILE_DURABILITY_QOS,
+         KEEP_LAST_HISTORY_QOS, 1, 1, 1, 1, 1},
+        {"store_latest", RELIABLE_RELIABILITY_QOS, TRANSIENT_LOCAL_DURABILITY_QOS,
+         KEEP_LAST_HISTORY_QOS, 1, 1, 1, 1, 1},
+        {"store_history", RELIABLE_RELIABILITY_QOS, TRANSIENT_LOCAL_DURABILITY_QOS,
+         KEEP_LAST_HISTORY_QOS, 25, 25, 1, 25, 25},
+        {"lossless", RELIABLE_RELIABILITY_QOS, VOLATILE_DURABILITY_QOS, KEEP_ALL_HISTORY_QOS, 0, 25,
+         1, 25, 25},
+    };
+
+    for (const Row& row : rows) {
+        SCOPED_TRACE(row.name);
+
+        DataWriterQos writer;
+        ASSERT_EQ(probe.publisher().get_datawriter_qos_from_xml(document, writer, row.name),
+                  RETCODE_OK)
+            << "no <data_writer> profile named '" << row.name << "' in the built-in document";
+        EXPECT_EQ(writer.reliability().kind, row.reliability);
+        EXPECT_EQ(writer.durability().kind, row.durability);
+        EXPECT_EQ(writer.history().kind, row.history_kind);
+        if (row.history_kind == KEEP_LAST_HISTORY_QOS) EXPECT_EQ(writer.history().depth, row.depth);
+        EXPECT_EQ(writer.resource_limits().max_samples, row.max_samples);
+        EXPECT_EQ(writer.resource_limits().max_instances, row.max_instances);
+        EXPECT_EQ(writer.resource_limits().max_samples_per_instance, row.max_samples_per_instance);
+        EXPECT_EQ(writer.resource_limits().allocated_samples, row.allocated_samples);
+
+        DataReaderQos reader;
+        ASSERT_EQ(probe.subscriber().get_datareader_qos_from_xml(document, reader, row.name),
+                  RETCODE_OK)
+            << "no <data_reader> profile named '" << row.name << "' in the built-in document";
+        EXPECT_EQ(reader.reliability().kind, row.reliability);
+        EXPECT_EQ(reader.durability().kind, row.durability);
+        EXPECT_EQ(reader.history().kind, row.history_kind);
+        if (row.history_kind == KEEP_LAST_HISTORY_QOS) EXPECT_EQ(reader.history().depth, row.depth);
+        EXPECT_EQ(reader.resource_limits().max_samples, row.max_samples);
+        EXPECT_EQ(reader.resource_limits().max_instances, row.max_instances);
+        EXPECT_EQ(reader.resource_limits().max_samples_per_instance, row.max_samples_per_instance);
+        EXPECT_EQ(reader.resource_limits().allocated_samples, row.allocated_samples);
+
+        if (std::string(row.name) == "lossless") {
+            EXPECT_EQ(writer.reliability().max_blocking_time, c_TimeInfinite)
+                << "the lossless writer's max_blocking_time is not infinite";
+            EXPECT_EQ(writer.reliable_writer_qos().times.heartbeat_period, Duration_t(0, 20000000))
+                << "the lossless writer's heartbeat period is not 20 ms";
+        } else {
+            EXPECT_EQ(writer.reliable_writer_qos().times.heartbeat_period,
+                      DATAWRITER_QOS_DEFAULT.reliable_writer_qos().times.heartbeat_period)
+                << row.name << "'s writer heartbeat moved off Fast DDS's own default";
+        }
+    }
+}
+
 // DEBT-1's RENAME (owner ruling 2026-09-14) — an anchor-only, non-empty document used to resolve
 // to Fletcher's built-in QoS; the built-in floor under a non-empty document is gone now
 // (design rule 2), so it resolves to FAST DDS's OWN default instead, because this document

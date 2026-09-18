@@ -2965,3 +2965,155 @@ TEST(FastDDSPubSubProviderTest, OptionsMethodsAreRefusedFromInsideADelivery) {
 
     sub.Unsubscribe({"reentrant", "options"});
 }
+
+// ---------------------------------------------------------------------------
+// Tests — the built-in named profiles (K.1), behaviourally
+// ---------------------------------------------------------------------------
+
+// `store_latest` (TRANSIENT_LOCAL, KEEP_LAST 1): a subscriber that joins after three rows already
+// landed with no subscriber sees exactly the last one, then keeps receiving live rows — the
+// retained sample is replaced, not queued alongside.
+TEST(FastDDSPubSubProviderTest, StoreLatestReplaysTheLastValueToALateSubscriber) {
+    FastDDSPubSubProvider pub(ProviderConfig{});
+    pub.CreateTopicWithOptions({"options", "storelatest"}, MakeSchema(),
+                               {.profile = "store_latest"});
+    pub.Publish({"options", "storelatest"}, MakeEncoder(1));
+    pub.Publish({"options", "storelatest"}, MakeEncoder(2));
+    pub.Publish({"options", "storelatest"}, MakeEncoder(3));
+
+    std::mutex m;
+    std::vector<int32_t> rows;
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    SubscriptionResult result = sub.SubscribeWithOptions(
+        {"options", "storelatest"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) {
+                std::lock_guard<std::mutex> lk(m);
+                rows.push_back(DecodeRow(data));
+            }
+            NotifyWaiters();
+        },
+        {.profile = "store_latest"});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(m);
+            return !rows.empty();
+        },
+        std::chrono::seconds(5)))
+        << "the late subscriber never received the retained sample";
+
+    {
+        std::lock_guard<std::mutex> lk(m);
+        ASSERT_EQ(rows.size(), 1u) << "more than one retained sample was replayed";
+        EXPECT_EQ(rows[0], 3) << "the retained sample was not the last value published";
+    }
+
+    // The control: a row published after the subscriber joined arrives too, on top of the
+    // retained one — the profile replays a backlog of exactly one, not a merge with nothing.
+    pub.Publish({"options", "storelatest"}, MakeEncoder(4));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(m);
+            return rows.size() >= 2;
+        },
+        std::chrono::seconds(5)))
+        << "the row published after the subscriber joined never arrived";
+
+    std::lock_guard<std::mutex> lk(m);
+    EXPECT_THAT(rows, testing::ElementsAre(3, 4));
+}
+
+// `lossless` (KEEP_ALL, infinite max_blocking_time, 20 ms heartbeat) loses nothing even past its
+// 25-deep history: 300 rows, published back to back, all arrive in order. In-process delivery runs
+// on the listener (see "Why the listener and not a reader thread" in the README), so `Publish`
+// never blocks here even though the profile exists to block a slow remote reader instead of
+// dropping.
+TEST(FastDDSPubSubProviderTest, LosslessDeliversEverySampleInOrder) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    std::mutex m;
+    std::vector<int32_t> rows;
+    SubscriptionResult result = sub.SubscribeWithOptions(
+        {"options", "lossless"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) {
+                std::lock_guard<std::mutex> lk(m);
+                rows.push_back(DecodeRow(data));
+            }
+            NotifyWaiters();
+        },
+        {.profile = "lossless"});
+
+    pub.CreateTopicWithOptions({"options", "lossless"}, MakeSchema(), {.profile = "lossless"});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the data writer never matched the subscriber's data reader";
+
+    constexpr int32_t kRows = 300;  // more than the profile's 25-deep history
+    for (int32_t i = 1; i <= kRows; ++i) {
+        pub.Publish({"options", "lossless"}, MakeEncoder(i));
+    }
+
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(m);
+            return rows.size() >= static_cast<size_t>(kRows);
+        },
+        std::chrono::seconds(10)))
+        << "not all " << kRows << " rows arrived";
+
+    std::lock_guard<std::mutex> lk(m);
+    ASSERT_EQ(rows.size(), static_cast<size_t>(kRows));
+    for (int32_t i = 0; i < kRows; ++i) {
+        EXPECT_EQ(rows[static_cast<size_t>(i)], i + 1)
+            << "row " << (i + 1) << " arrived out of order";
+    }
+}
+
+// `fire_and_forget` (BEST_EFFORT, KEEP_LAST 1): once matched, in-process BEST_EFFORT delivers
+// every row -- there is no network loss here to manufacture -- so this pins the ordering the
+// profile promises to keep rather than the loss it allows.
+TEST(FastDDSPubSubProviderTest, FireAndForgetDeliversAfterTheMatch) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+
+    std::mutex m;
+    std::vector<int32_t> rows;
+    SubscriptionResult result = sub.SubscribeWithOptions(
+        {"options", "fireandforget"},
+        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) {
+                std::lock_guard<std::mutex> lk(m);
+                rows.push_back(DecodeRow(data));
+            }
+            NotifyWaiters();
+        },
+        {.profile = "fire_and_forget"});
+
+    pub.CreateTopicWithOptions({"options", "fireandforget"}, MakeSchema(),
+                               {.profile = "fire_and_forget"});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
+    ASSERT_TRUE(pub_listener.AwaitMatch())
+        << "the data writer never matched the subscriber's data reader";
+
+    for (int32_t i = 1; i <= 5; ++i) {
+        pub.Publish({"options", "fireandforget"}, MakeEncoder(i));
+    }
+
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(m);
+            return !rows.empty() && rows.back() == 5;
+        },
+        std::chrono::seconds(5)))
+        << "the last published row never arrived";
+
+    std::lock_guard<std::mutex> lk(m);
+    EXPECT_GE(rows.size(), 1u);
+    EXPECT_EQ(rows.back(), 5);
+}

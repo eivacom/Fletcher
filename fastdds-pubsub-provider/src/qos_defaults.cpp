@@ -37,6 +37,18 @@ using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 // `heartbeat_period` have no job to do and stay at Fast DDS's own defaults.
 // The companion `__schema` channel (below) is RELIABLE + KEEP_LAST(1) + TRANSIENT_LOCAL, one
 // retained sample per topic.
+//
+// Four named pairs sit beside `default_writer`/`default_reader`, each a `<data_writer>` and a
+// `<data_reader>` profile sharing one name, so `{.profile = "name"}` on both `CreateTopic` and
+// `Subscribe` resolves a matched writer and reader (writer and reader profile names live in
+// separate registry maps, so the same name picks the right side on each call rather than
+// colliding): `fire_and_forget` (BEST_EFFORT, VOLATILE, KEEP_LAST 1) drops a lagging sample rather
+// than retransmit it; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last
+// value to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays
+// the last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`) delivers
+// every sample in order and blocks the writer rather than drop one. `default_writer`/
+// `default_reader` are this file's own "stream" semantics -- RELIABLE, VOLATILE, KEEP_LAST 25 --
+// and are what every topic without a profile of its own runs on.
 const char* FletcherDefaultProfilesDocument() {
     return R"XML(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -44,6 +56,155 @@ const char* FletcherDefaultProfilesDocument() {
     <participant profile_name="fletcher_participant">
       <rtps><name>FletcherParticipant</name></rtps>
     </participant>
+    <!-- newest value only, no retransmission: high-rate sensor streams where a lost sample is
+         replaced by the next one -->
+    <data_writer profile_name="fire_and_forget">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="fire_and_forget">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- the last value, replayed to a late subscriber: state, configuration, status -->
+    <data_writer profile_name="store_latest">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="store_latest">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- the last 25 values, replayed to a late subscriber: track tails, recent events -->
+    <data_writer profile_name="store_history">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="store_history">
+      <qos>
+        <durability><kind>TRANSIENT_LOCAL</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>25</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- every sample, in order: commands, events, logs. A reader that stops taking samples stalls
+         the publisher; a crashed peer frees it when its participant lease expires (20 s by
+         default); the slowest reader can hold the publisher back once 25 samples are in flight -->
+    <data_writer profile_name="lossless">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
+        </reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+      <times><heartbeat_period><sec>0</sec><nanosec>20000000</nanosec></heartbeat_period></times>
+    </data_writer>
+    <data_reader profile_name="lossless">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>25</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>25</max_samples_per_instance>
+          <allocated_samples>25</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
     <data_writer profile_name="default_writer" is_default_profile="true">
       <qos>
         <durability><kind>VOLATILE</kind></durability>
