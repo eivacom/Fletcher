@@ -868,7 +868,7 @@ TEST(FastDdsConfig, DefaultProfilesDocumentIsTheBuiltInOne) {
     EXPECT_NE(from_header.find("is_default_profile=\"true\"", first + 1), std::string::npos);
 }
 
-// K.1's four named pairs resolve by name on BOTH sides, read straight out of the document text
+// The five built-in named pairs resolve by name on BOTH sides, read straight out of the document text
 // (`get_data{writer,reader}_qos_from_xml(document, qos, name)`) the same way
 // DefaultProfileTranscriptionIsExact reads the default pair, rather than through the registry or a
 // provider: this is a claim about what the document SAYS, independent of resolution order.
@@ -893,6 +893,8 @@ TEST(FastDdsConfig, BuiltInNamedProfilesResolveOnBothSides) {
     const std::vector<Row> rows = {
         {"fire_and_forget", BEST_EFFORT_RELIABILITY_QOS, VOLATILE_DURABILITY_QOS,
          KEEP_LAST_HISTORY_QOS, 1, 1, 1, 1, 1},
+        {"latest", RELIABLE_RELIABILITY_QOS, VOLATILE_DURABILITY_QOS, KEEP_LAST_HISTORY_QOS, 1, 1,
+         1, 1, 1},
         {"store_latest", RELIABLE_RELIABILITY_QOS, TRANSIENT_LOCAL_DURABILITY_QOS,
          KEEP_LAST_HISTORY_QOS, 1, 1, 1, 1, 1},
         {"store_history", RELIABLE_RELIABILITY_QOS, TRANSIENT_LOCAL_DURABILITY_QOS,

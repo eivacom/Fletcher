@@ -324,6 +324,44 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
         </resourceLimitsQos>
       </topic>
     </data_reader>
+    <!-- the newest value, retransmitted if lost, nothing replayed to a late subscriber: a live
+         state that must not be missed while it is live -->
+    <data_writer profile_name="latest">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="latest">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
     <!-- the last value, replayed to a late subscriber: state, configuration, status -->
     <data_writer profile_name="store_latest">
       <qos>
@@ -479,7 +517,7 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
 
 #### Built-in profiles
 
-Four named pairs sit beside `default_writer`/`default_reader`, one `<data_writer>` and one
+Five named pairs sit beside `default_writer`/`default_reader`, one `<data_writer>` and one
 `<data_reader>` profile sharing each name, so the same name selects a matched pair by construction
 on both `CreateTopic` and `Subscribe` — the writer and reader name maps in Fast DDS's registry are
 separate, so nothing stops the same name existing as both. Pool per endpoint is `depth` (KEEP_LAST)
@@ -489,6 +527,7 @@ bound:
 | Profile | Writer / reader QoS | For | Pool per endpoint | Cost |
 |---|---|---|---|---|
 | `fire_and_forget` | BEST_EFFORT, VOLATILE, KEEP_LAST 1 | high-rate streams where a lost sample is replaced by the next one | 2 slots, ~130 KiB | loses samples silently — no retransmission, nothing replayed |
+| `latest` | RELIABLE, VOLATILE, KEEP_LAST 1 | a live state that changes and must not be missed while live (the newest value, resent if a datagram is lost, nothing replayed to a late subscriber) | 2 slots, ~130 KiB | a reader more than one sample behind loses the older one |
 | `store_latest` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1 | state, configuration, status: the last value, replayed to a late subscriber | 2 slots, ~130 KiB | holds shared memory for replay |
 | `store_history` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25 | track tails, recent events: the last 25 values, replayed to a late subscriber | 26 slots, ~1.7 MB | holds shared memory for replay |
 | `lossless` | RELIABLE, VOLATILE, KEEP_ALL, infinite `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks every future `Publish` until it (or its participant's 20 s lease) goes away |

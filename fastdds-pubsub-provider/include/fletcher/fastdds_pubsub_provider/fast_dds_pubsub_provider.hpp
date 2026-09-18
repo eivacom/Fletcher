@@ -320,14 +320,16 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     /// The XML document the provider loads when `ProviderConfig::document` is empty: one
     /// `<data_writer is_default_profile="true">` and one `<data_reader is_default_profile="true">`
-    /// profile (RELIABLE, VOLATILE, KEEP_LAST 25) plus the participant anchor, and four named
+    /// profile (RELIABLE, VOLATILE, KEEP_LAST 25) plus the participant anchor, and five named
     /// `<data_writer>`/`<data_reader>` pairs, selectable through `TopicOptions::profile` on
     /// `CreateTopic` and `Subscribe` with no document of your own: `fire_and_forget` (BEST_EFFORT,
-    /// VOLATILE, KEEP_LAST 1) drops a lagging sample rather than retransmit it; `store_latest`
-    /// (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value to a late subscriber;
-    /// `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the last 25;
-    /// `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`) delivers every
-    /// sample in order and blocks the writer rather than drop one. Start a custom document from
+    /// VOLATILE, KEEP_LAST 1) drops a lagging sample rather than retransmit it; `latest` (RELIABLE,
+    /// VOLATILE, KEEP_LAST 1) sends the newest value, resent if lost, and never replays to a late
+    /// subscriber; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
+    /// to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the
+    /// last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`)
+    /// delivers every sample in order and blocks the writer rather than drop one. Start a custom
+    /// document from
     /// this text and add named profiles inside `<profiles>`; a custom document replaces all of
     /// this one, so copy the pairs you keep. The two `is_default_profile` profiles are what every
     /// topic without a profile of its own runs on.

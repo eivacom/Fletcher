@@ -38,17 +38,18 @@ using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 // The companion `__schema` channel (below) is RELIABLE + KEEP_LAST(1) + TRANSIENT_LOCAL, one
 // retained sample per topic.
 //
-// Four named pairs sit beside `default_writer`/`default_reader`, each a `<data_writer>` and a
+// Five named pairs sit beside `default_writer`/`default_reader`, each a `<data_writer>` and a
 // `<data_reader>` profile sharing one name, so `{.profile = "name"}` on both `CreateTopic` and
 // `Subscribe` resolves a matched writer and reader (writer and reader profile names live in
 // separate registry maps, so the same name picks the right side on each call rather than
 // colliding): `fire_and_forget` (BEST_EFFORT, VOLATILE, KEEP_LAST 1) drops a lagging sample rather
-// than retransmit it; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last
-// value to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays
-// the last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`) delivers
-// every sample in order and blocks the writer rather than drop one. `default_writer`/
-// `default_reader` are this file's own "stream" semantics -- RELIABLE, VOLATILE, KEEP_LAST 25 --
-// and are what every topic without a profile of its own runs on.
+// than retransmit it; `latest` (RELIABLE, VOLATILE, KEEP_LAST 1) newest value only, resent if
+// lost, no replay; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
+// to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the last
+// 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`) delivers every
+// sample in order and blocks the writer rather than drop one. `default_writer`/`default_reader`
+// are this file's own "stream" semantics -- RELIABLE, VOLATILE, KEEP_LAST 25 -- and are what every
+// topic without a profile of its own runs on.
 const char* FletcherDefaultProfilesDocument() {
     return R"XML(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -80,6 +81,44 @@ const char* FletcherDefaultProfilesDocument() {
       <qos>
         <durability><kind>VOLATILE</kind></durability>
         <reliability><kind>BEST_EFFORT</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_reader>
+    <!-- the newest value, retransmitted if lost, nothing replayed to a late subscriber: a live
+         state that must not be missed while it is live -->
+    <data_writer profile_name="latest">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
+      </qos>
+      <topic>
+        <historyQos>
+          <kind>KEEP_LAST</kind>
+          <depth>1</depth>
+        </historyQos>
+        <resourceLimitsQos>
+          <max_samples>1</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>1</max_samples_per_instance>
+          <allocated_samples>1</allocated_samples>
+        </resourceLimitsQos>
+      </topic>
+    </data_writer>
+    <data_reader profile_name="latest">
+      <qos>
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability><kind>RELIABLE</kind></reliability>
       </qos>
       <topic>
         <historyQos>
