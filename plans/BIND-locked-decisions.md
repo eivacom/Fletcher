@@ -12,6 +12,43 @@ architect / architect-reviewer / compliance steps must honour. Full rationale:
 resolve once PDA merges, so they are deliberately not links yet). A proposed deviation from anything here is
 **STOP-AND-ASK**.
 
+## Where a ruling has to land — FOUR places, not three
+
+Written down 2026-09-18 because the fourth was being missed, every time, for six
+weeks. A ruling is recorded the same turn it is made in:
+
+1. **this digest** — the entry itself;
+2. **[BIND-csharp-bindings.md](BIND-csharp-bindings.md)** — the decision table and
+   the affected item's rows;
+3. **[BIND-csharp-development-plan.md](BIND-csharp-development-plan.md)** — §2 and §7;
+4. **[BIND-architecture-diagrams.md](BIND-architecture-diagrams.md)** — **if the
+   ruling changes a shape, a name, a count or a direction.**
+
+The fourth is the one that rots, and it rots invisibly: prose contradicts itself in
+a way a reader notices, while a diagram just *draws the old design* and looks
+authoritative doing it. Measured on 2026-09-18, when Copilot's review of #129 and
+the sweep around it found **eight** stale claims in that one file — edges labelled
+*"REUSES verbatim"* into the driver ABI five weeks after D-BIND-2′ forbade sharing a
+declaration, a value-transfer hop still marked *"PROVISIONAL — open decision 1"*
+after Q1 ruled it, a package diagram showing two packages Q2 had collapsed out of
+existence, and a subscribe sequence showing the generated class parsing wire bytes
+through `ReadFrom` — **the managed codec D-BIND-1 refused**, drawn as if it were the
+spec, in the diagram a BIND-4/6 implementer would read first.
+
+None of it reached the code: BIND-1 and BIND-2 were built against the rulings, not
+against the pictures. But that is an implementer knowing better than the record,
+which is not a control — and BIND-Rust reads these files next round.
+
+**Two habits that go with it.** A ruling that supersedes an earlier one **marks the
+old entry SUPERSEDED rather than deleting it** (the convention D-BIND-33 set), so
+someone who remembers the old rule can see why it changed and when. And an
+acceptance bullet **names a file set, never a count** — counts are invalidated by
+any rebase that adds a case upstream, silently (BIND-0 review, F1; observed twice).
+
+**Validate a diagram edit by PARSING it**, never by eye: mermaid + jsdom, and check
+the file for CR bytes. A stray `;` or CR breaks rendering silently, long after the
+commit.
+
 - **D-BIND-1 — ONE codec. The binding wraps it; it is never reimplemented.**
   *(Revised and **CONFIRMED BY THE MAINTAINER 2026-08-31**. Reverses the earlier
   managed-port decision; not an architect's assumption.)*

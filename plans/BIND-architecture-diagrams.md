@@ -8,6 +8,19 @@ aware Markdown viewer.
 > levels. Treating a planned box as existing code would be the main way to misread
 > it.
 
+> ⚠️ **This file is a DERIVATIVE record of the round's rulings, and it is the one
+> that rots.** It says in pictures what the decisions digest, the tracker and the
+> development plan say in prose — so a ruling that changes a shape, a name, a count
+> or a direction has to sweep this file too. That is now written down as the fourth
+> place in [BIND-locked-decisions.md](BIND-locked-decisions.md#where-a-ruling-has-to-land--four-places-not-three).
+> On 2026-09-18 a sweep found **eight** claims here that a later ruling had
+> invalidated, including a sequence drawing a design D-BIND-1 had explicitly
+> refused. Prose that contradicts itself gets noticed; a diagram just draws the old
+> design and looks authoritative doing it.
+>
+> **Edit by parsing, not by eye:** mermaid + jsdom, and check for CR bytes. A stray
+> `;` or CR breaks rendering silently, long after the commit.
+
 ## Legend
 
 | Marker | Meaning |
