@@ -534,7 +534,7 @@ pole.
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` |
 | BIND-2 | Nanoarrow schema-driven codec + copy oracle producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage` |
-| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, Publisher, Subscriber, SchemaArrival, thunk discipline | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier` |
+| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, Publisher, Subscriber, SchemaArrival, thunk discipline | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark (D-BIND-37) |
 | BIND-5 | `SubscriberArrow` batching + the oracle run end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; StructArray windowing fixture at non-zero offset |
@@ -648,7 +648,8 @@ typed outcome (`Ok(schema)`, `Ok(null)` for schema-less transports, `Pending`,
 delivery and a builder on publish; `DispatchAfterDelivery` helper (constraint 5)
 that hands work to the thread pool and returns a `Task`. Ports Buckets 3 and 4;
 writes the C# arm of `CallerTier` (the tier BIND actually wraps, per §9) and adds
-at least one case to the C++ suite as §12.1 expects.
+at least one case to the C++ suite as §12.1 expects. **Carries the per-row publish
+benchmark** that settles B-2 (D-BIND-37, moved here from BIND-3).
 
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
@@ -758,12 +759,13 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   The C++ generated path writes bytes into the window directly. The copy oracle
   will still report zero copies (the wire bytes are written once, into the
   window), but allocation and latency per row are higher than C++. **Mitigation:**
-  measure in BIND-3 with a per-row benchmark against the C++ generated publisher;
+  measure in BIND-4 with a per-row benchmark against the C++ generated publisher
+  (moved there from BIND-3 on 2026-09-21, D-BIND-37: the benchmark needs a managed
+  publish path, which is BIND-4's);
   offer `Publish(batch)` as the fast path; document. §3.2's bind step makes that
   path structural: one export and one validation per batch, N publishes. **If the owner judges the
   per-row cost unacceptable, the only faster route is generated C# writing wire
-  bytes, which is a D-BIND-1 STOP-AND-ASK**, not a local fix. *Measure in BIND-3;
-  decide in BIND-4.*
+  bytes, which is a D-BIND-1 STOP-AND-ASK**, not a local fix. *Measure and decide in BIND-4.*
 
 - **B-3 — Which built-ins the shim links decides the package.** Linking Fast DDS
   and XRCE statically into one shim gives C# real transports now, but the native

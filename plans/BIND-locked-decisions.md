@@ -753,7 +753,8 @@ accessors do, for capstone parity (Q18).
   published. The borrow-and-copy cost that IS on the hot path is a different one — `ToSegments`
   materialising a `std::vector<std::string>` per `fl_publisher_publish_row`, which
   `fl_publisher_publish_rows` already hoists out of its loop. That is risk **B-2**, and BIND-3's
-  per-row publish benchmark decides it with numbers. If it must be paid down, the fix is a
+  per-row publish benchmark decides it with numbers (**moved to BIND-4 on 2026-09-21 by
+  D-BIND-37** — a publish benchmark needs a managed publisher). If it must be paid down, the fix is a
   pre-converted topic handle following this ABI's own open-once shape (`fl_codec_open` +
   `fl_rows_bind`), which is a pure addition and therefore append-only-safe — not something to add
   on suspicion.
@@ -827,3 +828,30 @@ accessors do, for capstone parity (Q18).
   **Consequences.** None in code — the refusal and its test already exist. BIND-2's deviation 2
   closes; `docs/wire-format-specification.md` is NOT amended by this ruling (the option was
   offered and not taken), so the constraint lives in this digest and in the refusal's own message.
+
+- **D-BIND-37 — BIND-3's per-row publish benchmark moves to BIND-4, whole.**
+  *LOCKED BY THE MAINTAINER 2026-09-21,* raised while slicing BIND-3.
+
+  **Why it could not stay.** The bullet asks for a benchmark *"against the C++ generated
+  publisher over `inprocess`"*, and a **publish** benchmark needs a managed publish path.
+  The managed `Publisher` is BIND-4's by the tracker's own item split. More pointedly, the
+  risk it exists to settle is **B-2** — `ToSegments` materialising a `std::vector<std::string>`
+  on every `fl_publisher_publish_row` — which is a per-publish cost and therefore not
+  measurable at all before a publisher exists. The bullet was asking BIND-3 to measure
+  something BIND-3 cannot reach.
+
+  **The alternatives, and why they were declined.** Benchmarking `fl_encode_row` alone in
+  BIND-3 would have produced a number, but not the one B-2 turns on. Giving BIND-3 a
+  minimal publish path would have had it straddle the item boundary — the same shape
+  D-BIND-31 had to rule for BIND-2c, and worth avoiding twice.
+
+  **The accepted cost, stated rather than hidden:** BIND-3 now carries **no performance
+  evidence at all**. Its acceptance is correctness and conformance only, and the first
+  numbers for the managed path arrive at BIND-4. If the per-row cost turns out to be
+  unacceptable there, the only faster route is generated C# writing wire bytes, which is a
+  **D-BIND-1 STOP-AND-ASK** and not a local fix — unchanged by this move, only relocated.
+
+  **Consequences.** The bullet moves verbatim into BIND-4's acceptance; both item tables and
+  the development plan's B-2 entry (*"measure and decide in BIND-4"*, previously split
+  across the two) follow. No code, no interface and no diagram changes — the four-places
+  rule's fourth place does not apply, checked.

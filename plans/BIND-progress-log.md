@@ -103,7 +103,9 @@ current file, cycle 1's deliberately quoting the text it found.
   callback's raw `uint64_t subscription_id` versus BIND-4's managed `Subscription` handle.
 - **Risk B-2, raised against D-BIND-32 and recorded with it:** the hot-path borrow cost is
   `ToSegments` materialising a `std::vector<std::string>` per `fl_publisher_publish_row`
-  (`fl_publisher_publish_rows` already hoists it). BIND-3's per-row publish benchmark settles it;
+  (`fl_publisher_publish_rows` already hoists it). BIND-3's per-row publish benchmark settles it
+  — *moved to BIND-4 on 2026-09-21 by D-BIND-37, because a publish benchmark needs a managed
+  publisher and B-2 is a per-publish cost*;
   the fix if needed is a pre-converted topic handle following this ABI's own open-once shape.
 
 ## BIND-2 — The nanoarrow codec, the publish fusion, and the oracle's producer (2026-09-18)
