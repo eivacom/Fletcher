@@ -4,12 +4,23 @@
 // The P/Invoke surface over `c-abi/include/fletcher/abi/binding.h`.
 //
 // ── What this file is, and what it deliberately is not ──────────────────────
-// A MECHANICAL MIRROR of the header, and nothing else. No policy, no taxonomy,
-// no convenience: a declaration here has the same name, the same parameters and
-// the same order as the C one, so the two can be diffed by eye. Everything that
-// interprets a status number, decides what to throw, or owns a handle lives one
-// layer up in `Eiva.Fletcher`, where it can be read without a C header open
-// beside it.
+// A MECHANICAL MIRROR of the header: same names, same parameters, same order, so
+// the two can be diffed by eye. No taxonomy and no convenience - a status number
+// stays an `int` here and becomes an exception one layer up, in `Eiva.Fletcher`,
+// where it can be read without a C header open beside it.
+//
+// ONE DEVIATION FROM "raw C types only", and it buys a safety property rather
+// than comfort: an opaque handle is typed as its `SafeHandle` wherever it is
+// created or consumed. Passing a SafeHandle to a P/Invoke makes the runtime keep
+// it alive for the duration of the call; passing a raw `nint` pulled out of one
+// does not, so the wrapper can be collected and FINALIZED while native code is
+// still using the pointer. Several of these calls are long - a publish runs the
+// whole encode inside it - which is exactly when that window is wide enough to
+// lose.
+//
+// The destroy entry points are the exception to the exception: they take a raw
+// `nint`, because their only caller is `ReleaseHandle`, which holds the raw
+// handle and cannot pass the wrapper it is in the middle of releasing.
 //
 // `LibraryImport` rather than `DllImport`: it generates the marshalling at
 // compile time instead of at runtime, which is what makes the surface
@@ -108,7 +119,7 @@ internal static partial class NativeMethods
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial nuint fl_string_list_size(nint list);
+    internal static partial nuint fl_string_list_size(StringListHandle list);
 
     /// <summary>The item at <paramref name="index"/>, BORROWED from the list.</summary>
     /// <remarks>
@@ -120,7 +131,7 @@ internal static partial class NativeMethods
     /// </remarks>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial FlStr fl_string_list_at(nint list, nuint index);
+    internal static partial FlStr fl_string_list_at(StringListHandle list, nuint index);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -131,7 +142,7 @@ internal static partial class NativeMethods
     /// <summary>Open a codec over a schema. The schema is BORROWED and deep-copied.</summary>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_codec_open(nint schema, out nint codec, ref FlError err);
+    internal static partial int fl_codec_open(nint schema, out CodecHandle codec, ref FlError err);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -147,7 +158,8 @@ internal static partial class NativeMethods
     /// </remarks>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_rows_bind(nint codec, nint array, out nint rows, ref FlError err);
+    internal static partial int fl_rows_bind(
+        CodecHandle codec, nint array, out BoundRowsHandle rows, ref FlError err);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -160,28 +172,30 @@ internal static partial class NativeMethods
     /// </remarks>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_encode_row(nint rows, long i, ref FlWriteWindow sink, ref FlError err);
+    internal static partial int fl_encode_row(
+        BoundRowsHandle rows, long i, ref FlWriteWindow sink, ref FlError err);
 
     /// <summary>Decode <paramref name="count"/> rows into a fresh array the caller OWNS.</summary>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_decode_rows(
-        nint codec, nint bytes, nuint len, long count, nint output, ref FlError err);
+        CodecHandle codec, nint bytes, nuint len, long count, nint output, ref FlError err);
 
     /* Provider and publisher ------------------------------------------------ */
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_provider_create(
-        FlStr selector, in FlProviderConfig config, out nint provider, ref FlError err);
+        FlStr selector, in FlProviderConfig config, out ProviderHandle provider, ref FlError err);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void fl_provider_destroy(nint provider);
 
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_publisher_create(nint provider, out nint publisher, ref FlError err);
+    // fl_publisher_create is NOT here. It is declared inside PublisherHandle, as
+    // a private import of that class, so that the compiler - not a comment -
+    // guarantees a publisher cannot be created without pinning the provider it
+    // borrows.
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -190,11 +204,12 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_publisher_create_topic(
-        nint publisher, FlTopic topic, nint schema, ref FlError err);
+        PublisherHandle publisher, FlTopic topic, nint schema, ref FlError err);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_publisher_list_topics(nint publisher, out nint list, ref FlError err);
+    internal static partial int fl_publisher_list_topics(
+        PublisherHandle publisher, out StringListHandle list, ref FlError err);
 
     /// <summary>Publish bytes a producer writes straight into the transport window.</summary>
     /// <remarks>
@@ -207,7 +222,8 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_publisher_publish_raw(
-        nint publisher, FlTopic topic, nint writer, nint ctx, nuint minBytes, nint atts, ref FlError err);
+        PublisherHandle publisher, FlTopic topic, nint writer, nint ctx, nuint minBytes, nint atts,
+        ref FlError err);
 
     /// <summary>Publish row <paramref name="i"/>, the fused zero-copy path.</summary>
     /// <remarks>
@@ -219,7 +235,8 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_publisher_publish_row(
-        nint publisher, FlTopic topic, nint rows, long i, nint atts, ref FlError err);
+        PublisherHandle publisher, FlTopic topic, BoundRowsHandle rows, long i, nint atts,
+        ref FlError err);
 
     /// <summary>Publish rows [first, first + count), N samples in one crossing.</summary>
     /// <remarks>
@@ -231,5 +248,6 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_publisher_publish_rows(
-        nint publisher, FlTopic topic, nint rows, long first, long count, nint attsPerRow, ref FlError err);
+        PublisherHandle publisher, FlTopic topic, BoundRowsHandle rows, long first, long count,
+        nint attsPerRow, ref FlError err);
 }
