@@ -26,6 +26,19 @@ on:
 # directory the C++ half writes, so splitting them across jobs would mean
 # publishing the corpus as an artifact for no gain. The order is emit, then test.
 #
+# THE EMITTER NEEDS ITS SHARED LIBRARIES FOUND, and the two legs say so
+# differently on purpose. The shim is a shared library by design, so a freshly
+# built `emit_corpus` cannot run without help from either platform's loader.
+# Linux sources Conan's own generated `conanrun.sh`, which sets LD_LIBRARY_PATH
+# for EVERY dependency rather than the one someone remembered — worth more here
+# than on Windows, because whether a given Conan package is shared or static on
+# Linux is not something this file should have to know. Windows puts the shim's
+# own directory on PATH: its `conanrun` equivalent is a .bat, which these bash
+# steps cannot source, and the shim is the only shared dependency there.
+# Both legs fail loudly if what they need is missing, because a corpus that was
+# never emitted makes the C# half a theory with no cases, and a theory with no
+# cases passes.
+#
 # THE CHECKOUT INCLUDES c-abi/tests, and that is not a stray entry: the emitter
 # includes `codec_corpus.hpp` from there, because the scenarios this suite
 # round-trips must be the SAME objects the codec's byte-identity test uses
@@ -74,7 +87,10 @@ jobs:
                      if [ -z \"\$SHIM\" ]; then echo '::error::libfletcher-c-abi.so not found after conan create'; exit 1; fi && \
                      EMITTER=\$(find integration-tests/binding-abi-conformance -name emit_corpus -type f -print -quit) && \
                      if [ -z \"\$EMITTER\" ]; then echo '::error::emit_corpus was not built'; exit 1; fi && \
+                     RUNENV=\$(find integration-tests/binding-abi-conformance -name conanrun.sh -print -quit) && \
+                     if [ -z \"\$RUNENV\" ]; then echo '::error::conanrun.sh was not generated; the emitter would not find its shared libraries'; exit 1; fi && \
                      echo '::group::emit the corpus' && \
+                     . \"\$RUNENV\" && \
                      \$EMITTER /workspace/corpus-out && \
                      echo '::endgroup::' && \
                      echo '::group::dotnet test' && \
