@@ -159,23 +159,104 @@ public sealed class CodecTests
         }
     }
 
-    /// <summary>A dictionary column is refused at open, and the refusal names it.</summary>
+    /// <summary>A dictionary column round-trips as its VALUE type.</summary>
     /// <remarks>
-    /// D-BIND-8: a dictionary is a columnar optimisation and the wire format
-    /// carries the VALUE type one value per row, so a dictionary column is
-    /// something the tier above lowers — never something this codec invents a
-    /// representation for while the DICT round is halted.
+    /// D-BIND-39, and the case the whole ruling was about: a C# caller must be
+    /// able to send what a C++ caller can over one wire format. The spec carries a
+    /// dictionary as its value type, one value per row — the indices are a
+    /// columnar optimisation with no meaning in a single row — so the values come
+    /// back plain, and re-folding them into a <c>DictionaryArray</c> is the
+    /// batched subscriber's job.
     ///
-    /// The message naming the field is the point. A schema has many columns and
-    /// "dictionary fields are not supported" leaves the caller to find which.
+    /// This replaced a test asserting the OPPOSITE. A refusal test left pointing
+    /// at behaviour that is now a feature would have locked in the defect it was
+    /// written to prevent, which is worth more caution than it sounds: the old row
+    /// was green, specific, and wrong.
     /// </remarks>
     [Fact]
-    public void ADictionaryColumnIsRefusedByName()
+    public void ADictionaryColumnRoundTripsAsItsValueType()
     {
+        RecordBatch batch = CodecFixtures.Dictionary();
+        using var codec = new FletcherCodec(batch.Schema);
+
+        // The two schemas differ, and the field keeps its own name: the name and
+        // the nullability belong to the FIELD, not to the value type.
+        Assert.NotSame(codec.Schema, codec.DecodedSchema);
+        Assert.Equal("category", codec.DecodedSchema.FieldsList[1].Name);
+        Assert.Equal(ArrowTypeId.String, codec.DecodedSchema.FieldsList[1].DataType.TypeId);
+        Assert.True(codec.DecodedSchema.FieldsList[1].IsNullable);
+
+        byte[] encoded;
+        using (BoundRows rows = codec.Bind(batch))
+        {
+            encoded = CodecFixtures.EncodeAll(codec, rows);
+        }
+
+        using RecordBatch decoded = codec.DecodeBatch(encoded, batch.Length);
+
+        // The values, resolved through the dictionary rather than the indices.
+        var categories = (StringArray)decoded.Column(1);
+        Assert.Equal(batch.Length, decoded.Length);
+        Assert.Equal("gamma", categories.GetString(0));
+        Assert.Equal("alpha", categories.GetString(1));
+        Assert.Equal("beta", categories.GetString(2));
+    }
+
+    /// <summary>
+    /// The wire bytes of a dictionary column are the bytes of its value column.
+    /// </summary>
+    /// <remarks>
+    /// The round trip above would also pass if the encoder and the decoder agreed
+    /// on some private representation of their own. This compares against a
+    /// separate batch that holds the same values as a plain <c>utf8</c> column —
+    /// an independent subject, so the only way both can hold is if a dictionary
+    /// really does go out as its value type. It is the managed twin of the shim's
+    /// own <c>ADictionaryColumnEncodesItsValues</c>.
+    /// </remarks>
+    [Fact]
+    public void ADictionaryEncodesTheSameBytesAsAPlainValueColumn()
+    {
+        RecordBatch dictionary = CodecFixtures.Dictionary();
+        RecordBatch plain = CodecFixtures.DictionaryAsPlainValues();
+
+        using var dictionaryCodec = new FletcherCodec(dictionary.Schema);
+        using var plainCodec = new FletcherCodec(plain.Schema);
+
+        byte[] fromDictionary;
+        byte[] fromPlain;
+        using (BoundRows rows = dictionaryCodec.Bind(dictionary))
+        {
+            fromDictionary = CodecFixtures.EncodeAll(dictionaryCodec, rows);
+        }
+
+        using (BoundRows rows = plainCodec.Bind(plain))
+        {
+            fromPlain = CodecFixtures.EncodeAll(plainCodec, rows);
+        }
+
+        Assert.Equal(fromPlain, fromDictionary);
+
+        // The plain codec decodes into its own schema, so `DecodedSchema` is the
+        // very same object — the cheap way a caller asks "does this one change?"
+        Assert.Same(plainCodec.Schema, plainCodec.DecodedSchema);
+    }
+
+    /// <summary>A dictionary whose values are not scalars is refused, by name.</summary>
+    /// <remarks>
+    /// The spec's own restriction: the wire carries a dictionary as ONE VALUE
+    /// where the format says one value goes, so a struct or list value type has no
+    /// single-row form. The message naming the field is the point — a wide schema
+    /// and "dictionary value types must be scalar" leaves the caller to find which
+    /// column meant it.
+    /// </remarks>
+    [Fact]
+    public void ADictionaryWithANestedValueTypeIsRefusedByName()
+    {
+        var nested = new StructType([new Field("x", Int32Type.Default, nullable: true)]);
         var schema = new Schema(
         [
             new Field("id", Int32Type.Default, nullable: true),
-            new Field("category", new DictionaryType(Int32Type.Default, StringType.Default, ordered: false), nullable: true),
+            new Field("category", new DictionaryType(Int32Type.Default, nested, ordered: false), nullable: true),
         ], metadata: null);
 
         FletcherFormatException refusal =
@@ -183,7 +264,7 @@ public sealed class CodecTests
 
         Assert.Equal(FletcherStatus.InvalidArgument, refusal.Status);
         Assert.Contains("category", refusal.Message, StringComparison.Ordinal);
-        Assert.Contains("dictionary", refusal.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value type", refusal.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>A batch that is not this codec's schema is refused at bind.</summary>

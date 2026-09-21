@@ -114,6 +114,60 @@ internal static class CodecFixtures
             length: 1);
     }
 
+    /// <summary>Three rows with a dictionary-encoded string column (D-BIND-39).</summary>
+    /// <remarks>
+    /// The indices are deliberately NOT in order and do not start at zero. An
+    /// encoder that put the index on the wire, or that resolved through the wrong
+    /// slot, would then produce different bytes from
+    /// <see cref="DictionaryAsPlainValues"/> rather than accidentally the same
+    /// ones — which is the whole point of that pairing.
+    /// </remarks>
+    internal static RecordBatch Dictionary()
+    {
+        var schema = new Schema(
+        [
+            new Field("id", Int32Type.Default, nullable: true),
+            new Field(
+                "category",
+                new DictionaryType(Int32Type.Default, StringType.Default, ordered: false),
+                nullable: true),
+        ], metadata: null);
+
+        StringArray values = new StringArray.Builder().Append("alpha").Append("beta").Append("gamma").Build();
+        Int32Array indices = new Int32Array.Builder().Append(2).Append(0).Append(1).Build();
+
+        var dictionary = new DictionaryArray(
+            (DictionaryType)schema.FieldsList[1].DataType, indices, values);
+
+        return new RecordBatch(
+            schema,
+            [new Int32Array.Builder().Append(1).Append(2).Append(3).Build(), dictionary],
+            length: 3);
+    }
+
+    /// <summary>The same values as <see cref="Dictionary"/>, as a plain utf8 column.</summary>
+    /// <remarks>
+    /// The independent subject the dictionary's bytes are compared against. Not
+    /// derived from the batch above — written out in the resolved order by hand —
+    /// because a fixture computed from the thing it checks proves nothing.
+    /// </remarks>
+    internal static RecordBatch DictionaryAsPlainValues()
+    {
+        var schema = new Schema(
+        [
+            new Field("id", Int32Type.Default, nullable: true),
+            new Field("category", StringType.Default, nullable: true),
+        ], metadata: null);
+
+        return new RecordBatch(
+            schema,
+            [
+                new Int32Array.Builder().Append(1).Append(2).Append(3).Build(),
+                new StringArray.Builder().Append("gamma").Append("alpha").Append("beta").Build(),
+            ],
+            length: 3);
+    }
+
     /// <summary>A batch of one nullable int32 column, for cases that need no shape.</summary>
     internal static RecordBatch Scalar()
     {

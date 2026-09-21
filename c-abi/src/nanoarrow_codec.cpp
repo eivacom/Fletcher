@@ -130,12 +130,50 @@ FieldPlan PlanNode(const ArrowSchema& schema, const std::string& path) {
             }
             break;
 
+        // A dictionary is a scalar MODIFIER, not a container: the wire carries
+        // the VALUE type, one value per row, because the indices are a columnar
+        // optimisation with no meaning in a single row
+        // (`docs/wire-format-specification.md` §"Dictionary Types", and
+        // `arrow-bridge`'s `Codec` has always done this). So the plan for a
+        // dictionary field IS the plan for its value type, and every layer below
+        // this one - decode's switch, the decoded schema - sees a plain value.
+        //
+        // D-BIND-8 deferred this to DICT; D-BIND-39 found the premise did not
+        // reach here. The halt was `nanoarrow_ipc` rejecting dictionary types,
+        // and this path never touches IPC - the schema arrives over the C Data
+        // Interface, where nanoarrow carries dictionaries in full.
+        case NANOARROW_TYPE_DICTIONARY: {
+            if (schema.dictionary == nullptr) {
+                Refuse("field '" + here +
+                       "' says it is a dictionary but carries no value type, so there is nothing "
+                       "to encode");
+            }
+
+            ArrowSchemaView value_view;
+            ArrowError value_error;
+            if (ArrowSchemaViewInit(&value_view, schema.dictionary, &value_error) != NANOARROW_OK) {
+                Refuse("field '" + here + "' is a dictionary whose value type cannot be parsed: " +
+                       value_error.message);
+            }
+
+            // The spec's own restriction, refused HERE so the message can name
+            // the field. A composite value type has no single-row form: the wire
+            // would have to carry the framing of a struct or a list where the
+            // format says one value goes.
+            if (!IsWireScalar(value_view.type)) {
+                Refuse("field '" + here +
+                       "' is a dictionary whose value type is not a scalar. The wire format "
+                       "carries a dictionary as its value type, one value per row, so a nested "
+                       "value type (struct, list, map or union) has no single-row form (spec "
+                       "\"Dictionary Types\")");
+            }
+
+            FieldPlan value;
+            value.type = value_view.type;
+            return value;
+        }
+
         // Refused, and each for its own reason rather than a shared shrug.
-        case NANOARROW_TYPE_DICTIONARY:
-            Refuse("field '" + here +
-                   "' is a dictionary. The wire format carries the VALUE type one value per row "
-                   "- the indices are a columnar optimisation - so a dictionary column is "
-                   "encoded as its value type by the tier above, never here (D-BIND-8)");
         case NANOARROW_TYPE_SPARSE_UNION:
         case NANOARROW_TYPE_DENSE_UNION:
             Refuse("field '" + here +
@@ -225,6 +263,27 @@ void EncodeElements(const ArrowArrayView& child, int64_t first, int64_t count, b
 /// One value, by type. The switch mirrors ValidateNode's accept list exactly;
 /// its default is unreachable unless the two drift, and says so.
 void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
+    // A dictionary column stores INDICES and the wire carries VALUES, so the
+    // index is resolved here, once, before the switch - which is what keeps that
+    // switch a mirror of the accept list rather than gaining a parallel set of
+    // dictionary arms. `storage_type` on a dictionary view is the INDEX type, so
+    // without this the encoder would happily put an int32 on the wire where the
+    // schema promised a string.
+    if (view.dictionary != nullptr) {
+        const int64_t code = ArrowArrayViewGetIntUnsafe(&view, index);
+        if (code < 0 || code >= view.dictionary->length) {
+            // Not an internal error: the caller exported this array, and an index
+            // outside its own dictionary is malformed input from the binding's
+            // point of view. `ArrowArrayViewGetIntUnsafe` would not have caught it
+            // and the read below would be out of bounds.
+            throw std::invalid_argument("NanoarrowCodec: a dictionary index of " +
+                                        std::to_string(code) + " is outside the dictionary's " +
+                                        std::to_string(view.dictionary->length) + " values");
+        }
+        EncodeValue(*view.dictionary, code, out);
+        return;
+    }
+
     PositionalWriter scalars(out, 0);  // a 0-field writer writes no bitfield
 
     switch (view.storage_type) {
@@ -348,6 +407,42 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
 /// input - the reader has already refused those - so a failure here is an
 /// allocation failure or a plan that does not match the array being built, and
 /// both are internal.
+void Must(int code, const char* what);
+
+/// Rewrite every dictionary node of `node` into its value type, in place.
+///
+/// Decode builds its output array from a SCHEMA, and after D-BIND-39 the schema a
+/// caller binds is no longer the schema decode produces: a dictionary field goes
+/// out as its value type and comes back as a plain value array. Building the
+/// output from the bind schema would tell nanoarrow to make a dictionary array
+/// and then append plain values into it.
+///
+/// Rewriting in place rather than rebuilding composites child by child, because
+/// the C Data Interface's own move idiom makes it short: release what the node
+/// held, then memcpy the replacement over it. The node's OWN identity - its name,
+/// its nullability, its metadata - belongs to the field and is put back on the
+/// value type, which carries none of it.
+void ResolveDictionaries(ArrowSchema* node) {
+    // Children first: a dictionary can sit inside a struct or a list, and
+    // resolving the parent afterwards must not walk into what it replaced.
+    for (int64_t i = 0; i < node->n_children; ++i) {
+        ResolveDictionaries(node->children[i]);
+    }
+
+    if (node->dictionary == nullptr) return;
+
+    ArrowSchema value = {};
+    Must(ArrowSchemaDeepCopy(node->dictionary, &value), "copying a dictionary's value type");
+    Must(ArrowSchemaSetName(&value, node->name == nullptr ? "" : node->name),
+         "naming a decoded dictionary field");
+    Must(ArrowSchemaSetMetadata(&value, node->metadata),
+         "copying a decoded dictionary field's metadata");
+    value.flags = node->flags;
+
+    node->release(node);
+    std::memcpy(node, &value, sizeof(ArrowSchema));
+}
+
 void Must(int code, const char* what) {
     if (code != NANOARROW_OK) {
         Refuse(std::string("internal: ") + what + " failed with code " + std::to_string(code));
@@ -644,6 +739,11 @@ NanoarrowCodec::NanoarrowCodec(const ArrowSchema& schema)
     for (int64_t i = 0; i < schema_.get()->n_children; ++i) {
         root_.children.push_back(PlanNode(*schema_.get()->children[i], std::string()));
     }
+
+    // Built AFTER planning, so a schema the mapping refuses is refused by the
+    // plan's message rather than by a copy failing for a second reason.
+    decoded_schema_ = OwnedSchema::DeepCopy(schema_.get());
+    ResolveDictionaries(decoded_schema_.get());
 }
 
 BoundRows::BoundRows(const NanoarrowCodec& codec, const ArrowArray& array)
@@ -694,8 +794,12 @@ void NanoarrowCodec::DecodeRows(const uint8_t* bytes, size_t len, int64_t count,
 
     ArrowArray building = {};
     ArrowError error;
-    if (ArrowArrayInitFromSchema(&building, schema_.get(), &error) != NANOARROW_OK) {
-        Refuse(std::string("internal: an array could not be built for the codec's schema: ") +
+    // The DECODED schema, not the bound one: a dictionary field goes out as its
+    // value type and comes back as a plain value array (D-BIND-39). The two are
+    // the same object for every schema that carries no dictionary.
+    if (ArrowArrayInitFromSchema(&building, decoded_schema_.get(), &error) != NANOARROW_OK) {
+        Refuse(std::string("internal: an array could not be built for the codec's decoded "
+                           "schema: ") +
                error.message);
     }
     // Armed before the first append: from here on, every exit but the last one

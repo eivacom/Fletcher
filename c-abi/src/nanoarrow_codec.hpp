@@ -142,12 +142,33 @@ class NanoarrowCodec {
     /// malformed bytes, and `PubSubError` on a schema the plan cannot build.
     void DecodeRows(const uint8_t* bytes, size_t len, int64_t count, ArrowArray* out) const;
 
+    /// The schema a caller BINDS against — what it exports and encodes from.
     [[nodiscard]] const ArrowSchema& schema() const noexcept { return *schema_.get(); }
+
+    /// The schema `DecodeRows` produces, which is not always the one above.
+    ///
+    /// They differ in exactly one way, and only when the schema carries a
+    /// dictionary: the wire carries a dictionary field as its VALUE type, one
+    /// value per row (D-BIND-39, spec §"Dictionary Types"), so what comes back is
+    /// a plain value array. Re-folding those values into a `DictionaryArray` is
+    /// the batched subscriber's job and belongs to DICT.
+    ///
+    /// **A binding must import a decoded array against THIS schema.** Importing
+    /// against the bind schema would tell Arrow to read a dictionary's buffers
+    /// from an array that has none. Bindings derive the same rewrite
+    /// independently rather than fetching it across the ABI — it is deterministic
+    /// and specified — so this accessor exists for the shim's own decode and for
+    /// the tests that hold the two derivations to each other.
+    [[nodiscard]] const ArrowSchema& decoded_schema() const noexcept {
+        return *decoded_schema_.get();
+    }
 
    private:
     friend class BoundRows;
 
     OwnedSchema schema_;
+    /// `schema_` with every dictionary node replaced by its value type.
+    OwnedSchema decoded_schema_;
     /// The row struct itself: `root_.children` is one plan per field.
     FieldPlan root_;
 };

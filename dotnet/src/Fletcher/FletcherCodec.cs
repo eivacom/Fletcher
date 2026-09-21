@@ -80,10 +80,29 @@ public sealed unsafe class FletcherCodec : IDisposable
         {
             CArrowSchema.Free(exported);
         }
+
+        // Derived only after the shim accepted the schema, so a schema the wire
+        // format refuses is refused by the shim's message — which names the field
+        // — rather than by a rewrite failing for a second reason.
+        DecodedSchema = Fletcher.DecodedSchema.Resolve(Schema);
     }
 
-    /// <summary>The schema this codec was opened over.</summary>
+    /// <summary>The schema this codec was opened over, and binds against.</summary>
     public Schema Schema { get; }
+
+    /// <summary>The schema <see cref="Decode"/> and <see cref="DecodeBatch"/> produce.</summary>
+    /// <remarks>
+    /// The same object as <see cref="Schema"/> unless the schema carries a
+    /// DICTIONARY. The wire format carries a dictionary field as its value type,
+    /// one value per row — the indices are a columnar optimisation with no meaning
+    /// in a single row — so what comes back is a plain value array (D-BIND-39,
+    /// spec §"Dictionary Types"). Re-folding those values into a
+    /// <c>DictionaryArray</c> belongs to the batched subscriber.
+    ///
+    /// Reference equality with <see cref="Schema"/> is the cheap way to ask
+    /// whether this codec decodes into something else.
+    /// </remarks>
+    public Schema DecodedSchema { get; }
 
     /// <summary>Make the next refill of an encode throw this. Tests only.</summary>
     /// <remarks>
@@ -227,10 +246,13 @@ public sealed unsafe class FletcherCodec : IDisposable
 
             Errors.ThrowIfFailed(status, ref err);
 
-            // The shim filled a fresh array the caller IMPORTS AND OWNS. The
-            // schema is this codec's own: the decoded struct matches it by
-            // construction, so nothing has to cross back to describe it.
-            return CArrowArrayImporter.ImportRecordBatch(decoded, Schema);
+            // The shim filled a fresh array the caller IMPORTS AND OWNS, and it is
+            // imported against the DECODED schema, not the bound one: a dictionary
+            // field went out as its value type and comes back as a plain value
+            // array, so importing against `Schema` would ask Arrow to read a
+            // dictionary's buffers from an array that has none. The two are the
+            // same object whenever the schema carries no dictionary.
+            return CArrowArrayImporter.ImportRecordBatch(decoded, DecodedSchema);
         }
         finally
         {
