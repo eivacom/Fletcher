@@ -196,3 +196,72 @@ searches its dependency chain). And libstdc++ gives a handful of `shared_ptr` in
 default visibility, so one `std::make_shared` exported six symbols regardless of
 `CXX_VISIBILITY_PRESET` — settled by an anonymous version script, which makes the export table a
 property of the LINK rather than something CI notices afterwards.
+
+## BIND-3 — `Eiva.Fletcher.Interop` and the codec/Arrow tier (2026-09-21)
+
+**Forcing tests:** every PROTO-MAPPING type round-trips through the binding (D-BIND-39, restated
+from "Bucket 1 green in C#") + `ErrorTests.EveryHardCaseKeepsItsMessage` → 🟢   (⚪ → 🔴 → 🟢)
+**What landed:** the managed tier, in four slices. **3a** (`88d7ed0`, `63c1a58`, `3a135b9`) the
+interop foundation — the resolver, an EXACT version handshake (not `>=`: `binding.h` says there
+is no compatibility guarantee before 1.0), 21 declarations cross-checked against the header's
+exports, and a `SafeHandle` per native handle with the publisher→provider borrow enforced by the
+COMPILER rather than by a comment. **3b** (`668e68d`) the error tier — one `ThrowIfFailed`,
+`FletcherFormatException` when the origin is the codec, rule 3 checked first, plus D1 and D2
+from BIND-2's review closed in the shim. **3c** (`e12d484`, `934512c`) the codec tier —
+`FletcherCodec`, `BoundRows`, the C Data Interface hop, the round's first
+`[UnmanagedCallersOnly]` thunk and N-1's reflection test, the HARD-1..7 sweep, and Arrow IPC.
+**3d** (`f9ddf37` … `a5fabed`) dictionaries, the proto-mapping parity suite,
+`integration-tests/binding-abi-conformance`, and the IPC parity test.
+
+**Three maintainer rulings, and the first one changed the item's shape.** **D-BIND-39** — the
+maintainer challenged "port bucket 1 to C#" and was right to: bucket 1 is `arrow-bridge`'s
+**Arrow-native** suite, so porting it asked the binding to implement a tier it does not serve,
+and roughly half of it exercises unions, decimals, intervals, half-float, the view types and
+fixed-size binary, which no `.proto` can produce. Checking the mapping field by field showed
+type support was ALREADY identical across C++, C#, TS and Rust on the generated path — with one
+genuine exception. **The shim refused every dictionary while the wire spec and `arrow-bridge`
+both carried them**, so a C# caller could not send what a C++ caller could over one format. The
+bullet was CONFIRMED rather than softened and the shim changed. **D-BIND-40** ruled the
+conformance corpus: the codec's own five Arrow fixtures, lifted into `codec_corpus.hpp` and
+INCLUDED by the emitter so one definition serves both consumers. **D-BIND-41** moved the glibc
+floor to BIND-9 and made it a MEASUREMENT.
+
+**Reviews:** code review (`plans/reviews/BIND-3-codereview.md`) and conformance review
+(`plans/reviews/BIND-3-conformance.md`). **CONFORMS on 9 of 9 live bullets; 0 BLOCKERs, 4 DEBT,
+3 NITs**; no defect in the handle lifetimes, the containment discipline, the wire-format path or
+the error taxonomy. **Both documents state their own limit first:** same author, same session,
+hours after the code — not a fresh-eyes pass, and the mechanical claim table is the part that
+carries weight. **D1 is the finding to act on, owed to BIND-4/5:** `DecodedSchema.Resolve` and
+`ResolveDictionaries` are two independent derivations of one rule and their AGREEMENT is proven
+for two shapes only; the native side has no nested dictionary test at all.
+
+**Verification, and the two halves are stated apart because they are not equally strong.**
+**CI-CONFIRMED at `4d3382d`:** `ci.pr` green 46/46, `dotnet` **102/102** on all four legs, and
+`integration-test-binding-abi-conformance` green on BOTH platforms (5 fixtures, 11/11 each) —
+each read BY COUNT rather than by badge, because the failure mode this round already shipped
+once produced 63 passing tests instead of 74 rather than a red one. **LOCAL ONLY at `a5fabed`:**
+c-abi 41/41 (was 36) and managed **122/122** — the twenty rows added by the IPC parity test
+postdate the last complete CI run. **`a5fabed` has no green `ci.pr`, and the reason is
+external:** GitHub returned sustained `HTTP 504`s to *every* lane that downloads from it,
+including Conan fetching the EXACTLY PINNED `gtest/1.17.0` tarball. Not a defect in this item,
+and not one pinning would have prevented — which is worth recording, because the first reading
+blamed an unpinned protoc lookup and that reading was wrong. **Measured, first reading of D-BIND-41: the
+linux-x64 shim requires `GLIBC_2.38`** — which excludes Ubuntu 22.04 LTS, Debian 12, RHEL 9 and
+RHEL 8, and is BIND-9's to answer.
+
+**Commit / push:** `feature/csharp-bindings` → `origin feature/csharp-bindings`
+
+**Found by building rather than by reasoning, and worth not rediscovering.** The documented
+FAIL-FAST for an exception escaping an `[UnmanagedCallersOnly]` method **is not what Windows
+does** — narrowing the thunk's catch let the exception unwind through the shim's C++ frames and
+reach the managed caller intact, so the behavioural test still passed; the rule is enforced
+structurally for that reason. The first N-1 reflection test was toothless, matching a catch-all
+nested inside the handler, and now requires the OUTERMOST clause. A **null struct's children are
+not on the wire**, so the parity suite's first comparison asserted that Fletcher transmits
+values the format deliberately drops — caught only because a fixture carries a label under a
+null struct. `find_package(arrow)` resolves on NTFS and fails on ext4 because Conan writes
+`ArrowConfig.cmake` with a capital A while naming the target lowercase — the fourth Linux-only
+defect this round. And `ci.dotnet.yml` checks out SPARSELY: the goldens `SchemaIpcTests` reads
+were simply absent in CI, which produced 63 passing tests instead of 74 rather than a red one —
+**a lane that gains a FILE dependency needs its checkout AND its path filter in the same
+commit.**
