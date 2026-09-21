@@ -54,13 +54,14 @@ std::string MessageOf(const fl_error& err) {
 /// (`tests/CMakeLists.txt` links both the shim and the objects it is built from).
 /// Disposing through the ABI would hand that allocation to the SHIM's `delete[]`.
 ///
-/// Those are one heap only while both modules share a C runtime. They do today,
-/// which is why either spelling passes now - and BIND-3 links the shim's MSVC CRT
-/// STATICALLY, which is exactly when they stop being one. That is D-BIND-32's own
-/// argument pointed the other way: the rule there says the shim must not free what
-/// a caller allocated, and this is a caller not asking it to. Getting it wrong
-/// would surface as heap corruption in whichever row ran first after the CRT flag
-/// flipped, in a file about the containment taxonomy.
+/// Both modules share a C runtime today and D-BIND-38 keeps it that way, so either
+/// spelling happens to work right now. The pairing is still wrong, and pairing is
+/// what `new[]`/`delete[]` is about: these are two separately linked copies of the
+/// same code, and nothing but the shared CRT makes one's `delete[]` correct for the
+/// other's `new[]`. That is D-BIND-32's own argument pointed the other way - the
+/// rule there says the shim must not free what a caller allocated, and this is a
+/// caller not asking it to. It stays correct under any future build that stops
+/// sharing a runtime, which a static-CRT shim (deferred to BIND-9) would be.
 void DisposeLocal(fl_error& err) {
     delete[] err.message;
     err = fl_error{};

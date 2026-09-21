@@ -115,9 +115,10 @@ class WindowBuffer final : public WriteBuffer {
             // Copied and NOT freed, per D-BIND-32: an `fl_error` a callback fills
             // is BORROWED to the shim, exactly as `fl_str` is everywhere else in
             // the ABI. Freeing it here would hand a binding's allocation to the
-            // shim's `delete[]`, and those are one heap only while both sides
-            // share a C runtime — which this shim, linking the MSVC CRT
-            // statically, does not.
+            // shim's `delete[]`, which is correct only for memory this shim's own
+            // `new[]` produced — the callback may have handed over a pinned
+            // managed buffer, a `malloc` block or static storage, none of which a
+            // `delete[]` releases whatever runtime either side links (D-BIND-38).
             // The NULL check is not decoration: nothing requires a refusing
             // `grow` to set a message, and `std::string(nullptr, 0)` is undefined
             // by the letter of the standard even though both toolchains accept it.

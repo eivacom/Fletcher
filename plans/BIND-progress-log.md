@@ -130,10 +130,13 @@ lifetimes** — the three places a defect would have been expensive.
   BOTH the shim and the object library it is built from, so `test_containment.cpp` filled an
   `fl_error` through the object library's `SetMessage` (`new[]` in the test binary) and released
   it with the shim's exported `fl_error_dispose` (`delete[]` in the shim). One heap while both
-  link the MSVC CRT dynamically — **two the moment BIND-3 links it statically**, which is
+  link the MSVC CRT dynamically — **two the moment the shim stops sharing a runtime**, which is
   D-BIND-32's own argument pointed the other way. Fixed with a file-local `DisposeLocal`.
-  **Watch for the shape again at BIND-3:** anything pairing an allocation in one module with a
-  free in another.
+  **Watch for the shape:** anything pairing an allocation in one module with a free in
+  another. *(D-BIND-38, 2026-09-21, kept the CRT dynamic and moved the static question to
+  BIND-9, so the hazard is deferred rather than imminent. The fix landed anyway: the pairing
+  is wrong under a shared runtime too, and D-BIND-32's rule now rests on allocator
+  provenance rather than on runtime linkage.)*
 - **Bullet 4 was met in substance and not in letter, and the letter was wrong** → **D-BIND-35**.
   The acceptance named the `emit_vectors` scenario corpus; reading it showed it encodes through
   the protoc-generated row class (proto rows, not Arrow arrays) and is three scenarios over one

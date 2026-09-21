@@ -737,7 +737,10 @@ accessors do, for capstone parity (Q18).
   hands an `fl_error*` to a function the CALLER wrote. Both cannot hold. Under the first the shim
   allocates and frees; under the second the binding allocates and the shim's `delete[]` frees —
   and those are one heap only while both sides share a C runtime, which BIND-3 intends them not to
-  (the shim links the MSVC CRT statically). BIND-2c's first implementation called
+  (the shim was then expected to link the MSVC CRT statically; **D-BIND-38 kept it dynamic,
+  and the rule stands on the stronger ground the header now states — allocator PROVENANCE,
+  not runtime linkage: a `delete[]` is correct only for this shim's own `new[]`, whatever
+  runtime either side links**). BIND-2c's first implementation called
   `fl_error_dispose` on a callback-filled error, which is heap corruption under the configuration
   the round means to ship.
 
@@ -855,3 +858,45 @@ accessors do, for capstone parity (Q18).
   the development plan's B-2 entry (*"measure and decide in BIND-4"*, previously split
   across the two) follow. No code, no interface and no diagram changes — the four-places
   rule's fourth place does not apply, checked.
+
+- **D-BIND-38 — the shim keeps the DYNAMIC MSVC CRT; the static-CRT question moves to
+  BIND-9.** *LOCKED BY THE MAINTAINER 2026-09-21,* raised at the start of BIND-3a when the
+  one-line acceptance clause turned out to be a profile-wide change.
+
+  **What the clause actually asked for.** `compiler.runtime` is a Conan PROFILE setting, not
+  a CMake property, so "the shim links the MSVC CRT statically" means rebuilding the shim
+  **and every static library inside it** — `fast-dds`, `fast-cdr`, `foonathan-memory`,
+  `tinyxml2`, `asio`, the four Fletcher components and their transitives — from source,
+  because objects with mismatched runtimes cannot be linked into one binary. With the C++
+  tests staying on dynamic that is two full builds of the eProsima chain per lane that
+  touches the shim, carried through seven remaining items.
+
+  **Why it buys almost nothing here.** The managed boundary never crosses heaps either way:
+  C# does not `free()` native memory, it calls `fl_error_dispose`, which allocates and
+  releases inside the shim. And a static CRT does not remove the two-heaps hazard — **it
+  creates it**, between the shim and any other native module in the process, which is
+  exactly what B1 found in `test_containment.cpp`. Staying dynamic removes that class rather
+  than deferring it. Against it: a static CRT means every CRT security fix needs the shim
+  rebuilt and reshipped rather than flowing through Windows Update, the shim grows, and it
+  diverges from every other component in this repository.
+
+  **What it does buy is a packaging property** — possibly no VC++ redistributable
+  prerequisite on an end user's machine — and packaging is BIND-9's: the RID matrix, the
+  packed-size budget, the licence and relinking question and the NuGet README all live
+  there. **Moved there, to be decided with packaging in hand and evidence about what the
+  .NET runtime's own install already guarantees, rather than assumed now.**
+
+  **The consequence that is not free, and is handled rather than ignored:** D-BIND-32's
+  recorded justification argued from the static CRT. That premise is gone. The RULE does not
+  move — it now rests on allocator **provenance**, which is stronger and independent of
+  packaging: the shim's `delete[]` is correct only for memory the shim's own `new[]`
+  produced, and a grow callback may hand over a pinned managed buffer, a `malloc` block, a
+  Rust allocation or static storage, none of which a `delete[]` releases however either side
+  links its runtime. Restated in `binding.h`, in `write_window.hpp` and on D-BIND-32 itself.
+  B1's fix stays for the same reason: two separately linked copies pairing one's `new[]`
+  with the other's `delete[]` is wrong under a shared runtime too.
+
+  **Consequences.** BIND-3's acceptance loses the clause; BIND-9's gains the question. No
+  profile changes, no rebuild, no size re-measurement. Comment-only changes in `binding.h`
+  — no signature, enumerator or struct moved, so the append-only rule does not bind and no
+  version bump is required.

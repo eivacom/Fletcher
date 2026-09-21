@@ -15,10 +15,23 @@
     <PackageTags>fletcher;arrow;interop;native</PackageTags>
   </PropertyGroup>
 
-  <!-- BIND-0: the package is empty on purpose. The declarations arrive with the
-       header they mirror (BIND-1 specifies it, BIND-3 binds it), and the native
-       assets arrive with the packaging work in BIND-9. What exists today is the
-       lane: `ci.dotnet.yml` restores, builds, tests and packs this project on
-       both platforms before there is anything in it to get wrong. -->
+  <!-- BIND-3a: the declarations have arrived. The NATIVE ASSETS still have not -
+       they are packaged in BIND-9 - so this package is not yet installable and
+       runnable from a feed; what a source build produces is an assembly that
+       knows how to find a shim staged beside it. -->
+  <PropertyGroup>
+    <!-- `LibraryImport`'s generated marshalling stubs are unsafe code by
+         construction: they take addresses and pin. This is the only project in
+         the round that needs it, which is the point of keeping the P/Invoke
+         surface in a package of its own. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shim's surface is internal (it is not a supported API), and the tests
+         drive it directly because BIND-3a's forcing property is about LOADING the
+         shim rather than about anything the managed tier does with it. -->
+    <InternalsVisibleTo Include="Fletcher.Tests" />
+  </ItemGroup>
 
 </Project>

@@ -285,10 +285,19 @@ typedef enum fl_origin {
  *   calls it on one of its own.
  *
  * The alternative - the shim freeing what a binding allocated - is rejected
- * because the two are one heap only while both sides share a C runtime, and this
- * shim links the MSVC CRT statically. Static storage, or a buffer the binding
- * owns for the duration of the call, both satisfy the rule and neither
- * allocates. The cost is one copy, on a path that is already failing. */
+ * because the shim cannot know how the binding allocated. `delete[]` here is
+ * correct only for memory this shim's own `new[]` produced. A grow callback
+ * lives in the BINDING: it may hand over a pinned managed buffer, a `malloc`
+ * block, a Rust allocation, a slice of a pool, or static storage - and none of
+ * those is released by a C++ `delete[]`, whatever runtime either side links.
+ * Allocator PROVENANCE is the reason, not C-runtime linkage; a shared CRT would
+ * not make a `malloc` block safe to `delete[]` either. (This paragraph argued
+ * from the shim linking the MSVC CRT statically until 2026-09-21, when D-BIND-38
+ * kept the CRT dynamic. The rule did not move: its premise was one vivid
+ * instance of the general case, and is now stated as the general case.)
+ * Static storage, or a buffer the binding owns for the duration of the call,
+ * both satisfy the rule and neither allocates. The cost is one copy, on a path
+ * that is already failing. */
 typedef struct fl_error {
     int32_t status;     /* an fl_status value */
     int32_t origin;     /* an fl_origin value */

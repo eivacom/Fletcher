@@ -25,6 +25,21 @@
     <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
   </ItemGroup>
 
+  <!-- The native shim, staged beside the test binary.
+       There is no NuGet layout in a source build, so nothing puts the shim where
+       the loader can find it. `conan create c-abi` leaves it in the Conan cache
+       under a content-addressed path that MSBuild cannot guess, so the path is
+       passed in: `dotnet test -p:FletcherNativeShim=<path>`, which is what
+       `ci.dotnet.yml` does after building the component.
+
+       Absent, the native rows FAIL rather than skip, carrying the resolver's
+       diagnostic - "the shim was never built" must not read green. -->
+  <ItemGroup Condition="'$(FletcherNativeShim)' != '' And Exists('$(FletcherNativeShim)')">
+    <None Include="$(FletcherNativeShim)"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />

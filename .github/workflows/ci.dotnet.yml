@@ -38,6 +38,12 @@ jobs:
           sparse-checkout: |
             dotnet
             .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
@@ -49,21 +55,44 @@ jobs:
       # .devcontainer/Dockerfile) and dotnet/global.json pins the same band, so
       # there is no toolchain install step here at all — the Node pattern, not
       # the Rust one (D-BIND-21).
-      - name: Restore, build, test, pack
+      # BIND-3a: the managed suite now LOADS the native shim, so this lane builds
+      # it. One container invocation for both halves, because the shim is found
+      # inside the Conan cache and that cache is container-local.
+      #
+      # No Conan remote hosts the fletcher-* packages, so each dependency recipe
+      # has to be created before the next can resolve it. arrow-bridge is NOT in
+      # the loop: it is the c-abi lane byte-identity oracle, never linked into the
+      # shim, so this lane has no use for it.
+      #
+      # The find is checked rather than trusted. The two native rows in
+      # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
+      # path here would surface as two confusing test failures instead of one
+      # clear lane failure naming the real cause.
+      - name: Build the native shim, then restore, build, test, pack
         shell: bash
         run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace/dotnet \
-            -e CI=true \
-            fletcher-build \
-            bash -c '
+          docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
               set -e
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+                echo "::group::conan create $COMPONENT"
+                (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE)
+                echo "::endgroup::"
+              done
+
+              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
+              if [ -z "$SHIM" ]; then
+                echo "::error::libfletcher-c-abi.so not found in the Conan cache after conan create"
+                exit 1
+              fi
+              echo "staging shim: $SHIM"
+
+              cd /workspace/dotnet
               echo "::group::dotnet --info"
               dotnet --info
               echo "::endgroup::"
               dotnet restore Fletcher.slnx --locked-mode
-              dotnet build Fletcher.slnx -c Release --no-restore
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM"
               dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=linux.trx"
               dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
             '
@@ -98,6 +127,12 @@ jobs:
           sparse-checkout: |
             dotnet
             .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
 
       # global-json-file, not a literal version: dotnet/global.json is the single
       # pin, and the runner's own pre-installed SDKs must not be what decides
@@ -105,6 +140,39 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: dotnet/global.json
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # BIND-3a: the managed suite loads the native shim, so this lane builds it.
+      # Same component order as the c-abi lane, minus arrow-bridge, which is that
+      # lane's byte-identity oracle and is never linked into the shim.
+      - name: Build the native shim
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+
+      # Checked, not trusted: the native rows fail rather than skip when the shim
+      # is absent, so an empty path here would surface as test failures instead of
+      # a lane failure that names the cause.
+      - name: Locate the shim
+        id: shim
+        shell: bash
+        run: |
+          set -e
+          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
+          if [ -z "$SHIM" ]; then
+            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
+            exit 1
+          fi
+          echo "staging shim: $SHIM"
+          echo "path=$SHIM" >> "$GITHUB_OUTPUT"
 
       - name: Restore, build, test
         shell: bash
@@ -115,7 +183,7 @@ jobs:
           set -e
           dotnet --info
           dotnet restore Fletcher.slnx --locked-mode
-          dotnet build Fletcher.slnx -c Release --no-restore
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}"
           dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=windows.trx"
 
       # No pack here: the packages are platform-neutral managed assemblies, and

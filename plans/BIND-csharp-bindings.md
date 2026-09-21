@@ -961,8 +961,10 @@ property becomes provable, not where the code happens to divide:
 **State — 2026-09-18.** Reviewed at `5762239`: `plans/reviews/BIND-2-codereview.md` and
 `plans/reviews/BIND-2-conformance.md`. **CONFORMS on 9 of 10 bullets** (bullet 4 amended by
 D-BIND-35), and **one BLOCKER is open** — B1, a cross-module `new[]`/`delete[]` in
-`test_containment.cpp` that is invisible today and fires when BIND-3 links the MSVC CRT
-statically.
+`test_containment.cpp` that is invisible today. *(It was expected to fire when BIND-3
+linked the MSVC CRT statically; D-BIND-38 keeps the CRT dynamic, so the hazard is
+deferred rather than imminent — the fix landed anyway, because pairing `new[]` in one
+module with `delete[]` in another is wrong under a shared runtime too.)*
 
 | Acceptance bullet | State |
 |---|---|
@@ -1019,7 +1021,9 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
 - `Eiva.Fletcher.Interop`: P/Invoke declarations; a `SafeHandle` per native
   handle; `NativeLibrary.SetDllImportResolver` with a diagnostic that names the
   missing RID; the ABI version handshake at load; the glibc floor stated for
-  `linux-x64` (N-7); MSVC CRT linked statically.
+  `linux-x64` (N-7). **The MSVC CRT stays DYNAMIC and the profile is untouched
+  (D-BIND-38, 2026-09-21)**; whether the shipped shim should link it statically is
+  a packaging question and moved to BIND-9.
 - **Error handling per D-BIND-19** (development plan §3.5): one `ThrowIfFailed`
   site; `FletcherException {Status, Origin, Message}` with
   `FletcherFormatException` when `Origin` is the codec; a captured managed
@@ -1250,6 +1254,16 @@ same machinery as everything else, **so that** it cannot rot.
   every run via the #127 deployer; pack fails if either is missing. The
   **asset-isolation check** for `GatewayClient` rides in the same step.
 - The **packed-size budget** for the shim.
+- **The MSVC CRT: dynamic or static, decided here (D-BIND-38, moved from BIND-3).**
+  The question is a packaging one — whether a consumer needs the VC++
+  redistributable on the target machine — and it is settled with **evidence** about
+  what the .NET runtime's own install already guarantees, not by assumption. Static
+  costs a from-source rebuild of the shim's entire chain (the runtime is a Conan
+  profile setting, so every static library inside the shim must match), grows the
+  artifact against the size ceiling above, and means CRT security fixes require
+  reshipping rather than flowing through Windows Update. It also reintroduces the
+  two-heaps hazard between the shim and other native modules that BIND-2's B1
+  found. Dynamic is the status quo and needs no work.
 - The **self-hosted runner** registered, labelled, documented (what it runs, what it
   must have installed), and used by no other job.
 - The **LGPL relinking decision** from the maintainer (Q9) is due before the first
@@ -1333,7 +1347,7 @@ D-BIND-32, where it is recorded in full.
 `test_containment.cpp` fills an `fl_error` through the object library's copy of
 the containment site (`new[]` in the test binary) and releases it with the shim's
 exported `fl_error_dispose` (`delete[]` in the shim). One heap today, two the
-moment BIND-3 links the MSVC CRT statically — which is D-BIND-32's own argument,
+moment the shim stops sharing a runtime with the test binary — which is D-BIND-32's own argument,
 mirrored. Two lines to fix, and it belongs to BIND-2 rather than to BIND-3.
 
 Three actions remain besides, none an engineering one:
