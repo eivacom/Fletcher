@@ -37,6 +37,23 @@ namespace Eiva.Fletcher;
 /// Immutable after construction, so any number of threads may bind, encode and
 /// decode through one instance concurrently without a lock. Disposing it is the
 /// one operation that is not thread-safe against the others.
+///
+/// <para>
+/// <b>Strings cross a transcoding boundary, and its cost is real</b> (D-BIND-1b).
+/// .NET holds strings as UTF-16; the wire carries UTF-8. So a
+/// <see cref="Apache.Arrow.StringArray"/> built by managed code is already UTF-8
+/// in its buffers — Arrow's own representation — and passes through untouched,
+/// but a string that reaches Arrow from a .NET <c>string</c> is transcoded on the
+/// way in, once, by <c>Apache.Arrow</c> rather than by Fletcher.
+/// </para>
+/// <para>
+/// Two consequences worth knowing before measuring anything. Every length on the
+/// wire is a count of UTF-8 BYTES, never of characters or of UTF-16 code units,
+/// so a string whose <c>Length</c> is 10 may occupy 30 bytes. And the copy
+/// accounting the seam is graded on does not count that transcode: it is a
+/// property of the .NET string type, not of this boundary, and it happens before
+/// a row reaches the codec at all.
+/// </para>
 /// </remarks>
 public sealed unsafe class FletcherCodec : IDisposable
 {

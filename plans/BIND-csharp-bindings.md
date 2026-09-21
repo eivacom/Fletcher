@@ -1065,6 +1065,18 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
   `proto_message`, `field_number`); the **IPC parity test** — `.ipc` bytes emitted
   by `--fletcher_opt=ipc` parse to a schema whose fields, types, nullability and
   metadata key order match.
+  **MET 2026-09-21 (BIND-3d), over all ten checked-in goldens:**
+  `SchemaIpcTests.EveryGeneratedDescriptorCarriesTheSpecsMetadata` asserts the
+  spec's own keys — `proto_package` and `proto_message` on the schema,
+  `field_number` on EVERY field — and
+  `.ASchemaSurvivesAnIpcRoundTripFieldForField` compares fields, types,
+  nullability and metadata KEY ORDER against the schema re-serialised from what
+  was parsed, so it needs no hand-written expectation to drift from. Key order is
+  checked separately because Arrow metadata is an ordered list rather than a map:
+  a crossing that rebuilt it from a dictionary would reorder it without losing
+  anything, which reads as equal under any comparison that sorts. Carries a
+  vacuity guard — comparing two key orders is trivially satisfied when both are
+  empty.
 - Dictionary handling per spec §"Dictionary Types": decode a dictionary field as
   its value type; reject nested value types with a clear error; nothing beyond
   that ahead of DICT (D-BIND-8).
@@ -1081,7 +1093,12 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
   codec's bind schema and its decode schema are different objects and the managed
   tier exposes both.
 - The UTF-16↔UTF-8 boundary stated in the XML docs and the oracle's scope note
-  (D-BIND-1b).
+  (D-BIND-1b). **XML-DOC HALF MET 2026-09-21 (BIND-3d)**: stated on
+  `FletcherCodec` — every wire length is a count of UTF-8 BYTES rather than of
+  characters or UTF-16 code units, and the transcode happens in `Apache.Arrow` on
+  the way into an array rather than at this boundary, so the copy accounting does
+  not count it. **The oracle's scope note is BIND-5's**, where the oracle first
+  runs with the C# producer.
 - ~~**Bucket 1 green** as binding conformance tests — the FILE SET named in Part 4's
   matrix, not a count.~~ **REPLACED 2026-09-21 (D-BIND-39).** The FILE-SET wording
   fixed the wrong problem: bucket 1 is `arrow-bridge`'s **Arrow-native** suite, so
