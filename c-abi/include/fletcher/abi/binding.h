@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 1
+#define FL_BINDING_ABI_VERSION_MINOR 2
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -421,6 +421,26 @@ typedef struct fl_blob {
     const uint8_t* data; /* NULL when size == 0 */
     size_t size;
 } fl_blob;
+
+/* Make a blob Fletcher owns, by COPYING `size` bytes from `data`.
+ *
+ * Added at BIND-4a (D-BIND-42) because the surface had no way to make one. The
+ * other three blob entry points all assume you already hold a blob: retain and
+ * release operate on one, and the attachments accessors hand back one BORROWED
+ * from a set. A binding could therefore only ever attach a blob it had RECEIVED
+ * from a delivery, which left `fl_attachments_builder_set` unreachable for a
+ * publisher attaching a trace id of its own.
+ *
+ * It COPIES rather than borrowing, and that is the point: the alternative is a
+ * view-only blob, which rule 1 exists to forbid. The copy is what gives the
+ * bytes an owner whose lifetime the caller no longer has to think about, and
+ * attachments are sidecar metadata where one copy costs nothing - the row
+ * payload's zero-copy path is elsewhere and untouched.
+ *
+ * The caller OWNS the result and releases it with fl_blob_release. A zero `size`
+ * yields the empty blob and needs no release. */
+FL_ABI_EXPORT fl_status fl_blob_create(const uint8_t* data, size_t size, fl_blob* out,
+                                       fl_error* err);
 
 /* Take a reference. Safe from any thread; a no-op on an empty blob. */
 FL_ABI_EXPORT void fl_blob_retain(const fl_blob* blob);

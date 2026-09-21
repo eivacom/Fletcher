@@ -167,6 +167,36 @@ void fl_string_list_dispose(fl_string_list* list) { delete list; }
 
 /* ══ Blobs: shared ownership in C (BIND-4a) ═══════════════════════════════ */
 
+/// Make a blob Fletcher owns, by COPYING the caller's bytes (D-BIND-42).
+///
+/// The copy is the feature. Rule 1 forbids a view-only blob precisely so that
+/// every blob crossing this boundary has an owner whose lifetime is not the
+/// caller's problem, and the only way to honour that for bytes a binding already
+/// holds is to take our own copy of them. Attachments are sidecar metadata; the
+/// row payload's zero-copy path is `fl_publisher_publish_row` and is untouched.
+fl_status fl_blob_create(const uint8_t* data, size_t size, fl_blob* out, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_blob_create");
+        if (data == nullptr && size != 0) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_blob_create: a null data pointer cannot carry " +
+                                  std::to_string(size) + " bytes");
+        }
+
+        // Rule 5: an empty blob needs no owner, so it is not worth a control
+        // block and must report {NULL, NULL, 0} whatever it was built from.
+        if (size == 0) {
+            *out = fl_blob{nullptr, nullptr, 0};
+            return;
+        }
+
+        auto* block = new fletcher::abi::BlobOwner();
+        auto bytes = std::make_shared<const std::vector<uint8_t>>(data, data + size);
+        block->keep = bytes;
+        *out = fl_blob{block, bytes->data(), bytes->size()};
+    });
+}
+
 /// Retain and release are the ONLY operations on `owner`, and both are no-ops on
 /// an empty blob — the header's rule 5 says an empty blob has no owner because
 /// there is no byte to keep alive, so there is nothing to count.

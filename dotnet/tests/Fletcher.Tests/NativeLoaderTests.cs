@@ -89,14 +89,23 @@ public sealed class NativeLoaderTests
     /// If this binding ever reaches 1.0, that case becomes legal and this row has
     /// to be revisited on purpose rather than discovered.
     /// </remarks>
+    /// <remarks>
+    /// DERIVED from the header's own constants rather than written out, and that
+    /// is not tidiness: the cases were literals until D-BIND-42 bumped the minor
+    /// from 1 to 2, at which point `(0, 2)` — listed here as "a newer minor,
+    /// refused" — became the version the shim actually reports, and this row
+    /// failed. It failing was the right outcome; it needing a hand-edit on every
+    /// ABI bump was not. Each case is now an offset from the real version, so the
+    /// next bump moves them with it.
+    /// </remarks>
     [Theory]
-    [InlineData(1u, 1u)]   // a different major
-    [InlineData(0u, 0u)]   // an older minor
-    [InlineData(0u, 2u)]   // a NEWER minor - refused while major is 0
+    [InlineData(NativeLoader.HeaderVersionMajor + 1, NativeLoader.HeaderVersionMinor)]
+    [InlineData(NativeLoader.HeaderVersionMajor, NativeLoader.HeaderVersionMinor - 1)]
+    [InlineData(NativeLoader.HeaderVersionMajor, NativeLoader.HeaderVersionMinor + 1)]
     public void TheHandshakeRefusesAnyOtherVersion(uint major, uint minor)
     {
-        // None of the three is the matching version, by construction - the
-        // matching one is (0, 1) and is asserted by the row above.
+        // None of the three is the matching version, by construction: each is an
+        // offset from it, and the matching one is asserted by the row above.
         uint packed = (major << 16) | minor;
 
         InvalidOperationException error =

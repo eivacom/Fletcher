@@ -1139,6 +1139,13 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   retain/release, and `fl_schema_arrival_*`. BIND-2c built the codec surface and
   the publisher chain; everything else on the ABI is this item's, and is named
   here so the gap the ruling closed does not reopen.
+  **Plus one entry point the header did not have (D-BIND-42, 2026-09-21):
+  `fl_blob_create`.** Every other blob call assumes you already hold a blob, so a
+  binding could only attach one it had RECEIVED from a delivery — leaving "a
+  builder on publish", three bullets down, unreachable. Found by writing the test
+  rather than by reading the header. The ABI minor goes 1 → 2 as the header's own
+  rule requires, and the managed handshake matches EXACTLY while major is 0, so
+  `NativeLoader.HeaderVersionMinor` moves in the same commit.
 - **Thunk discipline per D-BIND-18**: per-subscription in-flight counter and
   `retired` flag, the last one out frees the `GCHandle`; thread-static marker;
   managed refusal of `Dispose` from a handler; managed refusal of a synchronous

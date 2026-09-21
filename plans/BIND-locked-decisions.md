@@ -1067,3 +1067,47 @@ accessors do, for capstone parity (Q18).
   Nothing in this ruling changes the image today.
 
   **No diagram change** (the fourth place): no shape, name, count or direction moves.
+
+- **D-BIND-42 — `fl_blob_create` is added, and the ABI minor goes 1 → 2.** *LOCKED BY THE
+  MAINTAINER 2026-09-21,* raised mid-BIND-4a when a test that should have been routine turned
+  out to be unwritable.
+
+  **THE SURFACE HAD NO WAY TO MAKE A BLOB.** All three blob-adjacent entry points assume you
+  already hold one: `fl_blob_retain` and `fl_blob_release` operate on a blob, and
+  `fl_attachments_value_at` / `_find` hand back one BORROWED from an existing set. Meanwhile
+  `fl_attachments_builder_set` takes a `const fl_blob*` and RETAINS it, and `fl_blob`'s own
+  rules refuse a non-NULL `data` with a NULL `owner` — "there is deliberately no view-only
+  form". Put together: **a binding could only ever attach a blob it had RECEIVED from a
+  delivery.** A publisher attaching a trace id of its own had nothing to call, which left
+  BIND-4's "`Attachments` … a builder on publish" unreachable and the whole write end of the
+  attachments surface dead code.
+
+  **Found by writing the test, not by reading the header.** The read end was implemented and
+  green over empty-valued entries before the gap surfaced; it surfaced when a valued entry
+  needed a blob and there was no call that produced one. Worth recording as the mechanism: the
+  header reviewed cleanly at BIND-1 because every declaration is individually sensible, and
+  what was missing was a declaration nobody thought to look for.
+
+  **The fix is an ADDITION, not a relaxation.** The alternative considered and rejected was
+  letting `fl_attachments_builder_set` COPY when `owner` is NULL: that removes the new entry
+  point at the cost of making the no-view-only-blob rule conditional on which function you are
+  calling, and the header states that rule absolutely. `fl_blob_create` COPIES the caller's
+  bytes and hands back a blob the caller owns and releases — the copy is the point, because it
+  is what gives the bytes an owner whose lifetime the caller no longer has to reason about.
+  Attachments are sidecar metadata; the row payload's zero-copy path is
+  `fl_publisher_publish_row` and is untouched.
+
+  **THE MINOR IS BUMPED BECAUSE THE HEADER'S OWN RULE SAYS SO:** *"any declaration here may
+  change shape or disappear between 0.x releases … what the exemption does NOT license is a
+  silent change — the version above is bumped, and the change is recorded in the round's
+  decision log."* This is that record.
+
+  **The bump has a consequence that must land in the SAME commit, and it does:** the managed
+  handshake is an EXACT match while major is 0 (not `>=`), so `NativeLoader.HeaderVersionMinor`
+  moves with it or every managed test fails at load. It also broke
+  `TheHandshakeRefusesAnyOtherVersion`, which listed `(0, 2)` as "a newer minor, refused" — and
+  `(0, 2)` is now the real version. **The test failing was correct; its cases being literals
+  was not.** They are now derived as offsets from `NativeLoader.HeaderVersionMajor/Minor`, so
+  the next bump moves them rather than breaking them.
+
+  **No diagram change** (the fourth place): no shape, name, count or direction moves.

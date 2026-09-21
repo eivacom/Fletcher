@@ -921,6 +921,14 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   deep-copy-before-import rule and the "a schema received twice" test **move to
   BIND-4**, where a received schema first exists.
 
+- **N-6a — a binding cannot make a blob, and now it can (D-BIND-42, 2026-09-21).**
+  The ABI's blob rules forbid a view-only blob so that everything crossing has an
+  owner — and the surface then offered no way to CREATE one from a binding's own
+  bytes, so `fl_attachments_builder_set` was unreachable for a publisher. Closed
+  by adding `fl_blob_create`, which COPIES; the copy is what supplies the owner.
+  Attachments are sidecar metadata and the row payload's zero-copy path is
+  untouched. ABI minor 1 → 2. *BIND-4a.*
+
 - **N-6 — `GCHandle` and pinning.** Context handles are `GCHandle.Alloc(obj)` (not
   pinned; they are opaque tokens). Buffers handed to native for the duration of a
   call are pinned with `fixed`; nothing pinned outlives its call. The

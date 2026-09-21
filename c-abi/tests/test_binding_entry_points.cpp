@@ -916,6 +916,97 @@ TEST(Attachments, AKeyContainingAZeroByteIsRefusedBySeam) {
     fl_attachments_builder_dispose(builder);
 }
 
+/// A valued attachment round-trips: create, set, seal, read the bytes back.
+///
+/// This is the case that could not be written before D-BIND-42, and the reason
+/// the gap was worth stopping for: every accessor and the whole builder existed,
+/// and none of it was reachable for a publisher attaching bytes of its own.
+TEST(Attachments, AValuedEntryRoundTripsThroughTheBuilder) {
+    fl_error err = {};
+    const std::vector<uint8_t> payload = {0x00, 0xFF, 0x41, 0x00, 0x7F};
+
+    fl_blob value = {};
+    ASSERT_EQ(fl_blob_create(payload.data(), payload.size(), &value, &err), FL_OK)
+        << MessageOf(err);
+    ASSERT_NE(value.owner, nullptr);
+    ASSERT_EQ(value.size, payload.size());
+
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("trace"), &value, &err), FL_OK)
+        << MessageOf(err);
+
+    // The builder RETAINED it, so the caller's reference goes now — which is the
+    // header's promise, and if it were wrong the read below would be a
+    // use-after-free rather than a comparison.
+    fl_blob_release(&value);
+
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK) << MessageOf(err);
+
+    const fl_blob read = fl_attachments_value_at(set, 0);
+    ASSERT_EQ(read.size, payload.size());
+    EXPECT_EQ(std::vector<uint8_t>(read.data, read.data + read.size), payload)
+        << "the bytes did not survive the builder retaining them";
+
+    fl_attachments_dispose(set);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// A RETAINED blob outlives the set it was borrowed from.
+///
+/// The property the per-entry control blocks exist for, and the one a per-call
+/// block would have got wrong in whichever direction it chose: retain, dispose
+/// the set, and the bytes are still there because the block is still referenced.
+TEST(Attachments, ARetainedBlobOutlivesTheSet) {
+    fl_error err = {};
+    const std::vector<uint8_t> payload = {1, 2, 3, 4};
+
+    fl_blob created = {};
+    ASSERT_EQ(fl_blob_create(payload.data(), payload.size(), &created, &err), FL_OK);
+
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK);
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("keep"), &created, &err), FL_OK);
+    fl_blob_release(&created);
+
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK);
+
+    fl_blob borrowed = fl_attachments_value_at(set, 0);
+    fl_blob_retain(&borrowed);
+
+    // The set goes. Under a per-call control block this is where the bytes die.
+    fl_attachments_dispose(set);
+
+    ASSERT_EQ(borrowed.size, payload.size());
+    EXPECT_EQ(std::vector<uint8_t>(borrowed.data, borrowed.data + borrowed.size), payload)
+        << "a retained blob did not outlive the set it came from";
+
+    fl_blob_release(&borrowed);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// An empty blob is the empty blob however it was created (rule 5).
+TEST(Blobs, CreateNormalisesEmptyAndRefusesBytesThatAreNotThere) {
+    fl_error err = {};
+
+    fl_blob empty = {};
+    ASSERT_EQ(fl_blob_create(nullptr, 0, &empty, &err), FL_OK) << MessageOf(err);
+    EXPECT_EQ(empty.owner, nullptr) << "an empty blob needs no owner";
+    EXPECT_EQ(empty.data, nullptr);
+    EXPECT_EQ(empty.size, 0U);
+
+    // A non-empty size with no bytes behind it is refused rather than trusted.
+    fl_blob bad = {};
+    EXPECT_EQ(fl_blob_create(nullptr, 8, &bad, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    EXPECT_EQ(fl_blob_create(nullptr, 0, nullptr, &err), FL_INVALID_ARGUMENT)
+        << "a null out parameter was accepted";
+    fl_error_dispose(&err);
+}
+
 /// Retain and release are no-ops on an empty blob, and safe on NULL.
 ///
 /// A binding's finaliser reaches both after the thing is gone, so neither may
