@@ -5,7 +5,16 @@ cmake_minimum_required(VERSION 3.15)
 project(binding-abi-conformance CXX)
 
 find_package(fletcher-c-abi CONFIG REQUIRED)
-find_package(arrow CONFIG REQUIRED)
+
+# Arrow with a CAPITAL A, and the asymmetry below is deliberate rather than
+# sloppy: Conan's recipe generates `ArrowConfig.cmake` but declares the target as
+# `arrow::arrow`. A lowercase `find_package(arrow)` resolves on Windows anyway,
+# because NTFS is case-insensitive, and fails on Linux, where it is not — which
+# is how it reached CI green on one leg and red on the other. No other
+# CMakeLists in this repository calls find_package for Arrow directly (they get
+# it transitively through fletcher-arrow-bridge), so there was no precedent here
+# to copy the correct spelling from.
+find_package(Arrow CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
