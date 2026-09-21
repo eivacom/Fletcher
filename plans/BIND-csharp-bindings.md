@@ -241,6 +241,27 @@ BIND, by section:
 > `ArrowArrayView`; no wire byte is written by managed code except in
 > `Eiva.Fletcher.GatewayClient`.
 
+**TWO DRIVERS, ONE WIRE FORMAT — and which one a binding reaches (D-BIND-39,
+2026-09-21).** "One codec" is true of the FORMAT and misleading about the code, and
+the gap cost a round of confusion at BIND-3d, so it is written down here:
+
+| | `arrow-bridge::Codec` | `NanoarrowCodec` (the shim) |
+|---|---|---|
+| Tier | **Arrow-native** | **the binding tier** |
+| Callers | hand-written C++ already holding arbitrary Arrow data | every binding — C# now, Rust next round |
+| Types | everything the wire format frames: unions, decimals, intervals, half-float, string/binary view, fixed-size binary | **the proto mapping**, plus `int8/16`, `uint8/16`, `large_string/binary`, `date32/64`, `time32/64`, `fixed_size_list` |
+| Bucket 1 tests | **this one** | not this one |
+
+**Every type a generator can emit, every binding carries.** Checked field by field
+against `docs/wire-format-specification.md`: the proto mapping produces `bool`,
+`int32/64`, `uint32/64`, `float/double`, `utf8`, `binary`, `enum`→int32,
+`timestamp(ns)`, `duration(ns)`, the nullable wrappers, `struct`, `list`, `map` —
+and the shim's codec accepts all of them and more. So **C++, C#, TypeScript and
+Rust generated code agree by construction**, which is the parity property that
+matters; the Arrow-native extras are unreachable from any `.proto` (`oneof` is in
+the spec's own §"Unsupported Types", and decimals, intervals, half-float and the
+view types are not proto constructs at all).
+
 Three things settled it:
 
 1. **GIR-8 already scoped it.** The descriptor-driven codec is explicitly *"BIND-2
@@ -778,7 +799,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-0 | Kickoff: decisions recorded, skeleton `c-abi/` + `dotnet/` green in CI on an empty ABI, matrix committed | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms | 🟢 |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
-| BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `ErrorTests.EveryHardCaseKeepsItsMessage` | ⚪ |
+| BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | ⚪ |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | ⚪ |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
@@ -1043,14 +1064,34 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
 - Dictionary handling per spec §"Dictionary Types": decode a dictionary field as
   its value type; reject nested value types with a clear error; nothing beyond
   that ahead of DICT (D-BIND-8).
+  **CONFIRMED AND MADE REACHABLE 2026-09-21 (D-BIND-39).** This bullet was right
+  and the implementation was not: the shim's codec refused every dictionary at
+  open, so a C# caller could not send what a C++ caller could over the same
+  format. D-BIND-8's deferral rested on the DICT halt, which is a `nanoarrow_ipc`
+  limitation the binding path never reaches — the schema arrives over the C Data
+  Interface and the shim references no nanoarrow IPC at all. **The bullet stands
+  as written and BIND-3d implements it**: plan a dictionary field as its value
+  type, refuse a non-scalar value type naming the field, resolve index→value at
+  encode. Re-folding decoded values into a `DictionaryArray` stays DICT's/BIND-5's.
+  Consequence: a decoded dictionary field arrives as its **value type**, so a
+  codec's bind schema and its decode schema are different objects and the managed
+  tier exposes both.
 - The UTF-16↔UTF-8 boundary stated in the XML docs and the oracle's scope note
   (D-BIND-1b).
-- **Bucket 1 green** as binding conformance tests — the FILE SET named in Part 4's
-  matrix, not a count. A number here is invalidated by any rebase that adds a case
-  upstream (BIND-0 review, F1), and an acceptance bullet that a routine rebase can
-  falsify is one that will be argued about at the moment it is meant to settle
-  something. Re-run Part 4's command to get today's figure;
-  `integration-tests/binding-abi-conformance` round-trips every corpus scenario.
+- ~~**Bucket 1 green** as binding conformance tests — the FILE SET named in Part 4's
+  matrix, not a count.~~ **REPLACED 2026-09-21 (D-BIND-39).** The FILE-SET wording
+  fixed the wrong problem: bucket 1 is `arrow-bridge`'s **Arrow-native** suite, so
+  porting it asks the binding to implement a tier it does not serve — roughly half
+  of it is unions, decimals, intervals, half-float, view types and fixed-size
+  binary, none of which any `.proto` can produce, plus `test_envelope` (BIND-8 by
+  §2.6) and `WriteBufferInPlace`'s writer cases (BIND-4 by surface). F1's point
+  survives intact and is why this is still not stated as a number.
+  **The obligation is now: every type the PROTO MAPPING produces round-trips
+  through the binding** — the mapping table in `docs/wire-format-specification.md`
+  is the file set, and it is the same suite C#, Rust and TypeScript each run, which
+  is what makes the cross-language parity claim testable rather than asserted.
+  `integration-tests/binding-abi-conformance` round-trips every corpus scenario
+  with the values C++ produces.
 
 ### BIND-4 — Pub/sub in `Eiva.Fletcher`
 

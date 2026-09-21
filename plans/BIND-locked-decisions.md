@@ -230,6 +230,16 @@ commit.
   round **halted after DICT-2** (nanoarrow IPC rejects dictionary types), BIND
   **defers dictionary support to DICT's conclusion**. Inventing a representation
   ahead of DICT → STOP-AND-ASK.
+  **AMENDED 2026-09-21 BY D-BIND-39 — the Dictionary clause is SUPERSEDED for the
+  ENCODE/DECODE path.** The premise was checked and does not hold there: the DICT
+  halt is a `nanoarrow_ipc` limitation, and the binding path never touches IPC —
+  `fl_codec_open` takes an `ArrowSchema` over the C Data Interface and the shim
+  references no nanoarrow IPC at all. The STOP-AND-ASK is answered by the same
+  check: `docs/wire-format-specification.md` §"Dictionary Types" ALREADY fixes the
+  representation (encode the value type, one value per row; refuse a non-scalar
+  value type), so implementing it invents nothing. **DICT still owns** re-folding
+  decoded values into a `DictionaryArray` and anything involving dictionary IPC.
+  The enum half of this decision is untouched.
 
 - **D-BIND-9 — The accessor emitter builds on the IR, not on `FieldKind`.** RBA
   stays on the thin `FieldKind` projection this round (GIR-3) and round **RIR**
@@ -900,3 +910,81 @@ accessors do, for capstone parity (Q18).
   profile changes, no rebuild, no size re-measurement. Comment-only changes in `binding.h`
   — no signature, enumerator or struct moved, so the append-only rule does not bind and no
   version bump is required.
+
+- **D-BIND-39 — a BINDING carries the PROTO MAPPING; the shim's codec implements the spec's
+  dictionary rule; bucket 1 is not a binding port target.** *LOCKED BY THE MAINTAINER
+  2026-09-21,* raised at the start of BIND-3d when "port bucket 1 to C#" turned out to be
+  asking the binding to reimplement a tier it does not serve. The maintainer's question was
+  the right one and is recorded because it is the question every future binding will ask:
+  **must C++, C# and Rust support identical types?**
+
+  **THE ANSWER IS YES, AND ON THE GENERATED PATH IT IS ALREADY TRUE** — but only once the
+  two codecs are named apart, which no BIND document did until now:
+
+  | | `arrow-bridge::Codec` | `NanoarrowCodec` (the shim) |
+  |---|---|---|
+  | Tier | **Arrow-native** | **the binding tier** |
+  | Callers | hand-written C++ that already holds arbitrary Arrow data | every binding — C# today, Rust next round, through `fl_codec_open` |
+  | Type set | everything the wire format can frame: unions, decimals, intervals, half-float, string/binary view, fixed-size binary | the proto mapping, and a little more |
+  | Tested by | `test_codec` 35, `test_codec_edge` 23, `test_codec_property_fuzz` 2 — **this is bucket 1** | `test_nanoarrow_codec`, `test_binding_entry_points` |
+
+  **Checked field by field against `docs/wire-format-specification.md` §"Proto to Arrow Type
+  Mapping":** the mapping produces `bool`, `int32/64`, `uint32/64`, `float/double`, `utf8`,
+  `binary`, `enum`→int32, `timestamp(ns)`, `duration(ns)`, the eleven nullable wrappers,
+  `struct`, `list`, `map`. The shim's codec accepts **every one of them and more**
+  (`int8/16`, `uint8/16`, `large_string`, `large_binary`, `date32/64`, `time32/64`,
+  `fixed_size_list`). So generated C++, C#, TS and Rust already agree, and **no binding is
+  short of a type its generator can emit.**
+
+  **The types bucket 1 tests that the binding refuses are not a parity gap, because no
+  generator in any language can emit them.** `oneof` is in the spec's own §"Unsupported
+  Types" table ("Arrow union is not supported by Parquet and has limited compute kernel
+  coverage"), so unions reach the codec only from hand-written Arrow. Decimals, intervals,
+  half-float and the view types have no proto construct at all. Widening the shim's codec to
+  carry them would build support no `.proto` can reach — considered and rejected.
+
+  **THE ONE REAL DIVERGENCE IS DICTIONARIES, AND IT IS FROM THE SPEC, NOT FROM AN ACCEPTANCE
+  BULLET.** §"Dictionary Types" is normative: a `DICTIONARY` field "is encoded as its **value
+  type**, one value per row — the indices are a columnar optimization that has no meaning in
+  a single row", and the value type must be scalar, with nested value types "rejected with a
+  clear error". `arrow-bridge` implements exactly that
+  (`CodecTest.DictionaryFieldTransfersValueType`, `.DictionaryScalarEncodesResolvedValue`,
+  `.DictionaryNestedValueTypeRejected`). **The shim's codec refuses every dictionary at
+  open**, so a C# caller cannot send data a C++ caller can, over the same wire format. That
+  is the parity failure the maintainer's question was pointing at.
+
+  **The premise of the deferral does not hold, and this was VERIFIED rather than argued.**
+  D-BIND-8 defers dictionaries because "the DICT round halted after DICT-2 (nanoarrow IPC
+  rejects dictionary types)". That is a limitation of **`nanoarrow_ipc`**, and the binding
+  path never reaches it: `fl_codec_open` takes an `ArrowSchema` over the **C Data
+  Interface**, and **the shim uses no nanoarrow IPC at all** — zero references to it in
+  `c-abi/src/**` or `c-abi/conanfile.py`. nanoarrow's own header carries the whole facility
+  this needs: `ArrowArrayView.dictionary` is a view of the values, `storage_type` is the
+  index type, and `ArrowArrayViewInitFromSchema` builds the tree. BIND-3c supplies the
+  empirical half: `CodecTests.ADictionaryColumnIsRefusedByName` passes, which means nanoarrow
+  parsed a dictionary schema over C Data and reached the refusal **by field name**.
+
+  **D-BIND-8 IS AMENDED, NOT OVERTURNED** (marked rather than deleted, per D-BIND-33). Its
+  Dictionary clause is superseded **for the encode/decode path only**, on the ground that
+  settles its own STOP-AND-ASK: the spec ALREADY fixes the representation, so implementing it
+  invents nothing. **DICT still owns** re-folding decoded values back into a
+  `DictionaryArray` (the batched subscriber, BIND-5) and anything involving dictionary IPC.
+
+  **Consequences.**
+  1. The shim's codec gains dictionary support per the spec: plan a dictionary field as its
+     **value type**, refuse a non-scalar value type naming the field, resolve index→value at
+     encode. C++ cases mirroring `arrow-bridge`'s three.
+  2. **A decoded dictionary field comes back as its VALUE type**, so a codec's bind schema and
+     its decode schema are no longer the same object. The managed tier exposes both; nothing
+     may assume `DecodeBatch` returns rows shaped like `Schema`.
+  3. BIND-3c's `ADictionaryColumnIsRefusedByName` is **replaced** by a round-trip case plus
+     the nested-value-type refusal. A refusal test for behaviour that is now supported would
+     lock in the defect.
+  4. **Bucket 1 stops being a BIND-3 port target.** It is `arrow-bridge`'s Arrow-native suite.
+     BIND-3's obligation is restated as: **every type the PROTO MAPPING produces round-trips
+     through the binding** — the same suite C#, Rust and TS each run, which is what makes the
+     parity claim testable rather than asserted. `test_envelope` (11) was already BIND-8's by
+     §2.6 and `WriteBufferInPlace`'s writer cases are BIND-4's by surface.
+  5. The two-tier table above is the record. It is written here, in the tracker, in the dev
+     plan and in the diagrams' support table, because its absence is what let "port bucket 1"
+     stand unchallenged for six weeks.

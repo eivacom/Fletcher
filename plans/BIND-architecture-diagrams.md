@@ -40,7 +40,19 @@ path right now.
 | **C++** | ✅ generated row classes + `Codec` | ✅ `Publisher` / `Subscriber`, all providers | ✅ views + accessors | complete |
 | **TypeScript** | ✅ managed codec in `@eiva/fletcher-gateway-client` | ⚠️ via gateway WebSocket only, and **hand-wired** — no generated `Publisher`/`Subscriber` (that is BIND-T) | ❌ | partial |
 | **Rust** | ❌ *(planned — BIND-Rust)* | ❌ *(planned — BIND-Rust)* | ✅ `.fletcher.rs` RecordBatch accessor | read side today |
-| **C#** | ❌ | ❌ | ❌ | planned (BIND) |
+| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ❌ *(BIND-4)* | ❌ *(BIND-7)* | in progress (BIND) |
+
+**Which codec a language reaches, and why the type sets look different
+(D-BIND-39, 2026-09-21).** One wire format, **two drivers** of it:
+`arrow-bridge::Codec` serves hand-written C++ that already holds arbitrary Arrow
+data and carries everything the format can frame — unions, decimals, intervals,
+half-float, view types, fixed-size binary. `NanoarrowCodec` inside the shim serves
+**every binding** (C# today, Rust next round) and carries the **proto mapping**,
+which it covers completely and then some. So **every type a generator can emit,
+every language carries** — the extras are unreachable from any `.proto` (`oneof` is
+in the wire spec's own §"Unsupported Types"). Dictionaries are carried by both as
+of BIND-3d, per the spec's §"Dictionary Types": encoded as the **value type**, one
+value per row.
 
 **Rust has no pub/sub path *yet*.** Today the only Rust in the tree is the
 generated `.fletcher.rs` accessor, which reads `RecordBatch`es something else
