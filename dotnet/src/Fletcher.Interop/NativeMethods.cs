@@ -78,7 +78,7 @@ internal static partial class NativeMethods
     /// known to be compatible.
     /// </remarks>
     [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial uint fl_binding_abi_version();
 
     /// <summary>The single-copy marker text (D-BIND-17).</summary>
@@ -89,6 +89,147 @@ internal static partial class NativeMethods
     /// scan from being dead-stripped; the managed side never needs its value.
     /// </remarks>
     [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial nint fl_single_copy_marker();
+
+    /* Errors ---------------------------------------------------------------- */
+
+    /// <summary>Release the message an <see cref="FlError"/> carries and zero it.</summary>
+    /// <remarks>
+    /// Safe on a zeroed struct and safe to call twice, which is what lets the
+    /// managed throw site be an unconditional <c>finally</c>. For errors the SHIM
+    /// filled only, never for one a managed callback filled (D-BIND-32).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_error_dispose(ref FlError err);
+
+    /* Owned string lists ---------------------------------------------------- */
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nuint fl_string_list_size(nint list);
+
+    /// <summary>The item at <paramref name="index"/>, BORROWED from the list.</summary>
+    /// <remarks>
+    /// Out of range yields a NULL/0 sentinel rather than a status: the signature
+    /// has nowhere to put one, and the caller learns the size from
+    /// <c>fl_string_list_size</c>. BIND-1 review DEBT D2 notes the header leaves
+    /// this unspecified where its twin specifies it; the shim does return the
+    /// sentinel.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlStr fl_string_list_at(nint list, nuint index);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_string_list_dispose(nint list);
+
+    /* The codec: open once, bind once per batch, then encode or decode ------- */
+
+    /// <summary>Open a codec over a schema. The schema is BORROWED and deep-copied.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_codec_open(nint schema, out nint codec, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_codec_close(nint codec);
+
+    /// <summary>Bind one Arrow array to a codec, validated once for the batch.</summary>
+    /// <remarks>
+    /// The array is BORROWED AND NEVER CONSUMED: the codec does not call its
+    /// release callback, and the caller keeps the export alive until
+    /// <c>fl_rows_unbind</c> and releases it afterwards. That rule is what lets ONE
+    /// export serve N publishes, and the managed tier is expected to make it
+    /// structural - BoundRows.Dispose unbinds and THEN releases.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_rows_bind(nint codec, nint array, out nint rows, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_rows_unbind(nint rows);
+
+    /// <summary>Encode row <paramref name="i"/> into a caller-supplied window.</summary>
+    /// <remarks>
+    /// The route for bytes in hand. The zero-copy route is
+    /// <c>fl_publisher_publish_row</c>, and no encode entry point returns bytes.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_encode_row(nint rows, long i, ref FlWriteWindow sink, ref FlError err);
+
+    /// <summary>Decode <paramref name="count"/> rows into a fresh array the caller OWNS.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_decode_rows(
+        nint codec, nint bytes, nuint len, long count, nint output, ref FlError err);
+
+    /* Provider and publisher ------------------------------------------------ */
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_provider_create(
+        FlStr selector, in FlProviderConfig config, out nint provider, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_provider_destroy(nint provider);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_create(nint provider, out nint publisher, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_publisher_destroy(nint publisher);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_create_topic(
+        nint publisher, FlTopic topic, nint schema, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_list_topics(nint publisher, out nint list, ref FlError err);
+
+    /// <summary>Publish bytes a producer writes straight into the transport window.</summary>
+    /// <remarks>
+    /// <paramref name="writer"/> is an UnmanagedCallersOnly function pointer, not a
+    /// delegate: the writer runs inside the seam publish, and a delegate would put
+    /// a marshalling stub and a GC handle on the one path that exists to avoid a
+    /// copy. A writer reporting 0 bytes is how a binding signals that its own thunk
+    /// captured an exception (D-BIND-19 rule 3).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_publish_raw(
+        nint publisher, FlTopic topic, nint writer, nint ctx, nuint minBytes, nint atts, ref FlError err);
+
+    /// <summary>Publish row <paramref name="i"/>, the fused zero-copy path.</summary>
+    /// <remarks>
+    /// The codec runs INSIDE the seam publish, writing into the provider window, so
+    /// no intermediate bytes exist. <paramref name="atts"/> may be NULL, and in this
+    /// slice it can be nothing else: nothing constructs an attachments set until
+    /// BIND-4 (D-BIND-31).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_publish_row(
+        nint publisher, FlTopic topic, nint rows, long i, nint atts, ref FlError err);
+
+    /// <summary>Publish rows [first, first + count), N samples in one crossing.</summary>
+    /// <remarks>
+    /// Partial publication is NOT unwound and cannot be: rows already handed to the
+    /// transport have gone out. A failure at row k means the rows before it were
+    /// published, which the caller must treat as a resend decision rather than a
+    /// rollback.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_publish_rows(
+        nint publisher, FlTopic topic, nint rows, long first, long count, nint attsPerRow, ref FlError err);
 }
