@@ -14,6 +14,18 @@
     <PackageTags>fletcher;arrow;pubsub;dds</PackageTags>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Errors.ReadMessage decodes the shim's message from a byte* by length:
+         the bytes are not NUL-terminated, so the length is authoritative. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Errors.ThrowIfFailed is internal: it takes an FlError, which is an
+         interop type and not part of this package's public surface. -->
+    <InternalsVisibleTo Include="Fletcher.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../Fletcher.Interop/Fletcher.Interop.csproj" />
   </ItemGroup>

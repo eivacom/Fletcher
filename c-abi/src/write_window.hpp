@@ -29,6 +29,28 @@
 
 namespace fletcher::abi {
 
+/// Is `status` one of the taxonomy's FAILURE numbers?
+///
+/// FL_OK is excluded because this is only asked on a refusal, and the two wait
+/// OUTCOMES (FL_PENDING, FL_SUBSCRIPTION_ENDED) are excluded because `PubSubError`
+/// refuses to carry them - they are values, never failures (D-BIND-19 rule 4), so
+/// a `grow` returning one is as wrong as returning 4711.
+inline bool KnownFailure(fl_status status) {
+    switch (status) {
+        case FL_INVALID_ARGUMENT:
+        case FL_SCHEMA_CONFLICT:
+        case FL_TOPIC_NOT_DECLARED:
+        case FL_PAYLOAD_TOO_LARGE:
+        case FL_TRANSPORT_FAILURE:
+        case FL_NOT_SUPPORTED:
+        case FL_INTERNAL:
+        case FL_REENTRANT_CALL:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// A `WriteBuffer` over a caller-owned `fl_write_window`.
 ///
 /// The base class does the arithmetic; this subclass only has to answer "the
@@ -126,8 +148,23 @@ class WindowBuffer final : public WriteBuffer {
                 err.message == nullptr
                     ? std::string()
                     : std::string(reinterpret_cast<const char*>(err.message), err.message_len);
-            throw PubSubError(static_cast<PubSubStatus>(status),
-                              message.empty() ? "fl_write_window: grow refused" : message);
+            // D2 (BIND-2 code review): the callback's number is VALIDATED, not
+            // cast through. `PubSubError::Sanitize` only coerces the three
+            // non-failure values, so an unrecognised int32 - a GetLastError, a
+            // negative errno, an uninitialised local - would otherwise reach
+            // `err->status` verbatim and land in a managed `switch` that has no
+            // arm for it. Anything outside the taxonomy becomes kInternal, and
+            // the offending number is put in the message rather than dropped,
+            // because a binding author debugging this needs to see what their
+            // thunk actually returned.
+            const PubSubStatus mapped =
+                KnownFailure(status) ? static_cast<PubSubStatus>(status) : PubSubStatus::kInternal;
+            std::string text = message.empty() ? "fl_write_window: grow refused" : message;
+            if (!KnownFailure(status)) {
+                text = "fl_write_window: grow returned " + std::to_string(status) +
+                       ", which is not an fl_status value; reporting internal. " + text;
+            }
+            throw PubSubError(mapped, text);
         }
         // Only on SUCCESS: a `grow` that threw above keeps CALLBACK, which is
         // the whole point of setting it.

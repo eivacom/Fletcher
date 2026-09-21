@@ -248,6 +248,72 @@ TEST(BindingEntryPoints, AGrowThatRefusesKeepsItsStatusMessageAndOrigin) {
     fl_error_dispose(&err);
 }
 
+/// A `grow` that refuses WITHOUT a message still produces a usable failure.
+///
+/// Closes D1 from BIND-2's code review: the guard against `std::string(nullptr,
+/// 0)` was added there, and the path was left unexercised. Nothing in `binding.h`
+/// requires a refusing `grow` to set `message`, so this is a conforming callback
+/// and not a hostile one.
+TEST(BindingEntryPoints, AGrowThatRefusesSilentlyStillFailsCleanly) {
+    AbiFixture abi;
+
+    struct Silent {
+        static fl_status Grow(fl_write_window*, size_t, fl_error*) { return FL_TRANSPORT_FAILURE; }
+    };
+
+    std::vector<uint8_t> storage(1);
+    fl_write_window window = {};
+    window.data = storage.data();
+    window.capacity = storage.size();
+    window.pos = 0;
+    window.grow = &Silent::Grow;
+
+    fl_error err = {};
+    EXPECT_EQ(fl_encode_row(abi.rows(), 0, &window, &err), FL_TRANSPORT_FAILURE);
+    EXPECT_EQ(err.origin, FL_ORIGIN_CALLBACK);
+    // The shim supplies its own text rather than handing back an empty message.
+    EXPECT_NE(MessageOf(err).find("grow refused"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
+/// A `grow` returning a number that is NOT an fl_status is reported as INTERNAL,
+/// and the bogus number is named.
+///
+/// Closes D2 from BIND-2's code review. `PubSubError::Sanitize` only coerces the
+/// three non-failure values, so before this an unrecognised int32 reached
+/// `err->status` verbatim and landed in a managed `switch` with no arm for it.
+/// The number is put in the message because the binding author debugging their
+/// own thunk needs to see what it actually returned.
+TEST(BindingEntryPoints, AGrowReturningANonStatusIsContainedAsInternal) {
+    AbiFixture abi;
+
+    struct Bogus {
+        static fl_status Grow(fl_write_window*, size_t, fl_error* err) {
+            static const char kWhy[] = "the managed thunk was confused";
+            err->message = reinterpret_cast<uint8_t*>(const_cast<char*>(kWhy));
+            err->message_len = sizeof(kWhy) - 1;
+            return static_cast<fl_status>(4711);
+        }
+    };
+
+    std::vector<uint8_t> storage(1);
+    fl_write_window window = {};
+    window.data = storage.data();
+    window.capacity = storage.size();
+    window.pos = 0;
+    window.grow = &Bogus::Grow;
+
+    fl_error err = {};
+    EXPECT_EQ(fl_encode_row(abi.rows(), 0, &window, &err), FL_INTERNAL)
+        << "a number outside the taxonomy reached the caller verbatim";
+    EXPECT_EQ(err.origin, FL_ORIGIN_CALLBACK);
+    EXPECT_NE(MessageOf(err).find("4711"), std::string::npos)
+        << "the offending number was dropped: " << MessageOf(err);
+    // The callback's own message is still carried - the diagnosis needs both.
+    EXPECT_NE(MessageOf(err).find("was confused"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
 // ---------------------------------------------------------------------------
 // Nothing is re-invented at the boundary
 // ---------------------------------------------------------------------------

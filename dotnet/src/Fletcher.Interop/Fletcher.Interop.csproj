@@ -31,6 +31,9 @@
     <!-- The shim's surface is internal (it is not a supported API), and the tests
          drive it directly because BIND-3a's forcing property is about LOADING the
          shim rather than about anything the managed tier does with it. -->
+    <!-- Eiva.Fletcher is the tier that gives these handles lifetimes and these
+         status numbers exceptions; it is the intended and only consumer. -->
+    <InternalsVisibleTo Include="Fletcher" />
     <InternalsVisibleTo Include="Fletcher.Tests" />
   </ItemGroup>
 
