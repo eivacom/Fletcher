@@ -533,7 +533,7 @@ pole.
 | BIND-0 | Kickoff: decisions locked, skeleton `c-abi/` + `dotnet/` green in CI, matrix re-baselined | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms with an empty ABI |
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` |
 | BIND-2 | Nanoarrow schema-driven codec + copy oracle producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` |
-| BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `Errors.EveryHardCaseKeepsItsMessage` |
+| BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Bucket 1 green in C#; `ErrorTests.EveryHardCaseKeepsItsMessage` |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, Publisher, Subscriber, SchemaArrival, thunk discipline | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark (D-BIND-37) |
 | BIND-5 | `SubscriberArrow` batching + the oracle run end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged |
@@ -866,6 +866,22 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   A managed exception escaping an `UnmanagedCallersOnly` method is a fail-fast.
   Enforce with a Roslyn analyzer or a reflection test that every such method's
   body is wrapped. *BIND-3.*
+  **Done at BIND-3c (2026-09-21), with the reflection test:**
+  `ThunkDisciplineTests.EveryUnmanagedCallersOnlyMethodIsWrapped` walks both
+  binding assemblies and requires each thunk's **outermost** exception clause to
+  be a catch-all. Written at 3c rather than 3b because the round's first thunk is
+  `GrowingWindow.GrowThunk` and a reflection test over an empty set passes while
+  asserting nothing. **Two things learned by deliberately breaking it, both worth
+  not relearning:** (1) the first version asked whether ANY clause caught
+  `Exception` and was toothless — narrowing the thunk's own catch left the
+  catch-all guarding the failure-recording path, nested inside the handler, and
+  the row kept passing; (2) **the fail-fast above is not what this platform does.**
+  With the catch narrowed, the escaping exception unwound through the shim's C++
+  frames and reached the managed caller intact, so the behavioural test passed
+  too. That is a property of the Windows unwinder and of the flags the shim is
+  built with — on a toolchain whose `catch (...)` sees it, the containment site
+  turns it into `FL_INTERNAL` and the caller's own exception type is LOST. So the
+  rule is enforced structurally, and no code may rest on what happens to work.
 
 - **N-2 — Transport threads call managed code.** Fast DDS listener threads and the
   XRCE session pump enter the CLR via the thunk; that is legal, but a handler that
@@ -894,6 +910,13 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   (`OwnedSchema::DeepCopy`, public for exactly this reason) before import. Misuse
   is a use-after-free under every other holder. *BIND-3; test with a schema
   received twice.*
+  **NOT discharged at BIND-3c, and not by oversight — the RECEIVING half is
+  unreachable.** 3c builds the EXPORT direction only: a schema and a batch that C#
+  exports, which the shim borrows and deep-copies on its own side. Nothing in the
+  implemented entry-point set produces an `fl_schema` — it arrives from
+  `fl_schema_arrival_wait` and the subscriber, both BIND-4's — so the
+  deep-copy-before-import rule and the "a schema received twice" test **move to
+  BIND-4**, where a received schema first exists.
 
 - **N-6 — `GCHandle` and pinning.** Context handles are `GCHandle.Alloc(obj)` (not
   pinned; they are opaque tokens). Buffers handed to native for the duration of a

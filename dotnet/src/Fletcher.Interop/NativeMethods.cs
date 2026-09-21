@@ -148,18 +148,12 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void fl_codec_close(nint codec);
 
-    /// <summary>Bind one Arrow array to a codec, validated once for the batch.</summary>
-    /// <remarks>
-    /// The array is BORROWED AND NEVER CONSUMED: the codec does not call its
-    /// release callback, and the caller keeps the export alive until
-    /// <c>fl_rows_unbind</c> and releases it afterwards. That rule is what lets ONE
-    /// export serve N publishes, and the managed tier is expected to make it
-    /// structural - BoundRows.Dispose unbinds and THEN releases.
-    /// </remarks>
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_rows_bind(
-        CodecHandle codec, nint array, out BoundRowsHandle rows, ref FlError err);
+    // fl_rows_bind is NOT here, for the same reason fl_publisher_create is not:
+    // it is declared inside BoundRowsHandle, as a private import of that class,
+    // so that the compiler - not a comment - guarantees a view cannot be bound
+    // without the exported array pinned to it. The array is BORROWED AND NEVER
+    // CONSUMED, which is what lets ONE export serve N publishes, and the header
+    // asks the managed tier to make the unbind-then-release order structural.
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

@@ -40,6 +40,19 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The plugin's schema goldens, staged beside the test binary.
+       They are the generator's OWN output: the .ipc file the schema option emits
+       for each message, so opening a codec over every one of them is the only
+       check in the round that the descriptors BIND-6 will generate are
+       descriptors BIND-3's codec accepts. Copied rather than read through a
+       relative path so that the dependency is declared where a build can see it,
+       and so a golden that is renamed breaks here instead of silently skipping. -->
+  <ItemGroup>
+    <None Include="../../../protoc/tests/golden/*.ipc"
+          Link="golden/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />

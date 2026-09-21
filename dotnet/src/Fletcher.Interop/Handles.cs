@@ -75,8 +75,11 @@ internal sealed class CodecHandle : FletcherHandle
 /// <remarks>
 /// Releasing this unbinds the VIEW only. The caller's exported
 /// <c>ArrowArray</c> is BORROWED and stays the caller's to release, which is what
-/// lets one export serve N publishes — and the managed tier is expected to make
-/// the order structural by unbinding and THEN releasing the export.
+/// lets one export serve N publishes — and the header asks the managed tier to
+/// make the order structural by unbinding and THEN releasing the export. <see
+/// cref="Bind"/> does that the way <see cref="PublisherHandle.Create"/> pins a
+/// provider: the export is reference-counted by this handle, so its release
+/// cannot run before this unbind whatever order the two are finalized in.
 ///
 /// No reference is taken on the codec, deliberately, and the reason is on the
 /// native side: <c>fl_rows</c> holds a <c>shared_ptr</c> share of the codec, so
@@ -84,12 +87,63 @@ internal sealed class CodecHandle : FletcherHandle
 /// managed AddRef would add a second, weaker guard over a hazard the shim already
 /// removed — and would impose an ordering the header does not require.
 /// </remarks>
-internal sealed class BoundRowsHandle : FletcherHandle
+internal sealed partial class BoundRowsHandle : FletcherHandle
 {
+    private SafeHandle? _export;
+    private bool _addedRef;
+
+    /// <summary>Bind one Arrow array to a codec, pinning the export to the result.</summary>
+    /// <remarks>
+    /// THE ONLY WAY TO GET A BOUND-ROWS HANDLE, for the same reason
+    /// <c>fl_publisher_create</c> is private to <see cref="PublisherHandle"/>: a
+    /// rule that has to be remembered at each call site is one that will be
+    /// forgotten at the next one. The import below is private to this class, so
+    /// no other type in the assembly can bind without the export pinned.
+    ///
+    /// The array is passed as a <see cref="SafeHandle"/> rather than an
+    /// <c>nint</c>: the marshaller then keeps it alive for the duration of the
+    /// bind, which is exactly the window in which the validation reads every
+    /// buffer it points at.
+    /// </remarks>
+    [LibraryImport(NativeMethods.LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static partial int fl_rows_bind(
+        CodecHandle codec, SafeHandle array, out BoundRowsHandle rows, ref FlError err);
+
+    internal static int Bind(
+        CodecHandle codec, SafeHandle array, out BoundRowsHandle rows, ref FlError err)
+    {
+        int status = fl_rows_bind(codec, array, out rows, ref err);
+        if (status == 0 && !rows.IsInvalid)
+        {
+            rows.Pin(array);
+        }
+
+        return status;
+    }
+
+    /// <summary>Pin the export this view borrows.</summary>
+    private void Pin(SafeHandle export)
+    {
+        bool taken = false;
+        export.DangerousAddRef(ref taken);
+        _export = export;
+        _addedRef = taken;
+    }
+
     /// <inheritdoc/>
     protected override bool ReleaseHandle()
     {
         NativeMethods.fl_rows_unbind(handle);
+
+        // Unbind FIRST, release the export afterwards — the order `binding.h`
+        // asks a binding to express in a type rather than in a comment.
+        if (_addedRef && _export is not null)
+        {
+            _export.DangerousRelease();
+            _addedRef = false;
+        }
+
         return true;
     }
 }
