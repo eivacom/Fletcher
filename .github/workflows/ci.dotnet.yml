@@ -29,6 +29,18 @@ on:
 # Container"), Windows natively with actions/setup-dotnet. Both legs restore with
 # --locked-mode, so a dependency that changed without its packages.lock.json
 # fails here rather than resolving differently on the two platforms.
+#
+# BOTH SPARSE CHECKOUTS INCLUDE protoc/tests/golden, AND THAT IS NOT A STRAY
+# ENTRY. Fletcher.Tests stages those .ipc files beside the test binary and opens
+# a codec over every one of them (SchemaIpcTests), which is the only check in the
+# tree that the descriptors the generator emits are descriptors the binding's
+# codec accepts. Without the entry the MSBuild glob matches nothing, the goldens
+# are silently absent, and the theory over them has no cases - which is exactly
+# how BIND-3c first went red here while passing on every developer machine, where
+# the whole repo is present. Cone mode also brings the files directly in protoc/
+# and protoc/tests/ along; that is a few hundred KB and is the price of the
+# check. A new consumer of a path outside this lane's checkout must add it HERE
+# and to ci.pr.yml's dotnet filter, in the same commit.
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -44,6 +56,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            protoc/tests/golden
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
@@ -133,6 +146,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            protoc/tests/golden
 
       # global-json-file, not a literal version: dotnet/global.json is the single
       # pin, and the runner's own pre-installed SDKs must not be what decides
