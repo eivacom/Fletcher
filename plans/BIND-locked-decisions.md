@@ -1111,3 +1111,44 @@ accessors do, for capstone parity (Q18).
   the next bump moves them rather than breaking them.
 
   **No diagram change** (the fourth place): no shape, name, count or direction moves.
+
+- **D-BIND-43 — `fl_schema_retain` is added, and the ABI minor goes 2 → 3.** *LOCKED BY THE
+  MAINTAINER 2026-09-21,* raised while writing BIND-4a's delivery thunk. **D-BIND-42's
+  mechanism, a second time, one slice later** — and that it recurred is the finding, not the
+  coincidence.
+
+  **THE DELIVERY CONTRACT ASKED FOR A CALL THAT DID NOT EXIST.** `fl_delivery_fn`'s
+  documentation says every pointer is borrowed for the duration of the call and spells out what
+  a handler does to keep each one: *"A handler that keeps the bytes copies them; one that keeps
+  the schema retains it; one that keeps an attachment's blob retains that."* Two of those three
+  were callable. `fl_schema_release` existed with **no counterpart anywhere in the header** —
+  the only `retain` declared was `fl_blob_retain` — so a handler that wanted the schema past
+  its frame had no sanctioned way to say so, and the one route left (go back to
+  `fl_schema_arrival_wait`, which does hand out a new reference) requires holding an arrival a
+  delivery handler need not have.
+
+  **Found the same way D-BIND-42 was: by writing the code that has to call it.** The header
+  reviewed cleanly at BIND-1 for the same reason as before — every declaration is individually
+  sensible, and a MISSING one is invisible to a reader going declaration by declaration. What
+  makes this instance sharper is that the surface was not merely incomplete but internally
+  inconsistent: a release with no retain is a pair with one half, and nothing in a
+  declaration-by-declaration review asks "what pairs with this?". **The standing lesson: an
+  owner-handle type is reviewed as a PAIR, and a round that adds one should grep for its
+  counterpart.**
+
+  **Rejected alternative: correct the documentation instead.** That reading — a delivery
+  handler may not keep the schema, and the durable route is the arrival — is coherent, cheaper,
+  and needs no bump. It was rejected because it makes the schema the one borrowed thing in a
+  delivery a handler cannot keep, for no reason the transport imposes, and because `fl_blob`
+  and `fl_schema` are deliberately the same shape with the same idiom; giving them different
+  rules about retaining would be a difference a binding author has to memorise rather than
+  derive.
+
+  **The two coupled consequences are the same as D-BIND-42's and land in the same commit:**
+  `NativeLoader.HeaderVersionMinor` moves 2 → 3 (the managed handshake is an EXACT match while
+  major is 0), and `TheHandshakeRefusesAnyOtherVersion` follows for free — its cases were
+  derived as offsets from `HeaderVersionMajor/Minor` by D-BIND-42 precisely so the next bump
+  would move them rather than break them. **It did. That is the first evidence the derivation
+  was worth making.**
+
+  **No diagram change** (the fourth place): no shape, name, count or direction moves.

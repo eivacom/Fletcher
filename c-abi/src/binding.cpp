@@ -4,12 +4,18 @@
 // The binding ABI's entry points (BIND-2c): the codec surface, the write-window
 // adapters, and the publisher chain that makes the publish fusion real.
 //
-// Scope is D-BIND-31's: the subscriber half, the attachments builder, blob
-// retain/release and the schema-arrival pair are BIND-4's and are deliberately
-// absent here rather than stubbed — an exported symbol that answers
-// FL_NOT_SUPPORTED reads to a binding author exactly like a transport that
-// cannot do the thing, which is a different and much more confusing statement
-// than "not linked yet".
+// BIND-4a completed it: the attachments builder, blob retain/release, shared
+// schemas, the subscriber half and the schema-arrival pair are all here, and
+// every symbol `binding.h` declares is now defined.
+//
+// D-BIND-31's rule still holds and is the reason for the ONE apparent exception
+// below. An unimplemented entry point is a LINK ERROR here, never a symbol that
+// answers FL_NOT_SUPPORTED, because that status reads to a binding author
+// exactly like a transport that cannot do the thing. `fl_subscriber_subscribe_
+// schema` and its pair are not that case: the header DECLARES them as answering
+// FL_NOT_SUPPORTED until the seam grows SubscribeSchema/UnsubscribeSchema
+// (D-BIND-29), so the status is the specified answer rather than a stub standing
+// in for a missing one.
 //
 // ── The one rule every function in this file obeys ──────────────────────────
 // A C++ exception unwinding through a C function is undefined behaviour, so
@@ -31,6 +37,7 @@
 // `binding.h` says "the shim re-validates". It does, in the only sense that
 // survives review — every call goes through the code that refuses — but not by
 // restating the rules here.
+#include <chrono>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
@@ -103,6 +110,46 @@ void RequireOut(const void* out, const char* what) {
                           std::string(what) + ": the out parameter must not be null");
     }
 }
+
+/// A NEW reference to a shared schema, in the ABI's owner-handle form.
+///
+/// The control block is the blob's, deliberately: `fl_schema` and `fl_blob` are
+/// the same shape (an opaque owner plus a borrowed pointer) with the same
+/// retain/release idiom, and giving them two control blocks would be two
+/// refcounts to get right instead of one. What it keeps differs — here the
+/// `SharedSchema` itself, which is a `shared_ptr<const ArrowSchema>`, so holding
+/// the block holds the schema and nothing deep-copies.
+///
+/// A NULL schema is the schema-less transport's answer (seam §7 clause 1) and
+/// gets no block: there is nothing to keep alive, and the header says that
+/// `owner` is NULL exactly then and must not be released.
+fl_schema ShareSchema(const fletcher::SharedSchema& schema) {
+    if (schema == nullptr) return fl_schema{nullptr, nullptr};
+    auto* block = new fletcher::abi::BlobOwner();
+    block->keep = schema;
+    return fl_schema{block, schema.get()};
+}
+
+/// A shared schema for exactly the length of a scope, for the delivery thunk.
+///
+/// The thunk hands the handler a BORROWED schema and must drop its own reference
+/// however it leaves — including when building the attachments view throws,
+/// which the seam's fan-out absorbs rather than propagates. A raw
+/// make-call-release would leak the block on that path, and the leak would be a
+/// schema held forever with nothing pointing at it.
+class SchemaScope {
+   public:
+    explicit SchemaScope(const fletcher::SharedSchema& schema) : view_(ShareSchema(schema)) {}
+    ~SchemaScope() { fl_schema_release(&view_); }
+
+    SchemaScope(const SchemaScope&) = delete;
+    SchemaScope& operator=(const SchemaScope&) = delete;
+
+    [[nodiscard]] const fl_schema* get() const noexcept { return &view_; }
+
+   private:
+    fl_schema view_;
+};
 
 }  // namespace
 
@@ -230,6 +277,15 @@ void fl_blob_release(const fl_blob* blob) {
 /// because that destroys the schema for every other holder — including the
 /// provider still delivering on it. This is the sanctioned way to let go, and
 /// like the blob pair it never fails and never re-enters the seam.
+/// Take a reference (D-BIND-43). The blob pair's reasoning applies unchanged,
+/// including the orderings: relaxed to add, because the caller already holds a
+/// reference and nothing else is being published.
+void fl_schema_retain(const fl_schema* schema) {
+    if (schema == nullptr || schema->owner == nullptr) return;
+    auto* block = static_cast<fletcher::abi::BlobOwner*>(schema->owner);
+    block->refs.fetch_add(1, std::memory_order_relaxed);
+}
+
 void fl_schema_release(const fl_schema* schema) {
     if (schema == nullptr || schema->owner == nullptr) return;
     auto* block = static_cast<fletcher::abi::BlobOwner*>(schema->owner);
@@ -573,5 +629,202 @@ fl_status fl_publisher_publish_rows(fl_publisher* publisher, fl_topic topic, con
         // rather than a rollback.
     });
 }
+
+/* ══ Subscriber ═════════════════════════════════════════════════════════════════════════ */
+
+fl_status fl_subscriber_create(fl_provider* provider, fl_subscriber** out, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_subscriber_create");
+        if (provider == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_create: provider must not be null");
+        }
+        *out = new fl_subscriber(provider->provider);
+    });
+}
+
+/// Destroy a subscriber, and NOTE WHAT THIS DOES NOT DO.
+///
+/// It does not check for quiescence and it cannot: from inside a delivery on
+/// this same subscriber the seam's `~Subscriber` reaches the provider's door,
+/// is refused with kReentrantCall, and rethrows out of a `noexcept` destructor -
+/// the program stops, by design, because the alternative is a silently leaked
+/// transport subscription. That answer is the SEAM's and the shim must not
+/// soften it: a `catch` here would turn a designed halt into a leak with no
+/// signal at all.
+///
+/// The refusal a caller can actually act on belongs one level up, in the
+/// binding's own code, before the call can reach this symbol (D-BIND-18).
+void fl_subscriber_destroy(fl_subscriber* subscriber) { delete subscriber; }
+
+fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_topic topic,
+                                  fl_delivery_fn on_delivery, void* ctx, uint64_t* out_id,
+                                  fl_schema_arrival** out_arrival, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out_id, "fl_subscriber_subscribe (out_id)");
+        RequireOut(out_arrival, "fl_subscriber_subscribe (out_arrival)");
+        if (subscriber == nullptr || on_delivery == nullptr) {
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "fl_subscriber_subscribe: subscriber and on_delivery must not be null");
+        }
+
+        // Allocated BEFORE the subscription goes live, and the ordering is the
+        // point rather than a style choice. Between `Subscribe` returning and
+        // the caller learning its id there must be nothing that can throw: a
+        // failure in that gap leaves a subscription running, delivering into a
+        // thunk, with no id anywhere for anyone to cancel it by. Everything
+        // after the call below is a move-assign of a `shared_ptr`, a pointer
+        // store and a `release()` - all noexcept.
+        auto arrival = std::make_unique<fl_schema_arrival>(fletcher::SchemaArrival{});
+
+        auto result = subscriber->subscriber->Subscribe(
+            ToSegments(topic),
+            [on_delivery, ctx](uint64_t id, const uint8_t* data, size_t len,
+                               const fletcher::SharedSchema& schema, const Attachments& atts) {
+                // THE THUNK. Both views are borrowed for exactly this call,
+                // which is what the header promises a handler, and both are torn
+                // down however this frame exits - `SchemaScope`'s destructor and
+                // `view`'s. A handler that wants either past the return retains
+                // it (fl_schema_retain, fl_blob_retain) and the block outlives
+                // the scope that made it.
+                //
+                // `on_delivery` is a C function pointer and cannot throw; a
+                // binding's own thunk is what catches the handler's exceptions
+                // (seam 5.3). What CAN throw here is building the views, and the
+                // seam's fan-out absorbs that and counts it in
+                // `AbsorbedCallbackFailures()` rather than letting it reach a
+                // transport thread's C frames.
+                const SchemaScope shared(schema);
+
+                // A COPY of the set per delivery, and the cost is stated rather
+                // than hidden: one control block per entry, built here because
+                // `fl_attachments` builds them at seal time so that a blob it
+                // hands out is retainable. A delivery with no attachments
+                // allocates nothing. Whether this is worth a borrowing form is a
+                // question for D-BIND-37's benchmark, not for a guess here.
+                fl_attachments view(atts);
+
+                on_delivery(ctx, id, data, len, shared.get(), &view);
+            });
+
+        arrival->arrival = std::move(result.schema);
+        *out_id = result.subscription_id;
+        *out_arrival = arrival.release();
+    });
+}
+
+/// Cancel a subscription.
+///
+/// Nothing is translated here, including the two surprises, because both are the
+/// seam's contract and a shim that smoothed either would be describing a
+/// different system: cancelling something that is not live is a NO-OP rather
+/// than an error, and a cancellation issued from inside a delivery does not wait
+/// for the frame it is already in.
+fl_status fl_subscriber_unsubscribe(fl_subscriber* subscriber, uint64_t subscription_id,
+                                    fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        if (subscriber == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_unsubscribe: subscriber must not be null");
+        }
+        subscriber->subscriber->Unsubscribe(subscription_id);
+    });
+}
+
+/// The schema watch, answering FL_NOT_SUPPORTED as the header declares it does.
+///
+/// This is the one place in this file where a defined symbol reports that it
+/// cannot do the thing, and it is not a stub standing in for missing work: the
+/// seam has no SubscribeSchema/UnsubscribeSchema pair yet (D-BIND-29), so "this
+/// build cannot do it" is the true answer rather than a stand-in for "not linked
+/// yet". The message names the route that DOES work, because a binding author
+/// reading only the status would otherwise have to go back to the header to
+/// learn there is one.
+fl_status fl_subscriber_subscribe_schema(fl_subscriber* subscriber, fl_topic topic,
+                                         fl_schema_arrival** out_arrival, fl_error* err) {
+    (void)subscriber;
+    (void)topic;
+    (void)out_arrival;
+    return Contain(err, FL_ORIGIN_SEAM, [] {
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          "fl_subscriber_subscribe_schema: the seam does not carry a schema "
+                          "watch yet (D-BIND-29); subscribe to the topic and wait on the "
+                          "arrival fl_subscriber_subscribe returns");
+    });
+}
+
+fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscriber, fl_topic topic,
+                                           fl_error* err) {
+    (void)subscriber;
+    (void)topic;
+    return Contain(err, FL_ORIGIN_SEAM, [] {
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          "fl_subscriber_unsubscribe_schema: the seam does not carry a schema "
+                          "watch yet (D-BIND-29); nothing was ever registered to release");
+    });
+}
+
+/* ══ The schema arrival ════════════════════════════════════════════════════════════ */
+
+/// Wait, and report FIVE outcomes across TWO channels.
+///
+/// Three of them are values and are RETURNED (FL_OK, FL_PENDING,
+/// FL_SUBSCRIPTION_ENDED); a genuine failure is THROWN, so that the one
+/// containment site fills `err` with the number and the message exactly as it
+/// does for every other entry point. That split is why this function cannot just
+/// be a `Contain` call whose status is the answer: `Contain` reports FL_OK for
+/// anything that did not throw, and "not yet" is not a failure.
+///
+/// The timeout is FORWARDED, not interpreted. A negative is refused by
+/// `SchemaArrival::Wait` itself with kInvalidArgument, and INT64_MAX is
+/// `milliseconds::max()` exactly - same underlying type, same value - so the
+/// unbounded form arrives as the unbounded form without this boundary inventing
+/// a mapping. D-BIND-20's "negative means forever" belongs to C#, above this
+/// call, and must not be invented here.
+fl_status fl_schema_arrival_wait(fl_schema_arrival* arrival, int64_t timeout_ms, fl_schema* out,
+                                 fl_error* err) {
+    fl_status outcome = FL_OK;
+    const fl_status contained = Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_schema_arrival_wait");
+        if (arrival == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_schema_arrival_wait: arrival must not be null");
+        }
+
+        fletcher::SharedSchema shared;
+        const PubSubStatus status =
+            arrival->arrival.Wait(std::chrono::milliseconds(timeout_ms), &shared);
+
+        switch (status) {
+            case PubSubStatus::kOk:
+                // Written on BOTH kOk shapes. A schema-less transport answers
+                // kOk with a null schema, and `ShareSchema` turns that into
+                // {NULL, NULL} - the header is explicit that `*out` is written
+                // then, because a caller left reading whatever it passed in is
+                // the silent wrong-slot decode clause 7 exists to prevent.
+                *out = ShareSchema(shared);
+                outcome = FL_OK;
+                return;
+            case PubSubStatus::kPending:
+                outcome = FL_PENDING;
+                return;
+            case PubSubStatus::kSubscriptionEnded:
+                outcome = FL_SUBSCRIPTION_ENDED;
+                return;
+            default:
+                // A real failure. `PubSubError` refuses to carry the three
+                // statuses above, which is why they are returned before this
+                // line can see them.
+                throw PubSubError(status, arrival->arrival.Message());
+        }
+    });
+    return contained == FL_OK ? outcome : contained;
+}
+
+/// Dispose the handle, and nothing else. The subscription behind it is untouched
+/// - this holds a COPY of a copyable arrival - and a schema already handed out by
+/// `wait` keeps the reference it was given.
+void fl_schema_arrival_dispose(fl_schema_arrival* arrival) { delete arrival; }
 
 }  // extern "C"

@@ -27,6 +27,8 @@
 #include <fletcher/core/types.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
+#include <fletcher/pubsub/schema_arrival.hpp>
+#include <fletcher/pubsub/subscriber.hpp>
 #include <memory>
 #include <string>
 #include <utility>
@@ -137,6 +139,34 @@ struct fl_publisher {
     /// order the caller destroys its handles in.
     std::shared_ptr<fletcher::PubSubProvider> provider;
     std::unique_ptr<fletcher::Publisher> publisher;
+};
+
+/// The read end, and it holds the provider for the same reason `fl_publisher`
+/// does: the seam requires a provider to outlive everything built on it, and a
+/// binding whose handles are collected by a GC does not choose the order its
+/// finalisers run in.
+///
+/// The header calls the provider BORROWED, which is a statement about what the
+/// CALLER must not do - it may not assume destroying the provider first is
+/// legal - and not a licence for the shim to hold a dangling reference when the
+/// caller does it anyway.
+struct fl_subscriber {
+    explicit fl_subscriber(std::shared_ptr<fletcher::PubSubProvider> p)
+        : provider(std::move(p)), subscriber(std::make_unique<fletcher::Subscriber>(provider)) {}
+
+    std::shared_ptr<fletcher::PubSubProvider> provider;
+    std::unique_ptr<fletcher::Subscriber> subscriber;
+};
+
+/// A waitable arrival the caller owns.
+///
+/// `SchemaArrival` is COPYABLE in C++ and every copy observes the same arrival,
+/// so this handle is a copy rather than a reference into the subscription - the
+/// header promises disposing it does not cancel the subscription behind it, and
+/// holding a copy is what makes that true without the shim tracking anything.
+struct fl_schema_arrival {
+    explicit fl_schema_arrival(fletcher::SchemaArrival a) : arrival(std::move(a)) {}
+    fletcher::SchemaArrival arrival;
 };
 
 struct fl_string_list {

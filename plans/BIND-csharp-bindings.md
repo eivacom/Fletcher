@@ -1146,6 +1146,14 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   rather than by reading the header. The ABI minor goes 1 → 2 as the header's own
   rule requires, and the managed handshake matches EXACTLY while major is 0, so
   `NativeLoader.HeaderVersionMinor` moves in the same commit.
+  **And a second one the header did not have (D-BIND-43, 2026-09-21):
+  `fl_schema_retain`.** `fl_schema_release` was declared with no counterpart, so the
+  delivery contract's own sentence — a handler that keeps the schema retains it —
+  named a call that did not exist. Found the same way, by writing the thunk that
+  has to call it. Minor 2 → 3, with the same coupled managed handshake; the
+  handshake test's cases, derived as offsets by D-BIND-42, moved on their own.
+  **The native half of BIND-4 is COMPLETE: 43 declared entry points, 43 defined,
+  checked mechanically in both directions.**
 - **Thunk discipline per D-BIND-18**: per-subscription in-flight counter and
   `retired` flag, the last one out frees the `GCHandle`; thread-static marker;
   managed refusal of `Dispose` from a handler; managed refusal of a synchronous

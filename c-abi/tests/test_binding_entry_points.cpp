@@ -1025,3 +1025,432 @@ TEST(Blobs, RetainAndReleaseAreSafeOnEmptyAndNull) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// The subscriber half (BIND-4a)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// What a delivery handed the thunk, COPIED out of the borrowed pointers.
+///
+/// The copying is the point rather than convenience: the header says every
+/// pointer in a delivery is borrowed for the duration of the call, so a test
+/// that asserted against them after the frame returned would be testing a
+/// promise the ABI never made - and would pass or fail on allocator luck.
+struct Delivery {
+    uint64_t subscription_id = 0;
+    std::vector<uint8_t> bytes;
+    bool had_schema = false;
+    int64_t schema_children = 0;
+    std::string first_field;
+    size_t attachment_count = 0;
+};
+
+struct Collector {
+    std::vector<Delivery> deliveries;
+
+    static void OnDelivery(void* ctx, uint64_t id, const uint8_t* data, size_t len,
+                           const fl_schema* schema, const fl_attachments* atts) {
+        auto* self = static_cast<Collector*>(ctx);
+        Delivery seen;
+        seen.subscription_id = id;
+        if (data != nullptr && len > 0) seen.bytes.assign(data, data + len);
+        seen.had_schema = schema != nullptr && schema->schema != nullptr;
+        if (seen.had_schema) {
+            seen.schema_children = schema->schema->n_children;
+            if (schema->schema->n_children > 0 && schema->schema->children[0]->name != nullptr) {
+                seen.first_field = schema->schema->children[0]->name;
+            }
+        }
+        seen.attachment_count = fl_attachments_size(atts);
+        self->deliveries.push_back(std::move(seen));
+    }
+};
+
+/// Provider, publisher and subscriber over `inprocess`, torn down in an order
+/// the seam accepts. `inprocess` delivers SYNCHRONOUSLY on the publishing
+/// thread, which is why every assertion below can run straight after a publish
+/// without a wait - and why a wait would hide a delivery that never happened.
+class SubscriberFixture {
+   public:
+    SubscriberFixture() {
+        const fl_provider_config config = {};
+        EXPECT_EQ(fl_provider_create(Str("inprocess"), &config, &provider_, &err_), FL_OK)
+            << MessageOf(err_);
+        EXPECT_EQ(fl_publisher_create(provider_, &publisher_, &err_), FL_OK) << MessageOf(err_);
+        EXPECT_EQ(fl_subscriber_create(provider_, &subscriber_, &err_), FL_OK) << MessageOf(err_);
+    }
+
+    ~SubscriberFixture() {
+        fl_subscriber_destroy(subscriber_);
+        fl_publisher_destroy(publisher_);
+        fl_provider_destroy(provider_);
+    }
+
+    SubscriberFixture(const SubscriberFixture&) = delete;
+    SubscriberFixture& operator=(const SubscriberFixture&) = delete;
+
+    fl_provider* provider() const { return provider_; }
+    fl_publisher* publisher() const { return publisher_; }
+    fl_subscriber* subscriber() const { return subscriber_; }
+
+   private:
+    fl_error err_ = {};
+    fl_provider* provider_ = nullptr;
+    fl_publisher* publisher_ = nullptr;
+    fl_subscriber* subscriber_ = nullptr;
+};
+
+}  // namespace
+
+/// The chain the publisher half could not close: publish here, arrive there,
+/// through the export table both ways.
+///
+/// `fl_publisher_list_topics` was BIND-2c's stand-in for this (D-BIND-31) - it
+/// could say a topic was declared but not that a byte ever reached anyone. This
+/// is the first test in the tree where the ABI's own subscriber observes the
+/// ABI's own publisher, and the bytes are checked against the codec's oracle
+/// rather than against themselves.
+TEST(Subscriber, TheChainDeliversThroughTheAbiInBothDirections) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("bind"), Str("deliver")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    Collector collector;
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &collector,
+                                      &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    ASSERT_NE(arrival, nullptr) << "out_arrival is written on success";
+    EXPECT_GT(id, 0U);
+
+    ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
+
+    ASSERT_EQ(collector.deliveries.size(), 1U) << "the publish did not reach the subscriber";
+    const Delivery& seen = collector.deliveries.front();
+    EXPECT_EQ(seen.subscription_id, id) << "a delivery must name the subscription it belongs to";
+    EXPECT_EQ(seen.bytes, EncodeLocally(abi.batch(), 0))
+        << "the bytes that arrived are not the bytes the codec encodes";
+    EXPECT_TRUE(seen.had_schema);
+    EXPECT_EQ(seen.schema_children, 2);
+    EXPECT_EQ(seen.first_field, "id");
+    EXPECT_EQ(seen.attachment_count, 0U);
+
+    // Cancellation is observable in the only way that matters: a publish after
+    // it delivers nothing.
+    ASSERT_EQ(fl_subscriber_unsubscribe(fx.subscriber(), id, &err), FL_OK) << MessageOf(err);
+    ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 1, nullptr, &err), FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(collector.deliveries.size(), 1U) << "a cancelled subscription still delivered";
+
+    fl_schema_arrival_dispose(arrival);
+}
+
+/// The arrival's five outcomes, over the two a declared topic can produce.
+///
+/// The schema handed back is a NEW REFERENCE each time, which is why this waits
+/// twice and releases twice: a shim that handed out one shared reference would
+/// pass the first release and corrupt on the second.
+TEST(Subscriber, TheArrivalAnswersTheDeclaredSchemaAsANewReferenceEachTime) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("bind"), Str("arrival")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    Collector collector;
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &collector,
+                                      &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+
+    fl_schema first = {};
+    ASSERT_EQ(fl_schema_arrival_wait(arrival, 0, &first, &err), FL_OK) << MessageOf(err);
+    ASSERT_NE(first.schema, nullptr);
+    ASSERT_NE(first.owner, nullptr) << "a real schema arrives with an owner to release";
+    EXPECT_EQ(first.schema->n_children, 2);
+
+    fl_schema second = {};
+    ASSERT_EQ(fl_schema_arrival_wait(arrival, 0, &second, &err), FL_OK) << MessageOf(err);
+    EXPECT_NE(second.owner, first.owner) << "two waits handed out one owner handle";
+    EXPECT_EQ(second.schema, first.schema) << "both references should share one schema";
+
+    fl_schema_release(&first);
+    // The second reference is still good after the first was dropped - the whole
+    // reason the type carries an owner rather than a bare ArrowSchema*.
+    EXPECT_EQ(second.schema->n_children, 2);
+    fl_schema_release(&second);
+
+    // A negative timeout is REFUSED rather than quietly polling, and the refusal
+    // is the seam's own: D-BIND-20 puts "negative means forever" in C#, above
+    // this call, so a shim that invented it here would make two bindings
+    // disagree about what -1 means.
+    fl_schema out = {};
+    EXPECT_EQ(fl_schema_arrival_wait(arrival, -1, &out, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    fl_schema_arrival_dispose(arrival);
+}
+
+/// A handler that keeps the schema, which is the case D-BIND-43 existed to make
+/// possible.
+///
+/// The retained reference is read after the delivery returned, after the
+/// subscription was cancelled, and after the subscriber, publisher and provider
+/// were all destroyed. Without `fl_schema_retain` there is no way to write this
+/// test at all - which is how the missing declaration was found.
+TEST(Subscriber, ARetainedSchemaOutlivesTheDeliveryAndTheProviderItCameFrom) {
+    fl_error err = {};
+    fl_schema kept = {};
+
+    {
+        SubscriberFixture fx;
+        AbiFixture abi;
+
+        ArrowSchema schema = {};
+        ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+        const fl_str segments[] = {Str("bind"), Str("retain")};
+        const fl_topic topic = {segments, 2};
+        ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+            << MessageOf(err);
+        schema.release(&schema);
+
+        uint64_t id = 0;
+        fl_schema_arrival* arrival = nullptr;
+        ASSERT_EQ(fl_subscriber_subscribe(
+                      fx.subscriber(), topic,
+                      [](void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema* delivered,
+                         const fl_attachments*) {
+                          auto* slot = static_cast<fl_schema*>(ctx);
+                          fl_schema_retain(delivered);
+                          *slot = *delivered;
+                      },
+                      &kept, &id, &arrival, &err),
+                  FL_OK)
+            << MessageOf(err);
+
+        ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err),
+                  FL_OK)
+            << MessageOf(err);
+        ASSERT_NE(kept.schema, nullptr) << "the handler never ran";
+
+        fl_schema_arrival_dispose(arrival);
+    }
+
+    // Everything that produced it is gone. The schema is not.
+    ASSERT_NE(kept.schema, nullptr);
+    EXPECT_EQ(kept.schema->n_children, 2);
+    ASSERT_NE(kept.schema->children[0]->name, nullptr);
+    EXPECT_EQ(std::string(kept.schema->children[0]->name), "id");
+    fl_schema_release(&kept);
+}
+
+/// Attachments cross a delivery, and a retained blob outlives the set that
+/// carried it - the borrow rule of BIND-4a's value tier, now over the wire
+/// rather than over a set built in the same function.
+TEST(Subscriber, AttachmentsReachTheHandlerAndARetainedBlobOutlivesTheDelivery) {
+    fl_error err = {};
+    fl_blob kept = {};
+
+    {
+        SubscriberFixture fx;
+        AbiFixture abi;
+
+        ArrowSchema schema = {};
+        ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+        const fl_str segments[] = {Str("bind"), Str("sidecar")};
+        const fl_topic topic = {segments, 2};
+        ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+            << MessageOf(err);
+        schema.release(&schema);
+
+        fl_attachments_builder* builder = nullptr;
+        ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
+        const uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+        fl_blob value = {};
+        ASSERT_EQ(fl_blob_create(payload, sizeof(payload), &value, &err), FL_OK) << MessageOf(err);
+        ASSERT_EQ(fl_attachments_builder_set(builder, Str("origin"), &value, &err), FL_OK)
+            << MessageOf(err);
+        fl_blob_release(&value);  // the builder retained its own reference
+
+        fl_attachments* atts = nullptr;
+        ASSERT_EQ(fl_attachments_builder_build(builder, &atts, &err), FL_OK) << MessageOf(err);
+        fl_attachments_builder_dispose(builder);
+
+        uint64_t id = 0;
+        fl_schema_arrival* arrival = nullptr;
+        ASSERT_EQ(fl_subscriber_subscribe(
+                      fx.subscriber(), topic,
+                      [](void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                         const fl_attachments* delivered) {
+                          auto* slot = static_cast<fl_blob*>(ctx);
+                          EXPECT_EQ(fl_attachments_size(delivered), 1U);
+                          fl_blob found = {};
+                          if (fl_attachments_find(delivered, Str("origin"), &found) != 0) {
+                              fl_blob_retain(&found);
+                              *slot = found;
+                          }
+                      },
+                      &kept, &id, &arrival, &err),
+                  FL_OK)
+            << MessageOf(err);
+
+        ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, atts, &err), FL_OK)
+            << MessageOf(err);
+
+        fl_attachments_dispose(atts);
+        fl_schema_arrival_dispose(arrival);
+    }
+
+    ASSERT_NE(kept.data, nullptr) << "the handler never found the attachment";
+    ASSERT_EQ(kept.size, 4U);
+    EXPECT_EQ(kept.data[0], 0xDE);
+    EXPECT_EQ(kept.data[3], 0xEF);
+    fl_blob_release(&kept);
+}
+
+/// The schema watch answers FL_NOT_SUPPORTED, and the message names the route
+/// that works.
+///
+/// Asserting on the message is not decoration here. FL_NOT_SUPPORTED alone tells
+/// a binding author that the transport cannot do the thing, which is true but
+/// unhelpful when there IS a way to get a schema; the header's own justification
+/// for declaring the pair early is that a surface reviewed with a known hole in
+/// it gets reviewed twice, and the hole has to say what to do instead.
+TEST(Subscriber, TheSchemaWatchPairAnswersNotSupportedAndSaysWhatToUseInstead) {
+    SubscriberFixture fx;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("watch")};
+    const fl_topic topic = {segments, 2};
+
+    fl_schema_arrival* arrival = nullptr;
+    EXPECT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, &arrival, &err),
+              FL_NOT_SUPPORTED);
+    EXPECT_EQ(arrival, nullptr) << "a refused call must not write its out parameter";
+    EXPECT_NE(MessageOf(err).find("D-BIND-29"), std::string::npos) << MessageOf(err);
+    EXPECT_NE(MessageOf(err).find("fl_subscriber_subscribe"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+
+    EXPECT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_NOT_SUPPORTED);
+    EXPECT_NE(MessageOf(err).find("D-BIND-29"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
+/// Every refusal the subscriber surface owes, and the two calls that are
+/// deliberately NOT refusals.
+TEST(Subscriber, NullArgumentsAreRefusedAndCancellingNothingIsNotAnError) {
+    SubscriberFixture fx;
+    fl_error err = {};
+
+    fl_subscriber* subscriber = nullptr;
+    EXPECT_EQ(fl_subscriber_create(nullptr, &subscriber, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+    EXPECT_EQ(fl_subscriber_create(fx.provider(), nullptr, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    const fl_str segments[] = {Str("bind"), Str("refusals")};
+    const fl_topic topic = {segments, 2};
+    Collector collector;
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+
+    EXPECT_EQ(
+        fl_subscriber_subscribe(fx.subscriber(), topic, nullptr, &collector, &id, &arrival, &err),
+        FL_INVALID_ARGUMENT)
+        << "a subscription with no handler would deliver into nothing";
+    fl_error_dispose(&err);
+    EXPECT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &collector,
+                                      nullptr, &arrival, &err),
+              FL_INVALID_ARGUMENT)
+        << "with nowhere to put the id, a successful subscribe could never be cancelled";
+    fl_error_dispose(&err);
+    EXPECT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &collector,
+                                      &id, nullptr, &err),
+              FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    EXPECT_EQ(fl_subscriber_unsubscribe(nullptr, 1, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    fl_schema out = {};
+    EXPECT_EQ(fl_schema_arrival_wait(nullptr, 0, &out, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    // Not refusals, and both matter to a foreign runtime's finaliser, which has
+    // nowhere to put a failure: cancelling an id that was never live is a no-op
+    // (the seam's rule, forwarded), and disposing a null handle is safe.
+    EXPECT_EQ(fl_subscriber_unsubscribe(fx.subscriber(), 99999, &err), FL_OK) << MessageOf(err);
+    fl_schema_arrival_dispose(nullptr);
+    fl_subscriber_destroy(nullptr);
+    fl_schema_release(nullptr);
+    fl_schema_retain(nullptr);
+}
+
+/// Two subscriptions on one topic observe ONE arrival, as the header promises,
+/// and each gets its own id.
+TEST(Subscriber, SeveralSubscriptionsToOneTopicShareOneArrival) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("bind"), Str("fanout")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    Collector first;
+    Collector second;
+    uint64_t first_id = 0;
+    uint64_t second_id = 0;
+    fl_schema_arrival* first_arrival = nullptr;
+    fl_schema_arrival* second_arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &first,
+                                      &first_id, &first_arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &second,
+                                      &second_id, &second_arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_NE(first_id, second_id);
+
+    ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
+    ASSERT_EQ(first.deliveries.size(), 1U);
+    ASSERT_EQ(second.deliveries.size(), 1U);
+    EXPECT_EQ(first.deliveries.front().subscription_id, first_id);
+    EXPECT_EQ(second.deliveries.front().subscription_id, second_id);
+
+    // Cancelling one leaves the other delivering.
+    ASSERT_EQ(fl_subscriber_unsubscribe(fx.subscriber(), first_id, &err), FL_OK) << MessageOf(err);
+    ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 1, nullptr, &err), FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(first.deliveries.size(), 1U);
+    EXPECT_EQ(second.deliveries.size(), 2U);
+
+    fl_schema_arrival_dispose(first_arrival);
+    fl_schema_arrival_dispose(second_arrival);
+}

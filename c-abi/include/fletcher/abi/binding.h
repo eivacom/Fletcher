@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 2
+#define FL_BINDING_ABI_VERSION_MINOR 3
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -468,6 +468,21 @@ typedef struct fl_schema {
     void* owner;                      /* opaque; NULL when schema is NULL */
     const struct ArrowSchema* schema; /* BORROWED from the owner; never released directly */
 } fl_schema;
+
+/* Take a reference to a shared schema (D-BIND-43).
+ *
+ * The counterpart fl_blob_retain has, and it exists for the same reason: a
+ * delivery's `schema` is BORROWED for the duration of the call, so a handler
+ * that keeps it past its return must extend the lifetime, and this is the
+ * sanctioned way. Without it the delivery contract above could not be honoured -
+ * the surface had a release with nothing to pair it with, and a handler wanting
+ * a durable schema had no route that did not go back through an arrival it may
+ * not hold.
+ *
+ * Safe from any thread; a no-op when `owner` is NULL - which is both a
+ * schema-less transport's kOk and an out-of-range accessor's answer, neither of
+ * which has anything to count. */
+FL_ABI_EXPORT void fl_schema_retain(const fl_schema* schema);
 
 /* Drop a reference to a shared schema. Never fails; a no-op when `owner` is
  * NULL. Safe from any thread, including from inside a delivery. */
