@@ -1032,3 +1032,38 @@ accessors do, for capstone parity (Q18).
 
   **No diagram change** (the fourth place): the deployment view draws the packages a consumer
   takes, and this is a test component that ships in nothing.
+
+- **D-BIND-41 — the glibc floor moves to BIND-9, and is MEASURED rather than stated.**
+  *LOCKED BY THE MAINTAINER 2026-09-21,* raised at the end of BIND-3d by the right question:
+  why do we need it at all?
+
+  **Because glibc is backward compatible and not forward compatible, and NuGet has no fallback.**
+  The shim builds in the devcontainer (`FROM ubuntu:24.04`, glibc 2.39) and links versioned
+  symbols, so it will not load on glibc 2.31 (Ubuntu 20.04, Debian 11) or 2.28 (RHEL 8). The
+  C++ side never had this problem and that is not luck: the `cd.*` lanes ship **Conan
+  packages**, and a consumer whose profile does not match simply rebuilds from source — the
+  mismatch is self-healing. A NuGet package has none of that. The `.so` under
+  `runtimes/linux-x64/native/` is taken as-is or not at all, and .NET supports distributions
+  older than this repository's build image, so a consumer can be fully supported by Microsoft
+  and still fail at the **first P/Invoke, at run time, on their own machine**.
+
+  **But it is a statement about a PACKAGE, and BIND-3 packages nothing.** Writing the floor
+  into BIND-3 would have documented an artifact that does not exist for six more items. So the
+  clause moves to BIND-9, beside the RID matrix, the packed-size budget and the CRT question
+  D-BIND-38 already moved there.
+
+  **What replaces it is stronger than the sentence it removes.** `ci.c-abi.yml`'s Linux leg now
+  prints the highest `GLIBC_x.y` the built shim references — the oldest distribution that can
+  load it — on every run, in the log and the step summary. **Printed, not enforced:** no floor
+  is ruled, so there is nothing to fail against yet. This is the size ceiling's habit applied
+  to a second property (*"each leg now prints baseline + headroom so growth shows as a number
+  before it shows as a red build"*), and it means BIND-9 will state a MEASURED number instead
+  of inferring one from the build image — which is usually wrong in the safe direction, since
+  the symbols a binary actually reaches are older than the glibc it was built against.
+
+  **If the measured floor turns out too high, the fix is the BUILD IMAGE** (manylinux, or an
+  older Ubuntu), which is exactly why the question was worth asking now even though the answer
+  lands later: changing the image after six more items is more disruptive than choosing it.
+  Nothing in this ruling changes the image today.
+
+  **No diagram change** (the fourth place): no shape, name, count or direction moves.

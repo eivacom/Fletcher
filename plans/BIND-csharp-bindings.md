@@ -1041,8 +1041,12 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
 
 - `Eiva.Fletcher.Interop`: P/Invoke declarations; a `SafeHandle` per native
   handle; `NativeLibrary.SetDllImportResolver` with a diagnostic that names the
-  missing RID; the ABI version handshake at load; the glibc floor stated for
-  `linux-x64` (N-7). **The MSVC CRT stays DYNAMIC and the profile is untouched
+  missing RID; the ABI version handshake at load. ~~the glibc floor stated for
+  `linux-x64` (N-7)~~ — **MOVED TO BIND-9 (D-BIND-41, 2026-09-21)**: a floor is a
+  statement about a PACKAGE, and nothing is packaged until BIND-9. What BIND-3
+  leaves behind is better than the sentence it removes — `ci.c-abi.yml` now
+  MEASURES the floor on every Linux build and prints it, so BIND-9 states a number
+  rather than guessing one from the build image. **The MSVC CRT stays DYNAMIC and the profile is untouched
   (D-BIND-38, 2026-09-21)**; whether the shipped shim should link it statically is
   a packaging question and moved to BIND-9.
 - **Error handling per D-BIND-19** (development plan §3.5): one `ThrowIfFailed`
@@ -1295,6 +1299,18 @@ same machinery as everything else, **so that** it cannot rot.
   every run via the #127 deployer; pack fails if either is missing. The
   **asset-isolation check** for `GatewayClient` rides in the same step.
 - The **packed-size budget** for the shim.
+- **The glibc floor for `linux-x64`, stated here (D-BIND-41, moved from BIND-3).**
+  The number is not guessed: `ci.c-abi.yml`'s Linux leg prints the highest
+  `GLIBC_x.y` the built shim references, which is the oldest distribution that can
+  load it, on every run. State THAT number in the package README, and decide
+  whether it is low enough — if it is not, the answer is to build the shim on an
+  older image, which is a packaging decision and belongs with the RID matrix
+  rather than with the codec. **Why this is a NuGet problem and not a Conan one:**
+  the C++ lanes ship Conan packages, so a consumer whose profile does not match
+  rebuilds from source and the mismatch is self-healing; a `.so` under
+  `runtimes/linux-x64/native/` is taken as-is or not at all, and .NET supports
+  distributions older than this repository's build image — so a consumer can be
+  fully supported by Microsoft and still fail at the first P/Invoke.
 - **The MSVC CRT: dynamic or static, decided here (D-BIND-38, moved from BIND-3).**
   The question is a packaging one — whether a consumer needs the VC++
   redistributable on the target machine — and it is settled with **evidence** about

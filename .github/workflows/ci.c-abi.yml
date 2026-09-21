@@ -185,6 +185,39 @@ jobs:
                 exit 1
               fi
 
+              # THE GLIBC FLOOR, MEASURED RATHER THAN ASSUMED (N-7).
+              #
+              # glibc is backward compatible and NOT forward compatible: a .so
+              # built here links versioned symbols, so the highest GLIBC_x.y it
+              # references is what decides the OLDEST distribution that can load
+              # it. The build image is ubuntu 24.04, but this number is usually
+              # lower than the glibc of that image, because it depends on which
+              # symbols the code actually reaches rather than on what was
+              # available to it.
+              #
+              # WHY THIS MATTERS TO BIND AND NEVER MATTERED TO THE C++ LANES:
+              # those ship CONAN packages, and a consumer whose profile does not
+              # match simply rebuilds from source, so a mismatch is self
+              # healing. A NuGet package has no such fallback - the .so under
+              # runtimes/linux-x64/native is taken as is or not at all - so a
+              # consumer on an older distribution gets a symbol-version failure
+              # at the first P/Invoke, at run time, on their own machine. .NET
+              # supports distributions older than this image, so that consumer
+              # can be fully supported by Microsoft and still unable to load us.
+              #
+              # PRINTED, NOT ENFORCED. No floor is ruled yet: BIND-9 states one
+              # when the RID assets are actually packaged, and it states THIS
+              # measured number rather than guessing from the build image. Same
+              # habit as the size ceiling above - a number in the log long
+              # before it is a red build.
+              FLOOR=$(objdump -T "$SHIM" | grep -oE "GLIBC_[0-9]+[.][0-9]+" | sort -u -V | tail -1)
+              if [ -z "$FLOOR" ]; then
+                echo "::warning::no GLIBC_ symbol versions found in the shim, so the floor could not be measured"
+              else
+                echo "linux-x64 shim requires glibc up to $FLOOR - the oldest distribution that can load it"
+                echo "### linux-x64 glibc floor: $FLOOR" >> /workspace/shim-summary.md
+              fi
+
               # The export table IS the interface, and on Linux it is enforced:
               # CXX_VISIBILITY_PRESET hides this component own symbols and
               # --exclude-libs ALL localises everything that arrived from a static

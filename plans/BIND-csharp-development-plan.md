@@ -934,6 +934,16 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   version handshake, and a **decision** on the glibc baseline for `linux-x64`
   (build on an older image, or state the floor). MSVC: the shim links the CRT
   **statically** (`/MT`) so consumers need no redistributable. *BIND-3 / BIND-9.*
+  **The glibc half moved to BIND-9 and is now MEASURED (D-BIND-41, 2026-09-21).**
+  A floor is a statement about a package, and BIND-3 packages nothing — but the
+  measurement does not have to wait: `ci.c-abi.yml`'s Linux leg prints the highest
+  `GLIBC_x.y` the built shim references on every run, so BIND-9 states a measured
+  number rather than inferring one from the build image (which is wrong in the
+  safe direction — the symbols a binary reaches are older than the glibc it was
+  built against). **Why this bites NuGet and never bit the C++ lanes:** they ship
+  Conan packages, so a profile mismatch rebuilds from source and heals itself; a
+  `.so` under `runtimes/linux-x64/native/` is taken as-is or not at all. The CRT
+  half of this bullet moved to BIND-9 earlier, by D-BIND-38.
 
 - **N-8 — NativeAOT and static native linking change the LGPL analysis.** Default
   P/Invoke to a shared shim keeps the shim replaceable (see P-1). A consumer that
