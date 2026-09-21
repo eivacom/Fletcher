@@ -608,6 +608,9 @@ job, and the plan documents.
 | `c-abi/src/publisher_abi.cpp` | the publish fusion shown in §3.2 |
 | `c-abi/src/write_window_adapter.hpp` | `fl_write_window` → `WriteBuffer` adapter for `fl_encode_row` (grow hook = one crossing per refill) |
 | `c-abi/tests/test_nanoarrow_codec.cpp` | `NanoarrowCodec.ByteIdenticalToArrowBridge` over the codec's own Arrow fixture corpus (D-BIND-35); malformed-input parity with HARD-1..7; the borrow rule (the array is never consumed across N encodes, and the caller's release is the only one) |
+| `c-abi/tests/codec_corpus.hpp` | the five Arrow fixtures (`scalars`, `temporal`, `nested`, `composites`, `fixed_size`), lifted out of `test_nanoarrow_codec.cpp` so ONE definition serves both the byte-identity test and the conformance emitter (D-BIND-40). gtest-free: it throws, because one consumer is a plain executable |
+| `integration-tests/binding-abi-conformance/src/emit_corpus.cpp` | writes each fixture as an Arrow IPC stream plus the rows as the SHIM encoded them through the C ABI, and a manifest the C# side discovers its cases from |
+| `integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/` | `ManagedArrowEncodesTheBytesNativeArrowDid` (the forcing property: two independent Arrow implementations, one codec, identical bytes), `NativeBytesDecodeToNativeValuesThroughTheBinding`, `TheCorpusWasEmitted` |
 | `c-abi/tests/binding_abi_c99.c` | `BindingAbi.CompilesAsC99AndIsSelfContained` |
 | `dotnet/src/Fletcher.Interop/NativeMethods.Codec.cs` | P/Invoke declarations for the eight functions |
 | `dotnet/src/Fletcher/FletcherCodec.cs` | `FletcherCodec(Schema)`, `Bind(RecordBatch) -> BoundRows`, `Decode`, `DecodeBatch`, `Dispose` |

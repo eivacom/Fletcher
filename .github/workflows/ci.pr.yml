@@ -45,6 +45,7 @@ jobs:
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
       integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
@@ -223,6 +224,21 @@ jobs:
               - 'integration-tests/gateway-fastdds-ts/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.gateway-fastdds-ts.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-binding-abi:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/binding-abi-conformance/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.binding-abi-conformance.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -473,6 +489,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-binding-abi-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-binding-abi == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.binding-abi-conformance.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-arrow-bridge:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-arrow == 'true' }}
@@ -557,6 +581,7 @@ jobs:
       - fastdds-pubsub-provider
       - xrcedds-pubsub-provider
       - gateway-client
+      - integration-test-binding-abi-conformance
       - integration-test-fastdds-xrce-interop
       - integration-test-gateway-end-to-end
       - integration-test-gateway-fastdds-ts
@@ -592,6 +617,7 @@ jobs:
             ${{ needs.fastdds-pubsub-provider.result }},
             ${{ needs.xrcedds-pubsub-provider.result }},
             ${{ needs.gateway-client.result }},
+            ${{ needs.integration-test-binding-abi-conformance.result }},
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},

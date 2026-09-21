@@ -988,3 +988,47 @@ accessors do, for capstone parity (Q18).
   5. The two-tier table above is the record. It is written here, in the tracker, in the dev
      plan and in the diagrams' support table, because its absence is what let "port bucket 1"
      stand unchallenged for six weeks.
+
+- **D-BIND-40 — `binding-abi-conformance` reuses the CODEC'S OWN corpus, emitted by C++ on
+  every run.** *LOCKED BY THE MAINTAINER 2026-09-21,* the open corpus question from D-BIND-39's
+  session. The acceptance already said "reusing the existing corpus rather than a C#-only
+  fixture"; what was open was WHICH corpus, and the two candidates were not equivalent.
+
+  **Ruled: the five Arrow fixtures in `codec_corpus.hpp`** — `scalars`, `temporal`, `nested`,
+  `composites`, `fixed_size` — the same objects `NanoarrowCodec.ByteIdenticalToArrowBridge`
+  compares the two C++ encoders over. **Rejected: `emit_vectors.cpp`'s scenario corpus**, for
+  the reason D-BIND-35 already gave when it struck that reference from BIND-2's acceptance —
+  it encodes through the protoc-generated row class, three scenarios over one flat message, so
+  it is the wrong SHAPE and narrower.
+
+  **The corpus is INCLUDED, not copied.** `codec_corpus.hpp` was lifted out of
+  `test_nanoarrow_codec.cpp` so one definition serves two consumers; the emitter includes it
+  across the tree and the c-abi test keeps using it unchanged. A second copy would drift, and
+  both copies would keep passing while covering different things — which is worse than no
+  corpus, because it reads as coverage. The header is gtest-free and reports a failure by
+  THROWING, because one consumer is a gtest binary and the other is a plain executable, and a
+  fixture that cannot be built must not quietly become an empty batch.
+
+  **What the suite can and cannot ask, stated because it is easy to overclaim.** Every binding
+  calls ONE codec, so "do C# and C++ encode the same bytes" is not a question it could fail.
+  The question it DOES ask is one layer up: **two independent Arrow implementations build the
+  same logical batch — do they hand that codec the same thing?** Arrow C++ builds the fixtures
+  and writes them as IPC; `Apache.Arrow` rebuilds its own arrays from that IPC and exports them
+  across the C Data Interface. Offsets, validity bitmaps, child ordering, buffer padding and
+  the empty-vs-null distinction all have to agree, or the codec reads the difference onto the
+  wire as a subscriber decoding into the wrong values. Correctness of the bytes stays
+  `ByteIdenticalToArrowBridge`'s job, in C++, against a genuinely second implementation.
+
+  **Emitted on every run, never committed.** A committed corpus is a golden the thing it
+  checks is free to drift away from. The C# side DISCOVERS its cases from the emitter's
+  `manifest.txt`, so a fixture added to the corpus is exercised without anyone remembering to
+  add it — and `TheCorpusWasEmitted` is the vacuity guard, because both theories are driven by
+  a file and a theory with no cases passes.
+
+  **The reference bytes come through the C ABI**, not through `NanoarrowCodec` directly: this
+  is the BINDING ABI's conformance suite, a binding reaches the codec only through
+  `fl_codec_open`/`fl_rows_bind`/`fl_encode_row`, and producing the reference any other way
+  would certify a path no binding takes.
+
+  **No diagram change** (the fourth place): the deployment view draws the packages a consumer
+  takes, and this is a test component that ships in nothing.

@@ -40,5 +40,12 @@ debug.log
 dotnet/**/bin/
 dotnet/**/obj/
 dotnet/**/*.user
+
+# The binding ABI conformance suite's C# half lives under integration-tests/,
+# so the rules above do not reach it. Scoped the same way, and for the same
+# reason: a blanket **/bin/ would quietly stop tracking the protoc launcher.
+integration-tests/**/dotnet/**/bin/
+integration-tests/**/dotnet/**/obj/
+integration-tests/**/dotnet/**/*.user
 dotnet/**/TestResults/
 dotnet/artifacts/
