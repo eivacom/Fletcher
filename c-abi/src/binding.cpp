@@ -89,7 +89,7 @@ std::vector<std::string> ToSegments(fl_topic topic) {
 /// `fl_attachments` until BIND-4's builder (D-BIND-31).
 const Attachments& AttachmentsOf(const fl_attachments* atts) {
     static const Attachments kNone;
-    return atts == nullptr ? kNone : atts->value;
+    return atts == nullptr ? kNone : atts->set;
 }
 
 /// Refuse a null OUT parameter before anything is built.
@@ -164,6 +164,156 @@ fl_str fl_string_list_at(const fl_string_list* list, size_t index) {
 }
 
 void fl_string_list_dispose(fl_string_list* list) { delete list; }
+
+/* ══ Blobs: shared ownership in C (BIND-4a) ═══════════════════════════════ */
+
+/// Retain and release are the ONLY operations on `owner`, and both are no-ops on
+/// an empty blob — the header's rule 5 says an empty blob has no owner because
+/// there is no byte to keep alive, so there is nothing to count.
+///
+/// Neither re-enters the seam and neither can fail, which is why they return
+/// void and take no `fl_error`: a release that could fail would leave a binding's
+/// finaliser with nowhere to put the failure.
+void fl_blob_retain(const fl_blob* blob) {
+    if (blob == nullptr || blob->owner == nullptr) return;
+    auto* block = static_cast<fletcher::abi::BlobOwner*>(blob->owner);
+    // Relaxed is enough to ADD a reference: the caller already holds one, so the
+    // object cannot die under us and no other memory is being published.
+    block->refs.fetch_add(1, std::memory_order_relaxed);
+}
+
+void fl_blob_release(const fl_blob* blob) {
+    if (blob == nullptr || blob->owner == nullptr) return;
+    auto* block = static_cast<fletcher::abi::BlobOwner*>(blob->owner);
+    // acq_rel on the way down, unlike the add: the thread that drops the last
+    // reference must see every write the other holders made before it runs the
+    // destructor.
+    if (block->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete block;
+}
+
+/* ══ Shared schemas ═══════════════════════════════════════════════════════ */
+
+/// Drop a reference to a shared schema.
+///
+/// The header's most expensive warning lives on this type: a binding must NEVER
+/// call the Arrow C Data Interface's own `release` on `fl_schema::schema`,
+/// because that destroys the schema for every other holder — including the
+/// provider still delivering on it. This is the sanctioned way to let go, and
+/// like the blob pair it never fails and never re-enters the seam.
+void fl_schema_release(const fl_schema* schema) {
+    if (schema == nullptr || schema->owner == nullptr) return;
+    auto* block = static_cast<fletcher::abi::BlobOwner*>(schema->owner);
+    if (block->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete block;
+}
+
+/* ══ Attachments: the read end ════════════════════════════════════════════ */
+
+size_t fl_attachments_size(const fl_attachments* atts) {
+    return atts == nullptr ? 0 : atts->set.size();
+}
+
+/// Out of range yields {NULL, 0} rather than a status, exactly as
+/// `fl_string_list_at` does: the signature has nowhere to put one, and the caller
+/// learns the size from the call above.
+fl_str fl_attachments_key_at(const fl_attachments* atts, size_t index) {
+    if (atts == nullptr || index >= atts->set.size()) return fl_str{nullptr, 0};
+    const std::string_view key = atts->set.KeyAt(index);
+    return fl_str{reinterpret_cast<const uint8_t*>(key.data()), key.size()};
+}
+
+/// BORROWED from the set: the control block is the set's, built at seal time, and
+/// this hands back a reference it does NOT add to. A caller keeping the bytes
+/// past the set calls `fl_blob_retain` — the header's rule 1, and the reason this
+/// does not retain on the caller's behalf.
+fl_blob fl_attachments_value_at(const fl_attachments* atts, size_t index) {
+    if (atts == nullptr || index >= atts->set.size()) return fl_blob{nullptr, nullptr, 0};
+    const fletcher::Blob& value = atts->set.ValueAt(index);
+    if (value.empty()) return fl_blob{nullptr, nullptr, 0};
+    return fl_blob{atts->owners[index], value.data(), value.size()};
+}
+
+/// Absence is not a failure and carries no error, which is why this returns an
+/// int rather than an `fl_status`: "no such key" is an ordinary answer, and a
+/// caller forced to distinguish it from a refusal would need a taxonomy for
+/// something that is not one.
+int fl_attachments_find(const fl_attachments* atts, fl_str key, fl_blob* out) {
+    if (atts == nullptr || out == nullptr) return 0;
+    const std::string_view wanted(reinterpret_cast<const char*>(key.data), key.len);
+    for (size_t i = 0; i < atts->set.size(); ++i) {
+        if (atts->set.KeyAt(i) != wanted) continue;
+        *out = fl_attachments_value_at(atts, i);
+        return 1;
+    }
+    return 0;
+}
+
+void fl_attachments_dispose(fl_attachments* atts) { delete atts; }
+
+/* ══ Attachments: the write end ═══════════════════════════════════════════ */
+
+fl_status fl_attachments_builder_create(fl_attachments_builder** out, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_attachments_builder_create");
+        *out = new fl_attachments_builder();
+    });
+}
+
+/// `key` is COPIED and `value` is RETAINED, so the caller may release its own
+/// reference the moment this returns. A key containing a zero byte is refused —
+/// the seam's own rule, inherited rather than re-implemented, because
+/// `Attachments::Set` raises it.
+fl_status fl_attachments_builder_set(fl_attachments_builder* builder, fl_str key,
+                                     const fl_blob* value, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        if (builder == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_attachments_builder_set: builder must not be null");
+        }
+
+        std::string copied(reinterpret_cast<const char*>(key.data), key.len);
+
+        if (value == nullptr || value->size == 0) {
+            builder->pending.Set(std::move(copied), fletcher::Blob());
+            return;
+        }
+
+        // Retaining means holding the CALLER's control block, not copying the
+        // bytes: that is what makes "value is RETAINED by the builder" true
+        // without a copy, and what lets a transport's loaned sample cross here.
+        auto* block = static_cast<fletcher::abi::BlobOwner*>(value->owner);
+        if (block == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_attachments_builder_set: a blob with bytes needs an owner that "
+                              "keeps them alive; there is no view-only blob");
+        }
+        block->refs.fetch_add(1, std::memory_order_relaxed);
+
+        // The deleter drops the reference just taken, so the retained block dies
+        // with the Blob rather than with this call.
+        std::shared_ptr<const void> keep(static_cast<const void*>(block), [block](const void*) {
+            if (block->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete block;
+        });
+        builder->pending.Set(std::move(copied),
+                             fletcher::Blob(std::move(keep), value->data, value->size));
+    });
+}
+
+/// Seal. The builder is left EMPTY and reusable, which is the header's wording
+/// and is what lets a publisher build one set per row without reallocating.
+fl_status fl_attachments_builder_build(fl_attachments_builder* builder, fl_attachments** out,
+                                       fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_attachments_builder_build");
+        if (builder == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_attachments_builder_build: builder must not be null");
+        }
+        *out = new fl_attachments(std::move(builder->pending));
+        builder->pending = fletcher::Attachments();
+    });
+}
+
+void fl_attachments_builder_dispose(fl_attachments_builder* builder) { delete builder; }
 
 /* ══ The codec ═════════════════════════════════════════════════════════════ */
 

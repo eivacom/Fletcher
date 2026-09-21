@@ -23,6 +23,7 @@
 #ifndef FLETCHER_C_ABI_SRC_HANDLES_HPP_
 #define FLETCHER_C_ABI_SRC_HANDLES_HPP_
 
+#include <atomic>
 #include <fletcher/core/types.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
@@ -32,6 +33,28 @@
 #include <vector>
 
 #include "nanoarrow_codec.hpp"
+
+namespace fletcher::abi {
+
+/// The C form of shared ownership, and it is NOT a `shared_ptr` in disguise.
+///
+/// `binding.h` says `owner` is opaque, not layout-compatible with the C++
+/// `shared_ptr` it is built from, and that only retain/release may be applied to
+/// it. That rules out the obvious implementation — a heap-allocated `shared_ptr`
+/// — for a reason worth stating: `fl_blob_retain` receives a `const fl_blob*`
+/// and must not change `owner`, so the reference count has to be reachable
+/// FROM the pointer the caller already holds. A control block with its own
+/// atomic count is the shape that satisfies that.
+///
+/// `keep` is whatever keeps the bytes alive: a vector Fletcher allocated, a
+/// transport's loan token, an arena. The count is atomic because the header
+/// promises retain and release are safe from any thread, concurrently.
+struct BlobOwner {
+    std::shared_ptr<const void> keep;
+    std::atomic<long> refs{1};
+};
+
+}  // namespace fletcher::abi
 
 /// Shared, not owned outright, and the reason is a lifetime the header does not
 /// state: nothing in `binding.h` says `fl_codec_close` may not precede
@@ -58,6 +81,54 @@ struct fl_provider {
     std::shared_ptr<fletcher::PubSubProvider> provider;
 };
 
+/// A sealed attachments set, plus one control block per entry.
+///
+/// The control blocks are built ONCE, at seal time, and not per accessor call.
+/// `binding.h` says a blob from `fl_attachments_value_at` is BORROWED from the
+/// set and valid for as long as the set is; a block minted per call would either
+/// leak (nobody releases a borrow) or dangle (freed while the caller still reads
+/// it). Building them with the set gives the borrow exactly the lifetime the
+/// header promises, and a caller that wants longer calls `fl_blob_retain`, which
+/// is why the set holds ONE reference of its own and drops it on dispose rather
+/// than deleting the blocks outright.
+struct fl_attachments {
+    explicit fl_attachments(fletcher::Attachments a) : set(std::move(a)) {
+        owners.reserve(set.size());
+        for (size_t i = 0; i < set.size(); ++i) {
+            // The entry's own owner keeps the bytes; this block keeps the entry's
+            // owner. One indirection, and it is what lets a retained blob outlive
+            // the set it came from.
+            // A COPY OF THE BLOB, not its owner: `Blob` keeps `owner_` private
+            // and exposes no accessor, and copying one copies the `shared_ptr`
+            // inside it — so holding the copy keeps the bytes alive exactly as
+            // holding the owner would, without core growing an accessor that
+            // exists only for this boundary.
+            auto* block = new fletcher::abi::BlobOwner();
+            block->keep = std::make_shared<const fletcher::Blob>(set.ValueAt(i));
+            owners.push_back(block);
+        }
+    }
+
+    ~fl_attachments() {
+        for (auto* block : owners) {
+            if (block->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete block;
+        }
+    }
+
+    fl_attachments(const fl_attachments&) = delete;
+    fl_attachments& operator=(const fl_attachments&) = delete;
+
+    fletcher::Attachments set;
+    std::vector<fletcher::abi::BlobOwner*> owners;
+};
+
+/// The write end. The seam's `Attachments::Set` already inserts in key order, so
+/// "the builder sorts on build" is satisfied by construction rather than by a
+/// sort at the end.
+struct fl_attachments_builder {
+    fletcher::Attachments pending;
+};
+
 struct fl_publisher {
     explicit fl_publisher(std::shared_ptr<fletcher::PubSubProvider> p)
         : provider(std::move(p)), publisher(std::make_unique<fletcher::Publisher>(provider)) {}
@@ -71,14 +142,6 @@ struct fl_publisher {
 struct fl_string_list {
     explicit fl_string_list(std::vector<std::string> v) : items(std::move(v)) {}
     std::vector<std::string> items;
-};
-
-/// Defined here in 2c so `fl_publisher_publish_row`'s signature is honoured
-/// rather than faked, but NOTHING CAN CONSTRUCT ONE until BIND-4 lands the
-/// builder (D-BIND-31): every entry point that takes one accepts NULL, meaning
-/// none, and no exported function returns one yet.
-struct fl_attachments {
-    fletcher::Attachments value;
 };
 
 #endif  // FLETCHER_C_ABI_SRC_HANDLES_HPP_

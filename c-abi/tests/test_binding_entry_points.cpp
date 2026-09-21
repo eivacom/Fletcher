@@ -762,4 +762,175 @@ TEST(BindingEntryPoints, SuccessLeavesTheErrorUntouched) {
     EXPECT_EQ(err.message, nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// BIND-4a — attachments and blobs
+// ---------------------------------------------------------------------------
+
+/// An empty-valued entry round-trips, and the empty blob is normalised.
+///
+/// `binding.h` rule 5: a zero-size blob reports `{NULL, NULL, 0}` however it was
+/// built, so a binding may test `size == 0` and `data == NULL` interchangeably.
+TEST(Attachments, AnEmptyValueNormalisesToTheEmptyBlob) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
+
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("trace"), nullptr, &err), FL_OK)
+        << MessageOf(err);
+
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK) << MessageOf(err);
+
+    ASSERT_EQ(fl_attachments_size(set), 1U);
+    const fl_str key = fl_attachments_key_at(set, 0);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(key.data), key.len), "trace");
+
+    const fl_blob value = fl_attachments_value_at(set, 0);
+    EXPECT_EQ(value.size, 0U);
+    EXPECT_EQ(value.data, nullptr) << "an empty blob did not normalise its data pointer";
+    EXPECT_EQ(value.owner, nullptr) << "an empty blob needs no owner";
+
+    fl_attachments_dispose(set);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// The set is ORDERED BY KEY BYTES and the accessors walk that order.
+///
+/// Insertion order is deliberately not key order here: the seam sorts on the way
+/// in, and a binding reading positionally must see the sorted order rather than
+/// whatever the builder was handed.
+TEST(Attachments, TheSetIsOrderedByKeyBytesWhateverOrderItWasBuiltIn) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
+
+    for (const char* key : {"zulu", "alpha", "mike"}) {
+        ASSERT_EQ(fl_attachments_builder_set(builder, Str(key), nullptr, &err), FL_OK)
+            << MessageOf(err);
+    }
+
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK) << MessageOf(err);
+
+    ASSERT_EQ(fl_attachments_size(set), 3U);
+    std::vector<std::string> seen;
+    for (size_t i = 0; i < fl_attachments_size(set); ++i) {
+        const fl_str key = fl_attachments_key_at(set, i);
+        seen.emplace_back(reinterpret_cast<const char*>(key.data), key.len);
+    }
+    EXPECT_EQ(seen, (std::vector<std::string>{"alpha", "mike", "zulu"}));
+
+    fl_attachments_dispose(set);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// Out of range is a sentinel, not a status, on both accessors.
+TEST(Attachments, OutOfRangeYieldsSentinelsRatherThanStatuses) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK);
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("only"), nullptr, &err), FL_OK);
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK);
+
+    const fl_str key = fl_attachments_key_at(set, 99);
+    EXPECT_EQ(key.data, nullptr);
+    EXPECT_EQ(key.len, 0U);
+
+    const fl_blob value = fl_attachments_value_at(set, 99);
+    EXPECT_EQ(value.owner, nullptr);
+    EXPECT_EQ(value.size, 0U);
+
+    // And on a NULL set, because a binding's finaliser can reach these after the
+    // handle is gone and neither may dereference.
+    EXPECT_EQ(fl_attachments_size(nullptr), 0U);
+    EXPECT_EQ(fl_attachments_key_at(nullptr, 0).data, nullptr);
+    EXPECT_EQ(fl_attachments_value_at(nullptr, 0).size, 0U);
+
+    fl_attachments_dispose(set);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// Find answers present and absent, and absence carries no error.
+TEST(Attachments, FindAnswersAbsenceWithoutRaisingIt) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK);
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("present"), nullptr, &err), FL_OK);
+    fl_attachments* set = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK);
+
+    fl_blob found = {};
+    EXPECT_EQ(fl_attachments_find(set, Str("present"), &found), 1);
+    EXPECT_EQ(fl_attachments_find(set, Str("absent"), &found), 0);
+    EXPECT_EQ(fl_attachments_find(set, Str("present"), nullptr), 0)
+        << "a null out parameter was dereferenced";
+
+    fl_attachments_dispose(set);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// The builder is left EMPTY and reusable, which the header promises so a
+/// publisher can build one set per row without reallocating.
+TEST(Attachments, BuildLeavesTheBuilderEmptyAndReusable) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK);
+
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("first"), nullptr, &err), FL_OK);
+    fl_attachments* one = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &one, &err), FL_OK);
+    ASSERT_EQ(fl_attachments_size(one), 1U);
+
+    // Reused without a second create, and the first set is not disturbed by it.
+    ASSERT_EQ(fl_attachments_builder_set(builder, Str("second"), nullptr, &err), FL_OK);
+    fl_attachments* two = nullptr;
+    ASSERT_EQ(fl_attachments_builder_build(builder, &two, &err), FL_OK);
+
+    EXPECT_EQ(fl_attachments_size(two), 1U) << "the builder kept the first set's entry";
+    const fl_str key = fl_attachments_key_at(two, 0);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(key.data), key.len), "second");
+    EXPECT_EQ(fl_attachments_size(one), 1U) << "sealing again disturbed an already-sealed set";
+
+    fl_attachments_dispose(one);
+    fl_attachments_dispose(two);
+    fl_attachments_builder_dispose(builder);
+}
+
+/// A key with a zero byte is refused, and the refusal is the SEAM's.
+///
+/// Inherited rather than re-implemented: `Attachments::Set` raises it, so the
+/// shim keeps no second copy of a rule that could drift from the first.
+TEST(Attachments, AKeyContainingAZeroByteIsRefusedBySeam) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    ASSERT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK);
+
+    const uint8_t key[] = {'a', 0x00, 'b'};
+    const fl_str embedded{key, sizeof(key)};
+
+    EXPECT_EQ(fl_attachments_builder_set(builder, embedded, nullptr, &err), FL_INVALID_ARGUMENT);
+    EXPECT_EQ(err.origin, FL_ORIGIN_SEAM);
+    fl_error_dispose(&err);
+
+    fl_attachments_builder_dispose(builder);
+}
+
+/// Retain and release are no-ops on an empty blob, and safe on NULL.
+///
+/// A binding's finaliser reaches both after the thing is gone, so neither may
+/// dereference. There is nothing to observe but the absence of a crash, which is
+/// the point: the header promises these never fail.
+TEST(Blobs, RetainAndReleaseAreSafeOnEmptyAndNull) {
+    const fl_blob empty{nullptr, nullptr, 0};
+    fl_blob_retain(&empty);
+    fl_blob_release(&empty);
+    fl_blob_retain(nullptr);
+    fl_blob_release(nullptr);
+
+    const fl_schema no_schema{nullptr, nullptr};
+    fl_schema_release(&no_schema);
+    fl_schema_release(nullptr);
+}
+
 }  // namespace
