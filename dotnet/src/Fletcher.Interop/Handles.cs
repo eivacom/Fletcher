@@ -286,3 +286,79 @@ internal sealed class AttachmentsHandle : FletcherHandle
         return true;
     }
 }
+
+/// <summary>An <c>fl_subscriber*</c>, which keeps its provider alive.</summary>
+/// <remarks>
+/// The same structural pinning <see cref="PublisherHandle"/> uses, for the same
+/// reason: the header says a subscriber BORROWS its provider and the provider
+/// must outlive it, and reachability does not order finalization.
+///
+/// ── What this handle deliberately does NOT protect ──────────────────────────
+/// Destroying a subscriber requires QUIESCENCE, and from inside a delivery on
+/// this same subscriber the seam's answer is process termination rather than a
+/// refusal - by design, because the alternative is to leak the transport
+/// subscription silently. A finalizer running on the finalizer thread cannot
+/// honour that clause, and nothing here pretends to: the refusal a caller can act
+/// on belongs in managed code, before the call reaches this handle (D-BIND-18).
+/// </remarks>
+internal sealed partial class SubscriberHandle : FletcherHandle
+{
+    private ProviderHandle? _provider;
+    private bool _addedRef;
+
+    /// <summary>The import is PRIVATE so a subscriber cannot be made unpinned.</summary>
+    [LibraryImport(NativeMethods.LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static partial int fl_subscriber_create(
+        ProviderHandle provider, out SubscriberHandle subscriber, ref FlError err);
+
+    /// <summary>Create a subscriber over a provider, and pin the provider to it.</summary>
+    internal static int Create(ProviderHandle provider, out SubscriberHandle subscriber, ref FlError err)
+    {
+        int status = fl_subscriber_create(provider, out subscriber, ref err);
+        if (status == 0 && !subscriber.IsInvalid)
+        {
+            subscriber.Pin(provider);
+        }
+
+        return status;
+    }
+
+    private void Pin(ProviderHandle provider)
+    {
+        bool added = false;
+        provider.DangerousAddRef(ref added);
+        _provider = provider;
+        _addedRef = added;
+    }
+
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.fl_subscriber_destroy(handle);
+
+        if (_addedRef)
+        {
+            _provider!.DangerousRelease();
+            _addedRef = false;
+        }
+
+        return true;
+    }
+}
+
+/// <summary>An <c>fl_schema_arrival*</c>: a waitable handle the caller owns.</summary>
+/// <remarks>
+/// Disposing it does NOT cancel the subscription behind it and does not release a
+/// schema already handed out - the shim holds a COPY of a copyable arrival, so
+/// letting go of this end changes nothing at the other.
+/// </remarks>
+internal sealed class SchemaArrivalHandle : FletcherHandle
+{
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.fl_schema_arrival_dispose(handle);
+        return true;
+    }
+}

@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 3
+#define FL_BINDING_ABI_VERSION_MINOR 4
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -487,6 +487,26 @@ FL_ABI_EXPORT void fl_schema_retain(const fl_schema* schema);
 /* Drop a reference to a shared schema. Never fails; a no-op when `owner` is
  * NULL. Safe from any thread, including from inside a delivery. */
 FL_ABI_EXPORT void fl_schema_release(const fl_schema* schema);
+
+/* Deep-copy a shared schema into a structure the CALLER owns (D-BIND-46).
+ *
+ * This is the only way to get an Arrow schema of your own out of this boundary,
+ * and it exists because the two lifetimes here are not the same one. The
+ * `fl_schema` above is SHARED: its `schema` is borrowed and releasing it through
+ * the Arrow C Data Interface would destroy it for the provider still delivering
+ * on it. What `out` receives is an INDEPENDENT schema, and the caller releases it
+ * the ordinary Arrow way - `out->release(out)` - or hands it to an importer that
+ * takes ownership, which is what every managed Arrow binding's import does.
+ *
+ * So the rule is: `fl_schema_release` for the handle, `out->release` for the
+ * copy, and never the other way round.
+ *
+ * `out` is written only on success and must not be NULL. A schema-less
+ * transport's kOk answer carries a NULL schema and there is nothing to copy from:
+ * that is FL_INVALID_ARGUMENT, because a caller reaching this call already has an
+ * answer it should have read (seam §7 clause 1), not a failure to report. */
+FL_ABI_EXPORT fl_status fl_schema_copy(const fl_schema* schema, struct ArrowSchema* out,
+                                       fl_error* err);
 
 /* ══ The schema arrival ════════════════════════════════════════════════════ */
 

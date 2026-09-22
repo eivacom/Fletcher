@@ -38,6 +38,7 @@
 // survives review — every call goes through the code that refuses — but not by
 // restating the rules here.
 #include <chrono>
+#include <cstring>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
@@ -290,6 +291,41 @@ void fl_schema_release(const fl_schema* schema) {
     if (schema == nullptr || schema->owner == nullptr) return;
     auto* block = static_cast<fletcher::abi::BlobOwner*>(schema->owner);
     if (block->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete block;
+}
+
+/// Deep-copy a shared schema into a structure the caller owns (D-BIND-46).
+///
+/// THE SURFACE COULD NOT DO THIS AND ITS OWN DOCUMENTATION SAID IT COULD: the
+/// `fl_schema` comment tells a binding to import "a deep copy the shim provides",
+/// and until this call nothing provided one. Found the same way `fl_blob_create`
+/// and `fl_schema_retain` were - by writing the managed code that had to consume
+/// the thing - and it is the same root cause all three share: an owner-handle
+/// type whose OUTBOUND direction had no consumer until now.
+///
+/// The copy is INDEPENDENT. `OwnedSchema::DeepCopy` is the seam's own, already
+/// used inbound by `fl_publisher_create_topic`, so the two directions cannot
+/// disagree about what a deep copy is.
+fl_status fl_schema_copy(const fl_schema* schema, struct ArrowSchema* out, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out, "fl_schema_copy");
+        if (schema == nullptr || schema->schema == nullptr) {
+            // A schema-less transport answers kOk with a NULL schema, which is an
+            // ANSWER (seam §7 clause 1) and not something to copy from. A caller
+            // here has skipped reading it.
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_schema_copy: there is no schema to copy; a NULL schema is the "
+                              "schema-less transport's answer, not a failure");
+        }
+
+        OwnedSchema owned = OwnedSchema::DeepCopy(schema->schema);
+
+        // Hand the structure over by MOVE, which is what `OwnedSchema`'s own move
+        // constructor does: copy the struct (release callback included) and zero
+        // the source so its destructor does not release what the caller now owns.
+        // Doing it any other way would either double-release or leak.
+        *out = *owned.get();
+        std::memset(owned.get(), 0, sizeof(ArrowSchema));
+    });
 }
 
 /* ══ Attachments: the read end ════════════════════════════════════════════ */

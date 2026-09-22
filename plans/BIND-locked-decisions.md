@@ -1259,3 +1259,55 @@ accessors do, for capstone parity (Q18).
   **No diagram change in the architecture set** (the fourth place): the class diagram in the
   public-surface document is amended, but no shape, name, count or direction moves in
   `BIND-architecture-diagrams.md`.
+
+- **D-BIND-46 — `fl_schema_copy` is added, the ABI minor goes 3 → 4, and the THIRD occurrence
+  is recorded as a pattern rather than as a third accident.** *LOCKED BY THE MAINTAINER
+  2026-09-22,* raised at BIND-4c-i when `SchemaHandle.ToArrowSchema()` turned out to be
+  unwritable.
+
+  **THE HEADER PROMISED A CALL IT DID NOT DECLARE.** `fl_schema`'s own comment tells a binding
+  that *"a binding that wants an Arrow schema of its own imports a COPY — in C#,
+  `CArrowSchemaImporter.ImportSchema` over a deep copy the shim provides — and releases this
+  handle."* **No declared function provided one.** The 43 entry points carried
+  `fl_schema_retain` and `fl_schema_release` and nothing else, and the alternative the sentence
+  rules out is the catastrophic one: `ImportSchema` TAKES OWNERSHIP, so handing it the shared
+  pointer runs the Arrow C Data Interface release callback on a schema the provider is still
+  delivering on — the mistake the same comment calls the single most expensive one available at
+  this boundary.
+
+  **THE FIX.** `fl_status fl_schema_copy(const fl_schema*, struct ArrowSchema* out, fl_error*)`
+  deep-copies through `OwnedSchema::DeepCopy` — the seam's own, already used INBOUND by
+  `fl_publisher_create_topic`, so the two directions cannot disagree about what a deep copy is.
+  `out` is written only on success and the caller then owns it, releasing it the ordinary Arrow
+  way. **So there are two releases and they are not interchangeable:** `fl_schema_release` for
+  the handle, `out->release` for the copy, and never the other way round. A NULL schema is
+  refused with kInvalidArgument, because a schema-less transport's kOk carries one and a caller
+  reaching this call has skipped an answer it should have read.
+
+  **THE MINOR GOES 3 → 4**, with the same two coupled consequences as D-BIND-42 and D-BIND-43:
+  `NativeLoader.HeaderVersionMinor` moves in the same commit (the managed handshake is an exact
+  match while major is 0), and the handshake test follows for free from D-BIND-42's derived
+  offsets — the second time that derivation has paid for itself.
+
+  **THIS IS THE THIRD MISSING DECLARATION, AND THAT IS THE ENTRY'S REAL SUBJECT.** 42
+  (`fl_blob_create`), 43 (`fl_schema_retain`) and now 46 were all found the same way — by
+  writing the code that had to CALL the thing — and all three share one root cause worth naming:
+  **an owner-handle type whose OUTBOUND direction had no consumer until the binding grew one.**
+  Inbound, every one of these types was exercised at BIND-2c and reviewed clean. A declaration
+  that is missing is invisible to a review that walks the declarations that are present, and all
+  three were invisible for exactly that reason.
+
+  **SO A SWEEP WAS RUN RATHER THAN A FOURTH POINT FIX**, checking every owner/opaque type against
+  the operations its own documentation describes: `fl_blob` (create/retain/release) ✓,
+  `fl_attachments` and its builder ✓, `fl_schema_arrival` ✓, `fl_codec`/`fl_rows` ✓,
+  `fl_provider`/`fl_publisher`/`fl_subscriber` ✓, `fl_string_list` ✓, `fl_error` ✓ — and
+  `fl_schema`, which was the one gap. **The surface is now complete by that test.** Recording the
+  sweep matters more than recording the fix: without it the next reader has three point fixes and
+  no reason to believe a fourth is not waiting, and the round would keep paying the same tax one
+  declaration at a time.
+
+  **The BIND-1 review is not thereby impeached, and saying so is part of the record.** It read
+  the header as a specification and every declaration in it was individually sensible; the
+  category it could not see was absence. A review method that would have caught these is
+  type-by-type completeness — the sweep above — and it is cheap enough that it should be run
+  once per surface, at the point a consumer for the outbound direction first exists.

@@ -1454,3 +1454,77 @@ TEST(Subscriber, SeveralSubscriptionsToOneTopicShareOneArrival) {
     fl_schema_arrival_dispose(first_arrival);
     fl_schema_arrival_dispose(second_arrival);
 }
+
+/// A copied schema is INDEPENDENT of the handle it came from (D-BIND-46).
+///
+/// The two lifetimes at this boundary are not the same one, and this is the test
+/// that says so: the `fl_schema` is released while the copy is still read, and
+/// the copy is released the ordinary Arrow way. A copy that shared structure with
+/// the shared schema would either read freed memory here or double-release at the
+/// end - and a shallow "copy" would pass every assertion that only reads the
+/// top-level struct, which is why the children are read too.
+TEST(Subscriber, ACopiedSchemaOutlivesTheHandleItCameFrom) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("bind"), Str("copy")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    Collector collector;
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &Collector::OnDelivery, &collector,
+                                      &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+
+    fl_schema shared = {};
+    ASSERT_EQ(fl_schema_arrival_wait(arrival, 0, &shared, &err), FL_OK) << MessageOf(err);
+    ASSERT_NE(shared.schema, nullptr);
+
+    ArrowSchema copy = {};
+    ASSERT_EQ(fl_schema_copy(&shared, &copy, &err), FL_OK) << MessageOf(err);
+    ASSERT_NE(copy.release, nullptr) << "a copy the caller owns must carry its own release";
+
+    // Let go of the shared handle. The copy must not care.
+    fl_schema_release(&shared);
+
+    EXPECT_EQ(copy.n_children, 2);
+    ASSERT_NE(copy.children, nullptr);
+    ASSERT_NE(copy.children[0]->name, nullptr);
+    EXPECT_EQ(std::string(copy.children[0]->name), "id");
+    EXPECT_EQ(std::string(copy.children[1]->name), "label");
+
+    // Released the ORDINARY Arrow way, which is the whole distinction: the handle
+    // goes through fl_schema_release, the copy goes through its own callback.
+    copy.release(&copy);
+    EXPECT_EQ(copy.release, nullptr) << "the Arrow contract requires release to null itself";
+
+    fl_schema_arrival_dispose(arrival);
+}
+
+/// There is nothing to copy from a schema-less transport's answer, and saying so
+/// is not the same as reporting a failure.
+TEST(Subscriber, CopyingARefusesWhenThereIsNoSchemaToCopy) {
+    fl_error err = {};
+    ArrowSchema out = {};
+
+    const fl_schema none = {nullptr, nullptr};
+    EXPECT_EQ(fl_schema_copy(&none, &out, &err), FL_INVALID_ARGUMENT);
+    EXPECT_NE(MessageOf(err).find("schema-less"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+
+    EXPECT_EQ(fl_schema_copy(nullptr, &out, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    // A null out parameter has nowhere to put the copy, so succeeding would leak it.
+    const fl_schema unused = {nullptr, nullptr};
+    EXPECT_EQ(fl_schema_copy(&unused, nullptr, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+}

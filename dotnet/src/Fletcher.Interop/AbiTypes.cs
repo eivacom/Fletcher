@@ -97,6 +97,29 @@ internal struct FlBlob
     internal nuint Size;
 }
 
+/// <summary>A shared schema and what keeps it alive (`fl_schema`).</summary>
+/// <remarks>
+/// THE MOST EXPENSIVE MISTAKE AVAILABLE AT THIS BOUNDARY lives on this type, and
+/// the header says so: a binding must NEVER call the Arrow C Data Interface's own
+/// <c>release</c> callback on <see cref="Schema"/>. That callback destroys the
+/// schema for every other holder - including the provider still delivering on it -
+/// and the failure appears later and elsewhere. Letting go is
+/// <c>fl_schema_release</c> on <see cref="Owner"/>, which is why the type carries
+/// an owner rather than being a bare <c>ArrowSchema*</c>.
+///
+/// A binding that wants an Arrow schema of its own imports a COPY and releases
+/// this handle.
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FlSchema
+{
+    /// <summary>`void* owner` — opaque; NULL when <see cref="Schema"/> is NULL.</summary>
+    internal nint Owner;
+
+    /// <summary>`const ArrowSchema* schema` — BORROWED from the owner.</summary>
+    internal nint Schema;
+}
+
 /// <summary>The typed core of a provider configuration (`fl_provider_config`).</summary>
 /// <remarks>
 /// <see cref="Document"/> crosses VERBATIM and is never parsed by Fletcher — the

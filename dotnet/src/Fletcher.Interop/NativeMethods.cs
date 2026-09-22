@@ -334,4 +334,121 @@ internal static partial class NativeMethods
     internal static partial int fl_publisher_publish_rows(
         PublisherHandle publisher, FlTopic topic, BoundRowsHandle rows, long first, long count,
         nint attsPerRow, ref FlError err);
+
+    /* == Shared schemas ====================================================== */
+
+    /// <summary>Take a reference to a shared schema (D-BIND-43).</summary>
+    /// <remarks>
+    /// The counterpart <c>fl_blob_retain</c> has. A delivery's schema is BORROWED
+    /// for the duration of the call, so a handler keeping it past the return must
+    /// extend the lifetime - and before D-BIND-43 there was no call that could.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_schema_retain(in FlSchema schema);
+
+    /// <summary>Drop a reference. Never the Arrow C Data Interface's own release.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_schema_release(in FlSchema schema);
+
+    /// <summary>Deep-copy a shared schema into a structure the CALLER owns (D-BIND-46).</summary>
+    /// <remarks>
+    /// THE ONLY WAY TO GET AN ARROW SCHEMA OF YOUR OWN out of this boundary. The
+    /// handle's own <c>schema</c> is shared and borrowed; importing it directly
+    /// would run the Arrow release callback on a structure the provider is still
+    /// delivering on. What <paramref name="destination"/> receives is independent,
+    /// and the caller releases it the ordinary Arrow way - or hands it to an
+    /// importer that takes ownership, which is what <c>ImportSchema</c> does.
+    ///
+    /// The rule, both halves: <c>fl_schema_release</c> for the handle,
+    /// <c>release</c> for the copy, and never the other way round.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_schema_copy(in FlSchema schema, nint destination, ref FlError err);
+
+    /* == The schema arrival ================================================== */
+
+    /// <summary>Wait for a topic's schema. FIVE outcomes, two of them values.</summary>
+    /// <remarks>
+    /// <c>FL_PENDING</c> and <c>FL_SUBSCRIPTION_ENDED</c> are OUTCOMES, never
+    /// failures, and <c>FL_OK</c> with an all-NULL schema is a schema-less
+    /// transport rather than an error - releasing that one is the obvious wrong
+    /// move. <paramref name="timeoutMs"/> is refused if negative; INT64_MAX is the
+    /// unbounded form, and D-BIND-20 puts the mapping from
+    /// <c>Timeout.Infinite</c> in managed code, above this call.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_schema_arrival_wait(
+        SchemaArrivalHandle arrival, long timeoutMs, out FlSchema schema, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_schema_arrival_dispose(nint arrival);
+
+    /* == Subscriber ========================================================== */
+
+    // fl_subscriber_create is NOT here. Like fl_publisher_create it is declared
+    // inside SubscriberHandle, so the compiler - not a comment - guarantees a
+    // subscriber cannot be created without pinning the provider it borrows.
+
+    /// <summary>Destroy a subscriber. REQUIRES QUIESCENCE.</summary>
+    /// <remarks>
+    /// From inside a delivery on this same subscriber the seam's answer is PROCESS
+    /// TERMINATION, by design, because the alternative is a silently leaked
+    /// transport subscription. A binding must refuse the call in its own code,
+    /// with its own exception, before it can reach this symbol (D-BIND-18).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_subscriber_destroy(nint subscriber);
+
+    /// <summary>Subscribe to a topic. NEVER BLOCKS.</summary>
+    /// <remarks>
+    /// The schema comes back as a waitable ARRIVAL rather than as a schema,
+    /// because a subscriber may subscribe before any publisher exists. Both out
+    /// parameters are written only on success.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_subscribe(
+        SubscriberHandle subscriber, FlTopic topic, nint onDelivery, nint ctx,
+        out ulong subscriptionId, out SchemaArrivalHandle arrival, ref FlError err);
+
+    /// <summary>Cancel a subscription.</summary>
+    /// <remarks>
+    /// On return NO FURTHER DELIVERY BEGINS for this id, which is exactly the
+    /// guarantee that lets a binding free the handler's context once its in-flight
+    /// count reaches zero. A delivery already running may still be running - the
+    /// counter, not this call, says when the last one has left.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_unsubscribe(
+        SubscriberHandle subscriber, ulong subscriptionId, ref FlError err);
+
+    /// <summary>Look an attachment up by key. Absence is not a failure.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_attachments_find(nint attachments, FlStr key, out FlBlob blob);
+
+    /// <summary>The number of entries in a set the delivery BORROWED to a handler.</summary>
+    /// <remarks>
+    /// Takes a raw pointer rather than a SafeHandle: a delivery's set is borrowed
+    /// for the call and owned by the shim, so wrapping it in a handle that could
+    /// dispose it would be exactly wrong.
+    /// </remarks>
+    [LibraryImport(LibraryName, EntryPoint = "fl_attachments_size")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nuint fl_attachments_size_raw(nint attachments);
+
+    [LibraryImport(LibraryName, EntryPoint = "fl_attachments_key_at")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlStr fl_attachments_key_at_raw(nint attachments, nuint index);
+
+    [LibraryImport(LibraryName, EntryPoint = "fl_attachments_value_at")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlBlob fl_attachments_value_at_raw(nint attachments, nuint index);
 }
