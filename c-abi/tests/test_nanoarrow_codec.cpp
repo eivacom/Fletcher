@@ -587,3 +587,163 @@ TEST(NanoarrowCodec, ADictionaryWithANestedValueTypeIsRefusedByName) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// D1 from BIND-3's review — the nested dictionary rewrite, on the NATIVE side
+// ---------------------------------------------------------------------------
+//
+// `DecodedSchema.Resolve` (C#) and `ResolveDictionaries` (here) are two
+// independent implementations of one rule: replace every dictionary node with
+// its value type, keeping the FIELD's name, nullability and metadata. D-BIND-39
+// chose that over an ABI entry point because the rule is deterministic and
+// specified - sound, and the same argument the round makes elsewhere for not
+// widening the boundary.
+//
+// What was under-tested is the AGREEMENT. The managed side had a branch per
+// composite; this side had no nested dictionary test at all, and the only nested
+// case anywhere was a dictionary inside a struct. So a wrong recursion for a
+// dictionary inside a MAP VALUE would have had `DecodeRows` build an array
+// against a schema the managed importer disagrees with - and the importer either
+// throws at the caller or misreads buffers, the second being worse.
+//
+// The rows below mirror `DecodedSchemaTests` CASE FOR CASE, deliberately: two
+// derivations of one rule are only as trustworthy as the shapes both are checked
+// on, so checking them on different shapes would leave exactly the gap D1 names.
+// Reached through `decoded_schema()` because `ResolveDictionaries` is file-local.
+namespace {
+
+/// The decoded schema of a one-field schema whose field carries `type`.
+class DecodedOf {
+   public:
+    explicit DecodedOf(const std::shared_ptr<arrow::DataType>& type) {
+        const auto schema = arrow::schema({arrow::field("value", type, /*nullable=*/true)});
+        EXPECT_TRUE(arrow::ExportSchema(*schema, &exported_).ok());
+        codec_ = std::make_unique<NanoarrowCodec>(exported_);
+    }
+
+    ~DecodedOf() {
+        codec_.reset();
+        if (exported_.release != nullptr) exported_.release(&exported_);
+    }
+
+    DecodedOf(const DecodedOf&) = delete;
+    DecodedOf& operator=(const DecodedOf&) = delete;
+
+    /// The one field, after the rewrite.
+    const ArrowSchema& field() const { return *codec_->decoded_schema().children[0]; }
+
+   private:
+    ArrowSchema exported_ = {};
+    std::unique_ptr<NanoarrowCodec> codec_;
+};
+
+std::string FormatOf(const ArrowSchema& node) {
+    return node.format == nullptr ? std::string{} : std::string(node.format);
+}
+
+/// No node anywhere below `node` still carries a dictionary.
+///
+/// Asserted separately from the format checks because a rewrite that produced the
+/// right FORMAT while leaving the `dictionary` pointer attached would satisfy
+/// every structural assertion and still tell nanoarrow to build a dictionary
+/// array.
+void ExpectNoDictionaries(const ArrowSchema& node) {
+    EXPECT_EQ(node.dictionary, nullptr) << "a dictionary survived at " << FormatOf(node);
+    for (int64_t i = 0; i < node.n_children; ++i) {
+        ExpectNoDictionaries(*node.children[i]);
+    }
+}
+
+std::shared_ptr<arrow::DataType> Dict() { return arrow::dictionary(arrow::int32(), arrow::utf8()); }
+
+}  // namespace
+
+TEST(DecodedSchema, ATopLevelDictionaryDecodesAsItsValueType) {
+    const DecodedOf decoded(Dict());
+
+    EXPECT_EQ(FormatOf(decoded.field()), "u");
+    EXPECT_EQ(std::string(decoded.field().name), "value")
+        << "the FIELD's name belongs to the field, not to the value type";
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ADictionaryInsideAListDecodesAsItsValueType) {
+    const DecodedOf decoded(arrow::list(arrow::field("item", Dict(), /*nullable=*/true)));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+l");
+    ASSERT_EQ(decoded.field().n_children, 1);
+    EXPECT_EQ(FormatOf(*decoded.field().children[0]), "u");
+    EXPECT_EQ(std::string(decoded.field().children[0]->name), "item");
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ADictionaryInsideALargeListDecodesAsItsValueType) {
+    const DecodedOf decoded(arrow::large_list(arrow::field("item", Dict(), /*nullable=*/true)));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+L");
+    ASSERT_EQ(decoded.field().n_children, 1);
+    EXPECT_EQ(FormatOf(*decoded.field().children[0]), "u");
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ADictionaryInsideAFixedSizeListKeepsItsSize) {
+    // The size rides in the FORMAT STRING, so a rewrite that rebuilt the parent
+    // instead of rewriting the child in place would lose it - and the loss is
+    // silent, because "+w:3" and "+w:4" are both valid.
+    const DecodedOf decoded(
+        arrow::fixed_size_list(arrow::field("item", Dict(), /*nullable=*/true), 3));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+w:3");
+    ASSERT_EQ(decoded.field().n_children, 1);
+    EXPECT_EQ(FormatOf(*decoded.field().children[0]), "u");
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ADictionaryInsideAMapValueDecodesAsItsValueType) {
+    // THE SHAPE D1 NAMED. A map's child is an entries struct carrying the key and
+    // the value, so reaching the dictionary means recursing twice - and this is
+    // the case the review said nothing in the tree would have caught.
+    const DecodedOf decoded(arrow::map(arrow::utf8(), Dict(), /*keys_sorted=*/true));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+m");
+    ASSERT_EQ(decoded.field().n_children, 1);
+
+    const ArrowSchema& entries = *decoded.field().children[0];
+    EXPECT_EQ(FormatOf(entries), "+s");
+    ASSERT_EQ(entries.n_children, 2);
+    EXPECT_EQ(FormatOf(*entries.children[0]), "u") << "the key was not a dictionary";
+    EXPECT_EQ(FormatOf(*entries.children[1]), "u") << "the map's VALUE did not resolve";
+
+    EXPECT_NE(decoded.field().flags & ARROW_FLAG_MAP_KEYS_SORTED, 0)
+        << "keys_sorted belongs to the map and must survive the rewrite";
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ADictionaryTwoCompositesDeepIsResolved) {
+    // One level is not recursion.
+    const auto inner = arrow::struct_({arrow::field("category", Dict(), /*nullable=*/true)});
+    const DecodedOf decoded(arrow::list(arrow::field("item", inner, /*nullable=*/true)));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+l");
+    ASSERT_EQ(decoded.field().n_children, 1);
+
+    const ArrowSchema& reached = *decoded.field().children[0];
+    EXPECT_EQ(FormatOf(reached), "+s");
+    ASSERT_EQ(reached.n_children, 1);
+    EXPECT_EQ(FormatOf(*reached.children[0]), "u");
+    EXPECT_EQ(std::string(reached.children[0]->name), "category");
+    ExpectNoDictionaries(decoded.field());
+}
+
+TEST(DecodedSchema, ASchemaWithoutDictionariesIsUnchanged) {
+    // The managed side asserts the same thing by identity. Here the assertion is
+    // structural: a rewrite that rebuilt every node would pass the dictionary
+    // cases and could still corrupt a schema that has none.
+    const DecodedOf decoded(arrow::list(arrow::field("item", arrow::int32(), /*nullable=*/true)));
+
+    EXPECT_EQ(FormatOf(decoded.field()), "+l");
+    ASSERT_EQ(decoded.field().n_children, 1);
+    EXPECT_EQ(FormatOf(*decoded.field().children[0]), "i");
+    EXPECT_EQ(std::string(decoded.field().children[0]->name), "item");
+    ExpectNoDictionaries(decoded.field());
+}

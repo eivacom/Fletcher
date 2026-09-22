@@ -202,6 +202,51 @@ public sealed class CodecTests
         Assert.Equal("beta", categories.GetString(2));
     }
 
+    /// <summary>A dictionary nested inside a struct survives the whole round trip.</summary>
+    /// <remarks>
+    /// D1 FROM BIND-3's REVIEW, managed half. `DecodedSchema.Resolve` (here) and
+    /// `ResolveDictionaries` (native) are two independent implementations of one
+    /// rewrite, and their AGREEMENT was proven for only two shapes - top level and
+    /// struct-nested - with the native side carrying no nested test at all.
+    ///
+    /// The schema-level agreement is now pinned natively, case for case against
+    /// <c>DecodedSchemaTests</c>. This row covers what a schema comparison cannot:
+    /// that <c>DecodeRows</c> BUILDS AN ARRAY the managed importer then reads
+    /// correctly. If the two derivations disagreed, the decode would either throw
+    /// at this line or hand back values read from the wrong buffers - and the
+    /// second failure produces data, which is why it is worse than a refusal.
+    /// </remarks>
+    [Fact]
+    public void ADictionaryNestedInAStructRoundTripsAsItsValueType()
+    {
+        RecordBatch batch = CodecFixtures.NestedDictionary();
+        using var codec = new FletcherCodec(batch.Schema);
+
+        // The rewrite recursed: the struct survives, its dictionary child does not.
+        var tagged = (StructType)codec.DecodedSchema.FieldsList[1].DataType;
+        Assert.Equal("tagged", codec.DecodedSchema.FieldsList[1].Name);
+        Assert.Equal(ArrowTypeId.String, tagged.Fields[0].DataType.TypeId);
+        Assert.Equal("category", tagged.Fields[0].Name);
+
+        byte[] encoded;
+        using (BoundRows rows = codec.Bind(batch))
+        {
+            encoded = CodecFixtures.EncodeAll(codec, rows);
+        }
+
+        using RecordBatch decoded = codec.DecodeBatch(encoded, batch.Length);
+
+        Assert.Equal(batch.Length, decoded.Length);
+        var decodedStruct = (StructArray)decoded.Column(1);
+        var categories = (StringArray)decodedStruct.Fields[0];
+
+        // The VALUES, resolved through the dictionary rather than the indices, and
+        // in the row order they were published in.
+        Assert.Equal("gamma", categories.GetString(0));
+        Assert.Equal("alpha", categories.GetString(1));
+        Assert.Equal("beta", categories.GetString(2));
+    }
+
     /// <summary>
     /// The wire bytes of a dictionary column are the bytes of its value column.
     /// </summary>

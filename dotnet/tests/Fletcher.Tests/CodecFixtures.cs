@@ -145,6 +145,47 @@ internal static class CodecFixtures
             length: 3);
     }
 
+    /// <summary>A dictionary nested inside a struct, and one inside a list.</summary>
+    /// <remarks>
+    /// D1's subject. A TOP-LEVEL dictionary resolves through one call and was
+    /// already covered; a nested one makes the rewrite RECURSE, and the failure it
+    /// guards against is not a refusal but a disagreement - `DecodeRows` building
+    /// an array against one reading of the schema while the managed importer reads
+    /// another. That either throws at the caller or misreads buffers, and the
+    /// second is worse because it produces values.
+    /// </remarks>
+    internal static RecordBatch NestedDictionary()
+    {
+        var dictionaryType = new DictionaryType(Int32Type.Default, StringType.Default, ordered: false);
+        var innerStruct = new StructType([new Field("category", dictionaryType, nullable: true)]);
+
+        var schema = new Schema(
+        [
+            new Field("id", Int32Type.Default, nullable: true),
+            new Field("tagged", innerStruct, nullable: true),
+        ], metadata: null);
+
+        StringArray values = new StringArray.Builder().Append("alpha").Append("beta").Append("gamma").Build();
+        Int32Array indices = new Int32Array.Builder().Append(2).Append(0).Append(1).Build();
+        var nested = new DictionaryArray(dictionaryType, indices, values);
+
+        // Every row valid: the subject here is the nested dictionary, not null
+        // handling, and a null parent would suppress the child values on the wire
+        // (a null struct's children are not transmitted, by design) - which would
+        // make the assertions below test the wrong thing.
+        var validity = new ArrowBuffer.BitmapBuilder(3);
+        validity.Append(true);
+        validity.Append(true);
+        validity.Append(true);
+
+        var tagged = new StructArray(innerStruct, length: 3, [nested], validity.Build(), nullCount: 0);
+
+        return new RecordBatch(
+            schema,
+            [new Int32Array.Builder().Append(1).Append(2).Append(3).Build(), tagged],
+            length: 3);
+    }
+
     /// <summary>The same values as <see cref="Dictionary"/>, as a plain utf8 column.</summary>
     /// <remarks>
     /// The independent subject the dictionary's bytes are compared against. Not
