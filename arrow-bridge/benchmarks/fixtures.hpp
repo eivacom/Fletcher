@@ -7,18 +7,10 @@
 // PositionalWriter/PositionalReader twin — exactly what fletcher-protoc generated code would emit
 // for this schema, verified byte-for-byte against fletcher::Codec in the validation pass before the
 // benchmarks run).
-//
-// MakeBatch (used by the Arrow IPC and end-to-end arms) is NOT hand-rolled per shape here: batch
-// construction never runs inside a timed loop, so the suite builds N rows via MakeRow and folds
-// them into a RecordBatch with BuildBatchScalarPath below (the per-cell MakeBuilder/AppendScalar/
-// Finish path kept as the A/B control against BatchDecoder) rather than seven independent
-// typed-builder pipelines. That is measured on purpose by BM_Decode_Batch_ScalarPath_*; here it is
-// only fixture setup.
 #ifndef FLETCHER_ARROW_BRIDGE_BENCHMARKS_FIXTURES_HPP_
 #define FLETCHER_ARROW_BRIDGE_BENCHMARKS_FIXTURES_HPP_
 
 #include <arrow/api.h>
-#include <arrow/compute/api.h>
 
 #include <array>
 #include <cstdint>
@@ -54,52 +46,6 @@ inline std::vector<uint8_t> FixedWidthBytes(int64_t i, size_t width) {
         b[k] = static_cast<uint8_t>((i + static_cast<int64_t>(k) * 7) & 0xFF);
     }
     return b;
-}
-
-// Re-folds a dictionary column from per-row (plain value, or null) scalars, for the per-cell
-// BuildBatchScalarPath below.
-inline std::shared_ptr<arrow::Array> BuildDictionaryColumnBench(
-    const std::shared_ptr<arrow::DataType>& dict_type, const std::vector<ArrowRow>& rows, int col) {
-    const auto& value_type = static_cast<const arrow::DictionaryType&>(*dict_type).value_type();
-    auto builder = arrow::MakeBuilder(value_type).ValueOrDie();
-    (void)builder->Reserve(static_cast<int64_t>(rows.size()));
-    for (const auto& row : rows) {
-        const auto& s = row[static_cast<size_t>(col)];
-        if (!s || !s->is_valid || !builder->AppendScalar(*s).ok()) (void)builder->AppendNull();
-    }
-    auto value_array = builder->Finish().ValueOrDie();
-    auto encoded = arrow::compute::DictionaryEncode(arrow::Datum(value_array)).ValueOrDie();
-    auto array = encoded.make_array();
-    if (!array->type()->Equals(*dict_type)) {
-        auto casted = arrow::compute::Cast(arrow::Datum(array), dict_type).ValueOrDie();
-        array = casted.make_array();
-    }
-    return array;
-}
-
-// The pre-BatchDecoder per-cell decode path, kept as the A/B control: MakeBuilder per column,
-// Reserve(rows), AppendScalar(*row[c]) per row, Finish, RecordBatch::Make. Used both as the timed
-// BM_Decode_Batch_ScalarPath_* body and as fixture setup for MakeBatch-style construction elsewhere
-// in this file.
-inline std::shared_ptr<arrow::RecordBatch> BuildBatchScalarPath(
-    const std::shared_ptr<arrow::Schema>& schema, const std::vector<ArrowRow>& rows) {
-    const int num_fields = schema->num_fields();
-    std::vector<std::shared_ptr<arrow::Array>> columns(static_cast<size_t>(num_fields));
-    for (int c = 0; c < num_fields; ++c) {
-        const auto& field_type = schema->field(c)->type();
-        if (field_type->id() == arrow::Type::DICTIONARY) {
-            columns[static_cast<size_t>(c)] = BuildDictionaryColumnBench(field_type, rows, c);
-            continue;
-        }
-        auto builder = arrow::MakeBuilder(field_type).ValueOrDie();
-        (void)builder->Reserve(static_cast<int64_t>(rows.size()));
-        for (const auto& row : rows) {
-            if (!builder->AppendScalar(*row[static_cast<size_t>(c)]).ok())
-                (void)builder->AppendNull();
-        }
-        columns[static_cast<size_t>(c)] = builder->Finish().ValueOrDie();
-    }
-    return arrow::RecordBatch::Make(schema, static_cast<int64_t>(rows.size()), std::move(columns));
 }
 
 // ---------------------------------------------------------------------------

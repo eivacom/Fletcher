@@ -13,9 +13,6 @@
 //   BM_Decode_Row_S                Codec::DecodeRow of prebuilt bytes.
 //   BM_Decode_Positional_S         the hand-written PositionalReader twin — the floor.
 //   BM_Memcpy_S                    the wire bytes moved once, nothing else.
-//   BM_Decode_Batch_ScalarPath_S/N the CURRENT batched decode (SubscriberArrow's BuildBatch,
-//                                  reproduced verbatim), N pre-decoded rows in, one RecordBatch
-//                                  out.
 //   BM_Decode_Batch_S/N            the new batched decode (fletcher::BatchDecoder), N pre-encoded
 //                                  wire rows in, one RecordBatch out — Reserve/Append x N/Finish,
 //                                  the same cycle SubscriberArrow::RecordBatchBatcher::Flush runs.
@@ -386,37 +383,6 @@ void RegisterShape(const std::string& name) {
         state.SetItemsProcessed(state.iterations());
     });
 
-    // BM_Decode_Batch_ScalarPath_<name>/N — the pre-BatchDecoder per-cell batched decode, kept as
-    // the A/B control (fixtures.hpp BuildBatchScalarPath), over N pre-decoded rows. N in
-    // {1, 1000, 8000}.
-    benchmark::RegisterBenchmark(
-        ("BM_Decode_Batch_ScalarPath_" + name).c_str(),
-        [=](benchmark::State& state) {
-            const int64_t n = state.range(0);
-            std::vector<ArrowRow> rows;
-            rows.reserve(static_cast<size_t>(n));
-            for (int64_t i = 0; i < n; ++i) rows.push_back(MakeRowFn(i));
-
-            for (auto _ : state) {
-                auto batch = fletcher::benchmarks::BuildBatchScalarPath(schema, rows);
-                benchmark::DoNotOptimize(batch.get());
-            }
-#ifdef FLETCHER_BENCH_COUNT_ALLOCS
-            if (n == 1000) {
-                uint64_t before = fletcher_bench::g_alloc_count;
-                auto one = fletcher::benchmarks::BuildBatchScalarPath(schema, rows);
-                benchmark::DoNotOptimize(one.get());
-                state.counters["allocs_per_row"] =
-                    static_cast<double>(fletcher_bench::g_alloc_count - before) /
-                    static_cast<double>(n);
-            }
-#endif
-            state.SetItemsProcessed(state.iterations() * n);
-        })
-        ->Arg(1)
-        ->Arg(1000)
-        ->Arg(8000);
-
     // BM_Decode_Batch_<name>/N — the NEW batched decode (fletcher::BatchDecoder), N pre-encoded
     // wire rows in, one RecordBatch out. One decoder built outside the timed loop; each iteration
     // repeats the Reserve/Append x N/Finish cycle SubscriberArrow::RecordBatchBatcher::Flush runs
@@ -467,10 +433,13 @@ void RegisterShape(const std::string& name) {
         ("BM_ArrowIpc_Write_" + name).c_str(),
         [=](benchmark::State& state) {
             const int64_t n = state.range(0);
-            std::vector<ArrowRow> rows;
-            rows.reserve(static_cast<size_t>(n));
-            for (int64_t i = 0; i < n; ++i) rows.push_back(MakeRowFn(i));
-            auto batch = fletcher::benchmarks::BuildBatchScalarPath(schema, rows);
+            fletcher::BatchDecoder fixture_decoder(schema);
+            fixture_decoder.Reserve(n);
+            for (int64_t i = 0; i < n; ++i) {
+                fletcher::EncodedRow bytes = codec->EncodeRow(MakeRowFn(i));
+                fixture_decoder.Append(bytes.data(), bytes.size());
+            }
+            auto batch = fixture_decoder.Finish();
 
             for (auto _ : state) {
                 auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
@@ -496,10 +465,13 @@ void RegisterShape(const std::string& name) {
         ("BM_ArrowIpc_Read_" + name).c_str(),
         [=](benchmark::State& state) {
             const int64_t n = state.range(0);
-            std::vector<ArrowRow> rows;
-            rows.reserve(static_cast<size_t>(n));
-            for (int64_t i = 0; i < n; ++i) rows.push_back(MakeRowFn(i));
-            auto batch = fletcher::benchmarks::BuildBatchScalarPath(schema, rows);
+            fletcher::BatchDecoder fixture_decoder(schema);
+            fixture_decoder.Reserve(n);
+            for (int64_t i = 0; i < n; ++i) {
+                fletcher::EncodedRow bytes = codec->EncodeRow(MakeRowFn(i));
+                fixture_decoder.Append(bytes.data(), bytes.size());
+            }
+            auto batch = fixture_decoder.Finish();
 
             auto out = arrow::io::BufferOutputStream::Create().ValueOrDie();
             auto writer = arrow::ipc::MakeStreamWriter(out, schema).ValueOrDie();

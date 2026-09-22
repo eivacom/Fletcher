@@ -23,13 +23,9 @@ Not part of any Conan package: this directory is outside `arrow-bridge`'s and `p
 For each shape, `fixtures.hpp` provides a plain-C++ `RowValues` struct, `Schema()`, `MakeRowValues(i)` /
 `ToArrowRow` (the same row data built two ways), and `WritePositional` / `ReadPositional` — a
 hand-written `PositionalWriter`/`PositionalReader` twin standing in for what `fletcher-protoc`
-generated code would emit for that schema. `MakeBatch`-style construction (used by the Arrow IPC and
-end-to-end arms) is **not** independently hand-rolled per shape: batch construction never runs inside
-a timed loop, so the suite folds `N` rows built via `MakeRow` into a `RecordBatch` with
-`BuildBatchScalarPath` (the same `MakeBuilder`/`AppendScalar`/`Finish` pattern
-`SubscriberArrow::RecordBatchBatcher` used before `BatchDecoder`) rather than seven independent typed-builder
-pipelines — that pattern is measured on purpose by `BM_Decode_Batch_ScalarPath_*`; here it is only
-fixture setup.
+generated code would emit for that schema. `BM_ArrowIpc_Write_S/N` and `BM_ArrowIpc_Read_S/N` build
+their fixture `RecordBatch` with `fletcher::BatchDecoder` directly in `bench_arrow_codec.cpp` — the
+same decoder `BM_Decode_Batch_S/N` measures — rather than a hand-rolled per-shape builder.
 
 ## Arms
 
@@ -41,7 +37,6 @@ fixture setup.
 | `BM_Decode_Row_S` | `Codec::DecodeRow` of prebuilt bytes |
 | `BM_Decode_Positional_S` | the hand-written `PositionalReader` twin — the floor |
 | `BM_Memcpy_S` | the wire bytes moved once, nothing else |
-| `BM_Decode_Batch_ScalarPath_S/N` | the OLD batched decode (`SubscriberArrow::RecordBatchBatcher::BuildBatch` pre-`BatchDecoder`, reproduced verbatim: `MakeBuilder`/`AppendScalar`/`Finish` over per-row `arrow::Scalar`s), `N` pre-decoded rows in, one `RecordBatch` out; `N` in {1, 1000, 8000} — kept as the A/B control |
 | `BM_Decode_Batch_S/N` | the NEW batched decode (`fletcher::BatchDecoder`, wire bytes straight into one `arrow::ArrayBuilder` tree, no per-row `arrow::Scalar`), `N` pre-encoded wire rows in, one `RecordBatch` out; `N` in {1, 1000, 8000} |
 | `BM_ArrowIpc_Write_S/N` | `arrow::ipc` stream writer over one `N`-row `RecordBatch`; `N` in {1000, 8000} |
 | `BM_ArrowIpc_Read_S/N` | `arrow::ipc` stream reader over the bytes `BM_ArrowIpc_Write_S/N` produces |
@@ -50,9 +45,9 @@ fixture setup.
 
 Counters: `bytes` (wire bytes per row) on the per-row arms; `allocs_per_row` (an `operator new`/`delete`
 override, sampled around one call outside the timed loop) on `BM_Decode_Row_*`,
-`BM_Decode_Batch_ScalarPath_*/1000`, `BM_Decode_Batch_*/1000`, and `BM_Encode_Codec_*` (both the
-vector and `_IntoFixed` overloads) — default ON for this target via the `FLETCHER_BENCH_COUNT_ALLOCS`
-compile definition in `CMakeLists.txt`. `SetItemsProcessed(rows)` on every arm.
+`BM_Decode_Batch_*/1000`, and `BM_Encode_Codec_*` (both the vector and `_IntoFixed` overloads) —
+default ON for this target via the `FLETCHER_BENCH_COUNT_ALLOCS` compile definition in
+`CMakeLists.txt`. `SetItemsProcessed(rows)` on every arm.
 
 A validation pass runs before any benchmark and fails the process (non-zero exit) if, for any shape and
 3 rows, `Codec::EncodeRow` disagrees byte-for-byte with the positional twin, a decoded value disagrees
@@ -95,6 +90,9 @@ tree twice; a run-to-run median delta over 3% on an arm is worth a second look b
 Recorded **2026-09-02** on this machine: 13th Gen Intel(R) Core(TM) i9-13950HX, 24 cores / 32
 logical processors (Google Benchmark's own header confirms `Run on (32 X 2419 MHz CPU)`), Windows
 11, MSVC 19.44 (toolset v143).
+
+The `BM_Decode_Batch_ScalarPath_*` control arm that produced the pre-`BatchDecoder` column was
+removed once these numbers were recorded.
 
 **BEFORE**: commit `564467b`. `fletcher-arrow-bridge` and `fletcher-pubsub-arrow` built from that
 commit, pinned at the time by a lockfile (the revisions are the record):

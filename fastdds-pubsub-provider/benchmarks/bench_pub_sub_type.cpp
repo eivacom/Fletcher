@@ -17,10 +17,8 @@
 //                                    with attachments, which the ReadFlow arm above never parses
 //                                    (BM_Deliver_ParseAttachments).
 //   BM_ProviderPublishOverhead       what FastDDSPubSubProvider::Publish spends per sample before
-//                                    the type is reached, i.e. what the loan saving competes with.
-//                                    Superseded by the Monorepo's
-//                                    tools/fletcher_bench/bench_publish, which drives the real
-//                                    Publish against a raw DDS control.
+//                                    the type is reached, step for step, DDS-free — what the loan
+//                                    saving competes with.
 //   BM_Memcpy                        the floor: the row bytes moved once, nothing else.
 //   BM_BatchRoundTrip                a whole Arrow batch out and back — read a row out of an
 //                                    ArrowArray, encode, serialise, deserialise, decode, append to
@@ -30,7 +28,7 @@
 // edge deployments and modules/datamodel use. The Apache Arrow C++ tier (fletcher-arrow-bridge,
 // arrow::RecordBatch) sits a layer above and is not measured here.
 //
-// Results: Monorepo modules/io/docs/serialization-benchmark.md.
+// Results: the provider README's "Measured decisions" table.
 
 #include <benchmark/benchmark.h>
 #include <fastcdr/Cdr.h>
@@ -41,6 +39,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/positional_io.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
@@ -48,10 +47,10 @@
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <functional>
-#include <map>
 #include <memory>
 #include <shared_mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "envelope_codec.hpp"
@@ -429,19 +428,23 @@ void BM_Deliver_ParseAttachments(benchmark::State& state) {
 }
 BENCHMARK(BM_Deliver_ParseAttachments)->Arg(0)->Arg(1)->Arg(4)->Arg(16);
 
-// What FastDDSPubSubProvider::Publish spends per sample before the sample writer is reached: join
-// the segments, take the shared lock, find the topic. Independent of row size, and the number to
-// hold against the loaned/serialised gap above.
+// What FastDDSPubSubProvider::Publish spends per sample before the sample writer is reached, step
+// for step as Publish does it (fast_dds_pubsub_provider.cpp): the re-entrancy door, the segments
+// joined into one thread_local scratch string (no allocation after the first call), the shared
+// lock, the unordered_map lookup. Independent of row size, and the number to hold against the
+// loaned/serialised gap above.
 void BM_ProviderPublishOverhead(benchmark::State& state) {
     const std::vector<std::string> segments = {"host", "RovSimulator", "State"};
     std::shared_mutex mutex;
-    std::map<std::string, int> topics;
+    std::unordered_map<std::string, int> topics;
     topics[fletcher::internal::JoinSegments(segments)] = 1;
     topics["host/RovSimulator/Command"] = 2;
     topics["host/Vehicle/Telemetry"] = 3;
 
     for (auto _ : state) {
-        std::string name = fletcher::internal::JoinSegments(segments);
+        fletcher::internal::RefuseIfInsideDeliveryOn(&topics, "Publish");
+        static thread_local std::string name;
+        fletcher::internal::JoinSegmentsInto(name, segments);
         std::shared_lock lock(mutex);
         auto it = topics.find(name);
         benchmark::DoNotOptimize(it->second);
