@@ -40,16 +40,14 @@ inline void WriteSample(eprosima::fastdds::dds::DataWriter* writer,
     // An oversized row fails under write() rather than in front of it, so it cannot throw here.
     const eprosima::fastdds::dds::ReturnCode_t rc = writer->write(&transport);
 
-    // write() serializes into the history synchronously in the
-    // SYNCHRONOUS publish mode this provider uses, so a failed encode has already recorded its
-    // reason by now. Fast DDS does not propagate a serialize failure into write()'s return
-    // code, and rc != OK is itself an ordinary outcome (no matched reader, backpressure) — so
-    // the diagnostic, not rc, is the reliable signal that THIS row failed to encode. Checked
-    // first so the caller gets the cause rather than a bare return code.
-    //
-    // A DataWriter QoS override selecting ASYNCHRONOUS_PUBLISH_MODE would defer serialization
-    // to the flow-controller thread, and this check would then run before serialize() and miss
-    // the failure.
+    // write() serializes into the history before it returns in EVERY publish mode
+    // (DataWriterImpl::perform_create_new_change calls type_->serialize before add_pub_change;
+    // ASYNCHRONOUS_PUBLISH_MODE only hands the finished change to the flow controller), so a
+    // failed encode has already recorded its reason by now and `transport` may live on the
+    // stack. Fast DDS does not propagate a serialize failure into write()'s return code, and
+    // rc != OK is itself an ordinary outcome (no matched reader, backpressure) — so the
+    // diagnostic, not rc, is the reliable signal that THIS row failed to encode. Checked first
+    // so the caller gets the cause rather than a bare return code.
     if (!transport.serialize_error.empty()) {
         // kInternal, NOT kTransportFailure: the only thing recorded here is the caller's encoder
         // throwing, and the transport is blameless. A binding that retries kTransportFailure must

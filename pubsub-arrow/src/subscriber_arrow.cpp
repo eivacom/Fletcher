@@ -29,14 +29,26 @@ namespace fletcher {
 class SubscriberArrow::RecordBatchBatcher {
    public:
     RecordBatchBatcher(RecordBatchCallback cb, int64_t max_rows, std::chrono::milliseconds timeout)
-        : cb_(std::move(cb)), max_rows_(max_rows < 1 ? 1 : max_rows), timeout_(timeout) {
-        timer_ = std::thread([this] { TimerLoop(); });
-    }
+        : cb_(std::move(cb)), max_rows_(max_rows < 1 ? 1 : max_rows), timeout_(timeout) {}
 
     ~RecordBatchBatcher() { Stop(); }
 
     RecordBatchBatcher(const RecordBatchBatcher&) = delete;
     RecordBatchBatcher& operator=(const RecordBatchBatcher&) = delete;
+
+    // Starts the timer thread, given a shared_ptr to this same batcher so the thread is a
+    // co-owner, not a borrower. Flush() runs the user callback with mu_ released, and that
+    // callback may call SubscriberArrow::Unsubscribe, which drops the SubscriberArrow's own
+    // shared_ptr to this batcher; without a second owner that would destroy *this* while the
+    // timer thread is still inside Flush()/TimerLoop(). The lambda's `self` capture is destroyed
+    // only after TimerLoop() returns, i.e. after mu_ is released, so a detach (see Stop()) leaves
+    // the final destructor running on the timer thread with mu_ free and `timer_` moved-from;
+    // ~RecordBatchBatcher's call to Stop() is then idempotent (already stopped_, empty timer_)
+    // and neither joins nor detaches again. Must be called once, right after construction, before
+    // the batcher can be reached by any delivery.
+    void Start(std::shared_ptr<RecordBatchBatcher> self) {
+        timer_ = std::thread([self = std::move(self)] { self->TimerLoop(); });
+    }
 
     // Provides the schema once known (from the subscription result). Until a
     // non-null schema is set the batcher buffers but cannot build batches.
@@ -328,6 +340,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
 
     auto batcher = std::make_shared<RecordBatchBatcher>(std::move(callback), options.max_rows,
                                                         options.timeout);
+    batcher->Start(batcher);  // timer thread co-owns; see Start()'s comment
     auto schema_set = std::make_shared<std::once_flag>();
     // The codec, once resolved, for this subscription's samples. Codecs live in `codecs_` for the
     // SubscriberArrow's lifetime, so the pointer stays valid; without this every sample of every

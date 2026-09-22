@@ -47,7 +47,13 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
     if (schema) {
         std::string key = internal::JoinSegments(segments);
         std::lock_guard lock(mu_);
-        codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
+        // try_emplace, not operator[]/insert_or_assign: a redeclaration of an existing topic
+        // reaches this line only after the Publisher above accepted it, which happens only when
+        // the schema's IPC bytes are byte-identical to the one already registered, so the
+        // existing codec is already equivalent. Publish() copies out the raw Codec* under mu_ and
+        // then releases mu_ to encode, so replacing the map entry here would free a codec a
+        // concurrent Publish() is still using.
+        codecs_.try_emplace(key, TopicCodec{schema, std::make_unique<Codec>(schema)});
     }
 }
 

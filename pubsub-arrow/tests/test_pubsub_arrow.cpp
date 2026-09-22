@@ -4,6 +4,7 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#include <future>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -252,6 +254,33 @@ TEST(PublisherArrowTest, PublishTwiceReusesScratchAndDeliversBothRows) {
     ASSERT_EQ(decoded2.size(), 2u);
     EXPECT_TRUE(decoded2[0]->Equals(*row2[0]));
     EXPECT_TRUE(decoded2[1]->Equals(*row2[1]));
+}
+
+// Publisher::CreateTopic (publisher.cpp) treats a re-declaration with a byte-identical schema as
+// a no-op and never calls back into the provider, so this exercises PublisherArrow's own map
+// insert on the second CreateTopic call: it must not replace the existing codecs_ entry, because
+// Publish() copies out a raw Codec* with mu_ released before encoding, and a concurrent
+// redeclaration that replaced the entry would free a codec a running EncodeRow still points at.
+// The race itself isn't reproducible deterministically here; this only pins that a redeclare
+// leaves a codec that still round-trips.
+TEST(PublisherArrowTest, RedeclaringATopicKeepsTheCodec) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    auto schema = TestSchema();
+    pub.CreateTopic(kTopic, schema);
+    pub.CreateTopic(kTopic, schema);  // re-declare with the identical schema
+
+    ArrowRow row = {std::make_shared<arrow::Int32Scalar>(3),
+                    std::make_shared<arrow::StringScalar>("third")};
+    pub.Publish(kTopic, row);
+
+    ASSERT_EQ(mock->published.size(), 1u);
+    Codec codec(schema);
+    ArrowRow decoded = codec.DecodeRow(mock->published[0].data(), mock->published[0].size());
+    ASSERT_EQ(decoded.size(), 2u);
+    EXPECT_TRUE(decoded[0]->Equals(*row[0]));
+    EXPECT_TRUE(decoded[1]->Equals(*row[1]));
 }
 
 // ---------------------------------------------------------------------------
@@ -940,6 +969,55 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDe
     pub.Publish(kTopic, MakeRow(2, "b"));
     pub.Publish(kTopic, MakeRow(3, "c"));
     EXPECT_EQ(delivery_count, 1);
+}
+
+// Pins RecordBatchBatcher::Start's fix: a timeout flush runs the callback on the batcher's own
+// timer thread, so an Unsubscribe from inside it makes that same thread take Stop()'s self-detach
+// branch. Before the fix the timer thread's lambda held only a raw `this`, so the shared_ptr
+// Unsubscribe drops there was the last owner and destroyed the batcher while the timer thread was
+// still inside Flush()/TimerLoop() on it (a use-after-free that may or may not crash under a given
+// allocator). With the fix the timer thread owns a shared_ptr of its own, kept alive until
+// TimerLoop() itself returns, so the object outlives the thread's use of it.
+TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    std::mutex id_mu;
+    uint64_t sub_id = 0;
+    std::atomic<bool> unsubscribed{false};
+    std::promise<void> delivered;
+    std::future<void> delivered_future = delivered.get_future();
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100;  // never reached; only the timeout triggers the flush
+    opt.timeout = std::chrono::milliseconds(20);
+    auto result = sub.Subscribe(
+        kTopic,
+        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
+            // Stop()'s own kClosing flush (triggered by the Unsubscribe below) re-enters this
+            // callback once more; only the first delivery unsubscribes and signals.
+            if (unsubscribed.exchange(true)) return;
+            uint64_t id;
+            {
+                std::lock_guard<std::mutex> lk(id_mu);
+                id = sub_id;
+            }
+            sub.Unsubscribe(id);  // runs on the timer thread -- the path the fix protects
+            delivered.set_value();
+        },
+        opt);
+    {
+        std::lock_guard<std::mutex> lk(id_mu);
+        sub_id = result.subscription_id;  // visible to the callback before the row is published
+    }
+
+    pub.Publish(kTopic, MakeRow(1, "a"));
+
+    ASSERT_EQ(delivered_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    // sub goes out of scope here; without the fix the timer thread would already have used freed
+    // memory well before reaching this point.
 }
 
 TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {

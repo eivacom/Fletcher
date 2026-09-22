@@ -543,6 +543,7 @@ bool IsNestedType(arrow::Type::type id) {
 }  // namespace
 
 BatchDecoder::BatchDecoder(std::shared_ptr<arrow::Schema> schema) : impl_(new Impl) {
+    if (!schema) throw std::invalid_argument("BatchDecoder: null schema");
     impl_->schema = schema;
     const int n = schema->num_fields();
     impl_->columns.resize(static_cast<size_t>(n));

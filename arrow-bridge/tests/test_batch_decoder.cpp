@@ -942,6 +942,10 @@ TEST(BatchDecoderTest, OrderedDictionaryRejectedAtConstruction) {
     }
 }
 
+TEST(BatchDecoderTest, ANullSchemaIsRefused) {
+    EXPECT_THROW(fletcher::BatchDecoder(nullptr), std::invalid_argument);
+}
+
 // ---------------------------------------------------------------------------
 // 11. A capacity-exceeding row throws and leaves the batch built so far intact.
 // ---------------------------------------------------------------------------
