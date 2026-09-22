@@ -1259,8 +1259,7 @@ std::string GenerateAppendTo(const std::string& cls, const std::vector<FieldInfo
     // matching `b.field_builder(<i>)` slot, so the slot index is positional
     // against the same schema the row and view layers use.
     for (size_t i = 0; i < fields.size(); ++i)
-        cpp_backend::EmitAppendToFieldFromIr(o, *fields[i].ir, "msg." + fields[i].name + "()", i,
-                                             fields[i].descriptor->file());
+        cpp_backend::EmitAppendToFieldFromIr(o, *fields[i].ir, "msg." + fields[i].name + "()", i);
 
     o << "    return arrow::Status::OK();\n"
       << "}\n";

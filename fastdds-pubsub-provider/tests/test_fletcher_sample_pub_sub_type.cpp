@@ -197,7 +197,7 @@ TEST(FletcherSamplePubSubTypeTest, StopsAfterTheBytesInUse) {
     ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
 
     // A plain type nominally carries its whole fixed-size body; this one truncates, which is what
-    // keeps a small row small when loan_publish is off.
+    // keeps a small row small on the copying publish path.
     EXPECT_EQ(payload.length, kHeader + kLengthPrefix + 4 + row.size() + 4);
     EXPECT_LT(payload.length, type.max_serialized_type_size);
 }
@@ -263,9 +263,8 @@ TEST(FletcherSamplePubSubTypeTest, FastCdrReproducesTheBytesExactly) {
 }
 
 // The companion __schema channel's TopicDataType: the same plain sample as the data channel, under
-// a different registered name (design owner-approved 2026-09-14). One TopicDataType
-// implementation, so its claims about itself are the data type's, checked once here rather than
-// duplicated per bound.
+// a different registered name. One TopicDataType implementation, so its claims about itself are
+// the data type's, checked once here rather than duplicated per bound.
 TEST(SchemaBytesPubSubTypeTest, NameBoundAndPlainness) {
     fletcher::internal::SchemaBytesPubSubType schema_type(kTestPayloadBytes);
     FletcherSamplePubSubType data_type(kTestPayloadBytes);
@@ -326,7 +325,7 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
 }
 
-// P18: the guard at the top of serialize() now accounts for the row's OWN 4-byte length prefix
+// The guard at the top of serialize() accounts for the row's OWN 4-byte length prefix
 // (EncodeEnvelopeBody's ROW_LEN) as well as the sample's — even an EMPTY row needs it. A buffer one
 // byte too small for that must be refused quietly, before the encoder ever runs, rather than
 // reaching it and failing with the "oversized row" diagnostic, which is the wrong story for a
@@ -351,14 +350,14 @@ TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
     EXPECT_EQ(payload.length, 0u);
 }
 
-// T1 (cycle 2), the exact-fit edge P18's guard leaves untested. `capacity` in serialize() is
-// `min(payload_bytes_, payload.max_size - kFraming)`, and the payload below reserves
-// `max_serialized_type_size == kFraming + payload_bytes_`, so here `capacity == kTestPayloadBytes`
-// exactly. EncodeEnvelopeBody's body framing for a ZERO-attachment row is 8 bytes — a 4-byte
-// ROW_LEN placeholder plus a 4-byte ATTACH_COUNT of zero (envelope_codec.hpp) — not the CDR
-// encapsulation header or the sample length prefix, both of which `kFraming` already accounts
-// for separately. So `body_size = 8 + row.size()`, and a row of `bound - 8` bytes is the largest
-// that fits `capacity` at all.
+// The exact-fit edge ABufferTooSmallForAnEmptyRowIsRefusedQuietly's guard leaves untested.
+// `capacity` in serialize() is `min(payload_bytes_, payload.max_size - kFraming)`, and the payload
+// below reserves `max_serialized_type_size == kFraming + payload_bytes_`, so here `capacity ==
+// kTestPayloadBytes` exactly. EncodeEnvelopeBody's body framing for a ZERO-attachment row is 8
+// bytes — a 4-byte ROW_LEN placeholder plus a 4-byte ATTACH_COUNT of zero (envelope_codec.hpp) —
+// not the CDR encapsulation header or the sample length prefix, both of which `kFraming` already
+// accounts for separately. So `body_size = 8 + row.size()`, and a row of `bound - 8` bytes is the
+// largest that fits `capacity` at all.
 TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAndRoundTrips) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
     const std::vector<uint8_t> row = Row(kTestPayloadBytes - 8, 0x37);
@@ -635,13 +634,13 @@ TEST(EnvelopeCodecTest, AnArrivingAttachmentKeyWithAZeroByteIsDroppedAsMalformed
     EXPECT_EQ(attachments.KeyAt(0), "axb");
 }
 
-// T2 (cycle 2): one malformation per row, each refused by `ParseEnvelopeBody` with a quiet
+// One malformation per row, each refused by `ParseEnvelopeBody` with a quiet
 // `false` that leaves `attachments` empty — never a throw, for the same reason the zero-byte-key
 // refusal above is a `return false` rather than an exception: this parse runs inside Fast DDS's
 // own `deserialize()`/`on_data_available` frames.
 //
-// This belongs HERE rather than in core/tests/test_envelope.cpp, where the brief first pointed:
-// core's own decoder, `fletcher::DeserializeEnvelope` (core/include/fletcher/core/envelope.hpp),
+// This belongs HERE rather than in core/tests/test_envelope.cpp: core's own decoder,
+// `fletcher::DeserializeEnvelope` (core/include/fletcher/core/envelope.hpp),
 // is a DIFFERENT function that THROWS `std::invalid_argument` on every one of these same
 // malformations instead of returning `false` — see EnvelopeTest.ThrowsOnTruncatedBuffer and
 // neighbours in that file. `ParseEnvelopeBody`, the bool-returning decoder these four rows are

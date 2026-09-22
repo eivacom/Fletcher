@@ -394,12 +394,9 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
 // `SplitTopic("")` yields an empty vector — which is why it is refused at the
 // door rather than trusted not to happen.
 //
-// Asserted on every one of the eight methods (S6 added `SubscribeSchema` and
-// `UnsubscribeSchema` beside the original four; this round adds
-// `CreateTopicWithOptions` and `SubscribeWithOptions` beside those, each passed an
-// EMPTY `TopicOptions{}` so the assertion is about the segment door, not about
-// options support): the check lives in one place (`internal::RequireSegments`),
-// and this is what says all eight still route through it.
+// Asserted on all eight seam methods, each passed an EMPTY `TopicOptions{}` where relevant so the
+// assertion is about the segment door, not about options support: the check lives in one place
+// (`internal::RequireSegments`), and this is what says all eight still route through it.
 TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
     InProcessPubSubProvider provider;
     const Topic none;
@@ -550,7 +547,7 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
     EXPECT_NO_THROW(provider.CreateTopic({"_private", "two words"}, OwnedSchema{}));
 }
 
-// ── The 2026-09-17 addendum to §2 — TopicOptions, empty means defaults ──
+// ── §2 — TopicOptions, empty means defaults ──
 //
 // A default-constructed `TopicOptions` is never refused and behaves exactly like
 // the pure form it delegates to (provider.hpp): the base class's own body is what

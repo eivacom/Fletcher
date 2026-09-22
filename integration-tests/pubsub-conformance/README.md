@@ -74,7 +74,7 @@ re-deriving the rules.
   | `ReentrantCallIsRefusedWithoutAnyThrow` | the refusal alone, with **no exception anywhere on the path** | the door only |
   | `ThrowingCallbackIsAbsorbedWithoutReentering` | the absorption alone, with **no re-entry on the path**, asserted on the absorbed COUNT | the absorption only |
   | `AnotherThreadIsNotRefusedDuringADelivery` | not-too-wide, THREAD axis: a second thread is not re-entrancy | neither |
-  | `EveryProviderMethodIsRefusedFromInsideADelivery` | the METHOD axis: the other three methods, the two schema-only ones and the two options-taking ones refuse too, **by name and without hanging** (owner ruling 2026-09-05, "refuse everywhere") | the door only |
+  | `EveryProviderMethodIsRefusedFromInsideADelivery` | the METHOD axis: the other three methods, the two schema-only ones and the two options-taking ones refuse too, **by name and without hanging** | the door only |
 
   Neither mechanism can green the other's control, in any landing order. That is
   the condition on which the grouping was allowed, and it is structural rather
@@ -409,7 +409,7 @@ real A and B on every subject.
 ## The `SeamVocabulary` suite — the crossing types themselves
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
-§3.3, §3.4, §5.1, §7 clause 1, §2's 2026-09-17 addendum. A **third** suite in
+§3.3, §3.4, §5.1, §7 clause 1, §2's `TopicOptions` clause. A **third** suite in
 this harness, in its own binary (`conformance_seam_vocabulary`), fifteen
 entries, no provider SDK.
 
@@ -427,8 +427,8 @@ provider-parameterised clause can reach:
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
 | `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
 | `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}`. §3.5's sixth refusal, the **246-byte joined-length bound**, is asserted in `pubsub_tests` (`Segments.NamesThatWouldTruncateOnTheWireAreRefused`) rather than here: it rides the same door, and keeping it in one place is what lets its two mutations redden that case alone |
-| `EmptyTopicOptionsAreNeverRefused` | §2's 2026-09-17 addendum: a default-constructed `TopicOptions` is never refused and behaves exactly like the pure form it delegates to — declare, subscribe and one row delivered, over `InProcessPubSubProvider`, which overrides neither method |
-| `NonEmptyOptionsAreRefusedOrHonouredByStatus` | The same addendum's other half: `{.profile = "x"}` answers `kNotSupported` or `kInvalidArgument`, never anything else and never silently. This binary's one provider takes the `kNotSupported` branch; Fast DDS's `kInvalidArgument` branch, over a real document, is that provider's own suite's job |
+| `EmptyTopicOptionsAreNeverRefused` | §2's `TopicOptions` clause: a default-constructed `TopicOptions` is never refused and behaves exactly like the pure form it delegates to — declare, subscribe and one row delivered, over `InProcessPubSubProvider`, which overrides neither method |
+| `NonEmptyOptionsAreRefusedOrHonouredByStatus` | The same clause's other half: `{.profile = "x"}` answers `kNotSupported` or `kInvalidArgument`, never anything else and never silently. This binary's one provider takes the `kNotSupported` branch; Fast DDS's `kInvalidArgument` branch, over a real document, is that provider's own suite's job |
 | `AnAttachmentSetIsReconstructibleFromItsPublishedFormAlone` | §3.2 clauses A1-A2 (PDA-DEC-AG2): a stand-in boundary shown **only** `size()`/`KeyAt()`/`ValueAt()` flattens an attachment set to bytes and rebuilds it through `Set` alone; the rebuilt set publishes the identical form, the same entries added in four different orders publish the identical form, and the sequence is in ascending unsigned-byte order of the key — over bytes, not a collation, so a key that is a prefix of another sorts first and a byte above 0x7f sorts after every ASCII key |
 | `AnAlteredAttachmentSetPublishesADifferentForm` *(live negative control)* | Four mutations — one key byte, one value byte, two values swapped between their keys, one entry dropped — each must publish a **different** form. Without it a `PublishedForm` returning a constant would green every line above |
 | `AnAttachmentKeyThatWouldTruncateIsRefused` | §3.2 clause A3 (PDA-DEC-AG2), **two legs with different mechanisms**: `Set` refuses a NUL-bearing key with `kInvalidArgument`, and a hand-built envelope body carrying one is refused by `DeserializeEnvelope` with `std::invalid_argument` — the wire-fault type — and **never** `PubSubError`, the caller-fault type. The second leg reddens on the exception TYPE if a later change routes decode through `Set`. Both legs carry their bound: a clean key of any length, including empty, still works |
@@ -660,7 +660,7 @@ every participant through a process-wide `DomainParticipantFactory` singleton.
 > claim** in either direction — each instance publishes only to its own private
 > topic, so the pair could not have crossed whatever the registry did; a
 > subscriber follows the bound its publisher announces on `__schema`, so bounds
-> alone no longer keep two endpoints apart, and the control's measured window
+> alone do not keep two endpoints apart, and the control's measured window
 > licenses only the equal-bound pair.
 >
 > **Three exclusions, stated rather than implied:** nothing about isolation
@@ -679,7 +679,7 @@ every participant through a process-wide `DomainParticipantFactory` singleton.
 
 **Three things carry the arrangement**, and a reviewer should check them before
 believing anything above. (1) **One `kBound`, equal in both instances of every
-case that asserts or denies a crossing.** Unequal bounds are no longer an
+case that asserts or denies a crossing.** Unequal bounds are not an
 *independent* reason two endpoints never meet — a subscriber's reader is
 created at whatever bound the publisher it follows announced, not at a bound
 of its own. `kBound` is kept one number anyway, so `domain_id` stays the only

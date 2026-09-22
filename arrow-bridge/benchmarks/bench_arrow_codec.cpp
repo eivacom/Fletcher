@@ -386,8 +386,8 @@ void RegisterShape(const std::string& name) {
         state.SetItemsProcessed(state.iterations());
     });
 
-    // BM_Decode_Batch_ScalarPath_<name>/N — the CURRENT batched decode
-    // (subscriber_arrow.cpp:177-205 BuildBatch), reproduced verbatim over N pre-decoded rows. N in
+    // BM_Decode_Batch_ScalarPath_<name>/N — the pre-BatchDecoder per-cell batched decode, kept as
+    // the A/B control (fixtures.hpp BuildBatchScalarPath), over N pre-decoded rows. N in
     // {1, 1000, 8000}.
     benchmark::RegisterBenchmark(
         ("BM_Decode_Batch_ScalarPath_" + name).c_str(),

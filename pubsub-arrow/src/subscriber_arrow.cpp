@@ -45,16 +45,15 @@ class SubscriberArrow::RecordBatchBatcher {
     // carries a null batch, so the loss is visible rather than silent.
     void SetSchema(std::shared_ptr<arrow::Schema> schema) {
         std::unique_lock<std::mutex> lk(mu_);
-        schema_ = std::move(schema);
-        if (schema_) {
+        if (schema) {
             try {
-                decoder_ = std::make_unique<BatchDecoder>(schema_);
+                decoder_ = std::make_unique<BatchDecoder>(schema);
                 decoder_->Reserve(max_rows_);
             } catch (...) {
                 decoder_.reset();
             }
         }
-        ready_ = (schema_ != nullptr);
+        ready_ = (schema != nullptr);
         if (ready_ && decoder_ && decoder_->num_rows() >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
         }
@@ -242,7 +241,6 @@ class SubscriberArrow::RecordBatchBatcher {
 
     std::mutex mu_;
     std::condition_variable cv_;
-    std::shared_ptr<arrow::Schema> schema_;
     std::unique_ptr<BatchDecoder> decoder_;
     std::vector<Attachments> atts_;
     int64_t dropped_ = 0;

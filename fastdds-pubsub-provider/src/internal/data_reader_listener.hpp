@@ -57,9 +57,9 @@ class DataReaderListenerBase : public eprosima::fastdds::dds::DataReaderListener
     explicit DataReaderListenerBase(FastDDSStatusListener* status_listener)
         : status_listener_(status_listener) {}
 
-    // Called exactly once, by whichever thread is about to `enable()` this reader (Subscribe, or
-    // this provider's schema thread once the schema arrives) -- always before that `enable()`, so
-    // `Drain` never runs with `schema_` unset (asserted there).
+    // Called exactly once, before `create_datareader` (the reader is created enabled), by the
+    // thread that creates it (Subscribe, or this provider's schema thread once the schema
+    // arrives), so `Drain` never runs with `schema_` unset (asserted there).
     void SetSchema(SharedSchema schema) { schema_ = std::move(schema); }
 
     void on_data_available(eprosima::fastdds::dds::DataReader* reader) final {

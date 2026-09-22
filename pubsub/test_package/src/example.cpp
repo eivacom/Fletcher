@@ -63,7 +63,8 @@ int main() {
 
     // TopicOptions: an empty options struct is never refused — the base class's default
     // delegates straight to CreateTopic, so StubProvider stays conforming with no change.
-    provider->CreateTopicWithOptions({"another", "topic"}, MakeSchema(), TopicOptions{});
+    publisher.CreateTopic({"another", "topic"}, MakeSchema(), TopicOptions{});
+    assert(publisher.ListTopics().size() == 2);
 
     return 0;
 }

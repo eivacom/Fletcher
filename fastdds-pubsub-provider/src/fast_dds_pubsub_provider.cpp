@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <fastdds/dds/core/Time_t.hpp>
 #include <fastdds/dds/core/condition/Condition.hpp>
 #include <fastdds/dds/core/condition/GuardCondition.hpp>
@@ -43,7 +44,6 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -53,7 +53,6 @@
 
 #include "internal/data_reader_listener.hpp"
 #include "internal/data_writer_listener.hpp"
-#include "internal/envelope_codec.hpp"
 #include "internal/fletcher_sample_pub_sub_type.hpp"
 #include "internal/participant_listener.hpp"
 #include "internal/profile_document.hpp"
@@ -645,9 +644,7 @@ FastDDSPubSubProvider::FastDDSPubSubProvider(const ProviderConfig& config,
     // before the participant exists. An empty `config.document` is resolved to
     // Fletcher's baked-in one first (qos_defaults.cpp), so there is exactly one path.
     // Writer/reader QoS is resolved per topic, in `CreateTopic`, the first moment a topic's name is
-    // known (internal/profile_document.hpp). Refusals here are `kInvalidArgument`: reached through
-    // a factory, a `std::invalid_argument` would arrive at the caller as `kInternal`, which tells
-    // an operator nothing.
+    // known (internal/profile_document.hpp). Refusals here are `kInvalidArgument`.
     // 64 KiB when unset. The bound governs this provider's publishers: it is the number in the
     // type name CreateTopic registers and the size a published row has to fit. Subscribers follow
     // whatever a publisher announces.
@@ -887,7 +884,7 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                 // `options.profile` set, that profile by name. The cost is the writer's pool
                 // reserved up front for every declared topic, whether or not it is ever published
                 // to: at the built-in defaults (max_samples 25, 64 KiB payload bound, data_sharing
-                // AUTO) each declared topic reserves roughly 1.6 MB of data-sharing segment plus
+                // AUTO) each declared topic reserves roughly 1.7 MB of data-sharing segment plus
                 // its payload pool at CreateTopic, published to or not.
                 const DataWriterQos wqos =
                     internal::ResolveDataWriterQos(*impl_->publisher, name, options.profile);

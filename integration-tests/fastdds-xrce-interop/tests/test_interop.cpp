@@ -216,7 +216,7 @@ constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF
   </profiles>
 </dds>)XML";
 
-// PDA-DEC-7: the typed XRCE options struct is retired. What these three tests witness is the
+// PDA-DEC-7: the typed XRCE options struct is retired. What these interop cases witness is the
 // seam's TYPED CORE and the registered type name, not the document - they run their Agent on
 // the DEFAULT port with the DEFAULT (UDP) transport, and their one distinguishing setting is
 // `domain_id`. The document carries only the session key, which has to be unique per client on

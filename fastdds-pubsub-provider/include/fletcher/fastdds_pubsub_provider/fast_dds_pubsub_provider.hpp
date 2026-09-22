@@ -207,9 +207,8 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// rest on a fact the substrate does not expose. The README publishes Fletcher's
 /// own profile as the copy-paste starting point.
 ///
-/// The document carries no vendor properties: `Publish` always goes through the
-/// regular (non-loaned) path. `LoanableSampleWriter` stays in the tree, compiled
-/// and unit-tested, but is not selectable by a document or any other
+/// `Publish` always goes through the regular (non-loaned) path. `LoanableSampleWriter` stays in
+/// the tree, compiled and unit-tested, but is not selectable by a document or any other
 /// configuration.
 ///
 /// ── Refused, all `kInvalidArgument` ─────────────────────────────────────────
@@ -327,12 +326,11 @@ class FastDDSPubSubProvider : public PubSubProvider {
     /// VOLATILE, KEEP_LAST 1) sends the newest value, resent if lost, and never replays to a late
     /// subscriber; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
     /// to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the
-    /// last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`)
-    /// delivers every sample in order and blocks the writer rather than drop one. Start a custom
-    /// document from
-    /// this text and add named profiles inside `<profiles>`; a custom document replaces all of
-    /// this one, so copy the pairs you keep. The two `is_default_profile` profiles are what every
-    /// topic without a profile of its own runs on.
+    /// last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`, 20 ms
+    /// heartbeat) delivers every sample in order and blocks the writer rather than drop one. Start
+    /// a custom document from this text and add named profiles inside `<profiles>`; a custom
+    /// document replaces all of this one, so copy the pairs you keep. The two `is_default_profile`
+    /// profiles are what every topic without a profile of its own runs on.
     [[nodiscard]] static const char* DefaultProfilesDocument() noexcept;
 
    private:

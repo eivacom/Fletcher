@@ -32,15 +32,15 @@ Retention RetentionForProvider(const std::string& provider) {
         // The loopback holds no history at all: a publish with no subscriber
         // registered is dropped on the floor.
         {"inprocess", Retention::kDropsPreSubscribe},
-        // Owner decision: the built-in data profiles are VOLATILE (streams do
-        // not keep pre-match samples). A row published before the data
-        // reader has matched a writer is gone for good — readiness is a
-        // subject-level wait on FastDDSStatusListener::OnMatched
+        // The built-in data profile is VOLATILE (streams do not keep
+        // pre-match samples). A row published before the data reader has
+        // matched a writer is gone for good — readiness is a subject-level
+        // wait on FastDDSStatusListener::OnMatched
         // (ProviderSubject::AwaitDataMatched), never a replayed backlog.
         {"fastdds", Retention::kDropsPreSubscribe},
-        // Same QoS triple as the shipped Fast DDS defaults used to be,
-        // expressed through the Agent: RELIABLE + KEEP_ALL + TRANSIENT_LOCAL,
-        // unchanged by the Fast DDS provider's VOLATILE move.
+        // RELIABLE + TRANSIENT_LOCAL + KEEP_ALL is hardcoded in the XRCE
+        // provider, expressed through the Agent, unaffected by the Fast DDS
+        // provider's VOLATILE built-in profile.
         {"xrce", Retention::kRetainsPreSubscribe},
     };
     auto it = kTable.find(provider);

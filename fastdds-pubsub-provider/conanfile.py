@@ -40,7 +40,6 @@ class FletcherPubsubConan(ConanFile):
         "include/*",
         "cmake/*",
         "tests/*",
-        "third_party/*",
     )
 
     def requirements(self):

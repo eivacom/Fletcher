@@ -288,7 +288,7 @@ const std::string selection = "fastdds";  // from config, a flag, or an environm
 auto provider = registry.Create(fletcher::ProviderSelector::Parse(selection), config);
 
 // Per-topic options ride two optional seam methods and never widen the typed core above:
-fletcher::Publisher pub(provider);  // or PublisherArrow — the same extra overload
+fletcher::Publisher pub(provider);  // or PublisherArrow — the same defaulted trailing options arg
 pub.CreateTopic({"nav", "imu"}, std::move(schema),
                 {.profile = "latest", .max_payload_bytes = 4096});
 ```

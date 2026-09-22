@@ -193,7 +193,8 @@ provider.Unsubscribe({"my", "topic"});
 
 ### Per-topic options
 
-`CreateTopic` has an overload taking `fletcher::TopicOptions` (`pubsub/provider.hpp`):
+`CreateTopicWithOptions` is the companion method taking `fletcher::TopicOptions`
+(`pubsub/provider.hpp`):
 
 ```cpp
 provider.CreateTopicWithOptions({"nav", "imu"}, schema,
@@ -222,7 +223,7 @@ bound for it is `kInvalidArgument` — the reader cannot migrate once created.
 - Only one subscription per topic per provider instance. Call `Unsubscribe` before re-subscribing.
 - The subscription callback is invoked from the background run-loop thread. Shared state accessed from the callback must be protected externally.
 - **A callback must not throw, and if one does the exception goes nowhere** (spec §5.3, owner ruling 2026-09-05). It is absorbed at the dispatch site, inside `DeliveryChannel::Deliver`, which is `noexcept`. That matters more here than anywhere else: `OnTopic` runs inside `uxr_run_session_time()`, so an unwind would cross the XRCE client's C frames — undefined behaviour on MSVC and process termination in practice. It is now a property of the dispatch type rather than a rule each site has to remember. The count of absorbed failures is readable through `DeliveryChannel::AbsorbedCount()`.
-- **From inside a delivery, every seam method — the four data-path methods and the two schema-only ones — on this same instance and this same thread is refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). **This is a deliberate behaviour change, and this provider pays for it.** It used to serve every one of them — the recursive `mu` let a re-entrant `Unsubscribe` straight through, so the in-place topic-state reset ran underneath the very delivery being cancelled, and `CreateTopic`/`Publish`/`Subscribe` genuinely worked from a handler. XRCE is the ONE protocol of three where they did: the loopback deadlocked on its own mutex and Fast DDS hung on the RTPS reader mutex. A capability on one transport is not a seam contract, so the owner chose the uniform rule and routed re-permitting to PDA-ABI (ruling 2026-09-05), where the loaned-sample receive path makes deferral affordable. The recursive `mu` is no longer load-bearing for re-entrant service and is kept only because narrowing it is a separate change with its own risk.
+- **From inside a delivery, every seam method — the four data-path methods, the two schema-only ones and the two options-taking ones — on this same instance and this same thread is refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). **This is a deliberate behaviour change, and this provider pays for it.** It used to serve every one of them — the recursive `mu` let a re-entrant `Unsubscribe` straight through, so the in-place topic-state reset ran underneath the very delivery being cancelled, and `CreateTopic`/`Publish`/`Subscribe` genuinely worked from a handler. XRCE is the ONE protocol of three where they did: the loopback deadlocked on its own mutex and Fast DDS hung on the RTPS reader mutex. A capability on one transport is not a seam contract, so the owner chose the uniform rule and routed re-permitting to PDA-ABI (ruling 2026-09-05), where the loaned-sample receive path makes deferral affordable. The recursive `mu` is no longer load-bearing for re-entrant service and is kept only because narrowing it is a separate change with its own risk.
 - `XrceDDSPubSubProvider` is non-copyable and non-movable.
 - `transport=serial` is refused with `PubSubError(kNotSupported)` - not implemented, and said distinctly from a typo.
 

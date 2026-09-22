@@ -38,31 +38,12 @@
 #include "internal/qos_defaults.hpp"
 #include "internal/sample_writer.hpp"
 #include "internal/transport_data.hpp"
+#include "test_helpers.hpp"
 
 using namespace fletcher;
 using namespace eprosima::fastdds::dds;
 
 namespace {
-
-// This file's one poll-free wait: a producer (a subscriber callback, a Log consumer) calls
-// NotifyWaiters() right after changing whatever a WaitUntil() predicate reads; the waiter blocks
-// on a condition_variable instead of sleeping and re-checking. notify_all() is issued under
-// g_wait_mutex, so a notify that lands between a waiter's predicate check and it actually
-// starting to wait is never lost (serialized through the same mutex) rather than merely
-// eventually-consistent.
-std::mutex g_wait_mutex;
-std::condition_variable g_wait_cv;
-
-void NotifyWaiters() {
-    std::lock_guard<std::mutex> lock(g_wait_mutex);
-    g_wait_cv.notify_all();
-}
-
-template <class Pred>
-bool WaitUntil(Pred pred, std::chrono::milliseconds budget) {
-    std::unique_lock<std::mutex> lock(g_wait_mutex);
-    return g_wait_cv.wait_for(lock, budget, std::move(pred));
-}
 
 // The one waiting mechanism (spec §3.4). Deliberately spelled out rather than
 // hidden: a test that wants the schema states its budget and reads a TYPED
@@ -74,13 +55,12 @@ SharedSchema AwaitSchema(const SubscriptionResult& result, std::chrono::millisec
     return schema;
 }
 
-// The data channel is VOLATILE now (qos_defaults.cpp, owner decision 2026-09-15): AwaitSchema
-// proves the SCHEMA reader matched (a separate channel, still TRANSIENT_LOCAL) -- not the DATA
-// reader. The data reader is enabled once the schema resolves, but matching it against the
-// publisher's data writer is a further, asynchronous step, and a row published before it
-// completes is dropped rather than replayed. Attach one of these to the PUBLISHER (its OnMatched
-// fires once its data writer sees the subscriber's data reader) and wait before the first Publish
-// that expects delivery.
+// The data channel is VOLATILE (qos_defaults.cpp): AwaitSchema proves the SCHEMA reader matched (a
+// separate channel, still TRANSIENT_LOCAL) -- not the DATA reader. The data reader is enabled once
+// the schema resolves, but matching it against the publisher's data writer is a further,
+// asynchronous step, and a row published before it completes is dropped rather than replayed.
+// Attach one of these to the PUBLISHER (its OnMatched fires once its data writer sees the
+// subscriber's data reader) and wait before the first Publish that expects delivery.
 class DataWriterMatchListener : public FastDDSStatusListener {
    public:
     bool AwaitMatch(std::chrono::milliseconds budget = std::chrono::seconds(10)) {
@@ -111,30 +91,11 @@ class DataWriterMatchListener : public FastDDSStatusListener {
     int32_t positive_matches_ = 0;
 };
 
-// A dispatch site is a DeliveryChannel now, not a bare std::function, so these
-// unit tests build one over a lambda. The token is this file's own static: a
-// delivery frame is pushed and popped around each invocation exactly as a
-// provider's would be, and nothing in these tests asks about it.
-inline fletcher::DeliveryChannel TestChannel(fletcher::PubSubProvider::SubscribeCallback cb) {
-    static const int kTestProviderToken = 0;
-    return fletcher::DeliveryChannel(fletcher::DeliveryChannel::RawToken{}, &kTestProviderToken,
-                                     std::move(cb));
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-static OwnedSchema MakeSchema() {
-    OwnedSchema s;
-    ArrowSchemaInit(s.get());
-    ArrowSchemaSetTypeStruct(s.get(), 1);
-    ArrowSchemaSetName(s->children[0], "x");
-    ArrowSchemaSetType(s->children[0], NANOARROW_TYPE_INT32);
-    return s;
-}
 
 // A schema that differs from MakeSchema() (different field name + type) so a
 // re-declaration with it is a genuine conflict.
@@ -145,19 +106,6 @@ static OwnedSchema MakeOtherSchema() {
     ArrowSchemaSetName(s->children[0], "y");
     ArrowSchemaSetType(s->children[0], NANOARROW_TYPE_DOUBLE);
     return s;
-}
-
-static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
-    return [x](WriteBuffer& buf) {
-        buf.AppendByte(0x00);
-        buf.AppendFixed<int32_t>(x);
-    };
-}
-
-static int32_t DecodeRow(const uint8_t* data) {
-    int32_t v;
-    std::memcpy(&v, data + 1, sizeof(v));
-    return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,9 +302,9 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 
 // The sample type is bounded and plain, so every endpoint reserves the whole payload bound per
 // history slot — which is what the resource limits here keep in check. The default memory policy
-// preallocates, so a reader built from these reads through loans; the publish side never loans any
-// more (owner decision 2026-09-15) -- see ALoanableSampleWriterWritesThroughARealWriter below for
-// LoanableSampleWriter's own direct coverage.
+// preallocates, so a reader built from these reads through loans; the publish side never loans --
+// see ALoanableSampleWriterWritesThroughARealWriter below for LoanableSampleWriter's own direct
+// coverage.
 //
 // PDA-DEC-6 — these used to be typed `FastDDSProviderOptions` fields; they are now lines in the
 // provider's own Fast DDS XML profiles document. Note the durability / reliability /
@@ -366,8 +314,8 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
 // BEST_EFFORT, data-sharing-AUTO reader, which is not what these tests are about.
 namespace {
 
-// VOLATILE mirrors Fletcher's built-in data profile (owner decision 2026-09-15,
-// qos_defaults.cpp): none of the tests below need replay, so there is no reason to diverge.
+// VOLATILE mirrors Fletcher's built-in data profile (qos_defaults.cpp): none of the tests below
+// need replay, so there is no reason to diverge.
 constexpr const char* kFletcherWriterQos = R"(
         <durability><kind>VOLATILE</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>)";
@@ -376,17 +324,6 @@ constexpr const char* kFletcherReaderQos = R"(
         <durability><kind>VOLATILE</kind></durability>
         <reliability><kind>RELIABLE</kind></reliability>
         <data_sharing><kind>OFF</kind></data_sharing>)";
-
-// Ten slots rather than Fletcher's published twenty-five: small enough that the loaned tests below
-// can exhaust the pool deliberately.
-constexpr const char* kTenSlots = R"(
-        <historyQos><kind>KEEP_LAST</kind><depth>10</depth></historyQos>
-        <resourceLimitsQos>
-          <max_samples>10</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>10</max_samples_per_instance>
-          <allocated_samples>10</allocated_samples>
-        </resourceLimitsQos>)";
 
 struct DocumentParts {
     std::string writer_qos = kFletcherWriterQos;
@@ -399,9 +336,9 @@ struct DocumentParts {
 };
 
 // Both endpoint profiles carry `is_default_profile="true"`: `fletcher_writer` / `fletcher_reader`
-// are not special names any more (design rule 2, internal/profile_document.hpp) -- none of the
-// topics these tests use are literally named that, so without the marking the document below
-// would configure nothing and every test through it would silently run on Fast DDS's own default.
+// are not special names (design rule 2, internal/profile_document.hpp) -- none of the topics these
+// tests use are literally named that, so without the marking the document below would configure
+// nothing and every test through it would silently run on Fast DDS's own default.
 std::string BoundedDocument(const DocumentParts& parts = {}) {
     return std::string(R"(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -516,8 +453,8 @@ static int32_t AwaitRow(const std::atomic<int32_t>& received) {
     return received.load();
 }
 
-// A non-preallocating reader reads through copies -- true of every reader since item C
-// (CopyingDataReaderListener is the default flow), but this one could not have taken the loaned
+// A non-preallocating reader reads through copies -- true of every reader, since
+// CopyingDataReaderListener is the default flow, but this one could not have taken the loaned
 // path anyway: CanLoanSamplesFollowsTheMemoryPolicy above is the predicate
 // LoanedDataReaderListener's own direct test relies on, and DYNAMIC fails it. The document line
 // that sets the memory policy is asserted directly rather than inferred from "a row arrived": a
@@ -618,42 +555,6 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
     EXPECT_EQ(AwaitRow(received), 31);
 }
 
-// Same DataSharingKind::ON check as for zero-copy: it passes only while the type
-// declares itself bounded, which is all data-sharing needs. Being plain (loans)
-// is a separate claim this mode does not make.
-TEST(FastDDSPubSubProviderTest, DataSharingTypeIsAcceptedForDataSharing) {
-    DocumentParts sharing;
-    sharing.writer_qos = std::string(kFletcherWriterQos) + R"(
-        <data_sharing><kind>ON</kind></data_sharing>)";
-    // VOLATILE, matching the writer above: a TRANSIENT_LOCAL request against a VOLATILE offer is
-    // an incompatible-QoS mismatch, and this test is not about that.
-    sharing.reader_qos = R"(
-        <durability><kind>VOLATILE</kind></durability>
-        <reliability><kind>RELIABLE</kind></reliability>
-        <data_sharing><kind>ON</kind></data_sharing>)";
-
-    DataWriterMatchListener pub_listener;
-    FastDDSPubSubProvider pub_provider(BoundedConfig(sharing), &pub_listener);
-    FastDDSPubSubProvider sub_provider(BoundedConfig(sharing));
-
-    pub_provider.CreateTopic({"datasharing", "on"}, MakeSchema());
-
-    std::atomic<int32_t> received{-1};
-    SubscriptionResult result = sub_provider.Subscribe(
-        {"datasharing", "on"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) received.store(DecodeRow(data));
-            NotifyWaiters();
-        });
-    ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
-
-    ASSERT_TRUE(pub_listener.AwaitMatch())
-        << "the data writer never matched the subscriber's data reader";
-    pub_provider.Publish({"datasharing", "on"}, MakeEncoder(29));
-
-    EXPECT_EQ(AwaitRow(received), 29);
-}
-
 // The mirror of the zero-copy oversize test, and what separates the two modes:
 // with no loan to encode into, the overflow happens inside serialize(), which
 // reports it to Fast DDS instead of throwing out of Publish. The sample is
@@ -706,7 +607,7 @@ TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
     EXPECT_EQ(AwaitRow(received), 23);
 }
 
-// T6: a row large enough that Fast DDS must FRAGMENT it at the RTPS level still crosses intact.
+// A row large enough that Fast DDS must FRAGMENT it at the RTPS level still crosses intact.
 // `bound` is the payload bound both endpoints resolve to here (65536, BoundedConfig()'s default —
 // see FastDdsConfig.AnUnsetPayloadBoundResolvesToSixtyFourKiB in test_profile_document.cpp).
 // `- 8` is EncodeEnvelopeBody's own zero-attachment body framing — a 4-byte ROW_LEN placeholder
@@ -790,12 +691,12 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
     EXPECT_GT(deliveries.load(), 5);
 }
 
-// LoanableSampleWriter stays in the tree, unit-tested, even though `Publish` always writes
-// through the regular `WriteSample` now (owner decision 2026-09-15). Driven directly against a
-// real, hand-built DataWriter on the SAME topic a normal provider subscribes to: the simplest way
-// left to prove it still loans, fills the sample -- attachments included -- and that a row too
-// large for the loan throws without leaking it back, repeated past the writer's own resource
-// limits (Fletcher's baked-in 100) so a leak cannot hide behind spare slots.
+// LoanableSampleWriter stays in the tree, unit-tested, even though `Publish` always writes through
+// the regular `WriteSample`. Driven directly against a real, hand-built DataWriter on the SAME
+// topic a normal provider subscribes to: the simplest way left to prove it still loans, fills the
+// sample -- attachments included -- and that a row too large for the loan throws without leaking
+// it back, repeated past the writer's own resource limits (Fletcher's baked-in 100) so a leak
+// cannot hide behind spare slots.
 TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{});
     pub_provider.CreateTopic({"loanablewriter", "direct"}, MakeSchema());
@@ -876,11 +777,11 @@ TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
 }
 
 // LoanedDataReaderListener stays in the tree, unit-tested, even though Subscribe does not install
-// it any more (owner ruling 2026-09-14). This drives it directly against a real, hand-built reader
-// on the SAME topic a normal provider publishes to: the simplest way left to prove it still takes
-// a loan, decodes it, and delivers. Fletcher's baked-in reader profile preallocates by default
-// (CanLoanSamplesFollowsTheMemoryPolicy above), so no extra document is needed to admit the loaned
-// path here -- `pub_provider`'s own construction already loaded it into the registry.
+// it. This drives it directly against a real, hand-built reader on the SAME topic a normal provider
+// publishes to: the simplest way left to prove it still takes a loan, decodes it, and delivers.
+// Fletcher's baked-in reader profile preallocates by default (CanLoanSamplesFollowsTheMemoryPolicy
+// above), so no extra document is needed to admit the loaned path here -- `pub_provider`'s own
+// construction already loaded it into the registry.
 TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirectly) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
@@ -909,10 +810,15 @@ TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirect
     // on_data_available calls it), and access is checked against the static type used to call it.
     // Not installed on `reader` -- driven by calling Drain directly, in a polling loop, same as
     // this test always has.
+    // A dispatch site is a DeliveryChannel, not a bare std::function: the token below is this
+    // test's own static, pushed and popped around each invocation exactly as a provider's would
+    // be, and nothing in this test asks about it.
+    static const int kTestProviderToken = 0;
     const std::unique_ptr<internal::DataReaderListenerBase> listener =
         std::make_unique<internal::LoanedDataReaderListener>(
             /*status_listener=*/nullptr, pub_provider.PayloadBytes(),
-            TestChannel(
+            DeliveryChannel(
+                DeliveryChannel::RawToken{}, &kTestProviderToken,
                 [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
                     if (len >= 5) received.store(DecodeRow(data));
                 }));
@@ -950,34 +856,12 @@ TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirect
     DomainParticipantFactory::get_instance()->delete_participant(participant);
 }
 
-// Loans are never negotiated: each side's own type gates its own, so all pairings interoperate.
-
 // ---------------------------------------------------------------------------
 // Tests — QoS configuration
 // ---------------------------------------------------------------------------
-//
-// PDA-DEC-6 retired five tests from here — `CustomDefaultWriterQos`,
-// `CustomDefaultReaderQos`, `PerTopicWriterQosOverridesDefault`,
-// `PerTopicReaderQosOverridesDefault` and `AutonomyStyleProfileViaOptions` — with the typed
-// `FastDDSProviderOptions` struct they configured. Each set a QoS value and then asserted only
-// that a row arrived, which is true of almost any QoS; none could tell a provider that applied
-// the setting from one that ignored it. Their replacements in `test_profile_document.cpp` read
-// back what the endpoint ANNOUNCED on the network, setting for setting, and are strictly
-// stronger:
-//
-//   CustomDefault{Writer,Reader}Qos        -> FastDdsConfig.ProfileDocumentConfiguresQos
-//                                             FastDdsConfig.ReaderProfileConfiguresTheReader
-//   PerTopic{Writer,Reader}QosOverridesDefault
-//                                          -> FastDdsConfig.PerTopicProfileOverridesTheDefault
-//   AutonomyStyleProfileViaOptions         -> FastDdsConfig.DefaultProfileTranscriptionIsExact
-//                                             (whole-struct, so it covers the history and
-//                                             resource_limits that discovery cannot carry)
-// ---------------------------------------------------------------------------
-// Subscriber-first: Subscribe before any publisher/topic exists must not block or throw. The
-// data reader it creates stays DISABLED until the topic's schema is known, so nothing reaches
-// the callback before then; once a publisher appears and announces, the schema thread hands the
-// schema to the listener and enables the reader, and the first callback fires with a non-null
-// schema (never invoked with a null one).
+// Subscribe before any publisher exists must not block or throw; no data reader exists until a
+// publisher announces the schema and bound on `__schema`; the schema thread then creates the
+// reader (already enabled) and the first callback fires with a non-null schema.
 // ---------------------------------------------------------------------------
 TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
     DataWriterMatchListener pub_listener;
@@ -1034,20 +918,19 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
 }
 
 // ---------------------------------------------------------------------------
-// Subscribe-first burst: the subscriber joins before the publisher. The data reader stays
-// disabled until the schema arrives, and matching cannot fire before that -- but the data channel
-// is VOLATILE now (qos_defaults.cpp, owner decision 2026-09-15), so a row published before the
-// writer actually matches the reader is dropped, not replayed. Waiting for the publisher's own
-// OnMatched on the data topic (never fires before the reader is enabled) before starting the burst
-// proves both the schema arrived and the match happened. Functional smoke test: 1000 rows,
-// delivered in order.
+// Subscribe-first burst: the subscriber joins before the publisher. The data reader stays disabled
+// until the schema arrives, and matching cannot fire before that -- but the data channel is
+// VOLATILE (qos_defaults.cpp), so a row published before the writer actually matches the reader is
+// dropped, not replayed. Waiting for the publisher's own OnMatched on the data topic (never fires
+// before the reader is enabled) before starting the burst proves both the schema arrived and the
+// match happened. Functional smoke test: 1000 rows, delivered in order.
 //
 // Paced by real delivery progress, not a fixed delay: the writer and reader profile here is
-// KEEP_LAST with a 25-sample resourceLimitsQos.max_samples/depth, so nothing blocks any more --
-// the risk is the reader's oldest unread sample being discarded once a same-process burst outruns
-// it by more than the depth. Keeping the gap between published and received counts under the
-// reader's KEEP_LAST depth, using the same cv `received` already notifies, keeps the listener
-// ahead of the oldest sample being overwritten, without guessing at a delay.
+// KEEP_LAST with a 25-sample resourceLimitsQos.max_samples/depth, so nothing blocks -- the risk is
+// the reader's oldest unread sample being discarded once a same-process burst outruns it by more
+// than the depth. Keeping the gap between published and received counts under the reader's
+// KEEP_LAST depth, using the same cv `received` already notifies, keeps the listener ahead of the
+// oldest sample being overwritten, without guessing at a delay.
 TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
     constexpr int32_t kCount = 1000;
     constexpr size_t kWindow = 12;  // comfortably under the 25-sample KEEP_LAST depth
@@ -1240,12 +1123,12 @@ TEST(FastDDSPubSubProviderTest, CreateTopicThenSubscribeOnOneProviderDeliversWit
     provider.Unsubscribe({"selfschema", "x"});
 }
 
-// EachTopicHasItsOwnDeliveryThread's premise died with this round's reader-side redesign (see the
-// file-header table, fast_dds_pubsub_provider.cpp): data delivery is a Fast DDS listener again, so
-// a live sample's on_data_available runs wherever Fast DDS calls it -- intraprocess, that is the
-// PUBLISHING thread (DataReaderListenerBase, internal/data_reader_listener.hpp) -- not on a thread
-// this provider owns. "Neither the subscribing nor the publishing thread" is therefore no longer
-// true of a data callback and would be pinning the wrong thing.
+// EachTopicHasItsOwnDeliveryThread's premise died with the reader-side redesign: data delivery is
+// a Fast DDS listener again, so a live sample's on_data_available runs wherever Fast DDS calls it
+// -- intraprocess, that is the PUBLISHING thread (DataReaderListenerBase,
+// internal/data_reader_listener.hpp) -- not on a thread this provider owns. "Neither the
+// subscribing nor the publishing thread" is therefore not true of a data callback and would be
+// pinning the wrong thing.
 //
 // What IS still true, and worth pinning instead: schema-before-data ordering
 // (ADataReaderIsNotCreatedBeforeTheSchemaArrives, above) still holds, and schema RESOLUTION still
@@ -1411,19 +1294,12 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeBeforeTheSchemaArrivesEndsTheArrival)
               PubSubStatus::kSubscriptionEnded);
 }
 
-// The schema channel's bound was `FastDDSProviderOptions::max_schema_bytes`, then PDA-DEC-6 moved
-// it into the document as the `fletcher.max_schema_bytes` vendor property; owner decision
-// 2026-09-15 fixed it at `kSchemaPayloadBytes` (pubsub/payload_bound.hpp) -- no document property
-// any more. The tests for it live in `test_profile_document.cpp`:
-//
-//   ASchemaLargerThanTheSchemaBoundIsRefused ->
-//   FastDdsConfig.ASchemaLargerThanTheSchemaBoundIsRefused AFailedSchemaAnnouncementCanBeRetried ->
-//   FastDdsConfig.AFailedSchemaAnnouncementCanBeRetried
+// The schema bound is fixed at `kSchemaPayloadBytes` (pubsub/payload_bound.hpp).
 
 // ---------------------------------------------------------------------------
 // Tests — FastDDSStatusListener
 //
-// The statuses are the application's now: a provider built from a `ProviderConfig` alone observes
+// The statuses are the application's: a provider built from a `ProviderConfig` alone observes
 // nothing, and a provider handed a listener reports through Fletcher's own vocabulary rather than
 // eProsima's. Both tests below pin what a consumer actually rebuilds from these callbacks — a
 // matched count, and the one diagnostic a payload-bound mismatch has.
@@ -1445,9 +1321,9 @@ TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
         std::vector<Match> matches;
 
         void OnMatched(Endpoint endpoint, int32_t current_count, int32_t change) noexcept override {
-            // Only the gained half is asserted on below. The companion __schema reader now reports
-            // matches too (item A: every reader's StatusCondition is left at its default enabled
-            // mask, so subscription_matched is no longer schema-reader-exempt) -- excluded here by
+            // Only the gained half is asserted on below. The companion __schema reader also
+            // reports matches -- every reader's StatusCondition is left at its default enabled
+            // mask, so subscription_matched is not schema-reader-exempt -- excluded here by
             // `is_schema_channel` so this stays a pin on the DATA channel specifically, not on
             // whichever of the two happens to match first.
             if (change <= 0 || endpoint.is_schema_channel) return;
@@ -1667,28 +1543,24 @@ TEST(FastDDSPubSubProviderTest, CreateTopicAfterUnsubscribeFromAnotherBoundIsAcc
 }
 
 // ---------------------------------------------------------------------------
-// Tests — FastDDSLoggingStatusListener / FastDDSStatusListener (cycle 2, T7 + P22)
+// Tests — FastDDSLoggingStatusListener / FastDDSStatusListener
 //
 // Deadline, liveliness, sample-lost and sample-rejected coverage THROUGH A LIVE PROVIDER (forcing
-// the real DDS conditions that drive them) is NOT attempted here — deferred to a later cycle,
-// per the brief, and listed as untested in this cycle's report. P22 below exercises every one of
-// FastDDSLoggingStatusListener's eight bodies directly instead, which needs no DDS condition to be
-// forced at all; the FastDDSStatusListener subclass tests that follow it drive the ones that ARE
-// reachable through a real provider pair (OnIncompatibleQos, OnReaderDiscovered,
-// OnParticipantDiscovered, and -- since item A (2026-09-14) -- OnMatched for a __schema reader
-// itself: is_schema_channel == true reaching OnMatched used to be unreachable, because the schema
-// reader's own status mask (the now-deleted internal::SchemaReaderStatusMask()) carried no
-// subscription_matched bit; the schema reader's StatusCondition is left at its default enabled
-// mask now, and this provider's one schema thread forwards whatever changed on it
+// the real DDS conditions that drive them) is NOT attempted here. The test below exercises every
+// one of FastDDSLoggingStatusListener's eight bodies directly instead, which needs no DDS
+// condition to be forced at all; the FastDDSStatusListener subclass tests that follow it drive the
+// ones that ARE reachable through a real provider pair (OnIncompatibleQos, OnReaderDiscovered,
+// OnParticipantDiscovered, and OnMatched for a __schema reader itself: is_schema_channel == true
+// reaching OnMatched is reachable because the schema reader's StatusCondition is left at its
+// default enabled mask, and this provider's one schema thread forwards whatever changed on it
 // (DispatchReaderStatuses, fast_dds_pubsub_provider.cpp) -- see
 // OnMatchedFiresForASchemaReadersOwnCondition below.
 // ---------------------------------------------------------------------------
 
 namespace {
 
-// The Cycle 1 conflict test's pattern (ConflictingCrossProviderSchemaIsLoggedNotSwallowed):
-// RegisterConsumer only ADDS a consumer, never Log::ClearConsumers, which would drop the default
-// stdout consumer along with it.
+// ConflictingCrossProviderSchemaIsLoggedNotSwallowed's pattern: RegisterConsumer only ADDS a
+// consumer, never Log::ClearConsumers, which would drop the default stdout consumer along with it.
 class CapturingLogConsumer : public eprosima::fastdds::dds::LogConsumer {
    public:
     void Consume(const eprosima::fastdds::dds::Log::Entry& entry) override {
@@ -1713,7 +1585,7 @@ class CapturingLogConsumer : public eprosima::fastdds::dds::LogConsumer {
 
 }  // namespace
 
-// P22: FastDDSLoggingStatusListener driven directly — no DDS participant at all, since every one
+// FastDDSLoggingStatusListener driven directly — no DDS participant at all, since every one
 // of its eight bodies (status_listener.cpp) only formats `endpoint` and its arguments into a log
 // line. Each call below names a topic string found nowhere else in this process, so a hit against
 // it can only be the call that named it, never another test's own transport traffic running
@@ -1912,9 +1784,9 @@ TEST(FastDDSStatusListenerTest, OnParticipantDiscoveredFiresForARemoteParticipan
     DomainParticipantFactory::get_instance()->delete_participant(other);
 }
 
-// item A (2026-09-14): the schema reader's own subscription_matched now reaches OnMatched with
-// is_schema_channel == true -- previously unreachable (see the section comment above). Subscribe
-// alone is enough to create and enable the schema reader (EnsureSchemaChannel); no data need flow.
+// The schema reader's own subscription_matched reaches OnMatched with is_schema_channel == true.
+// Subscribe alone is enough to create and enable the schema reader (EnsureSchemaChannel); no data
+// need flow.
 TEST(FastDDSStatusListenerTest, OnMatchedFiresForASchemaReadersOwnCondition) {
     struct SchemaMatchListener : FastDDSStatusListener {
         std::mutex m;
@@ -1966,9 +1838,8 @@ static SharedSchema AwaitWatch(const SchemaArrival& arrival, std::chrono::millis
 // The proof the feature exists for: a watch pairs with the publisher's `__schema` writer and never
 // with its data writer. The positive half is the schema arriving at all — nothing else can deliver
 // it — and the negative half is the publisher's own OnMatched staying silent for the data topic:
-// `WriterMatchListener` below filters both `is_writer` and `is_schema_channel` itself, since (item
-// A) every reader's StatusCondition -- the schema reader's included -- now reports every status it
-// has, not only the ones an old, narrower mask allowed through.
+// `WriterMatchListener` below filters both `is_writer` and `is_schema_channel` itself, since every
+// reader's StatusCondition -- the schema reader's included -- reports every status it has.
 TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
     struct WriterMatchListener : FastDDSStatusListener {
         std::mutex m;
@@ -2199,7 +2070,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
 
     // The channel stayed with the watch, so the schema is still there — the same object, with no
     // re-fetch and no new reader (a resolved channel ignores a second Resolve). That call is its
-    // own watch under the count (P1), not a free peek, so it is balanced by its own release right
+    // own watch under the count, not a free peek, so it is balanced by its own release right
     // after — otherwise the ONE UnsubscribeSchema below would not be the last one out.
     EXPECT_EQ(
         AwaitWatch(sub.SubscribeSchema({"keepwatch", "resolved"}), std::chrono::seconds(0)).get(),
@@ -2258,7 +2129,7 @@ TEST(FastDDSPubSubProviderTest, TwoWatchersOneRelease) {
     EXPECT_EQ(first.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kSubscriptionEnded);
 }
 
-// P2 — the channel never leaves its topic slot: a Subscribe racing an Unsubscribe that keeps a
+// The channel never leaves its topic slot: a Subscribe racing an Unsubscribe that keeps a
 // watch must never find `schema_reader` and `subscribed.schema` both null and open a second one
 // through EnsureSchemaChannel, replacing the watch's own arrival with a fresh
 // `SchemaArrival::Create()` pair -- the watch's own arrival must survive every one of these cycles
@@ -2362,7 +2233,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
     sub.Unsubscribe({"reentrant", "watch"});
 }
 
-// P5 — an undecodable __schema sample fails the arrival outright rather than leaving it pending
+// An undecodable __schema sample fails the arrival outright rather than leaving it pending
 // forever: a raw Fast DDS writer, entirely outside this provider, announces garbage bytes on the
 // companion channel, and a watch on that topic must come back with a diagnostic status instead of
 // hanging.
@@ -2417,9 +2288,9 @@ TEST(FastDDSPubSubProviderTest, UndecodableSchemaSampleFailsTheArrival) {
     DomainParticipantFactory::get_instance()->delete_participant(raw_participant);
 }
 
-// P5 companion — a __schema sample that decodes fine but carries no `max_payload_bytes`
-// attachment at all still fails the arrival: without a bound, this provider has nothing to size a
-// data reader from.
+// The same, one step milder — a __schema sample that decodes fine but carries no
+// `max_payload_bytes` attachment at all still fails the arrival: without a bound, this provider has
+// nothing to size a data reader from.
 TEST(FastDDSPubSubProviderTest, ASchemaWithoutAPayloadBoundFailsTheArrival) {
     const std::vector<std::string> t = {"noboundschema", "x"};
     const std::string joined = "noboundschema/x";
@@ -2466,7 +2337,7 @@ TEST(FastDDSPubSubProviderTest, ASchemaWithoutAPayloadBoundFailsTheArrival) {
     DomainParticipantFactory::get_instance()->delete_participant(raw_participant);
 }
 
-// P5 companion — a __schema sample whose `max_payload_bytes` attachment names a number
+// The same again — a __schema sample whose `max_payload_bytes` attachment names a number
 // `IsPayloadBound` refuses (not a multiple of 4) is just as unusable as no attachment at all.
 TEST(FastDDSPubSubProviderTest, ASchemaWithAnUnusablePayloadBoundFailsTheArrival) {
     const std::vector<std::string> t = {"unusableboundschema", "x"};
@@ -2517,7 +2388,7 @@ TEST(FastDDSPubSubProviderTest, ASchemaWithAnUnusablePayloadBoundFailsTheArrival
     DomainParticipantFactory::get_instance()->delete_participant(raw_participant);
 }
 
-// P6 — a conflicting later announcement from a second publisher is logged rather than silently
+// A conflicting later announcement from a second publisher is logged rather than silently
 // swallowed: this is the cross-process half of the seam's conflict refusal
 // (CreateTopicRejectsConflictingSchema above is the local, same-instance half, which throws
 // instead — there is no local caller here to throw at).

@@ -63,8 +63,7 @@ class MockPubSubProvider : public PubSubProvider {
         created_topics.push_back({segments, std::move(schema)});
     }
 
-    // Recorded rather than refused: this mock DOES support per-topic options, delegating to the
-    // existing recording above so the option-less tests keep passing unchanged.
+    // Recorded rather than refused: this mock DOES support per-topic options.
     void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
                                 const TopicOptions& options) override {
         last_create_options = options;

@@ -48,11 +48,9 @@ struct PublishData {
 
 // What deserialize() fills, decoded in place and moved on by the listener.
 //
-// Separate from PublishData rather than one struct carrying both directions: split by direction so
-// a publish never constructs a member the read path owns. The measured cost that once motivated
-// this is gone (BM_AttachmentsConstruct 50.2 ns -> 0.616 ns after the `Attachments` container
-// changed); the split stays because a bundled struct would still build and destroy a member one
-// direction never touches, not for the number. See README "Measured decisions".
+// Separate from PublishData rather than one struct carrying both directions: the split is kept
+// because a bundled struct made every serialised publish build an `Attachments` it never reads;
+// the measured cost is recorded in the README.
 struct ReceivedData {
     std::vector<uint8_t> decoded_row;
     Attachments decoded_attachments;

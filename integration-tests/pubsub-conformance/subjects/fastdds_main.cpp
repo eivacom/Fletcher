@@ -66,10 +66,10 @@ std::shared_ptr<PubSubProvider> MakeFastDds(uint32_t domain_id) {
 // the subscriber side, which is always this process. The writer side is
 // fenced where the writer lives: in the same participant for the local
 // subject, in the peer process for the cross-process one (peer.hpp
-// `await_matched`) -- measured 2026-09-15: the reader here matches at
-// enable() against an already-discovered writer, the peer's writer one
-// discovery hop later. OnMatched runs under FastDDSStatusListener's threading
-// contract: no provider call, no blocking, no throw.
+// `await_matched`) -- measured: the reader here matches at enable() against
+// an already-discovered writer, the peer's writer one discovery hop later.
+// OnMatched runs under FastDDSStatusListener's threading contract: no
+// provider call, no blocking, no throw.
 class MatchTracker : public FastDDSStatusListener {
    public:
     void OnMatched(Endpoint endpoint, int32_t current_count, int32_t /*change*/) noexcept override {
@@ -344,7 +344,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
 // Three things carry the arrangement, and none of them may drift:
 //
 //  1. **One `kBound`, equal in both instances of every case that asserts or
-//     denies a crossing.** Unequal bounds are no longer an independent reason
+//     denies a crossing.** Unequal bounds are not an independent reason
 //     two endpoints never meet: a subscriber's reader is created at whatever
 //     bound the publisher it follows announced, so it carries no bound of its
 //     own to disagree with. `kBound` stays one number here anyway, so that

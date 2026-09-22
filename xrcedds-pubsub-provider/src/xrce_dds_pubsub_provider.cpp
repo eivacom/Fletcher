@@ -1107,7 +1107,8 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         // let the call straight through, and the in-place reset below then ran
         // under the very delivery it was cancelling. That is the divergence this
         // item ends: all three providers now refuse every seam method by name —
-        // the four data-path methods and the two schema-only ones.
+        // the four data-path methods, the two schema-only ones and the two
+        // options-taking ones.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
 
         std::string name = internal::JoinSegments(topic_segments);

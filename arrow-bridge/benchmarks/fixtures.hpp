@@ -10,10 +10,10 @@
 //
 // MakeBatch (used by the Arrow IPC and end-to-end arms) is NOT hand-rolled per shape here: batch
 // construction never runs inside a timed loop, so the suite builds N rows via MakeRow and folds
-// them into a RecordBatch with BuildBatchScalarPath below (the same MakeBuilder/AppendScalar/Finish
-// pattern subscriber_arrow.cpp's BuildBatch uses) rather than seven independent typed-builder
-// pipelines. That is measured on purpose by BM_Decode_Batch_ScalarPath_*; here it is only fixture
-// setup.
+// them into a RecordBatch with BuildBatchScalarPath below (the per-cell MakeBuilder/AppendScalar/
+// Finish path kept as the A/B control against BatchDecoder) rather than seven independent
+// typed-builder pipelines. That is measured on purpose by BM_Decode_Batch_ScalarPath_*; here it is
+// only fixture setup.
 #ifndef FLETCHER_ARROW_BRIDGE_BENCHMARKS_FIXTURES_HPP_
 #define FLETCHER_ARROW_BRIDGE_BENCHMARKS_FIXTURES_HPP_
 
@@ -56,8 +56,8 @@ inline std::vector<uint8_t> FixedWidthBytes(int64_t i, size_t width) {
     return b;
 }
 
-// Re-folds a dictionary column from per-row (plain value, or null) scalars — verbatim mirror of
-// SubscriberArrow::RecordBatchBatcher::BuildDictionaryColumn (subscriber_arrow.cpp:210-238).
+// Re-folds a dictionary column from per-row (plain value, or null) scalars, for the per-cell
+// BuildBatchScalarPath below.
 inline std::shared_ptr<arrow::Array> BuildDictionaryColumnBench(
     const std::shared_ptr<arrow::DataType>& dict_type, const std::vector<ArrowRow>& rows, int col) {
     const auto& value_type = static_cast<const arrow::DictionaryType&>(*dict_type).value_type();
@@ -77,8 +77,7 @@ inline std::shared_ptr<arrow::Array> BuildDictionaryColumnBench(
     return array;
 }
 
-// Verbatim mirror of SubscriberArrow::RecordBatchBatcher::BuildBatch
-// (subscriber_arrow.cpp:177-205): the CURRENT batched-decode path. MakeBuilder per column,
+// The pre-BatchDecoder per-cell decode path, kept as the A/B control: MakeBuilder per column,
 // Reserve(rows), AppendScalar(*row[c]) per row, Finish, RecordBatch::Make. Used both as the timed
 // BM_Decode_Batch_ScalarPath_* body and as fixture setup for MakeBatch-style construction elsewhere
 // in this file.

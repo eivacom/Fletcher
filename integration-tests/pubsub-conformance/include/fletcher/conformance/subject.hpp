@@ -140,7 +140,7 @@ class ProviderSubject {
 
     virtual void Unsubscribe(const Topic& topic) = 0;
 
-    /// Schema-only subscribe/unsubscribe (S6). LOCAL-ONLY on every provider
+    /// Schema-only subscribe/unsubscribe. LOCAL-ONLY on every provider
     /// (the class doc above already says the subscriber side is always this
     /// process and this instance, for every subject), so there is no peer-pipe
     /// protocol for them to need — each subject forwards straight to its own
@@ -151,10 +151,10 @@ class ProviderSubject {
 
     /// Options-carrying declare/subscribe. LOCAL-ONLY on every provider, for the same reason
     /// `SubscribeSchema`/`UnsubscribeSchema` are: the class doc above already says the
-    /// subscriber side is always this process and this instance, for every subject, and this
-    /// round adds no peer-pipe protocol for either verb — each subject forwards straight to its
-    /// own provider's `CreateTopicWithOptions` / `SubscribeWithOptions`, exactly as it does for
-    /// the schema-only pair. `schema` is taken directly rather than as a `SchemaId`, unlike
+    /// subscriber side is always this process and this instance, for every subject — these verbs
+    /// are local-only; there is no peer-pipe form. Each subject forwards straight to its own
+    /// provider's `CreateTopicWithOptions` / `SubscribeWithOptions`, exactly as it does for the
+    /// schema-only pair. `schema` is taken directly rather than as a `SchemaId`, unlike
     /// `DeclareTopic`, because there is no peer wire form to build one for.
     virtual void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
                                          const TopicOptions& options) = 0;

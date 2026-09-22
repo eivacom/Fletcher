@@ -35,7 +35,8 @@ class BatchDecoder {
     // and decoded through the null bit alone and never reaches the type switch that would throw).
     // The three dictionary shapes are different: `Codec::DecodeRow` decodes all three fine — the
     // refusal here is this decoder's builder-tree shape, which is stricter, not a wire-format
-    // limit.
+    // limit. std::runtime_error: an internal builder/type mismatch while walking the schema (an
+    // invariant failure, not bad input).
     explicit BatchDecoder(std::shared_ptr<arrow::Schema> schema);
     ~BatchDecoder();
     BatchDecoder(BatchDecoder&&) noexcept;

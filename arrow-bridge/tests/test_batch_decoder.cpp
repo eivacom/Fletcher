@@ -838,8 +838,8 @@ TEST(BatchDecoderTest, SparseUnionInactiveChildrenAreNull) {
 
 TEST(BatchDecoderTest, TopLevelDictionaryRefolded) {
     for (const auto& index_type : {arrow::int8(), arrow::int16(), arrow::int32(), arrow::int64()}) {
-        // Not ordered: BatchDecoder now rejects an ordered dictionary at
-        // construction (A10) since the re-fold below cannot preserve order.
+        // Not ordered: BatchDecoder rejects an ordered dictionary at
+        // construction since the re-fold below cannot preserve order.
         auto dict_type = arrow::dictionary(index_type, arrow::utf8(), /*ordered=*/false);
         auto schema = arrow::schema({arrow::field("v", dict_type, true)});
         fletcher::Codec codec(schema);

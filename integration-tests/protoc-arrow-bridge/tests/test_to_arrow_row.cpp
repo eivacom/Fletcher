@@ -9,12 +9,10 @@
 // it for every nested struct element).
 
 #include <arrow/api.h>
-#include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/arrow_bridge/detail/arrow_result.hpp>
-#include <fletcher/pubsub/owned_schema.hpp>
 #include <memory>
 #include <vector>
 
@@ -156,8 +154,8 @@ TEST(ToArrowRowTest, EncodesTheSameBytesAsEncodeTo) {
         EXPECT_EQ(codec.EncodeRow(ToArrowRow(r)), r.Encode());
     }
 
-    // Roster: a repeated enum, a map<string, Message>, and a depth-3 nested list
-    // (2026-09-11 type-space audit, T13) — none of the fixtures above exercise any of the three.
+    // Roster: a repeated enum, a map<string, Message>, and a depth-3 nested list — none of the
+    // fixtures above exercise any of the three.
     {
         fletcher_gen::integration::Player captain;
         captain.set_name("Casey").set_level(9);
@@ -262,10 +260,9 @@ TEST(ToArrowRowTest, AppendToFillsAStructColumn) {
         }
     }
 
-    // A message carrying struct + map + nested-list fields together (2026-09-11 type-space
-    // audit, T13): a direct AppendTo(Roster) call dispatches EmitStruct (captain), EmitMap
-    // (by_name) and EmitNestedList (spreads, depth 3) in the SAME call, so all three actually run
-    // at runtime rather than only being emitted.
+    // A message carrying struct + map + nested-list fields together: a direct AppendTo(Roster)
+    // call dispatches EmitStruct (captain), EmitMap (by_name) and EmitNestedList (spreads, depth
+    // 3) in the SAME call, so all three actually run at runtime rather than only being emitted.
     fletcher_gen::integration::Player captain0, captain1;
     captain0.set_name("Casey").set_level(9);
     captain1.set_name("Drew").set_level(4);

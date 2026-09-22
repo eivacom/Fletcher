@@ -131,8 +131,9 @@ void FastDDSLoggingStatusListener::OnSampleRejected(Endpoint endpoint, int32_t r
     }
 }
 
-// KEEP_ALL + RELIABLE means the writer blocks rather than drops, so an unacknowledged sample being
-// removed is history overflowing under max_blocking_time — data loss, not backpressure.
+// Under a KEEP_ALL profile such as `lossless` the writer blocks rather than drops; see
+// DataWriterListener::on_unacknowledged_sample_removed (internal/data_writer_listener.hpp) for why
+// that makes an unacknowledged sample being removed data loss, not backpressure.
 void FastDDSLoggingStatusListener::OnUnacknowledgedSampleRemoved(Endpoint endpoint) noexcept {
     EPROSIMA_LOG_WARNING(
         FLETCHER_PUBLICATION,

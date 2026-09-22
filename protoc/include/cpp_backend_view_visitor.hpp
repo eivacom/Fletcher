@@ -56,7 +56,6 @@ void EmitToArrowRowFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
 // the `b.field_builder(<i>)` slot this field writes. `getter_expr` is the public
 // getter expression the value is read from (e.g. "msg.field()").
 void EmitAppendToFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
-                             const std::string& getter_expr, std::size_t field_index,
-                             const google::protobuf::FileDescriptor* context_file);
+                             const std::string& getter_expr, std::size_t field_index);
 
 }  // namespace fletcher::cpp_backend

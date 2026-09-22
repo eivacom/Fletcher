@@ -20,11 +20,9 @@ message Team {
     repeated Player roster  = 4;   // list(struct<name,level>)
 }
 
-// 2026-09-11 type-space audit (T13): ToArrowRowTest.EncodesTheSameBytesAsEncodeTo and
-// AppendToFillsAStructColumn never exercised a repeated enum, a message-valued map, or a
-// depth-3 nested list. Card/CardRow/CardRowList/Suit/Roster below cover exactly those three
-// shapes, plus a struct field, in one message so EmitStruct/EmitMap/EmitNestedList all run at
-// runtime (not just get emitted).
+// Covers a repeated enum, a message-valued map and a depth-3 nested list. Card/CardRow/
+// CardRowList/Suit/Roster below cover those three shapes, plus a struct field, in one message so
+// EmitStruct/EmitMap/EmitNestedList all run at runtime (not just get emitted).
 
 enum Suit {
     SUIT_UNSPECIFIED = 0;

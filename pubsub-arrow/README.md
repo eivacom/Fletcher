@@ -113,7 +113,7 @@ A window that would overflow a 32-bit Arrow offset (a utf8/binary/list
 column growing past 2 GiB) is flushed early with reason `kRowLimit`, same as
 hitting `max_rows`.
 
-Measured on 2026-09-02 (`arrow-bridge/benchmarks`, per row at 8000 rows per batch): a 10-scalar
+Measured (`arrow-bridge/benchmarks`, per row at 8000 rows per batch): a 10-scalar
 row 1.23 → 0.16 µs, a pose row with two nested `list<double>` 9.5 → 0.13 µs, a 2 × 2667-float cloud
 row 566 → 4.4 µs, a 1000-point `list<struct>` row 5.46 ms → 57 µs, with allocations per row falling
 from tens or thousands to under 0.2. The planner bridge, which subscribes this way, went from 79 % to

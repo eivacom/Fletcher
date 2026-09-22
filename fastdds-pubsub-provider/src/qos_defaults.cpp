@@ -33,8 +33,9 @@ using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 // ~858 KiB bound more than the segment's 32-bit size can address. `allocated_samples` matches both
 // so a pool that is not data-sharing is reserved at creation too, not grown into.
 // `durability` is VOLATILE at both ends: a topic that needs replay declares TRANSIENT_LOCAL in a
-// per-topic profile instead. Nothing here ever blocks a writer, so `max_blocking_time` and
-// `heartbeat_period` have no job to do and stay at Fast DDS's own defaults.
+// per-topic profile instead. The default pair never blocks a writer, so it leaves
+// `max_blocking_time` and `heartbeat_period` at Fast DDS's own defaults; `lossless` below sets
+// both.
 // The companion `__schema` channel (below) is RELIABLE + KEEP_LAST(1) + TRANSIENT_LOCAL, one
 // retained sample per topic.
 //
@@ -46,10 +47,10 @@ using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 // than retransmit it; `latest` (RELIABLE, VOLATILE, KEEP_LAST 1) newest value only, resent if
 // lost, no replay; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
 // to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the last
-// 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`) delivers every
-// sample in order and blocks the writer rather than drop one. `default_writer`/`default_reader`
-// are this file's own "stream" semantics -- RELIABLE, VOLATILE, KEEP_LAST 25 -- and are what every
-// topic without a profile of its own runs on.
+// 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`, 20 ms heartbeat)
+// delivers every sample in order and blocks the writer rather than drop one.
+// `default_writer`/`default_reader` are this file's own "stream" semantics -- RELIABLE, VOLATILE,
+// KEEP_LAST 25 -- and are what every topic without a profile of its own runs on.
 const char* FletcherDefaultProfilesDocument() {
     return R"XML(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">

@@ -795,7 +795,7 @@ TEST(ViewDepthBoundTest, Depth4EmitsAStaticAssertInsteadOfSilentlyWrongOutput) {
     // otherwise emit a block that opens no list level for the missing depth and
     // append its leaves into the wrong builder.
     std::ostringstream app4;
-    cpp_backend::EmitAppendToFieldFromIr(app4, d4, "msg.d4()", 0, file);
+    cpp_backend::EmitAppendToFieldFromIr(app4, d4, "msg.d4()", 0);
     EXPECT_NE(app4.str().find("static_assert(false"), std::string::npos) << app4.str();
     EXPECT_NE(app4.str().find("that AppendTo can render"), std::string::npos) << app4.str();
     EXPECT_EQ(app4.str().find("field_builder"), std::string::npos)
@@ -813,7 +813,7 @@ TEST(ViewDepthBoundTest, Depth4EmitsAStaticAssertInsteadOfSilentlyWrongOutput) {
     EXPECT_NE(view3.str().find("ArrowNestedScalarList2<"), std::string::npos) << view3.str();
 
     std::ostringstream app3;
-    cpp_backend::EmitAppendToFieldFromIr(app3, d3, "msg.d3()", 1, file);
+    cpp_backend::EmitAppendToFieldFromIr(app3, d3, "msg.d3()", 1);
     EXPECT_EQ(app3.str().find("static_assert"), std::string::npos) << app3.str();
     // One ListBuilder per level (lb0..lb2) plus the leaf's typed value builder:
     // the depth-3 shape this emitter CAN render, so an over-broad cap fails here.

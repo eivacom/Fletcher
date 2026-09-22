@@ -57,6 +57,8 @@ payload bound of their own (they follow what the publisher announces), so a non-
 `max_payload_bytes` on a `Subscribe` call is `kInvalidArgument` too — refused by the provider tier's
 own default, before its empty/support check ever runs.
 
+### Vendored nanoarrow
+
 A vendored copy of [nanoarrow](https://github.com/apache/arrow-nanoarrow) 0.8.0
 (amalgamation: core + IPC + flatcc) is bundled under `third_party/nanoarrow/`
 and built into the package as a static library. Its headers are exposed because
@@ -224,7 +226,6 @@ target_link_libraries(my-project PRIVATE fletcher::pubsub)
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
-#include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 ```

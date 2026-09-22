@@ -4,7 +4,8 @@
 #ifndef FLETCHER_SRC_ROW_READER_HPP_
 #define FLETCHER_SRC_ROW_READER_HPP_
 
-// Internal implementation detail used by codec.cpp.  Not part of the public API.
+// Internal implementation detail used by codec.cpp and batch_decoder.cpp.  Not part of the public
+// API.
 
 #include <arrow/api.h>
 
@@ -116,9 +117,10 @@ inline int32_t FixedWidth(const arrow::DataType& type) {
 }
 
 // Reserve()/AppendValues() below can still fail on a wire-supplied count that passed the
-// remaining-bytes bounds check but is otherwise pathological (e.g. an allocation failure), so this
-// is a recoverable runtime error, not a programmer error: throw std::invalid_argument like the rest
-// of the malformed-input paths.
+// remaining-bytes bounds check but is otherwise pathological (e.g. an allocation failure).
+// Malformed wire input is reported as std::invalid_argument here, like the rest of this file's
+// parsing paths; a caller that promises std::runtime_error instead (AppendSink::Run in
+// batch_decoder.cpp) translates at its own boundary.
 inline void ThrowIfNotOk(const arrow::Status& st, const char* operation) {
     if (!st.ok()) throw std::invalid_argument(std::string(operation) + ": " + st.ToString());
 }

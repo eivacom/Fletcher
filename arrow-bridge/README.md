@@ -80,7 +80,9 @@ the field's declared type on the way out.
 An all-valid run of a fixed-width element type (numeric, temporal, interval,
 decimal, `fixed_size_binary`, or `bool`) inside a list is appended with one
 memcpy rather than one builder call per element — the same optimization
-`Codec::EncodeRow`/`DecodeRow` make for list and map bodies.
+`Codec::EncodeRow`/`DecodeRow` make for list bodies. Map bodies are walked
+per element on both sides, and `Codec::EncodeRow` excludes `bool` from the
+bulk path.
 
 Not thread-safe: one `BatchDecoder` per subscription.
 

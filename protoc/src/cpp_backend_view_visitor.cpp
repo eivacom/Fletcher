@@ -963,13 +963,7 @@ void EmitToArrowRowFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
 }
 
 void EmitAppendToFieldFromIr(std::ostringstream& out, const ir::IrNode& node,
-                             const std::string& getter_expr, std::size_t field_index,
-                             const google::protobuf::FileDescriptor* /*context_file*/) {
-    // context_file is accepted for signature parity with the two visitors above
-    // and is deliberately unused: AppendTo() names no generated class — every
-    // nested message is reached through the ADL-resolved AppendTo() overload,
-    // and every builder is either an Arrow composite literal or a lookup-table
-    // scalar builder.
+                             const std::string& getter_expr, std::size_t field_index) {
     EdgeAppendToVisitor visitor(out, getter_expr, field_index);
     visitor.EmitField(node);
 }

@@ -45,7 +45,7 @@ fixture setup.
 | `BM_Decode_Batch_S/N` | the NEW batched decode (`fletcher::BatchDecoder`, wire bytes straight into one `arrow::ArrayBuilder` tree, no per-row `arrow::Scalar`), `N` pre-encoded wire rows in, one `RecordBatch` out; `N` in {1, 1000, 8000} |
 | `BM_ArrowIpc_Write_S/N` | `arrow::ipc` stream writer over one `N`-row `RecordBatch`; `N` in {1000, 8000} |
 | `BM_ArrowIpc_Read_S/N` | `arrow::ipc` stream reader over the bytes `BM_ArrowIpc_Write_S/N` produces |
-| `BM_EndToEnd_Batched_S/N` | `PublisherArrow::Publish`, `N` rows through a loopback provider (same shape as `MockProvider` in `pubsub-arrow/tests/test_pubsub_arrow.cpp`), into a batched `SubscriberArrow` (`BatchOptions{N, 1 min}`, now backed by `BatchDecoder`); time per `N` rows |
+| `BM_EndToEnd_Batched_S/N` | `PublisherArrow::Publish`, `N` rows through a loopback provider (same shape as `MockProvider` in `pubsub-arrow/tests/test_pubsub_arrow.cpp`), into a batched `SubscriberArrow` (`BatchOptions{N, 1 min}`, backed by `BatchDecoder`); time per `N` rows |
 | `BM_Run_PerElement_2667f` vs `BM_Run_Memcpy_2667f` | standalone: filling an `arrow::FloatBuilder` from 2667 unaligned floats one at a time against one bulk `memcpy` — the same comparison `Codec`'s primitive-list-run path (`detail::AppendRun`, `row_reader.hpp`) makes |
 
 Counters: `bytes` (wire bytes per row) on the per-row arms; `allocs_per_row` (an `operator new`/`delete`
@@ -81,27 +81,20 @@ If `conan install`/`conan build` reports a missing binary for `fletcher-arrow-br
 `fletcher-pubsub-arrow` even with the lockfile in place, re-run the `conan install ... --build=missing`
 step: a concurrent rebuild of those packages elsewhere on the machine can evict the specific package
 *binary* for the locked recipe revision from the local cache even though the locked revision's exported
-source remains available to rebuild from (this happened once while recording this baseline — see
-"Notes" below).
+source remains available to rebuild from.
 
 Google Benchmark is `benchmark/1.9.4` here, vs. `1.6.1` for `fastdds-pubsub-provider/benchmarks`.
 
 **Measurement discipline**: report medians with their standard deviations — several arms are a few
-nanoseconds to a few microseconds, so a single run says nothing (`fastdds-pubsub-provider/benchmarks/README.md:62`).
-Run the same tree twice; a run-to-run median delta over 3% on an arm is worth a second look before
-trusting it.
-
-## Notes
-
-- **`MakeBatch` is not per-shape hand-rolled typed builders.** See the shapes section above — batch
-  construction is unmeasured fixture setup here, folded through the same scalar-path builder the
-  `BM_Decode_Batch_ScalarPath_*` arm measures, rather than seven independent typed-builder pipelines.
+nanoseconds to a few microseconds, so a single run says nothing (see
+`fastdds-pubsub-provider/benchmarks/README.md`'s measurement-discipline paragraph). Run the same
+tree twice; a run-to-run median delta over 3% on an arm is worth a second look before trusting it.
 
 ## Results
 
 Recorded **2026-09-02** on this machine: 13th Gen Intel(R) Core(TM) i9-13950HX, 24 cores / 32
 logical processors (Google Benchmark's own header confirms `Run on (32 X 2419 MHz CPU)`), Windows
-11, MSVC 19.44 (toolset v143). Google Benchmark is `benchmark/1.9.4` here (as before).
+11, MSVC 19.44 (toolset v143).
 
 **BEFORE**: commit `564467b`. `fletcher-arrow-bridge` and `fletcher-pubsub-arrow` built from that
 commit, pinned at the time by a lockfile (the revisions are the record):
@@ -275,31 +268,6 @@ not a real behavior change — see "Reading the result" below for which deltas a
 | `BM_Run_Memcpy_2667f` | 613.6 ± 12.07 ns | 620.2 ± 6.01 ns | 1.011x | before run2 +4.1% |
 | `BM_Run_PerElement_2667f` | 4.11 ± 0.111 us | 4.02 ± 0.022 us | 0.978x |  |
 
-### 2026-09-09 — rebase onto `main` (PDA-DEC), same tree of arms
-
-**BEFORE** = the branch at `pre-main-sync-2026-09-09` (`9cf8cc9`, this suite's previous AFTER). **AFTER** = the
-branch rebased onto `main` `6c541e9`. Same machine and toolchain; every run pinned to one P-core
-(`ProcessorAffinity = 0x4`, priority High) after two unpinned runs showed the scheduler parking the thread on
-an E-core (the `BM_Memcpy_*` controls fell 2-4x mid-run — an i9-13950HX is hybrid). Two full runs per side,
-interleaved, then two filtered runs (`Generic|Nested`) for the arms that moved. Gate: an arm counts as
-regressed only when the slower of both AFTER runs is more than 5% above the faster of both BEFORE runs.
-
-Result: **no `BM_Decode_Batch_*`, `BM_Decode_Row_*` or `BM_Encode_Codec_*` arm regressed except one.**
-`BM_Encode_Codec_Generic` (8 KB string-heavy row into a `VectorWriteBuffer`) reads 1.33-1.37 us BEFORE and
-1.46-1.57 us AFTER (+10-17%) while its `_IntoFixed` twin is at parity (0.98x). The codec, `PositionalWriter`
-and `WriteBuffer` fast paths are source-identical between the two trees; a bisect binary built from the
-rebased tree with the BEFORE `write_buffer.hpp` swapped in was *slower still* (1.71 us in both rounds), and
-the `BM_Memcpy_Generic` control spans 31-53 ns across otherwise clean runs. Read: code-layout sensitivity of a
-1.3 us arm, not a lost optimisation. `BM_Decode_Batch_Cloud/1000` 2.99 → 3.04 ms, `BM_Decode_Batch_Points/1000`
-52.2 → 46.0 ms, `BM_Encode_Codec_Cloud` 4.59 → 4.56 us, `BM_Encode_Codec_Points_IntoFixed` 76.7 → 74.4 us.
-
-The provider suite (`fastdds-pubsub-provider/benchmarks`, same protocol) keeps this branch's numbers
-(`BM_PublishFlow_Loaned/214` 6.8 → 7.3 ns, `BM_BatchRoundTrip_Current*` within 3%) and shows `main`'s
-seam costs, all of them owner-ruled PDA-DEC design: `BM_ReadFlow_Loaned/*` 2.3 → 8.5 ns per sample (the
-per-delivery frame push/pop and `noexcept` containment in `DeliveryChannel::Deliver`), `BM_Deliver_OfferView`
-+2.6 ns, `BM_Deliver_ParseAttachments/0` 1.9 → 14.4 ns on the no-attachment path (the shared owner handle
-`ParseEnvelopeBody` now retains) against `ParseAttachments/1..16` 3-4x faster (sealed-vector `Attachments`).
-
 ## Reading the result
 
 **`Decode_Batch` allocations per `Cloud` row (target <= 10): PASS, by a wide margin.**
@@ -355,10 +323,10 @@ The numbers that matter are the before/after ratio and the absolute cost:
 Allocations per row: `Cloud` 5347 before (one `GetScalar` per list element), **2** after; `Points`
 8015 → 4; `Generic` 1015 → 2; `Pose` 27 → 2; `Scalars10`/`Nullable10` 1 → **0**. The two that remain
 on the list shapes come from the `arrow::Array::Validate()` guard `EncodeScalarValue` runs on each
-list value before walking it raw (a malformed `ListScalar` used to be caught by `GetScalar`'s bounds
-check; now it must be caught up front) — a candidate for a cheaper structural check if 2 allocations
-per row ever matter. `_IntoFixed` vs the fresh-vector overload (`Cloud` 4.64 vs 4.79 us, `Scalars10`
-108.5 vs 143.8 ns) is what `PublisherArrow`'s reused scratch buys per publish.
+list value before walking it raw, to catch a malformed `ListScalar` up front — a candidate for a
+cheaper structural check if 2 allocations per row ever matter. `_IntoFixed` vs the fresh-vector
+overload (`Cloud` 4.64 vs 4.79 us, `Scalars10` 108.5 vs 143.8 ns) is what `PublisherArrow`'s reused
+scratch buys per publish.
 
 The remaining 10-35x gap to the hand-written twin is the price of dispatching on `arrow::Type` per
 field at run time; the way to close it is to publish from the generated row class (`EncodeTo`), which
@@ -446,13 +414,3 @@ N = 8000): `Cloud` 1.07 ms → 20.5 us (**52x**), `Points` 6.21 ms → 159 us (*
 343 us → 17.1 us (**20x**), `Nested` 152 us → 25.4 us (**6x**), `Pose` 16.5 us → 8.3 us (**2x**),
 `Scalars10` 4.64 us → 4.03 us, `Nullable10` 4.61 us → 3.72 us. The flat-scalar shapes are dominated by
 the loopback provider, the `std::function` hop and the batcher's mutex, which this work did not touch.
-
-**Regressions.** `BM_Decode_Row_Nested` +9.4% (63.0 → 68.9 us) is the only library arm that moved the
-wrong way beyond its own noise. The unchanged control twins for the same shape moved as much or more
-in the same binary (`BM_Decode_Positional_Nested` +51%, `BM_Encode_Positional_Nested` +10%, with no
-code change in `fixtures.hpp`), so the shift is a code-layout effect of the larger AFTER binary rather
-than something the codec does differently on this shape; `Nested` has no fixed-width run to take and
-its decode path otherwise changed only in the string decode (`AllocateBuffer` + memcpy instead of
-`std::string` + `Buffer::FromString`, neutral on `Scalars10`/`Nullable10`). `BM_Decode_Row_Scalars10`
-+5.0% sits at the noise floor. Everything else that reads slower is a control whose source did not
-change.

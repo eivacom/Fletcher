@@ -41,9 +41,9 @@ uint32_t ParseDomainId(int argc, char* argv[]) {
     return domain_id;
 }
 
-// Fletcher's built-in data profile is VOLATILE now (qos_defaults.cpp, owner decision
-// 2026-09-15): a late-joining reader would not see the rows this peer publishes below before the
-// gateway's TS client subscribes. This suite's first case is a deliberate durable-topic proof, so
+// Fletcher's built-in data profile is VOLATILE (qos_defaults.cpp): a late-joining reader would
+// not see the rows this peer publishes below before the gateway's TS client subscribes. This
+// suite's first case is a deliberate durable-topic proof, so
 // this peer loads the built-in text with both <durability> lines changed to TRANSIENT_LOCAL — the
 // gateway loads the SAME text via --provider-config (see gateway-fastdds.test.ts).
 constexpr const char* kDurableDocument = R"XML(<?xml version="1.0" encoding="UTF-8"?>

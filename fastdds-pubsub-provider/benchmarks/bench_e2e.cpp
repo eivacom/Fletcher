@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// BEFORE/AFTER numbers for the reader-side redesign: end-to-end publish-to-callback latency and
-// throughput, intraprocess, through two real providers (publisher + subscriber, one process,
-// domain 43). With no flags this is Fletcher's built-in QoS throughout -- see BuildDocument below.
+// End-to-end publish-to-callback latency and throughput, intraprocess, through two real providers
+// (publisher + subscriber, one process, domain 43), against Fletcher's built-in QoS throughout.
 //
 // Latency: one sample in flight at a time. The publisher stamps steady_clock::now() (nanoseconds
 // since an unspecified epoch) into the row's first 8 bytes; the subscriber callback reads it back
@@ -13,16 +12,6 @@
 //
 // Throughput: the same two providers, one row size, publish 200 000 samples back to back with no
 // pacing; wall time runs until the callback has counted all of them.
-//
-// --reader-datasharing auto|off, --writer-blocking infinite|100ms separate the round-G3 QoS
-// changes (reader data_sharing AUTOMATIC, writer max_blocking_time DURATION_INFINITY) that made
-// bench_e2e's flat-out THROUGHPUT arms stall instead of dropping. auto+infinite (the default) is
-// byte-for-byte Fletcher's built-in QoS -- BuildDocument returns an EMPTY document, the same path
-// every prior bench_e2e run took. Any other combination loads a document built from the README's
-// "published starting point" block (`#### The published starting point`) with only the flagged
-// policy changed; both providers in this one process share it (profile_document.hpp: Fast DDS
-// profile names are process-wide, so every provider in a process must load one byte-identical
-// document).
 //
 // --arm latency|throughput|all, --bytes 198|60000|all run a single arm instead of the full sweep.
 //
@@ -90,69 +79,6 @@ void BusyWait(Clock::duration d) {
 double Percentile(std::vector<double>& v, double p) {
     std::sort(v.begin(), v.end());
     return v[static_cast<size_t>(p * (v.size() - 1))];
-}
-
-enum class ReaderDataSharing { kAuto, kOff };
-enum class WriterBlocking { kInfinite, k100Ms };
-
-// The XML is the README's "published starting point" block, copied verbatim, with only the one
-// flagged policy changed. auto+infinite (both flags at their default) returns an EMPTY document
-// instead of a transcription of the defaults, so a default run takes the exact code path
-// (ResolveParticipantQos, document.empty()) every bench_e2e run before this one took.
-std::string BuildDocument(ReaderDataSharing reader, WriterBlocking writer) {
-    if (reader == ReaderDataSharing::kAuto && writer == WriterBlocking::kInfinite) return "";
-    const std::string max_blocking_time =
-        writer == WriterBlocking::k100Ms
-            ? "<max_blocking_time><sec>0</sec><nanosec>100000000</nanosec></max_blocking_time>"
-            : "<max_blocking_time>DURATION_INFINITY</max_blocking_time>";
-    const std::string reader_data_sharing =
-        reader == ReaderDataSharing::kOff ? "<data_sharing><kind>OFF</kind></data_sharing>" : "";
-    return R"(<?xml version="1.0" encoding="UTF-8"?>
-<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-  <profiles>
-    <participant profile_name="fletcher_participant"/>
-    <data_writer profile_name="default_writer" is_default_profile="true">
-      <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
-        <reliability>
-          <kind>RELIABLE</kind>
-          )" +
-           max_blocking_time + R"(
-        </reliability>
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_ALL</kind></historyQos>
-        <resourceLimitsQos>
-          <max_samples>100</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-        </resourceLimitsQos>
-      </topic>
-      <times>
-        <heartbeat_period>
-          <sec>0</sec>
-          <nanosec>20000000</nanosec>
-        </heartbeat_period>
-      </times>
-    </data_writer>
-    <data_reader profile_name="default_reader" is_default_profile="true">
-      <qos>
-        <durability><kind>TRANSIENT_LOCAL</kind></durability>
-        <reliability><kind>RELIABLE</kind></reliability>
-        )" +
-           reader_data_sharing + R"(
-      </qos>
-      <topic>
-        <historyQos><kind>KEEP_ALL</kind></historyQos>
-        <resourceLimitsQos>
-          <max_samples>100</max_samples>
-          <max_instances>1</max_instances>
-          <max_samples_per_instance>100</max_samples_per_instance>
-        </resourceLimitsQos>
-      </topic>
-    </data_reader>
-  </profiles>
-</dds>)";
 }
 
 ProviderConfig Config(const std::string& document) {
@@ -306,17 +232,11 @@ struct Args {
     bool run_throughput = true;
     bool run_198 = true;
     bool run_60000 = true;
-    ReaderDataSharing reader = ReaderDataSharing::kAuto;
-    WriterBlocking writer = WriterBlocking::kInfinite;
 };
 
 void PrintUsage(const char* prog) {
     std::printf("usage: %s [--arm latency|throughput|all] [--bytes 198|60000|all]\n", prog);
-    std::printf("       [--reader-datasharing auto|off] [--writer-blocking infinite|100ms]\n");
-    std::printf(
-        "defaults: --arm all --bytes all --reader-datasharing auto --writer-blocking infinite\n");
-    std::printf(
-        "  (auto + infinite is Fletcher's built-in QoS -- BuildDocument then loads no document)\n");
+    std::printf("defaults: --arm all --bytes all\n");
 }
 
 bool ParseArgs(int argc, char** argv, Args& out) {
@@ -350,22 +270,6 @@ bool ParseArgs(int argc, char** argv, Args& out) {
             } else {
                 return false;
             }
-        } else if (flag == "--reader-datasharing") {
-            if (value == "auto") {
-                out.reader = ReaderDataSharing::kAuto;
-            } else if (value == "off") {
-                out.reader = ReaderDataSharing::kOff;
-            } else {
-                return false;
-            }
-        } else if (flag == "--writer-blocking") {
-            if (value == "infinite") {
-                out.writer = WriterBlocking::kInfinite;
-            } else if (value == "100ms") {
-                out.writer = WriterBlocking::k100Ms;
-            } else {
-                return false;
-            }
         } else {
             return false;
         }
@@ -382,7 +286,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::setbuf(stdout, nullptr);
-    const std::string document = BuildDocument(args.reader, args.writer);
+    const std::string document;  // empty -- Fletcher's built-in QoS
     for (size_t bytes : kRowSizes) {
         if (bytes == 198 && !args.run_198) continue;
         if (bytes == 60000 && !args.run_60000) continue;

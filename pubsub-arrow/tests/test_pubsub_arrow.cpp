@@ -213,7 +213,7 @@ TEST(PublisherArrowTest, PublishAfterATypeMismatchStillDelivers) {
     EXPECT_THROW(pub.Publish(kTopic, bad_row), std::invalid_argument);
     EXPECT_TRUE(mock->published.empty());
 
-    // The scratch buffer survives the throw (A5): a correct publish right
+    // The scratch buffer survives the throw: a correct publish right
     // after, on the same thread, is delivered intact.
     ArrowRow good_row = {std::make_shared<arrow::Int32Scalar>(7)};
     pub.Publish(kTopic, good_row);
@@ -722,7 +722,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
 }
 
 // ---------------------------------------------------------------------------
-// BatchDecoder-backed batching (Step 4) — corrupt rows, capacity, reuse
+// BatchDecoder-backed batching — corrupt rows, capacity, reuse
 // ---------------------------------------------------------------------------
 
 TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
@@ -821,7 +821,7 @@ TEST(SubscriberArrowBatchTest, FixedSizeListWithNamedItemArrivesNonNull) {
     ASSERT_NE(batch, nullptr);
     ASSERT_EQ(batch->num_rows(), 1);
     auto col = batch->column(0);
-    ASSERT_TRUE(col->IsValid(0));  // this was silently nulled before Step 1's F6 fix + this step
+    ASSERT_TRUE(col->IsValid(0));  // this was silently nulled before the underlying fix
     auto fsl_col = std::static_pointer_cast<arrow::FixedSizeListArray>(col);
     auto values = std::static_pointer_cast<arrow::FloatArray>(fsl_col->values());
     EXPECT_EQ(values->Value(0), 1.0f);
@@ -873,7 +873,7 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
 
     // 200 distinct values overflow an int8 dictionary index (128 representable
     // values) when BatchDecoder::Finish() re-folds the column and casts it to
-    // dictionary<int8>. That failure is an internal invariant (A1/A3), not a
+    // dictionary<int8>. That failure is an internal invariant, not a
     // malformed row, and must not terminate the process.
     for (int i = 0; i < 200; ++i) {
         pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("v" + std::to_string(i))});
@@ -900,13 +900,13 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
     EXPECT_EQ(sink.deliveries[1].status.rows_dropped, 0);
 }
 
-// A4 (2026-09-11 type-space/case audit) — the last remaining batched-subscriber case: Unsubscribe
-// called from INSIDE the batch callback, itself invoked synchronously from Flush() on the
-// publishing thread. A real BatchCapacityExceeded needs a column that trips Arrow's ~2 GiB
-// builder limit (BatchDecoderTest.CapacityExceededLeavesBuildersUntouched in arrow-bridge/tests/
+// The last remaining batched-subscriber case: Unsubscribe called from INSIDE the batch callback,
+// itself invoked synchronously from Flush() on the publishing thread. A real
+// BatchCapacityExceeded needs a column that trips Arrow's ~2 GiB builder limit
+// (BatchDecoderTest.CapacityExceededLeavesBuildersUntouched in arrow-bridge/tests/
 // test_batch_decoder.cpp needs 300 rows of an 8 MiB column to force it) — unforceable here without
 // allocating gigabytes in a unit test, so this drives the identical reentrant-Unsubscribe-during-
-// Flush path through the ordinary row-limit flush instead (max_rows = 1). Cycle 1 added the
+// Flush path through the ordinary row-limit flush instead (max_rows = 1), exercising the
 // `if (stopped_) return;` guard in the BatchCapacityExceeded handler (subscriber_arrow.cpp)
 // precisely so a mid-flush Unsubscribe doesn't touch a decoder Stop() already tore down; this
 // pins the observable half of that fix: no further delivery after Unsubscribe returns, and the

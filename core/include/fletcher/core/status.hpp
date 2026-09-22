@@ -63,10 +63,10 @@ enum class PubSubStatus : int32_t {
     /// The caller re-entered the seam from inside a delivery callback, on the
     /// same provider instance and the same thread, through a door that cannot
     /// serve it there. EVERY PubSubProvider method refuses, on every provider —
-    /// the four data-path methods and the two schema-only ones (spec §6
-    /// clause 6). Distinct from kNotSupported, which says the provider cannot
-    /// do this AT ALL rather than "not from in there" — two different operator
-    /// problems (owner ruling 2026-09-03).
+    /// the four data-path methods, the two schema-only ones and the two
+    /// options-taking ones (spec §6 clause 6). Distinct from kNotSupported,
+    /// which says the provider cannot do this AT ALL rather than "not from in
+    /// there" — two different operator problems (owner ruling 2026-09-03).
     kReentrantCall = 10,
 };
 

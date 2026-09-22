@@ -1331,7 +1331,7 @@ TEST(CodecTest, EncodeMatchesPositionalWriter_Unions) {
     EXPECT_EQ(codec_bytes, hand_bytes);
 }
 
-// The type-space gaps a 2026-09-11 audit found in the oracle above: int8, int16, uint8, uint16,
+// The type-space gaps in the oracle above: int8, int16, uint8, uint16,
 // uint64, float16, date32, date64, time32, time64, fixed_size_binary, decimal256, large_list,
 // large_utf8, large_binary, utf8_view, binary_view, and a fixed_size_list with a null element (so
 // the element bitfield byte is non-zero). Every arm below still compares Codec::EncodeRow against
@@ -1956,7 +1956,7 @@ TEST(CodecTest, EveryFixedWidthRunTypeRoundtrips) {
 // ---------------------------------------------------------------------------
 
 // The WriteBuffer-overload and the vector-returning overload must produce
-// identical bytes (the latter is now just VectorWriteBuffer + Finish() over
+// identical bytes (the latter is just VectorWriteBuffer + Finish() over
 // the former), and both must still match the hand-built PositionalWriter
 // oracle for a representative spread of shapes already covered above.
 TEST(CodecTest, EncodeIntoWriteBufferMatchesVectorOverload) {

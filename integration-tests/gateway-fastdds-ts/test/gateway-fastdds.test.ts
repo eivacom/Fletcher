@@ -45,10 +45,10 @@ const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 // pubsub-arrow-fastdds (137) on a shared --network host CI runner.
 const DOMAIN_ID = process.env.DDS_DOMAIN_ID ?? '142';
 
-// Fletcher's built-in data profile is VOLATILE now (qos_defaults.cpp, owner decision
-// 2026-09-15): a late-joining reader does not see rows published before it. The first case below
-// is a deliberate durable-topic proof (the C++ peer publishes before the TS client subscribes),
-// so both the gateway and the peer are configured with this explicit document instead — the
+// Fletcher's built-in data profile is VOLATILE (qos_defaults.cpp): a late-joining reader does not
+// see rows published before it. The first case below is a deliberate durable-topic proof (the
+// C++ peer publishes before the TS client subscribes), so both the gateway and the peer are
+// configured with this explicit document instead — the
 // built-in text (see fastdds-pubsub-provider/README.md "The published starting point") with both
 // <durability> lines changed to TRANSIENT_LOCAL. `fastdds_peer.cpp` carries the identical text
 // (`kDurableDocument`); this copy is written to a file and handed to the gateway via
@@ -258,7 +258,7 @@ describe('gateway FastDDS provider — bidirectional', () => {
       received.push(row);
     });
 
-    // DURABLE_DOCUMENT's TRANSIENT_LOCAL + KEEP_ALL (the default is VOLATILE now, qos_defaults.cpp)
+    // DURABLE_DOCUMENT's TRANSIENT_LOCAL + KEEP_ALL (the default is VOLATILE, qos_defaults.cpp)
     // replays the peer's startup rows to the gateway's late-joining DataReader, so order of
     // subscribe vs publish does not matter; allow headroom for cross-process DDS discovery.
     await waitFor(() => received.length >= EXPECTED_CPP_ROWS.length, 15_000);

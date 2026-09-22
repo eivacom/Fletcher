@@ -111,12 +111,11 @@ struct TopicOptions {
 /// created, through `ProviderConfig` — a typed core of exactly
 /// `{max_payload_bytes, domain_id}` plus an opaque document in the provider's
 /// own format, which Fletcher transports and never reads (§4.1, §4.2, see
-/// provider_registry.hpp). All three providers are configured this way, as
-/// landed: the in-process loopback (PDA-DEC-5), Fast DDS by its own native XML
-/// QoS profiles document (PDA-DEC-6), and XRCE by a `key=value` document
-/// (PDA-DEC-7). No eProsima type and no XRCE type is nameable from here, or
-/// from any provider's installed header. There IS one per-call options
-/// struct — `TopicOptions`, below — and it is protocol-agnostic: a profile
+/// provider_registry.hpp). All three providers are configured this way: the
+/// in-process loopback, Fast DDS by its own native XML QoS profiles document,
+/// and XRCE by a `key=value` document. No eProsima type and no XRCE type is
+/// nameable from here, or from any provider's installed header. There IS one
+/// per-call options struct — `TopicOptions`, below — and it is protocol-agnostic: a profile
 /// name the provider interprets the way it interprets the document, and the
 /// same payload bound the typed core carries, for one topic's publisher. No
 /// protocol QoS vocabulary crosses the seam through it.
@@ -187,10 +186,10 @@ class PubSubProvider {
     ///    `DeliveryChannel` (delivery_channel.hpp), whose `Deliver` is `noexcept`
     ///    — so a provider cannot opt out and an unwind across a transport's C
     ///    frames is a type property rather than a comment.
-    ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6, owner
-    ///    ruling 2026-09-05). The four data-path methods `CreateTopic`,
-    ///    `Publish`, `Subscribe` and `Unsubscribe`, the two schema-only ones
-    ///    below, and the two options-taking ones (`CreateTopicWithOptions`,
+    ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6). The four
+    ///    data-path methods `CreateTopic`, `Publish`, `Subscribe` and
+    ///    `Unsubscribe`, the two schema-only ones below, and the two
+    ///    options-taking ones (`CreateTopicWithOptions`,
     ///    `SubscribeWithOptions`), issued from inside a delivery on this same
     ///    instance and this same thread, each throw `PubSubError(kReentrantCall)`
     ///    before taking any lock. Copy what you need and act after the callback
@@ -242,12 +241,11 @@ class PubSubProvider {
     /// see and do not prevent.
     virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
 
-    /// The topic's schema without its data (owner ruling 2026-09-09, spec §2
-    /// addendum). Opens only the schema side of a subscription and returns the
-    /// same arrival `Subscribe` would — **never blocks**, and resolves once a
-    /// publisher has announced the topic, at once if one already has. That is
-    /// the whole point: a catalog client learns a topic's shape without asking
-    /// for one row of it.
+    /// The topic's schema without its data (spec §2). Opens only the schema
+    /// side of a subscription and returns the same arrival `Subscribe` would —
+    /// **never blocks**, and resolves once a publisher has announced the
+    /// topic, at once if one already has. That is the whole point: a catalog
+    /// client learns a topic's shape without asking for one row of it.
     ///
     /// Idempotent per topic — a second call opens nothing further, and a later
     /// `Subscribe` reuses what this opened. The watch is released **only** by

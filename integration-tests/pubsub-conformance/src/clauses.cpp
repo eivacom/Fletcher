@@ -704,13 +704,12 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
 // `publishes_into_subject_instance` names structurally rather than by matching on
 // a label.
 //
-// S6 added `SubscribeSchema`/`UnsubscribeSchema` beside `Subscribe`, and this round adds
-// `DeclareTopicWithOptions`/`SubscribeWithOptions` beside those: all four are LOCAL-ONLY on
-// every subject (subject.hpp), never routed over the peer pipe, so their assertion is
-// unconditional on all six subjects too — the same reason `Subscribe`'s is. The options pair is
-// passed an EMPTY `TopicOptions{}`: the door is checked before the support check, so the
-// refusal is `kReentrantCall` regardless of whether the provider under test honours options at
-// all.
+// `SubscribeSchema`/`UnsubscribeSchema` and `DeclareTopicWithOptions`/`SubscribeWithOptions` beside
+// `Subscribe`: all four are LOCAL-ONLY on every subject (subject.hpp), never routed over the peer
+// pipe, so their assertion is unconditional on all six subjects too — the same reason `Subscribe`'s
+// is. The options pair is passed an EMPTY `TopicOptions{}`: the door is checked before the support
+// check, so the refusal is `kReentrantCall` regardless of whether the provider under test honours
+// options at all.
 TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     const bool reentrant_publish = GetParam().publishes_into_subject_instance;
 

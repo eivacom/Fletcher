@@ -22,10 +22,10 @@ class FletcherPubSubTypeBenchmarksConan(ConanFile):
         self.requires("fletcher-core/[*, include_prerelease]")
         # An EXPLICIT fast-dds require, because PDA-DEC-6 dropped `transitive_headers=True` from
         # the provider recipe: the provider's public header names no eProsima type any more, so a
-        # consumer no longer sees Fast DDS headers transitively. All four benchmark TUs include
-        # <fastdds/...> directly (they exercise the DDS types themselves, which is the point), so
-        # they have to ask for the SDK themselves. Benchmarks are outside CI, so this would
-        # otherwise rot silently rather than go red.
+        # consumer no longer sees Fast DDS headers transitively. Three of the four benchmark TUs
+        # include <fastdds/...> directly (they exercise the DDS types themselves, which is the
+        # point), so they have to ask for the SDK themselves. Benchmarks are outside CI, so this
+        # would otherwise rot silently rather than go red.
         self.requires("fast-dds/3.4.0")
         self.requires("benchmark/1.6.1")
 

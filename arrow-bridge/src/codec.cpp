@@ -6,12 +6,10 @@
 #include <arrow/api.h>
 
 #include <cstdint>
-#include <cstring>
 #include <fletcher/core/positional_io.hpp>
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include "fletcher/arrow_bridge/detail/arrow_result.hpp"
 #include "row_reader.hpp"

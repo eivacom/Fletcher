@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The writer side's statuses, forwarded to the application's FastDDSStatusListener, plus the
-// status mask for the writer end. One instance per provider, shared by every DataWriter it
-// creates -- it carries no per-topic state, and the topic name is on the endpoint itself.
+// The writer side's statuses, forwarded to the application's FastDDSStatusListener. One instance
+// per provider, shared by every DataWriter it creates -- it carries no per-topic state, and the
+// topic name is on the endpoint itself.
 //
 // The reader side splits in two: a data reader has a real Fast DDS listener
 // (DataReaderListenerBase, internal/data_reader_listener.hpp), forwarding its own statuses
@@ -17,7 +17,6 @@
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_DATA_WRITER_LISTENER_HPP_
 
 #include <cstdint>
-#include <fastdds/dds/core/status/StatusMask.hpp>
 #include <fastdds/dds/publisher/DataWriter.hpp>
 #include <fastdds/dds/publisher/DataWriterListener.hpp>
 
@@ -78,10 +77,11 @@ class DataWriterListener : public eprosima::fastdds::dds::DataWriterListener {
                                                static_cast<uint32_t>(status.total_count));
     }
 
-    // KEEP_ALL + RELIABLE means the writer blocks rather than drops, so an unacknowledged sample
-    // being removed is history overflowing under max_blocking_time — data loss, not backpressure.
-    // Not in the writer's status mask (CreateTopic): this is a Fast DDS extension with no
-    // StatusMask bit, dispatched whenever a listener is set at all (DataWriterImpl.cpp).
+    // Under a KEEP_ALL profile such as `lossless` the writer blocks rather than drops, so an
+    // unacknowledged sample being removed there is history overflowing under max_blocking_time —
+    // data loss, not backpressure. Not in the writer's status mask (CreateTopic): this is a Fast
+    // DDS extension with no StatusMask bit, dispatched whenever a listener is set at all
+    // (DataWriterImpl.cpp).
     void on_unacknowledged_sample_removed(
         eprosima::fastdds::dds::DataWriter* writer,
         const eprosima::fastdds::dds::InstanceHandle_t& /*instance*/) override {

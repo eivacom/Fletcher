@@ -35,16 +35,18 @@ exists, then a second client declares the topic and publishes — and the first
 client receives it (the subscribe path is non-blocking and the late publisher
 is matched).
 
-Fletcher's default data profile is `RELIABLE` + `KEEP_ALL` + `VOLATILE`
-(`qos_defaults.cpp`): a late-joining reader does not see rows published
-before it. The first case above needs the opposite — the peer publishes its
-startup rows before the TS client subscribes — so it opts into a durable
-topic explicitly: both the gateway (via `--provider-config`) and the peer
-(via `ProviderConfig::document`, `fastdds_peer.cpp`) load the same document,
-the built-in text with both `<durability>` lines changed to
-`TRANSIENT_LOCAL`. The other three cases do not depend on this; they only
-happen to run against the same durable document because Fast DDS's profile
-registry is process-wide.
+Fletcher's built-in data profile is `RELIABLE` + `KEEP_LAST` 25 + `VOLATILE`
+(`qos_defaults.cpp`; see the provider README's
+[Built-in profiles](../../fastdds-pubsub-provider/README.md#built-in-profiles)
+table): a late-joining reader does not see rows published before it. The
+first case above needs the opposite — the peer publishes its startup rows
+before the TS client subscribes — so it opts into a durable topic
+explicitly: both the gateway (via `--provider-config`) and the peer (via
+`ProviderConfig::document`, `fastdds_peer.cpp`) load the same document, the
+built-in text with both `<durability>` lines changed to `TRANSIENT_LOCAL`.
+The other three cases do not depend on this; they only happen to run
+against the same durable document because Fast DDS's profile registry is
+process-wide.
 
 ## Layout
 

@@ -77,10 +77,9 @@ class PeerSubject : public ProviderSubject {
 
     void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
 
-    /// LOCAL-ONLY, as subject.hpp says: this round adds no peer-pipe protocol, so — unlike
-    /// `DeclareTopic` above — this reaches `provider_`, the subscriber-side instance in THIS
-    /// process, never the peer child. Nothing in this round needs the publisher-side instance
-    /// for it.
+    /// LOCAL-ONLY, as subject.hpp says: there is no peer-pipe form, so — unlike `DeclareTopic`
+    /// above — this reaches `provider_`, the subscriber-side instance in THIS process, never the
+    /// peer child. The publisher-side instance is not needed for it.
     void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
                                  const TopicOptions& options) override {
         provider_->CreateTopicWithOptions(topic, std::move(schema), options);
