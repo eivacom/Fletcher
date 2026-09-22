@@ -67,7 +67,7 @@ that enumerated built-ins would silently reopen that decision.
 |---|---|
 | `Publisher(shared_ptr<PubSubProvider>)` | `Publisher(PubSubProviderHandle)` , `IDisposable` |
 | `Publisher::CreateTopic(segments, OwnedSchema)` | `CreateTopic(TopicPath, Apache.Arrow.Schema)` |
-| `Publisher::Publish(segments, RowEncoder, Attachments)` | `Publish(TopicPath, BoundRows, int row, AttachmentsBuilder?)` · `Publish(TopicPath, BoundRows, AttachmentsBuilder[]?)` (all rows, one crossing) · `Publish(TopicPath, RowWriter, AttachmentsBuilder?)` · `PublishRaw(TopicPath, ReadOnlySpan<byte>, AttachmentsBuilder?)`. `BoundRows` comes from `FletcherCodec.Bind(RecordBatch)`: one export and one validation serve N publishes (development plan §3.2, D-BIND-23) |
+| `Publisher::Publish(segments, RowEncoder, Attachments)` | `Publish(TopicPath, BoundRows, int row, AttachmentsBuilder?)` · `Publish(TopicPath, BoundRows, AttachmentsBuilder[]?)` (all rows, one crossing) · `Publish(TopicPath, RowWriter, int minBytes, AttachmentsBuilder?)` (**`minBytes` added by D-BIND-45**: `publish_raw` sizes the window before the writer runs, refuses 0, and a writer cannot ask for more — so it cannot be defaulted honestly) · `PublishRaw(TopicPath, ReadOnlySpan<byte>, AttachmentsBuilder?)`. `BoundRows` comes from `FletcherCodec.Bind(RecordBatch)`: one export and one validation serve N publishes (development plan §3.2, D-BIND-23) |
 | `Publisher::ListTopics()` | `IReadOnlyList<string> ListTopics()` |
 | `Subscriber(shared_ptr<PubSubProvider>)` | `Subscriber(PubSubProviderHandle)` , `IDisposable` |
 | `Subscriber::Subscribe(segments, cb)` → `{subscription_id, SchemaArrival}` | `Subscribe(TopicPath, RowHandler)` → `SubscribeResult { Subscription Subscription · SchemaArrival Schema }` |
@@ -304,7 +304,7 @@ classDiagram
         +CreateTopic(TopicPath topic, Schema schema) void
         +Publish(TopicPath topic, BoundRows rows, int row) void
         +Publish(TopicPath topic, BoundRows rows) void
-        +Publish(TopicPath topic, RowWriter writer) void
+        +Publish(TopicPath topic, RowWriter writer, int minBytes) void
         +PublishRaw(TopicPath topic, ReadOnlySpan~byte~ row) void
         +ListTopics() IReadOnlyList~string~
         +Dispose() void

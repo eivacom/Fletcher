@@ -1209,3 +1209,53 @@ accessors do, for capstone parity (Q18).
 
   **No diagram change** (the fourth place): `AttachmentsBuilder` keeps the members the surface
   document draws, and `Build` is internal, so nothing public moves.
+
+- **D-BIND-45 — the `RowWriter` publish overload takes `minBytes` EXPLICITLY, and the frozen
+  surface is amended to match.** *LOCKED BY THE MAINTAINER 2026-09-22,* raised during BIND-4b-iii
+  when the writer path turned out to need a number the public-surface document had nowhere to
+  put.
+
+  **THE GAP.** `fl_publisher_publish_raw` takes a `min_bytes`, and the seam makes room for it
+  BEFORE the writer is invoked: `AppendInPlace` forces a refill if the window is short, and
+  refuses with kPayloadTooLarge if the room cannot be produced — in which case the writer is not
+  called at all. `min_bytes == 0` is refused outright ("a fill of no bytes names nothing").
+  The public-surface document froze `Publish(TopicPath, RowWriter)` with no size argument.
+
+  **WHY IT CANNOT BE DEFAULTED HONESTLY, which is the whole decision.** The writer is handed
+  `room`, the WHOLE remaining window, and `room >= min_bytes` — that is the ABI's promise and it
+  is what lets a variable-length producer avoid a second crossing. But a writer that needs more
+  than `room` has NO RECOURSE: it cannot ask for more, and reporting more than `room` is a
+  refusal that commits nothing. So a default that is too small does not degrade, it fails, and
+  it fails at a size that depends on the transport's window rather than on anything the caller
+  wrote. A caller stating the room they need is the only form that is not a guess.
+
+  **THIS ONE CHANGES THE PUBLIC SURFACE, and that is why it is recorded rather than left in a
+  file header.** D-BIND-44 was the same SHAPE — a managed signature frozen without knowledge of
+  a native requirement — but its fix was entirely behind the surface, so the frozen table stayed
+  true. This fix is visible: `Publish(TopicPath, RowWriter, int minBytes, AttachmentsBuilder?)`.
+  **The surface document is amended in the same commit**, both the §2.4 row and the class
+  diagram, because a frozen table that disagrees with the shipped API is worse than no table —
+  the next reader cannot tell which one is current, and the table is the thing they will trust.
+
+  **The addition is source-compatible in form but not in fact, and the distinction is worth
+  stating:** `minBytes` sits before the optional `attachments`, so it is a required argument and
+  a caller writing `Publish(topic, writer)` does not compile. That is deliberate. Making it
+  optional would have reintroduced the guess it exists to remove, and there is no caller to
+  break — nothing outside this round has ever compiled against this surface.
+
+  **NO ABI CHANGE AND NO VERSION BUMP.** Like D-BIND-44 and unlike D-BIND-42/43, nothing native
+  moves: the header is right and `fl_writer_fn`'s contract is already precise about `room`,
+  commit-by-return and the two refusals.
+
+  **Two smaller rulings ride along, both in the thunk and both about the value 0.**
+  (1) `binding.h` reserves a writer's return of 0 as the binding's signal that its thunk
+  captured an exception — so a managed `RowWriter` that returns 0 honestly would be
+  indistinguishable from one that threw. The thunk converts it into an `InvalidOperationException`
+  naming the rule, because a caller whose writer legitimately produced nothing deserves a message
+  rather than a status. (2) `room` is CLAMPED to `int.MaxValue` rather than refused, since a
+  `Span<byte>` cannot be longer; refusing would be this binding inventing a limit the ABI does
+  not have.
+
+  **No diagram change in the architecture set** (the fourth place): the class diagram in the
+  public-surface document is amended, but no shape, name, count or direction moves in
+  `BIND-architecture-diagrams.md`.
