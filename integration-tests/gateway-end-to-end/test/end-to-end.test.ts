@@ -365,10 +365,7 @@ describe('provider configuration', () => {
   it('a valid --provider-config document reaches the provider and the gateway starts', async () => {
     const child = await spawnGateway(
       { name: 'fastdds', port: TEST_PORT + 9, domainId: '154', roundtripMs: 15_000 },
-      [
-        '--provider-config',
-        write('good.xml', ANCHOR_ONLY),
-      ],
+      ['--provider-config', write('good.xml', ANCHOR_ONLY)],
     );
     await stopGateway(child);
   });
