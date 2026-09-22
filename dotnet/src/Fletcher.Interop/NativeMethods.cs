@@ -177,6 +177,96 @@ internal static partial class NativeMethods
 
     /* Provider and publisher ------------------------------------------------ */
 
+    /* == Blobs and attachments: the write end (BIND-4a's entry points) ======== */
+
+    /// <summary>Make a blob Fletcher owns, by COPYING the caller's bytes.</summary>
+    /// <remarks>
+    /// D-BIND-42 added this because the surface had no other way to MAKE a blob:
+    /// retain and release operate on one you already hold, and the accessors hand
+    /// back one BORROWED from a set. The copy is the point - <c>fl_blob</c>'s rules
+    /// refuse bytes with no owner ("there is deliberately no view-only form"), and
+    /// copying is what supplies an owner whose lifetime the caller stops having to
+    /// reason about. A zero <paramref name="size"/> yields the empty blob, which
+    /// has no owner and needs no release.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_blob_create(nint data, nuint size, out FlBlob blob, ref FlError err);
+
+    /// <summary>Take a reference. Safe from any thread; a no-op on an empty blob.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_blob_retain(in FlBlob blob);
+
+    /// <summary>Drop a reference. Never fails, never re-enters the seam.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_blob_release(in FlBlob blob);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_attachments_builder_create(
+        out AttachmentsBuilderHandle builder, ref FlError err);
+
+    /// <summary>Add or replace an entry. The key is copied; the value is RETAINED.</summary>
+    /// <remarks>
+    /// Because the builder retains, the caller still owns the reference it passed
+    /// and must release it - the managed side creates a blob, sets it, and releases
+    /// in the same breath, so no blob reference outlives the call that made it.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_attachments_builder_set(
+        AttachmentsBuilderHandle builder, FlStr key, in FlBlob value, ref FlError err);
+
+    /// <summary>Seal the pending entries into a set, and EMPTY the builder.</summary>
+    /// <remarks>
+    /// THE EMPTYING IS THE PART A BINDING HAS TO DESIGN AROUND. The native builder
+    /// moves its pending entries into the new set, so a second build yields an
+    /// EMPTY one - which would silently drop the attachments of every row after the
+    /// first if a publish built from a caller's builder per sample. The managed
+    /// <c>AttachmentsBuilder</c> therefore owns its entries and treats this handle
+    /// as a transient it repopulates.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_attachments_builder_build(
+        AttachmentsBuilderHandle builder, out AttachmentsHandle attachments, ref FlError err);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_attachments_builder_dispose(nint builder);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nuint fl_attachments_size(AttachmentsHandle attachments);
+
+    /// <summary>The key at <paramref name="index"/>, in the set's own byte order.</summary>
+    /// <remarks>
+    /// Declared in this slice although the READ surface (AttachmentsView) belongs
+    /// to the subscriber: without it nothing can prove that the bytes a builder was
+    /// given are the bytes that reached the sealed set, and a write end whose only
+    /// assertion is a COUNT would ship on faith until 4c. Out of range yields
+    /// {NULL, 0} rather than a status - the signature has nowhere to put one.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlStr fl_attachments_key_at(AttachmentsHandle attachments, nuint index);
+
+    /// <summary>The value at <paramref name="index"/>, BORROWED from the set.</summary>
+    /// <remarks>
+    /// The blob's control block belongs to the set and this does not add a
+    /// reference to it. A caller keeping the bytes past the set calls
+    /// <c>fl_blob_retain</c>.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlBlob fl_attachments_value_at(AttachmentsHandle attachments, nuint index);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void fl_attachments_dispose(nint attachments);
+
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_provider_create(

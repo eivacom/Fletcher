@@ -1129,6 +1129,11 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
 - `Publisher`: `CreateTopic(TopicPath, Schema)`, `Publish(TopicPath, BoundRows,
   int)`, `Publish(TopicPath, BoundRows)`, `Publish(TopicPath, RowWriter)`,
   `PublishRaw`, `ListTopics`, `IDisposable`.
+  **The attachments argument carries a managed design decision (D-BIND-44,
+  2026-09-22): `AttachmentsBuilder` owns its entries and CACHES the sealed set,
+  because `fl_attachments_builder_build` empties the native builder** — a publish
+  that sealed the caller's builder per row would attach them to row 0 and silently
+  to nothing after. No ABI change; unlike D-BIND-42/43 the native side is correct.
 - `Subscriber`: `Subscribe(TopicPath, RowHandler) → SubscribeResult {Subscription,
   SchemaArrival}`, `Unsubscribe(Subscription)`, `AbsorbedCallbackFailures` (the
   managed counter), `DispatchAfterDelivery(Func<Task>)`, `IDisposable`, **no

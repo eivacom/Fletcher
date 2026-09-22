@@ -1152,3 +1152,60 @@ accessors do, for capstone parity (Q18).
   was worth making.**
 
   **No diagram change** (the fourth place): no shape, name, count or direction moves.
+
+- **D-BIND-44 — the managed `AttachmentsBuilder` OWNS its entries; the native builder is a
+  transient it repopulates, and the sealed set is cached.** *LOCKED 2026-09-22 at the
+  maintainer's direction,* raised during BIND-4b when two facts that are each correct on their
+  own turned out to collide.
+
+  **THE COLLISION.** `fl_attachments_builder_build` MOVES the pending entries into the sealed
+  set and resets the builder (`*out = new fl_attachments(std::move(builder->pending));
+  builder->pending = fletcher::Attachments();`), so a second build on the same builder yields an
+  EMPTY set. Meanwhile the frozen public surface gives `AttachmentsBuilder` only `Set`, `Clear`
+  and `Count` — **there is no `Build()`** — and every publish overload takes an
+  `AttachmentsBuilder?`. Put together, the publish has to seal the caller's builder itself, and
+  sealing it empties it.
+
+  **WHAT THAT WOULD HAVE DONE, and why it is the round's worst failure shape.** A caller
+  publishing ten rows with one builder would have attachments on row 0 and none on rows 1–9.
+  **Silently**, because an empty attachments set is a legal thing to publish: no status, no
+  refusal, nothing at either end to notice. It is the same class as the dictionary divergence
+  and the sparse-checkout vacuity — a wrong answer that reads exactly like a right one.
+
+  **THE DESIGN.** The entries live in MANAGED memory as key/value byte copies. `Build` is
+  `internal`, creates a fresh `fl_attachments_builder*`, repopulates it from the managed
+  entries, seals it, disposes the transient, and CACHES the resulting `fl_attachments*`.
+  `Set` and `Clear` drop the cache. So N publishes with unchanged attachments cost ONE seal, a
+  mutation between publishes is picked up rather than ignored, and the caller's builder is never
+  emptied by an operation that does not say it empties things.
+
+  **TWO ALTERNATIVES, both rejected.** (1) *Expose `Build()` and have the caller hold the sealed
+  set.* This is arguably the cleaner model and it is what C++ does — but it changes a signature
+  the public-surface document froze, and it moves a lifetime onto the caller for a type whose
+  whole job is to be convenient. (2) *Seal per publish with no managed entries.* This is the
+  literal reading of the frozen surface and it is the silent-loss behaviour above. Rejected on
+  sight.
+
+  **WHAT IT COSTS, stated rather than buried:** the value bytes are copied twice on the path
+  from caller to wire — once into the builder's managed entry at `Set`, once by
+  `fl_blob_create` at seal. The second copy is the ABI's own rule (D-BIND-42: there is
+  deliberately no view-only blob), so only the first is ours. It happens once per mutation, not
+  per publish, and attachments are sidecar metadata — the row payload's zero-copy path is
+  `fl_publisher_publish_row` and is untouched by any of this.
+
+  **NO ABI CHANGE AND NO VERSION BUMP.** Unlike D-BIND-42 and D-BIND-43, which this superficially
+  resembles, nothing native moves: the header is right, the shim is right, and the semantics that
+  bite are documented in `binding.h` already. **The difference is worth naming, because all three
+  were found the same way and only two are the same kind of defect.** 42 and 43 were MISSING
+  DECLARATIONS — the surface could not express something it described. This one is a collision
+  between a correct native contract and a managed signature frozen without knowledge of it, and
+  the fix belongs entirely on the managed side. A round that files all three under "the header
+  was wrong" would go looking for a header change that is not owed.
+
+  **The guard is a test, not the comment.** `SealingTwiceWithoutAMutationReusesTheSameSet` and
+  `AMutationAfterSealingIsPickedUpRatherThanIgnored` pin both halves — correct reuse, and reuse
+  that does not become a stale read. Without the second, the cache would be a new way to publish
+  the wrong attachments.
+
+  **No diagram change** (the fourth place): `AttachmentsBuilder` keeps the members the surface
+  document draws, and `Build` is internal, so nothing public moves.

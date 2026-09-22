@@ -252,3 +252,37 @@ internal sealed class StringListHandle : FletcherHandle
         return true;
     }
 }
+
+/// <summary>An <c>fl_attachments_builder*</c>: the write end, before it is sealed.</summary>
+/// <remarks>
+/// Mutable and NOT thread safe, unlike every other handle in this file. That is
+/// the seam's shape rather than a shortcut: a builder is scratch space a single
+/// producer fills and seals, and making it shareable would mean a lock on a path
+/// whose whole purpose is to cost nothing.
+/// </remarks>
+internal sealed class AttachmentsBuilderHandle : FletcherHandle
+{
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.fl_attachments_builder_dispose(handle);
+        return true;
+    }
+}
+
+/// <summary>An <c>fl_attachments*</c>: a SEALED set, immutable and shareable.</summary>
+/// <remarks>
+/// The set owns one reference to each of its blobs' control blocks, built at seal
+/// time. A blob handed out by an accessor is BORROWED from the set and stays
+/// valid only as long as the set does - which is why this handle is what a
+/// publish borrows, and why releasing it is the caller's to time.
+/// </remarks>
+internal sealed class AttachmentsHandle : FletcherHandle
+{
+    /// <inheritdoc/>
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.fl_attachments_dispose(handle);
+        return true;
+    }
+}
