@@ -28,17 +28,41 @@
 // it. Exactly one of them wins, and `TryFree`'s interlocked exchange is what
 // makes "exactly one" true rather than likely.
 //
-// ── What is NOT in this slice ───────────────────────────────────────────────
-// D-BIND-18 also requires a thread-static "inside my own thunk" marker, a
-// managed refusal of `Dispose` from a handler, a managed refusal of a
-// synchronous `Subscribe` to a new topic from a handler, and
-// `DispatchAfterDelivery`. Those are 4c-ii. They are a REFUSAL layer above the
-// lifetime core below, and separating them keeps the part where a bug is
-// memory-unsafe reviewable on its own.
+// ── The refusal layer above it (4c-ii) ──────────────────────────────────────
+// Two things a handler can do have no safe answer at all once they reach native,
+// so they are refused HERE, in managed code, while a managed exception is still
+// possible:
+//
+//   Subscriber.Dispose() from a handler   native's answer is PROCESS TERMINATION.
+//                                         Not a refusal - the seam's destructor
+//                                         reaches the provider's door, is refused
+//                                         with kReentrantCall, and rethrows out
+//                                         of a noexcept destructor. By design,
+//                                         because the alternative is a silently
+//                                         leaked transport subscription.
+//
+//   Subscribe(new topic) from a handler   refused natively with kReentrantCall,
+//                                         because a topic this Subscriber has not
+//                                         subscribed before needs a PROVIDER-level
+//                                         subscription and the provider cannot be
+//                                         entered from inside its own delivery.
+//
+// A thread-static marker is what makes both detectable: it names the Subscriber
+// whose thunk this thread is inside. Note what is NOT refused - `Unsubscribe`
+// from a handler is the seam's documented carve-out and is served, and a
+// Subscribe to a topic this Subscriber ALREADY holds is answered from the cached
+// arrival without touching the provider. Which of the two a Subscribe gets
+// depends on the data, not on the call, so the managed check asks the same
+// question the seam does.
+//
+// `DispatchAfterDelivery` is the sanctioned route for work that must touch the
+// seam: it runs off the delivery thread, where the seam's own blocking makes the
+// call correct rather than refused.
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 
 using Eiva.Fletcher.Interop;
 
@@ -119,8 +143,61 @@ public readonly struct SubscribeResult
 /// <summary>Subscribes to topics over one provider.</summary>
 public sealed unsafe class Subscriber : IDisposable
 {
+    /// <summary>The Subscriber whose thunk this thread is currently inside.</summary>
+    /// <remarks>
+    /// Thread-static because the question is about a THREAD's call stack, not
+    /// about the object: two threads may be inside two deliveries on the same
+    /// Subscriber, and neither is inside the other's. Saved and restored around
+    /// the handler rather than simply cleared, so a delivery reached from inside
+    /// another delivery leaves the outer frame's answer intact.
+    /// </remarks>
+    [ThreadStatic]
+    private static Subscriber? _inDelivery;
+
+    private long _freedByDelivery;
+    private long _freedByCanceller;
+
+    /// <summary>How many GCHandles a DEPARTING DELIVERY has freed (the re-entrant path).</summary>
+    /// <remarks>
+    /// <para>
+    /// Exists so a test can bracket an operation and assert WHICH branch of the
+    /// lifetime rule ran. See <c>SubscriptionState.TryFree</c>: both branches end
+    /// in the same observable state - handle freed, delivery stopped - so without
+    /// these the re-entrant path cannot be distinguished from the ordinary one by
+    /// any assertion a test could make, and a row claiming to cover it would prove
+    /// nothing.
+    /// </para>
+    /// <para>
+    /// PER INSTANCE, and the first version was static, which was wrong for the
+    /// same reason the seam scopes <c>AbsorbedCallbackFailures</c> per Subscriber:
+    /// a process-wide counter answers a question nobody asked. A test bracketing
+    /// one was measuring every other subscriber in the process too, and with xUnit
+    /// running classes in parallel it read cancellations that belonged to another
+    /// test - passing or failing on scheduling. Scoped here, the bracket means
+    /// what it says.
+    /// </para>
+    /// </remarks>
+    internal long FreedByDeliveryCount => Interlocked.Read(ref _freedByDelivery);
+
+    /// <summary>How many a CANCELLING THREAD has freed (the ordinary path).</summary>
+    internal long FreedByCancellerCount => Interlocked.Read(ref _freedByCanceller);
+
+    /// <summary>Record which branch released a subscription's handle.</summary>
+    internal void RecordFree(bool byDelivery)
+    {
+        if (byDelivery)
+        {
+            Interlocked.Increment(ref _freedByDelivery);
+        }
+        else
+        {
+            Interlocked.Increment(ref _freedByCanceller);
+        }
+    }
+
     private readonly SubscriberHandle _handle;
     private readonly object _gate = new();
+    private readonly System.Collections.Generic.HashSet<string> _known = new(StringComparer.Ordinal);
     private long _absorbed;
     private bool _disposed;
 
@@ -162,6 +239,32 @@ public sealed unsafe class Subscriber : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(handler);
 
+        // REFUSED HERE BECAUSE THE SEAM WOULD REFUSE IT THERE, and a managed
+        // exception is worth more than a kReentrantCall from inside a transport
+        // callback. The question is the seam's own: a topic this Subscriber has
+        // already subscribed is answered from the cached arrival and touches no
+        // provider, so it is SERVED; one it has not needs a provider-level
+        // subscription, and the provider cannot be entered from inside its own
+        // delivery frame.
+        string key = topic.ToKey();
+        if (ReferenceEquals(_inDelivery, this))
+        {
+            bool known;
+            lock (_gate)
+            {
+                known = _known.Contains(key);
+            }
+
+            if (!known)
+            {
+                throw new InvalidOperationException(
+                    $"Subscribe to '{key}' cannot run inside a delivery on this subscriber: the topic " +
+                    "has not been subscribed before, so it needs a provider-level subscription, and the " +
+                    "provider cannot be entered from inside its own delivery. Use DispatchAfterDelivery " +
+                    "to defer the call past this handler's return.");
+            }
+        }
+
         byte* buffer = stackalloc byte[TopicPath.MaxJoinedBytes];
         FlStr* segments = stackalloc FlStr[topic.Segments.Count];
         FlTopic native = MarshalTopic(topic, buffer, segments);
@@ -195,6 +298,13 @@ public sealed unsafe class Subscriber : IDisposable
         lock (_gate)
         {
             _live[id] = state;
+
+            // Remembered for the subscriber's LIFETIME, not until the last
+            // subscription on it is cancelled. That mirrors the seam: a
+            // provider-level subscription survives the last local unsubscribe and
+            // is reused if the topic is subscribed again, so re-entering on it
+            // stays legal after the topic has gone quiet.
+            _known.Add(key);
         }
 
         return new SubscribeResult(subscription, new SchemaArrival(arrival));
@@ -249,6 +359,24 @@ public sealed unsafe class Subscriber : IDisposable
     /// </remarks>
     public void Dispose()
     {
+        // THE ONE REFUSAL THAT PREVENTS A PROCESS TERMINATION RATHER THAN AN
+        // ERROR. Reaching native here ends the program: the seam's destructor
+        // enters the provider's door, is refused with kReentrantCall, and rethrows
+        // out of a noexcept destructor. That is the designed answer to a forbidden
+        // act - the alternative is to leak the transport subscription with no
+        // signal - so the shim must not soften it and this wrapper must not reach
+        // it. Checked BEFORE the disposed short-circuit, because a handler
+        // disposing its own subscriber is a bug whether or not someone else
+        // already disposed it.
+        if (ReferenceEquals(_inDelivery, this))
+        {
+            throw new InvalidOperationException(
+                "Subscriber.Dispose() cannot run inside a delivery on this subscriber: destroying it " +
+                "requires quiescence, and the native answer to doing it from a handler is process " +
+                "termination, by design. Hand the subscriber to whatever owns its lifetime and let the " +
+                "handler return, or use DispatchAfterDelivery.");
+        }
+
         if (_disposed)
         {
             return;
@@ -275,6 +403,42 @@ public sealed unsafe class Subscriber : IDisposable
         }
 
         _handle.Dispose();
+    }
+
+    /// <summary>Run <paramref name="work"/> off the delivery thread.</summary>
+    /// <returns>A task that completes when the work does, carrying any failure.</returns>
+    /// <remarks>
+    /// <para>
+    /// THE SANCTIONED ROUTE for work that must touch the seam from a handler. The
+    /// two refusals above name it, and this is what makes them actionable rather
+    /// than merely correct: a handler that needs to subscribe, or to dispose its
+    /// subscriber, hands the work here and returns.
+    /// </para>
+    /// <para>
+    /// It runs on the thread pool, which is what makes the deferred call LEGAL
+    /// rather than refused: the seam's rule is about re-entering a provider on the
+    /// SAME THREAD, and a call from another thread is served - it simply blocks
+    /// until the delivery in flight has returned. So the work may start before
+    /// this delivery finishes and will wait at the provider's door, which is
+    /// correct and costs nothing but a parked pool thread.
+    /// </para>
+    /// <para>
+    /// <b>DO NOT AWAIT OR WAIT ON THE RETURNED TASK INSIDE THE HANDLER.</b> That
+    /// is a deadlock and not a subtle one: the work blocks at the provider until
+    /// the delivery returns, and the delivery cannot return because it is waiting
+    /// for the work. The task is for the code that owns the handler, not for the
+    /// handler.
+    /// </para>
+    /// <para>
+    /// The failure lands on the task rather than in
+    /// <see cref="AbsorbedCallbackFailures"/>: deferred work has a caller who can
+    /// observe it, which is exactly what a delivery does not have.
+    /// </para>
+    /// </remarks>
+    public Task DispatchAfterDelivery(Func<Task> work)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        return Task.Run(work);
     }
 
     internal void ReportAbsorbed(Exception exception, ulong subscriptionId)
@@ -331,6 +495,13 @@ public sealed unsafe class Subscriber : IDisposable
                 return;
             }
 
+            // SAVED AND RESTORED, never simply cleared. A handler that reaches a
+            // delivery on another subscriber leaves an outer frame whose answer is
+            // still "inside that one", and clearing would tell the outer frame it
+            // was safe to dispose itself.
+            Subscriber? outer = _inDelivery;
+            _inDelivery = state.Owner;
+
             try
             {
                 // BORROWED, all three. The schema handle is the non-owning form:
@@ -349,6 +520,9 @@ public sealed unsafe class Subscriber : IDisposable
             }
             finally
             {
+                // The marker comes off BEFORE Exit, so that the departing delivery
+                // is not still advertising itself as in-flight while it frees.
+                _inDelivery = outer;
                 state.Exit();
             }
         }
@@ -408,7 +582,7 @@ public sealed unsafe class Subscriber : IDisposable
         {
             if (Interlocked.Decrement(ref _inFlight) == 0 && Volatile.Read(ref _retired) != 0)
             {
-                TryFree();
+                TryFree(byDelivery: true);
             }
         }
 
@@ -419,7 +593,7 @@ public sealed unsafe class Subscriber : IDisposable
 
             if (Volatile.Read(ref _inFlight) == 0)
             {
-                TryFree();
+                TryFree(byDelivery: false);
             }
         }
 
@@ -431,9 +605,23 @@ public sealed unsafe class Subscriber : IDisposable
         /// InvalidOperationException on a transport thread - which is to say, a
         /// crash with no useful stack.
         /// </remarks>
-        private void TryFree()
+        private void TryFree(bool byDelivery)
         {
-            if (Interlocked.Exchange(ref _freed, 1) == 0 && Self.IsAllocated)
+            if (Interlocked.Exchange(ref _freed, 1) != 0)
+            {
+                return;
+            }
+
+            // WHICH BRANCH FREED IS RECORDED, because otherwise no test can tell
+            // them apart. A self-cancelling handler and an ordinary cancellation
+            // both end with the handle freed and delivery stopped, so a test
+            // asserting only those outcomes passes whichever path ran - and the
+            // re-entrant path is the one where a bug is a use-after-free on a
+            // transport thread. Counting is the cheapest way to make the claim
+            // checkable rather than merely plausible.
+            Owner.RecordFree(byDelivery);
+
+            if (Self.IsAllocated)
             {
                 Self.Free();
             }
