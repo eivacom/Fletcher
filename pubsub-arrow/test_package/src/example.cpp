@@ -43,5 +43,10 @@ int main() {
     pub.CreateTopic({"hello", "world"}, schema);
     assert(pub.ListTopics().size() == 1);
 
+    // TopicOptions: an empty options struct is never refused — the base class's default
+    // delegates straight to CreateTopic, so StubProvider stays conforming with no change.
+    pub.CreateTopic({"another", "topic"}, schema, TopicOptions{});
+    assert(pub.ListTopics().size() == 2);
+
     return 0;
 }

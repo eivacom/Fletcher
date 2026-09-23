@@ -8,18 +8,18 @@ add_executable(fastdds_pubsub_tests
     test_fletcher_sample_pub_sub_type.cpp
     test_profile_document.cpp)
 
-# The OrderedDelivery white-box test, the DDS-type test and the profile-document test include
-# the provider's internal headers directly (they are header-only). The profile-document test
-# needs `internal/profile_document.hpp` and `internal/qos_defaults.hpp` in particular: the
-# resolution ladders and Fletcher's built-in profiles are asserted whole and in-process, because
-# `history` and `resource_limits` are not observable in DDS discovery data.
+# The DDS-type test and the profile-document test include the provider's internal headers
+# directly (they are header-only). The profile-document test needs `internal/profile_document.hpp`
+# and `internal/qos_defaults.hpp` in particular: the resolution ladders and Fletcher's built-in
+# profiles are asserted whole and in-process, because `history` and `resource_limits` are not
+# observable in DDS discovery data.
 target_include_directories(fastdds_pubsub_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 # B1: `DefaultProfileTranscriptionIsExact` reads the published starting-point XML block out of
 # README.md itself rather than holding a copy of it, so editing either the README block or
-# `MakeFletcherDefault*Qos()` alone turns the test red. The README is exported by conanfile.py
-# so the cache build reads the same file the repository holds.
+# `FletcherDefaultProfilesDocument()` (qos_defaults.cpp) alone turns the test red. The README is
+# exported by conanfile.py so the cache build reads the same file the repository holds.
 target_compile_definitions(fastdds_pubsub_tests PRIVATE
     FLETCHER_FASTDDS_README_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../README.md")
 
@@ -30,6 +30,13 @@ target_link_libraries(fastdds_pubsub_tests PRIVATE
     fastdds)
 
 include(GoogleTest)
+# Fast DDS's profile registry is process-wide and keeps a profile for the life of the process
+# (src/internal/profile_document.hpp), so the FastDdsConfig suite is valid only one TEST() per
+# process. `gtest_discover_tests` itself is what makes that true: it registers each discovered
+# TEST() as its own CTest test, and ctest runs each test as its own process invocation of the
+# binary (--gtest_filter=<that test>). DISCOVERY_MODE PRE_TEST only moves WHEN discovery happens
+# (test time instead of build time); it does not change that one-test-one-process property.
+# Running this binary bare collides by design.
 gtest_discover_tests(fastdds_pubsub_tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------

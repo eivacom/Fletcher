@@ -270,15 +270,7 @@ describe('provider configuration', () => {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">',
     '  <profiles>',
-    '    <participant profile_name="fletcher_participant">',
-    '      <rtps>',
-    '        <propertiesPolicy>',
-    '          <properties>',
-    '            <property><name>PROPERTY_NAME</name><value>131072</value></property>',
-    '          </properties>',
-    '        </propertiesPolicy>',
-    '      </rtps>',
-    '    </participant>',
+    '    <participant profile_name="fletcher_participant"/>',
     '  </profiles>',
     '</dds>',
   ].join('\n');
@@ -338,6 +330,21 @@ describe('provider configuration', () => {
   });
 
   it("a document the provider rejects exits 2, in the provider's own wording", async () => {
+    // No <participant profile_name="fletcher_participant">: the anchor is mandatory for any
+    // non-empty document, so the provider refuses this one by name even though the XML itself
+    // parses fine and the data_writer profile in it is well formed.
+    const noAnchor = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">',
+      '  <profiles>',
+      '    <data_writer profile_name="default_writer" is_default_profile="true">',
+      '      <qos>',
+      '        <reliability><kind>RELIABLE</kind></reliability>',
+      '      </qos>',
+      '    </data_writer>',
+      '  </profiles>',
+      '</dds>',
+    ].join('\n');
     const { code, stderr } = await spawnGatewayExpectingExit([
       '--port',
       String(TEST_PORT + 10),
@@ -348,20 +355,17 @@ describe('provider configuration', () => {
       '--domain-id',
       '153',
       '--provider-config',
-      write('bad-property.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_byte')),
+      write('no-anchor.xml', noAnchor),
     ]);
     expect(code).toBe(2);
     // The Fast DDS provider's wording, not the gateway's: proof the bytes crossed the seam.
-    expect(stderr).toContain('fletcher.max_schema_byte');
+    expect(stderr).toContain('fletcher_participant');
   });
 
   it('a valid --provider-config document reaches the provider and the gateway starts', async () => {
     const child = await spawnGateway(
       { name: 'fastdds', port: TEST_PORT + 9, domainId: '154', roundtripMs: 15_000 },
-      [
-        '--provider-config',
-        write('good.xml', ANCHOR_ONLY.replace('PROPERTY_NAME', 'fletcher.max_schema_bytes')),
-      ],
+      ['--provider-config', write('good.xml', ANCHOR_ONLY)],
     );
     await stopGateway(child);
   });

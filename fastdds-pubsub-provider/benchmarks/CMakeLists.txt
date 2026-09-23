@@ -6,8 +6,8 @@ project(fletcher-fastdds-pubsub-provider-benchmarks CXX)
 
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-core CONFIG REQUIRED)
-# Explicit, because the provider links fast-dds PRIVATE and no longer exports its headers: every
-# TU here includes <fastdds/...> directly (PDA-DEC-6 DEBT-4).
+# Explicit, because the provider links fast-dds PRIVATE and no longer exports its headers: three
+# of the four TUs here include <fastdds/...> directly (PDA-DEC-6 DEBT-4).
 find_package(fastdds CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 
@@ -19,7 +19,10 @@ add_executable(example_arrow_roundtrip example_arrow_roundtrip.cpp)
 
 add_executable(exp_zero_copy exp_zero_copy.cpp)
 
-foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy)
+# End-to-end publish-to-callback latency and throughput, intraprocess, on the built-in profiles.
+add_executable(bench_e2e bench_e2e.cpp)
+
+foreach(_target bench_pub_sub_type example_arrow_roundtrip exp_zero_copy bench_e2e)
     target_compile_features(${_target} PRIVATE cxx_std_20)
 
     # src/internal is on the include path so that the type exercised is the shipped one rather than a

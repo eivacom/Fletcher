@@ -88,6 +88,22 @@ class LocalSubject : public ProviderSubject {
 
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
 
+    SchemaArrival SubscribeSchema(const Topic& topic) override {
+        return provider_->SubscribeSchema(topic);
+    }
+
+    void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
+
+    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                 const TopicOptions& options) override {
+        provider_->CreateTopicWithOptions(topic, std::move(schema), options);
+    }
+
+    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        return provider_->SubscribeWithOptions(topic, std::move(callback), options);
+    }
+
    private:
     ProviderTraits traits_;
     std::shared_ptr<PubSubProvider> provider_;

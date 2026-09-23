@@ -3,9 +3,10 @@
 //
 // The DDS type this provider shipped before FletcherSample, kept alive here as the baseline arm of
 // bench_pub_sub_type.cpp. Lifted verbatim from src/fast_dds_pubsub_provider.cpp at f779c2f, where
-// it was a file-local class; the only edits are the namespace, the include block, and taking
-// internal::PublishData / internal::ReceivedData from src/internal/transport_data.hpp in place of
-// the single combined struct that sat beside it in that file (same fields, split by direction).
+// it was a file-local class; the only edits are the rename from FletcherTopicType, the namespace,
+// the include block, and taking internal::PublishData / internal::ReceivedData from
+// src/internal/transport_data.hpp in place of the single combined struct that sat beside it in
+// that file (same fields, split by direction).
 //
 // What it is, in one line: an unbounded, non-plain type carrying a self-framing envelope behind a
 // hand-written CDR encapsulation. Unbounded means Fast DDS never offered it data-sharing, and

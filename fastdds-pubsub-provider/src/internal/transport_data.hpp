@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The sample types the provider hands to Fast DDS: RawBytes for the companion schema channel, and
-// one per direction for the data channel.
+// The sample types the provider hands to Fast DDS: one per direction for the data channel, and the
+// same PublishData/ReceivedData pair for the companion __schema channel (it rides the same plain
+// sample layout as a row -- the IPC bytes -- plus one attachment carrying the publisher's payload
+// bound — see fletcher_sample_pub_sub_type.hpp).
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_INTERNAL_TRANSPORT_DATA_HPP_
 
@@ -16,10 +18,6 @@
 namespace fletcher {
 namespace internal {
 
-struct RawBytes {
-    std::vector<uint8_t> data;
-};
-
 // What serialize() reads — the encoder writes row bytes directly into the DDS payload buffer via
 // FixedWriteBuffer. Both members point at the caller's: serialize() runs synchronously inside
 // DataWriter::write, so neither outlives the Publish call that set it.
@@ -27,9 +25,9 @@ struct PublishData {
     const PubSubProvider::RowEncoder* encoder = nullptr;
     const Attachments* attachments = nullptr;
 
-    // #60: why serialize() failed, so Publish can throw a diagnostic instead of the caller seeing
-    // only a return code that cannot distinguish the cause (H-INV-2). serialize() must not rethrow
-    // (H-INV-3), so it records here and Publish reads it after write() returns.
+    // Why serialize() failed, so Publish can throw a diagnostic instead of the caller seeing
+    // only a return code that cannot distinguish the cause. serialize() must not rethrow, so it
+    // records here and Publish reads it after write() returns.
     //
     // Deliberately per-publish rather than a sink on the shared type instance: Publish holds the
     // provider mutex SHARED, so concurrent publishes to different topics run at once and would race
@@ -37,8 +35,8 @@ struct PublishData {
     // `mutable` because serialize() receives it as `const void* const`.
     mutable std::string serialize_error;
 
-    // Exception-safe by contract: called from serialize()'s catch handlers, where nothing may throw
-    // (H-INV-3). Takes const char* (std::exception::what() is noexcept, so no allocation at the
+    // Exception-safe by contract: called from serialize()'s catch handlers, where nothing may
+    // throw. Takes const char* (std::exception::what() is noexcept, so no allocation at the
     // call site) and swallows a bad_alloc from the assignment itself.
     void RecordSerializeError(const char* what) const noexcept {
         try {
@@ -50,21 +48,17 @@ struct PublishData {
 
 // What deserialize() fills, decoded in place and moved on by the listener.
 //
-// Separate from PublishData rather than one struct carrying both directions. The measurement that
-// forced the split: Attachments WAS an unordered_map, and MSVC allocates a sentinel node in its
-// default constructor, so a bundled struct made every serialised publish allocate and free a node
-// for a member that path never reads. PDA-DEC-AG2 retired that alias for a sealed container over a
-// std::vector, which allocates nothing when empty, so the cost is gone and the split is kept for
-// the reason rather than the number — a bundled struct would still build and destroy a member one
-// direction never touches. See README "Measured decisions".
+// Separate from PublishData rather than one struct carrying both directions: the split is kept
+// because a bundled struct made every serialised publish build an `Attachments` it never reads;
+// the measured cost is recorded in the README.
 struct ReceivedData {
     std::vector<uint8_t> decoded_row;
     Attachments decoded_attachments;
 
-    // Owns the bytes `decoded_attachments` alias (§3.2): one copy of the sample body, taken ONLY
-    // when the sample carries attachments, replacing the copy-per-attachment this path used to
-    // make. Fast DDS may recycle the payload the moment deserialize() returns, so the blobs cannot
-    // simply point at it — but they can point into this, which lives as long as any of them does.
+    // Owns the bytes `decoded_attachments` alias: one copy of the sample body, taken ONLY when the
+    // sample carries attachments. Fast DDS may recycle the payload the moment deserialize()
+    // returns, so the blobs cannot simply point at it — but they can point into this, which lives
+    // as long as any of them does.
     //
     // Null for an attachment-free sample, which is the hot path: it pays nothing for this.
     std::shared_ptr<const std::vector<uint8_t>> body;

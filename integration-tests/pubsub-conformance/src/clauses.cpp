@@ -67,6 +67,9 @@ TEST_P(ProviderConformance, SchemaBeforeDataAcrossHandoff) {
     ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    // No-op except on Fast DDS: waits for the reader to match the writer just
+    // declared before the immediate publish below (subject.hpp).
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
     }
@@ -91,6 +94,7 @@ TEST_P(ProviderConformance, SchemaModeIsUniformNeverMixed) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -118,6 +122,7 @@ TEST_P(ProviderConformance, PerWriterOrderIsMonotonic) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= kRows; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -137,6 +142,7 @@ TEST_P(ProviderConformance, BacklogNeverInterleavesWithLiveSamples) {
     ScopedSubscription sub(Subject(), topic, collector.Callback());
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
     }
@@ -219,6 +225,7 @@ TEST_P(ProviderConformance, IdenticalRedeclarationIsIdempotent) {
 
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForCount(1, Deadline()))
         << "the topic stopped delivering after an identical re-declaration";
@@ -266,6 +273,7 @@ TEST_P(ProviderConformance, OneCallbackPerTopicPerInstance) {
         // Refusing the second registration is one legal way to hold the
         // cardinality; replacing the first is the other.
     }
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForCount(1, Deadline())) << "the row reached no callback at all";
@@ -288,6 +296,7 @@ TEST_P(ProviderConformance, SubscribeNeverBlocksSchemaArrivesLater) {
         << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms";
 
     CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(collector.WaitForSeq(1, Deadline())) << "the row never arrived";
 
@@ -316,6 +325,7 @@ TEST_P(ProviderConformance, NoDeliveryAfterUnsubscribeReturns) {
     CONF_MUST_DECLARE(topic, DataSchema());
     Collector collector;
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     for (uint32_t seq = 1; seq <= 3; ++seq) {
         CONF_MUST_PUBLISH(topic, seq);
@@ -354,6 +364,7 @@ TEST_P(ProviderConformance, DeliveryIsSerializedPerSubscription) {
     // it concurrently with this write.
     collector.SetHoldWindow(std::chrono::microseconds(500));
     ScopedSubscription sub(Subject(), topic, collector.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     Reply reply_a;
     Reply reply_b;
@@ -503,6 +514,7 @@ TEST_P(ProviderConformance, HostileCallbackNeitherEscapesNorIsChargedElsewhere) 
                                // was just handed to.
                                throw std::overflow_error("a hostile handler");
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     const Reply published = Subject().PublishRow(topic, 1);
     EXPECT_TRUE(published.ok()) << "a subscriber's handler failure was charged to the publisher: "
@@ -539,6 +551,7 @@ TEST_P(ProviderConformance, ReentrantCallIsRefusedWithoutAnyThrow) {
                                recorded.store(RecordReentrantUnsubscribe(Subject(), topic));
                                handled.Set();
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     CONF_MUST_PUBLISH(topic, 1);
     ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
@@ -570,6 +583,7 @@ TEST_P(ProviderConformance, ThrowingCallbackIsAbsorbedWithoutReentering) {
                                threw.Set();
                                throw std::overflow_error("a failing handler");
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     const uint64_t before = DeliveryChannel::AbsorbedTotal();
     const Reply published = Subject().PublishRow(topic, 1);
@@ -619,6 +633,7 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
                                in_delivery.Set();
                                (void)may_return.WaitUntil(SettleDeadline());
                            });
+    Subject().AwaitDataMatched(topic, RemainingBudget());
 
     std::thread publisher([&] { (void)Subject().PublishRow(topic, 1); });
     // However this clause exits — including through the ASSERT below — the parked
@@ -688,17 +703,29 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
 // assert a bug. They are asserted where they are genuinely re-entrant, which
 // `publishes_into_subject_instance` names structurally rather than by matching on
 // a label.
+//
+// `SubscribeSchema`/`UnsubscribeSchema` and `DeclareTopicWithOptions`/`SubscribeWithOptions` beside
+// `Subscribe`: all four are LOCAL-ONLY on every subject (subject.hpp), never routed over the peer
+// pipe, so their assertion is unconditional on all six subjects too — the same reason `Subscribe`'s
+// is. The options pair is passed an EMPTY `TopicOptions{}`: the door is checked before the support
+// check, so the refusal is `kReentrantCall` regardless of whether the provider under test honours
+// options at all.
 TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     const bool reentrant_publish = GetParam().publishes_into_subject_instance;
 
     const Topic driver = Fresh("refused_driver");
     const Topic derived = Fresh("refused_derived");
     const Topic watched = Fresh("refused_watched");
+    const Topic derived_options = Fresh("refused_derived_options");
     CONF_MUST_DECLARE(driver, DataSchema());
 
     Reply declare_reply = Reply::HarnessFailure("the handler never got there");
     Reply publish_reply = Reply::HarnessFailure("the handler never got there");
     std::atomic<int32_t> subscribe_status{kNothingRecorded};
+    std::atomic<int32_t> subscribe_schema_status{kNothingRecorded};
+    std::atomic<int32_t> unsubscribe_schema_status{kNothingRecorded};
+    std::atomic<int32_t> declare_with_options_status{kNothingRecorded};
+    std::atomic<int32_t> subscribe_with_options_status{kNothingRecorded};
     std::atomic<int> entered{0};
     Latch handled;
 
@@ -718,18 +745,78 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
             } catch (...) {
                 subscribe_status.store(kNonSeamException);
             }
+            try {
+                SchemaArrival opened = Subject().SubscribeSchema(watched);
+                (void)opened;
+                subscribe_schema_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                subscribe_schema_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                subscribe_schema_status.store(kNonSeamException);
+            }
+            try {
+                Subject().UnsubscribeSchema(watched);
+                unsubscribe_schema_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                unsubscribe_schema_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                unsubscribe_schema_status.store(kNonSeamException);
+            }
+            try {
+                Subject().DeclareTopicWithOptions(
+                    derived_options, MakeConformanceSchema(DataSchema()), TopicOptions{});
+                declare_with_options_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                declare_with_options_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                declare_with_options_status.store(kNonSeamException);
+            }
+            try {
+                SubscriptionResult opened = Subject().SubscribeWithOptions(
+                    watched, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                    TopicOptions{});
+                (void)opened;
+                subscribe_with_options_status.store(kReturnedWithoutThrowing);
+            } catch (const PubSubError& e) {
+                subscribe_with_options_status.store(static_cast<int32_t>(e.status()));
+            } catch (...) {
+                subscribe_with_options_status.store(kNonSeamException);
+            }
             handled.Set();
         });
+    Subject().AwaitDataMatched(driver, RemainingBudget());
 
     CONF_MUST_PUBLISH(driver, 1);
     ASSERT_TRUE(handled.WaitUntil(Deadline())) << "the handler never ran, so nothing was tested";
 
-    // `Subscribe` first: it is the one that carries force on every subject, and
-    // the status is asserted by NAME, so a provider that refuses for some other
-    // reason does not green this.
+    // `Subscribe`, `SubscribeSchema` and `UnsubscribeSchema` all carry force on
+    // every subject — the subscriber side is always this process and this
+    // instance (subject.hpp), peer or not — and each status is asserted by
+    // NAME, so a provider that refuses for some other reason does not green
+    // this.
     EXPECT_EQ(subscribe_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
         << "Subscribe from inside a delivery answered with " << StatusText(subscribe_status.load())
-        << "; §6 clause 6 refuses all four methods on every provider";
+        << "; §6 clause 6 refuses every seam method on every provider";
+    EXPECT_EQ(subscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "SubscribeSchema from inside a delivery answered with "
+        << StatusText(subscribe_schema_status.load())
+        << "; §6 clause 6 refuses the schema-only methods too";
+    EXPECT_EQ(unsubscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "UnsubscribeSchema from inside a delivery answered with "
+        << StatusText(unsubscribe_schema_status.load())
+        << "; §6 clause 6 refuses the schema-only methods too";
+    EXPECT_EQ(declare_with_options_status.load(),
+              static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "DeclareTopicWithOptions from inside a delivery answered with "
+        << StatusText(declare_with_options_status.load())
+        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
+           "runs";
+    EXPECT_EQ(subscribe_with_options_status.load(),
+              static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "SubscribeWithOptions from inside a delivery answered with "
+        << StatusText(subscribe_with_options_status.load())
+        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
+           "runs";
 
     if (reentrant_publish) {
         // `refused()`, never "!ok()": Reply's third outcome exists precisely so a
@@ -759,6 +846,7 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     Collector after;
     ScopedSubscription after_sub(Subject(), derived, after.Callback());
     CONF_MUST_DECLARE(derived, DataSchema());
+    Subject().AwaitDataMatched(derived, RemainingBudget());
     CONF_MUST_PUBLISH(derived, 78);
     EXPECT_TRUE(after.WaitForSeq(78, Deadline()))
         << "the provider stopped serving after refusing a re-entrant call";

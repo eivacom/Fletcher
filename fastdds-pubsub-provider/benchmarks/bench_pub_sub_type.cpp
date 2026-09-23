@@ -12,15 +12,13 @@
 //   BM_PublishFlow / BM_ReadFlow     what the loaned flow removes from each side, isolated from
 //                                    Fast DDS. This is the zero-copy budget: bench_dds_payload can
 //                                    only see it at 0.1 us granularity, and bench_e2e not at all.
-//   BM_Deliver                       the subscribe-side delivery layer: OrderedDelivery for both
-//                                    read flows, and ParseEnvelopeBody with attachments, which the
-//                                    ReadFlow arm above never parses. Read each against
-//                                    BM_Deliver_CallbackOnly from the same run.
+//   BM_Deliver                       the floor beneath a delivery -- the callback alone, called
+//                                    directly (BM_Deliver_CallbackOnly) -- and ParseEnvelopeBody
+//                                    with attachments, which the ReadFlow arm above never parses
+//                                    (BM_Deliver_ParseAttachments).
 //   BM_ProviderPublishOverhead       what FastDDSPubSubProvider::Publish spends per sample before
-//                                    the type is reached, i.e. what the loan saving competes with.
-//                                    Superseded by the Monorepo's
-//                                    tools/fletcher_bench/bench_publish, which drives the real
-//                                    Publish against a raw DDS control.
+//                                    the type is reached, step for step, DDS-free — what the loan
+//                                    saving competes with.
 //   BM_Memcpy                        the floor: the row bytes moved once, nothing else.
 //   BM_BatchRoundTrip                a whole Arrow batch out and back — read a row out of an
 //                                    ArrowArray, encode, serialise, deserialise, decode, append to
@@ -30,7 +28,7 @@
 // edge deployments and modules/datamodel use. The Apache Arrow C++ tier (fletcher-arrow-bridge,
 // arrow::RecordBatch) sits a layer above and is not measured here.
 //
-// Results: Monorepo modules/io/docs/serialization-benchmark.md.
+// Results: the provider README's "Measured decisions" table.
 
 #include <benchmark/benchmark.h>
 #include <fastcdr/Cdr.h>
@@ -41,25 +39,24 @@
 #include <cstdio>
 #include <cstring>
 #include <fastdds/rtps/common/SerializedPayload.hpp>
+#include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/positional_io.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
-#include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <functional>
-#include <map>
 #include <memory>
 #include <shared_mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "envelope_codec.hpp"
 #include "fletcher_sample.hpp"
 #include "fletcher_sample_pub_sub_type.hpp"
 #include "legacy_fletcher_topic_type.hpp"
-#include "ordered_delivery.hpp"
 #include "transform_batch.hpp"
 #include "transport_data.hpp"
 
@@ -262,7 +259,7 @@ void BM_PublishFieldsConstruct(benchmark::State& state) {
 }
 BENCHMARK(BM_PublishFieldsConstruct);
 
-// SampleWriter::Write — a PublishData per publish, which copies the RowEncoder std::function, then
+// WriteSample — a PublishData per publish, which holds a pointer to the RowEncoder, then
 // serialize() into the transport's payload.
 void BM_PublishFlow_Serialised(benchmark::State& state) {
     FletcherSamplePubSubType type(kBenchPayloadBytes);
@@ -317,8 +314,11 @@ void BM_PublishFlow_LoanedStruct(benchmark::State& state) {
 }
 BENCHMARK(BM_PublishFlow_LoanedStruct)->FLETCHER_ROW_SIZES;
 
-// LoanableDataReaderListener's read: the row stays where the writer put it, so the parse hands back
-// a pointer. Against BM_Deserialize_Current, which owes a vector copy of the same bytes.
+// LoanedDataReaderListener::Drain's read: the row stays where the writer put it, so the parse hands
+// back a pointer. Against BM_Deserialize_Current, which owes a vector copy of the same bytes. Not
+// driven through Drain itself, which needs a live DataReader (see the note below, above
+// BM_Deliver_CallbackOnly) -- this exercises the same ParseEnvelopeBody call Drain makes per
+// sample.
 void BM_ReadFlow_Loaned(benchmark::State& state) {
     const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
     std::vector<uint8_t> sample(fletcher::internal::SampleSize(kBenchPayloadBytes));
@@ -352,13 +352,14 @@ void BM_ReadFlow_Loaned(benchmark::State& state) {
 BENCHMARK(BM_ReadFlow_Loaned)->FLETCHER_ROW_SIZES;
 
 // ---------------------------------------------------------------------------
-// The delivery layer: what OrderedDelivery adds between the reader and the callback
+// The delivery floor: the callback alone, with the arguments a delivery hands it
 // ---------------------------------------------------------------------------
 //
-// The subscribe-side counterpart of the monorepo's bench_publish, built the same way: a control arm
-// that runs the callback and nothing else, so every arm below is read as its own time minus
-// BM_Deliver_CallbackOnly *from the same run*. Absolute numbers here say little — the std::function
-// call is most of them.
+// The subscribe-side counterpart of the monorepo's bench_publish. A read listener's Drain
+// (data_reader_listener.hpp) now calls straight into DeliveryChannel::Deliver per sample -- the
+// try/catch frame and the push/pop of a thread-local vector it costs are unchanged by this
+// redesign (DeliveryChannel is pubsub/, not touched here) and not remeasured by this file; this
+// arm is the floor beneath it, everything a delivery hands the callback and nothing else.
 //
 // This cannot be driven through a real DataReader. Delivery arrives on a Fast DDS listener thread
 // and `take` consumes, so there is no synchronous loop to hand a benchmark; bench_read_flow in the
@@ -369,16 +370,6 @@ BENCHMARK(BM_ReadFlow_Loaned)->FLETCHER_ROW_SIZES;
 fletcher::PubSubProvider::SubscribeCallback MakeSink(size_t& sum) {
     return [&sum](const uint8_t* data, size_t len, const fletcher::SharedSchema&,
                   const fletcher::Attachments&) { sum += len ? data[0] : 0; };
-}
-
-// OrderedDelivery dispatches through a DeliveryChannel, so the two arms below
-// measure the channel's cost too: one try/catch frame and one push/pop of a
-// thread-local vector per sample. That is deliberate -- it is what the shipped
-// path pays.
-fletcher::DeliveryChannel BenchChannel(fletcher::PubSubProvider::SubscribeCallback cb) {
-    static const int kBenchProviderToken = 0;
-    return fletcher::DeliveryChannel(fletcher::DeliveryChannel::RawToken{}, &kBenchProviderToken,
-                                     std::move(cb));
 }
 
 // The floor: the callback alone, with the arguments a delivery hands it.
@@ -394,44 +385,10 @@ void BM_Deliver_CallbackOnly(benchmark::State& state) {
 }
 BENCHMARK(BM_Deliver_CallbackOnly)->FLETCHER_ROW_SIZES;
 
-// The loaned read flow's delivery: schema known and nothing queued, so OfferView claims the drain
-// slot and hands the borrowed pointer straight on. The row is never copied, which is what should
-// keep this flat across row size — hold it against BM_Deliver_Offer below.
-void BM_Deliver_OfferView(benchmark::State& state) {
-    const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
-    size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(BenchChannel(MakeSink(sum)),
-                                                 fletcher::MakeSharedSchema(TransformSchema()), 10);
-    for (auto _ : state) {
-        delivery.OfferView(row.data(), row.size(), kNoAttachments);
-    }
-    benchmark::DoNotOptimize(sum);
-    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * row.size());
-}
-BENCHMARK(BM_Deliver_OfferView)->FLETCHER_ROW_SIZES;
-
-// The copying read flow hands Offer the vector its ReceivedData already owns. Both arms are flat
-// across row size and within a couple of nanoseconds of the callback itself, because in the steady
-// state neither one copies the row: Offer takes it by reference and the latched path passes the
-// pointer straight on.
-//
-// **This is not the copying flow's total cost.** That flow also pays a deserialize per sample,
-// which does copy the row into ReceivedData::decoded_row — see BM_Deserialize_Current. What this
-// arm shows is only what OrderedDelivery adds on top of it, which is now almost nothing.
-void BM_Deliver_Offer(benchmark::State& state) {
-    const std::vector<uint8_t> row(static_cast<size_t>(state.range(0)), 0xAB);
-    size_t sum = 0;
-    fletcher::internal::OrderedDelivery delivery(BenchChannel(MakeSink(sum)),
-                                                 fletcher::MakeSharedSchema(TransformSchema()), 10);
-    for (auto _ : state) {
-        delivery.Offer(row, kNoAttachments);
-    }
-    benchmark::DoNotOptimize(sum);
-    state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * row.size());
-}
-BENCHMARK(BM_Deliver_Offer)->FLETCHER_ROW_SIZES;
-
-// ParseEnvelopeBody with attachments, which BM_ReadFlow_Loaned never exercises.
+// ParseEnvelopeBody with attachments, which BM_ReadFlow_Loaned never exercises. (The two arms that
+// used to sit here, BM_Deliver_OfferView and BM_Deliver_Offer, measured OrderedDelivery, which
+// this redesign removes -- a delivered sample now goes straight from a read flow's Drain to
+// DeliveryChannel::Deliver, which BM_Deliver_CallbackOnly above already measures the cost of.)
 void BM_Deliver_ParseAttachments(benchmark::State& state) {
     const int count = static_cast<int>(state.range(0));
     const std::vector<uint8_t> row(214, 0xAB);
@@ -471,19 +428,23 @@ void BM_Deliver_ParseAttachments(benchmark::State& state) {
 }
 BENCHMARK(BM_Deliver_ParseAttachments)->Arg(0)->Arg(1)->Arg(4)->Arg(16);
 
-// What FastDDSPubSubProvider::Publish spends per sample before the sample writer is reached: join
-// the segments, take the shared lock, find the topic. Independent of row size, and the number to
-// hold against the loaned/serialised gap above.
+// What FastDDSPubSubProvider::Publish spends per sample before the sample writer is reached, step
+// for step as Publish does it (fast_dds_pubsub_provider.cpp): the re-entrancy door, the segments
+// joined into one thread_local scratch string (no allocation after the first call), the shared
+// lock, the unordered_map lookup. Independent of row size, and the number to hold against the
+// loaned/serialised gap above.
 void BM_ProviderPublishOverhead(benchmark::State& state) {
     const std::vector<std::string> segments = {"host", "RovSimulator", "State"};
     std::shared_mutex mutex;
-    std::map<std::string, int> topics;
+    std::unordered_map<std::string, int> topics;
     topics[fletcher::internal::JoinSegments(segments)] = 1;
     topics["host/RovSimulator/Command"] = 2;
     topics["host/Vehicle/Telemetry"] = 3;
 
     for (auto _ : state) {
-        std::string name = fletcher::internal::JoinSegments(segments);
+        fletcher::internal::RefuseIfInsideDeliveryOn(&topics, "Publish");
+        static thread_local std::string name;
+        fletcher::internal::JoinSegmentsInto(name, segments);
         std::shared_lock lock(mutex);
         auto it = topics.find(name);
         benchmark::DoNotOptimize(it->second);

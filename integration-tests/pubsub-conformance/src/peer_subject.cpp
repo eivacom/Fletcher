@@ -7,6 +7,7 @@
 // observe, and no clause needs it to, which is also what stops a clause
 // quietly turning a cross-process subject into an in-process one.
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -69,6 +70,37 @@ class PeerSubject : public ProviderSubject {
     }
 
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
+
+    SchemaArrival SubscribeSchema(const Topic& topic) override {
+        return provider_->SubscribeSchema(topic);
+    }
+
+    void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
+
+    /// LOCAL-ONLY, as subject.hpp says: there is no peer-pipe form, so — unlike `DeclareTopic`
+    /// above — this reaches `provider_`, the subscriber-side instance in THIS process, never the
+    /// peer child. The publisher-side instance is not needed for it.
+    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
+                                 const TopicOptions& options) override {
+        provider_->CreateTopicWithOptions(topic, std::move(schema), options);
+    }
+
+    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        return provider_->SubscribeWithOptions(topic, std::move(callback), options);
+    }
+
+    /// The writer-side half of the readiness fence lives in the peer (peer.hpp
+    /// `await_matched`); the subscriber-side half is the wrapping subject's.
+    /// Capped below the exchange budget so the pipe never times out first.
+    void AwaitDataMatched(const Topic& topic, std::chrono::milliseconds budget) override {
+        const auto capped = std::min<std::chrono::milliseconds>(budget, std::chrono::seconds{10});
+        Reply reply = Exchange("await_matched " + internal::JoinSegments(topic) + " " +
+                               std::to_string(capped.count()));
+        if (!reply.ok()) {
+            throw std::runtime_error("conformance: peer await_matched failed: " + reply.detail);
+        }
+    }
 
    private:
     /// Unsendable over the peer PIPE, or unsendable through the SEAM — both are
