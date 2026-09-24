@@ -15,6 +15,7 @@ on:
   pull_request:
     paths:
       - "dotnet/**"
+      - "integration-tests/**/dotnet/**"
       - ".github/workflows/ci.format-check-cs.yml"
 
 jobs:
@@ -39,3 +40,23 @@ jobs:
         run: |
           dotnet restore Fletcher.slnx --locked-mode
           dotnet format Fletcher.slnx --verify-no-changes --severity warn --no-restore
+
+      # THE SOLUTION DOES NOT CONTAIN THE INTEGRATION SUITES, and must not: 
+      # ci.dotnet.yml runs `dotnet test Fletcher.slnx`, so adding them there would
+      # drag real Fast DDS participants into the unit lane - the precise thing
+      # pubsub-transport-conformance was given its own lane to avoid - and would
+      # break `restore --locked-mode`, which wants a lock file per project.
+      #
+      # So they are formatted HERE, by path. Without this step they are outside
+      # the gate entirely: binding-abi-conformance had been since BIND-3, which is
+      # how the gap was found - by noticing a SECOND project was about to join it.
+      # A new C# project outside dotnet/ adds itself to this list.
+      - name: Run dotnet format over the integration suites
+        run: |
+          for PROJECT in \
+            integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/BindingAbiConformance.csproj \
+            integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj; do
+            echo "::group::dotnet format $PROJECT"
+            dotnet format "$PROJECT" --verify-no-changes --severity warn
+            echo '::endgroup::'
+          done

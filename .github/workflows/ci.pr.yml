@@ -46,6 +46,7 @@ jobs:
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
       integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
+      integration-pubsub-transport: ${{ steps.filter.outputs.integration-pubsub-transport }}
       integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
@@ -239,6 +240,24 @@ jobs:
               - 'integration-tests/binding-abi-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.binding-abi-conformance.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # BIND-4d-iii. The provider components are in the list because the shim
+            # statically links the transports this lane selects: a change to one of
+            # them changes what `fastdds` or `xrce` resolves to.
+            integration-pubsub-transport:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/pubsub-transport-conformance/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.pubsub-transport-conformance.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -497,6 +516,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-pubsub-transport-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-transport == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.pubsub-transport-conformance.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-arrow-bridge:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-arrow == 'true' }}
@@ -583,6 +610,7 @@ jobs:
       - gateway-client
       - integration-test-binding-abi-conformance
       - integration-test-fastdds-xrce-interop
+      - integration-test-pubsub-transport-conformance
       - integration-test-gateway-end-to-end
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
