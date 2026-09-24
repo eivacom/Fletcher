@@ -1311,3 +1311,49 @@ accessors do, for capstone parity (Q18).
   category it could not see was absence. A review method that would have caught these is
   type-by-type completeness — the sweep above — and it is cheap enough that it should be run
   once per surface, at the point a consumer for the outbound direction first exists.
+
+- **D-BIND-47 — bucket 3's two provider-level fan-out cases are EXCLUDED; the ported total goes
+  278 → 276 of 302 and the exclusions 24 → 26.** *LOCKED BY THE MAINTAINER 2026-09-24,* raised
+  at BIND-4d-ii when the port ran into two cases the managed surface cannot observe.
+
+  **THE TWO CASES.** `UnsubscribeLastSubscriberUnsubscribesFromProvider` and
+  `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` both assert
+  `mock->unsubscribe_count`: the fan-out's PROVIDER-LEVEL bookkeeping, which decides whether the
+  last local cancellation releases the transport subscription or leaves it open and quiet.
+
+  **WHY THEY CANNOT PORT, and the reason is structural rather than awkward.** That bookkeeping
+  lives in the C++ `fletcher::Subscriber`. The managed `Subscriber` WRAPS it through
+  `fl_subscriber_*` and reimplements none of it — the fan-out, the dedup and the provider-level
+  release are all one tier down. So a "port" would drive the same C++ code a second time and
+  file the result as a test of the binding, which is the vacuity this round keeps refusing. On
+  top of that the managed surface has NO VIEW of provider-level subscriptions at all: D-BIND-24
+  exposes no registration and no enumeration on `ProviderRegistry`, deliberately, so there is
+  nothing to observe even if it were the binding's to observe.
+
+  **THE SAME REASONING THE BUCKET TABLE ALREADY USES**, for the 24 provider-internal Fast DDS
+  cases: *"provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches)"*.
+  These two are that category, found in a different bucket. Recording them as a second instance
+  of one rule rather than as a new kind of exception is the point — **the test for exclusion is
+  "does the managed surface implement this, or only wrap it?"**, and it should be applied to
+  bucket 4 before that port starts rather than discovered inside it.
+
+  **WHY A NUMBERED DECISION AND NOT A PARAGRAPH IN A TEST FILE.** The 302 denominator and the
+  278 numerator are MAINTAINED FIGURES that the round has already corrected once under a
+  maintainer ruling (2026-09-18, when 275 of 300 was found low by three). A second movement of
+  the same figure by an implementer's judgement, recorded only in a test file's header, would be
+  exactly the drift that correction existed to stop. The number now moves in the decision log,
+  the tracker's three sites carry it, and the test file points at both.
+
+  **NO CODE CONSEQUENCE AND NO ABI CHANGE.** Unlike 42/43/46 nothing native moves, and unlike
+  44/45 no managed signature moves either; this decision changes only what the round counts as
+  owed. Bucket 3's remaining 21 cases are ported and green (`BucketThreeConformanceTests.cs`
+  carries the case-by-case mapping, including the 11 covered by earlier slices and named rather
+  than duplicated).
+
+  **A SECOND, SMALLER FINDING RIDES ALONG, and it is not an exclusion:** bucket 3's row lists
+  `test_pubsub_arrow`'s 15 cases, but BIND-5's acceptance row claims them ("`pubsub-arrow`
+  cases") and `SubscriberArrow` does not exist before BIND-5. So bucket 3 splits 23 / 15 across
+  BIND-4d-ii and BIND-5. Those 15 still port — the total is unaffected — and the row now says
+  where they land, so BIND-5 does not have to rediscover it.
+
+  **No diagram change** (the fourth place): nothing in the architecture set counts test cases.
