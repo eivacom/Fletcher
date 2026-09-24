@@ -55,8 +55,8 @@ class FletcherCAbiConan(ConanFile):
         # package needs exactly one header and no include path but its own.
         # test_package compiles a C program against the package to keep that
         # claim a test rather than a comment.
-        self.requires("fletcher-pubsub/0.5.0-alpha")
-        self.requires("fletcher-fastdds-pubsub-provider/0.5.0-alpha")
+        self.requires("fletcher-pubsub/0.5.1-alpha")
+        self.requires("fletcher-fastdds-pubsub-provider/0.5.1-alpha")
         self.requires("fletcher-xrcedds-pubsub-provider/0.5.1-alpha")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
@@ -66,7 +66,7 @@ class FletcherCAbiConan(ConanFile):
             # encoder rather than a transcription of it, so the test binary links
             # both. `run_tests` is deleted from package_id, so the shipped
             # package is unaffected by their presence here.
-            self.requires("fletcher-arrow-bridge/0.5.0-alpha")
+            self.requires("fletcher-arrow-bridge/0.5.1-alpha")
             self.requires("arrow/23.0.1")
             # The same zlib conflict arrow-bridge and pubsub-arrow resolve:
             # arrow pins 1.2.13, openssl pulls 1.3.1.
